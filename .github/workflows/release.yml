@@ -1,0 +1,85 @@
+name: Release
+
+# Publishes packages/core to npm and creates a GitHub Release when a `v*` tag
+# is pushed. Authentication is npm OIDC trusted publishing — NO npm token is
+# stored anywhere (nothing to leak), and the package ships with a provenance
+# attestation.
+#
+# ONE-TIME npm-side setup (required before the first automated release):
+#   npmjs.com → package `stitchkit` → Settings → Trusted Publisher →
+#   add a GitHub Actions publisher:
+#     organization/user: max-listov
+#     repository:        stitchkit
+#     workflow filename: release.yml
+#   Until this is configured the "Publish to npm" step fails.
+#
+# Release flow once set up:
+#   1. bump `version` in packages/core/package.json
+#   2. move CHANGELOG `[Unreleased]` into a new version section
+#   3. commit, then: git tag vX.Y.Z && git push origin vX.Y.Z
+#   The tag push runs this workflow — verify, publish, GitHub Release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # OIDC — npm trusted publishing + provenance
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # OIDC trusted publishing requires npm >= 11.5.
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Verify tag matches package version
+        working-directory: packages/core
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Typecheck
+        working-directory: packages/core
+        run: bun run check
+
+      - name: Test
+        working-directory: packages/core
+        run: bun test
+
+      # `npm publish` runs `prepublishOnly` (copies the README, builds dist/).
+      # OIDC auth is automatic — no NODE_AUTH_TOKEN.
+      - name: Publish to npm
+        working-directory: packages/core
+        run: npm publish --provenance --access public
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --title "stitchkit $GITHUB_REF_NAME"
+          --generate-notes
