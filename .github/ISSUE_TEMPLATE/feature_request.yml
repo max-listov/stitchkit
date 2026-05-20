@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an idea for stitchkit.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that stitchkit makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should the API or behaviour look like?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

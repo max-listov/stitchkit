@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in stitchkit does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting. A precise report gets a fast fix.
+  - type: input
+    id: version
+    attributes:
+      label: stitchkit version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: entrypoint
+    attributes:
+      label: Entrypoint
+      options:
+        - stitchkit
+        - stitchkit/server
+        - stitchkit/tools
+        - stitchkit/react
+        - stitchkit/contract
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What you expected vs. what happened
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A contract plus the code that reproduces it — the smaller the better.
+      render: ts
+    validations:
+      required: true
+  - type: input
+    id: bun
+    attributes:
+      label: Bun version
+      placeholder: "bun --version"
+    validations:
+      required: true

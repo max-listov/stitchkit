@@ -1,0 +1,24 @@
+{
+  "name": "stitchkit-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
+    "dev": "bun --filter stitchkit dev",
+    "check": "bun --filter stitchkit check",
+    "test": "bun --filter stitchkit test",
+    "build": "bun --filter stitchkit build",
+    "lint": "biome check --error-on-warnings .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "verify": "bun run lint && bun run check && bun run test && bun run build",
+    "sync:readme": "cp README.md packages/core/README.md",
+    "release": "bun run sync:readme && bun run verify && cd packages/core && bun publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15"
+  }
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 140" width="460" height="140" role="img" aria-label="stitchkit">
+  <rect width="460" height="140" rx="18" fill="#0d1117"/>
+  <!-- the "stitch": one dashed line tying the endpoints together -->
+  <line x1="76" y1="54" x2="384" y2="54" stroke="#3b82f6" stroke-width="3.5" stroke-dasharray="11 9" stroke-linecap="round"/>
+  <circle cx="76" cy="54" r="5" fill="#3b82f6"/>
+  <circle cx="384" cy="54" r="5" fill="#3b82f6"/>
+  <text x="230" y="100" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="46" font-weight="700" letter-spacing="1.5" fill="#f0f3f7">stitchkit</text>
+</svg>

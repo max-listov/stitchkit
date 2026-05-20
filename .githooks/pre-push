@@ -1,0 +1,8 @@
+#!/bin/sh
+# Full verification before code reaches the remote — the exact suite CI runs
+# (lint, typecheck, tests, build). A broken push never turns CI red.
+#
+# Wired via `core.hooksPath`. Bypass once with `git push --no-verify`.
+set -e
+
+bun run verify
