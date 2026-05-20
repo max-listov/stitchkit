@@ -46,8 +46,9 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       # OIDC trusted publishing requires npm >= 11.5.
+      # Pin version — `npm@latest` self-upgrade breaks on some Node builds.
       - name: Update npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.5.0
 
       - name: Install
         run: bun install --frozen-lockfile
