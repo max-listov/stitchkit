@@ -11,7 +11,7 @@ ideas and pull requests are all welcome.
 ## Setup
 
 ```bash
-git clone https://github.com/maxlistov/stitchkit.git
+git clone https://github.com/max-listov/stitchkit.git
 cd stitchkit
 bun install
 ```

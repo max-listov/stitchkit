@@ -21,12 +21,12 @@
   "author": "Max Listov <maxlistov@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maxlistov/stitchkit.git",
+    "url": "git+https://github.com/max-listov/stitchkit.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/maxlistov/stitchkit#readme",
+  "homepage": "https://github.com/max-listov/stitchkit#readme",
   "bugs": {
-    "url": "https://github.com/maxlistov/stitchkit/issues"
+    "url": "https://github.com/max-listov/stitchkit/issues"
   },
   "type": "module",
   "engines": {

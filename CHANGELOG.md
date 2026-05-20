@@ -74,5 +74,5 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/maxlistov/stitchkit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/maxlistov/stitchkit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/max-listov/stitchkit/releases/tag/v0.1.0

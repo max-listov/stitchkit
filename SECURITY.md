@@ -15,7 +15,7 @@ stitchkit is pre-1.0. Security fixes land on the latest `0.1.x` release only.
 
 Report it privately, by either:
 
-- [GitHub private vulnerability reporting](https://github.com/maxlistov/stitchkit/security/advisories/new)
+- [GitHub private vulnerability reporting](https://github.com/max-listov/stitchkit/security/advisories/new)
   (the **Security** tab → *Report a vulnerability*), or
 - email to **maxlistov@gmail.com** with `stitchkit security` in the subject.
 

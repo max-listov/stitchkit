@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/maxlistov/stitchkit/master/assets/hero-emblem.jpg" alt="stitchkit — one contract becomes HTTP, MCP and AI-agent tools" width="100%" />
+  <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/hero-emblem.jpg" alt="stitchkit — one contract becomes HTTP, MCP and AI-agent tools" width="100%" />
 </p>
 
 <p align="center">
@@ -9,13 +9,13 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/stitchkit"><img src="https://img.shields.io/npm/v/stitchkit?color=2563eb" alt="npm version" /></a>
-  <a href="https://github.com/maxlistov/stitchkit/actions/workflows/ci.yml"><img src="https://github.com/maxlistov/stitchkit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml"><img src="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/stitchkit?color=2563eb" alt="MIT license" /></a>
   <img src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=000" alt="Bun" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/maxlistov/stitchkit/master/assets/infographic-hero.jpg" alt="One contract becomes an HTTP API, MCP tools, AI-agent tools and a typed client" width="100%" />
+  <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/infographic-hero.jpg" alt="One contract becomes an HTTP API, MCP tools, AI-agent tools and a typed client" width="100%" />
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ to drift, three places to keep in sync. stitchkit collapses them into a single
 contract — change it once, every surface and the typed client move together.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/maxlistov/stitchkit/master/assets/infographic-compare.jpg" alt="Without stitchkit: the same API hand-written three times. With stitchkit: one contract drives them all." width="100%" />
+  <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/infographic-compare.jpg" alt="Without stitchkit: the same API hand-written three times. With stitchkit: one contract drives them all." width="100%" />
 </p>
 
 ## Status
