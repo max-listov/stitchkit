@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/hero-emblem.jpg" alt="stitchkit — one contract becomes HTTP, MCP and AI-agent tools" width="100%" />
-</p>
-
-<p align="center">
   <strong>Contract-first backend framework for Bun.</strong><br/>
   Define your API once — get an HTTP API, MCP tools, AI-agent tools and a typed client.
 </p>
