@@ -9,7 +9,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract';
-import { getClientInfo } from '../server/request';
+import { getClientInfo, resolveSocketIp } from '../server/request';
 import { resolveTraceContext, type TraceContext } from './trace';
 
 /** Everything known about the request in flight. */
@@ -75,6 +75,15 @@ export function setRequestError(error: { code?: string; message?: string }): voi
   if (ctx) ctx.error = error;
 }
 
+/** Options for `wrapInRequestContext`. */
+export interface WrapRequestContextOptions {
+  /**
+   * Trust `x-forwarded-for` for the client IP — enable only behind a proxy
+   * that rewrites it. Default `false`: the real socket peer IP is used.
+   */
+  trustProxy?: boolean;
+}
+
 /**
  * Wrap a fetch handler so it runs inside a fresh `RequestContext` — trace ids
  * (the inbound `traceparent` continued, or freshly minted), timing and client
@@ -87,15 +96,21 @@ export function setRequestError(error: { code?: string; message?: string }): voi
  */
 export function wrapInRequestContext<S>(
   handler: (req: Request, server: S) => Promise<Response>,
+  options: WrapRequestContextOptions = {},
 ): (req: Request, server: S) => Promise<Response> {
   return (req, server) => {
     const ctx: RequestContext = {
       trace: resolveTraceContext(req),
       source: 'http',
       method: req.method,
-      path: new URL(req.url).pathname,
+      // `req.url` may be a bare pathname on a Node adapter — the base avoids
+      // a `TypeError: Invalid URL`.
+      path: new URL(req.url, 'http://localhost').pathname,
       startedAt: process.hrtime.bigint(),
-      ...getClientInfo(req),
+      ...getClientInfo(req, {
+        trustProxy: options.trustProxy,
+        socketIp: resolveSocketIp(req, server),
+      }),
     };
     return runWithRequestContext(ctx, () => handler(req, server));
   };

@@ -28,6 +28,7 @@ These records were consolidated from the project's internal design notes on
 | [0011](0011-bun-only-one-package.md) | Bun-only, published as one small package | Accepted |
 | [0012](0012-observability-module.md) | A built-in observability module | Accepted |
 | [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011 |
+| [0014](0014-tool-http-parity.md) | The tool surface carries the same contract guarantees as HTTP | Accepted — refines 0007 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

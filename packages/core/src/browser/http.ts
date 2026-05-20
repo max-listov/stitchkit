@@ -60,6 +60,11 @@ export interface HttpClientConfig {
    */
   retry?: { limit?: number; methods?: string[]; statusCodes?: number[] };
   parseError?: (body: unknown) => ErrorEnvelope['error'] | null;
+  /**
+   * Path prefixes whose `401` must NOT emit an `unauthorized` event — the
+   * login / session endpoints, where a `401` is an expected outcome. Matched
+   * against `URL.pathname`, so the prefixes start with `/`.
+   */
   authEndpoints?: string[];
   /**
    * Extra headers added to every request. A function is re-evaluated per
@@ -101,7 +106,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
-  const authEndpoints = config.authEndpoints ?? ['auth/'];
+  const authEndpoints = config.authEndpoints ?? ['/auth/'];
 
   const parseError = config.parseError ?? parseApiErrorBody;
 
@@ -147,7 +152,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
         async ({ request, response }) => {
           if (response.status === 401) {
             const url = new URL(request.url).pathname;
-            if (!isLoggedOut && !authEndpoints.some((path) => url.includes(path))) {
+            if (!isLoggedOut && !authEndpoints.some((path) => url.startsWith(path))) {
               isLoggedOut = true;
               emit({ type: 'unauthorized' });
             }

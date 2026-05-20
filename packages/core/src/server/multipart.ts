@@ -1,14 +1,53 @@
 import type { ZodType } from 'zod';
 import { badRequest } from '../contract';
+import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
 
 /** A parsed multipart request — the uploaded `file` and the validated `fields`. */
 export interface MultipartResult {
   file: File;
-  fields: Record<string, unknown>;
+  /** Validated when a `fieldsSchema` was given, else the raw decoded fields. */
+  fields: unknown;
 }
 
 /** Default per-request upload ceiling — override via the `maxBytes` argument. */
 const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Read a request body into a buffer, aborting once it exceeds `maxBytes`. The
+ * read is capped *before* anything is buffered, so an upload with a missing or
+ * spoofed `Content-Length` cannot exhaust memory — `req.formData()` alone
+ * would buffer the whole body first.
+ */
+async function readBodyCapped(
+  req: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = req.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maxBytes) {
+        await reader.cancel();
+        badRequest(`Upload exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return buffer;
+}
 
 /**
  * Parse a `multipart/form-data` request — extract the file at `fileField` and
@@ -22,37 +61,32 @@ export async function parseMultipart(
   fieldsSchema?: ZodType<unknown>,
   maxBytes = DEFAULT_MAX_UPLOAD_BYTES,
 ): Promise<MultipartResult> {
-  // Reject oversized uploads up front — `req.formData()` buffers the whole
-  // body in memory, so an unbounded upload is an OOM vector.
-  const declared = Number(req.headers.get('content-length') ?? 0);
-  if (declared > maxBytes) {
-    badRequest(`Upload exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit`);
-  }
-  const formData = await req.formData();
+  // Stream-read with a hard byte cap, then parse the capped buffer — memory is
+  // bounded at `maxBytes` regardless of `Content-Length`.
+  const body = await readBodyCapped(req, maxBytes);
+  const contentType = req.headers.get('content-type') ?? '';
+  const formData = await new Response(body, {
+    headers: { 'content-type': contentType },
+  }).formData();
 
   const file = formData.get(fileField);
   if (!file || !(file instanceof File)) {
     badRequest(`Missing file field: ${fileField}`);
   }
-  // The real ceiling — `Content-Length` above is only a cheap fast-path and
-  // can be absent or spoofed; the parsed file size is authoritative.
-  if (file.size > maxBytes) {
-    badRequest(`Upload exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit`);
-  }
 
   const fields: Record<string, unknown> = {};
   for (const [key, value] of formData.entries()) {
     if (key === fileField) continue;
+    // A field literally named `__proto__` would pollute the prototype chain.
+    if (isUnsafeKey(key)) continue;
     if (typeof value === 'string') {
       try {
-        fields[key] = JSON.parse(value);
+        fields[key] = safeJsonParse(value);
       } catch {
         fields[key] = value;
       }
     }
   }
 
-  const parsed = fieldsSchema ? fieldsSchema.parse(fields) : fields;
-
-  return { file, fields: parsed as Record<string, unknown> };
+  return { file, fields: fieldsSchema ? fieldsSchema.parse(fields) : fields };
 }

@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { safeJsonParse } from '../internal/safe-json';
 
+/** True for a field whose value should be JSON-parsed when it arrives as a string. */
 function needsJsonCoercion(field: z.core.$ZodType): boolean {
   if (field instanceof z.ZodArray || field instanceof z.ZodObject) return true;
   if (
@@ -12,45 +14,33 @@ function needsJsonCoercion(field: z.core.$ZodType): boolean {
   return false;
 }
 
-const jsonCoerce = (val: unknown) => {
-  if (typeof val !== 'string') return val;
-  try {
-    return JSON.parse(val);
-  } catch {
-    return val;
-  }
-};
-
 /**
- * Wrap array/object fields with `z.preprocess(jsonCoerce)` — tolerant of
- * LLM double-serialization (sending `"[1,2]"` instead of `[1,2]`).
- * Preserves optional/nullable wrappers so the emitted JSON Schema is identical.
+ * Coerce JSON-stringified array/object arguments — an LLM sometimes
+ * double-serializes a nested value (sends `"[1,2]"` instead of `[1,2]`).
+ *
+ * Only fields the schema declares as an array/object are touched, and only
+ * when the incoming value is a string. The transform operates on the
+ * **arguments**, never the schema — so the advertised tool schema stays
+ * exactly the contract schema (correct types, correct `required`).
  */
-export function withJsonCoercion(
-  schema: z.ZodObject<z.ZodRawShape>,
-): z.ZodObject<z.ZodRawShape> {
+export function coerceJsonArgs(
+  args: Record<string, unknown>,
+  schema: z.ZodType | undefined,
+): Record<string, unknown> {
+  if (!(schema instanceof z.ZodObject)) return args;
   const shape = schema.shape;
-  const coerced: Record<string, z.core.$ZodType> = {};
-
-  for (const key of Object.keys(shape)) {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
     const field = shape[key];
-    if (!field || !needsJsonCoercion(field)) {
-      if (field) coerced[key] = field;
-      continue;
+    if (field && needsJsonCoercion(field) && typeof value === 'string') {
+      try {
+        out[key] = safeJsonParse(value);
+        continue;
+      } catch {
+        // Not JSON — leave the raw string; validation rejects it normally.
+      }
     }
-
-    let inner: z.core.$ZodType = field;
-    const wrappers: ('optional' | 'nullable')[] = [];
-    while (inner instanceof z.ZodOptional || inner instanceof z.ZodNullable) {
-      wrappers.push(inner instanceof z.ZodOptional ? 'optional' : 'nullable');
-      inner = inner.unwrap();
-    }
-    let result: z.core.$ZodType = z.preprocess(jsonCoerce, inner);
-    for (const wrapper of wrappers.reverse()) {
-      result = wrapper === 'optional' ? z.optional(result) : z.nullable(result);
-    }
-    coerced[key] = result;
+    out[key] = value;
   }
-
-  return z.object(coerced);
+  return out;
 }

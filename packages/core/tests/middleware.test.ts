@@ -90,13 +90,14 @@ describe('auth', () => {
     await expect(verifyJwt('not-a-jwt', 'secret')).rejects.toThrow();
   });
 
-  test('verifyJwt — valid token round-trip', async () => {
-    const secret = 'test-secret-key-12345';
-    const payload = { sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 };
+  // JWT segments are base64url (no `+` / `/` / `=`) — sign a spec-shaped token.
+  const b64url = (s: string): string =>
+    btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+  async function signJwt(payload: Record<string, unknown>, secret: string): Promise<string> {
     const encoder = new TextEncoder();
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-    const body = btoa(JSON.stringify(payload));
+    const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const body = b64url(JSON.stringify(payload));
     const key = await crypto.subtle.importKey(
       'raw',
       encoder.encode(secret),
@@ -105,31 +106,37 @@ describe('auth', () => {
       ['sign'],
     );
     const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(`${header}.${body}`));
-    const signature = btoa(String.fromCharCode(...new Uint8Array(sig)));
-    const token = `${header}.${body}.${signature}`;
+    const signature = b64url(String.fromCharCode(...new Uint8Array(sig)));
+    return `${header}.${body}.${signature}`;
+  }
 
+  test('verifyJwt — valid token round-trip', async () => {
+    const secret = 'test-secret-key-12345';
+    const token = await signJwt(
+      { sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 },
+      secret,
+    );
     const result = await verifyJwt(token, secret);
     expect(result.sub).toBe('user-1');
   });
 
-  test('verifyJwt — expired token', async () => {
+  test('verifyJwt — expired token (beyond the clock-skew leeway)', async () => {
     const secret = 'test-secret';
-    const payload = { sub: 'user-1', exp: Math.floor(Date.now() / 1000) - 100 };
-
-    const encoder = new TextEncoder();
-    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-    const body = btoa(JSON.stringify(payload));
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign'],
+    const token = await signJwt(
+      { sub: 'user-1', exp: Math.floor(Date.now() / 1000) - 3600 },
+      secret,
     );
-    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(`${header}.${body}`));
-    const signature = btoa(String.fromCharCode(...new Uint8Array(sig)));
-    const token = `${header}.${body}.${signature}`;
-
     await expect(verifyJwt(token, secret)).rejects.toThrow('expired');
+  });
+
+  test('verifyJwt — an empty secret is rejected loudly', async () => {
+    const token = await signJwt({ sub: 'user-1' }, 'real-secret');
+    await expect(verifyJwt(token, '')).rejects.toThrow('secret');
+  });
+
+  test('verifyJwt — a non-numeric exp is malformed, not non-expiring', async () => {
+    const secret = 'test-secret';
+    const token = await signJwt({ sub: 'user-1', exp: 'soon' }, secret);
+    await expect(verifyJwt(token, secret)).rejects.toThrow();
   });
 });

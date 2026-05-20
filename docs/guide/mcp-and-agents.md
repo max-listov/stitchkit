@@ -81,6 +81,12 @@ Without it, a tool call bypasses the HTTP `beforeHandle` — the contract's
 `scope` is not enforced on the MCP / agent surface. `mountMcp`, `mountAgent` and
 `buildMcpServer` take `lifecycle` too.
 
+> **Tool-path identity.** A tool call has no `req`, so `createAuthHook` resolves
+> identity through `resolveFromContext`, not `resolve`. Set it (read the
+> identity your `auth` / `context` injected) — without it a scoped tool call
+> has no identity and **fails closed**. See
+> [Auth on the tool surface](./auth-and-errors.md#auth-on-the-tool-surface--resolvefromcontext).
+
 ### Incompatible schemas — `onIncompatibleSchema`
 
 A contract schema that JSON Schema cannot represent (a `z.date()`, a `z.map()`)

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { type ZodType, z } from 'zod';
 import { AppError } from '../contract';
 
 export function formatZodError(error: z.ZodError): string {
@@ -19,8 +19,26 @@ export function normalizeError(err: unknown): AppError {
     return new AppError('VALIDATION_ERROR', formatZodError(err), 400);
   }
 
-  const msg = err instanceof Error ? err.message : String(err);
-  const safeMessage = msg.length > 200 ? `${msg.slice(0, 200)}...` : msg;
+  // An unexpected error: log the real cause server-side, but return a generic
+  // message to the caller — a raw `Error.message` can carry internal detail
+  // (a DB connection string, a file path, a stack fragment).
+  console.error('[stitchkit] unhandled error:', err);
+  return new AppError('INTERNAL_SERVER_ERROR', 'Internal server error', 500);
+}
 
-  return new AppError('INTERNAL_SERVER_ERROR', safeMessage, 500);
+/**
+ * Validate a handler's return value against the contract `output` schema. A
+ * mismatch is a **server** fault (the handler broke its own contract) — shared
+ * by the HTTP and tool transports so both report it identically.
+ */
+export function validateHandlerOutput(
+  schema: ZodType,
+  data: unknown,
+): { ok: true; data: unknown } | { ok: false; message: string } {
+  const parsed = schema.safeParse(data);
+  if (parsed.success) return { ok: true, data: parsed.data };
+  return {
+    ok: false,
+    message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,
+  };
 }

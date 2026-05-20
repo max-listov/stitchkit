@@ -20,12 +20,19 @@ const contract = defineContract(
       input: z.object({ message: z.string() }),
       output: z.object({ message: z.string() }),
     },
+    whoami: {
+      method: 'GET',
+      path: '/whoami',
+      desc: 'Report the resolved client IP',
+      output: z.object({ ip: z.string().nullable() }),
+    },
   },
 );
 
 const service = implement(contract, {
   ping: () => ({ pong: true }),
   echo: (ctx) => ({ message: ctx.input.message }),
+  whoami: (ctx) => ({ ip: ctx.ipAddress ?? null }),
 });
 
 const server = await serveNode({
@@ -67,6 +74,21 @@ describe('serveNode', () => {
   test('trace id header present', async () => {
     const res = await fetch(`${base}/api/ping`);
     expect(res.headers.get('x-request-id')).toBeTruthy();
+  });
+
+  test('ctx.ipAddress is the real socket peer — no trustProxy needed', async () => {
+    const res = await fetch(`${base}/api/whoami`);
+    const body = await res.json();
+    // srvx resolves the loopback peer — non-empty without any header trust.
+    expect(body.ip).toBeTruthy();
+  });
+
+  test('a spoofed x-forwarded-for is ignored without trustProxy', async () => {
+    const res = await fetch(`${base}/api/whoami`, {
+      headers: { 'x-forwarded-for': '9.9.9.9' },
+    });
+    const body = await res.json();
+    expect(body.ip).not.toBe('9.9.9.9');
   });
 
   test('CORS headers when configured', async () => {

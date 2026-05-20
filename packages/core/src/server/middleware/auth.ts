@@ -1,5 +1,7 @@
 import type { RuntimeContext } from '../../contract';
 import { forbidden, unauthorized } from '../../contract';
+import { safeJsonParse } from '../../internal/safe-json';
+import { isRecord } from '../../internal/typed';
 import type { MethodDef } from '../types';
 import { parseCookies } from './cookies';
 
@@ -7,14 +9,40 @@ export interface JwtPayload {
   [key: string]: unknown;
 }
 
-/** Decode a base64url JWT segment to raw bytes (padding-tolerant). */
+/** Tuning for `verifyJwt`. */
+export interface VerifyJwtOptions {
+  /** Clock-skew tolerance for `exp` / `nbf`, in seconds. Default `60`. */
+  leewaySeconds?: number;
+  /** Required `iss` claim — the token is rejected on mismatch. */
+  issuer?: string;
+  /** Required `aud` claim — the token is rejected if it does not carry it. */
+  audience?: string;
+}
+
+/** A JWT longer than this is rejected before any decoding work. */
+const MAX_TOKEN_BYTES = 8192;
+
+/** Decode a base64url JWT segment to raw bytes — rejects a non-base64url segment. */
 function decodeBase64Url(segment: string): Uint8Array<ArrayBuffer> {
+  // A character outside the alphabet, or a length that cannot be a base64
+  // string (`% 4 === 1`), is malformed — reject before `atob`.
+  if (!/^[A-Za-z0-9_-]*$/.test(segment) || segment.length % 4 === 1) {
+    throw new Error('invalid base64url segment');
+  }
   const b64 = segment.replace(/-/g, '+').replace(/_/g, '/');
   const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 
-export async function verifyJwt(token: string, secret: string): Promise<JwtPayload> {
+export async function verifyJwt(
+  token: string,
+  secret: string,
+  options: VerifyJwtOptions = {},
+): Promise<JwtPayload> {
+  // An empty secret yields a trivially forgeable HMAC — fail loud, not silent.
+  if (!secret) throw new Error('verifyJwt: a non-empty secret is required');
+  if (token.length > MAX_TOKEN_BYTES) throw unauthorized('Token too large');
+
   const [headerB64, payloadB64, signatureB64] = token.split('.');
   if (!headerB64 || !payloadB64 || !signatureB64) throw unauthorized('Invalid token format');
 
@@ -22,16 +50,19 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   // Header/payload are UTF-8 JSON (decoded via TextDecoder so non-ASCII claims
   // survive); the signature is raw bytes.
   let header: { alg?: unknown };
-  let payload: JwtPayload;
+  let payloadRaw: unknown;
   let signature: Uint8Array<ArrayBuffer>;
   try {
     const decoder = new TextDecoder();
     header = JSON.parse(decoder.decode(decodeBase64Url(headerB64)));
-    payload = JSON.parse(decoder.decode(decodeBase64Url(payloadB64)));
+    // `safeJsonParse` drops `__proto__` — a claim cannot pollute the prototype.
+    payloadRaw = safeJsonParse(decoder.decode(decodeBase64Url(payloadB64)));
     signature = decodeBase64Url(signatureB64);
   } catch {
     throw unauthorized('Malformed token');
   }
+  if (!isRecord(payloadRaw)) throw unauthorized('Malformed token');
+  const payload: JwtPayload = payloadRaw;
 
   // Pin the algorithm — never let the token's own `alg` pick the scheme.
   if (header.alg !== 'HS256') throw unauthorized('Unsupported token algorithm');
@@ -49,12 +80,25 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   const valid = await crypto.subtle.verify('HMAC', key, signature, data);
   if (!valid) throw unauthorized('Invalid token signature');
 
+  const leeway = options.leewaySeconds ?? 60;
   const now = Date.now() / 1000;
-  if (typeof payload.exp === 'number' && payload.exp < now) {
-    throw unauthorized('Token expired');
+  // A present-but-non-numeric `exp` / `nbf` is malformed — never treat it as
+  // "absent" (that would make the token effectively non-expiring).
+  if ('exp' in payload) {
+    if (typeof payload.exp !== 'number') throw unauthorized('Malformed token');
+    if (payload.exp < now - leeway) throw unauthorized('Token expired');
   }
-  if (typeof payload.nbf === 'number' && payload.nbf > now) {
-    throw unauthorized('Token not yet valid');
+  if ('nbf' in payload) {
+    if (typeof payload.nbf !== 'number') throw unauthorized('Malformed token');
+    if (payload.nbf > now + leeway) throw unauthorized('Token not yet valid');
+  }
+  if (options.issuer !== undefined && payload.iss !== options.issuer) {
+    throw unauthorized('Token issuer mismatch');
+  }
+  if (options.audience !== undefined) {
+    const aud = payload.aud;
+    const ok = Array.isArray(aud) ? aud.includes(options.audience) : aud === options.audience;
+    if (!ok) throw unauthorized('Token audience mismatch');
   }
 
   return payload;
@@ -96,6 +140,14 @@ export type AuthRule<TIdentity> =
 export interface AuthHookConfig<TIdentity> {
   /** Resolve the request identity — cookie / bearer + DB lookup. */
   resolve: (ctx: RuntimeContext) => Promise<TIdentity | null>;
+  /**
+   * Resolve identity on a non-HTTP context (a tool call) where there is no
+   * `req`. The transport (MCP / agent) has already authenticated the caller;
+   * this locates the identity it injected into `ctx` (via `buildMcpServer`'s
+   * `context`). Without it, a scoped tool call with no `req` **fails closed**
+   * — the scope rule sees no identity and `onAnonymous` rejects the call.
+   */
+  resolveFromContext?: (ctx: RuntimeContext) => TIdentity | null | Promise<TIdentity | null>;
   /** Access rule per scope; `endpoint.scope` is the key. */
   rules: Record<string, AuthRule<TIdentity>>;
   /** Scope applied when an endpoint declares none. */
@@ -116,22 +168,37 @@ export type AuthHook = (ctx: RuntimeContext, endpoint: MethodDef) => Promise<voi
  * Identity resolution and the scope vocabulary stay in the project; the
  * project annotates its `rules` object with `satisfies Record<MyScope, …>` to
  * keep scope coverage exhaustive.
+ *
+ * The hook runs on both surfaces: as `createServer`'s `beforeHandle` (HTTP) and
+ * as a tool mount's `lifecycle.beforeHandle` (MCP / agent). On HTTP it resolves
+ * identity from `ctx.req` via `resolve`; on a tool call — where there is no
+ * `req` — it uses `resolveFromContext`. If `resolveFromContext` is omitted, a
+ * scoped tool call has no identity and **fails closed** (never silently passes).
  */
 export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): AuthHook {
   const onAnonymous = config.onAnonymous ?? ((): never => unauthorized());
   const onForbidden = config.onForbidden ?? ((): never => forbidden());
 
   return async (ctx, endpoint) => {
-    if (!(ctx.req instanceof Request)) return;
-
-    const identity = await config.resolve(ctx);
+    // The transport tag is authoritative — `ctx.source` is `'http'` only on a
+    // real HTTP request. HTTP resolves identity from `ctx.req`; a tool call has
+    // none, so it uses `resolveFromContext`. Never skip the scope check.
+    const identity =
+      ctx.source === 'http'
+        ? await config.resolve(ctx)
+        : ((await config.resolveFromContext?.(ctx)) ?? null);
     config.inject?.(ctx, identity);
 
     const scope = endpoint.scope ?? config.defaultScope;
     if (!scope) return;
 
     const rule = config.rules[scope];
-    if (!rule || rule === 'public') return;
+    // An endpoint that declares a scope with no matching rule is a config
+    // mistake — fail closed, never silently pass an unguarded endpoint.
+    if (!rule) {
+      throw new Error(`[stitchkit] auth: no rule for scope "${scope}"`);
+    }
+    if (rule === 'public') return;
 
     if (!identity) {
       onAnonymous();

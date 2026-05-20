@@ -246,6 +246,7 @@ export function mountMcp(
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,
+    coerceJsonArgs: config.coerceJsonArgs,
   });
 
   const seen = new Set<string>();
@@ -254,7 +255,6 @@ export function mountMcp(
   for (const service of serviceList) {
     for (const mountable of collectTools(service, 'MCP', {
       extend: config.extend,
-      coerceJsonArgs: config.coerceJsonArgs,
       flattenUnionInput: config.flattenUnionInput,
     })) {
       const prepared = prepareMcpTool(mountable, policy, config.logger, failures, seen);

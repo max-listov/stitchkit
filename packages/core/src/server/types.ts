@@ -87,6 +87,11 @@ export interface RawRouteContext {
    * Absent when the handler runs via the bare `createHandler` fetch.
    */
   server?: BunServer;
+  /**
+   * Client IP — the real socket peer, or the `x-forwarded-for` client when
+   * `trustProxy` is set. Resolved by the framework; never spoofable by default.
+   */
+  ipAddress?: string;
 }
 
 export interface RawRoute {
@@ -120,6 +125,13 @@ export interface HandlerConfig {
   hooks?: LifecycleHooks;
   logging?: boolean | StitchLogger;
   traceId?: (req: Request) => string;
+  /**
+   * Trust the `x-forwarded-for` / `x-real-ip` headers for the client IP.
+   * These are client-controllable — enable only when the server runs behind a
+   * proxy that overwrites them. Default `false`: the IP a spoofable header
+   * carries never reaches `ctx.ipAddress`, a rate-limit key or an audit row.
+   */
+  trustProxy?: boolean;
 }
 
 // ─── Bun-specific server config ─────────────────────

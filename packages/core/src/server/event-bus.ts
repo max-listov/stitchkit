@@ -32,9 +32,19 @@ interface Subscription {
   once: boolean;
 }
 
-export function createEventBus<
-  M extends Record<string, unknown> = DefaultEventMap,
->(): EventBus<M> {
+/** Options for `createEventBus`. */
+export interface EventBusOptions {
+  /**
+   * Called when a listener throws or rejects. A bus listener's failure must
+   * never break the bus, so it is caught — but without this hook it is also
+   * invisible. Wire it to a logger to surface listener bugs.
+   */
+  onListenerError?: (error: unknown, event: string) => void;
+}
+
+export function createEventBus<M extends Record<string, unknown> = DefaultEventMap>(
+  options: EventBusOptions = {},
+): EventBus<M> {
   const subscriptions = new Map<string, Set<Subscription>>();
 
   function add(event: string, fn: EventHandler, once: boolean): () => void {
@@ -59,12 +69,15 @@ export function createEventBus<
       for (const sub of [...set]) {
         if (sub.once) set.delete(sub);
         try {
-          // A handler may be async — swallow a rejected promise too, not only
-          // a synchronous throw, so one listener never breaks the bus.
+          // A handler may be async — route a rejected promise to the error
+          // hook too, not only a synchronous throw, so one listener never
+          // breaks the bus yet its failure is still observable.
           const result = sub.fn(data);
-          if (result instanceof Promise) result.catch(() => undefined);
-        } catch {
-          /* listener errors don't propagate */
+          if (result instanceof Promise) {
+            result.catch((err) => options.onListenerError?.(err, event));
+          }
+        } catch (err) {
+          options.onListenerError?.(err, event);
         }
       }
     },

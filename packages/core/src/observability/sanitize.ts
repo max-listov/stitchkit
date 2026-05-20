@@ -2,6 +2,7 @@
  * Payload sanitisation for audit logging — mask secrets, drop binary blobs,
  * cap size. An audit row must be safe to store and bounded in size.
  */
+import { isUnsafeKey } from '../internal/safe-json';
 import { isRecord } from '../internal/typed';
 
 /** A JSON-serialisable value — what a sanitised payload always reduces to. */
@@ -47,6 +48,11 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
   const sensitive = options.sensitiveKeys ?? DEFAULT_SENSITIVE_KEYS;
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
 
+  // Track the ANCESTOR chain of the current node — not every visited object —
+  // so a true circular reference collapses to a marker, while a shared (but
+  // acyclic) subtree referenced from two siblings is still walked both times.
+  const ancestors = new Set<object>();
+
   const walk = (input: unknown, depth: number): JsonValue => {
     if (depth > maxDepth) return '[max depth]';
     if (input === null || input === undefined) return null;
@@ -66,14 +72,23 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
     }
 
     if (Array.isArray(input)) {
-      return input.map((item) => walk(item, depth + 1));
+      if (ancestors.has(input)) return '[circular]';
+      ancestors.add(input);
+      const result = input.map((item) => walk(item, depth + 1));
+      ancestors.delete(input);
+      return result;
     }
 
     if (isRecord(input)) {
+      if (ancestors.has(input)) return '[circular]';
+      ancestors.add(input);
       const out: { [key: string]: JsonValue } = {};
       for (const [key, val] of Object.entries(input)) {
+        // A `__proto__` key would set the prototype of the produced value.
+        if (isUnsafeKey(key)) continue;
         out[key] = sensitive.test(key) ? MASK : walk(val, depth + 1);
       }
+      ancestors.delete(input);
       return out;
     }
 
@@ -89,10 +104,11 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
  */
 export function truncatePreview(value: JsonValue, maxBytes = DEFAULT_MAX_BYTES): JsonValue {
   const json = JSON.stringify(value);
-  if (json.length <= maxBytes) return value;
+  const bytes = Buffer.byteLength(json, 'utf8');
+  if (bytes <= maxBytes) return value;
   return {
     _truncated: true,
-    _originalBytes: json.length,
+    _originalBytes: bytes,
     preview: `${json.slice(0, maxBytes)}…`,
   };
 }
@@ -121,7 +137,9 @@ export function measureSize(value: unknown): SizeMeasure {
   if (Array.isArray(value)) {
     return { resultSize: value.length, responseBytes };
   }
-  if (typeof value === 'object' && 'items' in value && Array.isArray(value.items)) {
+  // A cursor-pagination page — `{ items, nextCursor }`. Gate on both keys so a
+  // payload that merely happens to carry an `items` array is not miscounted.
+  if (isRecord(value) && Array.isArray(value.items) && 'nextCursor' in value) {
     return { resultSize: value.items.length, responseBytes };
   }
   return { resultSize: null, responseBytes };

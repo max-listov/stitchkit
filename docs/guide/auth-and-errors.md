@@ -58,7 +58,8 @@ The value of each `rules` entry, keyed by scope:
 
 | Field | Purpose |
 |-------|---------|
-| `resolve` | `(ctx) => identity \| null` — cookie / bearer + lookup |
+| `resolve` | `(ctx) => identity \| null` — HTTP identity from `ctx.req` (cookie / bearer + lookup) |
+| `resolveFromContext` | `(ctx) => identity \| null` — identity on a tool call (no `req`) |
 | `rules` | access rule per scope; `endpoint.scope` is the key |
 | `defaultScope` | scope applied when an endpoint declares none |
 | `inject` | write the resolved identity onto `ctx` for handlers |
@@ -68,8 +69,29 @@ The value of each `rules` entry, keyed by scope:
 Annotate `rules` with `satisfies Record<MyScope, AuthRule<User>>` so the compiler
 catches a scope you forgot to cover.
 
-Because the hook runs in `beforeHandle`, it guards **every transport** — HTTP,
-MCP and agent calls all pass through it.
+### Auth on the tool surface — `resolveFromContext`
+
+The hook runs in `beforeHandle`, so it guards **every transport** — HTTP, MCP
+and agent calls all pass through it. But identity is resolved differently per
+surface:
+
+- **HTTP** — `resolve(ctx)` reads `ctx.req` (a cookie or bearer token).
+- **Tool calls (MCP / agent)** — there is no `req`. The transport authenticated
+  the caller (an MCP API key) and `buildMcpServer`'s `context` injected the
+  identity into `ctx`. `resolveFromContext(ctx)` locates it.
+
+```ts
+const authHook = createAuthHook<User>({
+  resolve: (ctx) => resolveSession(ctx),          // HTTP — from ctx.req
+  resolveFromContext: (ctx) => ctx.user ?? null,  // tool — from injected ctx
+  rules: { public: 'public', user: 'authenticated', admin: (u) => u.isAdmin },
+})
+```
+
+The **scope check is identical** on both surfaces — only identity resolution
+differs. If you omit `resolveFromContext`, a scoped tool call has no identity
+and **fails closed** (rejected by `onAnonymous`) — the hook never silently
+passes a tool call it cannot authenticate. → [ADR 0014](../decisions/0014-tool-http-parity.md)
 
 ## `createBearerResolver`
 

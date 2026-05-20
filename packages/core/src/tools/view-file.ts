@@ -16,9 +16,16 @@
 import { lookup } from 'node:dns/promises';
 import { readFile, stat } from 'node:fs/promises';
 import { isIP } from 'node:net';
-import { extname, resolve, sep } from 'node:path';
+import { extname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { isWithinDir } from '../internal/within-dir';
+
+/** A host that is digits/dots-only or `0x…` is a numeric IP in disguise. */
+const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9.]+)$/i;
+
+/** Cap on redirect hops the SSRF guard re-validates before giving up. */
+const MAX_REDIRECTS = 5;
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
@@ -94,23 +101,54 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
-/** Refuse a URL whose host is — or resolves to — a private/internal address. */
+/**
+ * Refuse a URL whose host is — or resolves to — a private/internal address.
+ *
+ * Note: the DNS resolution here and the resolution `fetch` performs are
+ * separate, so a hostile resolver retains a narrow rebinding window. The
+ * redirect loop in `fetchGuarded` re-runs this check on every hop, which is
+ * the larger and fully-closed hole; a static private DNS record is rejected
+ * outright.
+ */
 async function assertPublicUrl(url: URL): Promise<void> {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (isIP(host)) {
     if (isPrivateIp(host)) throw new Error('refusing to fetch a private address');
     return;
   }
+  // A digits-only / `0x…` host is a numeric IP in a non-canonical form
+  // (`http://2130706433/` is `127.0.0.1`); `isIP` rejects it but `fetch`
+  // would still resolve it. A real hostname always carries a non-numeric char.
+  if (NUMERIC_HOST.test(host)) {
+    throw new Error('refusing to fetch a non-canonical numeric host');
+  }
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
     throw new Error('refusing to fetch an internal host');
   }
-  // Resolve DNS and check every address — defends against DNS rebinding.
   const records = await lookup(host, { all: true });
   for (const record of records) {
     if (isPrivateIp(record.address)) {
       throw new Error('refusing to fetch a host that resolves to a private address');
     }
   }
+}
+
+/**
+ * Fetch a URL with the SSRF guard enforced on the initial URL and on every
+ * redirect hop — a public host can otherwise `302` to an internal address.
+ */
+async function fetchGuarded(start: URL, allowPrivate: boolean): Promise<Response> {
+  let url = start;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!allowPrivate) await assertPublicUrl(url);
+    const res = await fetch(url, { redirect: 'manual' });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    await res.body?.cancel();
+    url = new URL(location, url);
+  }
+  throw new Error('too many redirects');
 }
 
 /** Read a response body into a buffer, aborting if it exceeds `max` bytes. */
@@ -148,9 +186,7 @@ async function fetchSource(
 
   if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
     const url = new URL(pathOrUrl);
-    if (!options.allowPrivateHosts) await assertPublicUrl(url);
-
-    const res = await fetch(url);
+    const res = await fetchGuarded(url, options.allowPrivateHosts ?? false);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const headerMime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
     const mimeType = headerMime || extMime || 'application/octet-stream';
@@ -172,7 +208,7 @@ async function fetchSource(
   }
   const root = resolve(options.baseDir);
   const target = resolve(root, pathOrUrl);
-  if (target !== root && !target.startsWith(root + sep)) {
+  if (!isWithinDir(root, target)) {
     throw new Error('path escapes the allowed directory');
   }
   const info = await stat(target).catch(() => null);

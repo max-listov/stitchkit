@@ -45,11 +45,11 @@ export function parseTraceparent(header: string | null | undefined): TraceContex
   if (!header) return null;
   const match = TRACEPARENT_RE.exec(header.trim());
   if (!match?.[1] || !match[2]) return null;
-  return {
-    traceId: match[1].toLowerCase(),
-    spanId: randomHex(8),
-    parentSpanId: match[2].toLowerCase(),
-  };
+  const traceId = match[1].toLowerCase();
+  const parentSpanId = match[2].toLowerCase();
+  // The W3C spec mandates rejecting the all-zero trace / span id as invalid.
+  if (/^0+$/.test(traceId) || /^0+$/.test(parentSpanId)) return null;
+  return { traceId, spanId: randomHex(8), parentSpanId };
 }
 
 /** Render a `TraceContext` as a `traceparent` header value (sampled flag `01`). */

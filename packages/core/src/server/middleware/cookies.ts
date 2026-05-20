@@ -1,14 +1,20 @@
+import { isUnsafeKey } from '../../internal/safe-json';
+
 export function parseCookies(header: string | null): Record<string, string> {
   if (!header) return {};
   const cookies: Record<string, string> = {};
   for (const pair of header.split(';')) {
-    const [key, ...rest] = pair.split('=');
-    if (!key) continue;
-    const raw = rest.join('=').trim();
+    const eq = pair.indexOf('=');
+    // A segment with no `=` is not a cookie — skip it rather than store `''`.
+    if (eq === -1) continue;
+    const key = pair.slice(0, eq).trim();
+    // A cookie named `__proto__` would pollute the prototype chain.
+    if (!key || isUnsafeKey(key)) continue;
+    const raw = pair.slice(eq + 1).trim();
     try {
-      cookies[key.trim()] = decodeURIComponent(raw);
+      cookies[key] = decodeURIComponent(raw);
     } catch {
-      cookies[key.trim()] = raw;
+      cookies[key] = raw;
     }
   }
   return cookies;

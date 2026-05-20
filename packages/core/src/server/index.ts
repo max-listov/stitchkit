@@ -38,9 +38,11 @@ export {
 export { parseMultipart } from './multipart';
 export { createRateLimiter, type RateLimitConfig } from './rate-limit';
 export {
+  type ClientIpOptions,
   extractIp,
   generateTraceId,
   getClientInfo,
+  resolveSocketIp,
   resolveTraceId,
 } from './request';
 export { staticRoute } from './router';

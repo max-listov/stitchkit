@@ -1,7 +1,11 @@
+import { normalizeError } from '../internal/errors';
+
 /**
  * Turn an async generator into a Server-Sent Events `Response` — each yielded
  * value is one JSON `data:` event, the stream ends with a `[DONE]` sentinel,
- * and a thrown error is emitted as a final `{ error }` event.
+ * and a thrown error is emitted as a final error event. The error is
+ * normalised (`normalizeError`) so an internal failure never leaks its raw
+ * message into the stream.
  */
 export function streamSSE(generator: AsyncGenerator<unknown>): Response {
   const encoder = new TextEncoder();
@@ -16,8 +20,8 @@ export function streamSSE(generator: AsyncGenerator<unknown>): Response {
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
+        const envelope = normalizeError(err).toJSON();
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(envelope)}\n\n`));
         controller.close();
       }
     },
@@ -65,8 +69,9 @@ export async function* parseSSE<T>(
       for (const rawLine of lines) {
         // Tolerate CRLF — the SSE spec uses `\r\n`, not just `\n`.
         const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
+        if (!line.startsWith('data:')) continue;
+        // The spec allows `data:value` and `data: value` — one optional space.
+        const data = line.slice(5).replace(/^ /, '');
         if (data === '[DONE]') return;
         try {
           yield JSON.parse(data);

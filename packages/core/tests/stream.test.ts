@@ -26,7 +26,9 @@ describe('SSE streaming', () => {
     const response = streamSSE(gen());
     const text = await response.text();
     expect(text).toContain('data: {"chunk":1}');
-    expect(text).toContain('"error":"Stream failed"');
+    // A generic error is normalised — the raw message never leaks into the stream.
+    expect(text).toContain('INTERNAL_SERVER_ERROR');
+    expect(text).not.toContain('Stream failed');
   });
 
   test('parseSSE reads SSE stream back into objects', async () => {

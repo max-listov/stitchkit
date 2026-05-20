@@ -5,23 +5,44 @@ export interface CorsConfig {
   headers?: string;
 }
 
+/**
+ * Reject an unsafe CORS config at construction. `credentials: true` with a
+ * wildcard origin would reflect *any* caller's `Origin` with
+ * `Allow-Credentials: true` — every site could make authenticated cross-origin
+ * requests. Credentials require an explicit origin allow-list.
+ */
+export function assertCorsConfig(config: CorsConfig): void {
+  if (config.credentials && (config.origin === undefined || config.origin === '*')) {
+    throw new Error(
+      '[stitchkit] cors: `credentials: true` cannot be combined with a wildcard origin. ' +
+        'Set `origin` to an explicit string or list.',
+    );
+  }
+}
+
+/** Resolve the allowed origin for a request — `undefined` means emit no header. */
+function resolveOrigin(
+  config: CorsConfig,
+  requestOrigin: string | null | undefined,
+): string | undefined {
+  if (config.origin === undefined || config.origin === '*') {
+    // Credentials + wildcard is rejected by `assertCorsConfig`, so a wildcard
+    // here is always credential-free and safe to emit verbatim.
+    return '*';
+  }
+  if (Array.isArray(config.origin)) {
+    if (!requestOrigin) return undefined;
+    const lower = requestOrigin.toLowerCase();
+    return config.origin.some((o) => o.toLowerCase() === lower) ? requestOrigin : undefined;
+  }
+  return config.origin;
+}
+
 export function corsHeaders(
   config: CorsConfig,
   requestOrigin?: string | null,
 ): Record<string, string> {
-  // Resolve the allowed origin. `undefined` → omit the header entirely; an
-  // empty string is never emitted (it is an invalid header value).
-  let allowOrigin: string | undefined;
-  if (config.origin === undefined || config.origin === '*') {
-    // `Allow-Origin: *` is invalid with credentials — reflect the caller's
-    // origin instead so credentialed requests still work.
-    allowOrigin = config.credentials ? (requestOrigin ?? undefined) : '*';
-  } else if (Array.isArray(config.origin)) {
-    allowOrigin =
-      requestOrigin && config.origin.includes(requestOrigin) ? requestOrigin : undefined;
-  } else {
-    allowOrigin = config.origin;
-  }
+  const allowOrigin = resolveOrigin(config, requestOrigin);
 
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': config.methods ?? 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
@@ -30,16 +51,15 @@ export function corsHeaders(
   };
   if (allowOrigin !== undefined) {
     headers['Access-Control-Allow-Origin'] = allowOrigin;
-  }
-  if (config.credentials) {
-    headers['Access-Control-Allow-Credentials'] = 'true';
+    // Credentials are emitted only alongside a resolved origin — never on a
+    // request whose origin was rejected.
+    if (config.credentials) {
+      headers['Access-Control-Allow-Credentials'] = 'true';
+    }
   }
   // The chosen origin depends on the request whenever it is whitelisted from a
-  // list or reflected for credentials — tell shared caches, match or not.
-  const variesByOrigin =
-    Array.isArray(config.origin) ||
-    ((config.origin === undefined || config.origin === '*') && Boolean(config.credentials));
-  if (variesByOrigin) {
+  // list — tell shared caches the response varies by `Origin`.
+  if (Array.isArray(config.origin)) {
     headers.Vary = 'Origin';
   }
   return headers;

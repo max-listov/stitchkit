@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { implement } from '../src/server/implement';
-import { withJsonCoercion } from '../src/tools/coerce';
+import { coerceJsonArgs } from '../src/tools/coerce';
 import { executeToolMethod } from '../src/tools/execute';
 import { flattenDiscriminatedUnion } from '../src/tools/flatten';
 import { buildToolManifest } from '../src/tools/manifest';
@@ -10,63 +10,51 @@ import { collectTools, formatToolError } from '../src/tools/mount';
 
 // ─── Gap 1: JSON coercion ───────────────────────────────────────────────
 
-describe('withJsonCoercion', () => {
-  test('coerces JSON-stringified array', () => {
-    const schema = withJsonCoercion(z.object({ tags: z.array(z.string()) }));
-    const result = schema.safeParse({ tags: '["a","b"]' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.tags).toEqual(['a', 'b']);
+describe('coerceJsonArgs', () => {
+  test('coerces a JSON-stringified array field', () => {
+    const schema = z.object({ tags: z.array(z.string()) });
+    expect(coerceJsonArgs({ tags: '["a","b"]' }, schema)).toEqual({ tags: ['a', 'b'] });
   });
 
-  test('coerces JSON-stringified object', () => {
-    const schema = withJsonCoercion(z.object({ meta: z.object({ x: z.number() }) }));
-    const result = schema.safeParse({ meta: '{"x":42}' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.meta).toEqual({ x: 42 });
+  test('coerces a JSON-stringified object field', () => {
+    const schema = z.object({ meta: z.object({ x: z.number() }) });
+    expect(coerceJsonArgs({ meta: '{"x":42}' }, schema)).toEqual({ meta: { x: 42 } });
   });
 
-  test('leaves string fields untouched', () => {
-    const schema = withJsonCoercion(z.object({ name: z.string() }));
-    const result = schema.safeParse({ name: 'hello' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.name).toBe('hello');
+  test('leaves string-typed fields untouched', () => {
+    const schema = z.object({ name: z.string() });
+    expect(coerceJsonArgs({ name: 'hello' }, schema)).toEqual({ name: 'hello' });
   });
 
-  test('preserves optional wrapper', () => {
-    const schema = withJsonCoercion(z.object({ tags: z.array(z.string()).optional() }));
-    const withValue = schema.safeParse({ tags: '["x"]' });
-    expect(withValue.success).toBe(true);
-    if (withValue.success) expect(withValue.data.tags).toEqual(['x']);
-
-    const without = schema.safeParse({});
-    expect(without.success).toBe(true);
-    if (without.success) expect(without.data.tags).toBeUndefined();
+  test('coerces through optional / nullable wrappers', () => {
+    const schema = z.object({ tags: z.array(z.string()).optional() });
+    expect(coerceJsonArgs({ tags: '["x"]' }, schema)).toEqual({ tags: ['x'] });
   });
 
-  test('preserves nullable wrapper', () => {
-    const schema = withJsonCoercion(
-      z.object({ data: z.object({ a: z.number() }).nullable() }),
-    );
-    const withNull = schema.safeParse({ data: null });
-    expect(withNull.success).toBe(true);
-    if (withNull.success) expect(withNull.data.data).toBeNull();
-  });
-
-  test('non-JSON string stays as-is for array field', () => {
-    const schema = withJsonCoercion(z.object({ tags: z.array(z.string()) }));
-    const result = schema.safeParse({ tags: 'not-json' });
-    expect(result.success).toBe(false);
+  test('a non-JSON string for an array field is left for validation to reject', () => {
+    const schema = z.object({ tags: z.array(z.string()) });
+    expect(coerceJsonArgs({ tags: 'not-json' }, schema)).toEqual({ tags: 'not-json' });
   });
 
   test('already-parsed values pass through', () => {
-    const schema = withJsonCoercion(z.object({ items: z.array(z.number()) }));
-    const result = schema.safeParse({ items: [1, 2, 3] });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.items).toEqual([1, 2, 3]);
+    const schema = z.object({ items: z.array(z.number()) });
+    expect(coerceJsonArgs({ items: [1, 2, 3] }, schema)).toEqual({ items: [1, 2, 3] });
+  });
+
+  test('strips prototype-pollution keys from a coerced object', () => {
+    const schema = z.object({ meta: z.object({}).loose() });
+    const out = coerceJsonArgs({ meta: '{"__proto__":{"x":1},"ok":2}' }, schema);
+    expect(Object.getPrototypeOf(out.meta as object) === Object.prototype).toBe(true);
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  test('a non-object schema is returned unchanged', () => {
+    const schema = z.array(z.string());
+    expect(coerceJsonArgs({ a: '1' }, schema)).toEqual({ a: '1' });
   });
 });
 
-describe('coerceJsonArgs in collectTools', () => {
+describe('coerceJsonArgs in the tool runner — schema stays clean', () => {
   const contract = defineContract(
     { prefix: '/test', scope: 'public' },
     {
@@ -75,29 +63,47 @@ describe('coerceJsonArgs in collectTools', () => {
         path: '/do',
         desc: 'Does a thing',
         input: z.object({ items: z.array(z.string()) }),
+        output: z.object({ count: z.number() }),
       },
     },
   );
   const service = implement(contract, {
-    doThing: () => undefined,
+    doThing: (ctx) => ({ count: ctx.input.items.length }),
   });
 
-  test('coercion enabled by default', () => {
+  test('advertised schema keeps `required` (no preprocess wrapper)', () => {
     const [first] = collectTools(service, 'AGENT', {});
     if (!first) throw new Error('expected tool');
-    const result = (first.schema as z.ZodObject<z.ZodRawShape>).safeParse({
-      items: '["a","b"]',
-    });
-    expect(result.success).toBe(true);
+    const json = z.toJSONSchema(first.schema, { io: 'input' });
+    expect(json.required).toEqual(['items']);
   });
 
-  test('coercion disabled when coerceJsonArgs=false', () => {
-    const [first] = collectTools(service, 'AGENT', { coerceJsonArgs: false });
-    if (!first) throw new Error('expected tool');
-    const result = (first.schema as z.ZodObject<z.ZodRawShape>).safeParse({
-      items: '["a","b"]',
-    });
-    expect(result.success).toBe(false);
+  test('executeToolMethod coerces a stringified array when coerceJson is on', async () => {
+    const method = service.methods.doThing;
+    if (!method) throw new Error('expected method');
+    const result = await executeToolMethod(
+      method,
+      'do_thing',
+      { items: '["a","b"]' },
+      { source: 'agent' },
+      undefined,
+      undefined,
+      true,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual({ count: 2 });
+  });
+
+  test('executeToolMethod does not coerce when coerceJson is off', async () => {
+    const method = service.methods.doThing;
+    if (!method) throw new Error('expected method');
+    const result = await executeToolMethod(
+      method,
+      'do_thing',
+      { items: '["a","b"]' },
+      { source: 'agent' },
+    );
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -172,19 +178,13 @@ describe('flattenUnionInput in collectTools', () => {
   const service = implement(contract, { patch: () => undefined });
 
   test('without flatten — schema stays non-object', () => {
-    const [first] = collectTools(service, 'MCP', {
-      flattenUnionInput: false,
-      coerceJsonArgs: false,
-    });
+    const [first] = collectTools(service, 'MCP', { flattenUnionInput: false });
     if (!first) throw new Error('expected tool');
     expect(first.schema).not.toBeInstanceOf(z.ZodObject);
   });
 
   test('with flatten — schema becomes ZodObject', () => {
-    const [first] = collectTools(service, 'MCP', {
-      flattenUnionInput: true,
-      coerceJsonArgs: false,
-    });
+    const [first] = collectTools(service, 'MCP', { flattenUnionInput: true });
     if (!first) throw new Error('expected tool');
     expect(first.schema).toBeInstanceOf(z.ZodObject);
   });
@@ -255,7 +255,7 @@ describe('buildToolManifest', () => {
   });
 
   test('returns manifest entries with name, description, inputSchema', () => {
-    const tools = collectTools(service, 'AGENT', { coerceJsonArgs: false });
+    const tools = collectTools(service, 'AGENT', {});
     const manifest = buildToolManifest(tools);
 
     expect(manifest).toHaveLength(2);
@@ -268,7 +268,7 @@ describe('buildToolManifest', () => {
   });
 
   test('inputSchema is valid JSON Schema', () => {
-    const tools = collectTools(service, 'AGENT', { coerceJsonArgs: false });
+    const tools = collectTools(service, 'AGENT', {});
     const manifest = buildToolManifest(tools);
     const createEntry = manifest.find((e) => e.name.includes('create'));
     expect(createEntry).toBeDefined();

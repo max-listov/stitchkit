@@ -1,5 +1,5 @@
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
-export { withJsonCoercion } from './tools/coerce';
+export { coerceJsonArgs } from './tools/coerce';
 export type { ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
 export { flattenDiscriminatedUnion } from './tools/flatten';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';

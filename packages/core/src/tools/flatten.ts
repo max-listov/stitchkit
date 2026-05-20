@@ -19,7 +19,7 @@ export function flattenDiscriminatedUnion(
 
   const literalValues: string[] = [];
   const fieldToVariants = new Map<string, string[]>();
-  const fieldSchemas: Record<string, z.core.$ZodType> = {};
+  const fieldSchemas: Record<string, z.ZodType> = {};
 
   for (const opt of union.def.options) {
     if (!(opt instanceof z.ZodObject)) {
@@ -61,7 +61,7 @@ export function flattenDiscriminatedUnion(
   for (const [key, field] of Object.entries(fieldSchemas)) {
     const variants = fieldToVariants.get(key) ?? [];
     const hint = `Required if ${discriminator} = ${variants.join(' | ')}`;
-    shape[key] = field instanceof z.ZodType ? field.describe(hint) : field;
+    shape[key] = field.describe(hint);
   }
   return z.object(shape);
 }

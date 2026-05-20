@@ -78,7 +78,7 @@ export function defineContract(
     if (!('toolName' in ep) || !ep.toolName) continue;
     const transports = new Set(
       ep.expose
-        ? (ep.expose as readonly Transport[]).filter((t) => t !== 'HTTP')
+        ? ep.expose.filter((t) => t !== 'HTTP')
         : (['MCP', 'AGENT'] satisfies Transport[]),
     );
     // A `toolName` only means anything on a tool transport — setting one on an

@@ -1,6 +1,8 @@
 import type { RuntimeContext, TransportSource } from '../contract';
-import { formatZodError, normalizeError } from '../internal/errors';
+import { formatZodError, normalizeError, validateHandlerOutput } from '../internal/errors';
+import { isUnsafeKey } from '../internal/safe-json';
 import type { MethodDef } from '../server/types';
+import { coerceJsonArgs } from './coerce';
 import { objectShapeKeys } from './schema';
 
 export type ToolResult =
@@ -70,6 +72,7 @@ export async function executeToolMethod(
   context: ToolCallContext,
   hooks?: ToolCallHooks,
   lifecycle?: ToolLifecycle,
+  coerceJson = false,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
 
@@ -79,8 +82,14 @@ export async function executeToolMethod(
     return result;
   };
 
+  // `beforeToolCall` is guarded — a throw here must still fire `afterToolCall`,
+  // otherwise an auth-rejected call would produce no audit record.
   if (hooks?.beforeToolCall) {
-    await hooks.beforeToolCall(toolName, rawArgs, context);
+    try {
+      await hooks.beforeToolCall(toolName, rawArgs, context);
+    } catch (err) {
+      return finish(toolResultFromError(err));
+    }
   }
 
   // Slice the flat tool args the way the HTTP transport slices a request: path
@@ -89,11 +98,19 @@ export async function executeToolMethod(
   // as it works on HTTP — a single flat blob parsed against both would reject
   // every call once either schema is strict.
   const paramKeys = new Set(objectShapeKeys(method.paramsSchema));
-  const paramArgs: Record<string, unknown> = {};
-  const inputArgs: Record<string, unknown> = {};
+  let paramArgs: Record<string, unknown> = {};
+  let inputArgs: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rawArgs)) {
+    // A tool arg named `__proto__` would pollute the prototype chain.
+    if (isUnsafeKey(key)) continue;
     if (paramKeys.has(key)) paramArgs[key] = value;
     else inputArgs[key] = value;
+  }
+
+  // Coerce JSON-stringified array/object args (LLM double-serialization).
+  if (coerceJson) {
+    paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
+    inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
   }
 
   let params: unknown;
@@ -143,20 +160,22 @@ export async function executeToolMethod(
     // A mismatch is a server fault — `INTERNAL_SERVER_ERROR`, not the client
     // `VALIDATION_ERROR` an invalid argument produces.
     if (method.outputSchema) {
-      const parsed = method.outputSchema.safeParse(data);
-      if (!parsed.success) {
+      const checked = validateHandlerOutput(method.outputSchema, data);
+      if (!checked.ok) {
         return finish({
           ok: false,
           code: 'INTERNAL_SERVER_ERROR',
-          details: {
-            message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,
-          },
+          details: { message: checked.message },
         });
       }
-      data = parsed.data;
+      data = checked.data;
     }
 
-    const output = data === undefined || data === null ? { status: 'ok' } : data;
+    // A void handler reports `{ status: 'ok' }` — but only when the contract
+    // declares no `output`. With an `outputSchema`, a validated `null` is the
+    // contract's chosen result and must not be replaced.
+    const output =
+      (data === undefined || data === null) && !method.outputSchema ? { status: 'ok' } : data;
     return finish({ ok: true, data: output });
   } catch (err) {
     // The result carries the cause (message in `details` when there is nothing

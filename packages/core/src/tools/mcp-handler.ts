@@ -13,6 +13,11 @@ import { buildMcpServer, type McpServerBuildConfig, validateMcpSchemas } from '.
 
 const EVENT_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 60 * 1000;
+
+/** Hard caps — a burst between sweeps must not grow memory without bound. */
+const MAX_EVENTS = 10_000;
+const MAX_SESSIONS = 1_000;
 
 interface StoredEvent {
   streamId: string;
@@ -22,7 +27,8 @@ interface StoredEvent {
 
 /**
  * Event store for Streamable-HTTP SSE resumability — if a client loses its
- * SSE stream it reconnects with `Last-Event-ID` and the SDK replays.
+ * SSE stream it reconnects with `Last-Event-ID` and the SDK replays. Capped at
+ * `MAX_EVENTS` (oldest-first eviction) on top of the TTL sweep.
  */
 class InMemoryEventStore implements EventStore {
   private events = new Map<string, StoredEvent>();
@@ -31,6 +37,12 @@ class InMemoryEventStore implements EventStore {
   async storeEvent(streamId: StreamId, message: JSONRPCMessage): Promise<EventId> {
     const eventId = String(++this.counter);
     this.events.set(eventId, { streamId, message, timestamp: Date.now() });
+    // Evict the oldest event once the cap is hit — the Map keeps insertion
+    // order, so the first key is the oldest.
+    if (this.events.size > MAX_EVENTS) {
+      const oldest = this.events.keys().next().value;
+      if (oldest !== undefined) this.events.delete(oldest);
+    }
     return eventId;
   }
 
@@ -107,6 +119,12 @@ export function createMcpHandler<TAuth>(
   const eventStore = new InMemoryEventStore();
   const sessions = new Map<string, SessionData>();
 
+  const closeTransport = (transport: WebStandardStreamableHTTPServerTransport): void => {
+    transport.close().catch((err) => {
+      console.error('[stitchkit] MCP transport close failed:', err);
+    });
+  };
+
   // Periodic sweep — expire SSE events and idle sessions. Must not by itself
   // keep the process alive.
   setInterval(() => {
@@ -115,10 +133,10 @@ export function createMcpHandler<TAuth>(
     for (const [id, session] of sessions) {
       if (session.lastSeen < cutoff) {
         sessions.delete(id);
-        session.transport.close().catch(() => undefined);
+        closeTransport(session.transport);
       }
     }
-  }, EVENT_TTL_MS).unref();
+  }, SWEEP_INTERVAL_MS).unref();
 
   return async (req: Request): Promise<Response> => {
     const auth = await config.auth(req);
@@ -143,6 +161,24 @@ export function createMcpHandler<TAuth>(
     }
 
     // No session id → a fresh session; the id is always server-generated.
+    // Cap concurrent sessions — evict the least-recently-seen one on overflow
+    // so a session-minting flood cannot exhaust memory.
+    if (sessions.size >= MAX_SESSIONS) {
+      let oldestId: string | undefined;
+      let oldestSeen = Number.POSITIVE_INFINITY;
+      for (const [id, session] of sessions) {
+        if (session.lastSeen < oldestSeen) {
+          oldestSeen = session.lastSeen;
+          oldestId = id;
+        }
+      }
+      if (oldestId !== undefined) {
+        const evicted = sessions.get(oldestId);
+        sessions.delete(oldestId);
+        if (evicted) closeTransport(evicted.transport);
+      }
+    }
+
     const newSessionId = randomUUID();
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => newSessionId,

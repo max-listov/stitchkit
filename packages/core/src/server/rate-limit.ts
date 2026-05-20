@@ -19,10 +19,21 @@ function refillBucket(entry: BucketEntry, config: RateLimitConfig, now: number):
 }
 
 /**
+ * Hard cap on tracked keys — without it an attacker rotating keys (e.g. a
+ * spoofed IP) grows the bucket map unbounded between sweeps.
+ */
+const MAX_BUCKETS = 100_000;
+
+/**
  * In-memory token-bucket rate limiter. `check(key, config)` consumes a token
  * and returns whether the request is allowed; `remaining(key, config)` reports
- * the count without consuming. Idle keys are swept on a 60-second timer;
- * `destroy()` stops it.
+ * the count without consuming. Idle keys are swept on a 60-second timer and the
+ * map is capped at `MAX_BUCKETS` (least-recently-used eviction); `destroy()`
+ * stops the timer.
+ *
+ * `config` is per-call — reusing one `key` with two different configs lets
+ * whichever call created the bucket fix its `max` / `window`. Key a bucket to
+ * one config (one limiter per limit) if that matters.
  */
 export function createRateLimiter() {
   const { store: buckets, destroy } = createSweptMap<BucketEntry>({
@@ -34,18 +45,30 @@ export function createRateLimiter() {
     destroy,
     check(key: string, config: RateLimitConfig): boolean {
       const now = Date.now();
-      let entry = buckets.get(key);
+      const entry = buckets.get(key);
 
-      if (!entry) {
-        entry = { tokens: config.max, lastRefill: now };
+      if (entry) {
+        // Re-insert on access — a `Map` keeps insertion order, so deleting and
+        // re-adding moves this key to the newest end. The cap below then evicts
+        // the genuinely least-recently-used key, not the oldest by birth.
+        buckets.delete(key);
         buckets.set(key, entry);
+        refillBucket(entry, config, now);
+        if (entry.tokens < 1) return false;
+        entry.tokens -= 1;
+        return true;
       }
 
-      refillBucket(entry, config, now);
-
-      if (entry.tokens < 1) return false;
-
-      entry.tokens -= 1;
+      // Evict the least-recently-used bucket once the cap is hit — bounds
+      // memory against a key-rotation flood between sweeps.
+      if (buckets.size >= MAX_BUCKETS) {
+        const lru = buckets.keys().next().value;
+        if (lru !== undefined) buckets.delete(lru);
+      }
+      const fresh: BucketEntry = { tokens: config.max, lastRefill: now };
+      buckets.set(key, fresh);
+      if (fresh.tokens < 1) return false;
+      fresh.tokens -= 1;
       return true;
     },
 

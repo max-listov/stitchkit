@@ -3,7 +3,7 @@
  * context assembly in `context.ts`, request helpers in `request.ts`.
  */
 import { AppError, type RuntimeContext } from '../contract';
-import { normalizeError } from '../internal/errors';
+import { normalizeError, validateHandlerOutput } from '../internal/errors';
 import { buildContext, buildErrorContext } from './context';
 import {
   buildLogFields,
@@ -14,8 +14,12 @@ import {
   type RequestLog,
   shouldLog,
 } from './logger';
-import { corsHeaders as buildCorsHeaders, corsPreflightResponse } from './middleware/cors';
-import { extractIp, resolveTraceId } from './request';
+import {
+  assertCorsConfig,
+  corsHeaders as buildCorsHeaders,
+  corsPreflightResponse,
+} from './middleware/cors';
+import { type ClientIpOptions, extractIp, resolveSocketIp, resolveTraceId } from './request';
 import {
   allowedMethods,
   buildRouteMap,
@@ -33,7 +37,8 @@ import type {
 } from './types';
 
 export function createHandler(config: HandlerConfig): (req: Request) => Promise<Response> {
-  const { cors, hooks, logging = false } = config;
+  const { cors, hooks, logging = false, trustProxy = false } = config;
+  if (cors) assertCorsConfig(cors);
 
   const customLogger: StitchLogger | null = typeof logging === 'object' ? logging : null;
   const useDefaultLog = logging === true;
@@ -47,26 +52,28 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     url: URL,
     traceId: string,
     server: BunServer | undefined,
+    clientIp: ClientIpOptions,
   ): Promise<Response> {
     const shouldLogRequest = logging && shouldLog(url.pathname, req.method);
+    const ipAddress = extractIp(req, clientIp) || undefined;
 
     let reqLog: RequestLog | undefined;
     if (shouldLogRequest && useDefaultLog) {
-      reqLog = logIncoming(req, url.pathname, traceId);
+      reqLog = logIncoming(req, url.pathname, traceId, ipAddress);
     }
     if (shouldLogRequest && customLogger) {
       customLogger.debug(`${req.method} ${url.pathname}`, {
         traceId,
         method: req.method,
         path: url.pathname,
-        ip: extractIp(req) || undefined,
+        ip: ipAddress,
       });
-      reqLog = { traceId, startTime: process.hrtime.bigint() };
+      reqLog = { traceId, startTime: performance.now() };
     }
 
     const logDone = (status: number) => {
       if (!reqLog) return;
-      if (useDefaultLog) logOutgoing(req, url.pathname, status, reqLog);
+      if (useDefaultLog) logOutgoing(req, url.pathname, status, reqLog, ipAddress);
       if (customLogger) {
         const durationMs = Math.round(elapsedMs(reqLog.startTime));
         const level = levelForStatus(status);
@@ -88,7 +95,7 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
       if (hooks?.onError) {
         try {
           const response = await hooks.onError(
-            errCtx ?? buildErrorContext(req, url, traceId),
+            errCtx ?? buildErrorContext(req, url, traceId, clientIp),
             err,
             endpoint,
           );
@@ -132,6 +139,7 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
           const res = await rawMatch.route.handler(req, {
             params: rawMatch.params,
             server,
+            ipAddress,
           });
           const withCors = applyCors(res, cors, req);
           logDone(withCors.status);
@@ -161,7 +169,7 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     let ctx: RuntimeContext | undefined;
 
     try {
-      ctx = await buildContext(req, url, method, pathParams, traceId);
+      ctx = await buildContext(req, url, method, pathParams, traceId, clientIp);
 
       if (hooks?.beforeHandle) {
         await hooks.beforeHandle(ctx, method);
@@ -182,7 +190,14 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
       }
 
       if (method.outputSchema) {
-        result = method.outputSchema.parse(result);
+        // A handler returning the wrong shape is a server fault, not a client
+        // one — `INTERNAL_SERVER_ERROR`, never the `VALIDATION_ERROR` a bad
+        // request produces. Same rule as the tool transport (ADR 0014).
+        const checked = validateHandlerOutput(method.outputSchema, result);
+        if (!checked.ok) {
+          throw new AppError('INTERNAL_SERVER_ERROR', checked.message, 500);
+        }
+        result = checked.data;
       }
 
       if (result === undefined || result === null) {
@@ -202,10 +217,22 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
     const traceId = resolveId(req);
-    const response = await dispatch(req, url, traceId, server);
-    // Every response carries the trace id — success and error alike.
-    if (!response.headers.has('x-request-id')) {
+    // Resolve the real socket peer once per request — the adapter (Bun server
+    // / srvx) knows it; `extractIp` prefers `x-forwarded-for` over it only
+    // when `trustProxy` is set.
+    const clientIp: ClientIpOptions = {
+      trustProxy,
+      socketIp: resolveSocketIp(req, server),
+    };
+    const response = await dispatch(req, url, traceId, server, clientIp);
+    // Every response carries the framework-resolved trace id — always
+    // overwritten, never the value a raw route or `onError` may have echoed
+    // from the client. Immutable headers (a `Response.redirect()`) are
+    // tolerated: the id is best-effort there.
+    try {
       response.headers.set('x-request-id', traceId);
+    } catch {
+      // headers are immutable — a redirect / opaque response; skip.
     }
     return response;
   };

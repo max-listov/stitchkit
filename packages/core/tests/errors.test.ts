@@ -44,24 +44,25 @@ describe('normalizeError', () => {
     expect(appErr.message).toContain('name');
   });
 
-  test('generic Error → INTERNAL_SERVER_ERROR', () => {
+  test('generic Error → INTERNAL_SERVER_ERROR with a generic message', () => {
     const err = normalizeError(new Error('Something broke'));
     expect(err.code).toBe('INTERNAL_SERVER_ERROR');
     expect(err.status).toBe(500);
-    expect(err.message).toBe('Something broke');
+    // The raw message is logged server-side, never sent to the client.
+    expect(err.message).toBe('Internal server error');
   });
 
-  test('string error', () => {
+  test('string error → generic message', () => {
     const err = normalizeError('raw string');
     expect(err.code).toBe('INTERNAL_SERVER_ERROR');
-    expect(err.message).toBe('raw string');
+    expect(err.message).toBe('Internal server error');
   });
 
-  test('long error truncated to 200 chars', () => {
-    const longMsg = 'x'.repeat(300);
-    const err = normalizeError(new Error(longMsg));
-    expect(err.message?.length).toBeLessThan(210);
-    expect(err.message).toContain('...');
+  test('an internal message never leaks into the envelope', () => {
+    const secret = `db://user:${'x'.repeat(300)}@host`;
+    const err = normalizeError(new Error(secret));
+    expect(err.message).toBe('Internal server error');
+    expect(err.message).not.toContain('db://');
   });
 });
 

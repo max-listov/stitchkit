@@ -41,12 +41,12 @@ export function mountAgent(
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,
+    coerceJsonArgs: config.coerceJsonArgs,
   });
 
   for (const service of serviceList) {
     for (const mountable of collectTools(service, 'AGENT', {
       extend: config.extend,
-      coerceJsonArgs: config.coerceJsonArgs,
       flattenUnionInput: config.flattenUnionInput,
     })) {
       if (mountable.name in tools) {

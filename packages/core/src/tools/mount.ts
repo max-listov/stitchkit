@@ -6,7 +6,6 @@
 import { z } from 'zod';
 import type { Transport, TransportSource } from '../contract';
 import type { MethodDef, ServiceDef } from '../server/types';
-import { withJsonCoercion } from './coerce';
 import {
   executeToolMethod,
   type ToolCallHooks,
@@ -62,8 +61,6 @@ function applyExtend(base: z.ZodType, extra: Record<string, z.ZodType>): z.ZodTy
 
 export interface CollectToolsConfig {
   extend?: ToolExtend;
-  /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
-  coerceJsonArgs?: boolean;
   /** Flatten discriminated union inputs into a single object for MCP. Default: false. */
   flattenUnionInput?: boolean;
 }
@@ -77,7 +74,7 @@ export function collectTools(
   transport: Transport,
   config: CollectToolsConfig = {},
 ): MountableTool[] {
-  const { extend, coerceJsonArgs = true, flattenUnionInput = false } = config;
+  const { extend, flattenUnionInput = false } = config;
   const tools: MountableTool[] = [];
   for (const [methodName, method] of Object.entries(service.methods)) {
     if (method.expose && !method.expose.includes(transport)) continue;
@@ -88,9 +85,6 @@ export function collectTools(
 
     if (flattenUnionInput && baseSchema instanceof z.ZodDiscriminatedUnion) {
       baseSchema = flattenDiscriminatedUnion(baseSchema);
-    }
-    if (coerceJsonArgs && baseSchema instanceof z.ZodObject) {
-      baseSchema = withJsonCoercion(baseSchema);
     }
 
     const shouldExtend = !!extend && (!extend.filter || extend.filter(service, method));
@@ -115,6 +109,8 @@ export interface ToolRunnerConfig {
   lifecycle?: ToolLifecycle;
   /** Global error hint injected into every failed tool result. */
   errorHint?: (toolName: string, errorCode: string) => string | null;
+  /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
+  coerceJsonArgs?: boolean;
 }
 
 /**
@@ -142,6 +138,7 @@ export function createToolRunner(
       { ...config.context, ...extraContext, source: config.source },
       config.hooks,
       config.lifecycle,
+      config.coerceJsonArgs ?? true,
     );
   };
 }

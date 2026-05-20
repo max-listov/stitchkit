@@ -3,9 +3,12 @@
  * Pure `Request → value` functions; no framework state.
  */
 
-/** Compact, time-sortable id — base36 timestamp + base36 random, ~14 chars. */
+import { isUnsafeKey } from '../internal/safe-json';
+import { isRecord } from '../internal/typed';
+
+/** Compact, time-sortable id — base36 timestamp + a cryptographic suffix. */
 export function generateTraceId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  return `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 /**
@@ -24,22 +27,67 @@ export function resolveTraceId(req: Request): string {
   return generateTraceId();
 }
 
-/** Client IP from `x-forwarded-for` / `x-real-ip` (IPv4-mapped prefix stripped). */
-export function extractIp(req: Request): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return (forwarded.split(',')[0] ?? '').trim().replace('::ffff:', '');
-  const realIp = req.headers.get('x-real-ip');
-  if (realIp) return realIp.trim().replace('::ffff:', '');
-  return '';
+/**
+ * Resolve the real socket peer IP from the runtime — unspoofable, unlike a
+ * header. On Bun the server resolves it (`server.requestIP`); on Node / Deno
+ * the `srvx` adapter attaches `.ip` to the request. `undefined` when neither
+ * is available (the bare `createHandler` fetch with no server).
+ */
+export function resolveSocketIp(req: Request, server: unknown): string | undefined {
+  if (
+    typeof server === 'object' &&
+    server !== null &&
+    'requestIP' in server &&
+    typeof server.requestIP === 'function'
+  ) {
+    const addr: unknown = server.requestIP(req);
+    if (isRecord(addr) && typeof addr.address === 'string' && addr.address) {
+      return addr.address;
+    }
+  }
+  // `srvx` (Node / Deno) attaches the client IP to the request object.
+  if ('ip' in req && typeof req.ip === 'string' && req.ip) return req.ip;
+  return undefined;
+}
+
+/** Options for `extractIp` / `getClientInfo`. */
+export interface ClientIpOptions {
+  /**
+   * Trust `x-forwarded-for` / `x-real-ip` for the client IP. Enable only behind
+   * a proxy that overwrites them — they are client-controllable. Default
+   * `false`: the real socket IP (`socketIp`) is used instead.
+   */
+  trustProxy?: boolean;
+  /** The real socket peer IP — see `resolveSocketIp`. */
+  socketIp?: string;
+}
+
+/**
+ * The client IP for a request. With `trustProxy`, the `x-forwarded-for` /
+ * `x-real-ip` client wins (the server sits behind a proxy that rewrites them);
+ * otherwise the real, unspoofable socket peer (`socketIp`) is used. Returns
+ * `''` when nothing is known.
+ */
+export function extractIp(req: Request, options: ClientIpOptions = {}): string {
+  if (options.trustProxy) {
+    const forwarded = req.headers.get('x-forwarded-for');
+    if (forwarded) return (forwarded.split(',')[0] ?? '').trim().replace(/^::ffff:/, '');
+    const realIp = req.headers.get('x-real-ip');
+    if (realIp) return realIp.trim().replace(/^::ffff:/, '');
+  }
+  return (options.socketIp ?? '').replace(/^::ffff:/, '');
 }
 
 /** Client identity — IP + user-agent. The one place projects derive both. */
-export function getClientInfo(req: Request): {
+export function getClientInfo(
+  req: Request,
+  options: ClientIpOptions = {},
+): {
   ipAddress?: string;
   userAgent?: string;
 } {
   return {
-    ipAddress: extractIp(req) || undefined,
+    ipAddress: extractIp(req, options) || undefined,
     userAgent: req.headers.get('user-agent') ?? undefined,
   };
 }
@@ -48,6 +96,8 @@ export function getClientInfo(req: Request): {
 export function parseQueryParams(url: URL): Record<string, string | string[]> {
   const query: Record<string, string | string[]> = {};
   for (const key of new Set(url.searchParams.keys())) {
+    // `?__proto__=x` would pollute the prototype chain on assignment.
+    if (isUnsafeKey(key)) continue;
     const values = url.searchParams.getAll(key);
     const [first] = values;
     query[key] = values.length === 1 && first !== undefined ? first : values;

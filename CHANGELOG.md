@@ -8,6 +8,81 @@ public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-20
+
+### Security hardening
+
+A multi-agent audit of the framework surfaced and closed a set of holes.
+
+- **Prototype-pollution defence at every input boundary.** A `__proto__` key in
+  a JSON body, query string, cookie, multipart field, tool argument, path param
+  or JWT claim is stripped before it can rewire a prototype chain. New
+  `safeJsonParse` helper.
+- **Real client IP, unspoofable by default.** `ctx.ipAddress` (and a raw
+  route's `ctx.ipAddress`) is the actual socket peer — resolved by the adapter
+  (`Bun.serve` / `srvx`), not a header. `HandlerConfig.trustProxy` (default
+  `false`) switches it to the `x-forwarded-for` client for deployments behind a
+  trusted proxy. A spoofed forwarded header is ignored unless `trustProxy` is
+  set.
+- **SSRF — `view_file` no longer follows redirects past the guard.** A public
+  URL could `302` to an internal address; the guard now re-validates every
+  redirect hop. A non-canonical numeric host (`http://2130706433/`) is rejected.
+- **CORS — `credentials: true` with a wildcard origin is rejected** at
+  construction. A rejected origin no longer receives `Allow-Credentials`.
+  Origin matching is case-insensitive.
+- **Internal error messages no longer leak.** An unexpected (non-`AppError`)
+  error returns a generic `Internal server error`; the real cause is logged
+  server-side. Applies to the HTTP response and the SSE error event.
+- **Multipart uploads are capped before buffering.** The body is stream-read
+  with a hard byte limit, so an upload with a missing / spoofed
+  `Content-Length` can no longer exhaust memory.
+- **JWT verification hardened** — an empty secret is rejected, `exp` / `nbf`
+  honour a configurable clock-skew leeway (default 60 s), a non-numeric `exp`
+  is malformed (not "non-expiring"), optional `issuer` / `audience` checks, an
+  oversized token is rejected, and a non-base64url segment is rejected.
+- **`createAuthHook` fails closed** — a scope with no matching rule now throws
+  instead of silently passing the request. Identity resolution branches on the
+  authoritative `ctx.source`, not the presence of `ctx.req`.
+- **MCP session and event stores are bounded** — hard caps with LRU eviction
+  on top of the TTL sweep, closing a memory-exhaustion vector.
+- **`createHandler` is fully Web-Fetch-clean** — request timing uses
+  `performance.now()`, not `process.hrtime`.
+- A non-empty request body must declare `Content-Type: application/json` — a
+  `text/plain` body (a forgeable cross-origin form post) is rejected.
+- `staticRoute` uses `node:fs` (runs on Node, not just Bun), sets
+  `X-Content-Type-Options: nosniff` and a content type, and rejects
+  percent-encoded path traversal.
+- The JSON-coercion of tool arguments is now an argument transform, not a
+  schema wrapper — the advertised tool schema keeps its correct `required`
+  fields. `withJsonCoercion` is replaced by `coerceJsonArgs`.
+- Smaller fixes: rate-limiter LRU key-space cap, `afterToolCall` fires even when
+  `beforeToolCall` throws, the response `x-request-id` is always the
+  framework-resolved id, `createEventBus` takes an `onListenerError` hook,
+  `traceparent` rejects the all-zero id, `buildToolManifest` tolerates an
+  incompatible schema, `redact` no longer mislabels a shared subtree as
+  circular.
+
+### Tool ≡ HTTP parity — follow-up fixes
+
+A post-0.2.0 audit found gaps in the contract-parity guarantee between the HTTP
+and tool surfaces.
+
+- **`createAuthHook` no longer silently skips tool calls.** It previously
+  early-returned when there was no `ctx.req`, so a `createAuthHook` passed as a
+  tool mount's `lifecycle.beforeHandle` enforced **nothing** — a scoped tool was
+  callable by anyone. The hook now resolves identity per surface: `resolve`
+  (HTTP, from `ctx.req`) or the new `resolveFromContext` (tool calls). A scoped
+  tool call with no `resolveFromContext` **fails closed**.
+- **HTTP output-validation mismatch is now `INTERNAL_SERVER_ERROR`.** A handler
+  returning a value the contract `output` rejects is a server fault — it was
+  reported as a client `VALIDATION_ERROR` (400). Now `500`, matching the tool
+  transport.
+- **ADR 0014** — the tool surface carries the same contract guarantees as HTTP.
+  Records the invariant the parity fixes established; lists the intentional
+  differences (error envelope, multipart endpoints are HTTP-only).
+- New `tests/parity.test.ts` runs one contract's args through both surfaces and
+  asserts identical accept / reject.
+
 ## [0.2.0] — 2026-05-20
 
 ### Tools — LLM robustness and mount extensions
@@ -161,6 +236,7 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/max-listov/stitchkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/max-listov/stitchkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/max-listov/stitchkit/releases/tag/v0.1.0
