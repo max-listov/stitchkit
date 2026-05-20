@@ -4,7 +4,7 @@ stitchkit's realtime layer is [Socket.IO](https://socket.io) — `polling`
 fallback, heartbeats, acks, a mature client. stitchkit does not ship its own
 WebSocket engine; it ships thin, typed wrappers over Socket.IO and a bridge that
 syncs socket events into the TanStack Query cache. See
-[ADR 0008](../DECISIONS.md#adr-0008).
+[ADR 0008](../decisions/0008-thin-wrappers.md).
 
 ## Typed events
 

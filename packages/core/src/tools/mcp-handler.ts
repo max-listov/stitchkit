@@ -7,7 +7,7 @@ import {
   WebStandardStreamableHTTPServerTransport,
 } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import { buildMcpServer, type McpServerBuildConfig } from './mcp';
+import { buildMcpServer, type McpServerBuildConfig, validateMcpSchemas } from './mcp';
 
 // ─── In-memory event store (SSE resumability) ───────────────────────────────
 
@@ -96,6 +96,14 @@ function jsonRpcError(code: number, message: string, status: number): Response {
 export function createMcpHandler<TAuth>(
   config: McpHandlerConfig<TAuth>,
 ): (req: Request) => Promise<Response> {
+  // Fail the deploy, not the first request: when `services` is a static array
+  // the tool schemas can be validated up front. A function-form `services`
+  // depends on the per-request identity, so it is validated when each session
+  // builds (`buildMcpServer` → `mountMcp`).
+  if (Array.isArray(config.services)) {
+    validateMcpSchemas(config.services, config.onIncompatibleSchema, config.logger);
+  }
+
   const eventStore = new InMemoryEventStore();
   const sessions = new Map<string, SessionData>();
 

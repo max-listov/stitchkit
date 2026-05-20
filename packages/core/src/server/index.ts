@@ -49,13 +49,14 @@ export { createSocketIOServer } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
   BunServer,
+  BunServerConfig,
+  HandlerConfig,
   Handlers,
   LifecycleHooks,
   MethodDef,
   RawRoute,
   RawRouteContext,
   RouteGroup,
-  ServerConfig,
   ServerPassthrough,
   ServiceDef,
   StitchLogger,

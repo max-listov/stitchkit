@@ -76,10 +76,19 @@ jobs:
         working-directory: packages/core
         run: npm publish --provenance --access public
 
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section between ## [X.Y.Z] and the next ## [
+          BODY=$(awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          # gh release needs a file for multiline body
+          echo "$BODY" > /tmp/release-notes.md
+
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
           --title "stitchkit $GITHUB_REF_NAME"
-          --generate-notes
+          --notes-file /tmp/release-notes.md

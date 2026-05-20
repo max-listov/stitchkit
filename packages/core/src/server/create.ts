@@ -24,9 +24,15 @@ import {
   type NormalizedGroup,
   validateRoutes,
 } from './router';
-import type { BunServer, MethodDef, ServerConfig, StitchLogger } from './types';
+import type {
+  BunServer,
+  BunServerConfig,
+  HandlerConfig,
+  MethodDef,
+  StitchLogger,
+} from './types';
 
-export function createHandler(config: ServerConfig): (req: Request) => Promise<Response> {
+export function createHandler(config: HandlerConfig): (req: Request) => Promise<Response> {
   const { cors, hooks, logging = false } = config;
 
   const customLogger: StitchLogger | null = typeof logging === 'object' ? logging : null;
@@ -192,7 +198,9 @@ export function createHandler(config: ServerConfig): (req: Request) => Promise<R
   }
 
   return async (req: Request, server?: BunServer): Promise<Response> => {
-    const url = new URL(req.url);
+    // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
+    // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
+    const url = new URL(req.url, 'http://localhost');
     const traceId = resolveId(req);
     const response = await dispatch(req, url, traceId, server);
     // Every response carries the trace id — success and error alike.
@@ -203,7 +211,7 @@ export function createHandler(config: ServerConfig): (req: Request) => Promise<R
   };
 }
 
-export function createServer(config: ServerConfig) {
+export function createServer(config: BunServerConfig) {
   const { routes, websocket, development, bun: bunExtra, port = 3000, hostname } = config;
 
   const fetch = createHandler(config);
@@ -229,7 +237,7 @@ export function createServer(config: ServerConfig) {
 
 // ─── Group normalization ─────────────────────────────
 
-function normalizeGroups(config: ServerConfig): NormalizedGroup[] {
+function normalizeGroups(config: HandlerConfig): NormalizedGroup[] {
   const result: NormalizedGroup[] = [];
 
   if (config.services) {
@@ -251,7 +259,7 @@ function normalizeGroups(config: ServerConfig): NormalizedGroup[] {
 
 // ─── Response helpers ────────────────────────────────
 
-function corsHeaders(cors: ServerConfig['cors'], req: Request): Record<string, string> {
+function corsHeaders(cors: HandlerConfig['cors'], req: Request): Record<string, string> {
   if (!cors) return {};
   return buildCorsHeaders(cors, req.headers.get('origin'));
 }
@@ -261,7 +269,7 @@ function corsHeaders(cors: ServerConfig['cors'], req: Request): Record<string, s
  * or an `onError` hook). The response is rebuilt rather than mutated — a
  * `Response.redirect()` (a documented raw-route use) has immutable headers.
  */
-function applyCors(res: Response, cors: ServerConfig['cors'], req: Request): Response {
+function applyCors(res: Response, cors: HandlerConfig['cors'], req: Request): Response {
   const extra = corsHeaders(cors, req);
   if (Object.keys(extra).length === 0) return res;
   const headers = new Headers(res.headers);
@@ -276,7 +284,7 @@ function applyCors(res: Response, cors: ServerConfig['cors'], req: Request): Res
 function json(
   data: unknown,
   status: number,
-  cors: ServerConfig['cors'],
+  cors: HandlerConfig['cors'],
   req: Request,
 ): Response {
   return Response.json(data, { status, headers: corsHeaders(cors, req) });

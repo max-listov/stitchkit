@@ -69,13 +69,26 @@ export function defineContract(
 ): ContractDef {
   const toolTransports = new Map<string, { key: string; transports: Set<Transport> }>();
   for (const [key, ep] of Object.entries(endpoints)) {
+    // `desc` is the description a model reads to decide whether to call the
+    // tool — an empty one passes the type check but ships an unusable tool.
+    if (ep.desc.trim() === '') {
+      throw new Error(`Contract "${meta.prefix}": endpoint "${key}" has an empty desc`);
+    }
+
     if (!('toolName' in ep) || !ep.toolName) continue;
     const transports = new Set(
       ep.expose
         ? (ep.expose as readonly Transport[]).filter((t) => t !== 'HTTP')
         : (['MCP', 'AGENT'] satisfies Transport[]),
     );
-    if (transports.size === 0) continue;
+    // A `toolName` only means anything on a tool transport — setting one on an
+    // HTTP-only endpoint is a contract mistake (the type also forbids it, but
+    // a runtime-built contract bypasses the type).
+    if (transports.size === 0) {
+      throw new Error(
+        `Contract "${meta.prefix}": endpoint "${key}" sets toolName "${ep.toolName}" but is not exposed on any tool transport (MCP / AGENT)`,
+      );
+    }
 
     const existing = toolTransports.get(ep.toolName);
     if (existing) {

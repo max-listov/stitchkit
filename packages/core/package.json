@@ -1,9 +1,10 @@
 {
   "name": "stitchkit",
-  "version": "0.1.0",
-  "description": "Contract-first backend framework for Bun — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client.",
+  "version": "0.2.0",
+  "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
+    "node",
     "framework",
     "contract-first",
     "mcp",
@@ -30,7 +31,8 @@
   },
   "type": "module",
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.2.0",
+    "node": ">=22"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -63,6 +65,10 @@
     "./observability": {
       "types": "./dist/observability/index.d.ts",
       "import": "./dist/observability/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "publishConfig": {
@@ -70,7 +76,7 @@
   },
   "scripts": {
     "check": "bun x tsc --noEmit",
-    "build:js": "bun build src/index.ts src/react.ts src/tools.ts src/contract/index.ts src/server/index.ts src/observability/index.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:js": "bun build src/index.ts src/react.ts src/tools.ts src/contract/index.ts src/server/index.ts src/observability/index.ts src/node.ts --outdir dist --target node --packages external --splitting --root src",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",
     "build": "rm -rf dist && bun run build:js && bun run build:types",
     "dev": "bun run build:js -- --watch",
@@ -87,6 +93,7 @@
     "react-query-kit": "^3.3.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
+    "srvx": "^0.11.0",
     "zod": "^4.4.3"
   },
   "peerDependenciesMeta": {
@@ -116,6 +123,9 @@
     },
     "socket.io-client": {
       "optional": true
+    },
+    "srvx": {
+      "optional": true
     }
   },
   "dependencies": {
@@ -134,6 +144,7 @@
     "react-query-kit": "^3.3.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
+    "srvx": "^0.11.15",
     "typescript": "^6",
     "zod": "^4.4.3"
   }

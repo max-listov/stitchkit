@@ -6,9 +6,8 @@ deep on each piece.
 
 ## Requirements
 
-- [Bun](https://bun.sh) `>= 1.2`. stitchkit is Bun-only — it builds on
-  `Bun.serve`, `bun:test` and Bun APIs. There is no Node or Deno compatibility
-  layer.
+- [Bun](https://bun.sh) `>= 1.2` (recommended) or [Node.js](https://nodejs.org)
+  `>= 22`. Bun is first-class; Node is supported via `stitchkit/node`.
 
 ## Install
 

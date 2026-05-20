@@ -4,7 +4,7 @@ Where stitchkit is and where it is going. This is a direction, not a dated
 commitment — priorities shift as the framework is proven across more projects.
 
 The *why* behind each item lives in an ADR under
-[`docs/DECISIONS.md`](./docs/DECISIONS.md).
+[`docs/decisions/`](./docs/decisions/).
 
 ## Now — 0.1.x
 
@@ -47,11 +47,11 @@ Deliberate non-goals — considered and declined, so they are not re-proposed:
 
 - **A fullstack framework.** No file-based routing, no server components, no
   bundler. stitchkit is the contract and transport layer; the UI build belongs
-  to the app. → [ADR 0010](./docs/DECISIONS.md#adr-0010)
+  to the app. → [ADR 0010](./docs/decisions/0010-fullstack-rejected.md)
 - **A competing WebSocket or hook engine.** Realtime is a thin Socket.IO
-  wrapper; the React data layer is `react-query-kit`. → [ADR 0008](./docs/DECISIONS.md#adr-0008)
-- **Node / Deno support.** stitchkit is Bun-only — it builds on `Bun.serve`,
-  `bun:test` and Bun APIs with no compatibility shims. → [ADR 0011](./docs/DECISIONS.md#adr-0011)
+  wrapper; the React data layer is `react-query-kit`. → [ADR 0008](./docs/decisions/0008-thin-wrappers.md)
+- **A Deno/Cloudflare runtime.** Bun is first-class, Node ≥ 22 is supported
+  via `stitchkit/node`. → [ADR 0013](./docs/decisions/0013-runtime-agnostic-core.md)
 
 ## Contributing to the roadmap
 

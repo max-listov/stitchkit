@@ -33,3 +33,43 @@ jobs:
       - name: Build
         working-directory: packages/core
         run: bun run build
+
+  node-smoke:
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        working-directory: packages/core
+        run: bun run build
+
+      - name: Node import smoke test
+        working-directory: packages/core
+        run: |
+          node -e "
+            import('stitchkit/node').then(m => {
+              if (typeof m.serveNode !== 'function') process.exit(1);
+              console.log('stitchkit/node: OK');
+            });
+            import('stitchkit/contract').then(m => {
+              if (typeof m.defineContract !== 'function') process.exit(1);
+              console.log('stitchkit/contract: OK');
+            });
+            import('stitchkit/tools').then(m => {
+              console.log('stitchkit/tools: OK');
+            });
+          "

@@ -5,8 +5,8 @@ ideas and pull requests are all welcome.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) `>= 1.2` — stitchkit is Bun-only (uses `Bun.serve`,
-  `bun:test`); there is no Node/Deno compatibility layer.
+- [Bun](https://bun.sh) `>= 1.2` — development and tests use `Bun.serve` and
+  `bun:test`. Node ≥ 22 is supported at runtime via `stitchkit/node`.
 
 ## Setup
 
@@ -100,13 +100,14 @@ built output.
 - **Zod-first** — schemas define the shape, types come from `z.infer`.
 - **No `as` casts** in framework code, except a documented adapter boundary over
   an untyped external library (e.g. the Socket.IO emitter).
-- **Bun-only** — no Node/Deno compatibility shims.
+- **Core is Web Fetch-clean** — `createHandler` has no Bun globals. Bun APIs
+  live only in `createServer` and `stitchkit/server`.
 - Public API additions need a short note in `CHANGELOG.md` under `[Unreleased]`.
 - The repo-root `README.md` is canonical; `packages/core/README.md` (the npm
   landing page) is a synced copy. Edit the root file, then run
   `bun run sync:readme` — `bun run release` does this automatically.
 - User-facing docs live in `docs/guide/` and `docs/api/`; design rationale in
-  `docs/DECISIONS.md` (ADRs). See [`docs/README.md`](./docs/README.md).
+  `docs/decisions/` (ADRs). See [`docs/README.md`](./docs/README.md).
 
 ## Pull requests
 

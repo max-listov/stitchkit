@@ -239,6 +239,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
+| `validateMcpSchemas` | function | assert every tool schema is JSON Schema-compatible — [guide](../guide/mcp-and-agents.md#incompatible-schemas--onincompatibleschema) |
 | `McpHandlerConfig` | _type_ | config for `createMcpHandler` |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
@@ -247,6 +248,10 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
+| `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
+| `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` observability hooks |
+| `ToolResult` | _type_ | the result of one tool call |
+| `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
 
 ---
@@ -272,4 +277,4 @@ and `react-query-kit` peers.
 
 For the rationale behind these APIs — why `Bun.serve` and not a framework, why
 two context types, why thin wrappers — see the
-[Architecture Decisions](../DECISIONS.md).
+[Architecture Decisions](../decisions/).

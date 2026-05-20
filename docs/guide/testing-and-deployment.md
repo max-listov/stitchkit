@@ -2,7 +2,7 @@
 
 ## Testing
 
-stitchkit is Bun-only, so tests run on `bun:test`. The contract makes most of an
+stitchkit's own test suite runs on `bun:test`. The contract makes most of an
 API testable without a live socket.
 
 ### Test handlers in process

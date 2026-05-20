@@ -37,7 +37,8 @@ Every public export, grouped by entrypoint, each linked to the guide.
 How stitchkit is built and why.
 
 - [`VISION.md`](./VISION.md) — what stitchkit is, its principles, its direction.
-- [`DECISIONS.md`](./DECISIONS.md) — architecture decision records (ADRs) — the **why**.
+- [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
+  One file per ADR. Index: [`decisions/README.md`](./decisions/README.md).
 - [`backlog/`](./backlog/) — task tracking — the **what**.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — how to build, test and contribute.
 
@@ -48,7 +49,7 @@ docs/
 ├── guide/         the user guide — how to build with stitchkit
 ├── api/           the API reference
 ├── VISION.md      what stitchkit is, its principles, its direction
-├── DECISIONS.md   architecture decision records (ADRs) — the "why"
+├── decisions/     architecture decision records — one file per ADR
 └── backlog/       task tracking — the "what"
     ├── inbox/     raw ideas, not yet worked out
     ├── planned/   worked out, has a plan, ready to pick up
@@ -60,7 +61,7 @@ docs/
 ```
 idea ─▶ inbox/ ─▶ planned/ ─▶ done/
                         │
-   architectural decision ─▶ DECISIONS.md (a new ADR section)
+   architectural decision ─▶ decisions/ (a new ADR file)
    released change        ─▶ CHANGELOG.md (repo root)
 ```
 
@@ -69,7 +70,7 @@ idea ─▶ inbox/ ─▶ planned/ ─▶ done/
 - **Being implemented** → it may move to an `in-progress/` folder while active.
 - **Finished** → `git mv` to `done/` and add a `## What was done` section.
 - **An architectural decision** taken along the way → also a new ADR section in
-  `DECISIONS.md`.
+  `decisions/`.
 - **A shipped, user-visible change** → a line in the root `CHANGELOG.md`.
 
 `done/` holds completed task records — from the first release onward it fills
@@ -77,7 +78,7 @@ normally as work ships.
 
 ### Decisions vs. backlog
 
-- **`DECISIONS.md`** records the **why** — architectural decisions, as immutable
+- **`decisions/`** records the **why** — architectural decisions, as immutable
   ADRs. An ADR weighs alternatives and explains a choice; once written it is
   not edited, only superseded by a later ADR.
 - **`backlog/`** records the **what** — the work pipeline, from idea to done.
@@ -86,7 +87,7 @@ Not every completed task is an ADR. A routine task — a bug fix, a small
 feature — just lives in `done/`. Write an ADR only when a real architectural
 decision was made (a choice between alternatives, with lasting consequences).
 
-See [`DECISIONS.md`](./DECISIONS.md) for the ADR format and index.
+See [`decisions/README.md`](./decisions/README.md) for the ADR format and index.
 
 ### File conventions
 
@@ -110,4 +111,4 @@ completed: YYYY-MM-DD   # done only
 ```
 
 ADRs use a lighter header (a `Status` and `Date` line) — see the sections in
-`DECISIONS.md`.
+`decisions/`.

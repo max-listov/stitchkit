@@ -101,6 +101,29 @@ export interface RawRoute {
   handler: (req: Request, ctx: RawRouteContext) => Response | Promise<Response>;
 }
 
+export interface StitchLogger {
+  info(msg: string, data?: Record<string, unknown>): void;
+  warn(msg: string, data?: Record<string, unknown>): void;
+  error(msg: string, data?: Record<string, unknown>): void;
+  debug(msg: string, data?: Record<string, unknown>): void;
+}
+
+/**
+ * Runtime-neutral handler config — everything `createHandler` needs.
+ * No Bun globals, no Bun types. This is the portability seam.
+ */
+export interface HandlerConfig {
+  services?: ServiceDef[];
+  groups?: RouteGroup[];
+  rawRoutes?: RawRoute[];
+  cors?: CorsConfig;
+  hooks?: LifecycleHooks;
+  logging?: boolean | StitchLogger;
+  traceId?: (req: Request) => string;
+}
+
+// ─── Bun-specific server config ─────────────────────
+
 type BunServeOptions = Parameters<typeof Bun.serve>[0];
 type BunWebSocketHandlers = BunServeOptions extends { websocket?: infer T } ? T : never;
 type BunRoutes = BunServeOptions extends { routes?: infer T } ? T : never;
@@ -111,30 +134,13 @@ export type ServerPassthrough = Omit<
   'fetch' | 'port' | 'hostname' | 'unix' | 'routes' | 'websocket' | 'development'
 >;
 
-export interface StitchLogger {
-  info(msg: string, data?: Record<string, unknown>): void;
-  warn(msg: string, data?: Record<string, unknown>): void;
-  error(msg: string, data?: Record<string, unknown>): void;
-  debug(msg: string, data?: Record<string, unknown>): void;
-}
-
-export interface ServerConfig {
-  services?: ServiceDef[];
-  groups?: RouteGroup[];
-  /** Non-contract routes — auth, webhooks, static, socket.io. */
-  rawRoutes?: RawRoute[];
+/**
+ * Full config for `createServer` — extends `HandlerConfig` with Bun-specific
+ * options (`Bun.serve` routes, websocket, development, passthrough).
+ */
+export interface BunServerConfig extends HandlerConfig {
   port?: number;
   hostname?: string;
-  cors?: CorsConfig;
-  hooks?: LifecycleHooks;
-  logging?: boolean | StitchLogger;
-  /**
-   * Resolve the per-request trace id. Default: a trusted `x-request-id` /
-   * `x-trace-id` header, else a generated id. Override to reuse an id the
-   * project already owns (e.g. an `AsyncLocalStorage` request context) so
-   * request logs and application logs share one id.
-   */
-  traceId?: (req: Request) => string;
   routes?: BunRoutes;
   websocket?: BunWebSocketHandlers;
   development?: BunDevelopmentOptions;

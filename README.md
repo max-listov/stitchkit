@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Contract-first backend framework for Bun.</strong><br/>
+  <strong>Contract-first backend framework for Bun and Node.</strong><br/>
   Define your API once — get an HTTP API, MCP tools, AI-agent tools and a typed client.
 </p>
 
@@ -8,6 +8,7 @@
   <a href="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml"><img src="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/stitchkit?color=2563eb" alt="MIT license" /></a>
   <img src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=000" alt="Bun" />
+  <img src="https://img.shields.io/badge/runtime-Node%20%E2%89%A522-339933?logo=nodedotjs&logoColor=fff" alt="Node >= 22" />
 </p>
 
 <p align="center">
@@ -23,7 +24,7 @@
 ## Why
 
 - **One contract, four surfaces.** Define your API once — get HTTP routes, MCP tools (for Claude/Cursor), AI SDK tools (for agents), and a typed client.
-- **Zero HTTP framework deps.** Built on `Bun.serve()` directly. No Hono, no Elysia, no Express.
+- **Zero HTTP framework deps.** Built on `Bun.serve()` (Bun) or `srvx` (Node). No Hono, no Elysia, no Express.
 - **Fullstack type safety.** Server handlers, client calls, MCP tools — all typed from the same contract.
 - **Small.** ~4000 lines of source. No magic, no codegen, no build step.
 - **Thin over what you already use.** WebSocket = Socket.IO (`createSocketIOClient` / `createSocketIOServer`). React data layer = `react-query-kit` (`createCursorQuery`). stitchkit owns the contract and the transport — not its own competing WebSocket or hook engine.
@@ -43,13 +44,15 @@ contract — change it once, every surface and the typed client move together.
 ## Status
 
 Pre-1.0. The core is stable and covered by tests, but the public API may still
-change between minor versions until 1.0. Bun-only — there is no Node/Deno
-compatibility layer.
+change between minor versions until 1.0. Bun is first-class; Node ≥ 22 is
+supported via `stitchkit/node`.
 
 ## Install
 
 ```bash
-bun add stitchkit
+bun add stitchkit        # Bun
+npm install stitchkit    # Node
+pnpm add stitchkit       # pnpm
 ```
 
 ## Import policy
@@ -338,7 +341,7 @@ peer — an install pulls in only what the project actually uses.
 **Why peers, not bundled.** A peer is resolved once, by your app — framework and
 app code share a single instance. Bundled copies would double `zod`, split the
 `react` hook runtime and break `instanceof`. Optional peers mean an app that
-never touches MCP never installs the MCP SDK. → [DECISIONS.md](./docs/DECISIONS.md#adr-0011)
+never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/0011-bun-only-one-package.md)
 
 The framework itself is small — ~4000 lines, no codegen, no build step in your app.
 
@@ -363,7 +366,7 @@ This README is the quick start. The full guide and API reference are in
   [testing & deployment](./docs/guide/testing-and-deployment.md)
 - **[API reference](./docs/api/reference.md)** — every export, by entrypoint.
 - **[Roadmap](./ROADMAP.md)** — where stitchkit is going.
-- **[Architecture decisions](./docs/DECISIONS.md)** — the *why* behind the design.
+- **[Architecture decisions](./docs/decisions/)** — the *why* behind the design.
 
 ## Contributing
 

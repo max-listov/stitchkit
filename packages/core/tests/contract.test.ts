@@ -68,18 +68,41 @@ describe('defineContract', () => {
             path: '/a',
             desc: 'A',
             toolName: 'do_thing',
-            expose: ['HTTP'] as const,
+            expose: ['MCP'] as const,
           },
           b: {
             method: 'POST',
             path: '/b',
             desc: 'B',
             toolName: 'do_thing',
-            expose: ['MCP'] as const,
+            expose: ['AGENT'] as const,
           },
         },
       ),
     ).not.toThrow();
+  });
+
+  test('rejects toolName on an HTTP-only endpoint', () => {
+    expect(() =>
+      defineContract(
+        { prefix: 'test' },
+        {
+          a: {
+            method: 'GET',
+            path: '/a',
+            desc: 'A',
+            toolName: 'do_thing',
+            expose: ['HTTP'] as const,
+          },
+        },
+      ),
+    ).toThrow('not exposed on any tool transport');
+  });
+
+  test('rejects an empty desc', () => {
+    expect(() =>
+      defineContract({ prefix: 'test' }, { a: { method: 'GET', path: '/a', desc: '  ' } }),
+    ).toThrow('empty desc');
   });
 
   test('supports endpoint-level scope override', () => {

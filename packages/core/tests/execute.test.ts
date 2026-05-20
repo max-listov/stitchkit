@@ -164,4 +164,95 @@ describe('executeToolMethod', () => {
     expect(afterResults.length).toBe(1);
     expect(afterResults[0]?.ok).toBe(false);
   });
+
+  test('slices flat args — strict params + input schemas work', async () => {
+    const method = makeMethod({
+      paramsSchema: z.strictObject({ id: z.string() }),
+      inputSchema: z.strictObject({ name: z.string() }),
+      handler: (ctx) => ({ params: ctx.params, input: ctx.input }),
+    });
+
+    const result = await executeToolMethod(
+      method,
+      'test',
+      { id: 'a', name: 'Max' },
+      { source: 'mcp' },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toEqual({ params: { id: 'a' }, input: { name: 'Max' } });
+    }
+  });
+
+  test('validates handler output — a mismatch is a server fault', async () => {
+    const method = makeMethod({
+      outputSchema: z.object({ id: z.string() }),
+      handler: () => ({ id: 123 }),
+    });
+    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('INTERNAL_SERVER_ERROR');
+  });
+
+  test('valid handler output passes outputSchema', async () => {
+    const method = makeMethod({
+      outputSchema: z.object({ id: z.string() }),
+      handler: () => ({ id: 'ok' }),
+    });
+    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    expect(result.ok).toBe(true);
+  });
+
+  test('lifecycle.beforeHandle can reject the call before the handler', async () => {
+    let handlerRan = false;
+    const method = makeMethod({
+      handler: () => {
+        handlerRan = true;
+        return 'ok';
+      },
+    });
+    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' }, undefined, {
+      beforeHandle: () => {
+        throw new AppError('FORBIDDEN', 'denied', 403);
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('FORBIDDEN');
+    expect(handlerRan).toBe(false);
+  });
+
+  test('lifecycle.afterHandle transforms the result', async () => {
+    const method = makeMethod({ handler: () => ({ n: 1 }) });
+    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' }, undefined, {
+      afterHandle: (_ctx, data) => ({
+        ...(data as Record<string, unknown>),
+        wrapped: true,
+      }),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual({ n: 1, wrapped: true });
+  });
+
+  test('context cannot shadow params / input / source', async () => {
+    let captured: Record<string, unknown> = {};
+    const method = makeMethod({
+      paramsSchema: z.object({ id: z.string() }),
+      handler: (ctx) => {
+        captured = { ...ctx };
+        return 'ok';
+      },
+    });
+    await executeToolMethod(
+      method,
+      'test',
+      { id: 'real' },
+      {
+        source: 'agent',
+        params: 'HIJACK',
+        input: 'HIJACK',
+      },
+    );
+    expect(captured.params).toEqual({ id: 'real' });
+    expect(captured.source).toBe('agent');
+  });
 });

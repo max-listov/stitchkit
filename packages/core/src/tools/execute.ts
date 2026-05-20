@@ -1,6 +1,7 @@
 import type { RuntimeContext, TransportSource } from '../contract';
 import { formatZodError, normalizeError } from '../internal/errors';
 import type { MethodDef } from '../server/types';
+import { objectShapeKeys } from './schema';
 
 export type ToolResult =
   | { ok: true; data: unknown }
@@ -26,12 +27,49 @@ export interface ToolCallHooks {
   ) => void | Promise<void>;
 }
 
+/**
+ * The tool-side twin of the HTTP server's `beforeHandle` / `afterHandle`. A
+ * tool call runs the same handler an HTTP request would — `ToolLifecycle` makes
+ * it run the same gate. Pass a `createAuthHook` result as `beforeHandle` here
+ * and tools are scope-guarded exactly as HTTP routes are; without it a tool
+ * call bypasses the auth a `createServer` `beforeHandle` enforces.
+ *
+ * Structurally a subset of `LifecycleHooks` — the same hook object used for
+ * `createServer({ hooks })` is assignable here.
+ */
+export interface ToolLifecycle {
+  /** Auth / scope gate — throw to reject the call. */
+  beforeHandle?: (ctx: RuntimeContext, endpoint: MethodDef) => void | Promise<void>;
+  /** Transform the handler result before it is returned. */
+  afterHandle?: (
+    ctx: RuntimeContext,
+    result: unknown,
+    endpoint: MethodDef,
+  ) => unknown | Promise<unknown>;
+}
+
+/**
+ * Normalise any thrown value into a failed `ToolResult` — the one place an
+ * `AppError` becomes a tool error. Shared by `executeToolMethod` and both
+ * transport mounts so every tool error has one shape.
+ */
+export function toolResultFromError(err: unknown): Extract<ToolResult, { ok: false }> {
+  const appErr = normalizeError(err);
+  return {
+    ok: false,
+    code: appErr.code,
+    details: appErr.details ?? { message: appErr.message },
+    ...(appErr.hint && { hint: appErr.hint }),
+  };
+}
+
 export async function executeToolMethod(
   method: MethodDef<unknown, unknown, unknown>,
   toolName: string,
   rawArgs: Record<string, unknown>,
   context: ToolCallContext,
   hooks?: ToolCallHooks,
+  lifecycle?: ToolLifecycle,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
 
@@ -45,9 +83,22 @@ export async function executeToolMethod(
     await hooks.beforeToolCall(toolName, rawArgs, context);
   }
 
+  // Slice the flat tool args the way the HTTP transport slices a request: path
+  // params and body/query are disjoint sets of keys. Parsing each schema over
+  // only its own slice keeps a `.strict()` schema working as a tool, exactly
+  // as it works on HTTP — a single flat blob parsed against both would reject
+  // every call once either schema is strict.
+  const paramKeys = new Set(objectShapeKeys(method.paramsSchema));
+  const paramArgs: Record<string, unknown> = {};
+  const inputArgs: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rawArgs)) {
+    if (paramKeys.has(key)) paramArgs[key] = value;
+    else inputArgs[key] = value;
+  }
+
   let params: unknown;
   if (method.paramsSchema) {
-    const result = method.paramsSchema.safeParse(rawArgs);
+    const result = method.paramsSchema.safeParse(paramArgs);
     if (!result.success) {
       return finish({
         ok: false,
@@ -60,7 +111,7 @@ export async function executeToolMethod(
 
   let input: unknown;
   if (method.inputSchema) {
-    const result = method.inputSchema.safeParse(rawArgs);
+    const result = method.inputSchema.safeParse(inputArgs);
     if (!result.success) {
       return finish({
         ok: false,
@@ -72,20 +123,45 @@ export async function executeToolMethod(
   }
 
   try {
-    const ctx: RuntimeContext = { params, input, ...context };
-    const data = await method.handler(ctx);
+    // Framework-owned fields are written last so neither the static context
+    // nor a `ToolExtend.resolve` result can shadow `params` / `input` /
+    // `source` — the same guard the HTTP context builder applies.
+    const ctx: RuntimeContext = { ...context, params, input, source: context.source };
+
+    if (lifecycle?.beforeHandle) {
+      await lifecycle.beforeHandle(ctx, method);
+    }
+
+    let data: unknown = await method.handler(ctx);
+
+    if (lifecycle?.afterHandle) {
+      const transformed = await lifecycle.afterHandle(ctx, data, method);
+      if (transformed !== undefined) data = transformed;
+    }
+
+    // Validate the handler's output against the contract, like the HTTP path.
+    // A mismatch is a server fault — `INTERNAL_SERVER_ERROR`, not the client
+    // `VALIDATION_ERROR` an invalid argument produces.
+    if (method.outputSchema) {
+      const parsed = method.outputSchema.safeParse(data);
+      if (!parsed.success) {
+        return finish({
+          ok: false,
+          code: 'INTERNAL_SERVER_ERROR',
+          details: {
+            message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,
+          },
+        });
+      }
+      data = parsed.data;
+    }
+
     const output = data === undefined || data === null ? { status: 'ok' } : data;
     return finish({ ok: true, data: output });
   } catch (err) {
-    const appErr = normalizeError(err);
-    // Протаскиваем message вызывающему, когда нет структурированных `details` —
-    // клиент должен видеть причину, а не голый код. Логирование результата —
-    // на стороне потребителя через `afterToolCall` hook.
-    return finish({
-      ok: false,
-      code: appErr.code,
-      details: appErr.details ?? { message: appErr.message },
-      ...(appErr.hint && { hint: appErr.hint }),
-    });
+    // The result carries the cause (message in `details` when there is nothing
+    // structured) so a model sees why it failed. Result logging is the
+    // consumer's job, via the `afterToolCall` hook.
+    return finish(toolResultFromError(err));
   }
 }

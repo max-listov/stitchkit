@@ -1,7 +1,8 @@
 /**
- * The public error envelope — the JSON shape of every error response, and the
- * one type the server (`AppError.toJSON`) and the typed HTTP client are
- * declared against.
+ * The public error envelope — the JSON shape of every HTTP error response, and
+ * the one type the server (`AppError.toJSON`) and the typed HTTP client are
+ * declared against. Tool (MCP / agent) errors use a flatter, model-facing
+ * shape instead — see `formatToolError` in `tools/mount.ts`.
  */
 export interface ErrorEnvelope {
   error: {

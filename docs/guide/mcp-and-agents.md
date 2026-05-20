@@ -55,12 +55,46 @@ createServer({
 | `auth` | `(req) => identity \| null` — `null` rejects with 401 |
 | `services` | the services to expose — an array, or `(auth) => ServiceDef[]` |
 | `context` | `(auth) => {…}` — values merged into every tool handler's `ctx` |
-| `hooks` | tool-call lifecycle hooks — `afterToolCall` fires on every result |
+| `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see below) |
+| `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
+| `onIncompatibleSchema` | `'throw'` (default) · `'skip'` · `'warn'` — see below |
+| `logger` | a `StitchLogger` for the `'warn'` policy |
 | `nativeTools` | register non-contract tools directly on the `McpServer` |
 | `instructions` | a short host-facing usage hint, surfaced to MCP tool-search |
 
 `services` and `context` receive the resolved identity, so a tenant can be
 shown only its own tools and every handler can read `ctx.tenantId`.
+
+### Guarding tools — `lifecycle`
+
+A tool call runs the same handler an HTTP request would. `lifecycle` makes it
+run the same gate: a `beforeHandle` (throw to reject) and an `afterHandle`
+(transform the result) — the tool-side twin of `createServer`'s hooks. Pass the
+**same** [`createAuthHook`](./auth-and-errors.md#createauthhook) result you give
+the HTTP server and tool calls are scope-checked by the identical rules:
+
+```ts
+createMcpHandler({ serverInfo, auth, services, lifecycle: { beforeHandle: authHook } })
+```
+
+Without it, a tool call bypasses the HTTP `beforeHandle` — the contract's
+`scope` is not enforced on the MCP / agent surface. `mountMcp`, `mountAgent` and
+`buildMcpServer` take `lifecycle` too.
+
+### Incompatible schemas — `onIncompatibleSchema`
+
+A contract schema that JSON Schema cannot represent (a `z.date()`, a `z.map()`)
+cannot become a tool. `onIncompatibleSchema` decides what happens:
+
+- `'throw'` (default) — fail the build, listing every offending tool. A static
+  `services` array is checked when `createMcpHandler` is constructed, so a bad
+  schema fails the deploy, not the first request. Better than a tool that
+  silently vanishes from the surface.
+- `'warn'` — log through `logger` and drop the tool.
+- `'skip'` — drop the tool silently.
+
+`validateMcpSchemas(services)` runs the same check on its own — useful in a
+startup assertion or a test.
 
 ## `mountMcp`
 
@@ -166,12 +200,16 @@ the merged `params` + `input`. `context` is merged into every tool handler's
 | Field | Purpose |
 |-------|---------|
 | `context` | values merged into every tool handler's `ctx` |
-| `hooks` | tool-call lifecycle hooks |
+| `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see [Guarding tools](#guarding-tools--lifecycle)) |
+| `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | add extra args resolved before the handler runs (see below) |
 
 `extend` adds tool-only arguments — fields the model fills that are resolved
 into context, then stripped before the contract handler sees them. Use it when a
 tool needs an argument the HTTP endpoint does not.
+
+`lifecycle` works the same as on the MCP server — without it an agent tool call
+bypasses the HTTP `beforeHandle` auth gate. Pass your `createAuthHook` result.
 
 ## Native multimodal tools
 

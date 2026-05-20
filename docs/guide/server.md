@@ -134,7 +134,7 @@ createServer({
   the error body. Without it, errors render through the standard envelope.
 
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
-That split is deliberate — see [ADR 0003](../DECISIONS.md#adr-0003).
+That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).
 
 ## Raw routes
 

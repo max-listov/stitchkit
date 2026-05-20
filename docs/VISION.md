@@ -1,6 +1,6 @@
 ---
 title: "stitchkit — Vision"
-description: Contract-first backend framework for Bun. One defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client.
+description: Contract-first backend framework for Bun and Node. One defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client.
 type: vision
 status: active
 created: 2025-05-01
@@ -9,7 +9,7 @@ updated: 2026-05-20
 
 # stitchkit
 
-Contract-first backend framework for Bun.
+Contract-first backend framework for Bun and Node.
 
 One `defineContract()` → an HTTP API + MCP tools + AI-agent tools + a typed client.
 
@@ -32,8 +32,8 @@ truth; the transports cannot drift.
 
 - **One contract, every surface.** Define the API once — get HTTP, MCP, agent
   tools and a typed client, all typed from the same declaration.
-- **Zero HTTP-framework dependency.** Built on `Bun.serve()` directly. No Hono,
-  no Elysia, no Express.
+- **Zero HTTP-framework dependency.** Built on `Bun.serve()` (Bun) or `srvx`
+  (Node). No Hono, no Elysia, no Express.
 - **Thin over what you already use.** WebSocket is Socket.IO; the React data
   layer is `react-query-kit`. stitchkit owns the contract and the transport —
   it does not ship a competing WebSocket engine or hook library.

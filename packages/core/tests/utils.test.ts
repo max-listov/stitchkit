@@ -64,80 +64,73 @@ describe('toToolName', () => {
 });
 
 describe('mergeSchemas', () => {
-  test('merges params + input into single schema', () => {
-    const params = z.object({ id: z.string() });
-    const input = z.object({ name: z.string() });
-    const merged = mergeSchemas(params, input);
-
-    const result = merged.parse({ id: '123', name: 'test' });
-    expect(result).toEqual({ id: '123', name: 'test' });
+  test('merges params + input into a single object schema', () => {
+    const merged = mergeSchemas(z.object({ id: z.string() }), z.object({ name: z.string() }));
+    expect(merged.parse({ id: '123', name: 'test' })).toEqual({
+      id: '123',
+      name: 'test',
+    });
   });
 
   test('params only', () => {
-    const params = z.object({ id: z.string() });
-    const merged = mergeSchemas(params, undefined);
+    const merged = mergeSchemas(z.object({ id: z.string() }), undefined);
     expect(merged.parse({ id: 'abc' })).toEqual({ id: 'abc' });
   });
 
   test('input only', () => {
-    const input = z.object({ name: z.string() });
-    const merged = mergeSchemas(undefined, input);
+    const merged = mergeSchemas(undefined, z.object({ name: z.string() }));
     expect(merged.parse({ name: 'test' })).toEqual({ name: 'test' });
   });
 
   test('neither — empty schema', () => {
-    const merged = mergeSchemas(undefined, undefined);
-    expect(merged.parse({})).toEqual({});
+    expect(mergeSchemas(undefined, undefined).parse({})).toEqual({});
   });
 
-  test('JSON coercion — string to array', () => {
-    const input = z.object({ tags: z.array(z.string()) });
-    const merged = mergeSchemas(undefined, input);
-    const result = merged.parse({ tags: '["a","b"]' });
-    expect(result).toEqual({ tags: ['a', 'b'] });
+  test('does not coerce — the advertised schema is the validated schema', () => {
+    // Coercion would make the schema a tool advertises differ from the one a
+    // call is validated against. A JSON-looking string is rejected, not parsed.
+    const merged = mergeSchemas(undefined, z.object({ tags: z.array(z.string()) }));
+    expect(() => merged.parse({ tags: '["a","b"]' })).toThrow();
+    expect(merged.parse({ tags: ['a', 'b'] })).toEqual({ tags: ['a', 'b'] });
   });
 
-  test('JSON coercion — string to object', () => {
-    const input = z.object({ meta: z.object({ key: z.string() }) });
-    const merged = mergeSchemas(undefined, input);
-    const result = merged.parse({ meta: '{"key":"val"}' });
-    expect(result).toEqual({ meta: { key: 'val' } });
+  test('conflict detection — throws on a key in both params and input', () => {
+    expect(() =>
+      mergeSchemas(z.object({ id: z.string() }), z.object({ id: z.number() })),
+    ).toThrow('Schema merge conflict: id');
   });
 
-  test('conflict detection — throws on duplicate keys', () => {
-    const params = z.object({ id: z.string() });
-    const input = z.object({ id: z.number(), name: z.string() });
-    expect(() => mergeSchemas(params, input)).toThrow('Schema merge conflict: id');
+  test('non-object params — throws', () => {
+    expect(() => mergeSchemas(z.string(), undefined)).toThrow(
+      'params schema must be a z.object',
+    );
   });
 
-  test('discriminated union — flattened to flat object', () => {
-    const input = z.discriminatedUnion('type', [
-      z.object({ type: z.literal('text'), content: z.string() }),
-      z.object({ type: z.literal('image'), url: z.string(), alt: z.string().optional() }),
-    ]);
-
-    const merged = mergeSchemas(undefined, input);
-    const shape = merged.shape;
-
-    expect('type' in shape).toBe(true);
-    expect('content' in shape).toBe(true);
-    expect('url' in shape).toBe(true);
-    expect('alt' in shape).toBe(true);
-
+  test('discriminated union input — kept intact, requiredness preserved', () => {
+    const merged = mergeSchemas(
+      undefined,
+      z.discriminatedUnion('type', [
+        z.object({ type: z.literal('text'), content: z.string() }),
+        z.object({ type: z.literal('image'), url: z.string() }),
+      ]),
+    );
     expect(merged.parse({ type: 'text', content: 'hello' })).toBeTruthy();
-    expect(merged.parse({ type: 'image', url: 'http://...' })).toBeTruthy();
+    expect(merged.parse({ type: 'image', url: 'http://x' })).toBeTruthy();
+    // A wrong-variant field combination is still rejected.
+    expect(() => merged.parse({ type: 'text', url: 'http://x' })).toThrow();
   });
 
-  test('discriminated union + params merged', () => {
-    const params = z.object({ id: z.string() });
-    const input = z.discriminatedUnion('action', [
-      z.object({ action: z.literal('create'), name: z.string() }),
-      z.object({ action: z.literal('delete') }),
-    ]);
-
-    const merged = mergeSchemas(params, input);
-    expect('id' in merged.shape).toBe(true);
-    expect('action' in merged.shape).toBe(true);
-    expect('name' in merged.shape).toBe(true);
+  test('discriminated union + params — intersected, both enforced', () => {
+    const merged = mergeSchemas(
+      z.object({ id: z.string() }),
+      z.discriminatedUnion('action', [
+        z.object({ action: z.literal('create'), name: z.string() }),
+        z.object({ action: z.literal('delete') }),
+      ]),
+    );
+    expect(merged.parse({ id: 'x', action: 'create', name: 'n' })).toBeTruthy();
+    expect(merged.parse({ id: 'x', action: 'delete' })).toBeTruthy();
+    // Missing the params half is rejected.
+    expect(() => merged.parse({ action: 'delete' })).toThrow();
   });
 });
