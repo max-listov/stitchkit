@@ -22,8 +22,9 @@ reasoning behind each rule is an ADR in `docs/decisions/`.
   there is no billing, `source` is transport-only. → ADR 0002
 - Transport and hooks use `RuntimeContext` (loose); handlers use
   `HandlerContext` (typed). Do not cast between them. → ADR 0003
-- A new architectural decision → a new ADR in `docs/decisions/`. A new idea →
-  a file in `docs/backlog/inbox/`. See `docs/README.md`.
+- A new architectural decision → a new ADR in `docs/decisions/` **and a row in
+  `docs/decisions/README.md`** (keep the index in sync). A new idea → a file in
+  `docs/backlog/inbox/`. See `docs/README.md`.
 - **ALWAYS** run `bun run verify` before pushing — lint, typecheck, tests and
   build must all be green.
 
@@ -58,7 +59,7 @@ packages/core/src/
 ```
 
 Entrypoints: `stitchkit` (browser-safe) · `/server` · `/node` · `/tools` ·
-`/react` · `/contract` · `/observability`. The user guide is in `docs/guide/`,
+`/cli` · `/react` · `/contract` · `/observability`. The user guide is in `docs/guide/`,
 the full public API in `docs/api/reference.md`.
 
 ## Conventions
@@ -67,3 +68,21 @@ the full public API in `docs/api/reference.md`.
   `packages/core/tests`.
 - Two git hooks enforce quality: `pre-commit` (auto-format, blocks on any
   warning) and `pre-push` (`bun run verify`). See `CONTRIBUTING.md`.
+- Commit messages are plain (e.g. `release: 0.4.0`, `fix: …`) — **no
+  `Co-Authored-By`, AI or tool-signature footer**.
+- **Never name a private/consuming project** in committed docs, ADRs, the
+  CHANGELOG or backlog — write "a consuming project". The public repo carries no
+  downstream names.
+
+## Releasing
+
+Tag-driven — CI publishes on a `v*` tag (npm via OIDC trusted publishing + a
+GitHub Release). Full flow lives in the `.github/workflows/ci.yml` header:
+
+1. Bump `version` in `packages/core/package.json`.
+2. Roll `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] — <date>`; add a fresh empty
+   `[Unreleased]` and the footer compare links.
+3. `bun run verify` green, then commit `release: X.Y.Z`.
+4. `git push origin master`, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+   CI checks `tag == package version`, runs `npm publish --provenance`, and cuts
+   the GitHub Release from that changelog section.

@@ -35,6 +35,7 @@ These records were consolidated from the project's internal design notes on
 | [0018](0018-openapi-generation.md) | OpenAPI generated from the contract | Accepted |
 | [0019](0019-generic-native-tools.md) | Generic native MCP tools (wait / download / upload) | Accepted — extends 0007 |
 | [0020](0020-raw-websocket-lane.md) | A raw WebSocket lane composed beside Socket.IO | Accepted — upholds 0008 |
+| [0021](0021-endpoint-meta-passthrough.md) | Endpoint meta passthrough (opaque per-endpoint metadata) | Accepted — extends 0002 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

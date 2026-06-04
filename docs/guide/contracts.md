@@ -63,6 +63,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `toolName` | no | explicit MCP / agent tool name (defaults to `prefix_key`) |
 | `multipart` | no | field name of a file upload — see [below](#file-uploads) |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
+| `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
 
 ## `params` vs `input` vs `output`
 
@@ -125,6 +126,37 @@ name:
 ```ts
 { method: 'POST', path: '/', desc: 'Create a user', toolName: 'create_user', /* … */ }
 ```
+
+## Endpoint metadata (`meta`)
+
+`meta` is an **opaque, app-defined** bag the core attaches no meaning to — the
+same escape-hatch spirit as `scope` being a free string ([ADR 0002](../decisions/0002-generic-core.md) /
+[ADR 0021](../decisions/0021-endpoint-meta-passthrough.md)). Declare app concerns
+the generic core does not model — a feature gate, a rate tier, a cache hint, a
+doc/owner tag — right next to the endpoint:
+
+```ts
+broadcast: {
+  method: 'POST', path: '/broadcast', desc: 'Send a broadcast',
+  input: BroadcastInput, output: Broadcast,
+  meta: { requiredFeature: 'broadcasts' },   // opaque to the core
+}
+```
+
+It rides through to `MethodDef.meta`, readable in lifecycle hooks (the second
+argument is the endpoint) and on tool mounts. The consumer narrows the type when
+reading:
+
+```ts
+beforeHandle: (ctx, endpoint) => {
+  const feature = endpoint.meta?.requiredFeature
+  if (typeof feature === 'string' && !ctx.user?.features?.includes(feature)) {
+    throw forbidden('feature not enabled')
+  }
+}
+```
+
+`meta` is **app-private** — it is never serialized into the OpenAPI document.
 
 ## File uploads
 

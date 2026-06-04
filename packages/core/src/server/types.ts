@@ -41,6 +41,12 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   ui?: EndpointUiMeta;
   /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
   annotations?: EndpointToolAnnotations;
+  /**
+   * Opaque app-defined metadata from `EndpointDef.meta` — the core gives it no
+   * meaning. Read it in lifecycle hooks (`endpoint.meta?.X`) or on tool mounts;
+   * the consumer narrows the type. Never serialized to OpenAPI. → ADR 0021.
+   */
+  meta?: Record<string, unknown>;
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;
 }
 

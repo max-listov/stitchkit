@@ -8,6 +8,17 @@ public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-05
+
+### Endpoint metadata passthrough
+
+- **`EndpointDef.meta`** + **`MethodDef.meta`** (`Record<string, unknown>`) — an
+  opaque, app-defined per-endpoint metadata bag the core attaches no meaning to
+  (the `scope`-style escape-hatch). It rides through `implement()` and is
+  readable in lifecycle hooks (`beforeHandle`/`afterHandle`/`onError`) and on
+  tool mounts — for app concerns the generic core does not model (feature gate,
+  rate tier, cache hint, doc tag). Never serialized into OpenAPI. → ADR 0021.
+
 ## [0.4.0] — 2026-06-05
 
 ### Realtime — token handshake auth + a raw WebSocket lane
@@ -401,7 +412,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/max-listov/stitchkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/max-listov/stitchkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/max-listov/stitchkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/max-listov/stitchkit/compare/v0.1.0...v0.2.0

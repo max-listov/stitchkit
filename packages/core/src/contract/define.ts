@@ -22,6 +22,16 @@ interface EndpointDefBase {
    * property of the endpoint — declared once, the typed client applies it.
    */
   timeout?: number;
+  /**
+   * Opaque, app-defined per-endpoint metadata. The core attaches **no** meaning
+   * to it (like `scope`, it is a free escape-hatch — ADR 0002/0021): it rides
+   * through to `MethodDef.meta`, readable in lifecycle hooks
+   * (`beforeHandle`/`afterHandle`/`onError`) and on tool mounts. Use it for
+   * app concerns the generic core does not model — a feature gate, a rate tier,
+   * a cache hint, a doc/owner tag. The consumer narrows the type when reading.
+   * Never surfaced in the OpenAPI document (app-private, not the HTTP contract).
+   */
+  meta?: Record<string, unknown>;
 }
 
 /**

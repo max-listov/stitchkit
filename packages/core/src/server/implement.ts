@@ -38,6 +38,9 @@ export function implement<
       multipart: endpoint.multipart,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
+      // Opaque app metadata — rides through untouched (on the shared base, so no
+      // `in` guard). Readable in hooks / on tool mounts. → ADR 0021.
+      meta: endpoint.meta,
       handler: (ctx: RuntimeContext) =>
         (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),
     };
