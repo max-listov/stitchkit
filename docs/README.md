@@ -16,10 +16,11 @@ The guide, in reading order:
 3. [HTTP server](./guide/server.md) — `createServer`, hooks, raw routes, primitives.
 4. [Typed client](./guide/client.md) — the client, the React data layer, SSE.
 5. [MCP & agents](./guide/mcp-and-agents.md) — contracts as AI tools.
-6. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
-7. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
-8. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
-9. [Testing & deployment](./guide/testing-and-deployment.md).
+6. [CLI](./guide/cli.md) — contracts as a command-line program.
+7. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
+8. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
+9. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
+10. [Testing & deployment](./guide/testing-and-deployment.md).
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 

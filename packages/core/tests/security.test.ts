@@ -3,12 +3,17 @@
  * defence, CORS credential safety, SSRF numeric-host rejection, path
  * containment.
  */
-import { describe, expect, test } from 'bun:test';
+
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { isUnsafeKey, safeJsonParse } from '../src/internal/safe-json';
 import { isWithinDir } from '../src/internal/within-dir';
 import { parseCookies } from '../src/server/middleware/cookies';
 import { assertCorsConfig, corsHeaders } from '../src/server/middleware/cors';
 import { parseQueryParams } from '../src/server/request';
+import { resolveMedia } from '../src/tools/view-file';
 
 describe('safeJsonParse — prototype pollution', () => {
   test('drops __proto__ from a parsed object', () => {
@@ -118,5 +123,62 @@ describe('isWithinDir — path containment', () => {
 
   test('a sibling with a shared prefix is rejected', () => {
     expect(isWithinDir('/srv/static', '/srv/static-evil/x')).toBe(false);
+  });
+
+  // A trailing separator on root used to make `root + sep` end in `//`, which no
+  // real path starts with — silently turning the check into allow-nothing.
+  test('a trailing separator on root is normalised, not an accidental allow-nothing', () => {
+    expect(isWithinDir('/srv/static/', '/srv/static/app.css')).toBe(true);
+    expect(isWithinDir('/srv/static/', '/srv/static')).toBe(true);
+  });
+
+  test('root "/" correctly contains every absolute path', () => {
+    expect(isWithinDir('/', '/etc/passwd')).toBe(true);
+    expect(isWithinDir('/', '/')).toBe(true);
+  });
+
+  test('the shared-prefix guard still holds with a trailing-separator root', () => {
+    expect(isWithinDir('/srv/static/', '/srv/static-evil/x')).toBe(false);
+  });
+});
+
+describe('resolveMedia — local-file sandbox', () => {
+  let base = '';
+  let root = '';
+
+  beforeAll(async () => {
+    base = await mkdtemp(join(tmpdir(), 'sk-vf-'));
+    root = join(base, 'sandbox');
+    await mkdir(root);
+    await writeFile(join(root, 'pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await writeFile(join(root, 'secret.json'), '{"apiKey":"ggk_secret"}');
+    await writeFile(join(base, 'outside.png'), Buffer.from([1, 2, 3]));
+    await symlink(join(base, 'outside.png'), join(root, 'link.png'));
+  });
+
+  afterAll(async () => {
+    if (base) await rm(base, { recursive: true, force: true });
+  });
+
+  test('reads a media file inside the sandbox', async () => {
+    const content = await resolveMedia('pic.png', { baseDir: root });
+    expect(content[0]?.type).toBe('image');
+  });
+
+  test('refuses a non-media file even inside the sandbox', async () => {
+    // The ggk_ key lives in a config.json — a media-only allowlist blocks it.
+    await expect(resolveMedia('secret.json', { baseDir: root })).rejects.toThrow(/non-media/);
+  });
+
+  test('refuses a path escaping the sandbox', async () => {
+    await expect(resolveMedia('../outside.png', { baseDir: root })).rejects.toThrow(/escapes/);
+  });
+
+  test('refuses a symlink that points outside the sandbox', async () => {
+    await expect(resolveMedia('link.png', { baseDir: root })).rejects.toThrow(/escapes/);
+  });
+
+  test('local file access is disabled without a baseDir', async () => {
+    await expect(resolveMedia('pic.png')).rejects.toThrow(/disabled/);
   });
 });

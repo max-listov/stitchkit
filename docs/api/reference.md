@@ -53,13 +53,13 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
-| `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT']` |
+| `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` |
 | `EndpointDef` | _type_ | a single endpoint definition |
 | `HttpMethod` | _type_ | `GET \| POST \| PUT \| PATCH \| DELETE` |
-| `Transport` | _type_ | `HTTP \| MCP \| AGENT` |
-| `TransportSource` | _type_ | `http \| mcp \| agent` — the value of `ctx.source` |
+| `Transport` | _type_ | `HTTP \| MCP \| AGENT \| CLI` |
+| `TransportSource` | _type_ | `http \| mcp \| agent \| cli` — the value of `ctx.source` |
 | `RuntimeContext` | _type_ | the loose context seen by transport and hooks |
 | `HandlerContext` | _type_ | the typed context seen by a handler |
 | `EndpointFn` | _type_ | the call signature of one client method |
@@ -103,7 +103,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `createImplement` | function | fix the handler context type once |
 | `staticRoute` | function | a raw route that serves a directory |
-| `ServerConfig` | _type_ | config for `createServer` / `createHandler` |
+| `HandlerConfig` | _type_ | config for `createHandler` (runtime-agnostic) |
+| `BunServerConfig` | _type_ | config for `createServer` (Bun) |
 | `ServiceDef` | _type_ | the result of `implement` |
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
 | `Handlers` | _type_ | the typed handler map `implement` expects |
@@ -149,6 +150,12 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createSocketIOServer` | function | the typed Socket.IO server — [guide](../guide/realtime.md#server--createsocketioserver) |
 | `SocketIOServerConfig` | _type_ | config for `createSocketIOServer` |
 | `SocketIOServerHandle` | _type_ | the `{ io, websocket, route }` handle |
+| `composeWebSocketHandlers` | function | compose one Bun `websocket` from N lanes — a raw binary lane beside Socket.IO ([guide](../guide/realtime.md#raw-binary-lane-bun)) |
+| `webSocketLane` | function | a typed, cast-free lane for `composeWebSocketHandlers` |
+| `socketIoLane` | function | the Socket.IO catch-all lane for `composeWebSocketHandlers` |
+| `ComposedLane` | _type_ | a lane bridged to the loose data type |
+| `WebSocketLane` | _type_ | a typed lane (`{ match, handlers }`) |
+| `WebSocketComposeConfig` | _type_ | server-wide tuning for the composed handler |
 
 ### Primitives
 
@@ -168,6 +175,17 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `EventBus` | _type_ | the `createEventBus` handle |
 | `RateLimitConfig` | _type_ | config for `createRateLimiter` |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
+
+### OpenAPI
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `generateOpenApiDocument` | function | an OpenAPI 3.1 document from contract services — [ADR 0018](../decisions/0018-openapi-generation.md) |
+| `openApiRoute` | function | a `RawRoute` that serves the document as JSON |
+| `OpenApiConfig` | _type_ | config for `generateOpenApiDocument` |
+| `OpenApiDocument` | _type_ | the generated document |
+| `OpenApiInfo` | _type_ | the spec `info` block |
+| `OpenApiServer` | _type_ | a spec `servers` entry |
 
 ---
 
@@ -237,6 +255,8 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
+| `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
 | `validateMcpSchemas` | function | assert every tool schema is JSON Schema-compatible — [guide](../guide/mcp-and-agents.md#incompatible-schemas--onincompatibleschema) |
@@ -247,12 +267,39 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
+| `CliConfig` | _type_ | config for `createCli` |
+| `CliWaitConfig` | _type_ | `--wait` polling config |
+| `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
+| `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
 | `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` observability hooks |
 | `ToolResult` | _type_ | the result of one tool call |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
+
+---
+
+## `stitchkit/cli`
+
+Server-only. Turns contracts into a command-line program — the fourth transport.
+Light by design: needs neither the MCP SDK nor the `ai` peer.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createCli` | function | build and run a CLI from contracts — [guide](../guide/cli.md) |
+| `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
+| `pollUntilDone` | function | the generic `--wait` poller (advanced) |
+| `emitResult` | function | write a `ToolResult` to stdout/stderr + exit code (advanced) |
+| `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
+| `CliConfig` | _type_ | config for `createCli` |
+| `CliRunOptions` | _type_ | parsed global flags (`--json`, `--wait`, …) |
+| `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
+| `CliWaitConfig` | _type_ | per-command `--wait` polling config |
+| `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
+| `PollParams` | _type_ | params for `pollUntilDone` |
+| `CliWriters` | _type_ | stdout/stderr sinks for `emitResult` |
+| `EmitOptions` | _type_ | options for `emitResult` |
 
 ---
 

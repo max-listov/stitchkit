@@ -1,6 +1,11 @@
 import { createClient } from '../browser/client';
-import type { HttpClient } from '../browser/http';
-import type { ContractDef, EndpointDef, RuntimeContext } from '../contract';
+import { ApiError, type HttpClient } from '../browser/http';
+import {
+  AppError,
+  type ContractDef,
+  type EndpointDef,
+  type RuntimeContext,
+} from '../contract';
 import { isRecord } from '../internal/typed';
 import type { MethodDef, ServiceDef } from '../server/types';
 
@@ -57,6 +62,8 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       desc: endpoint.desc,
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
       expose: endpoint.expose,
+      ui: 'ui' in endpoint ? endpoint.ui : undefined,
+      annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       scope: endpoint.scope ?? groupScope,
       paramsSchema: endpoint.params,
       inputSchema: endpoint.input,
@@ -68,7 +75,29 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
           throw new Error(`implementRemote: endpoint "${key}" is not exposed over HTTP`);
         }
         const args = toArgs(ctx);
-        return call(options?.transformArgs ? await options.transformArgs(key, args) : args);
+        const finalArgs = options?.transformArgs
+          ? await options.transformArgs(key, args)
+          : args;
+        try {
+          return await call(finalArgs);
+        } catch (err) {
+          // The typed client throws `ApiError` on a non-2xx remote response.
+          // Translate it to the framework `AppError` so the real code / status /
+          // hint survive — otherwise `normalizeError` flattens every remote
+          // failure to `INTERNAL_SERVER_ERROR` (and logs a misleading "unhandled
+          // error"). A remote 400 stays a clean `VALIDATION_ERROR`, a 403 a
+          // `FORBIDDEN`, and so on, across every transport that mounts the proxy.
+          if (ApiError.is(err)) {
+            throw new AppError(
+              err.code,
+              err.message,
+              err.status,
+              isRecord(err.details) ? err.details : undefined,
+              err.hint,
+            );
+          }
+          throw err;
+        }
       },
     };
   }

@@ -2,9 +2,10 @@
 title: OpenAPI 3.1 генерация из defineContract
 description: Генерировать OpenAPI-спеку напрямую из контрактов stitchkit — контракт уже Zod-схема, спека бесплатна
 type: task
-status: inbox
+status: done
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-05-29
+completed: 2026-05-29 15:22
 ---
 
 # OpenAPI 3.1 генерация из `defineContract`
@@ -54,3 +55,22 @@ generateOpenApiDocument(config: {
 ## Контекст
 
 Идея возникла при обкатке stitchkit на реальном пилоте — nice-to-have, не блокер ни одной задачи, поэтому отложено в inbox.
+
+## Что сделано
+
+### Core (stitchkit)
+- [x] `generateOpenApiDocument({ info, services, groups, servers })` → `{ openapi:'3.1.0', info, paths }` — `packages/core/src/server/openapi.ts`
+- [x] HTTP-only фильтр методов = **то же правило, что у роутера** (`expose` отсутствует ИЛИ включает `'HTTP'`)
+- [x] path-params (`in:'path'`), GET-input → query, non-GET input → JSON `requestBody`, `output` → 200, `scope≠public` → 401/403
+- [x] конвертация через **единый** `toJsonSchema` + `jsonSchemaFields` (тот же walker, что CLI `--help`) — без дубля интроспекции
+- [x] `openApiRoute('/openapi.json', doc)` — `RawRoute` отдаёт спеку
+- [x] экспорт из `stitchkit/server` — `packages/core/src/server/index.ts`
+
+### Decisions / tests
+- [x] ADR 0018 — `docs/decisions/0018-openapi-generation.md`
+- [x] `tests/openapi.test.ts` (paths, params, requestBody, error-responses, tool-only skip, `openApiRoute`)
+
+### Что НЕ делалось (отложено явно)
+- `components`/`$ref`-дедуп — схемы инлайнятся (валидный OpenAPI), рефы позже.
+- Typed path-params из литерала пути (Hono-style) — отдельная крупная TS-фича.
+- Swagger-UI страница.

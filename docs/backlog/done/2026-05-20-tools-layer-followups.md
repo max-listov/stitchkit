@@ -2,10 +2,11 @@
 title: Tools-слой — follow-up'ы после таска целостности
 description: Три пункта, всплывшие при реализации tool-surface-integrity и осознанно оставленные вне его скоупа — типизированный tool-контекст, проверка implementRemote, перф per-session сборки MCP
 type: task
-status: inbox
+status: done
 created: 2026-05-20
-updated: 2026-05-20
-related: docs/backlog/done/2026-05-20-tools-surface-integrity.md
+updated: 2026-06-05
+completed: 2026-06-05 20:52
+related: docs/backlog/done/2026-05-20-tools-surface-integrity.md, docs/backlog/inbox/2026-06-05-mcp-build-per-session-cache.md
 ---
 
 # Tools-слой — follow-up'ы
@@ -152,3 +153,27 @@ probe-результаты, на каждую сессию делать толь
 - ADR 0002 (generic core), ADR 0003 (два контекста) — `docs/decisions/`.
 - Код: `packages/core/src/tools/mcp.ts`, `tools/mcp-handler.ts`,
   `tools/mount.ts`, `tools/remote.ts`, `server/implement.ts`.
+
+---
+
+## Итог (закрыто 2026-06-05)
+
+Сверено с кодом на момент релиза 0.4.0:
+
+- [x] **Item 1 — типизированный tool-контекст → СДЕЛАН.** Реализован как
+  `createToolkit<TContext>()` (`packages/core/src/tools/toolkit.ts`, экспорт из
+  `stitchkit/tools`) + **ADR 0017** (`docs/decisions/0017-typed-tool-context.md`).
+  Это ровно «подход 2» из плана (фабрика-зеркало `createImplement`), который и
+  рекомендовался.
+- [x] **Item 2 — `implementRemote` output-валидация → закрыт F5 (по коду).**
+  `tools/execute.ts` валидирует `method.outputSchema` (`validateHandlerOutput`)
+  → `INTERNAL_SERVER_ERROR` при дрейфе; `tools/remote.ts` проводит
+  `outputSchema: endpoint.output`. Покрыты MCP/agent и HTTP пути. *Остаточный
+  край:* отдельного подтверждающего теста на `implementRemote` не добавляли
+  (P3, не блокер) — общая валидация output уже под тестами.
+- [ ] **Item 3 — per-session перестройка `McpServer` → ВЫНЕСЕН.** Единственный
+  живой пункт; перф P4 «делать только если всплывёт в профайле». Вынесен
+  отдельной задачей на потом:
+  [`docs/backlog/inbox/2026-06-05-mcp-build-per-session-cache.md`](../inbox/2026-06-05-mcp-build-per-session-cache.md).
+
+Файл закрыт: Item 1 и 2 реализованы, Item 3 живёт отдельной inbox-заметкой.

@@ -21,6 +21,8 @@ export {
   createBearerResolver,
   extractToken,
   type JwtPayload,
+  type SignJwtOptions,
+  signJwt,
   verifyJwt,
 } from './middleware/auth';
 export {
@@ -35,7 +37,16 @@ export {
   corsHeaders,
   corsPreflightResponse,
 } from './middleware/cors';
+export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
 export { parseMultipart } from './multipart';
+export {
+  generateOpenApiDocument,
+  type OpenApiConfig,
+  type OpenApiDocument,
+  type OpenApiInfo,
+  type OpenApiServer,
+  openApiRoute,
+} from './openapi';
 export { createRateLimiter, type RateLimitConfig } from './rate-limit';
 export {
   type ClientIpOptions,
@@ -47,7 +58,7 @@ export {
 } from './request';
 export { staticRoute } from './router';
 export type { SocketIOServerConfig, SocketIOServerHandle } from './socket-io';
-export { createSocketIOServer } from './socket-io';
+export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
   BunServer,
@@ -63,3 +74,10 @@ export type {
   ServiceDef,
   StitchLogger,
 } from './types';
+export {
+  type ComposedLane,
+  composeWebSocketHandlers,
+  type WebSocketComposeConfig,
+  type WebSocketLane,
+  webSocketLane,
+} from './websocket';

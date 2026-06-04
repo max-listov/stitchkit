@@ -19,6 +19,6 @@
     "release": "bun run sync:readme && bun run verify && cd packages/core && bun publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15"
+    "@biomejs/biome": "^2.4.16"
   }
 }

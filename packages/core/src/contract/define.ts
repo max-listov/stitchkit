@@ -2,10 +2,10 @@ import type { ZodType, z } from 'zod';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT'] as const;
+export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
 export type Transport = (typeof ALL_TRANSPORTS)[number];
 
-export type TransportSource = 'http' | 'mcp' | 'agent';
+export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli';
 
 interface EndpointDefBase {
   method: HttpMethod;
@@ -24,6 +24,37 @@ interface EndpointDefBase {
   timeout?: number;
 }
 
+/**
+ * MCP Apps UI metadata for a tool (SEP-1865). When set, the tool's MCP
+ * registration carries `_meta.ui`, so a host renders the named `ui://` resource
+ * as an interactive widget for this tool's results. The resource itself is
+ * served separately (see `McpServerBuildConfig.resources`).
+ */
+export interface EndpointUiMeta {
+  /** `ui://…` resource the host renders for this tool's results. */
+  resourceUri: string;
+  /** Who sees the tool — `'model'` (in the tool list) and/or `'app'` (widget-only). */
+  visibility?: readonly ('model' | 'app')[];
+}
+
+/**
+ * MCP `ToolAnnotations` — behavioural hints a host reads to group tools and pick
+ * permission defaults (read-only auto-allow, destructive needs approval) and to
+ * show a human label. Hints only — never a security boundary.
+ */
+export interface EndpointToolAnnotations {
+  /** Human-friendly display name (e.g. "Explore Models" instead of `list_models`). */
+  title?: string;
+  /** Tool does not mutate state — hosts may auto-allow and group as read-only. */
+  readOnlyHint?: boolean;
+  /** Tool may perform destructive updates (ignored when `readOnlyHint` is true). */
+  destructiveHint?: boolean;
+  /** Repeated calls with the same args have no additional effect. */
+  idempotentHint?: boolean;
+  /** Tool interacts with an open/external world (not a closed set). */
+  openWorldHint?: boolean;
+}
+
 interface HttpOnlyEndpointDef extends EndpointDefBase {
   expose: readonly ['HTTP'];
   toolName?: never;
@@ -32,6 +63,10 @@ interface HttpOnlyEndpointDef extends EndpointDefBase {
 interface ToolEndpointDef extends EndpointDefBase {
   toolName?: string;
   expose?: readonly Transport[];
+  /** MCP Apps widget for this tool's results (MCP transport only). */
+  ui?: EndpointUiMeta;
+  /** MCP behavioural hints (read-only / destructive / title) for hosts. */
+  annotations?: EndpointToolAnnotations;
 }
 
 export type EndpointDef = HttpOnlyEndpointDef | ToolEndpointDef;

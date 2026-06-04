@@ -1,6 +1,8 @@
 import type { ZodType } from 'zod';
 import type {
   EndpointDef,
+  EndpointToolAnnotations,
+  EndpointUiMeta,
   HandlerContext,
   HttpMethod,
   RuntimeContext,
@@ -35,6 +37,10 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   inputSchema?: ZodType<TInput>;
   outputSchema?: ZodType<TOutput>;
   multipart?: string;
+  /** MCP Apps widget metadata — carried onto the MCP tool's `_meta.ui`. */
+  ui?: EndpointUiMeta;
+  /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
+  annotations?: EndpointToolAnnotations;
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;
 }
 

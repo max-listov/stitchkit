@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { buildMcpServer, type McpServerBuildConfig, validateMcpSchemas } from './mcp';
+import { type ProtectedResourceConfig, wwwAuthenticateHeader } from './oauth-metadata';
 
 // ─── In-memory event store (SSE resumability) ───────────────────────────────
 
@@ -79,6 +80,23 @@ class InMemoryEventStore implements EventStore {
 export interface McpHandlerConfig<TAuth> extends McpServerBuildConfig<TAuth> {
   /** Resolve an incoming request to an identity. Return `null` → 401. */
   auth: (req: Request) => TAuth | null | Promise<TAuth | null>;
+  /**
+   * OAuth 2.0 Protected Resource metadata (RFC 9728). When set, a `401` carries
+   * a `WWW-Authenticate: Bearer resource_metadata="…"` header so an MCP client
+   * can discover the authorization server. Serve the matching metadata document
+   * with `oauthProtectedResourceRoute(protectedResource)`.
+   */
+  protectedResource?: ProtectedResourceConfig;
+  /**
+   * Stateless mode (default `false`). Each request builds a fresh transport +
+   * server and is handled in isolation — no `Mcp-Session-Id`, no in-memory
+   * session store. A restart / deploy / scale-out therefore never invalidates a
+   * client (no `404 Session not found`), which is what most request/response
+   * tool servers want. The trade-off is no server-initiated messages
+   * (`notifications/progress`, standalone SSE) between requests — fine for
+   * synchronous tools. Leave `false` only when you need that server push.
+   */
+  stateless?: boolean;
 }
 
 interface SessionData {
@@ -87,8 +105,16 @@ interface SessionData {
   lastSeen: number;
 }
 
-function jsonRpcError(code: number, message: string, status: number): Response {
-  return Response.json({ jsonrpc: '2.0', error: { code, message }, id: null }, { status });
+function jsonRpcError(
+  code: number,
+  message: string,
+  status: number,
+  headers?: Record<string, string>,
+): Response {
+  return Response.json(
+    { jsonrpc: '2.0', error: { code, message }, id: null },
+    { status, headers },
+  );
 }
 
 /**
@@ -116,6 +142,35 @@ export function createMcpHandler<TAuth>(
     validateMcpSchemas(config.services, config.onIncompatibleSchema, config.logger);
   }
 
+  /** RFC 9728 §5.1 401 — points the client at the OAuth resource metadata. */
+  const unauthorized = (): Response => {
+    const headers = config.protectedResource
+      ? { 'WWW-Authenticate': wwwAuthenticateHeader(config.protectedResource.resource) }
+      : undefined;
+    return jsonRpcError(-32001, 'Authorization required', 401, headers);
+  };
+
+  // ── Stateless mode ─────────────────────────────────────────────────────────
+  // A fresh transport + server per request, no session store. A restart never
+  // invalidates a client (no `404 Session not found`). The SDK requires a new
+  // transport per request in stateless mode — reuse collides message ids.
+  if (config.stateless) {
+    return async (req: Request): Promise<Response> => {
+      const auth = await config.auth(req);
+      if (!auth) return unauthorized();
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        // A complete JSON response (not a held-open SSE stream) — the request is
+        // self-contained, so the transport can be discarded once it returns.
+        enableJsonResponse: true,
+      });
+      const server = buildMcpServer(config, auth);
+      await server.connect(transport);
+      return transport.handleRequest(req);
+    };
+  }
+
+  // ── Stateful mode (session store + SSE event store) ─────────────────────────
   const eventStore = new InMemoryEventStore();
   const sessions = new Map<string, SessionData>();
 
@@ -140,9 +195,7 @@ export function createMcpHandler<TAuth>(
 
   return async (req: Request): Promise<Response> => {
     const auth = await config.auth(req);
-    if (!auth) {
-      return jsonRpcError(-32001, 'Authorization required', 401);
-    }
+    if (!auth) return unauthorized();
 
     const sessionId = req.headers.get('mcp-session-id');
     if (sessionId) {

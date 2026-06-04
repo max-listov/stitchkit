@@ -8,6 +8,171 @@ public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-05
+
+### Realtime — token handshake auth + a raw WebSocket lane
+
+- **`SocketIOClientConfig.auth`** (`stitchkit`) — token-based handshake auth, the
+  alternative to cookie auth (`withCredentials`). Reaches the server as
+  `socket.handshake.auth`. A **function** form (sync or async) is re-read on
+  every (re)connect, so a rotated token is picked up without recreating the
+  client (and losing durable subscriptions). **`query`** and **`extraHeaders`**
+  added alongside. No server change — the gate stays project `io.use(...)`.
+- **`composeWebSocketHandlers`**, **`webSocketLane`**, **`socketIoLane`** +
+  types **`ComposedLane` / `WebSocketLane` / `WebSocketComposeConfig`**
+  (`stitchkit/server`, Bun-only) — compose Bun's single `websocket` handler from
+  several lanes, so a truly-raw binary lane can run beside Socket.IO on one
+  server. Routing is by a positive raw marker on `ws.data`; Socket.IO is the
+  catch-all, so the engine's opaque data is never inspected — cast-free. → ADR 0020.
+
+### MCP Apps — interactive UI widgets
+
+A contract tool can now render an inline UI widget in the chat (MCP Apps /
+SEP-1865). stitchkit owns the generic plumbing; the app owns the widget HTML/UI.
+
+- **`EndpointDef.ui`** — a tool endpoint declares `ui: { resourceUri, visibility? }`;
+  its MCP registration carries `_meta.ui` so a host renders the named `ui://`
+  resource as a widget for that tool's results.
+- **`McpServerBuildConfig.resources`** + **`mountMcpResource()`** (`stitchkit/tools`) —
+  serve `ui://…` UI resources over `resources/list` / `resources/read`, default
+  MIME `text/html;profile=mcp-app`, with per-resource `_meta.ui` (CSP, border, domain).
+- **`inlineMcpAppBundle()`**, **`RESOURCE_MIME_TYPE`**, **`EXT_APPS_BUNDLE_PLACEHOLDER`**,
+  **`McpResourceDef` / `McpAppCsp` / `McpAppResourceMeta`** (`stitchkit/tools`) —
+  inline the `@modelcontextprotocol/ext-apps` runtime (new optional peer) into a
+  widget HTML; the app keeps full ownership of the widget markup.
+
+### CLI — the fourth transport
+
+A `defineContract` now drives a command-line program too, peering with the HTTP,
+MCP and agent surfaces — same validation, same auth gate, same error model
+(HTTP ≡ MCP ≡ agent ≡ CLI). See [ADR 0016](./docs/decisions/0016-cli-transport.md)
+and the [CLI guide](./docs/guide/cli.md).
+
+- **`createCli()`** (`stitchkit/cli`, also `stitchkit/tools`) — build and run a
+  CLI from contract services: `<app> <command> [positional] [--flags]`. Resolves
+  identity once at startup, routes each command through the shared
+  `executeToolMethod` pipeline. The `stitchkit/cli` entrypoint needs neither the
+  MCP SDK nor `ai`.
+- **`Transport` gains `'CLI'`, `TransportSource` gains `'cli'`.** CLI exposure is
+  **opt-in** — a method is a command only when its `expose` lists `'CLI'`.
+- **CLI-unique behaviour:** schema-aware argv coercion, positional args, piped
+  stdin, `--json` / `--quiet` / `--dry-run`, per-`ToolResult.code` exit codes,
+  `--output-dir` downloads, and a generic `--wait` poller (`pollUntilDone`).
+- **`parseCliArgs`, `emitResult`, `DEFAULT_EXIT_CODES`, `CliConfig`,
+  `CliWaitConfig`, `ExitCodeMap`** and friends are exported for advanced use.
+- The core ships **no binary** — `createCli` is the building block; an app writes
+  its own `#!/usr/bin/env node` executable and `bin` entry.
+- **Output is JSON** — pretty-printed by default (like an MCP tool result),
+  compact with `--json` for `| jq`. No hand-formatted tables; the audience is
+  agents / scripts. Per-command `format` overrides are intentionally not shipped.
+- **`passthrough`** — a command's unknown `--flags` fold into a freeform object
+  field (`generate <model> --prompt … --aspect_ratio 16:9` → `parameters`), no
+  `--parameters '{json}'` blob.
+
+### Generic native MCP tools
+
+The imperative tools the contract model can't express — shipped generic so an
+app configures them instead of hand-rolling on the raw SDK. → [ADR 0019](./docs/decisions/0019-generic-native-tools.md).
+
+- **`mountWait` / `mountDownload` / `mountUpload`** (`stitchkit/tools`) — native
+  MCP tools (poll-until-done / save URL to disk / upload a local file); the app
+  injects the domain (`poll` / `done`, `resolveUrl`, `upload`).
+- **`pollUntil`** — one backoff/timeout poll loop behind both the CLI `--wait`
+  (`pollUntilDone`) and `mountWait` — no duplicate loop.
+- **`type McpServer` is re-exported** from `stitchkit/tools` so a native-tool
+  registrar needs no direct `@modelcontextprotocol/sdk` import.
+
+### Fixes
+
+- **Remote errors keep their code.** `implementRemote` translates the typed
+  client's `ApiError` to `AppError`, so a proxied remote `400` surfaces as a
+  clean `VALIDATION_ERROR` (correct exit code, no stack) instead of being
+  flattened to `INTERNAL_SERVER_ERROR`.
+- **`z.record(...)` arguments are JSON-coerced** — a `--parameters '{…}'` string
+  for a record-typed field now parses (was object/array only).
+
+### Typed tool-path context
+
+- **`createToolkit<AppContext>()`** (`stitchkit/tools`) — the tool-side mirror of
+  `createImplement`. Returns context-pinned `mountMcp` / `mountAgent` /
+  `buildMcpServer` / `createMcpHandler` / `createStdioMcpServer` / `createCli`,
+  type-checking the injected `context` (and `ToolExtend.resolve`) against your
+  app's context shape. Pure typing sugar; the loose form still compiles.
+  See [ADR 0017](./docs/decisions/0017-typed-tool-context.md). `ToolExtend` is now
+  generic (`ToolExtend<TContext>`).
+
+### OpenAPI 3.1 from the contract
+
+- **`generateOpenApiDocument()` / `openApiRoute()`** (`stitchkit/server`) —
+  generate an OpenAPI 3.1 document straight from contract services (HTTP-exposed
+  methods only), sharing the single `toJsonSchema` point and the `jsonSchemaFields`
+  walker with the CLI `--help` table. No decorators, no parallel spec.
+  See [ADR 0018](./docs/decisions/0018-openapi-generation.md).
+
+### OAuth 2.1 for MCP
+
+A remote MCP server can now be a native Claude (Desktop / web) custom connector —
+the framework ships the OAuth 2.1 resource-server machinery, the app supplies
+only identity and storage. See [ADR 0015](./docs/decisions/0015-oauth-resource-server.md).
+
+- **`createMcpHandler({ protectedResource })`** — a `401` now carries
+  `WWW-Authenticate: Bearer resource_metadata="…"` (RFC 9728 §5.1) so a client
+  can discover the authorization server.
+- **`oauthProtectedResourceRoute()`** (`stitchkit/tools`) — serves
+  `/.well-known/oauth-protected-resource` (RFC 9728).
+- **`mountOAuthProvider()`** (`stitchkit/tools`) — returns the authorization-
+  server routes: AS metadata (RFC 8414), Dynamic Client Registration
+  (RFC 7591), `/authorize` and `/token` with PKCE (RFC 7636) and resource
+  indicators (RFC 8707). Pluggable `clients` / `codes` / `refreshTokens` stores
+  and an `authorizeUser` login/consent callback.
+- **`signJwt()`** (`stitchkit/server`) — HS256 signer, the issuing counterpart
+  of `verifyJwt`; mints access tokens whose `aud` binds them to one resource.
+- **`verifyPkce()` / `deriveCodeChallenge()`** (`stitchkit/server`) — S256 PKCE.
+
+### Observability
+
+- **`RequestEvent` gains `authMethod` and `clientId`** — the audit event now
+  carries how a tool call authenticated (`'oauth'` / `'apikey'`) and the OAuth
+  client id, threaded through `createAuditHook`.
+
+### Security & correctness hardening (pre-release)
+
+A per-file review of the unreleased surfaces above closed a set of holes before
+the cut.
+
+- **SSRF guard is now shared and applied to every fetched URL.** The
+  `view_file` private-host / per-redirect-hop guard is extracted to one module
+  and reused by **`mountDownload`** and the CLI **`--output-dir`** downloader —
+  both fetch model/handler-derived URLs that were previously fetched raw. New
+  `allowPrivateHosts` (download tool) / `allowPrivateDownloadHosts` (CLI) opt-ins.
+- **A redirect to a non-`http(s)` scheme is refused.** A `302` to
+  `file://` / `gopher://` no longer turns a fetch into a local-file read; the
+  scheme is re-checked on every hop.
+- **Download bodies are size-capped.** `mountDownload` / CLI downloads read with
+  a byte cap (`maxBytes` / `maxDownloadBytes`, default 100 MB) so a hostile or
+  unbounded URL cannot OOM the process.
+- **CLI download filenames are contained.** A result `name` is reduced to its
+  basename and re-checked, so `../../etc/x` cannot escape `--output-dir`.
+- **`view_file` local reads are media-only + symlink-safe** — a non-media file
+  (`config.json` / `.env`) inside the sandbox is refused, and a symlink that
+  points out of the sandbox is rejected via a `realpath` re-check.
+- **RFC 9728 metadata path fixed.** For a resource with a path
+  (`https://h/mcp`), the protected-resource metadata is served at
+  `/.well-known/oauth-protected-resource/mcp` (the path is no longer dropped).
+- **PKCE is S256-only.** `plain` is removed (`verifyPkce(verifier, challenge)`,
+  no method arg) — OAuth 2.1 forbids it for public clients.
+- **DCR is stricter.** `refresh_token` is advertised in the registration
+  response only when the grant is enabled; an `http` redirect URI is accepted
+  only on a loopback host (RFC 8252).
+- **OpenAPI accuracy.** Multipart endpoints are documented as
+  `multipart/form-data`; DELETE input is documented as query params (matching the
+  typed client, via the shared `inputIsQuery`); `requestBody.required` reflects
+  whether the body schema has required fields; a single unrepresentable field
+  (`z.date()`, …) degrades to `{}` instead of collapsing the whole endpoint.
+- **CLI prototype-pollution & passthrough.** A `--__proto__…` flag (dotted or
+  flat) is dropped at every argv write boundary; `--parameters '{json}'` merged
+  with passthrough flags no longer loses the JSON payload.
+
 ## [0.3.0] — 2026-05-20
 
 ### Security hardening
@@ -236,7 +401,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/max-listov/stitchkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/max-listov/stitchkit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/max-listov/stitchkit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/max-listov/stitchkit/releases/tag/v0.1.0

@@ -13,19 +13,12 @@
  * sandboxed to a `baseDir`, and downloads are capped before they reach memory.
  */
 
-import { lookup } from 'node:dns/promises';
-import { readFile, stat } from 'node:fs/promises';
-import { isIP } from 'node:net';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isWithinDir } from '../internal/within-dir';
-
-/** A host that is digits/dots-only or `0x…` is a numeric IP in disguise. */
-const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9.]+)$/i;
-
-/** Cap on redirect hops the SSRF guard re-validates before giving up. */
-const MAX_REDIRECTS = 5;
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
@@ -46,11 +39,22 @@ const EXT_MIME: Record<string, string> = {
   '.mov': 'video/quicktime',
 };
 
+/**
+ * Annotation telling the client who a content block is for. `audience` lists
+ * `'user'` (render for the human) and/or `'assistant'` (keep in model context);
+ * `priority` (0–1) hints how prominently. Same shape as the MCP resource/prompt
+ * annotation.
+ */
+export interface McpAnnotations {
+  audience?: ('user' | 'assistant')[];
+  priority?: number;
+}
+
 /** An MCP content block — text / image / audio (video cannot be inlined). */
 export type McpMediaContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; data: string; mimeType: string }
-  | { type: 'audio'; data: string; mimeType: string };
+  | { type: 'image'; data: string; mimeType: string; annotations?: McpAnnotations }
+  | { type: 'audio'; data: string; mimeType: string; annotations?: McpAnnotations };
 
 export interface ViewFileOptions {
   /**
@@ -64,114 +68,6 @@ export interface ViewFileOptions {
    * network where the model is allowed to reach internal hosts.
    */
   allowPrivateHosts?: boolean;
-}
-
-/** True for a loopback / private / link-local / ULA / CGNAT IP literal. */
-function isPrivateIp(ip: string): boolean {
-  const family = isIP(ip);
-  if (family === 4) {
-    const [a, b] = ip.split('.').map(Number);
-    if (a === undefined || b === undefined) return true;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
-  }
-  if (family === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === '::1' || lower === '::') return true;
-    if (
-      lower.startsWith('fe8') ||
-      lower.startsWith('fe9') ||
-      lower.startsWith('fea') ||
-      lower.startsWith('feb') ||
-      lower.startsWith('fc') ||
-      lower.startsWith('fd')
-    ) {
-      return true;
-    }
-    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    return mapped?.[1] ? isPrivateIp(mapped[1]) : false;
-  }
-  return false;
-}
-
-/**
- * Refuse a URL whose host is — or resolves to — a private/internal address.
- *
- * Note: the DNS resolution here and the resolution `fetch` performs are
- * separate, so a hostile resolver retains a narrow rebinding window. The
- * redirect loop in `fetchGuarded` re-runs this check on every hop, which is
- * the larger and fully-closed hole; a static private DNS record is rejected
- * outright.
- */
-async function assertPublicUrl(url: URL): Promise<void> {
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (isIP(host)) {
-    if (isPrivateIp(host)) throw new Error('refusing to fetch a private address');
-    return;
-  }
-  // A digits-only / `0x…` host is a numeric IP in a non-canonical form
-  // (`http://2130706433/` is `127.0.0.1`); `isIP` rejects it but `fetch`
-  // would still resolve it. A real hostname always carries a non-numeric char.
-  if (NUMERIC_HOST.test(host)) {
-    throw new Error('refusing to fetch a non-canonical numeric host');
-  }
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
-    throw new Error('refusing to fetch an internal host');
-  }
-  const records = await lookup(host, { all: true });
-  for (const record of records) {
-    if (isPrivateIp(record.address)) {
-      throw new Error('refusing to fetch a host that resolves to a private address');
-    }
-  }
-}
-
-/**
- * Fetch a URL with the SSRF guard enforced on the initial URL and on every
- * redirect hop — a public host can otherwise `302` to an internal address.
- */
-async function fetchGuarded(start: URL, allowPrivate: boolean): Promise<Response> {
-  let url = start;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    if (!allowPrivate) await assertPublicUrl(url);
-    const res = await fetch(url, { redirect: 'manual' });
-    if (res.status < 300 || res.status >= 400) return res;
-    const location = res.headers.get('location');
-    if (!location) return res;
-    await res.body?.cancel();
-    url = new URL(location, url);
-  }
-  throw new Error('too many redirects');
-}
-
-/** Read a response body into a buffer, aborting if it exceeds `max` bytes. */
-async function readCapped(res: Response, max: number): Promise<Buffer | null> {
-  const reader = res.body?.getReader();
-  if (!reader) return Buffer.alloc(0);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.length;
-      if (total > max) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks);
 }
 
 type FetchedSource =
@@ -206,16 +102,30 @@ async function fetchSource(
   if (!options.baseDir) {
     throw new Error('local file paths are disabled — set baseDir to allow them');
   }
+  // Only ever read a media file — never a `config.json` / `.env` / `id_rsa`
+  // that happens to sit inside the sandbox. A path with no known media
+  // extension is refused before it is touched.
+  if (!extMime) {
+    throw new Error('refusing to read a non-media file');
+  }
   const root = resolve(options.baseDir);
   const target = resolve(root, pathOrUrl);
   if (!isWithinDir(root, target)) {
     throw new Error('path escapes the allowed directory');
   }
-  const info = await stat(target).catch(() => null);
+  // Re-check the real, symlink-resolved paths so a symlink inside the sandbox
+  // cannot point out of it (and so a sandbox reached through a symlink still
+  // matches). `realpath` of a missing file rejects → treated as not found.
+  const realTarget = await realpath(target).catch(() => null);
+  if (realTarget === null) throw new Error('file not found');
+  const realRoot = await realpath(root).catch(() => root);
+  if (!isWithinDir(realRoot, realTarget)) {
+    throw new Error('path escapes the allowed directory');
+  }
+  const info = await stat(realTarget).catch(() => null);
   if (!info?.isFile()) throw new Error('file not found');
-  const mimeType = extMime ?? 'application/octet-stream';
-  if (info.size > MAX_INLINE_BYTES) return { tooLarge: true, mimeType };
-  return { buffer: await readFile(target), mimeType };
+  if (info.size > MAX_INLINE_BYTES) return { tooLarge: true, mimeType: extMime };
+  return { buffer: await readFile(realTarget), mimeType: extMime };
 }
 
 /**
@@ -249,13 +159,26 @@ export async function resolveMedia(
   }
   if (mimeType.startsWith('image/')) {
     return [
-      { type: 'image', data: buffer.toString('base64'), mimeType },
+      {
+        type: 'image',
+        data: buffer.toString('base64'),
+        mimeType,
+        // Both audiences — the user sees it inline in the chat AND the model
+        // keeps it in context to verify the result. `['user']` alone would hide
+        // it from the model; the default (none) hides it from the user.
+        annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+      },
       { type: 'text', text: `[image] ${mimeType}, ${sizeKb}KB` },
     ];
   }
   if (mimeType.startsWith('audio/')) {
     return [
-      { type: 'audio', data: buffer.toString('base64'), mimeType },
+      {
+        type: 'audio',
+        data: buffer.toString('base64'),
+        mimeType,
+        annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+      },
       { type: 'text', text: `[audio] ${mimeType}, ${sizeKb}KB` },
     ];
   }
@@ -278,6 +201,9 @@ export function mountViewFile(server: McpServer, options: ViewFileOptions = {}):
           .union([z.string(), z.array(z.string())])
           .describe('Media URL(s) or file path(s) to view'),
       },
+      // Read-only: fetches and returns media, mutates nothing. A title + hints so
+      // hosts group it with the other read-only tools and show a friendly label.
+      annotations: { title: 'View Media', readOnlyHint: true, idempotentHint: true },
     },
     async (args: { paths: string | string[] }) => {
       const list = Array.isArray(args.paths) ? args.paths : [args.paths];

@@ -104,6 +104,66 @@ export async function verifyJwt(
   return payload;
 }
 
+/** Tuning for `signJwt`. */
+export interface SignJwtOptions {
+  /** Lifetime in seconds — sets `exp` to now + this. Omit for no expiry. */
+  expiresInSec?: number;
+  /** `iss` claim. */
+  issuer?: string;
+  /** `aud` claim. */
+  audience?: string;
+  /** `sub` claim. */
+  subject?: string;
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Sign a payload as an HS256 JWT — the issuing counterpart of `verifyJwt`.
+ * Used to mint OAuth access tokens whose audience binds them to one resource.
+ * `iat` is always set; `exp` / `iss` / `aud` / `sub` follow `options`.
+ */
+export async function signJwt(
+  payload: JwtPayload,
+  secret: string,
+  options: SignJwtOptions = {},
+): Promise<string> {
+  if (!secret) throw new Error('signJwt: a non-empty secret is required');
+
+  const now = Math.floor(Date.now() / 1000);
+  const claims: JwtPayload = {
+    ...payload,
+    iat: now,
+    ...(options.expiresInSec !== undefined && { exp: now + options.expiresInSec }),
+    ...(options.issuer !== undefined && { iss: options.issuer }),
+    ...(options.audience !== undefined && { aud: options.audience }),
+    ...(options.subject !== undefined && { sub: options.subject }),
+  };
+
+  const encoder = new TextEncoder();
+  const headerB64 = encodeBase64Url(
+    encoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })),
+  );
+  const payloadB64 = encodeBase64Url(encoder.encode(JSON.stringify(claims)));
+  const signingInput = `${headerB64}.${payloadB64}`;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(signingInput));
+  const signatureB64 = encodeBase64Url(new Uint8Array(signature));
+
+  return `${signingInput}.${signatureB64}`;
+}
+
 export function extractToken(req: Request, cookieName?: string): string | null {
   const authHeader = req.headers.get('authorization');
   if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7);

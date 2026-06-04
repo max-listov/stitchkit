@@ -71,8 +71,8 @@ no API behaviour change.
 ### Verification
 
 - `bun run check`, `bun test` (143 pass), `bun run build` — all green.
-- gecko-gen `bun check` green against the rebuilt stitchkit (no consumer used
-  the removed `McpToolExtend` / `AgentToolExtend`).
+- A consuming app's `bun check` green against the rebuilt stitchkit (no consumer
+  used the removed `McpToolExtend` / `AgentToolExtend`).
 
 ### Code links
 

@@ -144,6 +144,8 @@ export function createAuditHook(config: AuditConfig): AuditHook {
         resultSize: measure.resultSize,
         responseBytes: measure.responseBytes,
         userId: readString(context.userId),
+        authMethod: readString(context.authMethod),
+        clientId: readString(context.clientId),
         ipAddress: readString(context.ipAddress),
         userAgent: readString(context.userAgent),
         startedAt: new Date(Date.now() - durationMs),

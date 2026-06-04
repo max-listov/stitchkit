@@ -5,6 +5,8 @@ export {
   defineContract,
   type EndpointDef,
   type EndpointFn,
+  type EndpointToolAnnotations,
+  type EndpointUiMeta,
   type HandlerContext,
   type HttpMethod,
   type RuntimeContext,

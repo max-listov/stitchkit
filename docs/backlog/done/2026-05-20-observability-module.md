@@ -29,7 +29,7 @@ then be just **a table + a `write(event)` function** — nothing else.
 
 ## Current state — three projects
 
-| Piece | gecko-gen (stitchkit) | gecko-chat (Hono) | capetownian (Hono) |
+| Piece | app-1 (stitchkit) | app-2 (Hono) | app-3 (Hono) |
 |-------|----------------------|-------------------|--------------------|
 | Trace / correlation | basic `x-request-id` | **W3C `traceparent`** + `spanId` / `parentSpanId`, span chaining | W3C `traceparent` (but logger ignores it) |
 | Request-context ALS | **`RequestContext` ALS** | none — context threaded by hand | none |
@@ -39,14 +39,14 @@ then be just **a table + a `write(event)` function** — nothing else.
 | Logger | pino | hand-rolled coloured | pino + coloured + JSONL |
 
 **Best of breed:**
-- Trace → gecko-chat (proper W3C, span chaining).
-- ALS context → gecko-gen (no ALS = manual threading = error-prone).
-- Audit event richness → gecko-chat (`ActivityLog`).
-- Sanitisation → gecko-chat (redact + preview + measure).
+- Trace → app-2 (proper W3C, span chaining).
+- ALS context → app-1 (no ALS = manual threading = error-prone).
+- Audit event richness → app-2 (`ActivityLog`).
+- Sanitisation → app-2 (redact + preview + measure).
 - Hook model → stitchkit.
 
-The contract→transport framework itself is copy-pasted between gecko-chat and
-capetownian (capetownian's `utils.ts` says *"Copied from gecko-chat-bot"*).
+The contract→transport framework itself is copy-pasted between app-2 and
+app-3 (app-3's `utils.ts` says *"Copied from app-2"*).
 stitchkit ends that — and should end the duplicated audit layer too.
 
 ## What stitchkit should own
@@ -101,21 +101,21 @@ projects. A built-in dev default.
 6. (optional) dev tool-call console formatter.
 7. Docs — extend `docs/guide/observability.md`; CHANGELOG entry.
 
-### Phase 2 — gecko-gen adopts
+### Phase 2 — app-1 adopts
 Replace `withRequestAudit` + the `RequestContext` ALS + `sanitizePayload` + the
 hand-wired `afterToolCall` with stitchkit's `createAuditHook`. `writeRequestLog`
 + the `RequestLog` table stay — they are the sink.
 
-### Phase 3 — gecko-chat / capetownian (on stitchkit)
+### Phase 3 — app-2 / app-3 (on stitchkit)
 Once migrated to stitchkit they get audit by supplying a table + a `write`
-function. No re-implementation. capetownian gains audit it currently lacks
+function. No re-implementation. app-3 gains audit it currently lacks
 entirely.
 
 ## Open questions
 
 - **Placement** — a new entrypoint `stitchkit/observability`, or fold into
   `stitchkit/server`? The ALS + hooks are server-side.
-- **`RequestEvent` shape** — start from gecko-chat's `ActivityLog` field set
+- **`RequestEvent` shape** — start from app-2's `ActivityLog` field set
   (richest), drop project-specific columns.
 - **`createAuditHook`** — after-only, or also a start event from
   `beforeToolCall` / `onRequest`? After-only matches "log a completed call".
@@ -128,14 +128,14 @@ entirely.
 - Hooks: `ToolCallHooks` (`tools/execute.ts`), `LifecycleHooks` (`server/types.ts`).
 - Existing partials: `generateTraceId` / `resolveTraceId` / `getClientInfo` (`server/request`), `StitchLogger`, `paginatedSchema`.
 - Guide: `docs/guide/observability.md`.
-- gecko-gen: `RequestLog`, `writeRequestLog`, `withRequestAudit`, `RequestContext` ALS, `sanitizePayload`.
-- gecko-chat: `ActivityLog`, `logMutation`, `middleware/trace-context.ts`, audit-service `redact` / `buildPreview` / `measureOutput`.
-- capetownian: no audit layer — the gap this module fills.
+- app-1: `RequestLog`, `writeRequestLog`, `withRequestAudit`, `RequestContext` ALS, `sanitizePayload`.
+- app-2: `ActivityLog`, `logMutation`, `middleware/trace-context.ts`, audit-service `redact` / `buildPreview` / `measureOutput`.
+- app-3: no audit layer — the gap this module fills.
 
 ## What was done
 
-Phase 1 (stitchkit module) and Phase 2 (gecko-gen adopts) shipped. Phase 3
-stays open — blocked on gecko-chat / capetownian migrating to stitchkit.
+Phase 1 (stitchkit module) and Phase 2 (app-1 adopts) shipped. Phase 3
+stays open — blocked on app-2 / app-3 migrating to stitchkit.
 
 ### stitchkit — observability module (new entrypoint `stitchkit/observability`)
 
@@ -166,7 +166,7 @@ stays open — blocked on gecko-chat / capetownian migrating to stitchkit.
 - [x] `CHANGELOG.md` — `[Unreleased] → ### Observability`.
 - [x] `docs/DECISIONS.md` — ADR 0012.
 
-### gecko-gen — Phase 2 adoption
+### app-1 — Phase 2 adoption
 
 - [x] Deleted `lib/requestContext.ts` and `services/audit/sanitize.ts` —
   replaced by the module.
@@ -186,12 +186,12 @@ stays open — blocked on gecko-chat / capetownian migrating to stitchkit.
 - **Dev tool-call console formatter (item F).** Dropped — optional, zero
   consumers, duplicated `server/logger.ts` formatting. Revisit only with a real
   consumer, extracting shared formatters first.
-- **Phase 3 — gecko-chat / capetownian.** Blocked: neither is on stitchkit yet.
-- **Runtime verification.** Type-checked and built; the gecko-gen services were
+- **Phase 3 — app-2 / app-3.** Blocked: neither is on stitchkit yet.
+- **Runtime verification.** Type-checked and built; the app-1 services were
   not restarted.
 
 ### Code links
 
 - stitchkit module: `packages/core/src/observability/` (6 files).
-- gecko-gen sink: `packages/backend/src/services/audit/requestAudit.ts`.
+- app-1 sink: `packages/backend/src/services/audit/requestAudit.ts`.
 - ADR: `docs/DECISIONS.md` → ADR 0012.

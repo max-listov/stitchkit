@@ -27,6 +27,26 @@ import { io } from 'socket.io-client';
 type ClientSocket = ReturnType<typeof io>;
 
 /**
+ * Adapt our friendly `auth` form to what `io()` expects. socket.io's function
+ * form is callback-based (`(cb) => cb(payload)`) and called on every (re)connect;
+ * we accept a plain sync/async producer and bridge it to that callback. If the
+ * producer fails, send an empty auth object rather than leaving the handshake
+ * waiting forever; a normal server-side auth gate will reject it. Object /
+ * `undefined` pass straight through. No casts: socket.io types `auth` as
+ * `{ [k]: any } | ((cb: (data: object) => void) => void)`.
+ */
+function toIoAuth(
+  auth: SocketIOClientConfig['auth'],
+): Record<string, unknown> | ((cb: (data: object) => void) => void) | undefined {
+  if (typeof auth !== 'function') return auth;
+  return (cb) => {
+    void Promise.resolve()
+      .then(auth)
+      .then(cb, () => cb({}));
+  };
+}
+
+/**
  * Socket.IO event map — `{ event: (...args) => void }`. Aliases Socket.IO's
  * own `EventsMap` constraint, which intentionally maps to `any`: that is what
  * lets a plain `interface ServerToClientEvents { … }` (no index signature) be
@@ -42,6 +62,25 @@ export interface SocketIOClientConfig {
   path?: string;
   /** Send cookies on the handshake (cookie-based auth). Default `true`. */
   withCredentials?: boolean;
+  /**
+   * Handshake auth payload — token-based auth, the alternative to cookie auth
+   * (`withCredentials`). Reaches the server as `socket.handshake.auth`. A
+   * **function** is re-read on every (re)connect, so a rotated token is picked
+   * up automatically — no need to recreate the client (and lose durable
+   * subscriptions). The function may be async.
+   */
+  auth?:
+    | Record<string, unknown>
+    | (() => Record<string, unknown> | Promise<Record<string, unknown>>);
+  /** Extra query params on the handshake URL — reaches `socket.handshake.query`. */
+  query?: Record<string, string | number | boolean>;
+  /**
+   * Extra handshake headers. In a browser these apply to the **polling**
+   * transport only — a WebSocket upgrade cannot set request headers, so for
+   * browser WebSocket auth use `auth` instead. Useful from non-browser clients
+   * (Node/Bun server-to-server) where headers are honoured on every transport.
+   */
+  extraHeaders?: Record<string, string>;
   /** Transports, in preference order. Default `['websocket', 'polling']`. */
   transports?: Array<'websocket' | 'polling'>;
   /** Reconnection attempts. Default `Infinity`. */
@@ -107,6 +146,9 @@ export function createSocketIOClient<
       socket = io(config.url, {
         path: config.path ?? '/socket.io/',
         withCredentials: config.withCredentials ?? true,
+        auth: toIoAuth(config.auth),
+        ...(config.query && { query: config.query }),
+        ...(config.extraHeaders && { extraHeaders: config.extraHeaders }),
         transports: config.transports ?? ['websocket', 'polling'],
         autoConnect: false,
         reconnection: true,

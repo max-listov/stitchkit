@@ -18,7 +18,8 @@ By default every endpoint is a tool on every transport. `expose` narrows it:
 
 `desc` is the tool description the model reads — write it for the model, not
 just for a human. A `multipart` endpoint is never a tool. The tool name defaults
-to `prefix_key`; set `toolName` for an explicit one. See
+to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
+`get_widget`); set `toolName` for an explicit one. See
 [Contracts → transports](./contracts.md#transports).
 
 ## MCP — `createMcpHandler`
@@ -141,6 +142,59 @@ JSON-RPC channel.
 Both transports build the server through the shared `buildMcpServer` — same
 contract pipeline, same `services` / `context` / `hooks` / `nativeTools` /
 `instructions`.
+
+## OAuth 2.1 — a native remote connector
+
+A remote MCP server is connectable from Claude (Desktop / web "custom
+connector") only through the MCP authorization spec: OAuth 2.1 with PKCE, plus
+the discovery documents (RFC 9728 / 8414), Dynamic Client Registration
+(RFC 7591) and resource indicators (RFC 8707). A Bearer-only server returns a
+bare `401` and the connector never establishes.
+
+stitchkit ships the OAuth **protocol mechanics**; the app supplies only
+**identity and storage**. Three pieces wire it together:
+
+```ts
+import { createMcpHandler, mountOAuthProvider, oauthProtectedResourceRoute } from 'stitchkit/tools'
+import { createServer } from 'stitchkit/server'
+
+const resource = 'https://api.example.com/mcp'
+const issuer = 'https://api.example.com'
+
+// 1. Resource server — the 401 now points at the metadata.
+const handleMcp = createMcpHandler({
+  serverInfo: { name: 'my-app', version: '1.0.0' },
+  auth: resolveOAuthToken,        // validate the Bearer JWT (verifyJwt + audience)
+  services,
+  protectedResource: { resource, authorizationServers: [issuer] },
+})
+
+// 2. Authorization server — DCR, /authorize (PKCE), /token.
+const oauthRoutes = mountOAuthProvider({
+  issuer,
+  resource,
+  signingSecret: env.OAUTH_SECRET,
+  clients, codes, refreshTokens,  // your stores (DB or in-memory)
+  authorizeUser,                  // your login + consent → { userId } | Response
+})
+
+createServer({
+  services,
+  rawRoutes: [
+    { method: 'ALL', path: '/mcp', handler: (req) => handleMcp(req) },
+    oauthProtectedResourceRoute({ resource, authorizationServers: [issuer] }),
+    ...oauthRoutes,
+  ],
+})
+```
+
+Access tokens are signed HS256 JWTs (`signJwt`) whose `aud` is the resource —
+validate them in `auth` with `verifyJwt(token, secret, { audience: resource })`.
+`authorizeUser` is where the app authenticates the user (reuse an existing
+session) and records consent; return `{ userId }` to issue a code, or a
+`Response` to redirect the browser to a login page first. The AS and resource
+server can co-locate or live on separate origins. See
+[ADR 0015](../decisions/0015-oauth-resource-server.md).
 
 ## Proxying a remote API — `implementRemote`
 

@@ -40,6 +40,10 @@ export interface RequestEvent {
   responseBytes: number;
   /** Resolved user id, when authenticated. */
   userId?: string;
+  /** How the caller authenticated, when the app records it on the context. */
+  authMethod?: string;
+  /** Client id the call was made under (e.g. an OAuth client), when recorded. */
+  clientId?: string;
   /** Client IP. */
   ipAddress?: string;
   /** Client user-agent. */

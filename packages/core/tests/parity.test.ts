@@ -1,7 +1,8 @@
 /**
  * Cross-surface parity — the same contract args run through HTTP
- * (`createHandler`) and through a tool call (`executeToolMethod`) must produce
- * the same accept / reject outcome. The mechanical guard behind ADR 0014.
+ * (`createHandler`), a tool call and the CLI transport (`executeToolMethod`
+ * with `source: 'cli'`) must produce the same accept / reject outcome. The
+ * mechanical guard behind ADR 0014.
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
@@ -66,38 +67,60 @@ async function toolCall(
   return result.ok ? { ok: true, code: null } : { ok: false, code: result.code };
 }
 
-describe('cross-surface parity (HTTP ≡ tool)', () => {
-  test('valid args — both accept', async () => {
+/** Run the same endpoint through the CLI transport — returns the outcome shape. */
+async function cliCall(
+  methodKey: 'process' | 'badOutput',
+  args: Record<string, unknown>,
+): Promise<{ ok: boolean; code: string | null }> {
+  const method = service.methods[methodKey];
+  if (!method) throw new Error(`no method ${methodKey}`);
+  const result = await executeToolMethod(method, methodKey, args, { source: 'cli' });
+  return result.ok ? { ok: true, code: null } : { ok: false, code: result.code };
+}
+
+describe('cross-surface parity (HTTP ≡ tool ≡ CLI)', () => {
+  test('valid args — all accept', async () => {
     const http = await httpCall('/process/abc', { count: 5 });
     const tool = await toolCall('process', { id: 'abc', count: 5 });
+    const cli = await cliCall('process', { id: 'abc', count: 5 });
     expect(http.ok).toBe(true);
     expect(tool.ok).toBe(true);
+    expect(cli.ok).toBe(true);
   });
 
-  test('invalid input type — both reject VALIDATION_ERROR', async () => {
+  test('invalid input type — all reject VALIDATION_ERROR', async () => {
     const http = await httpCall('/process/abc', { count: 'not-a-number' });
     const tool = await toolCall('process', { id: 'abc', count: 'not-a-number' });
+    const cli = await cliCall('process', { id: 'abc', count: 'not-a-number' });
     expect(http.ok).toBe(false);
     expect(tool.ok).toBe(false);
+    expect(cli.ok).toBe(false);
     expect(http.code).toBe('VALIDATION_ERROR');
     expect(tool.code).toBe('VALIDATION_ERROR');
+    expect(cli.code).toBe('VALIDATION_ERROR');
   });
 
-  test('strict schema — an extra key is rejected on both', async () => {
+  test('strict schema — an extra key is rejected on all', async () => {
     const http = await httpCall('/process/abc', { count: 5, extra: 'nope' });
     const tool = await toolCall('process', { id: 'abc', count: 5, extra: 'nope' });
+    const cli = await cliCall('process', { id: 'abc', count: 5, extra: 'nope' });
     expect(http.ok).toBe(false);
     expect(tool.ok).toBe(false);
+    expect(cli.ok).toBe(false);
     expect(http.code).toBe('VALIDATION_ERROR');
     expect(tool.code).toBe('VALIDATION_ERROR');
+    expect(cli.code).toBe('VALIDATION_ERROR');
   });
 
-  test('output mismatch — both fail INTERNAL_SERVER_ERROR (server fault)', async () => {
+  test('output mismatch — all fail INTERNAL_SERVER_ERROR (server fault)', async () => {
     const http = await httpCall('/bad', {});
     const tool = await toolCall('badOutput', {});
+    const cli = await cliCall('badOutput', {});
     expect(http.ok).toBe(false);
     expect(tool.ok).toBe(false);
+    expect(cli.ok).toBe(false);
     expect(http.code).toBe('INTERNAL_SERVER_ERROR');
     expect(tool.code).toBe('INTERNAL_SERVER_ERROR');
+    expect(cli.code).toBe('INTERNAL_SERVER_ERROR');
   });
 });

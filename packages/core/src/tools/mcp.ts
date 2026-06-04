@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { EndpointToolAnnotations } from '../contract';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef, StitchLogger } from '../server/types';
 import {
@@ -9,6 +10,7 @@ import {
   toolResultFromError,
 } from './execute';
 import { type JsonSchemaIo, toJsonSchema } from './json-schema';
+import { type McpResourceDef, RESOURCE_MIME_TYPE } from './mcp-app';
 import {
   collectTools,
   createToolRunner,
@@ -264,8 +266,25 @@ export function mountMcp(
         description: string;
         inputSchema: z.ZodType;
         outputSchema?: z.ZodType;
+        annotations?: EndpointToolAnnotations;
+        _meta?: Record<string, unknown>;
       } = { description: mountable.method.desc, inputSchema: mountable.schema };
       if (prepared.outputSchema) toolConfig.outputSchema = prepared.outputSchema;
+      // MCP `ToolAnnotations` — behavioural hints a host reads to group tools
+      // (read-only vs destructive), pick permission defaults and show a title.
+      if (mountable.method.annotations) {
+        toolConfig.annotations = mountable.method.annotations;
+      }
+      // MCP Apps (SEP-1865): carry `_meta.ui` so a host renders the named
+      // `ui://` resource as an interactive widget for this tool's results. The
+      // legacy flat `ui/resourceUri` key is set alongside — some hosts still
+      // read it (matches the ext-apps `registerAppTool` normalization).
+      if (mountable.method.ui) {
+        toolConfig._meta = {
+          ui: mountable.method.ui,
+          'ui/resourceUri': mountable.method.ui.resourceUri,
+        };
+      }
 
       mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs) => {
         const args = isRecord(rawArgs) ? rawArgs : {};
@@ -319,6 +338,8 @@ export interface McpServerBuildConfig<TAuth> {
   /** Register native (non-contract) MCP tools — receives the `McpServer`
    *  directly. For tools returning multimodal content, e.g. `mountViewFile`. */
   nativeTools?: (server: McpServer) => void;
+  /** MCP Apps UI resources (`ui://…`) served for tools that declare `ui`. */
+  resources?: McpResourceDef[];
   /** Server instructions — a short (≤2KB) hint to the host on when and how to
    *  use these tools. Surfaced to MCP tool-search. */
   instructions?: string;
@@ -356,5 +377,31 @@ export function buildMcpServer<TAuth>(
     errorHint: config.errorHint,
   });
   config.nativeTools?.(server);
+  for (const resource of config.resources ?? []) {
+    mountMcpResource(server, resource);
+  }
   return server;
+}
+
+/**
+ * Register one MCP Apps UI resource on an `McpServer`. The `read` callback's
+ * HTML is served under the resource `uri` with the apps MIME type; any `ui`
+ * metadata (CSP, border, domain) is attached to the content's `_meta.ui`.
+ */
+export function mountMcpResource(server: McpServer, resource: McpResourceDef): void {
+  server.registerResource(
+    resource.name,
+    resource.uri,
+    { mimeType: resource.mimeType ?? RESOURCE_MIME_TYPE },
+    async () => ({
+      contents: [
+        {
+          uri: resource.uri,
+          mimeType: resource.mimeType ?? RESOURCE_MIME_TYPE,
+          text: await resource.read(),
+          ...(resource.ui && { _meta: { ui: resource.ui } }),
+        },
+      ],
+    }),
+  );
 }

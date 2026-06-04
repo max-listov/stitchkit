@@ -19,14 +19,18 @@ import { mergeSchemas } from './schema';
 /**
  * Extra arguments folded into a mounted tool's schema — the host supplies them,
  * `resolve` turns them into handler context. Shared by `mountMcp` / `mountAgent`.
+ *
+ * `TContext` is the typed handler context the extension contributes — left as
+ * `Record<string, unknown>` for the untyped mounts, pinned by `createToolkit`
+ * so `resolve` is checked against the app's context shape.
  */
-export interface ToolExtend {
+export interface ToolExtend<
+  TContext extends Record<string, unknown> = Record<string, unknown>,
+> {
   /** Extra Zod fields added to every (matching) tool's input schema. */
   schema: Record<string, z.ZodType>;
   /** Turn the extra arguments into context merged into the handler. */
-  resolve: (
-    args: Record<string, unknown>,
-  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  resolve: (args: Record<string, unknown>) => Partial<TContext> | Promise<Partial<TContext>>;
   /** Limit the extension to specific methods — default: every method. */
   filter?: (service: ServiceDef, method: MethodDef) => boolean;
 }
@@ -77,7 +81,15 @@ export function collectTools(
   const { extend, flattenUnionInput = false } = config;
   const tools: MountableTool[] = [];
   for (const [methodName, method] of Object.entries(service.methods)) {
-    if (method.expose && !method.expose.includes(transport)) continue;
+    // CLI is opt-IN: a method surfaces as a command only when its `expose`
+    // explicitly lists `'CLI'`. The other tool transports are default-on — a
+    // method with no `expose` is on MCP and AGENT — so adding the CLI transport
+    // never silently widens an existing contract's surface.
+    if (transport === 'CLI') {
+      if (!method.expose?.includes('CLI')) continue;
+    } else if (method.expose && !method.expose.includes(transport)) {
+      continue;
+    }
     if (method.multipart) continue;
 
     const name = method.toolName ?? toToolName(service.name, methodName);

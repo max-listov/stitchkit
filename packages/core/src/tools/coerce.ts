@@ -3,7 +3,13 @@ import { safeJsonParse } from '../internal/safe-json';
 
 /** True for a field whose value should be JSON-parsed when it arrives as a string. */
 function needsJsonCoercion(field: z.core.$ZodType): boolean {
-  if (field instanceof z.ZodArray || field instanceof z.ZodObject) return true;
+  if (
+    field instanceof z.ZodArray ||
+    field instanceof z.ZodObject ||
+    field instanceof z.ZodRecord
+  ) {
+    return true;
+  }
   if (
     field instanceof z.ZodOptional ||
     field instanceof z.ZodNullable ||

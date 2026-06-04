@@ -28,7 +28,7 @@ const notesService = implement(notes, {
 
 // ─── Socket.IO — file watcher → live reload ───────────
 
-const socket = createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
+const socket = await createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
   cors: { origin: '*' },
 });
 

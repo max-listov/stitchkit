@@ -1,6 +1,6 @@
 <p align="center">
   <strong>Contract-first backend framework for Bun and Node.</strong><br/>
-  Define your API once — get an HTTP API, MCP tools, AI-agent tools and a typed client.
+  Define your API once — get an HTTP API, MCP tools, AI-agent tools, a CLI and a typed client.
 </p>
 
 <p align="center">
@@ -16,26 +16,27 @@
 </p>
 
 <p align="center">
-  <em>One <code>defineContract()</code> → an HTTP API, MCP tools and AI-agent tools on the server — plus a fully-typed client to call them.</em>
+  <em>One <code>defineContract()</code> → an HTTP API, MCP tools, AI-agent tools and a CLI on the server — plus a fully-typed client to call them.</em>
 </p>
 
 ---
 
 ## Why
 
-- **One contract, four surfaces.** Define your API once — get HTTP routes, MCP tools (for Claude/Cursor), AI SDK tools (for agents), and a typed client.
+- **One contract, five surfaces.** Define your API once — get HTTP routes, MCP tools (for Claude/Cursor), AI SDK tools (for agents), a [CLI](./docs/guide/cli.md) (for scripts & Skills), and a typed client.
 - **Zero HTTP framework deps.** Built on `Bun.serve()` (Bun) or `srvx` (Node). No Hono, no Elysia, no Express.
 - **Fullstack type safety.** Server handlers, client calls, MCP tools — all typed from the same contract.
-- **Small.** ~4000 lines of source. No magic, no codegen, no build step.
+- **Small.** ~8500 lines of source. No magic, no codegen, no build step.
 - **Thin over what you already use.** WebSocket = Socket.IO (`createSocketIOClient` / `createSocketIOServer`). React data layer = `react-query-kit` (`createCursorQuery`). stitchkit owns the contract and the transport — not its own competing WebSocket or hook engine.
 
 ### The problem it solves
 
-A modern backend exposes the *same* operations three ways — an HTTP API for the
-app, MCP tools for assistants like Claude and Cursor, and tool definitions for AI
-agents. Written by hand, that is one surface described three times: three places
-to drift, three places to keep in sync. stitchkit collapses them into a single
-contract — change it once, every surface and the typed client move together.
+A modern backend exposes the *same* operations several ways — an HTTP API for the
+app, MCP tools for assistants like Claude and Cursor, tool definitions for AI
+agents, and a CLI for scripts and Skills. Written by hand, that is one surface
+described many times: many places to drift, many places to keep in sync.
+stitchkit collapses them into a single contract — change it once, every surface
+and the typed client move together.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/infographic-compare.jpg" alt="Without stitchkit: the same API hand-written three times. With stitchkit: one contract drives them all." width="100%" />
@@ -343,7 +344,7 @@ app code share a single instance. Bundled copies would double `zod`, split the
 `react` hook runtime and break `instanceof`. Optional peers mean an app that
 never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/0011-bun-only-one-package.md)
 
-The framework itself is small — ~4000 lines, no codegen, no build step in your app.
+The framework itself is small — ~8500 lines, no codegen, no build step in your app.
 
 ## Example
 

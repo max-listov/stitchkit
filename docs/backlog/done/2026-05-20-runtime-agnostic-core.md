@@ -2,9 +2,11 @@
 title: Runtime-agnostic ядро — Bun первоклассно, Node поддерживается
 description: Сделать stitchkit пригодным для Node без потери Bun-first — ядро Fetch-чистое, но завязок больше, чем казалось, и пол по Node = 22
 type: task
-status: inbox
+status: done
 created: 2026-05-20
-updated: 2026-05-20
+updated: 2026-06-05
+completed: 2026-06-05 20:52
+related: docs/backlog/inbox/2026-06-05-node-support-polish.md
 ---
 
 # Runtime-agnostic ядро
@@ -216,3 +218,151 @@ README. ESM-only (нет CJS-выхода) — оставить сознател
   `tsconfig.json`/`tsconfig.build.json` (`types:["bun"]`), `.github/workflows/`.
 - `docs/decisions/` — ADR 0001 (уточняется), 0008/0009 (прецедент для спора по
   `serveNode`), 0011 (Bun-only пункт замещается 0013).
+
+---
+
+## ⟢ Обновление 2026-05-29 — статус + остаток «от и до»
+
+Триггер: `stitch-demo` (RR7 + stitchkit) под Node-dev упал —
+`stitchkit/server` тянет Bun-движок сокетов на загрузке. Сверка плана выше с
+**текущим кодом** (часть зашипалась в 0.2.0, доку не обновляли).
+
+### Что реально СДЕЛАНО (0.2.0) — P1/P2
+
+- [x] `createHandler` Node-чистый — `src/server/create.ts` не импортит socket-io
+  (только `./request`); `Bun.serve`/`Bun.file` — внутри тел функций, не eval.
+- [x] Split `HandlerConfig` (нейтральный) / `BunServerConfig` (Bun) — `server/types.ts`.
+- [x] `serveNode` на **`srvx`** — `src/server/node.ts` (`serve({ port, fetch })`).
+  Спор «hand-roll vs srvx» решён → **srvx** (ADR 0013).
+- [x] Entry `stitchkit/node` — `src/node.ts` (`createHandler` + `serveNode` + `HandlerConfig`).
+- [x] `engines: { node: ">=22", bun: ">=1.2.0" }`, `srvx` optional-peer.
+- [x] `/tools` (MCP) — WebStandard transport, Node-safe (работы ноль, как и ожидалось).
+
+### Что НЕ сделано — подтверждённые дыры (по коду)
+
+- `src/server/socket-io.ts:14-15` — **статический** top-level `import @socket.io/bun-engine` + `socket.io`.
+- `src/server/index.ts:61` — баррель статически реэкспортит `createSocketIOServer`
+  → импорт `createHandler`/`implement`/`notFound` из `stitchkit/server` **eval-ит**
+  socket-io → Bun-движок → **краш под Node на загрузке** (даже без сокетов).
+- `implement`/`notFound` — только в `/server` барреле (`server/index.ts:7,14`), нет в `/node`.
+- Socket.IO **Node-пути нет** (только Bun-движок). serveNode не отдаёт http.Server.
+- `staticRoute` — `Bun.file` (Bun-only), падает на Node если зарегистрить в `rawRoutes`.
+- type-leak `Bun` namespace в `/server` `.d.ts` — под вопросом, проверить.
+- Node CI / dist-import-smoke / Fetch-purity guard — нет (потому баг и проскочил).
+
+### Крукс РЕШЁН: srvx отдаёт node-сервер
+
+`srvx` экспозит **`server.node.server`** = подлежащий `node:http.Server`
+(подтверждено: srvx.h3.dev/guide/server). Значит socket.io `io.attach(server.node.server)`
+на Node **реален** → realtime-on-Node возможен. Оговорка: проверить что srvx сам не
+перехватывает `upgrade` когда WS не сконфижен (createHandler — чистый fetch без WS →
+socket.io владеет `upgrade`); закрыть тестом.
+
+### Остаток «от и до» — фазы (переупорядочены под факт)
+
+- **Ф0 — Node-safety барреля (S, 1 файл, РАЗБЛОКИРУЕТ всё).** `socket-io.ts`:
+  top-level импорт движков → `await import(...)` **внутрь** `createSocketIOServer`
+  (внятная ошибка). Итог: `stitchkit/server` грузится под Node → **non-socket Node-апп
+  (= demo) работает.** Это «минимум, чтобы импортилось и бежало».
+- **Ф1 — эргономика + C8 + static (S–M).** Реэкспорт `implement`/`notFound`/`createImplement`
+  из `stitchkit/node`. Закрепить C8 (srvx даёт абсолютный url) Node-smoke-тестом.
+  `staticRoute` → задокументировать **Bun-only** (Node: статика через фронт/CDN); Node-static с Range — отдельный follow-up.
+- **Ф2 — Socket.IO на Node (M–L, главная работа).** Engine-адаптер: `createSocketIOServer`
+  берёт адаптер (Bun = `@socket.io/bun-engine`; Node = `io.attach(handle.node.server)`).
+  `serveNode({ socket })` симметрично `createServer`, отдаёт srvx-handle; socket.io цепляется
+  в той же фазе (владеет `upgrade`). = «полноценно вкл. realtime».
+- **Ф3 — типы/упаковка (S–M).** Убрать утечку `Bun` namespace в `/server`+`/node` `.d.ts`;
+  `@types/bun` → optional peer; подтвердить `exports ./node` с types.
+- **Ф4 — CI/доказательство (M).** Node test-job (`node --test`, отдельный набор);
+  **dist-import smoke** `node -e "import('stitchkit/node')"` + `import('stitchkit/server')`
+  (поймал бы этот баг); Fetch-purity Biome-guard; Node-job в `release.yml`.
+- **Ф5 — доки/ребренд (S).** README/description/keywords «for Bun **and Node**»;
+  getting-started + deployment на `serveNode`; staticRoute Bun-only.
+
+### Критический путь
+- min (импортится + бежит non-socket Node-апп) = **Ф0**.
+- полноценно вкл. realtime = **+ Ф2**.
+- прод-уверенно = **+ Ф3–Ф4 + Ф5**.
+
+### Демо тем временем
+`stitch-demo` на **Bun уже работает** (`/api/notes` отдаёт сид). Для Node-dev ждёт **Ф0**.
+
+---
+
+## ✅ Сделано 2026-05-29 — Node-готовность (Ф0–Ф4)
+
+Реализовано «от и до» + полный чек. **stitchkit полноценно работает на Node** (verified).
+
+### Ф0 — баррель Node-safe
+- [x] `server/socket-io.ts` — сокет-пакеты грузятся **лениво** (dynamic `import` внутри
+  `createSocketIOServer`; top-level value-импорты убраны, остались только `type`).
+  Баррель `stitchkit/server` больше eager-не-тянет Bun-движок → грузится под Node.
+
+### Ф1 — эргономика
+- [x] `stitchkit/node` (`src/node.ts`) реэкспортит `implement`/`createImplement`/error-helpers/
+  `createSocketIOServer` — Node-апп не касается Bun-именованного `createServer`.
+- [x] C8 (`new URL(req.url)`) — srvx даёт абсолютный url; подтверждено serveNode-смоуком.
+- [x] C2 staticRoute — оказалось УЖЕ Node-safe (`node:fs`, не `Bun.file`); таска была стале.
+
+### Ф2 — Socket.IO на Node
+- [x] `createSocketIOServer` async, runtime-ветвь: **Bun** = bun-engine + websocket + route;
+  **Node** = `io.attach(server.node.server)` (srvx `node:http.Server`). Единый handle:
+  `websocket`/`route` обязательны (на Node — inert-заглушки, без гардов у Bun-консьюмера),
+  `attach` обязателен (на Bun — noop). `serveNode({ socket })` делает attach.
+- [x] **Node = websocket-only** (polling столкнулся бы со srvx-request-handler; ws идёт через
+  `upgrade`). Задокументировано в `SocketIOServerConfig`; клиент ставит `transports:['websocket']`.
+- [x] Callsites обновлены (`await createSocketIOServer`): starter, consumer/backend, core test.
+
+### Ф3 — типы/упаковка (частично)
+- [x] `@types/bun` → optional **peer** (был только devDep).
+- [ ] Глубокая утечка `Bun`/bun-engine типов в `/server`+`/node` `.d.ts` (через
+  `RawRouteContext.server: BunServer` и websocket-тип) — generic `RawRouteContext<TServer>`
+  рефактор. Не блокер рантайма; Node-консьюмер ставит `@types/bun`. **Остаток.**
+
+### Ф4 — CI/доказательство
+- [x] `scripts/node-smoke.mjs` + `bun run smoke:node` — под **node** против dist: импорт ВСЕХ
+  server-side entrypoints (вкл. `stitchkit/server`!) + serveNode HTTP round-trip + Socket.IO
+  round-trip. Ровно класс бага, который `bun test` не видит.
+- [x] `.github/workflows/ci.yml` — `node-smoke` job переключён на `bun run smoke:node`
+  (был слабый inline, не импортил `/server`). release зависит от node-smoke.
+- [ ] Biome Fetch-purity guard (бан `Bun`-глобала в core-дир) — **отложено**: формат
+  `noRestrictedGlobals` под вопросом, риск сломать lint-гейт; dist-smoke даёт рантайм-гарантию.
+
+### Ф5 — ребренд (уже было сделано)
+- [x] description/keywords/README/VISION — уже «for Bun **and Node**».
+- [ ] getting-started/deployment doc на `serveNode` — **остаток** (мелочь).
+
+### Верификация
+- stitchkit: `bun run verify` — lint чист · tsc 0 · **339 pass/0 fail** · build ok.
+- `bun run smoke:node` под Node — все entrypoints + serveNode HTTP + Socket.IO ✅.
+- потребитель: **8/8** typecheck (websocket non-optional → без гардов).
+- demo `stitch-demo` под **Node** (`react-router dev`) — SSR + `/api` + typed-client ✅.
+
+### Остаток (некритично, не блокирует Node)
+- Ф3: generic `RawRouteContext<TServer>` (убрать Bun-type-leak из `.d.ts`).
+- Ф4: Biome Bun-global guard.
+- Ф5: getting-started/deployment doc для Node.
+
+---
+
+## Итог (закрыто 2026-06-05)
+
+Сверено с текущим кодом, глубоко:
+
+- **Ядро runtime-agnostic — СДЕЛАНО и verified.** Node полноценно работает
+  (зашипано в 0.3.0): lazy socket-io в барреле (`server/socket-io.ts`),
+  `serveNode` на srvx (`server/node.ts` + `stitchkit/node`), split
+  `HandlerConfig`/`BunServerConfig` (`server/types.ts`), Socket.IO Node-attach
+  (`io.attach(server.node.server)`), `node-smoke.mjs` + `node-smoke` job в CI,
+  `engines {node>=22, bun>=1.2}`, `@types/bun`/`srvx` optional-peers, ADR 0013.
+- **3 остатка подтверждены ОТКРЫТЫМИ** (некритичны, Node не блокируют) →
+  вынесены отдельной задачей на потом:
+  [`docs/backlog/inbox/2026-06-05-node-support-polish.md`](../inbox/2026-06-05-node-support-polish.md):
+  - **Ф3** — `RawRouteContext.server: BunServer` (не generic), `BunServer`
+    светит в `/server` `.d.ts`. Смягчено `@types/bun` optional-peer.
+  - **Ф4** — нет Biome Fetch-purity guard (только `globals:["Bun"]`); рантайм
+    прикрыт dist-smoke в CI.
+  - **Ф5** — Node-доки тонкие (в getting-started лишь строка prereq, нет
+    `serveNode`-примера и секции деплоя на Node).
+
+Файл закрыт: ядро done & verified, polish-остатки живут отдельной inbox-заметкой.

@@ -1,4 +1,5 @@
 import type { ContractDef, EndpointDef, RuntimeContext } from '../contract';
+import { typedEntries } from '../internal/typed';
 import type { Handlers, MethodDef, ServiceDef } from './types';
 
 /**
@@ -18,10 +19,10 @@ export function implement<
   // `ServiceDef.scope` share a single source of truth.
   const groupScope = contract.meta.scope ?? 'public';
 
-  for (const [key, endpoint] of Object.entries(contract.endpoints)) {
-    const typedHandler = handlers[key as keyof T];
+  for (const [key, endpoint] of typedEntries(contract.endpoints)) {
+    const typedHandler = handlers[key];
 
-    methods[key] = {
+    methods[String(key)] = {
       method: endpoint.method,
       path: endpoint.path,
       desc: endpoint.desc,
@@ -35,6 +36,8 @@ export function implement<
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
+      ui: 'ui' in endpoint ? endpoint.ui : undefined,
+      annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       handler: (ctx: RuntimeContext) =>
         (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),
     };

@@ -1,4 +1,5 @@
 import type { ContractDef, EndpointDef, TypedHttpClient } from '../contract';
+import { inputIsQuery } from '../internal/http-input';
 import { mapObject, typedEntries } from '../internal/typed';
 import {
   ApiError,
@@ -203,7 +204,7 @@ function createFetchMethod(
       ...(typeof config.headers === 'function' ? config.headers() : config.headers),
     };
 
-    const isQuery = endpoint.method === 'GET' || endpoint.method === 'DELETE';
+    const isQuery = inputIsQuery(endpoint.method);
     const hasBody = !isQuery && !endpoint.multipart && endpoint.input && args;
 
     if (isQuery && args) {
