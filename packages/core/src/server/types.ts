@@ -52,6 +52,13 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   /** Per-route upload ceiling (bytes) for a multipart endpoint — overrides the
    *  server `maxUploadBytes` default; from `EndpointDef.maxUploadBytes`. */
   maxUploadBytes?: number;
+  /**
+   * Whether the operation is safe to call twice with the same input — from
+   * `EndpointDef.idempotent`. The core attaches no behaviour; a retrying
+   * transport reads it to decide whether to replay a call after a reconnect.
+   * → ADR 0027.
+   */
+  idempotent?: boolean;
   /** MCP Apps widget metadata — carried onto the MCP tool's `_meta.ui`. */
   ui?: EndpointUiMeta;
   /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
-import { createSocketIOClient } from '../src/browser/socket-io';
+import { createSocketIOClient, type SocketIOClientConfig } from '../src/browser/socket-io';
 import { createServer } from '../src/server/create';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
 import type { RawRoute } from '../src/server/types';
@@ -170,7 +170,7 @@ const authServer = createServer({
   rawRoutes: [authSock.route],
 });
 
-function makeAuthClient(config: Partial<Parameters<typeof createSocketIOClient>[0]> = {}) {
+function makeAuthClient(config: Partial<SocketIOClientConfig<AuthServerEvents>> = {}) {
   return createSocketIOClient<AuthServerEvents, AuthClientEvents>({
     url: AUTH_URL,
     transports: ['websocket'],
@@ -411,6 +411,95 @@ describe('composed WebSocket lanes (Socket.IO + raw)', () => {
 
     expect(raw).toEqual(['open:echo', 'concurrent']);
     expect(await pong).toEqual({ n: 101 });
+    client.disconnect();
+  });
+});
+
+// ─── Sticky events (retained last value) ─────────────────────────────────────
+
+interface StateServerEvents {
+  state: (data: { value: number }) => void;
+}
+interface StateClientEvents {
+  noop: () => void;
+}
+
+const STICKY_PORT = 9898;
+const STICKY_URL = `http://localhost:${STICKY_PORT}`;
+
+const stickySock = await createSocketIOServer<StateServerEvents, StateClientEvents>({
+  cors: { origin: '*' },
+});
+// Publish the current state once, on connect — a subscriber that arrives later
+// would miss it without retention.
+stickySock.io.on('connection', (s) => {
+  s.emit('state', { value: 7 });
+});
+const stickyServer = createServer({
+  port: STICKY_PORT,
+  websocket: stickySock.websocket,
+  rawRoutes: [stickySock.route],
+});
+
+describe('Socket.IO sticky events (retain)', () => {
+  afterAll(() => {
+    stickyServer.stop(true);
+  });
+
+  test('a handler subscribed after the event still gets the last value', async () => {
+    const client = createSocketIOClient<StateServerEvents, StateClientEvents>({
+      url: STICKY_URL,
+      transports: ['websocket'],
+      retain: ['state'],
+    });
+    client.connect();
+    await whenConnected(client);
+    // Let the connect-time `state` emission arrive and be recorded.
+    await Bun.sleep(100);
+
+    // Subscribe *after* the event — the retained value is replayed synchronously.
+    const late: Array<{ value: number }> = [];
+    client.on('state', (data) => {
+      late.push(data);
+    });
+    expect(late).toEqual([{ value: 7 }]);
+    client.disconnect();
+  });
+
+  test('the retained value survives a disconnect/connect cycle', async () => {
+    const client = createSocketIOClient<StateServerEvents, StateClientEvents>({
+      url: STICKY_URL,
+      transports: ['websocket'],
+      retain: ['state'],
+    });
+    client.connect();
+    await whenConnected(client);
+    await Bun.sleep(100);
+    client.disconnect();
+
+    // Still replays while disconnected — the store lives outside the socket.
+    const afterDisconnect: Array<{ value: number }> = [];
+    client.on('state', (data) => {
+      afterDisconnect.push(data);
+    });
+    expect(afterDisconnect).toEqual([{ value: 7 }]);
+  });
+
+  test('a non-retained event is not replayed to a late subscriber', async () => {
+    const client = createSocketIOClient<StateServerEvents, StateClientEvents>({
+      url: STICKY_URL,
+      transports: ['websocket'],
+      // no `retain` → no stickiness
+    });
+    client.connect();
+    await whenConnected(client);
+    await Bun.sleep(100);
+
+    const late: Array<{ value: number }> = [];
+    client.on('state', (data) => {
+      late.push(data);
+    });
+    expect(late).toEqual([]);
     client.disconnect();
   });
 });

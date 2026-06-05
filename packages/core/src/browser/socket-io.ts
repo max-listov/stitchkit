@@ -22,6 +22,7 @@
  */
 import type { EventsMap } from '@socket.io/component-emitter';
 import { io } from 'socket.io-client';
+import { createRetainedTopics } from '../retained';
 
 /** The concrete Socket.IO client socket type (loose, default event typing). */
 type ClientSocket = ReturnType<typeof io>;
@@ -55,7 +56,7 @@ function toIoAuth(
  */
 export type SocketEventMap = EventsMap;
 
-export interface SocketIOClientConfig {
+export interface SocketIOClientConfig<TServerEvents extends SocketEventMap = SocketEventMap> {
   /** Server origin, e.g. `https://api.example.com`. */
   url: string;
   /** Socket.IO endpoint path. Default `/socket.io/`. */
@@ -91,6 +92,15 @@ export interface SocketIOClientConfig {
   reconnectionDelayMax?: number;
   /** Connection timeout (ms). Default `20000`. */
   timeout?: number;
+  /**
+   * Server → client events to **retain** ("sticky events"). The client keeps the
+   * last payload of each listed event and replays it to any handler subscribed
+   * afterwards (and on the next subscribe after a re-render), so a late
+   * subscriber catches up to the current state at once instead of waiting for the
+   * next emission. The retained value survives a `disconnect()` / `connect()`
+   * cycle. Only the first emitted argument of an event is retained.
+   */
+  retain?: Array<keyof TServerEvents & string>;
 }
 
 export interface SocketIOClient<
@@ -121,7 +131,7 @@ export interface SocketIOClient<
 export function createSocketIOClient<
   TServerEvents extends SocketEventMap,
   TClientEvents extends SocketEventMap,
->(config: SocketIOClientConfig): SocketIOClient<TServerEvents, TClientEvents> {
+>(config: SocketIOClientConfig<TServerEvents>): SocketIOClient<TServerEvents, TClientEvents> {
   // The internal socket keeps Socket.IO's default (loose) event typing — the
   // public methods below are the fully-typed surface. Socket.IO's emitter is a
   // conditional-typed API that cannot be forwarded through a generic wrapper;
@@ -130,6 +140,13 @@ export function createSocketIOClient<
   const connectionListeners = new Set<(connected: boolean) => void>();
   // Durable event subscriptions — each re-attaches itself onto a fresh socket.
   const subscriptions = new Set<(socket: ClientSocket) => void>();
+  // Sticky events — retained last value per topic. The store lives outside the
+  // socket, so a retained value survives a disconnect()/connect() cycle; each
+  // value is the event's first emitted argument.
+  const retainNames = config.retain ? config.retain.map(String) : [];
+  const retainSet = new Set(retainNames);
+  const retained =
+    retainNames.length > 0 ? createRetainedTopics<Record<string, unknown>>() : null;
 
   function notifyConnection(connected: boolean): void {
     for (const listener of connectionListeners) listener(connected);
@@ -160,6 +177,14 @@ export function createSocketIOClient<
 
       socket.on('connect', () => notifyConnection(true));
       socket.on('disconnect', () => notifyConnection(false));
+      // Record retained events' latest payload, independent of any user handler,
+      // so the value is available to a subscriber that connects later. Attached
+      // before connect so a handshake-time emission is captured too.
+      if (retained) {
+        for (const name of retainNames) {
+          socket.on(name, (payload: unknown) => retained.record(name, payload));
+        }
+      }
       // Re-attach every registered handler BEFORE connecting — nothing emitted
       // during the handshake (e.g. an `authenticated` reply) can be missed.
       for (const attach of subscriptions) attach(socket);
@@ -190,6 +215,14 @@ export function createSocketIOClient<
       };
       subscriptions.add(attach);
       if (socket) attach(socket);
+
+      // Sticky replay — a late subscriber to a retained topic gets the last
+      // value immediately. `fn` widens the (any-typed) listener to a loose call
+      // signature by plain assignment, no cast (as with `name` above).
+      if (retained && retainSet.has(name)) {
+        const fn: (...args: unknown[]) => void = handler;
+        retained.replay(name, (payload) => fn(payload));
+      }
 
       return () => {
         subscriptions.delete(attach);

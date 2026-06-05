@@ -4,6 +4,11 @@ export { type CliConfig, createCli } from './tools/cli';
 export type { ExitCodeMap } from './tools/cli-format';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
+export {
+  type ContractDispatcher,
+  type ContractDispatcherConfig,
+  createContractDispatcher,
+} from './tools/dispatch';
 export type { ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
 export { flattenDiscriminatedUnion } from './tools/flatten';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';

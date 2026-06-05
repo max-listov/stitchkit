@@ -97,7 +97,41 @@ subscribe once; reconnection is the wrapper's problem, not yours.
 
 `SocketIOClientConfig` takes `url`, `path`, `withCredentials` (cookies on the
 handshake — default `true`), `auth`, `query`, `extraHeaders`, `transports`,
-`reconnectionAttempts` and `reconnectionDelay`.
+`reconnectionAttempts`, `reconnectionDelay` and `retain` (below).
+
+### Sticky events
+
+A handler that subscribes **after** an event was emitted misses it — the UI stays
+on stale state until the next emission. List those events in **`retain`** and the
+client keeps each one's last payload and replays it to a handler the moment it
+subscribes (and on the next subscribe after a re-render). It is the pub/sub
+analogue of an MQTT *retained* message or an RxJS `BehaviorSubject`.
+
+```ts
+const client = createSocketIOClient<ServerEvents, ClientEvents>({
+  url,
+  retain: ['presence:changed', 'job:state'],   // events to keep the last value of
+})
+client.connect()
+
+// Later — even after the event already fired — this handler fires at once with
+// the last value, then on every future change:
+client.on('job:state', (s) => render(s))
+```
+
+The retained value survives a `disconnect()` / `connect()` cycle (the store lives
+outside the socket). Only an event's **first** argument is retained.
+
+For a pub/sub channel that is **not** Socket.IO (your own transport — see
+[below](#bring-your-own-transport)), use the same memory directly:
+
+```ts
+import { createRetainedTopics } from 'stitchkit'
+
+const topics = createRetainedTopics<{ 'job:state': JobState }>()
+topics.record('job:state', state)                 // on every publish
+topics.replay('job:state', (s) => render(s))      // for a late subscriber
+```
 
 ### Handshake auth — cookie or token
 
@@ -262,3 +296,66 @@ Notes:
   global — keep `idleTimeout` ≥ Socket.IO needs (> 2 × `pingInterval`).
 - For high throughput, handle backpressure in the raw lane: `ws.send()` returns
   `-1` under pressure; resume on the `drain` callback.
+
+## Bring-your-own transport
+
+Sometimes the transport is neither HTTP nor Socket.IO — a desktop app whose UI
+webview talks to its own local Bun sidecar over a raw WebSocket, an IPC channel,
+a queue worker. You still want one contract: a `defineContract` with typed
+client/server, Zod validation and a typed error envelope, not a hand-rolled
+method registry alongside it.
+
+stitchkit ships the **executor**, not the transport. `createContractDispatcher`
+runs a contract method by its key through the *same* core as the MCP / agent
+mounts — same validation, the same `{ ok, data } | { ok: false, code, … }`
+envelope, the same hooks and `beforeHandle` scope gate. You own the wire (framing,
+handshake, reconnect) and call `dispatch` per inbound frame.
+
+```ts
+import { createContractDispatcher } from 'stitchkit/tools'
+import { implement } from 'stitchkit/server'
+
+const service = implement(runtimeContract, { 'tasks.setDone': (ctx) => doIt(ctx.input), … })
+
+const dispatcher = createContractDispatcher(service, { source: 'local-ws' })
+
+// In your raw-WebSocket server, per `{ id, method, params }` frame:
+ws.onmessage = async (frame) => {
+  const { id, method, params } = JSON.parse(frame.data)
+  const result = await dispatcher.dispatch(method, params)   // validates + runs
+  ws.send(JSON.stringify({ id, ...result }))                 // { ok, data } | { ok:false, code, … }
+}
+```
+
+`dispatch` never throws for a normal call — a handler error becomes a failed
+result, and an unknown method is a `NOT_FOUND` result. Pass `hooks`
+(`beforeToolCall` / `afterToolCall`) and `lifecycle.beforeHandle` to audit and
+scope-guard exactly like the other transports. Tag calls with your own
+`source` — `TransportSource` is an open union.
+
+### Durability — `idempotent` + replay
+
+If the sidecar can restart mid-call, the client decides what to do with an
+in-flight request on reconnect from the operation's **idempotency**, declared on
+the contract:
+
+```ts
+export const runtimeContract = defineContract({ prefix: 'runtime' }, {
+  'tasks.setDone': { method: 'POST', path: '/done', desc: '…',
+    idempotent: true, input: taskDone, output: ok },     // re-send after reconnect — same result
+  'capture.start': { method: 'POST', path: '/start', desc: '…',
+    output: snapshot },                                   // unset → one-shot, do not re-send
+})
+```
+
+`idempotent` rides through to `MethodDef.idempotent`; the core attaches no
+behaviour. Your reconnect logic reads it: replay an idempotent call (the
+durability guarantee — the user's action is not lost), reject a non-idempotent
+one rather than fire a second side effect. Pair it with
+[sticky events](#sticky-events) (`createRetainedTopics`) so a reconnected client
+also catches up on the latest pushed state.
+
+This is deliberately *not* a reliable-RPC engine — that would be a competing
+WebSocket transport ([ADR 0008](../decisions/0008-thin-wrappers.md)). stitchkit
+gives you the executor and the metadata; the wire stays yours. See
+[ADR 0027](../decisions/0027-transport-neutral-contract-execution.md).

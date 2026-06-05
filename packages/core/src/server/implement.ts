@@ -40,6 +40,8 @@ export function implement<
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
       maxUploadBytes: endpoint.maxUploadBytes,
+      // Transport-neutral retry/replay hint — rides through untouched (→ ADR 0027).
+      idempotent: endpoint.idempotent,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       // Opaque app metadata — rides through untouched (on the shared base, so no

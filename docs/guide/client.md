@@ -58,7 +58,10 @@ contract:
 - for `GET` / `DELETE`, the remaining fields become the **query string**
   (arrays become repeated keys),
 - for `POST` / `PUT` / `PATCH`, they become the **JSON body**,
-- a `multipart` field must be a `Blob` and is sent as `form-data`.
+- a `multipart` field is a `Blob` (web / Bun) or a platform `FileDescriptor`
+  (`{ uri, name, type }`, for React Native / Expo) and is sent as `form-data`.
+  The exported `MultipartFile` / `FileDescriptor` types let you annotate your own
+  upload helpers.
 
 ### Many contracts at once
 

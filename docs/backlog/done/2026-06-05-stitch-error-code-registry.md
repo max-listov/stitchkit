@@ -24,7 +24,7 @@ A `code` is a free string (ADR 0002) — app codes are the consumer's. But stitc
 `onError` map → brittle: a `METHOD_NOT_ALLOWED` (wrong verb) wasn't in the copy →
 fell to 500 instead of 405.
 
-## Design (per Max's review)
+## Design (per maintainer review)
 
 One source of truth, no duplicated string list, **not** named `Framework*` →
 named **`Stitch*`** (it's stitchkit's own vocabulary). The map is the source; the

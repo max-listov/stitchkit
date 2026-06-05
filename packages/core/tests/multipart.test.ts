@@ -132,6 +132,63 @@ describe('multipart contract integration', () => {
   });
 });
 
+describe('multipart — platform file descriptor (React Native)', () => {
+  const PORT = 9904;
+  const base = `http://localhost:${PORT}`;
+
+  const uploads = defineContract(
+    { prefix: 'rn' },
+    {
+      create: {
+        method: 'POST',
+        path: '/',
+        desc: 'Upload a file',
+        multipart: 'file',
+        input: z.object({ title: z.string() }),
+        output: z.object({ ok: z.boolean() }),
+      },
+    },
+  );
+
+  // RN sends a file as a `{ uri, name, type }` descriptor (its `FormData` streams
+  // it from disk). Bun's `FormData` has no notion of that, so this asserts the
+  // *client* no longer rejects a non-`Blob` file and still sends the request —
+  // not RN's on-device streaming, which only a device can exercise.
+  const server = Bun.serve({ port: PORT, fetch: () => Response.json({ ok: true }) });
+  afterAll(() => server.stop(true));
+
+  test('typed client accepts a { uri, name, type } descriptor and sends the request', async () => {
+    const api = createClient(uploads, { baseUrl: base });
+    // Compiles → the multipart input type now accepts a descriptor, not only Blob.
+    const result = await api.create({
+      file: { uri: 'file:///audio.m4a', name: 'audio.m4a', type: 'audio/m4a' },
+      title: 'Recording',
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test('Blob still works alongside the descriptor', async () => {
+    const api = createClient(uploads, { baseUrl: base });
+    const result = await api.create({
+      file: new File(['hi'], 'hi.txt', { type: 'text/plain' }),
+      title: 'Blob',
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test('rejects an object that is neither a Blob nor a full descriptor', async () => {
+    const api = createClient(uploads, { baseUrl: base });
+    // A partial object ({uri} only) must not pass the guard. Reached through a
+    // structurally-widened reference (method-bivariance, cast-free) so the
+    // runtime guard — not the compiler — is what rejects it, as it would for an
+    // untyped JS caller.
+    const loose: { create(args: Record<string, unknown>): Promise<unknown> } = api;
+    await expect(loose.create({ file: { uri: 'file:///x' }, title: 't' })).rejects.toThrow(
+      'Missing multipart file field',
+    );
+  });
+});
+
 describe('multipart maxUploadBytes — per-route + global', () => {
   const PORT = 9903;
   const base = `http://localhost:${PORT}`;

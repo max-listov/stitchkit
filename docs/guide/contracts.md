@@ -63,6 +63,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `toolName` | no | explicit MCP / agent tool name (defaults to `prefix_key`) |
 | `multipart` | no | field name of a file upload — see [below](#file-uploads) |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
+| `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
 | `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
 
 ## `params` vs `input` vs `output`

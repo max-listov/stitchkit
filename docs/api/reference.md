@@ -37,10 +37,12 @@ The browser-and-server entrypoint. Re-exports everything from
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createSocketIOClient` | function | the typed Socket.IO client — [guide](../guide/realtime.md#client--createsocketioclient) |
+| `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `SocketIOClient` | _type_ | the client handle |
-| `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` |
+| `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
+| `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
 ---
@@ -69,6 +71,8 @@ from the root `stitchkit`.
 | `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
 | `ScopedHttpClient` | _type_ | a client whose `stripPrefixKeys` become required args ([guide](../guide/multi-tenant.md)) |
 | `ScopedEndpointFn` | _type_ | one method's signature with the consumed keys folded in |
+| `MultipartFile` | _type_ | a `multipart` file field — `Blob \| FileDescriptor` |
+| `FileDescriptor` | _type_ | a React Native / Expo file — `{ uri, name, type }` |
 
 ### Errors
 
@@ -272,6 +276,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `createContractDispatcher` | function | run a contract over a bring-your-own transport — [guide](../guide/realtime.md#bring-your-own-transport) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
@@ -283,6 +288,8 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ImplementRemoteOptions` | _type_ | options for `implementRemote` |
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
+| `ContractDispatcher` | _type_ | the `createContractDispatcher` handle |
+| `ContractDispatcherConfig` | _type_ | config for `createContractDispatcher` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli` |
 | `CliWaitConfig` | _type_ | `--wait` polling config |

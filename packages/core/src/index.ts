@@ -22,3 +22,4 @@ export type {
 export { createSocketIOClient } from './browser/socket-io';
 export { type ParseSSEOptions, parseSSE } from './browser/stream';
 export * from './contract';
+export { createRetainedTopics, type RetainedTopics } from './retained';

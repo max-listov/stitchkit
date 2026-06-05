@@ -74,6 +74,8 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
+      // Transport-neutral retry/replay hint — rides through (→ ADR 0027).
+      idempotent: endpoint.idempotent,
       handler: async (ctx: RuntimeContext) => {
         const call = client[key];
         if (!call) {

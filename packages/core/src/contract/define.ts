@@ -5,7 +5,14 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
 export type Transport = (typeof ALL_TRANSPORTS)[number];
 
-export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli';
+/**
+ * The transport tag on `ctx.source`. The four built-ins keep autocomplete, but
+ * the union is **open** (`string & {}`) so a bring-your-own transport — e.g. a
+ * raw-WebSocket lane driving a contract through `createContractDispatcher` — can
+ * tag its own calls (`source: 'local-ws'`). `source` is transport-only and
+ * carries no framework behaviour (→ ADR 0002 / ADR 0027).
+ */
+export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli' | (string & {});
 
 interface EndpointDefBase {
   method: HttpMethod;
@@ -29,6 +36,20 @@ interface EndpointDefBase {
    * property of the endpoint — declared once, the typed client applies it.
    */
   timeout?: number;
+  /**
+   * Whether calling this operation twice with the same input is safe (the
+   * second call yields the same result and no extra side effect) — a
+   * transport-neutral property of the operation, like HTTP `PUT`/`DELETE`.
+   *
+   * The core attaches **no** behaviour to it (it stays generic — ADR 0002): it
+   * rides through to `MethodDef.idempotent`, where a transport that can retry
+   * reads it. A reliable bring-your-own-transport lane (e.g. a raw-WebSocket
+   * client over `createContractDispatcher`) replays an `idempotent` call after a
+   * reconnect — that is the durability guarantee — while a non-idempotent one is
+   * rejected rather than re-sent (a duplicate would be a second side effect).
+   * Unset means "unknown" — a careful transport treats it as non-idempotent.
+   */
+  idempotent?: boolean;
   /**
    * Opaque, app-defined per-endpoint metadata. The core attaches **no** meaning
    * to it (like `scope`, it is a free escape-hatch — ADR 0002/0021): it rides
@@ -211,8 +232,31 @@ type Prop<T, K extends string> = K extends keyof T ? T[K] : undefined;
 // every intersected field to `never`.
 type InferInput<S> = S extends ZodType ? z.input<S> : unknown;
 
+/**
+ * A platform file descriptor accepted by the typed client's multipart methods
+ * where a file is not a `Blob`. React Native / Expo represent a file as
+ * `{ uri, name, type }` and their `FormData.append` streams it from disk by
+ * `uri`; reading it into a `Blob` first (`fetch(uri).blob()`) would load the
+ * whole media into memory. The web / Bun path still uses `Blob`.
+ */
+export interface FileDescriptor {
+  /** Local file URI the platform streams from (e.g. `file:///…`). */
+  uri: string;
+  /** File name for the multipart part. */
+  name: string;
+  /** MIME type for the multipart part. */
+  type: string;
+}
+
+/**
+ * What a `multipart` endpoint's file field accepts on the typed client — a
+ * `Blob` (web / Bun) or a platform {@link FileDescriptor} (React Native / Expo).
+ * Exported so a consumer can type its own upload helpers without a cast.
+ */
+export type MultipartFile = Blob | FileDescriptor;
+
 type MultipartArgs<E> = E extends { multipart: infer K extends string }
-  ? { [P in K]: Blob }
+  ? { [P in K]: MultipartFile }
   : unknown;
 
 type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &

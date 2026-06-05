@@ -14,6 +14,47 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-05
+
+### Added
+
+- **Run a contract over a bring-your-own transport — `createContractDispatcher`.**
+  (`stitchkit/tools`) Drives a `defineContract` over a transport stitchkit does
+  not own (a raw-WebSocket lane between a webview and a local sidecar, an IPC
+  channel, a queue worker) without hand-rolling a method registry. `dispatch(method,
+  args, context?)` runs a method by its contract key through the **same** execution
+  core as the MCP / agent mounts — same Zod validation, the same `{ ok, data } |
+  { ok: false, code, details, hint }` envelope, the same `beforeToolCall` /
+  `afterToolCall` hooks and `beforeHandle` scope gate. The app keeps its own wire
+  (framing, handshake, reconnect); stitchkit ships the executor, not a competing
+  engine. → ADR 0027.
+- **`idempotent?: boolean` on an endpoint** — a transport-neutral hint that the
+  operation is safe to call twice with the same input (like HTTP `PUT`/`DELETE`).
+  The core attaches no behaviour; it rides through to `MethodDef.idempotent`, where
+  a retrying transport reads it to decide whether to replay a call after a
+  reconnect. → ADR 0027.
+- **`createRetainedTopics` — sticky events (retained last value).** (`stitchkit`,
+  browser-safe) A transport-agnostic store that replays the last payload per topic
+  to a late subscriber (MQTT retained / `BehaviorSubject`), so a subscriber that
+  connects or re-renders after an event still sees current state.
+  `createSocketIOClient` gains a **`retain`** option that uses it — list the
+  server → client events to retain and a late `on()` handler is replayed the last
+  value at once (and across a `disconnect()` / `connect()` cycle). → ADR 0027.
+- **`TransportSource` is now an open union** (`… | (string & {})`) — the four
+  built-in transports keep autocomplete, and a bring-your-own transport can tag
+  its calls (`source: 'local-ws'`). Additive — no existing value breaks. → ADR 0027.
+
+- **Typed client multipart accepts a platform file descriptor, not only `Blob`.**
+  React Native / Expo represent a file as `{ uri, name, type }` (their `FormData`
+  streams it from disk by `uri`); the client previously hard-required
+  `file instanceof Blob`, forcing RN consumers to bypass the typed client and
+  hand-roll `FormData` + `fetch` (losing baseUrl / auth / per-endpoint timeout /
+  `ApiError` / output parsing). The multipart file field now accepts
+  `Blob | FileDescriptor`, and the new public types `MultipartFile` and
+  `FileDescriptor` let a consumer type its own upload helpers. The web / Bun path
+  is unchanged (`Blob`); the descriptor is matched only when it carries string
+  `uri` + `name` + `type` and is not a `Blob`.
+
 ## [0.8.1] — 2026-06-05
 
 ### Fixed
@@ -612,7 +653,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/max-listov/stitchkit/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/max-listov/stitchkit/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/max-listov/stitchkit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/max-listov/stitchkit/compare/v0.6.0...v0.7.0
