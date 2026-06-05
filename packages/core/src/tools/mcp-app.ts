@@ -8,7 +8,7 @@
  * the same `ui://…` uri registered through `McpServerBuildConfig.resources`.
  */
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 /**
  * MIME type a host uses to recognise an MCP Apps UI resource — it renders the
@@ -62,8 +62,6 @@ export interface McpResourceDef {
   read: () => string | Promise<string>;
 }
 
-const require = createRequire(import.meta.url);
-
 /**
  * Inline the `@modelcontextprotocol/ext-apps` browser runtime into a widget's
  * HTML, replacing `EXT_APPS_BUNDLE_PLACEHOLDER`. The iframe CSP blocks CDN
@@ -79,7 +77,13 @@ export function inlineMcpAppBundle(html: string): string {
 
   let bundlePath: string;
   try {
-    bundlePath = require.resolve('@modelcontextprotocol/ext-apps/app-with-deps');
+    // `import.meta.resolve` (sync, no `node:module`) keeps the browser-safe entry
+    // graph free of `createRequire` — a top-level `createRequire` got hoisted by
+    // the bundler into a shared chunk that the root entry imported, leaking
+    // `node:module` into client bundles.
+    bundlePath = fileURLToPath(
+      import.meta.resolve('@modelcontextprotocol/ext-apps/app-with-deps'),
+    );
   } catch {
     throw new Error(
       "[stitchkit] inlineMcpAppBundle: '@modelcontextprotocol/ext-apps' is not installed. " +

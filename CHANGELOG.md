@@ -14,6 +14,21 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-06-05
+
+### Fixed
+
+- **Browser bundlers no longer break on the root `stitchkit` entry.** A
+  `createRequire` / `node:module` helper from the MCP-apps code was hoisted by the
+  bundler (`--splitting`) into a shared chunk that the browser-safe root entry
+  side-effect-imported, so a client build (Next.js / Turbopack) failed with
+  *"the chunking context does not support external modules (request:
+  node:module)"*. The browser-safe entrypoints (`stitchkit`, `/react`,
+  `/contract`) are now built **separately** from the server / tools entrypoints,
+  so no Node built-in can leak into their graph; a post-build
+  `check-browser-clean` guard fails the build if one ever does, and the Node
+  smoke test now also runs in the local `verify` gate (not just CI).
+
 ## [0.8.0] — 2026-06-05
 
 ### Server
@@ -597,7 +612,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/max-listov/stitchkit/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/max-listov/stitchkit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/max-listov/stitchkit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/max-listov/stitchkit/compare/v0.5.0...v0.6.0
