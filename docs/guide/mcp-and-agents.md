@@ -82,6 +82,20 @@ Without it, a tool call bypasses the HTTP `beforeHandle` — the contract's
 `scope` is not enforced on the MCP / agent surface. `mountMcp`, `mountAgent` and
 `buildMcpServer` take `lifecycle` too.
 
+The observability `hooks` are symmetric with the HTTP side too: `beforeToolCall`
+and `afterToolCall` receive the resolved **`MethodDef`** as their last argument —
+the tool-side twin of `afterHandle(ctx, result, endpoint)`. Read
+`endpoint.serviceName` / `.key` / `.meta` directly for an audit row; you do not
+need to rebuild a `toolName → identity` map:
+
+```ts
+hooks: {
+  afterToolCall: (toolName, args, result, ms, ctx, endpoint) => {
+    audit({ service: endpoint.serviceName, action: endpoint.key, ok: result.ok, ms })
+  },
+}
+```
+
 > **Tool-path identity.** A tool call has no `req`, so `createAuthHook` resolves
 > identity through `resolveFromContext`, not `resolve`. Set it (read the
 > identity your `auth` / `context` injected) — without it a scoped tool call

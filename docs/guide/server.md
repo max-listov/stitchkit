@@ -84,6 +84,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `groups` | route groups — a shared path prefix and hooks (see below) |
 | `scopePrefixes` | `scope → path prefix` map — mount `services` by `service.scope` (see below) |
 | `rawRoutes` | non-contract routes (see below) |
+| `maxUploadBytes` | default multipart upload cap (bytes); per-route `EndpointDef.maxUploadBytes` overrides |
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `cors` | CORS policy — `{ origin, … }` |
 | `hooks` | lifecycle hooks (see below) |
@@ -336,6 +337,19 @@ const { file, fields } = await parseMultipart(req, { maxBytes: 10_000_000 })
 When an endpoint declares `multipart`, the framework parses the upload for you
 and the file arrives as `ctx.file` — call `parseMultipart` directly only from a
 raw route.
+
+The upload cap defaults to **25 MB**. Raise it per route with
+`EndpointDef.maxUploadBytes`, or set a server-wide default with
+`createServer({ maxUploadBytes })` — a per-route value wins over the global:
+
+```ts
+// contract
+upload: { method: 'POST', path: '/', desc: 'Upload a video',
+          multipart: 'file', maxUploadBytes: 200 * 1024 * 1024 }
+
+// server — default for every multipart route that declares no own cap
+createServer({ services, maxUploadBytes: 50 * 1024 * 1024 })
+```
 
 ### Rate limiting
 

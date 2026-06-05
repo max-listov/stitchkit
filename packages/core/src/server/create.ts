@@ -169,7 +169,15 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     let ctx: RuntimeContext | undefined;
 
     try {
-      ctx = await buildContext(req, url, method, pathParams, traceId, clientIp);
+      ctx = await buildContext(
+        req,
+        url,
+        method,
+        pathParams,
+        traceId,
+        clientIp,
+        config.maxUploadBytes,
+      );
 
       if (hooks?.beforeHandle) {
         await hooks.beforeHandle(ctx, method);

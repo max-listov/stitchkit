@@ -8,6 +8,47 @@ public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-05
+
+### Errors
+
+- **Published stitch error-code registry** — `STITCH_ERROR_STATUS` (the `code →
+  HTTP status` map for the codes stitchkit itself emits), `StitchErrorCode` (its
+  `keyof`, so type and map never drift) and `isStitchErrorCode()`, exported from
+  `stitchkit` and `stitchkit/server`. A consumer maps stitch → app codes in an
+  `onError` hook against `Record<StitchErrorCode, …>` instead of a hand-copied
+  string list — a renamed/added code becomes a TS error, not a silent 500.
+  `appError()` and the router resolve status through it (`METHOD_NOT_ALLOWED` →
+  405). → ADR 0026.
+
+### Tools
+
+- **`afterToolCall` / `beforeToolCall` now receive the `MethodDef`** as a final
+  argument — the tool-side twin of `afterHandle(ctx, result, endpoint)`. Read
+  `endpoint.serviceName` / `.key` / `.meta` directly for audit / metrics; no
+  toolName→identity map and no replicating the internal tool-naming (which lost
+  audit rows for auto-named tools). → ADR 0022.
+
+### Server
+
+- **Configurable multipart upload limit** — `EndpointDef.maxUploadBytes`
+  (per-route) and `createServer`/`createHandler` `maxUploadBytes` (global
+  default) thread into `parseMultipart`, replacing the hard-coded 25 MB cap. A
+  per-route value overrides the global; without either the 25 MB framework
+  default applies (avatar 5 MB vs video 200 MB declared per endpoint).
+- **Actionable missing-peer errors** — `createSocketIOServer` now turns a missing
+  optional peer into `"needs the optional peer \"@socket.io/bun-engine\" — install
+  it: bun add @socket.io/bun-engine"` instead of a bare `Cannot find module` at
+  bootstrap.
+
+### Docs
+
+- New **peer-dependency matrix** (feature → packages) in getting-started, so the
+  optional peers each feature needs are discoverable up front.
+- Documented that span ids live in the observability request context
+  (`getRequestContext()?.trace`), not on the handler `ctx` — the core carries a
+  single `traceId`.
+
 ## [0.6.0] — 2026-06-05
 
 ### Range-capable file serving
@@ -512,7 +553,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/max-listov/stitchkit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/max-listov/stitchkit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/max-listov/stitchkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/max-listov/stitchkit/compare/v0.3.0...v0.4.0

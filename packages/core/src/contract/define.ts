@@ -17,6 +17,13 @@ interface EndpointDefBase {
   output?: ZodType<unknown>;
   multipart?: string;
   /**
+   * Per-route upload ceiling in bytes for a `multipart` endpoint. Overrides the
+   * server's `maxUploadBytes` default; without either, the 25 MB framework
+   * default applies. Lets an avatar (5 MB) and a video (200 MB) declare their
+   * own caps. Ignored on non-multipart endpoints.
+   */
+  maxUploadBytes?: number;
+  /**
    * HTTP client timeout in ms for this endpoint. Use it for slow synchronous
    * endpoints (AI generation) that need more than the client default. A
    * property of the endpoint — declared once, the typed client applies it.

@@ -149,6 +149,27 @@ describe('executeToolMethod', () => {
     expect(calls).toEqual(['before:my_tool', 'after:my_tool:true']);
   });
 
+  test('beforeToolCall / afterToolCall receive the MethodDef (identity)', async () => {
+    let before: MethodDef | undefined;
+    let after: MethodDef | undefined;
+    const hooks: ToolCallHooks = {
+      beforeToolCall: (_n, _a, _ctx, endpoint) => {
+        before = endpoint;
+      },
+      afterToolCall: (_n, _a, _r, _ms, _ctx, endpoint) => {
+        after = endpoint;
+      },
+    };
+
+    const method = makeMethod({ handler: () => 'data' });
+    await executeToolMethod(method, 'my_tool', {}, { source: 'mcp' }, hooks);
+
+    // Same MethodDef the HTTP path's afterHandle gets — no toolName→identity map.
+    expect(before?.serviceName).toBe('test');
+    expect(after?.key).toBe('test');
+    expect(after?.method).toBe('POST');
+  });
+
   test('hooks called even on validation error', async () => {
     const afterResults: ToolResult[] = [];
     const hooks: ToolCallHooks = {

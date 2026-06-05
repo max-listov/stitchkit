@@ -39,6 +39,7 @@ export function implement<
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
+      maxUploadBytes: endpoint.maxUploadBytes,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       // Opaque app metadata — rides through untouched (on the shared base, so no

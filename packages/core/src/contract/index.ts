@@ -25,8 +25,11 @@ export {
   conflict,
   type ErrorEnvelope,
   forbidden,
+  isStitchErrorCode,
   notFound,
   rateLimited,
+  STITCH_ERROR_STATUS,
+  type StitchErrorCode,
   unauthorized,
 } from './errors';
 

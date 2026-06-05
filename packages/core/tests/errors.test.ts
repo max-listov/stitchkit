@@ -1,7 +1,40 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError } from '../src/contract';
+import { AppError, appError, isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
 import { formatZodError, normalizeError } from '../src/internal/errors';
+
+describe('stitch error registry', () => {
+  test('STITCH_ERROR_STATUS maps codes → status (incl. METHOD_NOT_ALLOWED 405)', () => {
+    expect(STITCH_ERROR_STATUS.METHOD_NOT_ALLOWED).toBe(405);
+    expect(STITCH_ERROR_STATUS.NOT_FOUND).toBe(404);
+    expect(STITCH_ERROR_STATUS.VALIDATION_ERROR).toBe(400);
+    expect(STITCH_ERROR_STATUS.INTERNAL_SERVER_ERROR).toBe(500);
+  });
+
+  test('isStitchErrorCode guards framework vs app codes', () => {
+    expect(isStitchErrorCode('NOT_FOUND')).toBe(true);
+    expect(isStitchErrorCode('METHOD_NOT_ALLOWED')).toBe(true);
+    expect(isStitchErrorCode('BOT_NOT_FOUND')).toBe(false);
+  });
+
+  test('appError maps a stitch code to its status, an app code to 500', () => {
+    let mna: unknown;
+    try {
+      appError('METHOD_NOT_ALLOWED', 'nope');
+    } catch (e) {
+      mna = e;
+    }
+    expect(AppError.is(mna) && mna.status).toBe(405);
+
+    let app: unknown;
+    try {
+      appError('BOT_NOT_FOUND');
+    } catch (e) {
+      app = e;
+    }
+    expect(AppError.is(app) && app.status).toBe(500);
+  });
+});
 
 describe('AppError', () => {
   test('hint field', () => {

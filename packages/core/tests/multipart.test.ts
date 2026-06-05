@@ -131,3 +131,62 @@ describe('multipart contract integration', () => {
     server?.stop();
   });
 });
+
+describe('multipart maxUploadBytes — per-route + global', () => {
+  const PORT = 9903;
+  const base = `http://localhost:${PORT}`;
+
+  // tiny: per-route cap 2000; normal: no per-route → falls back to global.
+  const uploads = defineContract(
+    { prefix: 'up' },
+    {
+      tiny: {
+        method: 'POST',
+        path: '/tiny',
+        desc: 'Tiny upload',
+        multipart: 'file',
+        maxUploadBytes: 2000,
+        input: z.object({}),
+        output: z.object({ size: z.number() }),
+      },
+      normal: {
+        method: 'POST',
+        path: '/normal',
+        desc: 'Normal upload',
+        multipart: 'file',
+        input: z.object({}),
+        output: z.object({ size: z.number() }),
+      },
+    },
+  );
+  const svc = implement(uploads, {
+    tiny: (ctx) => ({ size: ctx.file?.size ?? 0 }),
+    normal: (ctx) => ({ size: ctx.file?.size ?? 0 }),
+  });
+  // global default 4000 — per-route `tiny` (2000) overrides it.
+  const server = createServer({ port: PORT, services: [svc], maxUploadBytes: 4000 });
+
+  afterAll(() => server.stop(true));
+
+  const upload = (path: string, bytes: number) => {
+    const form = new FormData();
+    form.append('file', new File(['x'.repeat(bytes)], 'f.bin'));
+    return fetch(`${base}/up${path}`, { method: 'POST', body: form });
+  };
+
+  test('per-route cap overrides the global — tiny rejects 3000 (global would allow)', async () => {
+    expect((await upload('/tiny', 3000)).status).toBe(400);
+  });
+
+  test('per-route cap accepts a small upload', async () => {
+    expect((await upload('/tiny', 50)).status).toBe(200);
+  });
+
+  test('global default applies when no per-route cap — normal allows 3000', async () => {
+    expect((await upload('/normal', 3000)).status).toBe(200);
+  });
+
+  test('global default rejects an over-limit upload — normal rejects 9000', async () => {
+    expect((await upload('/normal', 9000)).status).toBe(400);
+  });
+});

@@ -117,18 +117,31 @@ shared `stitchkit/server` surface). See [deployment](./testing-and-deployment.md
 
 ## Dependencies
 
-| Dependency | Kind | Needed for |
-|------------|------|------------|
-| `ky` | bundled | the HTTP client — the only runtime dependency |
-| `zod` | peer | always — validation everywhere |
-| `@modelcontextprotocol/sdk` | peer, optional | `stitchkit/tools` MCP |
-| `ai` | peer, optional | `stitchkit/tools` agent |
-| `@tanstack/react-query` + `react-query-kit` | peer, optional | `stitchkit/react` |
-| `socket.io` / `@socket.io/bun-engine` | peer, optional | `createSocketIOServer` |
-| `socket.io-client` | peer, optional | `createSocketIOClient` |
+`ky` is the **only** bundled runtime dependency. Everything else is an *optional
+peer* — your app installs only what the features it uses need, and owns the
+version (one shared instance, no dual-version skew). This matrix is the install
+map — feature → packages:
 
-Optional peers are provided by your app, so the framework shares one instance of
-each with your code.
+| Feature you use | Install |
+|-----------------|---------|
+| anything (validation) | `zod` |
+| `createServer` (Bun) | — (uses `Bun.serve`) |
+| `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
+| MCP tools (`stitchkit/tools`) | `@modelcontextprotocol/sdk` |
+| MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
+| agent tools (`stitchkit/tools`) | `ai` |
+| React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
+| **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
+| **Socket.IO server on Node** | `socket.io` |
+| Socket.IO client | `socket.io-client` |
+
+```bash
+bun add socket.io @socket.io/bun-engine    # e.g. the Socket.IO server on Bun
+```
+
+If an optional peer is missing, the feature that needs it fails with an
+actionable error naming the package and the install command — not a bare
+`Cannot find module`.
 
 ## Next
 

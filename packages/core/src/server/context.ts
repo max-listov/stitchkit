@@ -48,13 +48,17 @@ export async function buildContext(
   pathParams: Record<string, string>,
   traceId: string,
   clientIp: ClientIpOptions,
+  maxUploadBytes?: number,
 ): Promise<RuntimeContext> {
   const parsedParams = method.paramsSchema ? method.paramsSchema.parse(pathParams) : undefined;
 
   let parsedInput: unknown;
   let file: File | undefined;
   if (method.multipart) {
-    const multipart = await parseMultipart(req, method.multipart, method.inputSchema);
+    // Per-route cap wins over the server default; `parseMultipart` falls back to
+    // its 25 MB framework default when both are undefined.
+    const cap = method.maxUploadBytes ?? maxUploadBytes;
+    const multipart = await parseMultipart(req, method.multipart, method.inputSchema, cap);
     parsedInput = multipart.fields;
     file = multipart.file;
   } else if (method.inputSchema) {

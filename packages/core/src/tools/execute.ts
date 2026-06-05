@@ -19,6 +19,7 @@ export interface ToolCallHooks {
     toolName: string,
     args: Record<string, unknown>,
     context: ToolCallContext,
+    endpoint: MethodDef,
   ) => void | Promise<void>;
   afterToolCall?: (
     toolName: string,
@@ -26,6 +27,7 @@ export interface ToolCallHooks {
     result: ToolResult,
     durationMs: number,
     context: ToolCallContext,
+    endpoint: MethodDef,
   ) => void | Promise<void>;
 }
 
@@ -77,8 +79,18 @@ export async function executeToolMethod(
   const startedAt = Date.now();
 
   // Single exit — fire `afterToolCall` for every result (success and error).
+  // `method` (the resolved `MethodDef`) is passed so the hook reads identity
+  // (`serviceName` / `key` / `meta`) directly — the tool-side twin of
+  // `afterHandle(ctx, result, endpoint)`, no toolName→identity map. → ADR 0022.
   const finish = async (result: ToolResult): Promise<ToolResult> => {
-    await hooks?.afterToolCall?.(toolName, rawArgs, result, Date.now() - startedAt, context);
+    await hooks?.afterToolCall?.(
+      toolName,
+      rawArgs,
+      result,
+      Date.now() - startedAt,
+      context,
+      method,
+    );
     return result;
   };
 
@@ -86,7 +98,7 @@ export async function executeToolMethod(
   // otherwise an auth-rejected call would produce no audit record.
   if (hooks?.beforeToolCall) {
     try {
-      await hooks.beforeToolCall(toolName, rawArgs, context);
+      await hooks.beforeToolCall(toolName, rawArgs, context, method);
     } catch (err) {
       return finish(toolResultFromError(err));
     }

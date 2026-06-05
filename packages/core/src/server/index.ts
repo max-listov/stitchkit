@@ -4,8 +4,11 @@ export {
   badRequest,
   conflict,
   forbidden,
+  isStitchErrorCode,
   notFound,
   rateLimited,
+  STITCH_ERROR_STATUS,
+  type StitchErrorCode,
   unauthorized,
 } from '../contract';
 export { cacheHeaders, createCache } from './cache';

@@ -40,6 +40,7 @@ These records were consolidated from the project's internal design notes on
 | [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013 |
 | [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002 |
 | [0025](0025-typed-scoped-client.md) | Typed scoped client (consumed keys as args) | Accepted — extends 0005 |
+| [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

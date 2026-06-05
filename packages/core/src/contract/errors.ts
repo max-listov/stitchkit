@@ -80,22 +80,46 @@ export function rateLimited(message = 'Too many requests'): never {
   throw new AppError('RATE_LIMITED', message, 429);
 }
 
-const ERROR_STATUS: Record<string, number> = {
-  NOT_FOUND: 404,
+/**
+ * `code → HTTP status` for the error codes **stitchkit itself** emits — the
+ * typed helpers above, `normalizeError` (`VALIDATION_ERROR` /
+ * `INTERNAL_SERVER_ERROR`) and the router (`METHOD_NOT_ALLOWED`). This map is the
+ * single source of truth: `StitchErrorCode` is derived from its keys, so the two
+ * never drift. App-defined codes are free strings the core never sees (ADR 0002);
+ * these are stitchkit's own, published so a consumer can map stitch → app codes
+ * against a stable, typed reference instead of a hand-copied string list.
+ * → ADR 0026.
+ */
+export const STITCH_ERROR_STATUS = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  METHOD_NOT_ALLOWED: 405,
   CONFLICT: 409,
   RATE_LIMITED: 429,
   VALIDATION_ERROR: 400,
   INTERNAL_SERVER_ERROR: 500,
-};
+} satisfies Record<string, number>;
 
-/** Throw an `AppError` for any `code`, mapping known codes to their HTTP status (else 500). */
+/** A code stitchkit itself emits — derived from `STITCH_ERROR_STATUS` (no dup). */
+export type StitchErrorCode = keyof typeof STITCH_ERROR_STATUS;
+
+/** Type guard — is `code` one of stitchkit's own error codes? */
+export function isStitchErrorCode(code: string): code is StitchErrorCode {
+  return code in STITCH_ERROR_STATUS;
+}
+
+/** Throw an `AppError` for any `code`, mapping a stitch code to its HTTP status (else 500). */
 export function appError(
   code: string,
   message?: string,
   details?: Record<string, unknown>,
 ): never {
-  throw new AppError(code, message, ERROR_STATUS[code] ?? 500, details);
+  throw new AppError(
+    code,
+    message,
+    isStitchErrorCode(code) ? STITCH_ERROR_STATUS[code] : 500,
+    details,
+  );
 }

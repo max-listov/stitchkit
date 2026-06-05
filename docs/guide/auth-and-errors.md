@@ -217,3 +217,31 @@ is turned into a `400 VALIDATION_ERROR` automatically.
 The client parses that envelope back into an `ApiError` with the same `code`,
 `status`, `details` and `hint` — see [Typed client → ApiError](./client.md#apierror).
 The error round-trips: one model, server to client.
+
+### Stitch codes vs your codes
+
+A `code` is a free string — your app codes (`BOT_NOT_FOUND`, …) are yours and the
+core never models them (ADR 0002). But stitchkit itself emits a fixed set:
+`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`,
+`CONFLICT`, `RATE_LIMITED`, `VALIDATION_ERROR`, `INTERNAL_SERVER_ERROR`. They are
+published as **`STITCH_ERROR_STATUS`** (the `code → status` map) and
+**`StitchErrorCode`** (its `keyof`), with **`isStitchErrorCode()`** (→ ADR 0026).
+
+If you translate stitch's framework errors into your own wire codes in an
+`onError` hook, key the map by `StitchErrorCode` so it stays exhaustive — a code
+stitch adds or renames becomes a compile error, not a silent `500`:
+
+```ts
+const STITCH_TO_APP: Record<StitchErrorCode, AppCode> = {
+  NOT_FOUND: 'NOT_FOUND', METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
+  BAD_REQUEST: 'VALIDATION_ERROR', VALIDATION_ERROR: 'VALIDATION_ERROR',
+  UNAUTHORIZED: 'UNAUTHORIZED', FORBIDDEN: 'FORBIDDEN', CONFLICT: 'CONFLICT',
+  RATE_LIMITED: 'RATE_LIMITED', INTERNAL_SERVER_ERROR: 'INTERNAL_SERVER_ERROR',
+}
+onError: (ctx, err) => {
+  if (AppError.is(err) && isStitchErrorCode(err.code)) {
+    return jsonError(STITCH_TO_APP[err.code], err.status)   // keep stitch's status
+  }
+  // … your own AppError / normalizeError path
+}
+```

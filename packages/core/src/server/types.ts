@@ -49,6 +49,9 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   inputSchema?: ZodType<TInput>;
   outputSchema?: ZodType<TOutput>;
   multipart?: string;
+  /** Per-route upload ceiling (bytes) for a multipart endpoint — overrides the
+   *  server `maxUploadBytes` default; from `EndpointDef.maxUploadBytes`. */
+  maxUploadBytes?: number;
   /** MCP Apps widget metadata — carried onto the MCP tool's `_meta.ui`. */
   ui?: EndpointUiMeta;
   /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
@@ -156,6 +159,12 @@ export interface HandlerConfig {
    */
   scopePrefixes?: Record<string, string>;
   rawRoutes?: RawRoute[];
+  /**
+   * Default upload ceiling (bytes) for every `multipart` endpoint. A per-route
+   * `EndpointDef.maxUploadBytes` overrides it; without either, multipart uploads
+   * are capped at the 25 MB framework default.
+   */
+  maxUploadBytes?: number;
   cors?: CorsConfig;
   hooks?: LifecycleHooks;
   logging?: boolean | StitchLogger;

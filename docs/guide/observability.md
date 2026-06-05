@@ -135,6 +135,16 @@ You rarely call the trace functions directly — `wrapInRequestContext` and
 `parseTraceparent`, `formatTraceparent`, `childSpan`) for when you need to
 propagate a `traceparent` onward to another service.
 
+> **Span ids live in the request context, not on `ctx`.** The handler `ctx`
+> carries a single `traceId`; the full `{ traceId, spanId, parentSpanId }` is on
+> the observability request context. To stamp `spanId` / `parentSpanId` into an
+> audit row read `getRequestContext()?.trace`, not `ctx.spanId`:
+>
+> ```ts
+> const trace = getRequestContext()?.trace
+> audit({ traceId: trace?.traceId, spanId: trace?.spanId, parentSpanId: trace?.parentSpanId })
+> ```
+
 ### Sanitisation
 
 A payload goes into an audit row only after `sanitizePayload`:

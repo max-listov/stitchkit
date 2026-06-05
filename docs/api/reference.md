@@ -83,6 +83,9 @@ from the root `stitchkit`.
 | `conflict` | function | throw `409 CONFLICT` |
 | `rateLimited` | function | throw `429 RATE_LIMITED` |
 | `appError` | function | throw an `AppError` for any code |
+| `STITCH_ERROR_STATUS` | const | `code → HTTP status` map for stitchkit's own error codes — [guide](../guide/auth-and-errors.md#stitch-codes-vs-your-codes) |
+| `StitchErrorCode` | _type_ | a code stitchkit itself emits (`keyof STITCH_ERROR_STATUS`) |
+| `isStitchErrorCode` | function | type guard — is a code one of stitchkit's own? |
 
 ### Pagination
 

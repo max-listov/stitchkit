@@ -87,6 +87,38 @@ const noop = (): void => {
   // intentionally empty
 };
 
+/** True when an import failed because the module is simply not installed. */
+function isModuleNotFound(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = 'code' in err ? err.code : undefined;
+  const message = 'message' in err && typeof err.message === 'string' ? err.message : '';
+  return (
+    code === 'ERR_MODULE_NOT_FOUND' ||
+    code === 'MODULE_NOT_FOUND' ||
+    message.includes('Cannot find module') ||
+    message.includes('Cannot find package')
+  );
+}
+
+/**
+ * Load an optional peer, turning a missing-module failure into an actionable
+ * error that names the package and the install command — instead of a bare
+ * `Cannot find module` surfacing from a dynamic import at bootstrap.
+ */
+async function importPeer<T>(load: () => Promise<T>, pkg: string): Promise<T> {
+  try {
+    return await load();
+  } catch (err) {
+    if (isModuleNotFound(err)) {
+      throw new Error(
+        `[stitchkit] createSocketIOServer needs the optional peer "${pkg}" — install it: bun add ${pkg}`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+}
+
 export async function createSocketIOServer<
   TServerEvents extends SocketEventMap,
   TClientEvents extends SocketEventMap,
@@ -102,7 +134,7 @@ export async function createSocketIOServer<
     methods: ['GET', 'POST'],
   };
 
-  const { Server } = await import('socket.io');
+  const { Server } = await importPeer(() => import('socket.io'), 'socket.io');
   const io = new Server<TClientEvents, TServerEvents>({
     // Passthrough first; the wrapper-owned fields below override any overlap.
     ...config.serverOptions,
@@ -114,7 +146,10 @@ export async function createSocketIOServer<
   });
 
   if (onBun) {
-    const { Server: Engine } = await import('@socket.io/bun-engine');
+    const { Server: Engine } = await importPeer(
+      () => import('@socket.io/bun-engine'),
+      '@socket.io/bun-engine',
+    );
     // socket.io forwards engine-level options to the engine only when it creates
     // the engine itself (the Node path). On Bun we build the engine by hand, so
     // they must be passed explicitly — otherwise `maxHttpBufferSize`, the ping
