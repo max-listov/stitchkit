@@ -3,6 +3,11 @@
 Thanks for your interest in stitchkit. It is an early (pre-1.0) project — issues,
 ideas and pull requests are all welcome.
 
+This is the hands-on workflow for **developing the framework**. The rules,
+architecture, breaking-change and release flow live in
+[`AGENTS.md`](./AGENTS.md). Building an app **with** stitchkit instead? See the
+[README](./README.md) and the [user guide](./docs/guide/).
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) `>= 1.2` — development and tests use `Bun.serve` and

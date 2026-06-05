@@ -233,7 +233,10 @@ createServer({
 ```
 
 A path may be exact, carry `:param` segments, or end in `/*` for a prefix
-wildcard. `staticRoute()` builds a raw route that serves a directory.
+wildcard — and the two combine: `/app/:slug/*` matches `/app/x/a/b` with
+`ctx.params.slug === 'x'` and the remainder in `ctx.params['*']` (a SPA
+deep-link fallback). List more specific routes before the wildcard — the first
+match wins. `staticRoute()` builds a raw route that serves a directory.
 
 ### Raw-route helpers
 

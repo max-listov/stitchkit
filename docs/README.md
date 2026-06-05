@@ -22,6 +22,7 @@ The guide, in reading order:
 9. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
 10. [Testing & deployment](./guide/testing-and-deployment.md).
 11. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
+12. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 
@@ -38,6 +39,8 @@ Every public export, grouped by entrypoint, each linked to the guide.
 
 How stitchkit is built and why.
 
+- [`AGENTS.md`](../AGENTS.md) — the development guide: rules, architecture,
+  breaking-change and release flow (read by Cursor / Codex / Claude too).
 - [`VISION.md`](./VISION.md) — what stitchkit is, its principles, its direction.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
   One file per ADR. Index: [`decisions/README.md`](./decisions/README.md).

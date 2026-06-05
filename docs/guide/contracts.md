@@ -206,6 +206,26 @@ feed: {
 default lives in the contract (`limit`'s `.default()`), never on the client —
 the two cannot diverge. The client side is [`createCursorQuery`](./client.md#cursor-pagination).
 
+The **format** of `nextCursor` is the server's choice — keep it opaque. For the
+usual keyset cursor (resume after the last row's `(sortValue, id)`), encode it
+with **`encodeCursor`** and read it back with **`decodeCursor`** (Zod-validated;
+a missing or garbage cursor decodes to `null`, i.e. "start from the top"):
+
+```ts
+import { encodeCursor, decodeCursor } from 'stitchkit'
+
+const Cursor = z.object({ v: z.string(), id: z.string() })   // your keyset shape
+
+const after = decodeCursor(ctx.input.cursor, Cursor)         // { v, id } | null
+const rows = await db.list({ after, take: limit + 1 })        // your keyset WHERE
+const nextCursor =
+  rows.length > limit ? encodeCursor({ v: last.createdAt, id: last.id }) : null
+```
+
+The codec is base64url over UTF-8 (`btoa`/`atob`, not Node `Buffer`) — server,
+client and browser safe, and a non-ASCII sort value round-trips. The keyset
+WHERE clause is yours (it's ORM-specific); stitchkit only carries the string.
+
 ## Scope
 
 An endpoint may carry a `scope` string; the contract `meta.scope` is the default

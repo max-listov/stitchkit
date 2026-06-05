@@ -93,6 +93,8 @@ from the root `stitchkit`.
 |--------|------|---------|
 | `paginatedSchema` | function | the `{ items, nextCursor }` Zod schema — [guide](../guide/contracts.md#pagination) |
 | `Paginated` | _type_ | the cursor-pagination envelope |
+| `encodeCursor` | function | encode a keyset value into an opaque `nextCursor` string (base64url, UTF-8-safe) |
+| `decodeCursor` | function | decode + Zod-validate a cursor back to its value (`null` if missing/invalid) |
 
 ---
 

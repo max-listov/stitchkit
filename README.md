@@ -352,10 +352,13 @@ A complete runnable app lives in [`packages/starter`](./packages/starter) — a
 notes CRUD with a contract, a typed client, `react-query-kit` hooks and a
 Socket.IO live-reload.
 
-## Documentation
+## Documentation — two roads
 
-This README is the quick start. The full guide and API reference are in
-[`docs/`](./docs/README.md):
+This README is the quick start. Where you go next depends on what you're doing:
+
+### 📦 Building an app **with** stitchkit
+
+The full guide and API reference, in [`docs/`](./docs/README.md):
 
 - **Guide** — [getting started](./docs/guide/getting-started.md) ·
   [contracts](./docs/guide/contracts.md) ·
@@ -364,16 +367,23 @@ This README is the quick start. The full guide and API reference are in
   [MCP & agents](./docs/guide/mcp-and-agents.md) ·
   [realtime](./docs/guide/realtime.md) ·
   [auth & errors](./docs/guide/auth-and-errors.md) ·
-  [testing & deployment](./docs/guide/testing-and-deployment.md)
+  [testing & deployment](./docs/guide/testing-and-deployment.md) ·
+  [multi-tenant](./docs/guide/multi-tenant.md) ·
+  [upgrading](./docs/guide/upgrading.md)
 - **[API reference](./docs/api/reference.md)** — every export, by entrypoint.
-- **[Roadmap](./ROADMAP.md)** — where stitchkit is going.
+- **Coding agent?** The package ships **`llms.txt`** (a curated index) and
+  **`llms-full.txt`** (the whole guide inlined) — your agent reads them from
+  `node_modules/stitchkit/`. For Claude Code, the repo also provides a
+  [stitchkit skill](./skills/stitchkit) you can drop into `.claude/skills/`.
+
+### 🔧 Developing stitchkit itself
+
+- **[AGENTS.md](./AGENTS.md)** — the development guide (setup, rules, hooks,
+  local-dev, breaking changes, release flow). One place for human and agent
+  contributors; [CONTRIBUTING.md](./CONTRIBUTING.md) points here.
 - **[Architecture decisions](./docs/decisions/)** — the *why* behind the design.
-
-## Contributing
-
-Issues and PRs are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Released
-changes are in [CHANGELOG.md](./CHANGELOG.md); security issues go through
-[SECURITY.md](./SECURITY.md).
+- **[Roadmap](./ROADMAP.md)** · **[Changelog](./CHANGELOG.md)** ·
+  **[Backlog](./docs/backlog/)** · security via **[SECURITY.md](./SECURITY.md)**.
 
 ## License
 

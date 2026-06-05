@@ -180,11 +180,20 @@ export function matchRawRoute(
   for (const route of rawRoutes) {
     if (route.method !== 'ALL' && route.method !== httpMethod) continue;
 
-    // Trailing `/*` — prefix wildcard.
+    // Trailing `/*` — prefix wildcard, matched per segment so a `:param` in the
+    // prefix is interpolated (`/app/:slug/*` matches `/app/x/a/b`, `slug` = `x`).
+    // The wildcard remainder (everything after the prefix) is `params['*']`.
+    // A pure literal prefix (`/app/*`) still matches `/app` and `/app/...`.
     if (route.path.endsWith('/*')) {
-      const prefix = route.path.slice(0, -2);
-      if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-        return { route, params: {} };
+      const prefixSegs = route.path.slice(0, -2).split('/').filter(Boolean);
+      const pathSegs = pathname.split('/').filter(Boolean);
+      if (pathSegs.length < prefixSegs.length) continue;
+      const params = matchSegments(prefixSegs, pathSegs.slice(0, prefixSegs.length));
+      if (params) {
+        return {
+          route,
+          params: { ...params, '*': pathSegs.slice(prefixSegs.length).join('/') },
+        };
       }
       continue;
     }

@@ -7,6 +7,10 @@ dist
 .dev
 *.tgz
 
+# generated consumer-agent entry points (built from docs/ by gen:llms)
+packages/core/llms.txt
+packages/core/llms-full.txt
+
 # code coverage
 coverage
 *.lcov

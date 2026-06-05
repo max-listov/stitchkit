@@ -107,7 +107,11 @@ export type BunServer = ReturnType<typeof Bun.serve>;
 
 /** Context passed to a `RawRoute` handler alongside the raw `Request`. */
 export interface RawRouteContext {
-  /** Matched `:param` path segments — empty object for exact / wildcard paths. */
+  /**
+   * Matched `:param` path segments. A trailing `/*` wildcard also adds its
+   * remainder (everything after the prefix) as `params['*']`. Empty for an exact
+   * path.
+   */
   params: Record<string, string>;
   /**
    * The `Bun.serve` instance — needed for connection upgrades (e.g. WebSocket).
@@ -123,7 +127,11 @@ export interface RawRouteContext {
 
 export interface RawRoute {
   method: HttpMethod | 'ALL';
-  /** Exact path, `:param` segments, or a trailing `/*` prefix wildcard. */
+  /**
+   * Exact path, `:param` segments, or a trailing `/*` prefix wildcard. The
+   * wildcard combines with params — `/app/:slug/*` matches `/app/x/a/b` with
+   * `params.slug === 'x'` and the remainder in `params['*']`.
+   */
   path: string;
   /**
    * Raw handler — a standard `Request → Response` fetch handler plus a routing

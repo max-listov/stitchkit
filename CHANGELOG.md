@@ -6,7 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/). Pre-1.0 — the
 public API may still change between minor versions.
 
+A release that breaks a public API leads its entry with a **`### ⚠️ Breaking
+changes`** section (with before → after migration snippets); a version without
+that section is purely additive. To move a project across versions, see
+[`docs/guide/upgrading.md`](docs/guide/upgrading.md). **No breaking changes
+through 0.7.0** — every release so far has been additive.
+
 ## [Unreleased]
+
+## [0.8.0] — 2026-06-05
+
+### Server
+
+- **Raw routes combine `:param` with a trailing `/*` wildcard** — `/app/:slug/*`
+  now matches `/app/x/a/b` with `ctx.params.slug === 'x'` and the remainder in
+  `ctx.params['*']` (an SPA deep-link fallback). Previously a trailing `/*` was a
+  literal prefix and a `:param` before it was not interpolated, so such a route
+  404'd. Pure literal wildcards (`/static/*`) are unchanged and now also expose
+  the remainder as `params['*']`.
+
+### Pagination
+
+- **`encodeCursor` / `decodeCursor`** (`stitchkit`) — the opaque cursor codec that
+  completes the pagination story (`Paginated` / `paginatedSchema` /
+  `createCursorQuery` already shipped). Encode a keyset value (`{ v, id }`) into
+  the `nextCursor` string and decode + Zod-validate it back (garbage / malformed →
+  `null`, treated as "no cursor"). base64url over UTF-8 via `btoa`/`atob` — works
+  on the server, the typed client and the browser, and a non-ASCII sort value
+  round-trips (a naïve `btoa(JSON)` corrupts it; `Buffer` is not browser-safe).
+  The keyset WHERE clause stays in the app (ORM-specific); this is only the
+  string ⇄ value codec.
+
+### Docs & packaging
+
+- **The package now ships `llms.txt` + `llms-full.txt`** — a consumer-agent entry
+  point. `llms.txt` is a curated index of the guide + reference; `llms-full.txt`
+  inlines the whole guide for offline use. Generated from `docs/` by
+  `bun run gen:llms` (runs in `build`). A coding agent in a consuming project
+  reads them from `node_modules/stitchkit/`.
+- **A Claude Code skill** (`skills/stitchkit/`) — the consumer build workflow for
+  agents that support skills.
+- **Breaking-change marking convention + an [upgrading guide](docs/guide/upgrading.md)** —
+  a release that breaks a public API leads its changelog entry with a
+  `### ⚠️ Breaking changes` section (with before → after); a version without one
+  is purely additive. Docs reorganised into two roads — *build with* (README +
+  guide + `llms.txt`) vs *develop* (AGENTS.md + CONTRIBUTING).
 
 ## [0.7.0] — 2026-06-05
 
@@ -553,7 +597,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/max-listov/stitchkit/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/max-listov/stitchkit/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/max-listov/stitchkit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/max-listov/stitchkit/compare/v0.4.0...v0.5.0
