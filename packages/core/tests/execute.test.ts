@@ -10,6 +10,8 @@ function makeMethod(
   return {
     method: 'POST',
     path: '/',
+    serviceName: 'test',
+    key: 'test',
     desc: 'test',
     handler: () => ({ ok: true }),
     ...overrides,

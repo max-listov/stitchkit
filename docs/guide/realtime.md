@@ -58,7 +58,22 @@ socket.io.emit('note:created', note)
 | `route` | the `/socket.io/*` raw route — pass to `createServer({ rawRoutes })` |
 
 `SocketIOServerConfig` also takes `path`, `transports`, `pingTimeout` and
-`pingInterval`.
+`pingInterval`. For anything else socket.io's `ServerOptions` exposes, use the
+typed **`serverOptions`** passthrough — most often `maxHttpBufferSize` to lift the
+1 MB default for large emits:
+
+```ts
+await createSocketIOServer({
+  cors: { origin: 'https://app.example.com' },
+  serverOptions: { maxHttpBufferSize: 5 * 1024 * 1024 }, // 5 MB
+})
+```
+
+The wrapper-owned fields (`cors` / `path` / `transports` / `ping*`) take
+precedence over the same keys in `serverOptions`. On Bun the engine-level options
+(`maxHttpBufferSize`, the ping heartbeat, `upgradeTimeout`) are forwarded to
+`@socket.io/bun-engine` too — so a configured `maxHttpBufferSize` actually applies
+instead of silently truncating at 1 MB.
 
 ## Client — `createSocketIOClient`
 

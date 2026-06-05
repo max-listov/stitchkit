@@ -60,10 +60,15 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       method: endpoint.method,
       path: endpoint.path,
       desc: endpoint.desc,
+      // Stable (service, action) identity for hooks / audit (→ ADR 0022).
+      serviceName: contract.meta.prefix,
+      key,
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
       expose: endpoint.expose,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
+      // Opaque app metadata rides through (was dropped here) — → ADR 0021.
+      meta: endpoint.meta,
       scope: endpoint.scope ?? groupScope,
       paramsSchema: endpoint.params,
       inputSchema: endpoint.input,

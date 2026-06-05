@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { AppError, defineContract } from '../src/contract';
 import { implement } from '../src/server';
 import { mountAgent } from '../src/tools/agent';
-import { mountMcp, validateMcpSchemas } from '../src/tools/mcp';
+import { buildMcpServer, mountMcp, validateMcpSchemas } from '../src/tools/mcp';
 import { collectTools, createToolRunner } from '../src/tools/mount';
 
 const notesContract = defineContract(
@@ -149,6 +149,24 @@ describe('mountMcp', () => {
       mountMcp(server, notesService, {
         extend: { schema: { title: z.string() }, resolve: () => ({}) },
       }),
+    ).toThrow('extend conflict');
+  });
+});
+
+describe('buildMcpServer', () => {
+  test('forwards extend to mountMcp (batteries-path reaches ToolExtend)', () => {
+    // extend was not threaded into buildMcpServer, so createMcpHandler could not
+    // add a tool arg. If it now reaches mountMcp → collectTools, a field that
+    // collides with the contract throws — proving the passthrough.
+    expect(() =>
+      buildMcpServer(
+        {
+          serverInfo: { name: 't', version: '1' },
+          services: [notesService],
+          extend: { schema: { title: z.string() }, resolve: () => ({}) },
+        },
+        undefined,
+      ),
     ).toThrow('extend conflict');
   });
 });

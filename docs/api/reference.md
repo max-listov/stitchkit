@@ -21,6 +21,8 @@ The browser-and-server entrypoint. Re-exports everything from
 |--------|------|---------|
 | `createClient` | function | build a typed client from a contract — [guide](../guide/client.md#createclient) |
 | `createClients` | function | build one typed client per contract from a registry |
+| `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
+| `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `createHttpClient` | function | the Ky-based HTTP transport — [guide](../guide/client.md#createhttpclient) |
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
@@ -64,7 +66,9 @@ from the root `stitchkit`.
 | `HandlerContext` | _type_ | the typed context seen by a handler |
 | `EndpointFn` | _type_ | the call signature of one client method |
 | `TypedClient` | _type_ | the full typed client for a contract |
-| `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only |
+| `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
+| `ScopedHttpClient` | _type_ | a client whose `stripPrefixKeys` become required args ([guide](../guide/multi-tenant.md)) |
+| `ScopedEndpointFn` | _type_ | one method's signature with the consumed keys folded in |
 
 ### Errors
 
@@ -103,6 +107,14 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `createImplement` | function | fix the handler context type once |
 | `staticRoute` | function | a raw route that serves a directory |
+| `serveFile` | function | serve a file with `Range` / `304` / `HEAD` — [guide](../guide/server.md#serving-files--range-requests) |
+| `parseByteRange` | function | parse a single `Range` header → range / `unsatisfiable` / `null` |
+| `weakETag` | function | a weak `ETag` from size + mtime |
+| `ServeFileOptions` | _type_ | options for `serveFile` |
+| `ByteRange` | _type_ | an inclusive `{ start, end }` byte range |
+| `respondJson` | function | a raw route's JSON response (`204` for null/undefined) |
+| `errorResponse` | function | any thrown value → the framework error envelope + `x-request-id` |
+| `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
 | `HandlerConfig` | _type_ | config for `createHandler` (runtime-agnostic) |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun) |
 | `ServiceDef` | _type_ | the result of `implement` |

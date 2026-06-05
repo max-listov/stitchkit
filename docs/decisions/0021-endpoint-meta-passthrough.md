@@ -60,3 +60,12 @@ as `scope` is a free string.
   (`MethodDef.meta` is `undefined`, never `{}`).
 - The core still models no domain — it transports the bag without reading it.
 - If a typed `meta` is wanted later, it layers on without breaking this API.
+- **Gotcha — declare meta as a `type`/inline/`satisfies`, not an `interface`.** A
+  TS `interface` has no implicit index signature, so it is not assignable to
+  `Record<string, unknown>`; on the overloaded `defineContract` the failure
+  misleadingly reports a `scope` mismatch. Kept `Record<string, unknown>` over
+  loosening to `object` (which breaks the cast-free `meta?.x` read in hooks and
+  admits arrays/functions) or a generic `meta` (whose typed read never reaches
+  the lifecycle hooks, which see the base `MethodDef`) — three independent
+  reviews converged on documenting the idiom rather than changing the type.
+  Documented in `docs/guide/contracts.md` and the `EndpointDef.meta` JSDoc.

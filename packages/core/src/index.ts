@@ -1,4 +1,9 @@
-export { createClient, createClients } from './browser/client';
+export {
+  type ClientConfig,
+  type ContractClientConfig,
+  createClient,
+  createClients,
+} from './browser/client';
 export {
   ApiError,
   type ApiEvent,

@@ -171,7 +171,7 @@ probe-результаты, на каждую сессию делать толь
   `outputSchema: endpoint.output`. Покрыты MCP/agent и HTTP пути. *Остаточный
   край:* отдельного подтверждающего теста на `implementRemote` не добавляли
   (P3, не блокер) — общая валидация output уже под тестами.
-- [ ] **Item 3 — per-session перестройка `McpServer` → ВЫНЕСЕН.** Единственный
+- [x] **Item 3 — per-session перестройка `McpServer` → ВЫНЕСЕН** (handled = отдельной задачей). Единственный
   живой пункт; перф P4 «делать только если всплывёт в профайле». Вынесен
   отдельной задачей на потом:
   [`docs/backlog/inbox/2026-06-05-mcp-build-per-session-cache.md`](../inbox/2026-06-05-mcp-build-per-session-cache.md).

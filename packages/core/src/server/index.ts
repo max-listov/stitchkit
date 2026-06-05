@@ -11,6 +11,13 @@ export {
 export { cacheHeaders, createCache } from './cache';
 export { createHandler, createServer } from './create';
 export { createEventBus, type EventBus } from './event-bus';
+export {
+  type ByteRange,
+  parseByteRange,
+  type ServeFileOptions,
+  serveFile,
+  weakETag,
+} from './file';
 export { createImplement, implement } from './implement';
 export {
   type AuthHook,
@@ -48,6 +55,7 @@ export {
   openApiRoute,
 } from './openapi';
 export { createRateLimiter, type RateLimitConfig } from './rate-limit';
+export { errorResponse, parseBody, respondJson } from './raw';
 export {
   type ClientIpOptions,
   extractIp,

@@ -30,6 +30,10 @@ interface EndpointDefBase {
    * app concerns the generic core does not model — a feature gate, a rate tier,
    * a cache hint, a doc/owner tag. The consumer narrows the type when reading.
    * Never surfaced in the OpenAPI document (app-private, not the HTTP contract).
+   *
+   * Declare its type as a `type` / inline literal / `satisfies` — **not an
+   * `interface`** (an interface has no implicit index signature, so it is not
+   * assignable to `Record<string, unknown>`).
    */
   meta?: Record<string, unknown>;
 }
@@ -224,6 +228,26 @@ type ExposesHttp<E> = E extends { expose: readonly Transport[] }
     : false
   : true;
 
-export type TypedHttpClient<C extends Record<string, EndpointDef>> = {
-  [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: EndpointFn<C[K]>;
+// ─── Scoped client (keys a `pathPrefix` consumes become required args) ────────
+//
+// A per-tenant / resource-scoped client built with `createClient(c, http, {
+// pathPrefix, stripPrefixKeys })` needs the consumed keys (e.g. `tenantId`) in
+// every method's args even though they are not in the endpoint schemas. `Extra`
+// is `{ [K in consumed]: string }`, or `unknown` for a plain client (so
+// `EndpointArgs<E> & unknown = EndpointArgs<E>` — identical to `EndpointFn`).
+type ArgsWith<E, Extra> = EndpointArgs<E> & Extra;
+
+export type ScopedEndpointFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
+  ? () => Promise<EndpointOutput<E>>
+  : (args: ArgsWith<E, Extra>) => Promise<EndpointOutput<E>>;
+
+export type ScopedHttpClient<C extends Record<string, EndpointDef>, Extra> = {
+  [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: ScopedEndpointFn<C[K], Extra>;
 };
+
+// A plain client is the scoped client with no extra keys (`unknown`), so
+// `ScopedEndpointFn<E, unknown>` collapses to `EndpointFn<E>`.
+export type TypedHttpClient<C extends Record<string, EndpointDef>> = ScopedHttpClient<
+  C,
+  unknown
+>;

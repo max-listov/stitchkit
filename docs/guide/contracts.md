@@ -158,6 +158,15 @@ beforeHandle: (ctx, endpoint) => {
 
 `meta` is **app-private** — it is never serialized into the OpenAPI document.
 
+> **Declare a meta type as a `type`, an inline literal, or with `satisfies` — not
+> an `interface`.** A TS `interface` has no implicit index signature (it can be
+> augmented by declaration merging), so it is not assignable to `meta`'s
+> `Record<string, unknown>` — and on the overloaded `defineContract` the error
+> misleadingly surfaces as a `scope` mismatch. Use
+> `type EndpointMeta = { requiredFeature?: PlanFeature }`, or
+> `meta: { requiredFeature: 'x' } satisfies EndpointMeta`. The read side is
+> unchanged — `endpoint.meta?.x` is `unknown`, narrow it in the hook.
+
 ## File uploads
 
 `multipart` names the form field carrying a file. The handler receives it as

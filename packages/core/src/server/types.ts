@@ -30,6 +30,18 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   method: HttpMethod;
   path: string;
   desc: string;
+  /**
+   * Owning contract's prefix — the "service" half of a stable `(service, action)`
+   * identity for hooks / audit / observability. Populated by `implement` /
+   * `implementRemote`; not derivable from `path`. → ADR 0022.
+   */
+  serviceName: string;
+  /**
+   * Endpoint key in the contract (e.g. `updatePartial`) — the "action" half of
+   * the identity. Not in `path`, and `toolName` is absent on HTTP-only endpoints,
+   * so this is the only stable per-endpoint key. → ADR 0022.
+   */
+  key: string;
   toolName?: string;
   expose?: readonly Transport[];
   scope?: string;
@@ -132,6 +144,17 @@ export interface StitchLogger {
 export interface HandlerConfig {
   services?: ServiceDef[];
   groups?: RouteGroup[];
+  /**
+   * Mount each `services` entry under a path prefix chosen by its `scope` — a
+   * `scope → prefix` map, so resource-scoped APIs declare the mapping once
+   * instead of hand-partitioning services into `groups`. A prefix may carry
+   * `:param` segments (they reach `ctx.pathParams`), e.g.
+   * `{ tenant: 'tenants/:tenantId', project: 'projects/:projectId' }`. A service
+   * whose `scope` is not in the map mounts flat. Services listed under explicit
+   * `groups` are unaffected (the group prefix wins). Scope stays a free string —
+   * the core attaches no meaning beyond this lookup. → ADR 0024.
+   */
+  scopePrefixes?: Record<string, string>;
   rawRoutes?: RawRoute[];
   cors?: CorsConfig;
   hooks?: LifecycleHooks;

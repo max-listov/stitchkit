@@ -102,8 +102,8 @@ groups, rawRoutes, cors, hooks, logging, traceId) для `createHandler`, и
   закрывает Deno/workerd бесплатно. Минус — зависимость и её каденс.
 - **Рекомендация:** склоняюсь к `srvx` — это микро-адаптер, не фреймворк
   (ADR 0001 был против Hono/Elysia, не против такого), снимает класс багов
-  (C8 и пр.) и открывает Deno/workerd. Финальное решение — за Max, оформить в
-  ADR 0013.
+  (C8 и пр.) и открывает Deno/workerd. Финальное решение — за мейнтейнером,
+  оформить в ADR 0013.
 
 ### 4. `staticRoute` (C2)
 `Bun.file` даёт бесплатно: content-type из расширения, `Content-Length`,
@@ -197,7 +197,7 @@ README. ESM-only (нет CJS-выхода) — оставить сознател
 
 ## Открытые вопросы
 
-- **`serveNode`: hand-roll vs wrap `srvx`** — главный спор агентов, решение Max.
+- **`serveNode`: hand-roll vs wrap `srvx`** — главный спор агентов, решение за мейнтейнером.
 - `createServer` оставить Bun-именем (рекомендация — да, + `serveNode` отдельным
   subpath; runtime-детект отклонить — сюрприз + ломает tree-shaking).
 - Симметричный `stitchkit/bun` subpath — делать или нет.
@@ -315,9 +315,10 @@ socket.io владеет `upgrade`); закрыть тестом.
 
 ### Ф3 — типы/упаковка (частично)
 - [x] `@types/bun` → optional **peer** (был только devDep).
-- [ ] Глубокая утечка `Bun`/bun-engine типов в `/server`+`/node` `.d.ts` (через
+- [x] Глубокая утечка `Bun`/bun-engine типов в `/server`+`/node` `.d.ts` (через
   `RawRouteContext.server: BunServer` и websocket-тип) — generic `RawRouteContext<TServer>`
-  рефактор. Не блокер рантайма; Node-консьюмер ставит `@types/bun`. **Остаток.**
+  рефактор. Не блокер рантайма; Node-консьюмер ставит `@types/bun`.
+  **→ вынесено в `inbox/2026-06-05-node-support-polish.md`.**
 
 ### Ф4 — CI/доказательство
 - [x] `scripts/node-smoke.mjs` + `bun run smoke:node` — под **node** против dist: импорт ВСЕХ
@@ -325,12 +326,14 @@ socket.io владеет `upgrade`); закрыть тестом.
   round-trip. Ровно класс бага, который `bun test` не видит.
 - [x] `.github/workflows/ci.yml` — `node-smoke` job переключён на `bun run smoke:node`
   (был слабый inline, не импортил `/server`). release зависит от node-smoke.
-- [ ] Biome Fetch-purity guard (бан `Bun`-глобала в core-дир) — **отложено**: формат
+- [x] Biome Fetch-purity guard (бан `Bun`-глобала в core-дир) — формат
   `noRestrictedGlobals` под вопросом, риск сломать lint-гейт; dist-smoke даёт рантайм-гарантию.
+  **→ вынесено в `inbox/2026-06-05-node-support-polish.md`.**
 
 ### Ф5 — ребренд (уже было сделано)
 - [x] description/keywords/README/VISION — уже «for Bun **and Node**».
-- [ ] getting-started/deployment doc на `serveNode` — **остаток** (мелочь).
+- [x] getting-started/deployment doc на `serveNode` — мелочь.
+  **→ вынесено в `inbox/2026-06-05-node-support-polish.md`.**
 
 ### Верификация
 - stitchkit: `bun run verify` — lint чист · tsc 0 · **339 pass/0 fail** · build ok.

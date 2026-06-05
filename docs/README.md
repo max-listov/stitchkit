@@ -21,6 +21,7 @@ The guide, in reading order:
 8. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
 9. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
 10. [Testing & deployment](./guide/testing-and-deployment.md).
+11. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 

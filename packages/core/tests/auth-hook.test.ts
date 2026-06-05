@@ -13,7 +13,15 @@ interface Identity {
 }
 
 function endpoint(scope?: string): MethodDef {
-  return { method: 'POST', path: '/', desc: 'test', handler: () => undefined, scope };
+  return {
+    method: 'POST',
+    path: '/',
+    serviceName: 'test',
+    key: 'test',
+    desc: 'test',
+    handler: () => undefined,
+    scope,
+  };
 }
 
 function httpCtx(): RuntimeContext {

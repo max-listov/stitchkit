@@ -132,8 +132,40 @@ const api = createClient(users, {
 })
 ```
 
-A third argument, `ContractClientConfig`, supports a dynamic URL `pathPrefix`
-(e.g. a per-tenant segment) and the argument keys it consumes.
+## `ContractClientConfig` — per-tenant / resource-scoped clients
+
+`createClient` takes an optional **third** argument that prepends a dynamic
+segment to every URL — the client half of a multi-tenant API
+([Route groups → param prefixes](./server.md#param-prefixes-resource-scoped-paths)):
+
+```ts
+interface ContractClientConfig {
+  /** Prepended to every request URL. A function is called per request with the
+   *  call's argument object, so the prefix can depend on the arguments. */
+  pathPrefix?: string | ((args: Record<string, unknown>) => string)
+  /** Argument keys consumed by `pathPrefix` — stripped from the query/body so
+   *  they are not also sent there (the endpoint's own path `:params` are
+   *  stripped automatically; list any *extra* keys here). */
+  stripPrefixKeys?: string[]
+}
+```
+
+A per-tenant client — `tenantId` goes into the URL, not the body:
+
+```ts
+const widgets = createClient(widgetsContract, http, {
+  pathPrefix: (args) => `tenants/${args.tenantId}/`,
+  stripPrefixKeys: ['tenantId'],
+})
+
+widgets.list({ tenantId: 't_123' })            // GET  /tenants/t_123/widgets
+widgets.create({ tenantId: 't_123', name: 'A' }) // POST /tenants/t_123/widgets  body: { name }
+```
+
+"Keys it consumes" = a key the `pathPrefix` function reads (here `tenantId`).
+List it in `stripPrefixKeys` so it lands in the URL **and is removed from the
+query/body** — otherwise it would be sent twice. Endpoint path `:params` are
+stripped for you; only extra prefix keys need listing.
 
 ## React data layer
 

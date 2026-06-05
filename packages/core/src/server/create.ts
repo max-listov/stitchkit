@@ -269,7 +269,10 @@ function normalizeGroups(config: HandlerConfig): NormalizedGroup[] {
 
   if (config.services) {
     for (const service of config.services) {
-      result.push({ prefix: '', service });
+      // `scope → prefix` mapping: a scoped service mounts under its prefix, an
+      // unmapped one mounts flat. Explicit `groups` below are unaffected.
+      const prefix = config.scopePrefixes?.[service.scope] ?? '';
+      result.push({ prefix, service });
     }
   }
 

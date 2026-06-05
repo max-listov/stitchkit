@@ -16,9 +16,12 @@
  * Connection handlers, rooms and handshake auth stay in the project.
  */
 import type { Server as HttpServer } from 'node:http';
-import type { Server as BunEngine } from '@socket.io/bun-engine';
+import type {
+  Server as BunEngine,
+  ServerOptions as BunEngineServerOptions,
+} from '@socket.io/bun-engine';
 import type { ServerWebSocket } from 'bun';
-import type { Server as SocketIOServer } from 'socket.io';
+import type { ServerOptions, Server as SocketIOServer } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
 import type { RawRoute } from './types';
 import { type ComposedLane, webSocketLane } from './websocket';
@@ -40,6 +43,15 @@ export interface SocketIOServerConfig {
   pingTimeout?: number;
   /** Heartbeat: ms between pings. Default `10000`. */
   pingInterval?: number;
+  /**
+   * Typed passthrough for any other Socket.IO `ServerOptions` the wrapper does
+   * not own — `maxHttpBufferSize` (raise above the 1 MB default for large
+   * emits), `connectionStateRecovery`, `perMessageDeflate`, `connectTimeout`, …
+   * Mirrors the `bun` passthrough on `createServer`. The wrapper-owned fields
+   * (`cors` / `path` / `transports` / `pingTimeout` / `pingInterval`) take
+   * precedence over the same keys here, so transport integration stays correct.
+   */
+  serverOptions?: Partial<ServerOptions>;
 }
 
 export interface SocketIOServerHandle<
@@ -82,23 +94,45 @@ export async function createSocketIOServer<
   const path = config.path ?? '/socket.io/';
   const onBun = 'Bun' in globalThis;
   const transports = config.transports ?? (onBun ? ['websocket', 'polling'] : ['websocket']);
+  const pingTimeout = config.pingTimeout ?? 20_000;
+  const pingInterval = config.pingInterval ?? 10_000;
+  const cors = {
+    origin: config.cors.origin,
+    credentials: config.cors.credentials ?? true,
+    methods: ['GET', 'POST'],
+  };
 
   const { Server } = await import('socket.io');
   const io = new Server<TClientEvents, TServerEvents>({
+    // Passthrough first; the wrapper-owned fields below override any overlap.
+    ...config.serverOptions,
     path,
-    cors: {
-      origin: config.cors.origin,
-      credentials: config.cors.credentials ?? true,
-      methods: ['GET', 'POST'],
-    },
+    cors,
     transports,
-    pingTimeout: config.pingTimeout ?? 20_000,
-    pingInterval: config.pingInterval ?? 10_000,
+    pingTimeout,
+    pingInterval,
   });
 
   if (onBun) {
     const { Server: Engine } = await import('@socket.io/bun-engine');
-    const engine = new Engine({ path });
+    // socket.io forwards engine-level options to the engine only when it creates
+    // the engine itself (the Node path). On Bun we build the engine by hand, so
+    // they must be passed explicitly — otherwise `maxHttpBufferSize`, the ping
+    // heartbeat and `upgradeTimeout` silently fall back to engine defaults and a
+    // configured value is lost (a >1 MB emit truncates at the 1 MB default).
+    const engineOpts: Partial<BunEngineServerOptions> = {
+      path,
+      cors,
+      pingTimeout,
+      pingInterval,
+    };
+    if (config.serverOptions?.maxHttpBufferSize !== undefined) {
+      engineOpts.maxHttpBufferSize = config.serverOptions.maxHttpBufferSize;
+    }
+    if (config.serverOptions?.upgradeTimeout !== undefined) {
+      engineOpts.upgradeTimeout = config.serverOptions.upgradeTimeout;
+    }
+    const engine = new Engine(engineOpts);
     io.bind(engine);
     const { websocket } = engine.handler();
 

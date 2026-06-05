@@ -8,6 +8,106 @@ public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-05
+
+### Range-capable file serving
+
+- **`serveFile(req, opts)`** (`stitchkit/server`, Bun) — serve a file with full
+  HTTP `Range` support (`206` / `416` / `Content-Range` / `Accept-Ranges`) plus
+  the conditional-request handling Range correctness needs: weak `ETag`,
+  `Last-Modified`, `If-Range`, and `If-None-Match` / `If-Modified-Since` → `304`.
+  Handles `HEAD`, streams the byte range via `Bun.file().slice()` (no full read
+  into memory), and auto-detects `Content-Type`. For media seeking / caching that
+  `staticRoute` deliberately does not cover. → ADR 0023.
+- **`parseByteRange(header, size)`** + **`weakETag(size, mtimeMs)`** — the pure,
+  runtime-neutral core, exported for direct use and unit testing. Single-range
+  only; multiple ranges return `null` (full `200`).
+- **`staticRoute` now detects media MIME types** (mp4 / webm / mov / mp3 / m4a /
+  wav / ogg / pdf / wasm / …) — the extension→MIME map is shared with
+  `serveFile`. Behaviour is otherwise unchanged (still basic, in-memory).
+
+### Resource-scoped mounting & client
+
+- **`scopePrefixes`** on `createServer` / `createHandler` — a `scope → URL prefix`
+  map (`{ tenant: 'tenants/:tenantId', … }`). Each `services` entry mounts under
+  its `service.scope` prefix (`:param` segments reach the context); an unmapped
+  scope mounts flat; explicit `groups` are unaffected. Declares the
+  scope↔prefix mapping once instead of hand-partitioning into groups. Scope stays
+  a free string. → ADR 0024.
+- **Typed scoped client** — `stripPrefixKeys` (a `const` tuple) now adds the
+  consumed keys as required, typed args on every method of the client
+  `createClient` returns. `createClient(c, http, { stripPrefixKeys: ['tenantId'] })`
+  → `api.list({ tenantId, … })` is typed; the per-tenant scoped-client type
+  wrapper is no longer needed. The **bare-fetch client** (a plain `{ baseUrl }`
+  config) now also honours `pathPrefix` / `stripPrefixKeys` — previously only the
+  `HttpClient` path did, so the typed keys had no runtime effect there.
+  `TypedHttpClient<C>` is now an alias of the new `ScopedHttpClient<C, unknown>`
+  (structurally identical). → ADR 0025.
+
+### Realtime
+
+- **`SocketIOServerConfig.serverOptions`** — a typed passthrough for the rest of
+  socket.io's `ServerOptions` (`maxHttpBufferSize`, `connectionStateRecovery`,
+  `perMessageDeflate`, `connectTimeout`, …). On Bun the engine-level options
+  (`maxHttpBufferSize`, ping heartbeat, `upgradeTimeout`) are now forwarded to the
+  hand-built `@socket.io/bun-engine` too — previously only `path` reached it, so a
+  configured `maxHttpBufferSize` was silently dropped and large emits truncated at
+  the 1 MB default. → ADR 0008.
+
+### Raw-route helpers
+
+- **`respondJson` / `errorResponse` / `parseBody`** (`stitchkit/server`) — the
+  three things every raw route re-implemented: a JSON response (`204` for
+  null/undefined), the framework error envelope from any thrown value (via
+  `normalizeError`, with `x-request-id` when in a request context), and a
+  no-throw Zod body parse (`data | null`). Conveniences over the existing error
+  normalization — raw routes and contract routes now return identical errors.
+
+### Tools
+
+- **`McpServerBuildConfig.extend`** — `ToolExtend` now reaches the batteries-path
+  (`createMcpHandler` / `buildMcpServer`), not only the manual `mountMcp` /
+  `mountAgent`. Add a tool argument (e.g. a `tenantId` resolved into handler
+  context) without hand-wrapping every service. → ADR 0007.
+
+### Endpoint identity for hooks & audit
+
+- **`MethodDef.serviceName` + `MethodDef.key`** — stable `(service, action)`
+  identity (contract prefix + endpoint key), populated by `implement` /
+  `implementRemote`. Read it in `beforeHandle` / `afterHandle` / `onError` (or on
+  a tool mount) to key audit / metrics — the action is not in the URL and
+  `toolName` is absent on HTTP-only endpoints, so this is the only stable pair.
+  → ADR 0022.
+- **`implementRemote` now passes `EndpointDef.meta` through** — it was dropped for
+  remote-proxied contracts (`implement` already carried it). → ADR 0021.
+
+### Client
+
+- **`ContractClientConfig` and `ClientConfig` are now exported from the root
+  `stitchkit` entrypoint** — the per-tenant / resource-scoped client config and
+  the bare-fetch client config (siblings of `HttpClientConfig` /
+  `SocketIOClientConfig`, which were already exported).
+
+### Fixed
+
+- **`safePath` no longer ships raw control bytes in `server/logger.ts`** — the
+  sanitiser was a regex literal containing literal `\x00`–`\x1f`/`\x7f` bytes,
+  which older Bun regex parsers (≤ 1.3.5) reject at parse time, so `import
+  'stitchkit'` threw on those versions (`engines.bun >= 1.2.0`). Rewritten as a
+  char-code filter (no regex, no raw bytes); a regression test scans `src/**`
+  for raw control bytes so it cannot recur.
+
+### Docs
+
+- Documented the `EndpointDef.meta` gotcha — declare a meta type as a `type` /
+  inline literal / `satisfies`, not an `interface` (an interface is not
+  assignable to `Record<string, unknown>`). Guide + ADR 0021 + field JSDoc.
+- New **multi-tenant / resource-scoped** guide (`docs/guide/multi-tenant.md`) —
+  contract → `scopePrefixes` server → auth → typed scoped client → `extend` for
+  the AI surface, end to end.
+- **Node deployment** documented — `serveNode` in getting-started and a "Deploy on
+  Node" section (`@types/bun` peer, `transports: ['websocket']`, Bun-only helpers).
+
 ## [0.5.0] — 2026-06-05
 
 ### Endpoint metadata passthrough
@@ -412,7 +512,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/max-listov/stitchkit/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/max-listov/stitchkit/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/max-listov/stitchkit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/max-listov/stitchkit/compare/v0.2.0...v0.3.0

@@ -331,6 +331,11 @@ export interface McpServerBuildConfig<TAuth> {
    *  same `createAuthHook` result used for the HTTP `beforeHandle` to guard
    *  tools with the identical rules. */
   lifecycle?: ToolLifecycle;
+  /** Add extra tool arguments resolved into handler context (e.g. a `tenantId`
+   *  for one API key serving many tenants). Same `ToolExtend` accepted by
+   *  `mountMcp` — without this, the batteries-path (`createMcpHandler`) could not
+   *  reach it and a consumer had to hand-wrap every service. */
+  extend?: ToolExtend;
   /** What to do when a tool's schema is not MCP-compatible. Default `'throw'`. */
   onIncompatibleSchema?: IncompatibleSchemaPolicy;
   /** Logger for schema-incompatibility warnings — defaults to `console`. */
@@ -370,6 +375,7 @@ export function buildMcpServer<TAuth>(
     context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,
+    extend: config.extend,
     onIncompatibleSchema: config.onIncompatibleSchema,
     logger: config.logger,
     coerceJsonArgs: config.coerceJsonArgs,

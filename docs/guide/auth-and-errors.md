@@ -51,8 +51,36 @@ The value of each `rules` entry, keyed by scope:
 - **`'public'`** — always passes; the identity is attached if present.
 - **`'authenticated'`** — any resolved identity passes; no identity ⇒ 401.
 - **a function** `(identity, ctx) => boolean | Promise<boolean>` — a custom
-  check. It receives the full context, so a resource-scoped rule can read
-  `ctx.params` and do a DB lookup. May be async.
+  check. It receives the full context, so a resource-scoped rule can read the
+  request's path params and do a DB lookup. May be async.
+
+#### Resource-scoped rule — reading a path/prefix param
+
+For a multi-tenant API (`pathPrefix: '/tenants/:tenantId'`, see
+[Route groups → param prefixes](./server.md#param-prefixes-resource-scoped-paths)),
+the rule gates access to the tenant in the path. A `:param` from the group prefix
+or the endpoint is on the **context root** as `ctx.<name>` (a raw `string`):
+
+```ts
+const authHook = createAuthHook<User>({
+  resolve: sessionResolver,
+  rules: {
+    public: 'public',
+    // gate the tenant in the path — ctx.tenantId comes from the group prefix
+    tenant: async (user, ctx) => userCanAccessTenant(user.id, String(ctx.tenantId)),
+  } satisfies Record<Scope, AuthRule<User>>,
+  // derive per-request facts onto ctx for handlers (role within this tenant, …)
+  inject: async (ctx, user) => {
+    ctx.user = user
+    if (user) ctx.tenantRole = await roleInTenant(user.id, String(ctx.tenantId))
+  },
+})
+```
+
+`inject` runs on every request (identity may be `null`) — use it to put the
+identity *and* any derived values (role, parent-id) on `ctx` for handlers. Read
+them back as `ctx.tenantRole` (typed `unknown` — narrow at the read site). The
+endpoints under the group declare `scope: 'tenant'`.
 
 ### `AuthHookConfig`
 

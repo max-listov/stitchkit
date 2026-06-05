@@ -100,6 +100,21 @@ Run the server with `bun run src/server/index.ts`. The contract is the single
 source of truth — change it and both the handler and the client are re-typed at
 once.
 
+#### On Node
+
+`createServer` is Bun's `Bun.serve`. On **Node ≥ 22**, swap it for `serveNode`
+(from `stitchkit/node`, built on `srvx`) — the contract, `implement` and the
+client are identical:
+
+```ts
+import { serveNode } from 'stitchkit/node'
+
+serveNode({ services: [service], port: 3000 })
+```
+
+Add `@types/bun` as a dev dependency on Node (an optional peer — it types the
+shared `stitchkit/server` surface). See [deployment](./testing-and-deployment.md#deploy-on-node).
+
 ## Dependencies
 
 | Dependency | Kind | Needed for |

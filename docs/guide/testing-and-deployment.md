@@ -68,8 +68,8 @@ The `stitchkit` package itself ships pre-built; you consume `dist/`, not `src/`.
 
 ### Runtime
 
-The deployment target must have **Bun ≥ 1.2**. stitchkit uses `Bun.serve` and
-Bun APIs with no Node/Deno shims — a Node host will not run it.
+The recommended target is **Bun ≥ 1.2** — `createServer` is `Bun.serve`. **Node
+≥ 22** is also supported via `stitchkit/node` (see below).
 
 ```ts
 createServer({
@@ -81,6 +81,33 @@ createServer({
 
 `createServer` returns the `Bun.serve` instance — keep the reference if you need
 `.stop()` for a graceful shutdown.
+
+### Deploy on Node
+
+The contract, `implement`, hooks, auth and the client are runtime-agnostic. Only
+the listener differs: replace `createServer` with **`serveNode`** (from
+`stitchkit/node`, built on `srvx`) — same `HandlerConfig`:
+
+```ts
+import { serveNode } from 'stitchkit/node'
+
+serveNode({
+  services,
+  port: Number(process.env.PORT ?? 3000),
+})
+```
+
+Notes for a Node host:
+
+- Add **`@types/bun`** as a dev dependency — it is an optional peer that types the
+  shared `stitchkit/server` surface (without it `tsc` reports a missing `Bun`
+  namespace).
+- **Socket.IO** attaches to the Node HTTP server via `serveNode({ socket })`, and
+  on Node the default transport is `['websocket']` — set the client to match
+  (`transports: ['websocket']`). See [realtime](./realtime.md).
+- **Bun-only helpers** do not run on Node: `serveFile` (uses `Bun.file`) and the
+  raw WebSocket lane. `staticRoute` is runtime-neutral (`node:fs`) and works on
+  both, but in production prefer a CDN / the static front-end below.
 
 ### Production checklist
 

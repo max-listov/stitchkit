@@ -105,6 +105,30 @@ describe('Socket.IO wrappers', () => {
   });
 });
 
+// ─── ServerOptions passthrough (maxHttpBufferSize → the Bun engine) ──────────
+
+describe('Socket.IO ServerOptions passthrough', () => {
+  test('maxHttpBufferSize reaches the Bun engine (websocket.maxPayloadLength)', async () => {
+    const big = 5 * 1024 * 1024;
+    const handle = await createSocketIOServer<ServerEvents, ClientEvents>({
+      cors: { origin: '*' },
+      serverOptions: { maxHttpBufferSize: big },
+    });
+    // On Bun the engine's maxPayloadLength is its maxHttpBufferSize — so a value
+    // over the 1 MB default proves the option was forwarded, not dropped.
+    expect(handle.websocket.maxPayloadLength).toBe(big);
+    handle.io.close();
+  });
+
+  test('default maxHttpBufferSize is the 1 MB engine default when omitted', async () => {
+    const handle = await createSocketIOServer<ServerEvents, ClientEvents>({
+      cors: { origin: '*' },
+    });
+    expect(handle.websocket.maxPayloadLength).toBe(1e6);
+    handle.io.close();
+  });
+});
+
 // ─── Handshake auth (token / query / headers) ───────────────────────────────
 
 interface Identity {

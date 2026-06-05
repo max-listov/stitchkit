@@ -10,6 +10,8 @@ export {
   type HandlerContext,
   type HttpMethod,
   type RuntimeContext,
+  type ScopedEndpointFn,
+  type ScopedHttpClient,
   type Transport,
   type TransportSource,
   type TypedClient,

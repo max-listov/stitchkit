@@ -264,12 +264,54 @@ the merged `params` + `input`. `context` is merged into every tool handler's
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | add extra args resolved before the handler runs (see below) |
 
-`extend` adds tool-only arguments — fields the model fills that are resolved
-into context, then stripped before the contract handler sees them. Use it when a
-tool needs an argument the HTTP endpoint does not.
-
 `lifecycle` works the same as on the MCP server — without it an agent tool call
 bypasses the HTTP `beforeHandle` auth gate. Pass your `createAuthHook` result.
+
+### Adding tool-only args — `extend`
+
+`extend` adds **tool-only** arguments — fields the model fills that are resolved
+into context, then stripped before the contract handler sees them. Use it when a
+tool needs an argument the HTTP endpoint does not — the classic case being a
+**multi-tenant** server reached by one API key, where the model passes `tenantId`
+on every call. It is the same `ToolExtend` shape on `mountMcp`, `createMcpHandler`
+and `mountAgent`:
+
+```ts
+interface ToolExtend {
+  /** Extra Zod fields added to every matching tool's input schema. */
+  schema: Record<string, z.ZodType>
+  /** Turn the extra args into context merged into the handler's ctx. */
+  resolve: (args: Record<string, unknown>) => Partial<Ctx> | Promise<Partial<Ctx>>
+  /** Limit the extension to specific methods — default: every method. */
+  filter?: (service: ServiceDef, method: MethodDef) => boolean
+}
+```
+
+On the MCP server — add `tenantId` to each tool, validate access in `resolve`,
+inject the resolved tenant into `ctx`, and `filter` to the tenant-scoped tools:
+
+```ts
+createMcpHandler({
+  serverInfo, auth,
+  services: [widgetsService],
+  extend: {
+    schema: { tenantId: z.string().describe('Tenant to act on') },
+    resolve: async ({ tenantId }) => {
+      const id = String(tenantId)
+      if (!(await tenantExists(id))) throw new Error(`unknown tenant ${id}`)
+      return { tenantId: id }          // merged into ctx → ctx.tenantId
+    },
+    filter: (_service, method) => method.scope === 'tenant',
+  },
+})
+```
+
+The model calls `widgets_list({ tenantId: 't_123' })`; `resolve` checks access and
+puts `tenantId` on `ctx`; the contract handler reads `ctx.tenantId` (same place
+as the HTTP prefix param — see
+[Route groups → param prefixes](./server.md#param-prefixes-resource-scoped-paths)),
+so one handler serves both surfaces. Pair `extend` with `lifecycle` (your
+`createAuthHook`) so the tool call is still scope-gated.
 
 ## Native multimodal tools
 

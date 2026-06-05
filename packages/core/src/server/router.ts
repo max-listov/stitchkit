@@ -3,8 +3,9 @@
  * raw-route matcher. The handler pipeline lives in `create.ts`.
  */
 import { readFile, stat } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { isWithinDir } from '../internal/within-dir';
+import { mimeForPath } from './mime';
 import type { LifecycleHooks, MethodDef, RawRoute, ServiceDef } from './types';
 
 /** A service mounted under a path prefix, carrying optional group hooks. */
@@ -202,29 +203,12 @@ export function matchRawRoute(
   return null;
 }
 
-/** Minimal extension → MIME map for `staticRoute`. */
-const STATIC_MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-  '.txt': 'text/plain; charset=utf-8',
-};
-
 /**
  * Build a `RawRoute` that serves files from `dir` under `prefix`. Basic by
- * design — no Range, no conditional requests; put a CDN in front for those.
- * Rejects path traversal (including the percent-encoded form); 404 for a
- * missing file. Uses `node:fs`, so it runs on both Bun and Node.
+ * design — no Range, no conditional requests, reads the whole file into memory;
+ * for media seeking / caching use `serveFile`, or put a CDN in front. Rejects
+ * path traversal (including the percent-encoded form); 404 for a missing file.
+ * Uses `node:fs`, so it runs on both Bun and Node.
  */
 export function staticRoute(prefix: string, dir: string): RawRoute {
   const cleanPrefix = prefix.replace(/\/+$/, '');
@@ -253,8 +237,7 @@ export function staticRoute(prefix: string, dir: string): RawRoute {
       const body = await readFile(target);
       return new Response(body, {
         headers: {
-          'Content-Type':
-            STATIC_MIME[extname(target).toLowerCase()] ?? 'application/octet-stream',
+          'Content-Type': mimeForPath(target),
           // Never let a browser sniff a served file into an executable type.
           'X-Content-Type-Options': 'nosniff',
         },

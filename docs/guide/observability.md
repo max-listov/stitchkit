@@ -187,6 +187,33 @@ createMcpHandler({
 Log **after** completion — a record is of a *finished* call; you need the
 outcome and the duration, neither of which exists before the handler runs.
 
+### Keying a row on (service, action)
+
+For a per-endpoint audit row keyed by **service** and **action**, read the
+endpoint identity off the `MethodDef` the hook receives — `endpoint.serviceName`
+(the contract prefix) and `endpoint.key` (the endpoint key, e.g. `updatePartial`).
+They are stable and always present (→ ADR 0022); the action is not in the URL and
+`toolName` is absent on HTTP-only endpoints, so this is the only reliable pair.
+`afterHandle` also gives you the handler `result` — so it, not `createAuditHook`'s
+HTTP wrapper (which never sees the response body), is the home for a rich mutation
+audit that records output:
+
+```ts
+hooks: {
+  afterHandle: (ctx, result, endpoint) => {
+    void logMutation({
+      service: endpoint.serviceName,
+      action: endpoint.key,
+      input: ctx.input,
+      output: result,
+      userId: ctx.userId,
+      traceId: ctx.traceId,
+    })
+    return result   // don't transform
+  },
+}
+```
+
 > **Why the HTTP audit is a wrapper, not a lifecycle hook.** `LifecycleHooks`
 > has a single `onError` — an audit built on it would compete with the app's own
 > error handler. `createAuditHook`'s `http` wrapper sees the final `Response`

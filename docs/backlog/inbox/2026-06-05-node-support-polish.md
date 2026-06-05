@@ -14,6 +14,17 @@ related: docs/backlog/done/2026-05-20-runtime-agnostic-core.md
 > при его закрытии. Само ядро (Node работает, verified, зашипано в 0.3.0) —
 > done. Эти три пункта — некритичный polish, Node ими не блокируется. На потом.
 
+> **Статус (2026-06-05):** **Item 3 (Node-доки) — СДЕЛАН** в 0.6.0-проходе
+> («разгрести инбокс»): `serveNode` в `getting-started.md` (новый «#### On Node»)
+> и `testing-and-deployment.md` (новая секция «Deploy on Node» + поправлена
+> неверная строка «a Node host will not run it» + `@types/bun` peer +
+> `transports:['websocket']` + пометка Bun-only хелперов `serveFile`/raw-lane,
+> `staticRoute` — dual-runtime). **Item 1 и Item 2 — осознанно отложены:**
+> Item 1 (generic `RawRouteContext`) инвазивен — ломает cast-free
+> `ctx.server.upgrade` в `socket-io.ts`; Item 2 (Biome Fetch-purity guard) сам
+> помечен «риск сломать lint», а `smoke:node` уже даёт рантайм-гарантию. Таск
+> остаётся в инбоксе ради Item 1/2.
+
 ## Item 1 — Утечка `Bun`-типов в `/server` + `/node` `.d.ts` (Ф3)
 
 **Приоритет: P3 (DX/типы). Не блокер рантайма.**

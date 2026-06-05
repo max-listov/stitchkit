@@ -82,6 +82,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 |-------|---------|
 | `services` | `ServiceDef[]` mounted at the root |
 | `groups` | route groups — a shared path prefix and hooks (see below) |
+| `scopePrefixes` | `scope → path prefix` map — mount `services` by `service.scope` (see below) |
 | `rawRoutes` | non-contract routes (see below) |
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `cors` | CORS policy — `{ origin, … }` |
@@ -106,6 +107,74 @@ createServer({
 
 Each service's own `prefix` is appended to the group prefix — `usersService`
 above is served at `/api/users`.
+
+### Param prefixes (resource-scoped paths)
+
+A group `pathPrefix` may contain `:param` segments — the spine of a multi-tenant
+or resource-scoped API:
+
+```ts
+createServer({
+  groups: [
+    { pathPrefix: '/tenants/:tenantId', services: [widgetsService], hooks: { beforeHandle: auth } },
+  ],
+})
+// widgetsService (prefix 'widgets') → /tenants/:tenantId/widgets/...
+```
+
+**Where the prefix param lands.** The router matches the *full* path (group
+prefix + service prefix + endpoint path) and collects every `:param` — from the
+prefix and from the endpoint alike — into one set. Each is spread onto the
+context root, so it is available as **`ctx.tenantId`** (a raw `string`) in both
+the handler and `beforeHandle`/`afterHandle`/`onError`:
+
+```ts
+beforeHandle: (ctx) => {
+  const tenantId = ctx.tenantId   // string — from the group prefix
+}
+```
+
+`ctx.tenantId` is typed `unknown` (it rides the context index signature) — narrow
+it (`String(ctx.tenantId)` / a guard) at the read site.
+
+**Relation to the endpoint `params` schema.** `ctx.params` is the endpoint's
+`params` schema **parsed against all collected path params** (prefix + endpoint).
+So to get the prefix param *inside* typed `ctx.params`, add it to that schema:
+
+```ts
+// endpoint under /tenants/:tenantId
+{ method: 'GET', path: '/:widgetId', desc: 'Get a widget',
+  params: z.object({ tenantId: z.string(), widgetId: z.string() }) }
+// → ctx.params.tenantId and ctx.params.widgetId both typed
+```
+
+⚠️ A **`z.strictObject`** params schema that omits the prefix param **rejects the
+request** (the extra `tenantId` key fails the strict parse). Either include every
+prefix param in the schema, use a non-strict `z.object` (extra keys are dropped
+from `ctx.params`, but `ctx.tenantId` still works), or read the param off the
+context root.
+
+### Scope-driven mounting (`scopePrefixes`)
+
+With several scopes, hand-partitioning services into `groups` duplicates the
+scope↔prefix mapping. Instead, map `scope → prefix` once and pass the flat
+`services` list — each entry mounts under `scopePrefixes[service.scope]`:
+
+```ts
+createServer({
+  services,   // mixed scopes, listed once
+  scopePrefixes: { tenant: 'tenants/:tenantId', project: 'projects/:projectId' },
+})
+// scope 'tenant'  → /tenants/:tenantId/<prefix>/...
+// scope 'project' → /projects/:projectId/<prefix>/...
+// unmapped scope  → mounted flat
+```
+
+A prefix may carry `:param` segments (they land on the context exactly as above).
+Services listed under explicit `groups` are unaffected — the group prefix wins.
+Scope stays a free string; the core attaches no meaning beyond this lookup
+(→ ADR 0024). When each scope needs a different handler-context shape, declare one
+`createImplement<Ctx>()` per scope rather than a single superset context.
 
 ## Lifecycle hooks
 
@@ -165,6 +234,72 @@ createServer({
 A path may be exact, carry `:param` segments, or end in `/*` for a prefix
 wildcard. `staticRoute()` builds a raw route that serves a directory.
 
+### Raw-route helpers
+
+A raw route gives up the contract pipeline, so three things get re-implemented in
+every one. `stitchkit/server` ships them — conveniences, not a second pipeline
+(no auth, no schema gate beyond `parseBody`):
+
+```ts
+import { respondJson, errorResponse, parseBody, badRequest } from 'stitchkit/server'
+
+handler: async (req) => {
+  try {
+    const body = await parseBody(req, MySchema)      // typed value, or null (no throw)
+    if (!body) throw badRequest('invalid body')      // helpers THROW an AppError
+    return respondJson(await myService(body))         // JSON; 204 when null/undefined
+  } catch (err) {
+    return errorResponse(err)                         // same envelope as a contract route
+  }
+}
+```
+
+The error helpers (`badRequest`, `notFound`, …) **throw** an `AppError`, so raise
+them inside the `try` and let `errorResponse(err)` render it — that runs any
+thrown value through the framework's `normalizeError`, so a raw route returns the
+**identical** `{ error: { code, message, … } }` shape (and `x-request-id`) a
+contract route does.
+
+### Serving files & Range requests
+
+`staticRoute` is basic on purpose — it reads the whole file into memory and has
+no `Range` or conditional support; put a CDN in front, or use it for small web
+assets. To serve **media** (video / audio / large downloads) that a browser must
+seek and cache, use **`serveFile`** (Bun) — it streams the requested byte range
+and speaks the conditional-request half of RFC 7233 / 9110:
+
+```ts
+import { serveFile } from 'stitchkit/server'
+
+createServer({
+  services,
+  rawRoutes: [
+    {
+      // `ALL` — so a HEAD probe also reaches serveFile (raw routes match the
+      // method exactly, and `HEAD` is not a contract `HttpMethod`); serveFile
+      // itself handles GET + HEAD and answers 405 for anything else.
+      method: 'ALL',
+      path: '/media/:id',
+      handler: (req, ctx) =>
+        serveFile(req, { path: pathForId(ctx.params.id), filename: 'clip.mp4' }),
+    },
+  ],
+})
+```
+
+`serveFile` returns `206` (range, with `Content-Range` + `Content-Length`), `200`
+(full), `416` (unsatisfiable, `Content-Range: bytes */size`), `304`
+(`If-None-Match` / `If-Modified-Since`), `404` (missing) or `405` (non GET/HEAD).
+It always sets `Accept-Ranges: bytes`, a weak `ETag` and `Last-Modified` (so
+`If-Range` keeps a changing file from being stitched from stale + fresh bytes),
+and `nosniff`. `Content-Type` is auto-detected from the path — override it, or
+pass `disposition` / `cacheControl` / `etag: false`, via the options.
+
+`serveFile` takes an explicit `path` and trusts it — **the caller owns
+containment**. For a URL-derived path use `staticRoute` (which enforces it) or
+`isWithinDir` first. The byte-range parser is exported on its own as
+`parseByteRange(header, size)` for direct use and testing. → ADR 0023.
+
 ## Server primitives
 
 `stitchkit/server` also exports the primitives most APIs need. Each is a small,
@@ -172,6 +307,7 @@ focused helper — not a sub-framework.
 
 | Helper | Does |
 |--------|------|
+| `serveFile()` | serve a file with `Range` / `304` / `HEAD` (media seeking) |
 | `streamSSE()` | turn an `AsyncGenerator` into a Server-Sent-Events `Response` |
 | `parseMultipart()` | parse a `multipart/form-data` request with a size cap |
 | `createRateLimiter()` | per-key token-bucket rate limiting |

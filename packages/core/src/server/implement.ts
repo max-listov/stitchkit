@@ -26,6 +26,9 @@ export function implement<
       method: endpoint.method,
       path: endpoint.path,
       desc: endpoint.desc,
+      // Stable (service, action) identity for hooks / audit (→ ADR 0022).
+      serviceName: contract.meta.prefix,
+      key: String(key),
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
       expose: endpoint.expose,
       // Effective scope: per-endpoint override, else the contract group scope.

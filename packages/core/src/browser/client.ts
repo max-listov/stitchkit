@@ -1,4 +1,4 @@
-import type { ContractDef, EndpointDef, TypedHttpClient } from '../contract';
+import type { ContractDef, EndpointDef, ScopedHttpClient, TypedHttpClient } from '../contract';
 import { inputIsQuery } from '../internal/http-input';
 import { mapObject, typedEntries } from '../internal/typed';
 import {
@@ -60,10 +60,23 @@ export interface ClientConfig {
   onError?: (status: number, body: unknown) => void;
 }
 
-/** Per-contract client tweaks — a dynamic URL `pathPrefix` and the keys it consumes. */
-export interface ContractClientConfig {
+/**
+ * The keys a `pathPrefix` consumes, as required `string` args. `never` (a plain
+ * client) collapses to `unknown`, so `EndpointArgs & unknown = EndpointArgs`.
+ */
+export type ScopedKeys<K extends string> = [K] extends [never]
+  ? unknown
+  : { [P in K]: string };
+
+/**
+ * Per-contract client tweaks — a dynamic URL `pathPrefix` and the keys it
+ * consumes. List the consumed keys in `stripPrefixKeys` (e.g. `['tenantId']`)
+ * and they become required, typed args on every method of the returned client —
+ * no hand-written scoped-client wrapper.
+ */
+export interface ContractClientConfig<K extends string = never> {
   pathPrefix?: string | ((args: Record<string, unknown>) => string);
-  stripPrefixKeys?: string[];
+  stripPrefixKeys?: readonly K[];
 }
 
 /**
@@ -72,17 +85,20 @@ export interface ContractClientConfig {
  * (from `createHttpClient`) for cookie auth, SSR and retry, or a plain
  * `ClientConfig` for a bare fetch client.
  */
-export function createClient<T extends Record<string, EndpointDef>>(
+export function createClient<
+  T extends Record<string, EndpointDef>,
+  const K extends string = never,
+>(
   contract: ContractDef<T, string>,
   configOrClient: ClientConfig | HttpAdapter,
-  contractConfig?: ContractClientConfig,
-): TypedHttpClient<T> {
+  contractConfig?: ContractClientConfig<K>,
+): ScopedHttpClient<T, ScopedKeys<K>> {
   const client: Partial<TypedHttpClient<T>> = {};
   const makeMethod = isHttpAdapter(configOrClient)
     ? (endpoint: EndpointDef) =>
         createHttpMethod(endpoint, contract.meta.prefix, configOrClient, contractConfig)
     : (endpoint: EndpointDef) =>
-        createFetchMethod(endpoint, contract.meta.prefix, configOrClient);
+        createFetchMethod(endpoint, contract.meta.prefix, configOrClient, contractConfig);
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;
@@ -90,7 +106,7 @@ export function createClient<T extends Record<string, EndpointDef>>(
     setClientMethod(client, key, makeMethod(endpoint));
   }
 
-  return client as unknown as TypedHttpClient<T>;
+  return client as unknown as ScopedHttpClient<T, ScopedKeys<K>>;
 }
 
 /**
@@ -119,7 +135,7 @@ function createHttpMethod(
   endpoint: EndpointDef,
   prefix: string,
   client: HttpAdapter,
-  config?: ContractClientConfig,
+  config?: ContractClientConfig<string>,
 ): (...args: unknown[]) => Promise<unknown> {
   const httpMethod = endpoint.method.toLowerCase() as
     | 'get'
@@ -195,9 +211,22 @@ function createFetchMethod(
   endpoint: EndpointDef,
   prefix: string,
   config: ClientConfig,
+  contractConfig?: ContractClientConfig<string>,
 ): (args?: Record<string, unknown>) => Promise<unknown> {
+  const prefixKeys = new Set(contractConfig?.stripPrefixKeys ?? []);
   return async (args?: Record<string, unknown>) => {
-    let url = buildFetchUrl(config.baseUrl, prefix, endpoint.path, args);
+    // Resolve the dynamic path prefix (per-tenant / resource-scoped) and strip
+    // the keys it consumes from the query / body — same as the HttpClient path.
+    let pathPrefixStr = '';
+    if (contractConfig?.pathPrefix) {
+      pathPrefixStr =
+        typeof contractConfig.pathPrefix === 'function'
+          ? contractConfig.pathPrefix(args ?? {})
+          : contractConfig.pathPrefix;
+      if (pathPrefixStr && !pathPrefixStr.endsWith('/')) pathPrefixStr += '/';
+    }
+
+    let url = buildFetchUrl(config.baseUrl, prefix, endpoint.path, args, pathPrefixStr);
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -208,7 +237,7 @@ function createFetchMethod(
     const hasBody = !isQuery && !endpoint.multipart && endpoint.input && args;
 
     if (isQuery && args) {
-      const remaining = stripParams(args, endpoint.path);
+      const remaining = stripParams(args, endpoint.path, prefixKeys);
       const searchParams = new URLSearchParams();
       for (const [k, v] of Object.entries(remaining)) {
         if (v === undefined || v === null) continue;
@@ -232,7 +261,7 @@ function createFetchMethod(
       formData.append(endpoint.multipart, file);
       appendFormFields(
         formData,
-        stripParams(args, endpoint.path),
+        stripParams(args, endpoint.path, prefixKeys),
         new Set([endpoint.multipart]),
       );
 
@@ -257,7 +286,9 @@ function createFetchMethod(
       method: endpoint.method,
       headers,
       credentials: config.credentials,
-      ...(hasBody && { body: JSON.stringify(stripParams(hasBody, endpoint.path)) }),
+      ...(hasBody && {
+        body: JSON.stringify(stripParams(hasBody, endpoint.path, prefixKeys)),
+      }),
     });
 
     if (!res.ok) {
@@ -307,8 +338,9 @@ function buildFetchUrl(
   prefix: string,
   path: string,
   args?: Record<string, unknown>,
+  pathPrefix = '',
 ): string {
-  let fullPath = `/${prefix}${path === '/' ? '' : path}`;
+  let fullPath = `/${pathPrefix}${prefix}${path === '/' ? '' : path}`;
   if (args) {
     fullPath = fullPath.replace(/:(\w+)/g, (_, key) => {
       const val = args[key];
@@ -321,14 +353,18 @@ function buildFetchUrl(
   return `${baseUrl}${fullPath}`;
 }
 
-function stripParams(args: Record<string, unknown>, path: string): Record<string, unknown> {
-  const paramNames = new Set<string>();
+function stripParams(
+  args: Record<string, unknown>,
+  path: string,
+  extra?: ReadonlySet<string>,
+): Record<string, unknown> {
+  const skip = new Set(extra);
   for (const match of path.matchAll(/:(\w+)/g)) {
-    if (match[1]) paramNames.add(match[1]);
+    if (match[1]) skip.add(match[1]);
   }
   const result: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
-    if (!paramNames.has(k)) result[k] = v;
+    if (!skip.has(k)) result[k] = v;
   }
   return result;
 }
