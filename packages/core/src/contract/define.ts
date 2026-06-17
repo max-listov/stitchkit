@@ -8,9 +8,9 @@ export type Transport = (typeof ALL_TRANSPORTS)[number];
 /**
  * The transport tag on `ctx.source`. The four built-ins keep autocomplete, but
  * the union is **open** (`string & {}`) so a bring-your-own transport — e.g. a
- * raw-WebSocket lane driving a contract through `createContractDispatcher` — can
- * tag its own calls (`source: 'local-ws'`). `source` is transport-only and
- * carries no framework behaviour (→ ADR 0002 / ADR 0027).
+ * raw-WebSocket lane that runs a contract through the app's own dispatch loop —
+ * can tag its own calls (`source: 'local-ws'`). `source` is transport-only and
+ * carries no framework behaviour (→ ADR 0002).
  */
 export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli' | (string & {});
 
@@ -44,10 +44,10 @@ interface EndpointDefBase {
    * The core attaches **no** behaviour to it (it stays generic — ADR 0002): it
    * rides through to `MethodDef.idempotent`, where a transport that can retry
    * reads it. A reliable bring-your-own-transport lane (e.g. a raw-WebSocket
-   * client over `createContractDispatcher`) replays an `idempotent` call after a
-   * reconnect — that is the durability guarantee — while a non-idempotent one is
-   * rejected rather than re-sent (a duplicate would be a second side effect).
-   * Unset means "unknown" — a careful transport treats it as non-idempotent.
+   * client) replays an `idempotent` call after a reconnect — that is the
+   * durability guarantee — while a non-idempotent one is rejected rather than
+   * re-sent (a duplicate would be a second side effect). Unset means "unknown" —
+   * a careful transport treats it as non-idempotent.
    */
   idempotent?: boolean;
   /**
@@ -195,6 +195,17 @@ export interface RuntimeContext {
   input: unknown;
   file?: File;
   source: TransportSource;
+  /**
+   * The raw Web `Request`, its parsed `URL` and `Headers` — set on the HTTP
+   * transport (and reachable in every lifecycle hook, including `onError` on a
+   * validation failure). Absent on the non-HTTP transports (MCP / agent / CLI /
+   * a bring-your-own lane), which carry no `Request`, so they are optional and a
+   * reader narrows them. Web Fetch types only — the core stays Fetch-clean
+   * (→ ADR 0013).
+   */
+  req?: Request;
+  url?: URL;
+  headers?: Headers;
   traceId?: string;
   spanId?: string;
   ipAddress?: string;
@@ -209,6 +220,11 @@ export interface HandlerContext<TParams = undefined, TInput = undefined> {
   input: TInput;
   file?: File;
   source: TransportSource;
+  /** Raw Web `Request` / `URL` / `Headers` — set on the HTTP transport, absent
+   *  on the tool transports (see {@link RuntimeContext}). */
+  req?: Request;
+  url?: URL;
+  headers?: Headers;
   traceId?: string;
   spanId?: string;
   ipAddress?: string;

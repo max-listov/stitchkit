@@ -104,6 +104,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
             durationMs,
             errorCode: ctx.error?.code,
             errorMessage: ctx.error?.message,
+            ...(ctx.error?.details !== undefined && { errorDetail: ctx.error.details }),
             payload: sanitizePayload(body, sanitize),
             resultSize: null,
             responseBytes: 0,

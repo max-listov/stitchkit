@@ -4,7 +4,7 @@
  */
 import { AppError, type RuntimeContext } from '../contract';
 import { normalizeError, validateHandlerOutput } from '../internal/errors';
-import { buildContext, buildErrorContext } from './context';
+import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
 import {
   buildLogFields,
   elapsedMs,
@@ -71,15 +71,22 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
       reqLog = { traceId, startTime: performance.now() };
     }
 
-    const logDone = (status: number) => {
+    const logDone = (status: number, errorCode?: string) => {
       if (!reqLog) return;
-      if (useDefaultLog) logOutgoing(req, url.pathname, status, reqLog, ipAddress);
+      if (useDefaultLog) logOutgoing(req, url.pathname, status, reqLog, ipAddress, errorCode);
       if (customLogger) {
         const durationMs = Math.round(elapsedMs(reqLog.startTime));
         const level = levelForStatus(status);
         customLogger[level](
-          `${req.method} ${url.pathname} ${status} ${durationMs}ms`,
-          buildLogFields(req.method, url.pathname, status, durationMs, reqLog.traceId),
+          `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
+          buildLogFields(
+            req.method,
+            url.pathname,
+            status,
+            durationMs,
+            reqLog.traceId,
+            errorCode,
+          ),
         );
       }
     };
@@ -110,7 +117,7 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
         }
       }
       const appErr = normalizeError(err);
-      logDone(appErr.status);
+      logDone(appErr.status, appErr.code);
       return json(appErr.toJSON(), appErr.status, cors, req);
     };
 
@@ -166,18 +173,13 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     }
 
     const { method, pathParams, groupHooks } = match;
-    let ctx: RuntimeContext | undefined;
+    // The base context is everything knowable from the URL alone — bound before
+    // any schema parsing, so a validation failure still gives `onError` the path
+    // params and the request instead of an empty context.
+    const ctx = buildBaseContext(req, url, pathParams, traceId, clientIp);
 
     try {
-      ctx = await buildContext(
-        req,
-        url,
-        method,
-        pathParams,
-        traceId,
-        clientIp,
-        config.maxUploadBytes,
-      );
+      await parseRequestInto(ctx, req, url, method, config.maxUploadBytes);
 
       if (hooks?.beforeHandle) {
         await hooks.beforeHandle(ctx, method);

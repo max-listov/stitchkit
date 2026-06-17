@@ -41,41 +41,24 @@ async function readJsonBody(req: Request): Promise<unknown> {
   }
 }
 
-export async function buildContext(
+/**
+ * Assemble everything knowable from the URL alone — path params, the request,
+ * trace id and client info — **before** any schema parsing. Bound first so a
+ * later validation failure still hands `onError` the path params and the
+ * request (an empty context loses both); `parseRequestInto` then enriches it
+ * with the schema-validated `params` / `input`.
+ *
+ * `params` starts as the raw matched path params (a property of the URL, known
+ * the moment the route matched) and is replaced by the validated value when the
+ * endpoint declares a `paramsSchema`.
+ */
+export function buildBaseContext(
   req: Request,
   url: URL,
-  method: MethodDef,
   pathParams: Record<string, string>,
   traceId: string,
   clientIp: ClientIpOptions,
-  maxUploadBytes?: number,
-): Promise<RuntimeContext> {
-  const parsedParams = method.paramsSchema ? method.paramsSchema.parse(pathParams) : undefined;
-
-  let parsedInput: unknown;
-  let file: File | undefined;
-  if (method.multipart) {
-    // Per-route cap wins over the server default; `parseMultipart` falls back to
-    // its 25 MB framework default when both are undefined.
-    const cap = method.maxUploadBytes ?? maxUploadBytes;
-    const multipart = await parseMultipart(req, method.multipart, method.inputSchema, cap);
-    parsedInput = multipart.fields;
-    file = multipart.file;
-  } else if (method.inputSchema) {
-    if (req.method === 'GET') {
-      parsedInput = method.inputSchema.parse(parseQueryParams(url));
-    } else if (req.method === 'DELETE') {
-      const ct = req.headers.get('content-type');
-      if (ct?.includes('application/json')) {
-        parsedInput = method.inputSchema.parse(await readJsonBody(req));
-      } else {
-        parsedInput = method.inputSchema.parse(parseQueryParams(url));
-      }
-    } else {
-      parsedInput = method.inputSchema.parse(await readJsonBody(req));
-    }
-  }
-
+): RuntimeContext {
   const safePathParams: Record<string, string> = {};
   for (const [k, v] of Object.entries(pathParams)) {
     // Skip both router-owned keys and prototype-pollution keys — a `:param`
@@ -84,9 +67,8 @@ export async function buildContext(
   }
 
   return {
-    params: parsedParams,
-    input: parsedInput,
-    ...(file && { file }),
+    params: pathParams,
+    input: undefined,
     source: 'http',
     req,
     url,
@@ -95,6 +77,43 @@ export async function buildContext(
     traceId,
     ...getClientInfo(req, clientIp),
   };
+}
+
+/**
+ * Parse `params` / `input` against the endpoint schemas and write them onto an
+ * already-assembled base context. A validation failure throws a `ZodError`
+ * here — the base context (path params, request) is preserved for `onError`.
+ */
+export async function parseRequestInto(
+  ctx: RuntimeContext,
+  req: Request,
+  url: URL,
+  method: MethodDef,
+  maxUploadBytes?: number,
+): Promise<void> {
+  if (method.paramsSchema) {
+    ctx.params = method.paramsSchema.parse(ctx.params);
+  }
+
+  if (method.multipart) {
+    // Per-route cap wins over the server default; `parseMultipart` falls back to
+    // its 25 MB framework default when both are undefined.
+    const cap = method.maxUploadBytes ?? maxUploadBytes;
+    const multipart = await parseMultipart(req, method.multipart, method.inputSchema, cap);
+    ctx.input = multipart.fields;
+    if (multipart.file) ctx.file = multipart.file;
+  } else if (method.inputSchema) {
+    if (req.method === 'GET') {
+      ctx.input = method.inputSchema.parse(parseQueryParams(url));
+    } else if (req.method === 'DELETE') {
+      const ct = req.headers.get('content-type');
+      ctx.input = ct?.includes('application/json')
+        ? method.inputSchema.parse(await readJsonBody(req))
+        : method.inputSchema.parse(parseQueryParams(url));
+    } else {
+      ctx.input = method.inputSchema.parse(await readJsonBody(req));
+    }
+  }
 }
 
 export function buildErrorContext(

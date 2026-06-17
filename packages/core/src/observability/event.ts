@@ -32,6 +32,12 @@ export interface RequestEvent {
   errorCode?: string;
   /** Error message — failures only. */
   errorMessage?: string;
+  /**
+   * Structured error detail — failures only, when the error handler recorded it
+   * via `setRequestError({ details })` (e.g. the failing validation issues the
+   * `errorMessage` string flattens). HTTP path only.
+   */
+  errorDetail?: JsonValue;
   /** Sanitised request payload — the HTTP body or the tool arguments. */
   payload: JsonValue | null;
   /** Item count of the result, when it is a list. */

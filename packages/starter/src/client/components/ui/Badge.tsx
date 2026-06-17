@@ -22,11 +22,11 @@ export function Badge({ tone = 'neutral', children, className = '', dot }: Badge
     <span
       className={`inline-flex items-center gap-1.5 h-5 px-2 text-[11px] font-medium tracking-wide border rounded-md ${tones[tone]} ${className}`}
     >
-      {dot && (
+      {dot ? (
         <span
           className={`w-1.5 h-1.5 rounded-full ${tone === 'success' ? 'bg-success' : tone === 'warning' ? 'bg-warning' : tone === 'danger' ? 'bg-danger' : tone === 'accent' ? 'bg-accent' : 'bg-text-muted'}`}
         />
-      )}
+      ) : null}
       {children}
     </span>
   );

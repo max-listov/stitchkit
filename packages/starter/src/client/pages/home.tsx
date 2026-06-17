@@ -67,9 +67,9 @@ export function HomePage() {
                     {new Date(note.createdAt).toLocaleDateString('en-GB')}
                   </span>
                 </div>
-                {note.content && (
+                {note.content ? (
                   <p className='text-[12px] text-text-muted line-clamp-2'>{note.content}</p>
-                )}
+                ) : null}
               </div>
               <button
                 type='button'

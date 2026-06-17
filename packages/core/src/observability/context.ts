@@ -10,6 +10,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract';
 import { getClientInfo, resolveSocketIp } from '../server/request';
+import type { JsonValue } from './sanitize';
 import { resolveTraceContext, type TraceContext } from './trace';
 
 /** Everything known about the request in flight. */
@@ -31,7 +32,7 @@ export interface RequestContext {
   /** Resolved user id — set late, once auth has run. */
   userId?: string;
   /** Error outcome — set late, by the error handler. */
-  error?: { code?: string; message?: string };
+  error?: { code?: string; message?: string; details?: JsonValue };
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -68,9 +69,15 @@ export function setRequestUser(userId: string): void {
 
 /**
  * Record the error outcome on the active context. Call this from the error
- * handler — the audit hook reads it when the request completes.
+ * handler — the audit hook reads it when the request completes. Optional
+ * `details` carries structure the message string flattens (e.g. the failing
+ * Zod issues) onto `RequestEvent.errorDetail`.
  */
-export function setRequestError(error: { code?: string; message?: string }): void {
+export function setRequestError(error: {
+  code?: string;
+  message?: string;
+  details?: JsonValue;
+}): void {
   const ctx = storage.getStore();
   if (ctx) ctx.error = error;
 }

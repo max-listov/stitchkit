@@ -75,8 +75,16 @@ export function buildLogFields(
   status: number,
   durationMs: number,
   traceId: string,
-): { traceId: string; method: string; path: string; status: number; durationMs: number } {
-  return { traceId, method, path, status, durationMs };
+  errorCode?: string,
+): {
+  traceId: string;
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+  errorCode?: string;
+} {
+  return { traceId, method, path, status, durationMs, ...(errorCode && { errorCode }) };
 }
 
 function formatMs(ms: number): string {
@@ -139,6 +147,7 @@ export function logOutgoing(
   status: number,
   log: RequestLog,
   ipAddress?: string,
+  errorCode?: string,
 ): void {
   const ms = elapsedMs(log.startTime);
 
@@ -148,7 +157,14 @@ export function logOutgoing(
         ts: new Date().toISOString(),
         level: levelForStatus(status),
         msg: `${req.method} ${pathname} ${status}`,
-        ...buildLogFields(req.method, pathname, status, Math.round(ms), log.traceId),
+        ...buildLogFields(
+          req.method,
+          pathname,
+          status,
+          Math.round(ms),
+          log.traceId,
+          errorCode,
+        ),
         ip: ipAddress,
       }),
     );
@@ -156,7 +172,8 @@ export function logOutgoing(
   }
 
   const mc = METHOD_COLOR[req.method] ?? c.dim;
+  const code = errorCode ? ` ${c.red}${errorCode}${c.reset}` : '';
   console.log(
-    `${c.gray}[${timestamp()}]${c.reset} ${mc}${req.method}${c.reset} ${c.dim}${log.traceId}${c.reset} ${c.cyan}←${c.reset} ${safePath(pathname)} ${statusColor(status)}${status}${c.reset} ${durationColor(ms)}${formatMs(ms)}${c.reset} ${ipLabel(ipAddress ?? '')}`,
+    `${c.gray}[${timestamp()}]${c.reset} ${mc}${req.method}${c.reset} ${c.dim}${log.traceId}${c.reset} ${c.cyan}←${c.reset} ${safePath(pathname)} ${statusColor(status)}${status}${c.reset}${code} ${durationColor(ms)}${formatMs(ms)}${c.reset} ${ipLabel(ipAddress ?? '')}`,
   );
 }

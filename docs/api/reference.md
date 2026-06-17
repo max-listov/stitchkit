@@ -276,7 +276,6 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
-| `createContractDispatcher` | function | run a contract over a bring-your-own transport — [guide](../guide/realtime.md#bring-your-own-transport) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
@@ -288,8 +287,6 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ImplementRemoteOptions` | _type_ | options for `implementRemote` |
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
-| `ContractDispatcher` | _type_ | the `createContractDispatcher` handle |
-| `ContractDispatcherConfig` | _type_ | config for `createContractDispatcher` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli` |
 | `CliWaitConfig` | _type_ | `--wait` polling config |

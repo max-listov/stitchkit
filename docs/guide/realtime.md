@@ -301,37 +301,20 @@ Notes:
 
 Sometimes the transport is neither HTTP nor Socket.IO — a desktop app whose UI
 webview talks to its own local Bun sidecar over a raw WebSocket, an IPC channel,
-a queue worker. You still want one contract: a `defineContract` with typed
-client/server, Zod validation and a typed error envelope, not a hand-rolled
-method registry alongside it.
+a queue worker. You can still drive it from one `defineContract`: share the
+contract's Zod schemas to validate each inbound frame, run your handlers, and
+reuse the contract metadata below. You own **both** the wire (framing,
+handshake, reconnect) *and* the per-call validate-run loop — stitchkit ships the
+contract and its metadata, not a transport engine. A reliable-RPC-over-raw-
+WebSocket engine would be a competing WebSocket transport
+([ADR 0008](../decisions/0008-thin-wrappers.md)); the wire stays yours.
 
-stitchkit ships the **executor**, not the transport. `createContractDispatcher`
-runs a contract method by its key through the *same* core as the MCP / agent
-mounts — same validation, the same `{ ok, data } | { ok: false, code, … }`
-envelope, the same hooks and `beforeHandle` scope gate. You own the wire (framing,
-handshake, reconnect) and call `dispatch` per inbound frame.
+Two pieces of the contract carry straight over to a bring-your-own lane:
 
-```ts
-import { createContractDispatcher } from 'stitchkit/tools'
-import { implement } from 'stitchkit/server'
-
-const service = implement(runtimeContract, { 'tasks.setDone': (ctx) => doIt(ctx.input), … })
-
-const dispatcher = createContractDispatcher(service, { source: 'local-ws' })
-
-// In your raw-WebSocket server, per `{ id, method, params }` frame:
-ws.onmessage = async (frame) => {
-  const { id, method, params } = JSON.parse(frame.data)
-  const result = await dispatcher.dispatch(method, params)   // validates + runs
-  ws.send(JSON.stringify({ id, ...result }))                 // { ok, data } | { ok:false, code, … }
-}
-```
-
-`dispatch` never throws for a normal call — a handler error becomes a failed
-result, and an unknown method is a `NOT_FOUND` result. Pass `hooks`
-(`beforeToolCall` / `afterToolCall`) and `lifecycle.beforeHandle` to audit and
-scope-guard exactly like the other transports. Tag calls with your own
-`source` — `TransportSource` is an open union.
+- **`source` is an open tag.** `TransportSource` is `'http' | 'mcp' | 'agent' |
+  'cli' | (string & {})`, so a handler or hook can tell your transport's calls
+  apart — tag them `source: 'local-ws'` and read `ctx.source`.
+- **`idempotent` drives replay-on-reconnect** — see below.
 
 ### Durability — `idempotent` + replay
 
@@ -357,5 +340,6 @@ also catches up on the latest pushed state.
 
 This is deliberately *not* a reliable-RPC engine — that would be a competing
 WebSocket transport ([ADR 0008](../decisions/0008-thin-wrappers.md)). stitchkit
-gives you the executor and the metadata; the wire stays yours. See
-[ADR 0027](../decisions/0027-transport-neutral-contract-execution.md).
+gives you the contract and the metadata (`idempotent`, the open `source` tag,
+`createRetainedTopics`); the wire and the per-call execution stay yours. See
+[ADR 0028](../decisions/0028-revert-contract-dispatcher.md).

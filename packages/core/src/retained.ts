@@ -9,7 +9,7 @@
  *
  * Transport-agnostic: wrap it around any pub/sub. `createSocketIOClient`'s
  * `retain` option uses it internally, and a bring-your-own-transport lane (a raw
- * WebSocket driving a contract through `createContractDispatcher`) can use it
+ * WebSocket driving a contract through the app's own dispatch loop) can use it
  * directly for its own event channel. Browser-safe — no Node built-ins.
  */
 export interface RetainedTopics<Events extends Record<string, unknown>> {

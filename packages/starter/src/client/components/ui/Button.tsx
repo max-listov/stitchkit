@@ -40,7 +40,7 @@ export function Button({
       disabled={disabled || loading}
       {...props}
     >
-      {loading && <Spinner />}
+      {loading ? <Spinner /> : null}
       {children}
     </button>
   );

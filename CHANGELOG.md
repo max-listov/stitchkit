@@ -14,6 +14,61 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-17
+
+### ⚠️ Breaking changes
+
+- **`createContractDispatcher` removed** (`stitchkit/tools`) — along with the
+  `ContractDispatcher` and `ContractDispatcherConfig` types. It shipped in 0.9.0
+  for one requesting consumer (a webview ↔ local-sidecar raw-WebSocket lane), who
+  on integration did not adopt it: their boundary already had a ~40-line executor,
+  the typed-envelope benefit was a ~10-line addition to their own wire, and
+  migrating *to* the dispatcher was net +90–110 lines. No other consumer uses it,
+  so the export is withdrawn rather than carried as speculative surface toward 1.0.
+  The execution core (`executeToolMethod`) is unchanged and still internal — a BYO
+  executor can be re-exposed on real evidence later. The rest of 0.9.0
+  (`idempotent`, `createRetainedTopics`, `MultipartFile` / `FileDescriptor`, the
+  open `TransportSource` union) is unchanged. → ADR 0028.
+
+  ```ts
+  // before: const d = createContractDispatcher(service, { source: 'local-ws' })
+  //         const result = await d.dispatch(method, args)
+  // after:  run the method on your own transport — validate the frame against the
+  //         contract's Zod schemas and call the handler (the ~40-line executor a
+  //         raw-WS/IPC lane already has). `ctx.source` stays an open tag.
+  ```
+
+### Fixed
+
+- **`onError` now sees the path params and the request on a validation failure.**
+  Body/param validation runs before `beforeHandle`, so a malformed request threw
+  while the context was still being assembled — `onError` (and any audit built on
+  it) received an empty context: no `params`, no request, so a pre-handler failure
+  could not be attributed to the resource it targeted. The context is now bound
+  from the URL (path params, request) *before* parsing, so a validation failure
+  still hands `onError` the matched path params, the `Request`, and the endpoint
+  identity. The schema-validated `params` / `input` still replace the raw values
+  on success — no change to a successful request.
+
+### Added
+
+- **`req` / `url` / `headers` are first-class, typed fields on the handler
+  context.** They were already present at runtime but only under the context's
+  index signature (`unknown`), so reading them needed an `as` cast. They are now
+  declared on `RuntimeContext` / `HandlerContext` as optional Web Fetch types
+  (`Request` / `URL` / `Headers`) — set on the HTTP transport, absent on the tool
+  transports (MCP / agent / CLI / a bring-your-own lane). The core stays
+  Fetch-clean. Additive — existing code is unaffected.
+- **The built-in access log renders the error code.** A failed request logged
+  `← 400 3ms` with no code, though the framework already knew it. The completed
+  line now carries it — `← 400 VALIDATION_ERROR 3ms` (dev) / an `errorCode` field
+  (prod JSON and a custom `StitchLogger`).
+- **`setRequestError` accepts structured `details`, surfaced as
+  `RequestEvent.errorDetail`.** (`stitchkit/observability`) The error handler can
+  record the structure the message string flattens (e.g. the failing Zod issues)
+  alongside the code and message; `createAuditHook` carries it onto the audit
+  event. Additive — `details` is optional.
+
 ## [0.9.0] — 2026-06-05
 
 ### Added
@@ -653,7 +708,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/max-listov/stitchkit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/max-listov/stitchkit/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/max-listov/stitchkit/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/max-listov/stitchkit/compare/v0.7.0...v0.8.0
