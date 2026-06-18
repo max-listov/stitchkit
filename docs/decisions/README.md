@@ -43,6 +43,7 @@ These records were consolidated from the project's internal design notes on
 | [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 |
 | [0027](0027-transport-neutral-contract-execution.md) | Transport-neutral contract execution (BYO transport) | Accepted — dispatcher portion superseded by 0028 |
 | [0028](0028-revert-contract-dispatcher.md) | Revert `createContractDispatcher` (no adopting consumer) | Accepted — supersedes the dispatcher part of 0027 |
+| [0029](0029-audit-endpoint-identity-and-dimensions.md) | Endpoint identity + domain dimensions on the audit event | Accepted — extends 0012, 0021, 0022 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

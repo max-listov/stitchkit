@@ -96,6 +96,9 @@ export function createAuditHook(config: AuditConfig): AuditHook {
             source: ctx.source,
             method: ctx.method,
             path: ctx.path,
+            ...(ctx.serviceName !== undefined && { serviceName: ctx.serviceName }),
+            ...(ctx.action !== undefined && { action: ctx.action }),
+            ...(ctx.dimensions !== undefined && { dimensions: ctx.dimensions }),
             traceId: ctx.trace.traceId,
             spanId: ctx.trace.spanId,
             parentSpanId: ctx.trace.parentSpanId,
@@ -120,11 +123,11 @@ export function createAuditHook(config: AuditConfig): AuditHook {
   };
 
   const toolCall: ToolCallHooks = {
-    afterToolCall: (toolName, args, result, durationMs, context) => {
+    afterToolCall: (toolName, args, result, durationMs, context, endpoint) => {
       // Each tool call is a span. Under an HTTP request it is a child of that
       // request's span; on its own (a stdio server) it opens a fresh trace.
-      const parent = getRequestContext()?.trace;
-      const span = parent ? childSpan(parent) : createTraceContext();
+      const requestCtx = getRequestContext();
+      const span = requestCtx ? childSpan(requestCtx.trace) : createTraceContext();
       const measure = result.ok
         ? measureSize(result.data)
         : { resultSize: null, responseBytes: 0 };
@@ -132,6 +135,9 @@ export function createAuditHook(config: AuditConfig): AuditHook {
         source: context.source,
         method: 'TOOL',
         path: `/${context.source}/${toolName}`,
+        serviceName: endpoint.serviceName,
+        action: endpoint.key,
+        ...(requestCtx?.dimensions !== undefined && { dimensions: requestCtx.dimensions }),
         toolName,
         traceId: span.traceId,
         spanId: span.spanId,

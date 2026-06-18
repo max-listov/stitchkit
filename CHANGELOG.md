@@ -14,6 +14,31 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-18
+
+### Added
+
+- **Audit events carry the endpoint's `(serviceName, action)` identity.**
+  (`stitchkit/observability`) `RequestEvent` gains `serviceName` / `action` — the
+  stable contract identity of the matched operation (→ ADR 0022), populated on the
+  HTTP path and the tool path alike, from the contract rather than parsed from the
+  URL. The HTTP pipeline writes it into the request context at route-match, *before*
+  validation, so even a pre-handler (400) failure is attributed to its operation.
+  A sink with `service` / `action` columns no longer parses them out of `path`.
+  → ADR 0029.
+- **`setRequestDimensions` — domain dimensions on the audit event.**
+  (`stitchkit/observability`) `RequestEvent` gains an opaque
+  `dimensions?: Record<string, string>` bag the core attaches no meaning to (the
+  ADR 0021 passthrough pattern). Resolve a tenant / project / entity id cheaply
+  from `ctx.params` / headers in `beforeHandle` (success) or `onError` (a
+  pre-handler failure, which carries `ctx.params` / `ctx.req` since 0.10.0) and it
+  lands on the event for the request, success or failure alike — instead of the
+  sink re-deriving identity from the path. → ADR 0029.
+
+  Together these let a project drop a hand-rolled `afterHandle` + `onError` audit
+  and adopt `createAuditHook` (now identity- and dimension-complete), which also
+  removes that split's success/error asymmetry.
+
 ## [0.10.0] — 2026-06-17
 
 ### ⚠️ Breaking changes
@@ -708,7 +733,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/max-listov/stitchkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/max-listov/stitchkit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/max-listov/stitchkit/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/max-listov/stitchkit/compare/v0.8.0...v0.8.1

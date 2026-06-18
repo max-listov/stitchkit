@@ -13,6 +13,8 @@ export {
   getUserId,
   type RequestContext,
   runWithRequestContext,
+  setRequestDimensions,
+  setRequestEndpoint,
   setRequestError,
   setRequestUser,
   wrapInRequestContext,

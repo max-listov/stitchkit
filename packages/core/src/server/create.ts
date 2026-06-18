@@ -4,6 +4,7 @@
  */
 import { AppError, type RuntimeContext } from '../contract';
 import { normalizeError, validateHandlerOutput } from '../internal/errors';
+import { setRequestEndpoint } from '../observability/context';
 import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
 import {
   buildLogFields,
@@ -177,6 +178,10 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     // any schema parsing, so a validation failure still gives `onError` the path
     // params and the request instead of an empty context.
     const ctx = buildBaseContext(req, url, pathParams, traceId, clientIp);
+    // Surface the matched operation's stable identity into the request context
+    // before validation — a no-op without an active observability context, so an
+    // audit event is attributed to its `(service, action)` even on a 400. → ADR 0022 / 0029.
+    setRequestEndpoint(method.serviceName, method.key);
 
     try {
       await parseRequestInto(ctx, req, url, method, config.maxUploadBytes);

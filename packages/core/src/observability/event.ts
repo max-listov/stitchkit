@@ -14,6 +14,20 @@ export interface RequestEvent {
   method: string;
   /** Request path — `/api/...` for HTTP, `/{source}/{tool}` for a tool call. */
   path: string;
+  /**
+   * Stable owning-contract identity of the matched operation — the "service"
+   * (contract prefix) and "action" (endpoint key) halves. Set on every surface
+   * (HTTP, MCP, agent) from the contract, not parsed from `path`. → ADR 0022.
+   */
+  serviceName?: string;
+  action?: string;
+  /**
+   * App-defined domain dimensions for the call — e.g. a tenant / project /
+   * entity id. An opaque bag the core attaches no meaning to (→ ADR 0021);
+   * populated by `setRequestDimensions`. The sink maps it onto its own columns
+   * instead of re-deriving identity from the path.
+   */
+  dimensions?: Record<string, string>;
   /** Tool name — tool calls only. */
   toolName?: string;
   /** W3C trace id — correlates every span of one logical request. */

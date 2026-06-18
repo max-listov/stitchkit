@@ -5,7 +5,8 @@
  *
  * Establish it with `wrapInRequestContext` as the outermost fetch wrapper;
  * read it with `getRequestContext` / `getTraceId`; update the late-bound fields
- * with `setRequestUser` / `setRequestError`.
+ * with `setRequestUser` / `setRequestError` / `setRequestEndpoint` /
+ * `setRequestDimensions`.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract';
@@ -31,6 +32,20 @@ export interface RequestContext {
   userAgent?: string;
   /** Resolved user id — set late, once auth has run. */
   userId?: string;
+  /**
+   * Stable endpoint identity — `(serviceName, action)` of the matched contract
+   * route. Written by the HTTP pipeline when the route matches, *before*
+   * validation, so even a failed request is attributed to the operation it
+   * targeted. → ADR 0022.
+   */
+  serviceName?: string;
+  action?: string;
+  /**
+   * App-defined domain dimensions (a tenant / project / entity id, …) — an
+   * opaque bag the core attaches no meaning to (→ ADR 0021), surfaced on
+   * `RequestEvent.dimensions`. Set via `setRequestDimensions`.
+   */
+  dimensions?: Record<string, string>;
   /** Error outcome — set late, by the error handler. */
   error?: { code?: string; message?: string; details?: JsonValue };
 }
@@ -65,6 +80,34 @@ export function getUserId(): string | undefined {
 export function setRequestUser(userId: string): void {
   const ctx = storage.getStore();
   if (ctx) ctx.userId = userId;
+}
+
+/**
+ * Attach the matched endpoint's stable `(serviceName, action)` identity to the
+ * active context. The framework's HTTP pipeline calls this when a contract route
+ * matches — *before* validation — so the audit event for a request carries the
+ * operation it targeted even when the request fails pre-handler. No-op outside a
+ * request context. → ADR 0022.
+ */
+export function setRequestEndpoint(serviceName: string, action: string): void {
+  const ctx = storage.getStore();
+  if (ctx) {
+    ctx.serviceName = serviceName;
+    ctx.action = action;
+  }
+}
+
+/**
+ * Merge app-defined domain dimensions (a tenant / project / entity id, …) onto
+ * the active context — an opaque bag the core gives no meaning to (→ ADR 0021),
+ * surfaced on `RequestEvent.dimensions`. Resolve them cheaply from `ctx.params` /
+ * headers in `beforeHandle` (success) or `onError` (a pre-handler failure) and
+ * they land on the audit event for the request, success or failure alike. Merges
+ * across calls; no-op outside a request context.
+ */
+export function setRequestDimensions(dimensions: Record<string, string>): void {
+  const ctx = storage.getStore();
+  if (ctx) ctx.dimensions = { ...ctx.dimensions, ...dimensions };
 }
 
 /**

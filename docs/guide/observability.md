@@ -77,11 +77,13 @@ queryable across all three:
 |-------|-------|
 | `source` | `http` \| `mcp` \| `agent` |
 | `method` / `path` | the verb + path, or `TOOL` + `/{source}/{tool}` |
+| `serviceName` / `action` | stable contract identity of the operation (→ ADR 0022) — from the contract, not parsed from `path`; set on every surface, present even on a pre-handler 400 |
 | `toolName` | tool calls only |
+| `dimensions` | app-defined domain dimensions (tenant / project / entity id) — see [request context](#request-context) |
 | `traceId` / `spanId` / `parentSpanId` | [W3C trace context](#trace-context) |
 | `ok` / `statusCode` | outcome — real HTTP status, or `200`/`400` for a tool |
 | `durationMs` / `startedAt` | timing |
-| `errorCode` / `errorMessage` | failures only |
+| `errorCode` / `errorMessage` / `errorDetail` | failures only — `errorDetail` carries the structure the message flattens (e.g. Zod issues) |
 | `payload` | the request body / tool arguments — sanitised |
 | `resultSize` / `responseBytes` | result item count + serialised size |
 | `userId` / `ipAddress` / `userAgent` | identity |
@@ -100,15 +102,36 @@ Bun.serve({
 })
 ```
 
-Two fields are filled in late — the resolved user, and the error outcome. Set
-them from the hooks that know:
+Some fields are filled in late. Set them from the hooks that know:
 
 ```ts
-import { setRequestError, setRequestUser } from 'stitchkit/observability'
+import {
+  setRequestDimensions,
+  setRequestError,
+  setRequestUser,
+} from 'stitchkit/observability'
 
 createAuthHook({ /* … */ inject: (ctx, user) => user && setRequestUser(user.id) })
 // in your onError hook:
-setRequestError({ code: err.code, message: err.message })
+setRequestError({ code: err.code, message: err.message, details: err.issues })
+```
+
+**Endpoint identity is automatic.** The framework writes the matched operation's
+`(serviceName, action)` into the context at route-match, *before* validation — so
+`event.serviceName` / `event.action` are present on every event, including a
+pre-handler 400. Nothing to wire.
+
+**Domain dimensions** — attach your own tenant / project / entity id with
+`setRequestDimensions`. It is an opaque `Record<string, string>` the core gives no
+meaning to (→ ADR 0021). Resolve it cheaply from `ctx.params` / headers in
+`beforeHandle` (success) or `onError` (a pre-handler failure — `ctx.params` /
+`ctx.req` are available there) and it lands on `event.dimensions` for the request
+either way, so your sink reads it as a column instead of re-parsing the path:
+
+```ts
+// beforeHandle (success) and onError (failure) alike:
+const projectId = ctx.req?.headers.get('x-project') ?? String(ctx.params?.projectId ?? '')
+if (projectId) setRequestDimensions({ projectId })
 ```
 
 Make the framework router share this trace id — so request logs and your
@@ -199,14 +222,15 @@ outcome and the duration, neither of which exists before the handler runs.
 
 ### Keying a row on (service, action)
 
-For a per-endpoint audit row keyed by **service** and **action**, read the
-endpoint identity off the `MethodDef` the hook receives — `endpoint.serviceName`
-(the contract prefix) and `endpoint.key` (the endpoint key, e.g. `updatePartial`).
-They are stable and always present (→ ADR 0022); the action is not in the URL and
-`toolName` is absent on HTTP-only endpoints, so this is the only reliable pair.
-`afterHandle` also gives you the handler `result` — so it, not `createAuditHook`'s
-HTTP wrapper (which never sees the response body), is the home for a rich mutation
-audit that records output:
+`createAuditHook` already keys every event by **service** and **action**
+(`event.serviceName` / `event.action`, → ADR 0029) — reach for the raw hook only
+when you also need the handler **output**, which the audit wrapper never sees. For
+that, read the endpoint identity off the `MethodDef` the hook receives —
+`endpoint.serviceName` (the contract prefix) and `endpoint.key` (the endpoint key,
+e.g. `updatePartial`). They are stable and always present (→ ADR 0022); the action
+is not in the URL and `toolName` is absent on HTTP-only endpoints, so this is the
+only reliable pair. `afterHandle` also gives you the handler `result` — so it is
+the home for a rich mutation audit that records output:
 
 ```ts
 hooks: {
