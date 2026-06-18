@@ -79,6 +79,7 @@ queryable across all three:
 | `method` / `path` | the verb + path, or `TOOL` + `/{source}/{tool}` |
 | `serviceName` / `action` | stable contract identity of the operation (→ ADR 0022) — from the contract, not parsed from `path`; set on every surface, present even on a pre-handler 400 |
 | `toolName` | tool calls only |
+| `httpMethod` | the contract verb on **tool** events (their `method` is `TOOL`) — filter reads vs writes across both surfaces with `(event.httpMethod ?? event.method) !== 'GET'` |
 | `dimensions` | app-defined domain dimensions (tenant / project / entity id) — see [request context](#request-context) |
 | `traceId` / `spanId` / `parentSpanId` | [W3C trace context](#trace-context) |
 | `ok` / `statusCode` | outcome — real HTTP status, or `200`/`400` for a tool |

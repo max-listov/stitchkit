@@ -1,4 +1,4 @@
-import type { TransportSource } from '../contract';
+import type { HttpMethod, TransportSource } from '../contract';
 import type { JsonValue } from './sanitize';
 
 /**
@@ -12,6 +12,13 @@ export interface RequestEvent {
   source: TransportSource;
   /** HTTP verb, or `TOOL` for a tool call. */
   method: string;
+  /**
+   * The operation's contract verb (`GET` / `POST` / …). Set on **tool** events
+   * (whose `method` is `TOOL`) so a single filter can tell a read from a write
+   * across HTTP and tool calls — `(event.httpMethod ?? event.method) !== 'GET'`.
+   * Omitted on HTTP events, where `method` already is the verb. → ADR 0030.
+   */
+  httpMethod?: HttpMethod;
   /** Request path — `/api/...` for HTTP, `/{source}/{tool}` for a tool call. */
   path: string;
   /**
@@ -47,9 +54,10 @@ export interface RequestEvent {
   /** Error message — failures only. */
   errorMessage?: string;
   /**
-   * Structured error detail — failures only, when the error handler recorded it
-   * via `setRequestError({ details })` (e.g. the failing validation issues the
-   * `errorMessage` string flattens). HTTP path only.
+   * Structured error detail — failures only. On HTTP, what the error handler
+   * recorded via `setRequestError({ details })` (e.g. the failing validation
+   * issues the `errorMessage` string flattens); on a tool call, the failed
+   * `ToolResult.details` (sanitised).
    */
   errorDetail?: JsonValue;
   /** Sanitised request payload — the HTTP body or the tool arguments. */

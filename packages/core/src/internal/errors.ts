@@ -12,6 +12,18 @@ export function formatZodError(error: z.ZodError): string {
   return lines.join('\n') + suffix;
 }
 
+/**
+ * The stable error code for a thrown value — `AppError.code`, `VALIDATION_ERROR`
+ * for a `ZodError`, else `undefined`. Side-effect-free (unlike `normalizeError`,
+ * it never logs): for access-log attribution on a path where the response is
+ * produced elsewhere — a custom `onError` hook that returns its own `Response`.
+ */
+export function errorCode(err: unknown): string | undefined {
+  if (AppError.is(err)) return err.code;
+  if (err instanceof z.ZodError) return 'VALIDATION_ERROR';
+  return undefined;
+}
+
 export function normalizeError(err: unknown): AppError {
   if (AppError.is(err)) return err;
 

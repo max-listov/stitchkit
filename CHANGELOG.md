@@ -14,6 +14,41 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-18
+
+### Added
+
+- **`RequestEvent.httpMethod` — the contract verb on tool events.**
+  (`stitchkit/observability`) A tool event carries `method: 'TOOL'`; `httpMethod`
+  now carries the endpoint's declared verb (`POST` / `GET` / …), so one filter
+  tells a read from a write across HTTP and tools —
+  `(event.httpMethod ?? event.method) !== 'GET'`. The raw verb, not a derived
+  `isMutation` flag (the app decides). A project can fold a hand-rolled tool audit
+  into the single `createAuditHook`. → ADR 0030.
+- **`errorDetail` on tool audit events** — a failed tool call now carries the
+  structured `ToolResult.details` (sanitised) on `RequestEvent.errorDetail`,
+  symmetric with the HTTP path. → ADR 0030.
+
+### Changed
+
+- **`setRequestError({ details })` now accepts `unknown` and sanitises it.**
+  (`stitchkit/observability`) `details` was typed `JsonValue` (0.11.0), so passing
+  a domain `AppError`'s `Record<string, unknown>` details needed a
+  `JSON.parse(JSON.stringify(...))` round-trip to launder the type. It now accepts
+  the detail raw and runs it through `sanitizePayload` (the same masking/capping as
+  the payload) before it lands on `RequestEvent.errorDetail` — no pre-laundering,
+  and `errorDetail` can no longer leak a secret. (Considered narrowing
+  `AppError.details` to `JsonValue` instead — rejected, it breaks the boundaries
+  that build an `AppError` from untyped network data. → ADR 0030.)
+
+### Fixed
+
+- **The access log renders the error code even when `onError` returns its own
+  Response.** 0.10.0 rendered `errorCode` only on the framework-default error
+  path, so a project with a custom error envelope saw `← 400` with no code. The
+  code is now derived from the original error (side-effect-free, no double log) on
+  the `onError`-Response path too. → ADR 0030.
+
 ## [0.11.0] — 2026-06-18
 
 ### Added
@@ -733,7 +768,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/max-listov/stitchkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/max-listov/stitchkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/max-listov/stitchkit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/max-listov/stitchkit/compare/v0.8.1...v0.9.0

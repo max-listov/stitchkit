@@ -87,4 +87,35 @@ describe('error context on a pre-handler (validation) failure', () => {
     expect(done?.fields?.errorCode).toBe('VALIDATION_ERROR');
     expect(done?.msg).toContain('VALIDATION_ERROR');
   });
+
+  test('the error code is logged even when onError returns its own Response', async () => {
+    const lines: Array<{ fields?: Record<string, unknown> }> = [];
+    const logger: StitchLogger = {
+      info: (_m, fields) => lines.push({ fields }),
+      warn: (_m, fields) => lines.push({ fields }),
+      error: (_m, fields) => lines.push({ fields }),
+      debug: () => {
+        // not asserted
+      },
+    };
+    const PORT = 9973;
+    server = createServer({
+      services: [service],
+      port: PORT,
+      logging: logger,
+      // A consuming project's custom error envelope — the framework no longer
+      // produces the response, but the access log must still carry the code.
+      hooks: { onError: () => new Response('{"e":1}', { status: 400 }) },
+    });
+
+    const res = await fetch(`http://localhost:${PORT}/items/abc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wrong: 'field' }),
+    });
+    expect(res.status).toBe(400);
+
+    const done = lines.find((l) => l.fields?.status === 400);
+    expect(done?.fields?.errorCode).toBe('VALIDATION_ERROR');
+  });
 });

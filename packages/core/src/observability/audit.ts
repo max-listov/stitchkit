@@ -107,7 +107,9 @@ export function createAuditHook(config: AuditConfig): AuditHook {
             durationMs,
             errorCode: ctx.error?.code,
             errorMessage: ctx.error?.message,
-            ...(ctx.error?.details !== undefined && { errorDetail: ctx.error.details }),
+            ...(ctx.error?.details !== undefined && {
+              errorDetail: sanitizePayload(ctx.error.details, sanitize),
+            }),
             payload: sanitizePayload(body, sanitize),
             resultSize: null,
             responseBytes: 0,
@@ -134,6 +136,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
       void emit({
         source: context.source,
         method: 'TOOL',
+        httpMethod: endpoint.method,
         path: `/${context.source}/${toolName}`,
         serviceName: endpoint.serviceName,
         action: endpoint.key,
@@ -147,6 +150,10 @@ export function createAuditHook(config: AuditConfig): AuditHook {
         durationMs,
         errorCode: result.ok ? undefined : result.code,
         errorMessage: result.ok ? undefined : toolErrorMessage(result),
+        ...(!result.ok &&
+          result.details !== undefined && {
+            errorDetail: sanitizePayload(result.details, sanitize),
+          }),
         payload: sanitizePayload(args, sanitize),
         resultSize: measure.resultSize,
         responseBytes: measure.responseBytes,

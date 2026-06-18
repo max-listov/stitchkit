@@ -11,7 +11,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract';
 import { getClientInfo, resolveSocketIp } from '../server/request';
-import type { JsonValue } from './sanitize';
 import { resolveTraceContext, type TraceContext } from './trace';
 
 /** Everything known about the request in flight. */
@@ -46,8 +45,9 @@ export interface RequestContext {
    * `RequestEvent.dimensions`. Set via `setRequestDimensions`.
    */
   dimensions?: Record<string, string>;
-  /** Error outcome — set late, by the error handler. */
-  error?: { code?: string; message?: string; details?: JsonValue };
+  /** Error outcome — set late, by the error handler. `details` is sanitised into
+   *  `RequestEvent.errorDetail` at emit, so it is accepted loosely here. */
+  error?: { code?: string; message?: string; details?: unknown };
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -113,13 +113,15 @@ export function setRequestDimensions(dimensions: Record<string, string>): void {
 /**
  * Record the error outcome on the active context. Call this from the error
  * handler — the audit hook reads it when the request completes. Optional
- * `details` carries structure the message string flattens (e.g. the failing
- * Zod issues) onto `RequestEvent.errorDetail`.
+ * `details` carries the structure the message string flattens (e.g. the failing
+ * Zod issues, or an `AppError.details`); it is accepted as `unknown` and
+ * **sanitised** into `RequestEvent.errorDetail` at emit — pass it raw, no need to
+ * pre-launder the type.
  */
 export function setRequestError(error: {
   code?: string;
   message?: string;
-  details?: JsonValue;
+  details?: unknown;
 }): void {
   const ctx = storage.getStore();
   if (ctx) ctx.error = error;

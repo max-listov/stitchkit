@@ -3,7 +3,7 @@
  * context assembly in `context.ts`, request helpers in `request.ts`.
  */
 import { AppError, type RuntimeContext } from '../contract';
-import { normalizeError, validateHandlerOutput } from '../internal/errors';
+import { errorCode, normalizeError, validateHandlerOutput } from '../internal/errors';
 import { setRequestEndpoint } from '../observability/context';
 import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
 import {
@@ -109,7 +109,10 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
           );
           if (response instanceof Response) {
             const withCors = applyCors(response, cors, req);
-            logDone(withCors.status);
+            // The hook owns the response, but the access log still wants the
+            // error's code — derive it from the original error (no normalize /
+            // no log), so `logging: true` shows it even with a custom `onError`.
+            logDone(withCors.status, errorCode(err));
             return withCors;
           }
         } catch {
