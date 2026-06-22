@@ -18,6 +18,18 @@ export interface ErrorEnvelope {
 }
 
 /**
+ * Global brand for cross-realm / cross-chunk identification. `AppError.is` checks
+ * this Symbol, **not `instanceof`**: the framework is bundled into more than one
+ * chunk (the browser build and the server build each carry their own copy of this
+ * class), so an `AppError` — or a consumer subclass of it — thrown across that
+ * boundary fails an `instanceof` against a *different* chunk's copy, and would be
+ * misclassified as `INTERNAL_SERVER_ERROR`. `Symbol.for` resolves to one symbol
+ * process-wide, so every copy of `AppError` stamps and recognises the same brand.
+ * → ADR 0032.
+ */
+const APP_ERROR_BRAND = Symbol.for('stitchkit.AppError');
+
+/**
  * The framework's error model — a stable `code`, an HTTP `status`, optional
  * structured `details` and a `hint`. `toJSON()` renders the public error
  * envelope. Throw it directly, or via the typed helpers below.
@@ -32,10 +44,14 @@ export class AppError extends Error {
   ) {
     super(message ?? code);
     this.name = 'AppError';
+    // Non-enumerable brand — invisible to JSON / spread / Object.keys, present
+    // for `is()`. Set on every instance, including consumer subclasses (their
+    // `super()` runs this).
+    Object.defineProperty(this, APP_ERROR_BRAND, { value: true });
   }
 
   static is(err: unknown): err is AppError {
-    return err instanceof AppError;
+    return typeof err === 'object' && err !== null && APP_ERROR_BRAND in err;
   }
 
   toJSON(): ErrorEnvelope {

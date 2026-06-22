@@ -199,6 +199,12 @@ if (ctx.input.title.length > 200) badRequest('Title too long', { max: 200 })
 Each helper has a `never` return type — TypeScript knows execution stops, so the
 code after it is correctly narrowed.
 
+You can subclass `AppError` for a domain error model (`class FeatureLocked extends
+AppError`). `AppError.is(err)` identifies any instance — a direct one, a subclass,
+even a copy from another bundle chunk or realm — by a global brand rather than
+`instanceof`, so a domain error keeps its `code` / `details` / `hint` on every
+transport (HTTP, MCP, agent). → ADR 0032.
+
 ### The error envelope
 
 `AppError.toJSON()` renders the public envelope every transport returns:

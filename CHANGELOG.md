@@ -14,6 +14,25 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-22
+
+### Fixed
+
+- **Domain errors no longer collapse to `INTERNAL_SERVER_ERROR` on tool calls.**
+  `AppError.is` used `instanceof`, but the package ships as two `bun build`s
+  (browser + server) that each bundle their own copy of the `AppError` class. A
+  consumer's domain error (`class DomainError extends AppError`, extending the copy
+  from `stitchkit`) thrown inside an MCP / agent tool handler or `lifecycle.beforeHandle`
+  was checked against the *server* build's copy → `instanceof` false → the real
+  `code` / `details` / `hint` were dropped and the model received a generic
+  `INTERNAL_SERVER_ERROR` (so weak models retried blindly, cascading 500s). HTTP via
+  the framework was affected by the same fragility. `AppError.is` now identifies by a
+  global `Symbol.for('stitchkit.AppError')` brand instead of `instanceof`, so every
+  chunk's copy — and every consumer subclass — is recognised across the bundle and
+  across realms. The brand is non-enumerable (invisible to JSON / spread / keys).
+  Additive: it recognises everything `instanceof` did, plus the cross-boundary cases.
+  → ADR 0032.
+
 ## [0.13.0] — 2026-06-22
 
 ### Fixed
@@ -792,7 +811,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/max-listov/stitchkit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/max-listov/stitchkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/max-listov/stitchkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/max-listov/stitchkit/compare/v0.10.0...v0.11.0
