@@ -139,7 +139,10 @@ export function createMcpHandler<TAuth>(
   // depends on the per-request identity, so it is validated when each session
   // builds (`buildMcpServer` → `mountMcp`).
   if (Array.isArray(config.services)) {
-    validateMcpSchemas(config.services, config.onIncompatibleSchema, config.logger);
+    validateMcpSchemas(config.services, config.onIncompatibleSchema, config.logger, {
+      extend: config.extend,
+      flattenUnionInput: config.flattenUnionInput,
+    });
   }
 
   /** RFC 9728 §5.1 401 — points the client at the OAuth resource metadata. */

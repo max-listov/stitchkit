@@ -221,12 +221,16 @@ export function validateMcpSchemas(
   services: ServiceDef[],
   onIncompatibleSchema: IncompatibleSchemaPolicy = 'throw',
   logger?: StitchLogger,
+  // Must mirror the live mount (`extend` / `flattenUnionInput`) — otherwise the
+  // build-time probe vets a DIFFERENT schema than `mountMcp` advertises, hiding
+  // flatten incompatibilities and falsely failing union inputs. → ADR 0033.
+  options?: { extend?: ToolExtend; flattenUnionInput?: boolean },
 ): void {
   const seen = new Set<string>();
   const failures: string[] = [];
 
   for (const service of services) {
-    for (const mountable of collectTools(service, 'MCP', undefined)) {
+    for (const mountable of collectTools(service, 'MCP', options)) {
       prepareMcpTool(mountable, onIncompatibleSchema, logger, failures, seen);
     }
   }

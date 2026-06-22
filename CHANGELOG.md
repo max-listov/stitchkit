@@ -14,6 +14,46 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-22
+
+### Fixed
+
+- **`flattenUnionInput` no longer produces an unsatisfiable schema when variants
+  share a key with different shapes.** (`stitchkit/tools`) The variant-field merge
+  was first-wins: two variants declaring the same key with a different type (e.g.
+  `media: object` in one, `media: array` in another) silently dropped one → the
+  advertised schema was *stricter* than the original union → for the losing
+  variant **no valid input existed** (the advertised schema rejected one form, the
+  union rejected the other). The merge now **widens** the advertised field to a
+  superset — identical types kept, string literal/enum collisions merged into one
+  widened `enum`, otherwise `z.unknown()` — so it accepts every variant's value
+  while staying free of `oneOf`/`anyOf` (the original union still validates the
+  real shape). Covers the same defect on differing enums, object shapes, defaults
+  and nested unions. → ADR 0033.
+- **Discriminator handling.** A multi-value `z.literal([...])` discriminator now
+  keeps all its values, and a `z.enum` discriminator is accepted. A union that
+  cannot be flattened (non-string discriminator, non-object variant) is left
+  untouched instead of throwing — it no longer crashes the whole `mountMcp` build.
+  → ADR 0033.
+- **`validateMcpSchemas` now validates the schema that actually ships.** It
+  ignored `flattenUnionInput`/`extend`, so the build-time deploy check vetted the
+  *un-flattened* schema — falsely failing union inputs and hiding flatten
+  incompatibilities. It now takes those options (forwarded by `createMcpHandler`).
+  → ADR 0033.
+- **`params` + discriminated-union input is now a mountable tool.** `params` and
+  `input` are flattened separately then merged, so a union input becomes a
+  `ZodObject` and merges with path params into one object — instead of an `allOf`
+  intersection MCP rejected. → ADR 0033.
+- **`coerceJsonArgs` repairs nested double-serialization.** It coerced only
+  top-level args and skipped union inputs; it now recurses into object fields,
+  array items and the matching variant of a discriminated union, so a model's
+  stringified nested value is un-stringified at any depth. → ADR 0033.
+
+### Added
+
+- **`flattenUnionsDeep` recurses into plain `ZodUnion` members and `ZodRecord`
+  values** — a discriminated union nested there now flattens too. → ADR 0033.
+
 ## [0.14.0] — 2026-06-22
 
 ### Fixed
@@ -811,7 +851,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/max-listov/stitchkit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/max-listov/stitchkit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/max-listov/stitchkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/max-listov/stitchkit/compare/v0.11.0...v0.12.0

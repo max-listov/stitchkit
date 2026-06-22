@@ -93,14 +93,17 @@ export function collectTools(
     if (method.multipart) continue;
 
     const name = method.toolName ?? toToolName(service.name, methodName);
-    let baseSchema = mergeSchemas(method.paramsSchema, method.inputSchema);
-
-    // Deep: flatten discriminated unions at every depth (a nested union — e.g.
-    // an array-of-union field — otherwise reaches the transport as `oneOf`, which
-    // weaker models mishandle). Advertised-only; validation stays on the original.
-    if (flattenUnionInput) {
-      baseSchema = flattenUnionsDeep(baseSchema);
-    }
+    // Flatten params and input SEPARATELY, then merge — so a union input becomes
+    // a ZodObject and merges with params into one object, instead of a
+    // non-mountable `allOf` intersection. Deep: discriminated unions flatten at
+    // every depth (object fields, array items, …). Advertised-only; validation
+    // stays on the originals. → ADR 0031 / 0033.
+    const baseSchema = flattenUnionInput
+      ? mergeSchemas(
+          method.paramsSchema ? flattenUnionsDeep(method.paramsSchema) : undefined,
+          method.inputSchema ? flattenUnionsDeep(method.inputSchema) : undefined,
+        )
+      : mergeSchemas(method.paramsSchema, method.inputSchema);
 
     const shouldExtend = !!extend && (!extend.filter || extend.filter(service, method));
     const schema =
