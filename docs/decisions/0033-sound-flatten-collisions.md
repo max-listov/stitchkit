@@ -72,10 +72,13 @@ value that passes both the SDK and validation.
 - **The whole advertise≠validate class is closed** for the confirmed kinds
   (K1–K5, discriminator, params+union, deep), and the build probe now sees the
   real schema.
-- **Collision soundness covers JSON-invisible checks:** a key that collides across
-  variants and whose kept schema carries any `checks` (a `.refine()`/custom check
-  does not serialize to JSON Schema, so it would otherwise leak onto a sibling
-  variant) is widened to `z.unknown()` — never advertised verbatim.
+- **Collision soundness covers JSON-invisible checks at any depth (0.15.1):** a key
+  that collides across variants and whose kept schema carries any check — directly,
+  or nested under an object field / array element / `.pipe()` output / `optional` /
+  `nullable` / `default` wrapper — is widened to `z.unknown()` (a `.refine()` /
+  custom check / pipe constraint does not serialize to JSON Schema, so it would
+  otherwise leak onto a sibling variant). The 0.15.0 check was shallow (top node
+  only); 0.15.1 made it deep.
 - **Known residual (documented, not silent):** `.strict()`/`catchall`/object-level
   refinements are dropped from the advertised hint; a non-flattenable union (non-
   string discriminator) keeps its `oneOf`; `ZodTuple`/`ZodMap`/`ZodSet` members and

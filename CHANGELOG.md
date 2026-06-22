@@ -14,6 +14,21 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-22
+
+### Fixed
+
+- **Flatten collision-soundness now covers JSON-invisible checks at any depth.**
+  (`stitchkit/tools`) 0.15.0 widened a colliding field to `z.unknown()` when its
+  kept schema carried a `.refine()`/custom check, but the check was **shallow** —
+  it only inspected the top node. A constraint nested below the kept field — behind
+  a `.pipe()` output, an object field, an array element, or a `.default()` wrapper —
+  still leaked verbatim onto the sibling variant and rejected its valid value (the
+  same advertise-stricter-than-union hole, relocated deeper). `hasChecks` is now
+  **deep** (recurses through wrappers, object fields, array items and both sides of
+  a pipe), so any hidden constraint on a collided key widens to `z.unknown()`.
+  Found by a 3-agent final-validation pass. → ADR 0033.
+
 ## [0.15.0] — 2026-06-22
 
 ### Fixed
@@ -851,7 +866,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/max-listov/stitchkit/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/max-listov/stitchkit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/max-listov/stitchkit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/max-listov/stitchkit/compare/v0.12.0...v0.13.0

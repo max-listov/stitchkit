@@ -87,6 +87,47 @@ describe('flatten — same-key collisions stay satisfiable, zero anyOf', () => {
     expect(flat2.safeParse({ k: 'a', n: 5 }).success).toBe(true);
     expect(flat2.safeParse({ k: 'b', n: -5 }).success).toBe(true);
   });
+
+  test('deep hidden checks (pipe / nested object / array element / default) never reject a sibling variant', () => {
+    // .pipe() — constraint lives in ZodPipe.def.out, invisible to top-node checks.
+    const uPipe = z.discriminatedUnion('k', [
+      z.object({ k: z.literal('a'), v: z.string().pipe(z.string().min(3)) }),
+      z.object({ k: z.literal('b'), v: z.string() }),
+    ]);
+    expect(flattenUnionsDeep(uPipe).safeParse({ k: 'b', v: 'x' }).success).toBe(true);
+
+    // refine nested one level down in an object field.
+    const uNested = z.discriminatedUnion('k', [
+      z.object({
+        k: z.literal('a'),
+        cfg: z.object({ p: z.string().refine((s) => s.length > 2) }),
+      }),
+      z.object({ k: z.literal('b'), cfg: z.object({ p: z.string() }) }),
+    ]);
+    expect(flattenUnionsDeep(uNested).safeParse({ k: 'b', cfg: { p: 'x' } }).success).toBe(
+      true,
+    );
+
+    // refine nested in an array element.
+    const uArr = z.discriminatedUnion('k', [
+      z.object({ k: z.literal('a'), list: z.array(z.string().refine((s) => s.length > 2)) }),
+      z.object({ k: z.literal('b'), list: z.array(z.string()) }),
+    ]);
+    expect(flattenUnionsDeep(uArr).safeParse({ k: 'b', list: ['x'] }).success).toBe(true);
+
+    // refine behind .default() (ZodDefault is not unwrapped by the field merge).
+    const uDef = z.discriminatedUnion('k', [
+      z.object({
+        k: z.literal('a'),
+        v: z
+          .string()
+          .refine((s) => s.length > 2)
+          .default('xxx'),
+      }),
+      z.object({ k: z.literal('b'), v: z.string() }),
+    ]);
+    expect(flattenUnionsDeep(uDef).safeParse({ k: 'b', v: 'x' }).success).toBe(true);
+  });
 });
 
 describe('flatten — discriminator handling', () => {

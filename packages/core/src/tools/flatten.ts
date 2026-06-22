@@ -119,16 +119,38 @@ function stripAnnotations(node: unknown): void {
 }
 
 /**
- * Whether a schema carries any `checks` — including a `.refine()` / custom check
- * that is **invisible** in JSON Schema, so two such fields can normalize equal
- * yet validate differently. A collided key whose kept schema has checks is
- * therefore widened to `z.unknown()` rather than advertised verbatim, so a
- * refinement from one variant cannot reject another variant's valid value.
+ * Whether a schema carries any `checks` **at any depth** — including a `.refine()`
+ * / custom check / `.pipe()` output that is **invisible** in JSON Schema, so two
+ * such fields can normalize equal yet validate differently. The check is deep
+ * (recurses through wrappers, object fields, array items, pipe sides) because a
+ * hidden constraint nested below the kept node leaks just as badly as one on it.
+ * A collided key whose kept schema returns true is widened to `z.unknown()`
+ * rather than advertised verbatim, so a refinement from one variant can never
+ * reject another variant's valid value. Erring toward `unknown` is invariant-safe
+ * (only looser advertising).
  */
 function hasChecks(schema: z.core.$ZodType): boolean {
   if (!(schema instanceof z.ZodType)) return false;
   const def: unknown = schema.def;
-  return isRecord(def) && Array.isArray(def.checks) && def.checks.length > 0;
+  if (isRecord(def) && Array.isArray(def.checks) && def.checks.length > 0) return true;
+
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodDefault
+  ) {
+    return hasChecks(schema.unwrap());
+  }
+  if (schema instanceof z.ZodPipe)
+    return hasChecks(schema.def.in) || hasChecks(schema.def.out);
+  if (schema instanceof z.ZodObject) return Object.values(schema.shape).some(hasChecks);
+  if (schema instanceof z.ZodArray) return hasChecks(schema.element);
+  if (schema instanceof z.ZodUnion) return schema.def.options.some(hasChecks);
+  if (schema instanceof z.ZodRecord) return hasChecks(schema.valueType);
+  if (schema instanceof z.ZodIntersection) {
+    return hasChecks(schema.def.left) || hasChecks(schema.def.right);
+  }
+  return false;
 }
 
 /** A normalized (annotation-stripped) JSON-Schema string for de-duping fields. */
@@ -158,8 +180,9 @@ function mergeCollidingFields(schemas: z.core.$ZodType[]): z.core.$ZodType {
   if (values.length <= 1) {
     if (only === undefined) return z.unknown();
     // A single distinct JSON shape across ≥2 variants can still hide a
-    // non-serializable `.refine()` that holds for only one variant — widen so it
-    // cannot reject another variant's valid value (the union still validates it).
+    // non-serializable check (`.refine()`, a `.pipe()` output, a nested refine)
+    // that holds for only one variant — widen so it cannot reject another
+    // variant's valid value (the union still validates it). `hasChecks` is deep.
     return schemas.length > 1 && hasChecks(only) ? z.unknown() : only;
   }
 
