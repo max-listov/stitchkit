@@ -12,7 +12,7 @@ import {
   type ToolLifecycle,
   type ToolResult,
 } from './execute';
-import { flattenDiscriminatedUnion } from './flatten';
+import { flattenUnionsDeep } from './flatten';
 import { toToolName } from './names';
 import { mergeSchemas } from './schema';
 
@@ -95,8 +95,11 @@ export function collectTools(
     const name = method.toolName ?? toToolName(service.name, methodName);
     let baseSchema = mergeSchemas(method.paramsSchema, method.inputSchema);
 
-    if (flattenUnionInput && baseSchema instanceof z.ZodDiscriminatedUnion) {
-      baseSchema = flattenDiscriminatedUnion(baseSchema);
+    // Deep: flatten discriminated unions at every depth (a nested union — e.g.
+    // an array-of-union field — otherwise reaches the transport as `oneOf`, which
+    // weaker models mishandle). Advertised-only; validation stays on the original.
+    if (flattenUnionInput) {
+      baseSchema = flattenUnionsDeep(baseSchema);
     }
 
     const shouldExtend = !!extend && (!extend.filter || extend.filter(service, method));

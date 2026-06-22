@@ -117,6 +117,23 @@ cannot become a tool. `onIncompatibleSchema` decides what happens:
 `validateMcpSchemas(services)` runs the same check on its own — useful in a
 startup assertion or a test.
 
+### Discriminated unions for weaker models — `flattenUnionInput`
+
+A discriminated union in a tool's input becomes a JSON Schema `oneOf` / `anyOf`.
+Capable models (Claude, Gemini, GPT) handle that; weaker / cheaper ones can drop
+the field or mangle its strings. Set `flattenUnionInput: true` (on
+`createMcpHandler` / `mountMcp` / `mountAgent`) to advertise each discriminated
+union as a **single flat object** instead — the discriminator becomes an enum and
+each variant's fields become optional with a `Required if <disc> = …` hint.
+
+It is **deep**: unions are flattened at every depth — top level, object fields,
+array items, and through `optional` / `nullable` / `default` / intersection
+wrappers — so no `oneOf` survives anywhere (e.g. a `content.parts[]` that is an
+array of a discriminated union). It is **advertised-only and lossy**: the original
+schemas stay the validation schemas in `executeToolMethod`, so requests are still
+validated against the real union. Schemas a transform cannot safely rebuild
+(refined / piped / lazy / plain non-discriminated unions) are left as-is.
+
 ## `mountMcp`
 
 If you already run an `McpServer` from the SDK, `mountMcp` adds contract tools

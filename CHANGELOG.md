@@ -14,6 +14,30 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-22
+
+### Fixed
+
+- **`flattenUnionInput` now flattens nested discriminated unions, not just the
+  top level.** (`stitchkit/tools`) The flag advertises a discriminated union as a
+  flat object so a tool schema carries no `oneOf` / `anyOf` (which weaker models
+  drop or mangle) — but it only ever flattened a union that was the *entire* input.
+  A union nested inside an object field or an array item (e.g. a `content.parts[]`
+  that is an array of a discriminated union) still reached the model as `oneOf`. It
+  is now **deep**: every discriminated union is flattened at any depth — object
+  fields, array items, and through `optional` / `nullable` / `default` /
+  intersection wrappers — with `.describe()` hints preserved. Still advertised-only
+  and lossy (the original schemas remain the validation schemas in
+  `executeToolMethod`), still opt-in behind the same flag, and schemas a transform
+  cannot safely rebuild (refined / piped / lazy / plain unions) are left as-is.
+  → ADR 0031.
+
+### Added
+
+- **`flattenUnionsDeep`** (`stitchkit/tools`) — the recursive flatten exposed
+  beside `flattenDiscriminatedUnion`, for building a `oneOf`-free advertised schema
+  directly.
+
 ## [0.12.0] — 2026-06-18
 
 ### Added
@@ -768,7 +792,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/max-listov/stitchkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/max-listov/stitchkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/max-listov/stitchkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/max-listov/stitchkit/compare/v0.9.0...v0.10.0

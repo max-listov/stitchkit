@@ -45,6 +45,7 @@ These records were consolidated from the project's internal design notes on
 | [0028](0028-revert-contract-dispatcher.md) | Revert `createContractDispatcher` (no adopting consumer) | Accepted — supersedes the dispatcher part of 0027 |
 | [0029](0029-audit-endpoint-identity-and-dimensions.md) | Endpoint identity + domain dimensions on the audit event | Accepted — extends 0012, 0021, 0022 |
 | [0030](0030-audit-verb-and-json-error-details.md) | Audit verb, sanitised error details, complete error-code logging | Accepted — extends 0029, 0026, 0022 |
+| [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.
