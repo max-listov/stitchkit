@@ -14,6 +14,23 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-06-26
+
+### Fixed
+
+- **A `ToolExtend` no longer strips a non-extended tool's own colliding param.**
+  (`stitchkit/tools`) `createToolRunner` resolved the extend context only for a
+  tool the extend applied to (`shouldExtend`), but stripped the extend keys from
+  **every** tool's arguments. So a tool the `extend.filter` excluded, whose own
+  contract param is named like an extend key (e.g. a `botId` path param on a
+  service the extend doesn't cover), had that argument silently removed → the
+  handler received it as `undefined` and validation failed (`Invalid params:
+  <key>`), even though the client sent it. The strip is now gated on
+  `shouldExtend`, mirroring the resolve — and `applyExtend` already forbids an
+  extend key clashing with an extended tool's own field, so a non-extended tool's
+  matching param is always legitimately its own. Affects all tool transports
+  (MCP / agent / CLI — shared `createToolRunner`).
+
 ## [0.15.1] — 2026-06-22
 
 ### Fixed
@@ -866,7 +883,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/max-listov/stitchkit/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/max-listov/stitchkit/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/max-listov/stitchkit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/max-listov/stitchkit/compare/v0.13.0...v0.14.0

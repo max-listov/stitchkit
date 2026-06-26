@@ -144,9 +144,15 @@ export function createToolRunner(
     if (tool.shouldExtend && config.extend) {
       extraContext = await config.extend.resolve(rawArgs);
     }
-    const cleanArgs = extendKeys
-      ? Object.fromEntries(Object.entries(rawArgs).filter(([key]) => !extendKeys.has(key)))
-      : rawArgs;
+    // Strip the extend keys ONLY for a tool that was actually extended — that is
+    // where they were injected (and `applyExtend` forbids a name clash, so they
+    // are never the contract's own). A non-extended tool that legitimately owns a
+    // param named like an extend key must keep it, or it reaches the handler as
+    // `undefined`. Gated identically to `resolve` above.
+    const cleanArgs =
+      tool.shouldExtend && extendKeys
+        ? Object.fromEntries(Object.entries(rawArgs).filter(([key]) => !extendKeys.has(key)))
+        : rawArgs;
     return executeToolMethod(
       tool.method,
       tool.name,
