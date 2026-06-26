@@ -14,6 +14,21 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-26
+
+### ⚠️ Breaking changes
+
+- **`ai` peer dependency now requires `^7.0.0` (dropped v6).** `mountAgent` /
+  `createToolkit` build the Vercel AI SDK `ToolSet` from your contract, so the
+  `ai` major stitchkit links against must match the one your app runs. AI SDK 7
+  keeps the symbols stitchkit uses — `tool`, `zodSchema`, `ToolSet` — source
+  compatible, so **no stitchkit code changed** and the agent-tool surface behaves
+  identically. But a consumer still on `ai@6` will hit a peer-dependency conflict
+  on upgrade. Move your app to `ai@7` in the same step.
+  `// before: "ai": "^6"` → `// after: "ai": "^7"`
+  (if your app uses more of the SDK than stitchkit's tool mount, run
+  `npx @ai-sdk/codemod v7` to migrate the rest.)
+
 ## [0.15.2] — 2026-06-26
 
 ### Fixed
@@ -883,7 +898,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/max-listov/stitchkit/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/max-listov/stitchkit/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/max-listov/stitchkit/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/max-listov/stitchkit/compare/v0.14.0...v0.15.0

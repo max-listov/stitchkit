@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -99,7 +99,7 @@
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": ">=5",
-    "ai": "^6.0.182",
+    "ai": "^7.0.0",
     "react": ">=18",
     "react-query-kit": "^3.3.3",
     "socket.io": "^4.8.3",
@@ -152,16 +152,16 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
-    "@tanstack/react-query": "5.101.0",
+    "@tanstack/react-query": "5.101.1",
     "@types/bun": "^1.3.14",
     "@types/json-schema": "^7.0.15",
     "@types/react": "^19.2.17",
-    "ai": "^6.0.207",
+    "ai": "^7.0.2",
     "react": "^19.2.7",
     "react-query-kit": "^3.3.4",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "srvx": "^0.11.16",
+    "srvx": "^0.11.17",
     "typescript": "^6",
     "zod": "^4.4.3"
   }
