@@ -93,6 +93,22 @@ export interface SocketIOClientConfig<TServerEvents extends SocketEventMap = Soc
   /** Connection timeout (ms). Default `20000`. */
   timeout?: number;
   /**
+   * Survive a **server-initiated** disconnect. When the server drops the socket
+   * (`socket.disconnect()` server-side, reason `io server disconnect`) Socket.IO
+   * does **not** auto-reconnect — by design the client is meant to stay down.
+   * That silently kills a long-lived client after a backend restart or an
+   * auth-gate drop: the WebSocket is gone for good and nothing recovers it.
+   *
+   * With this set, the client recycles itself instead — after the given delay it
+   * reconnects on the same socket, which re-reads the `auth` function (so a
+   * rotated token is picked up automatically, exactly like an ordinary
+   * reconnect). Other disconnect reasons (`transport close`, `ping timeout`, …)
+   * are untouched — Socket.IO's own reconnection already handles those.
+   *
+   * Set `false` to keep Socket.IO's default (stay disconnected). Default `1000` ms.
+   */
+  reconnectOnServerDisconnect?: number | false;
+  /**
    * Server → client events to **retain** ("sticky events"). The client keeps the
    * last payload of each listed event and replays it to any handler subscribed
    * afterwards (and on the next subscribe after a re-render), so a late
@@ -124,8 +140,14 @@ export interface SocketIOClient<
     event: E,
     ...args: Parameters<TClientEvents[E]>
   ): void;
-  /** Subscribe to connection up/down changes. Returns an unsubscribe. */
-  onConnectionChange(listener: (connected: boolean) => void): () => void;
+  /**
+   * Subscribe to connection up/down changes. Returns an unsubscribe. On a
+   * disconnect the listener also receives the Socket.IO **reason** (e.g.
+   * `io server disconnect`, `transport close`, `ping timeout`) as a second
+   * argument — `undefined` on connect. The extra argument is additive: a
+   * `(connected: boolean) => void` listener keeps working unchanged.
+   */
+  onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
 }
 
 export function createSocketIOClient<
@@ -137,7 +159,10 @@ export function createSocketIOClient<
   // conditional-typed API that cannot be forwarded through a generic wrapper;
   // the default-typed socket lets the delegation stay cast-free.
   let socket: ClientSocket | null = null;
-  const connectionListeners = new Set<(connected: boolean) => void>();
+  // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
+  const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
   // Durable event subscriptions — each re-attaches itself onto a fresh socket.
   const subscriptions = new Set<(socket: ClientSocket) => void>();
   // Sticky events — retained last value per topic. The store lives outside the
@@ -148,8 +173,15 @@ export function createSocketIOClient<
   const retained =
     retainNames.length > 0 ? createRetainedTopics<Record<string, unknown>>() : null;
 
-  function notifyConnection(connected: boolean): void {
-    for (const listener of connectionListeners) listener(connected);
+  function notifyConnection(connected: boolean, reason?: string): void {
+    for (const listener of connectionListeners) listener(connected, reason);
+  }
+
+  function clearReconnectTimer(): void {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
   }
 
   return {
@@ -176,7 +208,21 @@ export function createSocketIOClient<
       });
 
       socket.on('connect', () => notifyConnection(true));
-      socket.on('disconnect', () => notifyConnection(false));
+      socket.on('disconnect', (reason) => {
+        notifyConnection(false, reason);
+        // A server-initiated disconnect halts Socket.IO's own reconnection.
+        // Recycle manually so the client recovers (re-reading `auth`). Capture
+        // the current socket so a later disconnect()/connect() can't be recycled
+        // onto a stale instance.
+        if (reason === 'io server disconnect' && serverDisconnectDelay !== false) {
+          const current = socket;
+          clearReconnectTimer();
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            if (socket === current && current && !current.connected) current.connect();
+          }, serverDisconnectDelay);
+        }
+      });
       // Record retained events' latest payload, independent of any user handler,
       // so the value is available to a subscriber that connects later. Attached
       // before connect so a handshake-time emission is captured too.
@@ -193,6 +239,9 @@ export function createSocketIOClient<
     },
 
     disconnect() {
+      // Cancel any pending server-disconnect recycle — an explicit disconnect
+      // is a deliberate teardown and must not be undone by a queued reconnect.
+      clearReconnectTimer();
       if (!socket) return;
       const wasConnected = socket.connected;
       // Drop every listener before releasing the socket — otherwise the

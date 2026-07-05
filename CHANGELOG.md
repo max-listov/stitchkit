@@ -14,6 +14,34 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-07-05
+
+### Added
+
+- **`createSocketIOClient` — `onConnectionChange` now passes the disconnect
+  reason.** The listener gains an optional second argument:
+  `(connected: boolean, reason?: string) => void`, where `reason` is the
+  Socket.IO disconnect reason (`io server disconnect`, `transport close`,
+  `ping timeout`, …) on a down event and `undefined` on connect. Purely additive
+  — an existing `(connected) => void` listener keeps working unchanged.
+- **`createSocketIOClient` — `reconnectOnServerDisconnect` config option
+  (`number | false`, default `1000` ms).** When the **server** initiates the
+  disconnect (reason `io server disconnect`, e.g. a backend restart or an
+  auth-gate drop), Socket.IO by design does **not** auto-reconnect — a long-lived
+  client would stay dead for good. The client now recycles itself after the given
+  delay, reconnecting on the same socket (which re-reads the `auth` function, so a
+  rotated token is picked up automatically). Set `false` to keep Socket.IO's
+  stay-disconnected default. Other disconnect reasons are untouched — Socket.IO's
+  own reconnection already handles them.
+
+### Changed
+
+- **`createSocketIOClient` now recovers from a server-initiated disconnect by
+  default.** Previously such a disconnect left the client permanently down; it now
+  recycles after 1000 ms (see `reconnectOnServerDisconnect` above). Not a breaking
+  API change — no signature or export changed — but the runtime behavior differs;
+  pass `reconnectOnServerDisconnect: false` to restore the old behavior.
+
 ## [0.16.0] — 2026-06-26
 
 ### ⚠️ Breaking changes
@@ -898,7 +926,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/max-listov/stitchkit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/max-listov/stitchkit/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/max-listov/stitchkit/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/max-listov/stitchkit/compare/v0.15.0...v0.15.1

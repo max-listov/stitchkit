@@ -415,6 +415,112 @@ describe('composed WebSocket lanes (Socket.IO + raw)', () => {
   });
 });
 
+// ─── Server-initiated disconnect (reason + recycle) ──────────────────────────
+
+interface KickServerEvents {
+  hi: () => void;
+}
+interface KickClientEvents {
+  kick: () => void;
+}
+
+const KICK_PORT = 9899;
+const KICK_URL = `http://localhost:${KICK_PORT}`;
+
+const kickSock = await createSocketIOServer<KickServerEvents, KickClientEvents>({
+  cors: { origin: '*' },
+});
+// On `kick`, drop the socket server-side → the client sees reason
+// `io server disconnect`, which halts Socket.IO's built-in reconnection.
+kickSock.io.on('connection', (s) => {
+  s.on('kick', () => s.disconnect(true));
+});
+const kickServer = createServer({
+  port: KICK_PORT,
+  websocket: kickSock.websocket,
+  rawRoutes: [kickSock.route],
+});
+
+describe('Socket.IO server-initiated disconnect', () => {
+  afterAll(() => {
+    kickServer.stop(true);
+  });
+
+  test('onConnectionChange reports the disconnect reason', async () => {
+    const client = createSocketIOClient<KickServerEvents, KickClientEvents>({
+      url: KICK_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: false, // isolate: just observe the reason
+    });
+    const reasons: Array<string | undefined> = [];
+    client.onConnectionChange((connected, reason) => {
+      if (!connected) reasons.push(reason);
+    });
+
+    client.connect();
+    await whenConnected(client);
+    client.emit('kick');
+    await Bun.sleep(200);
+
+    expect(reasons).toContain('io server disconnect');
+    expect(client.connected).toBe(false);
+    client.disconnect();
+  });
+
+  test('reconnectOnServerDisconnect recycles the client back to life', async () => {
+    const client = createSocketIOClient<KickServerEvents, KickClientEvents>({
+      url: KICK_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: 100,
+    });
+    const connects: boolean[] = [];
+    client.onConnectionChange((connected) => connects.push(connected));
+
+    client.connect();
+    await whenConnected(client);
+    client.emit('kick');
+    // Disconnect fires, then the recycle reconnects after ~100 ms.
+    await Bun.sleep(500);
+
+    expect(client.connected).toBe(true);
+    // Two ups (initial + recycled) with a down between them.
+    expect(connects.filter(Boolean).length).toBeGreaterThanOrEqual(2);
+    expect(connects).toContain(false);
+    client.disconnect();
+  });
+
+  test('reconnectOnServerDisconnect: false stays down after a server kick', async () => {
+    const client = createSocketIOClient<KickServerEvents, KickClientEvents>({
+      url: KICK_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: false,
+    });
+    client.connect();
+    await whenConnected(client);
+    client.emit('kick');
+    await Bun.sleep(400);
+
+    expect(client.connected).toBe(false);
+    client.disconnect();
+  });
+
+  test('an explicit disconnect() cancels a pending recycle', async () => {
+    const client = createSocketIOClient<KickServerEvents, KickClientEvents>({
+      url: KICK_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: 200,
+    });
+    client.connect();
+    await whenConnected(client);
+    client.emit('kick');
+    await Bun.sleep(50); // recycle is queued but hasn't fired yet
+    client.disconnect(); // must cancel it
+
+    await Bun.sleep(400);
+    expect(client.connected).toBe(false);
+  });
+});
+
 // ─── Sticky events (retained last value) ─────────────────────────────────────
 
 interface StateServerEvents {
