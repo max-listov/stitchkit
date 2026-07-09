@@ -1,6 +1,7 @@
 import ky, { isHTTPError, type KyInstance, type Options } from 'ky';
 import type { ErrorEnvelope } from '../contract';
 import { isRecord } from '../internal/typed';
+import { createTraceContext, formatTraceparent } from '../observability/trace';
 
 export type ApiEvent =
   | { type: 'unauthorized' }
@@ -71,6 +72,15 @@ export interface HttpClientConfig {
    * request — use it for runtime tokens (e.g. a short-lived auth token).
    */
   headers?: HeaderProvider;
+  /**
+   * Emit a W3C `traceparent` header on every request — a fresh root trace per
+   * request. The stitchkit server continues an inbound `traceparent`
+   * (`resolveTraceContext`), so with this on, a browser call, its HTTP handler
+   * and every nested tool call share one trace id end-to-end. A `traceparent`
+   * already set (via `headers`) wins — the client never overwrites it.
+   * Default `false`.
+   */
+  trace?: boolean;
 }
 
 type ParamValue = string | number | boolean | undefined;
@@ -145,6 +155,10 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
             for (const [key, value] of Object.entries(extra)) {
               request.headers.set(key, value);
             }
+          }
+          // A fresh root trace per request; a caller-set traceparent wins.
+          if (config.trace && !request.headers.has('traceparent')) {
+            request.headers.set('traceparent', formatTraceparent(createTraceContext()));
           }
         },
       ],

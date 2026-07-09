@@ -27,9 +27,15 @@ const http = createHttpClient({ baseUrl: '/api' })
 | `headers` | — | extra headers — an object, or a function re-run per request |
 | `authEndpoints` | `['auth/']` | paths that should **not** emit `unauthorized` on 401 |
 | `parseError` | built-in | map an error body to `{ code, message, details, hint }` |
+| `trace` | `false` | emit a W3C `traceparent` header on every request |
 
 `headers` as a function is the hook for runtime tokens — a bearer token or any
 short-lived credential — re-evaluated on every request.
+
+`trace: true` mints a fresh root trace per request. The stitchkit server
+[continues an inbound `traceparent`](./observability.md#trace-context), so the
+browser call, the HTTP handler and every nested tool call share one trace id
+end-to-end. A `traceparent` you set yourself (via `headers`) always wins.
 
 Retry is deliberately conservative: only a connection that never landed (a
 network error), only on idempotent `GET`. A server that *responded* with a 5xx

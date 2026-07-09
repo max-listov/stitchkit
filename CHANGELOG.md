@@ -14,6 +14,43 @@ through 0.7.0** — every release so far has been additive.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-09
+
+### ⚠️ Breaking changes
+
+- **The typed client now throws on a non-flat `GET` / `DELETE` input field**
+  (a nested object, an array with non-primitive items, a function). Previously
+  such a field was **silently dropped** from the query string, sending a subtly
+  incomplete request. A query string can only carry `string` / `number` /
+  `boolean` and arrays of `string` / `number` — see
+  [Contracts → query input](docs/guide/contracts.md#query-input-get--delete).
+  `// before: api.search({ filter: { status: 'active' } })  → GET /search (filter silently dropped)`
+  → `// after: throws "GET /: input field \"filter\" is a nested object …" — flatten the field or use POST`
+  Flat fields and primitive arrays are unaffected. Both client paths
+  (`createHttpClient` adapter and the bare-fetch `ClientConfig` mode) enforce
+  the same rule.
+
+### Added
+
+- **`createHttpClient` — `trace` option (`boolean`, default `false`).** Emits a
+  W3C `traceparent` header with a fresh root trace on every request. The server
+  already continues an inbound `traceparent` (`resolveTraceContext`), so with
+  this on, a browser call, its HTTP handler and every nested tool call share
+  one trace id end-to-end. A `traceparent` set via `headers` wins — the client
+  never overwrites it.
+- **Trace helpers on the root `stitchkit` entry.** `createTraceContext`,
+  `formatTraceparent`, `parseTraceparent`, `childSpan` and the `TraceContext`
+  type are now also exported from the browser-safe root entrypoint (they are
+  Web Crypto-only), so a custom client can format its own `traceparent` without
+  importing the server-only `stitchkit/observability`.
+- **`listToolNames(services)` in `stitchkit/tools`.** Resolves every tool name
+  the services expose — the `toolName` override or the derived name, with its
+  `(service, method)` identity and tool transports (`MCP` / `AGENT` / `CLI`),
+  sorted. Built on the exact resolver the mounts use, so it can never drift
+  from what actually mounts. Use it for a name-baseline snapshot test (a
+  derived-name drift across upgrades fails CI instead of silently breaking MCP
+  client configs) and for migration diffs. Returns `ToolNameEntry[]`.
+
 ## [0.17.0] — 2026-07-05
 
 ### Added
@@ -926,7 +963,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/max-listov/stitchkit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/max-listov/stitchkit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/max-listov/stitchkit/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/max-listov/stitchkit/compare/v0.15.1...v0.15.2

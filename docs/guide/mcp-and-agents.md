@@ -22,6 +22,27 @@ to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` 
 `get_widget`); set `toolName` for an explicit one. See
 [Contracts → transports](./contracts.md#transports).
 
+### Pinning tool names — `listToolNames`
+
+Derived tool names are part of your public surface — an MCP client config or an
+agent prompt refers to them by string. `listToolNames(services)` resolves every
+tool name your services expose (the exact resolver the mounts use), with its
+`(service, method)` identity and transports, sorted — a stable shape to
+snapshot:
+
+```ts
+import { listToolNames } from 'stitchkit/tools'
+
+test('tool names have not drifted', () => {
+  expect(listToolNames(services)).toMatchSnapshot()
+})
+```
+
+A stitchkit upgrade (or a contract refactor) that would shift a derived name
+now fails this test instead of silently breaking the clients that call the
+tool. It is also the mechanical diff when migrating a service: run it before
+and after, compare.
+
 ## MCP — `createMcpHandler`
 
 `createMcpHandler` builds a complete Streamable-HTTP MCP server as a single

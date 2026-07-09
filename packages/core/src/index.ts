@@ -22,4 +22,13 @@ export type {
 export { createSocketIOClient } from './browser/socket-io';
 export { type ParseSSEOptions, parseSSE } from './browser/stream';
 export * from './contract';
+// W3C trace helpers — browser-safe (Web Crypto only), shared with the server's
+// `stitchkit/observability` entry so client and server speak one format.
+export {
+  childSpan,
+  createTraceContext,
+  formatTraceparent,
+  parseTraceparent,
+  type TraceContext,
+} from './observability/trace';
 export { createRetainedTopics, type RetainedTopics } from './retained';

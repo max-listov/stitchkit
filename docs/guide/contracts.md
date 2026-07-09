@@ -95,6 +95,26 @@ For the client, an endpoint's argument type is the schema's **input** type
 present (required) in the handler's parsed `ctx.input`. The contract handles the
 two type views; you do not.
 
+### Query input (`GET` / `DELETE`)
+
+`GET` and `DELETE` carry their input as the **query string**, and a query
+string can only encode flat values. An input field on these verbs must be a
+`string`, `number`, `boolean`, or an array of `string` / `number` (repeated
+query keys). A **nested object has no canonical query encoding** — the typed
+client throws on one instead of sending a silently incomplete request:
+
+```ts
+// input: z.object({ q: z.string(), filter: z.object({ … }) })  on a GET
+await api.search({ q: 'x', filter: { status: 'active' } })
+// ✗ throws: GET /: input field "filter" is a nested object — it cannot travel
+//   as a query parameter
+```
+
+Flatten the field (`status: 'active'`) or move the operation to a body verb
+(`POST`). Remember the server parses query values from **strings** — use
+`z.coerce.number()` / `z.coerce.boolean()` in a query-input schema for
+non-string fields.
+
 ## Transports
 
 By default an endpoint is exposed on **every** surface — HTTP, MCP and agent
@@ -120,9 +140,9 @@ file upload is not a tool call.
 
 ## `toolName`
 
-When an endpoint is exposed as a tool, its name defaults to `prefix_key`
-(`users` + `create` ⇒ `users_create`). Set `toolName` for an explicit, stable
-name:
+When an endpoint is exposed as a tool, its name defaults to a verb-aware
+derivation from the method key + prefix (`users` + `create` ⇒ `create_user`,
+`users` + `list` ⇒ `list_users`). Set `toolName` for an explicit, stable name:
 
 ```ts
 { method: 'POST', path: '/', desc: 'Create a user', toolName: 'create_user', /* … */ }

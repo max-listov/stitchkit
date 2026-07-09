@@ -37,10 +37,18 @@ function isParamArray(value: unknown): value is Array<string | number> {
  * Collect query params from a call's argument object — primitives passed
  * through, `string`/`number` arrays kept as arrays (repeated query keys),
  * path-param and other keys skipped. `undefined` when nothing qualifies.
+ *
+ * GET / DELETE input travels as query parameters (`inputIsQuery`), and a query
+ * string can only carry primitives and primitive arrays — a nested object has
+ * no canonical query encoding. Such a field is a contract-usage mistake, so it
+ * throws loudly instead of being dropped silently (the request would otherwise
+ * go out subtly incomplete). Shared by both client paths — the `HttpClient`
+ * adapter and the bare fetch client — so the rule cannot drift.
  */
 function collectQueryParams(
   args: Record<string, unknown>,
   skipKeys: Set<string>,
+  endpoint: EndpointDef,
 ): QueryParams | undefined {
   const params: QueryParams = {};
   let hasParams = false;
@@ -54,7 +62,19 @@ function collectQueryParams(
     ) {
       params[key] = value;
       hasParams = true;
+      continue;
     }
+    const what = Array.isArray(value)
+      ? 'an array with non-primitive items'
+      : typeof value === 'object'
+        ? 'a nested object'
+        : `a ${typeof value}`;
+    throw new Error(
+      `${endpoint.method} ${endpoint.path}: input field "${key}" is ${what} — it cannot ` +
+        'travel as a query parameter. GET / DELETE input must be flat (string / number / ' +
+        'boolean, or an array of string / number); flatten the field or move the ' +
+        'operation to a body verb (POST).',
+    );
   }
   return hasParams ? params : undefined;
 }
@@ -188,12 +208,12 @@ function createHttpMethod(
     }
 
     if (isGet) {
-      const params = collectQueryParams(firstArg, prefixKeys);
+      const params = collectQueryParams(firstArg, prefixKeys, endpoint);
       return client.get(url, withTimeout(params ? { params } : undefined, endpoint.timeout));
     }
 
     if (httpMethod === 'delete') {
-      const params = collectQueryParams(firstArg, prefixKeys);
+      const params = collectQueryParams(firstArg, prefixKeys, endpoint);
       return client.delete(
         url,
         withTimeout(params ? { params } : undefined, endpoint.timeout),
@@ -245,16 +265,20 @@ function createFetchMethod(
 
     if (isQuery && args) {
       const remaining = stripParams(args, endpoint.path, prefixKeys);
-      const searchParams = new URLSearchParams();
-      for (const [k, v] of Object.entries(remaining)) {
-        if (v === undefined || v === null) continue;
-        if (isParamArray(v)) {
-          for (const item of v) searchParams.append(k, String(item));
-        } else if (typeof v !== 'object') {
-          searchParams.set(k, String(v));
+      // Same collection + fail-first rule as the HttpClient path (path params
+      // are already stripped, so nothing extra to skip).
+      const params = collectQueryParams(remaining, new Set(), endpoint);
+      if (params) {
+        const searchParams = new URLSearchParams();
+        for (const [k, v] of Object.entries(params)) {
+          if (Array.isArray(v)) {
+            for (const item of v) searchParams.append(k, String(item));
+          } else {
+            searchParams.set(k, String(v));
+          }
         }
+        url += `?${searchParams}`;
       }
-      if (searchParams.size > 0) url += `?${searchParams}`;
     }
 
     if (hasBody) headers['Content-Type'] = 'application/json';

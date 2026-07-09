@@ -6,6 +6,7 @@ export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
 export type { ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
 export { flattenDiscriminatedUnion, flattenUnionsDeep } from './tools/flatten';
+export { listToolNames, type ToolNameEntry } from './tools/list-names';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';
 export {
   buildMcpServer,

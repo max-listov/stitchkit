@@ -45,6 +45,20 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
+### Trace (client)
+
+Browser-safe W3C trace helpers — the same functions as on
+[`stitchkit/observability`](#stitchkitobservability), re-exported so a client
+can emit / propagate a `traceparent` (see `HttpClientConfig.trace`).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createTraceContext` | function | a fresh root trace |
+| `formatTraceparent` | function | render a `traceparent` header value |
+| `parseTraceparent` | function | parse a `traceparent` header |
+| `childSpan` | function | a child span of a parent trace |
+| `TraceContext` | _type_ | `{ traceId, spanId, parentSpanId? }` |
+
 ---
 
 ## `stitchkit/contract`
@@ -281,6 +295,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
 | `validateMcpSchemas` | function | assert every tool schema is JSON Schema-compatible — [guide](../guide/mcp-and-agents.md#incompatible-schemas--onincompatibleschema) |
+| `listToolNames` | function | every mounted tool name with its `(service, method)` identity — for name-baseline snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
 | `McpHandlerConfig` | _type_ | config for `createMcpHandler` |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
@@ -296,6 +311,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
 | `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` observability hooks |
 | `ToolResult` | _type_ | the result of one tool call |
+| `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
 

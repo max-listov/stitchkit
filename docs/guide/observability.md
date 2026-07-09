@@ -159,6 +159,12 @@ You rarely call the trace functions directly — `wrapInRequestContext` and
 `parseTraceparent`, `formatTraceparent`, `childSpan`) for when you need to
 propagate a `traceparent` onward to another service.
 
+The browser side starts the trace:
+[`createHttpClient({ trace: true })`](./client.md#httpclientconfig) emits a
+fresh root `traceparent` on every request, which the server then continues. The
+trace helpers themselves are browser-safe and also exported from the root
+`stitchkit` entry — a custom client can format its own header.
+
 > **Span ids live in the request context, not on `ctx`.** The handler `ctx`
 > carries a single `traceId`; the full `{ traceId, spanId, parentSpanId }` is on
 > the observability request context. To stamp `spanId` / `parentSpanId` into an
