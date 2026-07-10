@@ -6,11 +6,13 @@
       "name": "stitchkit-monorepo",
       "devDependencies": {
         "@biomejs/biome": "^2.5.1",
+        "@types/bun": "^1.3.14",
+        "typescript": "^6",
       },
     },
     "packages/core": {
       "name": "stitchkit",
-      "version": "0.15.2",
+      "version": "0.18.0",
       "dependencies": {
         "ky": "^2.0.2",
       },

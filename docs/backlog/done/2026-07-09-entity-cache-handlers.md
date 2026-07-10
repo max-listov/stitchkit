@@ -2,9 +2,10 @@
 title: createEntityCacheHandlers — generic CRUD cache-updater для stitchkit/react
 description: Декларативные merge-правила created/updated/deleted → list + infinite + detail для TanStack Query cache. Две почти идентичные реализации у потребителей. НЕ реализовывать по дизайну на бумаге — извлекать после сравнения живых копий.
 type: task
-status: inbox
+status: done
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-07-10
+completed: 2026-07-10 04:35 +08:00
 ---
 
 # `createEntityCacheHandlers` — CRUD cache-updater (React)
@@ -39,3 +40,18 @@ createEntityCacheHandlers({ entity, listKeys, detailKey, compare })
 
 Миграция a consuming project на stitchkit завершена + его cache-updater
 сравнён с существующим у второго потребителя.
+
+## Подтверждение вторым источником (2026-07-09)
+
+Агент на живой миграции прислал ровно это (`createEntityHandlers`/`createCrudHooks`
+поверх `createQuery`/`createCursorQuery`/`createMutation`, ~14 хуков с
+повторяющимся обвесом list/get/create/update/delete + инвалидация) — **и сам
+поставил ту же оговорку**, что записана выше: не прятать флэттинг страниц, не
+тянуть `useAllX`-стиль (флэттинг держат В КОМПОНЕНТЕ). Два независимых анализа
+сошлись и на фиче, и на её ограничении → сигнал сильный, но осторожность та же:
+извлекать по живым данным, не на бумаге.
+
+
+## Реализовано (0.19.0)
+
+Вышло в релизе 0.19.0. Код + тесты + доки + reference. Файл перенесён в done/.

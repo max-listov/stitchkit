@@ -31,6 +31,7 @@ import { parseCliArgs } from './cli-args';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
+  type ErrorHintFn,
   type ToolCallHooks,
   type ToolLifecycle,
   type ToolResult,
@@ -74,7 +75,7 @@ export interface CliConfig<
   /** Coerce JSON-stringified arrays/objects in arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /** Global error hint appended to every failed command's error. */
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
   /** Override exit codes per `ToolResult.code`, merged over the defaults. */
   exitCodes?: ExitCodeMap;
   /**

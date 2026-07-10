@@ -32,6 +32,14 @@ export interface ToolCallHooks {
 }
 
 /**
+ * A per-tool hint appended to a failed tool result — given the tool name and the
+ * error code, return extra guidance for the model (or `null` for none). Shared
+ * by every tool mount (`mountMcp` / `mountAgent` / `createCli`), so a project
+ * writes one recovery-hint policy and it reaches all three transports.
+ */
+export type ErrorHintFn = (toolName: string, errorCode: string) => string | null;
+
+/**
  * The tool-side twin of the HTTP server's `beforeHandle` / `afterHandle`. A
  * tool call runs the same handler an HTTP request would — `ToolLifecycle` makes
  * it run the same gate. Pass a `createAuthHook` result as `beforeHandle` here

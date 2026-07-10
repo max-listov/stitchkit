@@ -9,10 +9,86 @@ public API may still change between minor versions.
 A release that breaks a public API leads its entry with a **`### ⚠️ Breaking
 changes`** section (with before → after migration snippets); a version without
 that section is purely additive. To move a project across versions, see
-[`docs/guide/upgrading.md`](docs/guide/upgrading.md). **No breaking changes
-through 0.7.0** — every release so far has been additive.
+[`docs/guide/upgrading.md`](docs/guide/upgrading.md). **0.1.0–0.7.0 were all
+additive**; the first breaking change landed in 0.10.0. Grep the file for
+`⚠️ Breaking changes` to find every one.
 
 ## [Unreleased]
+
+## [0.19.0] — 2026-07-10
+
+### Fixed
+
+- **Default CORS now allows the `traceparent` / `tracestate` request headers**,
+  so `createHttpClient({ trace: true })` (added in 0.18.0) actually works
+  cross-origin. The client sends `traceparent` on every request, but the default
+  `Access-Control-Allow-Headers` omitted it — every browser preflight failed and
+  the API was unreachable whenever `trace` was on. The three divergent CORS
+  header defaults (HTTP server, OAuth provider, OAuth metadata) are unified into
+  one exported constant, `DEFAULT_CORS_ALLOW_HEADERS`.
+
+### ⚠️ Breaking changes
+
+- **The `HttpClient` (ky) client path now validates responses against the
+  endpoint's `output` schema.** It previously returned the body unvalidated,
+  while the bare-fetch client path validated — so which guarantee you got
+  depended on whether you passed a `createHttpClient(...)` or a plain
+  `{ baseUrl }`. Both paths now honour the contract's documented promise ("when
+  set, the client parses the response through it"). A response the server sends
+  that does **not** match `output` now throws a `ZodError` on the ky path where
+  it used to slip through. For a correctly-built app this never fires — the
+  server handler's return is already type-checked against the same `output`; it
+  only surfaces a genuine server/client schema-version skew.
+  `// before: createClient(c, createHttpClient({...}))  // returned unvalidated`
+  → `// after: … validates output, throwing on a mismatch`
+
+### Added
+
+- **`createContractFactory<Scope>()`** (`stitchkit/contract`) — a `defineContract`
+  with a required, typed `scope`, so a missing scope is a compile error, not a
+  silent `'public'` endpoint. The scope vocabulary is the app's.
+- **`defineErrors({...})`** (`stitchkit/contract`) — declare domain error codes
+  once → typed throwers (`errors.SESSION_NOT_FOUND(msg)`) for the server and a
+  code table (`codes.SESSION_NOT_FOUND`) the client matches with autocomplete
+  instead of a magic `message` string.
+- **`createErrorHook({ codeMap, render })`** (`stitchkit/server`) — an `onError`
+  hook from an exhaustive `Record<StitchErrorCode, …>` map + an envelope
+  renderer; never leaks an internal message.
+- **`createToolLogger()`** (`stitchkit/tools`) — a ready `afterToolCall` preset
+  that logs every tool call (ok/failed, duration, endpoint identity), with an
+  optional `onRecord` metrics sink. **`summarizeTransports(services)`** returns
+  per-transport operation counts for a boot-time summary.
+- **`createEntityCacheHandlers()`** (`stitchkit/react`) — declarative
+  created/updated/deleted cache handlers for `createCacheBridge`, patching the
+  `Paginated<T>` list + detail queries (does not flatten pages).
+- The bare-fetch client path now applies an endpoint's declared `timeout` (via
+  `AbortSignal.timeout`) — it previously ignored it, so a declared `timeout` did
+  nothing on that path. The ky path already applied it.
+- **`DEFAULT_CORS_ALLOW_HEADERS`** exported from `stitchkit/server` — the default
+  allow-list, to extend (not replace) when setting a custom `cors.headers`.
+- The API reference — and the generated `llms.txt` / `llms-full.txt` a consuming
+  agent reads — now documents ~45 previously-missing public exports (the OAuth
+  provider, MCP Apps, the native `mountDownload` / `mountUpload` / `mountWait`
+  tools, `signJwt`, PKCE, the whole `stitchkit/node` entry). No code change; the
+  surface was already there, just undocumented. A new test keeps every export
+  documented from now on.
+
+### Changed
+
+- **`createSocketIOClient` loads `socket.io-client` lazily.** It is no longer a
+  static import of the root `stitchkit` entry, so `import { defineContract }`
+  (or any non-socket use) no longer drags the Socket.IO client into a bundle —
+  a minimal `bun add stitchkit zod` quick start now runs without the peer
+  installed. The peer loads on the first `connect()`; the connection opens
+  asynchronously as it always did, and a missing peer throws a clear
+  install-me error. No API change.
+- **Multipart on the `HttpClient` path now uses the endpoint's declared method**
+  (`POST` / `PUT` / `PATCH`) instead of always `POST` — a `PUT` upload no longer
+  silently becomes a `POST`. A multipart endpoint declared `GET` / `DELETE` now
+  throws (it never had a valid body verb).
+- **An `onRequest` hook's early `Response` now carries CORS headers** like every
+  other response exit — a short-circuit (auth wall, maintenance page) answered
+  to a browser is now readable cross-origin.
 
 ## [0.18.0] — 2026-07-09
 
@@ -963,7 +1039,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/max-listov/stitchkit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/max-listov/stitchkit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/max-listov/stitchkit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/max-listov/stitchkit/compare/v0.15.2...v0.16.0

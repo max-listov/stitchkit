@@ -71,6 +71,8 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
+| `createContractFactory` | function | a `defineContract` with a required, typed `scope` — [guide](../guide/contracts.md#scope) |
+| `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` |
@@ -87,6 +89,8 @@ from the root `stitchkit`.
 | `ScopedEndpointFn` | _type_ | one method's signature with the consumed keys folded in |
 | `MultipartFile` | _type_ | a `multipart` file field — `Blob \| FileDescriptor` |
 | `FileDescriptor` | _type_ | a React Native / Expo file — `{ uri, name, type }` |
+| `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`) |
+| `EndpointUiMeta` | _type_ | MCP Apps widget metadata on an endpoint |
 
 ### Errors
 
@@ -101,6 +105,9 @@ from the root `stitchkit`.
 | `conflict` | function | throw `409 CONFLICT` |
 | `rateLimited` | function | throw `429 RATE_LIMITED` |
 | `appError` | function | throw an `AppError` for any code |
+| `defineErrors` | function | declare domain error codes → typed throwers + a code table — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
+| `DefinedErrors` | _type_ | the `{ errors, codes, isCode }` handle `defineErrors` returns |
+| `ErrorThrower` | _type_ | one `defineErrors` thrower — `(message?, details?, hint?) => never` |
 | `STITCH_ERROR_STATUS` | const | `code → HTTP status` map for stitchkit's own error codes — [guide](../guide/auth-and-errors.md#stitch-codes-vs-your-codes) |
 | `StitchErrorCode` | _type_ | a code stitchkit itself emits (`keyof STITCH_ERROR_STATUS`) |
 | `isStitchErrorCode` | function | type guard — is a code one of stitchkit's own? |
@@ -156,14 +163,22 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAuthHook` | function | a scope-enforcing `beforeHandle` hook — [guide](../guide/auth-and-errors.md#createauthhook) |
+| `createErrorHook` | function | an `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
+| `ErrorHookConfig` | _type_ | config for `createErrorHook` |
+| `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
 | `createBearerResolver` | function | a bearer-token identity resolver |
+| `signJwt` | function | sign an HS256 JWT |
 | `verifyJwt` | function | verify an HS256 JWT |
 | `extractToken` | function | read a bearer token from header or cookie |
+| `deriveCodeChallenge` | function | PKCE — derive the `code_challenge` from a verifier |
+| `verifyPkce` | function | PKCE — verify a verifier against a stored challenge |
 | `AuthHook` | _type_ | the hook `createAuthHook` returns |
 | `AuthHookConfig` | _type_ | config for `createAuthHook` |
 | `AuthRule` | _type_ | `'public' \| 'authenticated' \| predicate` |
 | `BearerResolverConfig` | _type_ | config for `createBearerResolver` |
 | `JwtPayload` | _type_ | a decoded JWT payload |
+| `SignJwtOptions` | _type_ | options for `signJwt` (expiry, claims) |
+| `PkceMethod` | _type_ | the PKCE challenge method — `'S256' \| 'plain'` |
 
 ### Cookies & CORS
 
@@ -174,6 +189,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `serializeCookie` | function | build a `Set-Cookie` value |
 | `corsHeaders` | function | compute CORS response headers |
 | `corsPreflightResponse` | function | build a preflight `Response` |
+| `DEFAULT_CORS_ALLOW_HEADERS` | const | the default `Access-Control-Allow-Headers` (incl. `traceparent`) — extend it when overriding `cors.headers` |
 | `CookieDef` | _type_ | the `defineCookie` handle |
 | `CookieOptions` | _type_ | cookie attributes |
 | `CorsConfig` | _type_ | CORS policy |
@@ -206,9 +222,11 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `generateTraceId` | function | a fresh trace id |
 | `resolveTraceId` | function | the default per-request trace-id resolver |
 | `extractIp` | function | the caller IP from a request |
+| `resolveSocketIp` | function | the caller IP for a Socket.IO handshake (proxy-aware) |
 | `getClientInfo` | function | caller IP + user-agent |
 | `EventBus` | _type_ | the `createEventBus` handle |
 | `RateLimitConfig` | _type_ | config for `createRateLimiter` |
+| `ClientIpOptions` | _type_ | trusted-proxy config for `extractIp` / `resolveSocketIp` |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
 ### OpenAPI
@@ -248,6 +266,8 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `getTraceId` | function | the active trace id — pass as `traceId` to `createServer` |
 | `getUserId` | function | the active user id, once auth has resolved it |
 | `setRequestUser` | function | attach the resolved user to the active context |
+| `setRequestEndpoint` | function | attach the resolved endpoint identity to the active context |
+| `setRequestDimensions` | function | attach custom audit dimensions to the active context |
 | `setRequestError` | function | record the error outcome on the active context |
 | `runWithRequestContext` | function | run a function inside a given context |
 | `RequestContext` | _type_ | the per-request record |
@@ -310,10 +330,97 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
 | `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` observability hooks |
+| `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
+
+### Native tools
+
+Generic host-supplied tools mounted onto a server — not derived from a contract.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `mountDownload` | function | a "download a URL to disk" tool (SSRF-guarded, size-capped) |
+| `mountUpload` | function | an "upload a local file" tool |
+| `mountWait` | function | a generic `--wait`-style polling tool |
+| `DownloadToolConfig` | _type_ | config for `mountDownload` |
+| `UploadToolConfig` | _type_ | config for `mountUpload` |
+| `WaitToolConfig` | _type_ | config for `mountWait` |
+
+### OAuth 2.1 provider
+
+A native remote-connector auth surface for MCP — [guide](../guide/mcp-and-agents.md#oauth-21--a-native-remote-connector).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `mountOAuthProvider` | function | the OAuth 2.1 provider routes (DCR, PKCE, token) |
+| `oauthProtectedResourceRoute` | function | the RFC 9728 protected-resource-metadata route |
+| `protectedResourceMetadataUrl` | function | build the metadata URL for a resource |
+| `wwwAuthenticateHeader` | function | build the `WWW-Authenticate` challenge header |
+| `PROTECTED_RESOURCE_PATH` | const | the well-known metadata path |
+| `OAuthProviderConfig` | _type_ | config for `mountOAuthProvider` |
+| `ProtectedResourceConfig` | _type_ | config for `oauthProtectedResourceRoute` |
+| `AuthCodeData` | _type_ | a stored authorization-code record |
+| `AuthRequest` | _type_ | a parsed authorization request |
+| `ClientMetadata` | _type_ | dynamic-client-registration metadata |
+| `RefreshData` | _type_ | a stored refresh-token record |
+| `RegisteredClient` | _type_ | a registered OAuth client |
+
+### MCP Apps (widgets)
+
+Interactive MCP resources — [ADR 0019](../decisions/0019-generic-native-tools.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `mountMcpResource` | function | mount an MCP Apps widget resource |
+| `inlineMcpAppBundle` | function | inline a built widget bundle into a resource |
+| `EXT_APPS_BUNDLE_PLACEHOLDER` | const | the placeholder token `inlineMcpAppBundle` replaces |
+| `RESOURCE_MIME_TYPE` | const | the MCP Apps resource MIME type |
+| `McpResourceDef` | _type_ | an MCP Apps resource definition |
+| `McpAppResourceMeta` | _type_ | resource `_meta` for an MCP App |
+| `McpAppCsp` | _type_ | the widget content-security policy |
+
+### Introspection & internals
+
+Advanced building blocks — the shared machinery the mounts are built on.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `collectTools` | function | resolve a service's methods to mountable tools (the shared resolver) |
+| `createToolLogger` | function | a ready `afterToolCall` that logs every tool call — [guide](../guide/mcp-and-agents.md#logging-tool-calls--createtoollogger) |
+| `summarizeTransports` | function | per-transport operation counts for a boot-time summary |
+| `buildToolManifest` | function | a searchable `{ name, description, inputSchema }` manifest for a `tool_search` tool |
+| `ToolLoggerConfig` | _type_ | config for `createToolLogger` |
+| `ToolCallRecord` | _type_ | the structured record `createToolLogger` passes to `onRecord` |
+| `TransportSummary` | _type_ | the result of `summarizeTransports` |
+| `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
+| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
+| `flattenDiscriminatedUnion` | function | flatten one discriminated union into a single object schema |
+| `flattenUnionsDeep` | function | flatten discriminated unions at every depth (advertised schema only) |
+| `MountableTool` | _type_ | one contract method resolved for mounting |
+| `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
+
+---
+
+## `stitchkit/node`
+
+Server-only, for Node ≥ 22 (Bun uses `stitchkit/server`). The runtime-agnostic
+core plus a Node HTTP adapter — [ADR 0013](../decisions/0013-runtime-agnostic-core.md),
+[deployment guide](../guide/testing-and-deployment.md#node). Re-exports the
+runtime-agnostic pieces of `stitchkit/server` and the error helpers.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `serveNode` | function | build the router and start a Node HTTP server (via `srvx`) |
+| `createHandler` | function | the router as a bare `(req) => Response` (same as `/server`) |
+| `createSocketIOServer` | function | the typed Socket.IO server (same as `/server`) |
+| `implement` / `createImplement` | function | bind a contract to typed handlers (same as `/server`) |
+| `NodeServerConfig` | _type_ | config for `serveNode` |
+| `NodeServerHandle` | _type_ | the `serveNode` handle (`{ port, stop }`) |
+| `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` / `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | re-exported from `/server` |
+| `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---
 
@@ -349,6 +456,10 @@ and `react-query-kit` peers.
 |--------|------|---------|
 | `createCursorQuery` | function | a cursor-paginated infinite query — [guide](../guide/client.md#cursor-pagination) |
 | `createCacheBridge` | function | sync socket events into the Query cache — [guide](../guide/realtime.md#cache-bridge) |
+| `createEntityCacheHandlers` | function | created/updated/deleted cache handlers for one entity — [guide](../guide/realtime.md#entity-cache-handlers) |
+| `EntityCacheConfig` | _type_ | config for `createEntityCacheHandlers` |
+| `EntityCacheHandlers` | _type_ | the `{ created, updated, deleted }` handlers it returns |
+| `DeletedPayload` | _type_ | a `deleted` event payload — the entity or a bare `{ id }` |
 | `CursorQueryConfig` | _type_ | config for `createCursorQuery` |
 | `CacheBridge` | _type_ | the `createCacheBridge` handle |
 | `CacheBridgeConfig` | _type_ | config for `createCacheBridge` |

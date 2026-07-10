@@ -4,20 +4,15 @@
  * `/token`; the server confirms they correspond so an intercepted code is
  * useless without the verifier.
  */
+import { bytesToBase64Url } from '../../internal/base64url';
 
 /** The only PKCE method OAuth 2.1 permits for public clients. */
 export type PkceMethod = 'S256';
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 /** Derive the S256 `code_challenge` from a `code_verifier`. */
 export async function deriveCodeChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return base64UrlEncode(new Uint8Array(digest));
+  return bytesToBase64Url(new Uint8Array(digest));
 }
 
 /**

@@ -165,6 +165,11 @@ fresh root `traceparent` on every request, which the server then continues. The
 trace helpers themselves are browser-safe and also exported from the root
 `stitchkit` entry — a custom client can format its own header.
 
+The default CORS allow-list already permits `traceparent` / `tracestate`, so a
+cross-origin `trace: true` client works out of the box. If you set a custom
+`cors.headers`, extend `DEFAULT_CORS_ALLOW_HEADERS` rather than replacing it, or
+the preflight will reject the trace header.
+
 > **Span ids live in the request context, not on `ctx`.** The handler `ctx`
 > carries a single `traceId`; the full `{ traceId, spanId, parentSpanId }` is on
 > the observability request context. To stamp `spanId` / `parentSpanId` into an

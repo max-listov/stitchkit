@@ -21,11 +21,42 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 import type { EventsMap } from '@socket.io/component-emitter';
-import { io } from 'socket.io-client';
 import { createRetainedTopics } from '../retained';
 
+// `socket.io-client` is loaded lazily (see `loadIo`) so it stays OUT of the
+// root `stitchkit` entry's eager graph — importing `defineContract` must not
+// drag the Socket.IO client into a bundle that never opens a socket. The type
+// is pulled via a type-only `import(...)` query, which is fully erased.
+type IoFn = typeof import('socket.io-client')['io'];
+
 /** The concrete Socket.IO client socket type (loose, default event typing). */
-type ClientSocket = ReturnType<typeof io>;
+type ClientSocket = ReturnType<IoFn>;
+
+// Held in a variable, not a string literal, on purpose: under `--target node`
+// the bundler rewrites a *literal* external dynamic import into a `createRequire`
+// shim, which drags `node:module` into the browser graph (caught by
+// `check-browser-clean`). A non-literal specifier stays a native `import()`.
+const SOCKET_IO_CLIENT = 'socket.io-client';
+
+// The peer module, loaded once and shared by every client. Failure clears the
+// cache so a later `connect()` can retry, and reports the missing peer clearly
+// (the same courtesy `stitchkit/server` gives for its Socket.IO server peer).
+let ioLoader: Promise<IoFn> | null = null;
+function loadIo(): Promise<IoFn> {
+  if (!ioLoader) {
+    ioLoader = import(SOCKET_IO_CLIENT).then(
+      (mod: typeof import('socket.io-client')) => mod.io,
+      (cause) => {
+        ioLoader = null;
+        throw new Error(
+          'stitchkit: createSocketIOClient needs the "socket.io-client" peer — install it (e.g. `bun add socket.io-client`).',
+          { cause },
+        );
+      },
+    );
+  }
+  return ioLoader;
+}
 
 /**
  * Adapt our friendly `auth` form to what `io()` expects. socket.io's function
@@ -159,6 +190,10 @@ export function createSocketIOClient<
   // conditional-typed API that cannot be forwarded through a generic wrapper;
   // the default-typed socket lets the delegation stay cast-free.
   let socket: ClientSocket | null = null;
+  // Whether a connection is wanted right now — the source of truth the async
+  // peer load reconciles against. `connect()` sets it, `disconnect()` clears it;
+  // if a disconnect races the load, the resolved `io` is discarded.
+  let desiredConnected = false;
   // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
@@ -184,63 +219,80 @@ export function createSocketIOClient<
     }
   }
 
+  // Build the underlying socket once the peer `io` factory has loaded. A
+  // `disconnect()` (or a second `connect()` that already built one) may have
+  // raced the async load — so only build when a connection is still wanted and
+  // none exists yet.
+  function openSocket(io: IoFn): void {
+    if (!desiredConnected || socket) return;
+
+    socket = io(config.url, {
+      path: config.path ?? '/socket.io/',
+      withCredentials: config.withCredentials ?? true,
+      auth: toIoAuth(config.auth),
+      ...(config.query && { query: config.query }),
+      ...(config.extraHeaders && { extraHeaders: config.extraHeaders }),
+      transports: config.transports ?? ['websocket', 'polling'],
+      autoConnect: false,
+      reconnection: true,
+      reconnectionAttempts: config.reconnectionAttempts ?? Infinity,
+      reconnectionDelay: config.reconnectionDelay ?? 1000,
+      reconnectionDelayMax: config.reconnectionDelayMax ?? 5000,
+      timeout: config.timeout ?? 20_000,
+    });
+
+    socket.on('connect', () => notifyConnection(true));
+    socket.on('disconnect', (reason) => {
+      notifyConnection(false, reason);
+      // A server-initiated disconnect halts Socket.IO's own reconnection.
+      // Recycle manually so the client recovers (re-reading `auth`). Capture
+      // the current socket so a later disconnect()/connect() can't be recycled
+      // onto a stale instance.
+      if (reason === 'io server disconnect' && serverDisconnectDelay !== false) {
+        const current = socket;
+        clearReconnectTimer();
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (socket === current && current && !current.connected) current.connect();
+        }, serverDisconnectDelay);
+      }
+    });
+    // Record retained events' latest payload, independent of any user handler,
+    // so the value is available to a subscriber that connects later. Attached
+    // before connect so a handshake-time emission is captured too.
+    if (retained) {
+      for (const name of retainNames) {
+        socket.on(name, (payload: unknown) => retained.record(name, payload));
+      }
+    }
+    // Re-attach every registered handler BEFORE connecting — nothing emitted
+    // during the handshake (e.g. an `authenticated` reply) can be missed.
+    for (const attach of subscriptions) attach(socket);
+
+    socket.connect();
+  }
+
   return {
     get connected() {
       return socket?.connected ?? false;
     },
 
     connect() {
-      if (socket) return;
-
-      socket = io(config.url, {
-        path: config.path ?? '/socket.io/',
-        withCredentials: config.withCredentials ?? true,
-        auth: toIoAuth(config.auth),
-        ...(config.query && { query: config.query }),
-        ...(config.extraHeaders && { extraHeaders: config.extraHeaders }),
-        transports: config.transports ?? ['websocket', 'polling'],
-        autoConnect: false,
-        reconnection: true,
-        reconnectionAttempts: config.reconnectionAttempts ?? Infinity,
-        reconnectionDelay: config.reconnectionDelay ?? 1000,
-        reconnectionDelayMax: config.reconnectionDelayMax ?? 5000,
-        timeout: config.timeout ?? 20_000,
-      });
-
-      socket.on('connect', () => notifyConnection(true));
-      socket.on('disconnect', (reason) => {
-        notifyConnection(false, reason);
-        // A server-initiated disconnect halts Socket.IO's own reconnection.
-        // Recycle manually so the client recovers (re-reading `auth`). Capture
-        // the current socket so a later disconnect()/connect() can't be recycled
-        // onto a stale instance.
-        if (reason === 'io server disconnect' && serverDisconnectDelay !== false) {
-          const current = socket;
-          clearReconnectTimer();
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            if (socket === current && current && !current.connected) current.connect();
-          }, serverDisconnectDelay);
-        }
-      });
-      // Record retained events' latest payload, independent of any user handler,
-      // so the value is available to a subscriber that connects later. Attached
-      // before connect so a handshake-time emission is captured too.
-      if (retained) {
-        for (const name of retainNames) {
-          socket.on(name, (payload: unknown) => retained.record(name, payload));
-        }
-      }
-      // Re-attach every registered handler BEFORE connecting — nothing emitted
-      // during the handshake (e.g. an `authenticated` reply) can be missed.
-      for (const attach of subscriptions) attach(socket);
-
-      socket.connect();
+      // Idempotent: already connected, or a peer load is already in flight.
+      if (socket || desiredConnected) return;
+      desiredConnected = true;
+      // `socket.io-client` loads lazily — the socket appears a tick later. Every
+      // method already tolerates a null socket (durable subscriptions attach on
+      // build, `emit` no-ops while disconnected), so callers see no difference
+      // beyond the connection opening asynchronously, as it always did.
+      void loadIo().then(openSocket);
     },
 
     disconnect() {
-      // Cancel any pending server-disconnect recycle — an explicit disconnect
-      // is a deliberate teardown and must not be undone by a queued reconnect.
+      // Mark the connection unwanted first — cancels an in-flight peer load and
+      // any pending server-disconnect recycle; an explicit disconnect is a
+      // deliberate teardown that a queued reconnect must not undo.
+      desiredConnected = false;
       clearReconnectTimer();
       if (!socket) return;
       const wasConnected = socket.connected;

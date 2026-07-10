@@ -19,7 +19,6 @@ export {
   type TypedClient,
   type TypedHttpClient,
 } from './define';
-
 export {
   AppError,
   appError,
@@ -34,6 +33,12 @@ export {
   type StitchErrorCode,
   unauthorized,
 } from './errors';
+export {
+  type DefinedErrors,
+  defineErrors,
+  type ErrorThrower,
+} from './errors-factory';
+export { createContractFactory, type ScopedDefineContract } from './factory';
 
 export {
   decodeCursor,

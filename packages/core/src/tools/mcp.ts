@@ -4,6 +4,7 @@ import type { EndpointToolAnnotations } from '../contract';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef, StitchLogger } from '../server/types';
 import {
+  type ErrorHintFn,
   type ToolCallHooks,
   type ToolLifecycle,
   type ToolResult,
@@ -48,7 +49,7 @@ function formatMcpResult(
   result: ToolResult,
   mode: StructuredMode,
   toolName?: string,
-  errorHint?: (toolName: string, errorCode: string) => string | null,
+  errorHint?: ErrorHintFn,
 ) {
   if (result.ok) {
     const content = textBlock(JSON.stringify(result.data, null, 2));
@@ -207,7 +208,7 @@ export interface McpMountConfig {
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
 }
 
 /**
@@ -357,7 +358,7 @@ export interface McpServerBuildConfig<TAuth> {
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
 }
 
 /**

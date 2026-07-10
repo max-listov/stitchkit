@@ -1,3 +1,4 @@
+import { DEFAULT_CORS_ALLOW_HEADERS } from '../server/middleware/cors';
 import type { RawRoute } from '../server/types';
 
 /**
@@ -42,7 +43,7 @@ export function wwwAuthenticateHeader(resource: string): string {
 const PUBLIC_CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Headers': DEFAULT_CORS_ALLOW_HEADERS,
 };
 
 /**

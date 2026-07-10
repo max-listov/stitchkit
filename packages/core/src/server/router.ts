@@ -17,7 +17,6 @@ export interface NormalizedGroup {
 
 interface RouteEntry {
   method: MethodDef;
-  service: ServiceDef;
   pattern: string;
   segments: string[];
   groupHooks?: LifecycleHooks;
@@ -28,7 +27,6 @@ export type RouteMap = Map<string, RouteEntry[]>;
 
 export interface RouteMatch {
   method: MethodDef;
-  service: ServiceDef;
   pathParams: Record<string, string>;
   groupHooks?: LifecycleHooks;
 }
@@ -84,7 +82,7 @@ export function buildRouteMap(groups: NormalizedGroup[]): RouteMap {
       const segments = fullPath.split('/').filter(Boolean);
 
       const entries = map.get(method.method) ?? [];
-      entries.push({ method, service, pattern: fullPath, segments, groupHooks: hooks });
+      entries.push({ method, pattern: fullPath, segments, groupHooks: hooks });
       map.set(method.method, entries);
     }
   }
@@ -120,7 +118,6 @@ export function matchRoute(
     if (pathParams) {
       return {
         method: entry.method,
-        service: entry.service,
         pathParams,
         groupHooks: entry.groupHooks,
       };

@@ -2,7 +2,12 @@ import type { ToolSet } from 'ai';
 import { tool, zodSchema } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
-import { type ToolCallHooks, type ToolLifecycle, toolResultFromError } from './execute';
+import {
+  type ErrorHintFn,
+  type ToolCallHooks,
+  type ToolLifecycle,
+  toolResultFromError,
+} from './execute';
 import { collectTools, createToolRunner, formatToolError, type ToolExtend } from './mount';
 
 export interface AgentContext {
@@ -25,7 +30,7 @@ export interface AgentMountConfig {
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
 }
 
 export function mountAgent(

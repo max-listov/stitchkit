@@ -27,8 +27,12 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - **NEVER** ship a competing WebSocket or hook engine — wrap Socket.IO
   (`createSocketIOClient` / `createSocketIOServer`) and `react-query-kit`
   (`createCursorQuery`). → ADR 0008
-- **NEVER** write `as` casts. The one allowed exception is the documented
-  Socket.IO emitter adapter. → ADR 0003
+- **NEVER** write `as` casts in business logic. The only casts that ship are a
+  handful at documented **boundary** sites — the loose↔typed bridges in
+  `internal/typed.ts`, and adapters over untyped external emitters (Socket.IO,
+  the event bus, the cache bridge) — each carrying a comment that justifies it.
+  A new cast anywhere else means the types are broken upstream; fix them there.
+  → ADR 0003
 - **ALWAYS** keep the core Web Fetch-clean — `createHandler` takes
   `HandlerConfig` (no Bun types). Bun APIs live only in `createServer` and
   `stitchkit/server`. → ADR 0013
@@ -41,8 +45,8 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - A new architectural decision → a new ADR in `docs/decisions/` **and a row in
   `docs/decisions/README.md`** (keep the index in sync). A new idea → a file in
   `docs/backlog/inbox/`. See `docs/README.md`.
-- **ALWAYS** run `bun run verify` before pushing — lint, typecheck, tests and
-  build must all be green.
+- **ALWAYS** run `bun run verify` before pushing — lint, typecheck, tests,
+  build and the Node smoke test must all be green.
 
 ## Stack
 
@@ -57,7 +61,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 
 ```bash
 bun run dev       # watch-rebuild packages/core/dist
-bun run verify    # lint + typecheck + test + build — the gate
+bun run verify    # lint + typecheck + test + build + node smoke — the gate
 bun run build     # build dist/ + generate llms.txt
 bun run lint:fix  # auto-fix formatting / safe lint
 ```

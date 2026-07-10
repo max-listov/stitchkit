@@ -1,0 +1,15 @@
+{
+  "//": "Type-checks the repo-root build tooling in scripts/ — these are Bun scripts (import.meta.dir, process, node: builtins) that were outside every tsconfig, so `bun run check` never saw them. Mirrors packages/core's options + Bun types.",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "types": ["bun"]
+  },
+  "include": ["."]
+}

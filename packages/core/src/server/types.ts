@@ -217,12 +217,3 @@ export interface BunServerConfig extends HandlerConfig {
   development?: BunDevelopmentOptions;
   bun?: ServerPassthrough;
 }
-
-export type StitchServeOptions = ServerPassthrough & {
-  port: number;
-  hostname?: string;
-  routes?: BunRoutes;
-  websocket?: BunWebSocketHandlers;
-  development?: BunDevelopmentOptions;
-  fetch(req: Request): Promise<Response>;
-};

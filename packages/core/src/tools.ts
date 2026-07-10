@@ -4,7 +4,7 @@ export { type CliConfig, createCli } from './tools/cli';
 export type { ExitCodeMap } from './tools/cli-format';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
-export type { ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
+export type { ErrorHintFn, ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
 export { flattenDiscriminatedUnion, flattenUnionsDeep } from './tools/flatten';
 export { listToolNames, type ToolNameEntry } from './tools/list-names';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';
@@ -48,5 +48,15 @@ export {
   type RegisteredClient,
 } from './tools/oauth-provider';
 export { type ImplementRemoteOptions, implementRemote } from './tools/remote';
+export {
+  createToolLogger,
+  type ToolCallRecord,
+  type ToolLoggerConfig,
+} from './tools/tool-logger';
 export { createToolkit, type Toolkit } from './tools/toolkit';
+export {
+  summarizeTransports,
+  type TransportCounts,
+  type TransportSummary,
+} from './tools/transports';
 export { type McpMediaContent, mountViewFile, resolveMedia } from './tools/view-file';

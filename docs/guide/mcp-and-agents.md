@@ -383,6 +383,25 @@ const handleMcp = createMcpHandler({
 })
 ```
 
+## Logging tool calls — `createToolLogger`
+
+Every tool mount fires an `afterToolCall` hook. `createToolLogger` is a ready
+preset for it — one line logs each call (ok / failed, duration, which endpoint,
+keyed by the endpoint's stable `serviceName` / `key` identity):
+
+```ts
+import { createToolLogger } from 'stitchkit/tools'
+
+mountMcp(server, services, { hooks: createToolLogger() })
+// [tool] ok list_widgets (widgets.list) 12ms
+// [tool] warn get_widget (widgets.get) NOT_FOUND 4ms
+```
+
+Pass `log` to redirect the line, or `onRecord` to feed a metrics sink the
+structured `ToolCallRecord`. For a boot-time picture of what is exposed where,
+`summarizeTransports(services)` returns per-transport operation counts (HTTP /
+MCP / AGENT / CLI) for you to log.
+
 ## One handler, three callers
 
 A contract handler runs the same for an HTTP request, an MCP tool call and an

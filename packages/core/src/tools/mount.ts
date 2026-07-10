@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Transport, TransportSource } from '../contract';
 import type { MethodDef, ServiceDef } from '../server/types';
 import {
+  type ErrorHintFn,
   executeToolMethod,
   type ToolCallHooks,
   type ToolLifecycle,
@@ -126,7 +127,7 @@ export interface ToolRunnerConfig {
   /** Auth / scope gate and result transform — runs for every tool call. */
   lifecycle?: ToolLifecycle;
   /** Global error hint injected into every failed tool result. */
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
 }
@@ -175,7 +176,7 @@ export function createToolRunner(
 export function formatToolError(
   result: Extract<ToolResult, { ok: false }>,
   toolName?: string,
-  errorHint?: (toolName: string, errorCode: string) => string | null,
+  errorHint?: ErrorHintFn,
 ): Record<string, unknown> {
   const err: Record<string, unknown> = { error: result.code };
   if (result.details) err.details = result.details;

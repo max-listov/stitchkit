@@ -7,7 +7,8 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
     "dev": "bun --filter stitchkit dev",
-    "check": "bun --filter stitchkit check",
+    "check": "bun --filter stitchkit check && bun run check:scripts",
+    "check:scripts": "bun x tsc -p scripts/tsconfig.json",
     "test": "bun --filter stitchkit test",
     "gen:llms": "bun scripts/gen-llms.ts",
     "build": "bun run gen:llms && bun --filter stitchkit build",
@@ -21,6 +22,8 @@
     "release": "bun run sync:readme && bun run verify && cd packages/core && bun publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.1"
+    "@biomejs/biome": "^2.5.1",
+    "@types/bun": "^1.3.14",
+    "typescript": "^6"
   }
 }

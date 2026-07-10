@@ -254,6 +254,21 @@ for every endpoint that declares none. Scopes are free strings — the framework
 attaches no meaning, your auth hook does. See
 [Auth & errors](./auth-and-errors.md).
 
+A plain `defineContract` defaults a missing `scope` to `'public'` — forget it and
+the endpoint is public (fail-open). If every contract in your app must be scoped,
+`createContractFactory` binds your scope vocabulary once and makes `scope`
+**required and typed** — a missing or mistyped scope is a compile error:
+
+```ts
+// app: one line, once
+export const { defineContract } = createContractFactory<'public' | 'user' | 'admin'>()
+
+// scope is now mandatory and checked against the union
+export const users = defineContract({ prefix: 'users', scope: 'user' }, { … })
+```
+
+The vocabulary is yours; the returned contracts are ordinary `ContractDef`s.
+
 ## One source of truth
 
 A contract is plain data — no classes, no decorators, no codegen. It is imported

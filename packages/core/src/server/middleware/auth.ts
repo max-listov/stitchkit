@@ -1,5 +1,6 @@
 import type { RuntimeContext } from '../../contract';
 import { forbidden, unauthorized } from '../../contract';
+import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
 import type { MethodDef } from '../types';
@@ -22,18 +23,6 @@ export interface VerifyJwtOptions {
 /** A JWT longer than this is rejected before any decoding work. */
 const MAX_TOKEN_BYTES = 8192;
 
-/** Decode a base64url JWT segment to raw bytes — rejects a non-base64url segment. */
-function decodeBase64Url(segment: string): Uint8Array<ArrayBuffer> {
-  // A character outside the alphabet, or a length that cannot be a base64
-  // string (`% 4 === 1`), is malformed — reject before `atob`.
-  if (!/^[A-Za-z0-9_-]*$/.test(segment) || segment.length % 4 === 1) {
-    throw new Error('invalid base64url segment');
-  }
-  const b64 = segment.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-}
-
 export async function verifyJwt(
   token: string,
   secret: string,
@@ -54,10 +43,10 @@ export async function verifyJwt(
   let signature: Uint8Array<ArrayBuffer>;
   try {
     const decoder = new TextDecoder();
-    header = JSON.parse(decoder.decode(decodeBase64Url(headerB64)));
+    header = JSON.parse(decoder.decode(base64UrlToBytes(headerB64)));
     // `safeJsonParse` drops `__proto__` — a claim cannot pollute the prototype.
-    payloadRaw = safeJsonParse(decoder.decode(decodeBase64Url(payloadB64)));
-    signature = decodeBase64Url(signatureB64);
+    payloadRaw = safeJsonParse(decoder.decode(base64UrlToBytes(payloadB64)));
+    signature = base64UrlToBytes(signatureB64);
   } catch {
     throw unauthorized('Malformed token');
   }
@@ -116,12 +105,6 @@ export interface SignJwtOptions {
   subject?: string;
 }
 
-function encodeBase64Url(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 /**
  * Sign a payload as an HS256 JWT — the issuing counterpart of `verifyJwt`.
  * Used to mint OAuth access tokens whose audience binds them to one resource.
@@ -145,10 +128,10 @@ export async function signJwt(
   };
 
   const encoder = new TextEncoder();
-  const headerB64 = encodeBase64Url(
+  const headerB64 = bytesToBase64Url(
     encoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })),
   );
-  const payloadB64 = encodeBase64Url(encoder.encode(JSON.stringify(claims)));
+  const payloadB64 = bytesToBase64Url(encoder.encode(JSON.stringify(claims)));
   const signingInput = `${headerB64}.${payloadB64}`;
 
   const key = await crypto.subtle.importKey(
@@ -159,7 +142,7 @@ export async function signJwt(
     ['sign'],
   );
   const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(signingInput));
-  const signatureB64 = encodeBase64Url(new Uint8Array(signature));
+  const signatureB64 = bytesToBase64Url(new Uint8Array(signature));
 
   return `${signingInput}.${signatureB64}`;
 }

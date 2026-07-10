@@ -134,8 +134,13 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     if (hooks?.onRequest) {
       const earlyResponse = await hooks.onRequest(req);
       if (earlyResponse instanceof Response) {
-        logDone(earlyResponse.status);
-        return earlyResponse;
+        // Apply CORS like every other exit — an `onRequest` short-circuit (an
+        // auth wall, a maintenance page) answered to a browser must still carry
+        // `Access-Control-Allow-Origin`, or the response is unreadable
+        // cross-origin.
+        const withCors = applyCors(earlyResponse, cors, req);
+        logDone(withCors.status);
+        return withCors;
       }
     }
 

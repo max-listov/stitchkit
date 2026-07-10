@@ -23,19 +23,23 @@ realtime, `@tanstack/react-query` + `react-query-kit` for React). See
 
 ## Entrypoints
 
-stitchkit ships five entrypoints. Each is import-safe for one environment —
+stitchkit ships eight entrypoints. Each is import-safe for one environment —
 keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 
 | Import | Use in | Holds |
 |--------|--------|-------|
 | `stitchkit` | browser **and** server | `defineContract`, `createClient`, `createHttpClient`, `createSocketIOClient`, `parseSSE`, the error model |
 | `stitchkit/contract` | browser **and** server | the contract layer alone — `defineContract`, errors, pagination |
-| `stitchkit/server` | server | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
-| `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent` |
+| `stitchkit/server` | server (Bun) | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
+| `stitchkit/node` | server (Node ≥ 22) | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
+| `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
+| `stitchkit/cli` | server | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
+| `stitchkit/observability` | server | the audit layer — `createAuditHook`, trace context, sanitisation |
 | `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server
-code adds `stitchkit/server` and `stitchkit/tools`.
+code adds `stitchkit/server` (or `stitchkit/node` on Node) and `stitchkit/tools`.
+The full export list of each is in the [API reference](../api/reference.md).
 
 ## Project layout
 

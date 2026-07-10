@@ -11,7 +11,7 @@
  * return (`formatToolError`), so a script can keep `2>/dev/null` clean while
  * still parsing a success.
  */
-import type { ToolResult } from './execute';
+import type { ErrorHintFn, ToolResult } from './execute';
 import { formatToolError } from './mount';
 
 /** Map a `ToolResult.code` to a process exit code. */
@@ -42,7 +42,7 @@ export interface EmitOptions {
   /** Compact single-line JSON (for `| jq` / scripts); otherwise pretty-printed. */
   json: boolean;
   toolName: string;
-  errorHint?: (toolName: string, errorCode: string) => string | null;
+  errorHint?: ErrorHintFn;
   exitCodes?: ExitCodeMap;
 }
 

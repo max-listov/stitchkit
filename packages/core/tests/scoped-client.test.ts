@@ -26,7 +26,7 @@ const service = implement(widgets, {
 
 // Mount the contract under a resource-scoped prefix — the scoped client must
 // build `tenants/:tenantId/widgets` for the request to land here at all.
-const PORT = 9899;
+const PORT = 9886;
 const baseUrl = `http://localhost:${PORT}`;
 const server = createServer({
   port: PORT,

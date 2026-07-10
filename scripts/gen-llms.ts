@@ -10,7 +10,7 @@
  * Single source of truth is `docs/guide` + `docs/api` — edit the docs, then
  * `bun run gen:llms` (the build runs it). Path-independent of cwd.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -83,6 +83,19 @@ const API: [file: string, title: string, desc: string] = [
   'API reference',
   'every public export, grouped by entrypoint, each linked to the guide',
 ];
+
+// Drift guard: every guide page on disk must be listed in GUIDE, or it silently
+// drops out of llms.txt (invisible to a consumer's agent). Adding a page then
+// forgetting to register it here fails the build instead.
+const listed = new Set(GUIDE.map(([file]) => file));
+const onDisk = readdirSync(GUIDE_DIR).filter((f) => f.endsWith('.md'));
+const unlisted = onDisk.filter((f) => !listed.has(f));
+if (unlisted.length > 0) {
+  console.error(
+    `[gen:llms] guide pages on disk but missing from GUIDE (add them): ${unlisted.join(', ')}`,
+  );
+  process.exit(1);
+}
 
 const RULE = '='.repeat(78);
 

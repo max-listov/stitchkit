@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { extractToken, verifyJwt } from '../src/server/middleware/auth';
 import { parseCookies, serializeCookie } from '../src/server/middleware/cookies';
-import { corsHeaders } from '../src/server/middleware/cors';
+import { corsHeaders, DEFAULT_CORS_ALLOW_HEADERS } from '../src/server/middleware/cors';
 
 describe('cookies', () => {
   test('parseCookies — basic', () => {
@@ -63,6 +63,23 @@ describe('cors', () => {
   test('corsHeaders — credentials', () => {
     const headers = corsHeaders({ origin: '*', credentials: true }, null);
     expect(headers['Access-Control-Allow-Credentials']).toBe('true');
+  });
+
+  test('default allow-headers permits the W3C trace headers the client emits', () => {
+    // `createHttpClient({ trace: true })` sends `traceparent` on every request;
+    // the default preflight must allow it, or the request dies cross-origin.
+    const headers = corsHeaders({ origin: '*' }, 'http://example.com');
+    const allow = headers['Access-Control-Allow-Headers'];
+    expect(allow).toBe(DEFAULT_CORS_ALLOW_HEADERS);
+    expect(allow).toContain('traceparent');
+    expect(allow).toContain('tracestate');
+    // The legacy simple trace id (`resolveTraceId` reads `x-trace-id`) stays.
+    expect(allow).toContain('X-Trace-Id');
+  });
+
+  test('an explicit headers override still wins', () => {
+    const headers = corsHeaders({ origin: '*', headers: 'Content-Type' }, null);
+    expect(headers['Access-Control-Allow-Headers']).toBe('Content-Type');
   });
 });
 

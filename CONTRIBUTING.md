@@ -30,9 +30,9 @@ example. Every command runs from the repo root:
 bun run dev       # watch-rebuild packages/core/dist
 bun run lint      # Biome — strict, warnings fail
 bun run check     # tsc — typecheck src + tests
-bun run test      # 143 tests
+bun run test      # the test suite
 bun run build     # build dist/ (bun build + tsc declarations)
-bun run verify    # lint + check + test + build, in CI order — the single gate
+bun run verify    # lint + check + test + build + node smoke, in CI order — the single gate
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
 

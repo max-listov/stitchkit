@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { isRecord } from '../internal/typed';
 import { signJwt } from '../server/middleware/auth';
+import { DEFAULT_CORS_ALLOW_HEADERS } from '../server/middleware/cors';
 import { verifyPkce } from '../server/middleware/pkce';
 import type { RawRoute } from '../server/types';
 
@@ -107,7 +108,7 @@ export interface OAuthProviderConfig {
 const PUBLIC_CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Headers': DEFAULT_CORS_ALLOW_HEADERS,
 };
 
 const AS_METADATA_PATH = '/.well-known/oauth-authorization-server';

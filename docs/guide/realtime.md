@@ -219,6 +219,35 @@ onSuccess: () => bridge.markFresh(['notes'])
 to the socket and call `queryClient` directly. The bridge just centralises the
 event-to-cache mapping and the echo guard.
 
+### Entity cache handlers
+
+The created / updated / deleted events of one entity almost always patch the
+cache the same way: prepend to the list, replace by id, remove by id — plus the
+detail query. `createEntityCacheHandlers` builds those three handlers from a
+small config, so you wire them onto the bridge instead of hand-rolling the
+updater per entity:
+
+```ts
+import { createEntityCacheHandlers } from 'stitchkit/react'
+
+const widgetCache = createEntityCacheHandlers<Widget>({
+  getId: (w) => w.id,
+  listKey: ['widgets'],
+  detailKey: (id) => ['widgets', id],
+})
+
+createCacheBridge({ socket, queryClient, handlers: {
+  widgetCreated: widgetCache.created,
+  widgetUpdated: widgetCache.updated,
+  widgetDeleted: widgetCache.deleted,
+}})
+```
+
+It patches stitchkit's `Paginated<T>` list envelope (plain or an infinite list
+of pages) and honours the same `isFresh` echo guard. It deliberately does **not**
+flatten pages or add a `useAllX` surface — flattening stays in the component;
+this only keeps the cache correct.
+
 ## Raw binary lane (Bun)
 
 Socket.IO carries binary fine — for most streams a binary event (`pcm(frame)`)

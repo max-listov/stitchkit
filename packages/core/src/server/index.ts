@@ -13,6 +13,11 @@ export {
 } from '../contract';
 export { cacheHeaders, createCache } from './cache';
 export { createHandler, createServer } from './create';
+export {
+  createErrorHook,
+  type ErrorHookConfig,
+  type ResolvedError,
+} from './error-hook';
 export { createEventBus, type EventBus } from './event-bus';
 export {
   type ByteRange,
@@ -46,6 +51,7 @@ export {
   type CorsConfig,
   corsHeaders,
   corsPreflightResponse,
+  DEFAULT_CORS_ALLOW_HEADERS,
 } from './middleware/cors';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
 export { parseMultipart } from './multipart';

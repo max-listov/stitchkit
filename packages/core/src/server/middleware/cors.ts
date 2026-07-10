@@ -6,6 +6,21 @@ export interface CorsConfig {
 }
 
 /**
+ * The default `Access-Control-Allow-Headers` — the request headers stitchkit's
+ * own clients send, so a browser preflight passes out of the box. The single
+ * source shared by the HTTP server and the tool/OAuth CORS handlers (they used
+ * to carry three divergent literals).
+ *
+ * - `Content-Type` / `Authorization` — bodies and bearer auth.
+ * - `X-Trace-Id` — the simple inbound trace id (`resolveTraceId` reads it).
+ * - `traceparent` / `tracestate` — W3C Trace Context, what
+ *   `createHttpClient({ trace: true })` emits on every request; without it that
+ *   feature dies on the cross-origin preflight.
+ */
+export const DEFAULT_CORS_ALLOW_HEADERS =
+  'Content-Type, Authorization, X-Trace-Id, traceparent, tracestate';
+
+/**
  * Reject an unsafe CORS config at construction. `credentials: true` with a
  * wildcard origin would reflect *any* caller's `Origin` with
  * `Allow-Credentials: true` — every site could make authenticated cross-origin
@@ -46,8 +61,7 @@ export function corsHeaders(
 
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': config.methods ?? 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers':
-      config.headers ?? 'Content-Type, Authorization, X-Trace-Id',
+    'Access-Control-Allow-Headers': config.headers ?? DEFAULT_CORS_ALLOW_HEADERS,
   };
   if (allowOrigin !== undefined) {
     headers['Access-Control-Allow-Origin'] = allowOrigin;

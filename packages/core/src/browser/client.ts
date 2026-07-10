@@ -24,6 +24,19 @@ function withTimeout(
   return { ...options, timeout };
 }
 
+/**
+ * Validate a resolved response through the endpoint's `output` schema when it
+ * declares one — the contract's documented guarantee ("the client parses the
+ * response through it"). A `204` / empty-body result (`undefined`) passes
+ * through unparsed, exactly as the bare-fetch path handles it. Applied on both
+ * client paths so the guarantee cannot depend on which one a project wired.
+ */
+function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<unknown> {
+  const schema = endpoint.output;
+  if (!schema) return result;
+  return result.then((value) => (value === undefined ? undefined : schema.parse(value)));
+}
+
 type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
 
 /** Narrow an unknown value to a query-param array (`string`/`number` items). */
@@ -201,22 +214,35 @@ function createHttpMethod(
       if (!isMultipartFile(file)) {
         throw new Error(`Missing multipart file field: ${endpoint.multipart}`);
       }
+      // Multipart uses the endpoint's declared body verb — a `PUT` upload must
+      // not silently become a `POST` (the bare-fetch path already honours it).
+      if (httpMethod === 'get' || httpMethod === 'delete') {
+        throw new Error(
+          `Multipart endpoint ${endpoint.method} ${endpoint.path} must be POST / PUT / PATCH`,
+        );
+      }
       const formData = new FormData();
       appendMultipartFile(formData, endpoint.multipart, file);
       appendFormFields(formData, firstArg, new Set([...prefixKeys, endpoint.multipart]));
-      return client.post(url, formData, withTimeout(undefined, endpoint.timeout));
+      return withOutput(
+        endpoint,
+        client[httpMethod](url, formData, withTimeout(undefined, endpoint.timeout)),
+      );
     }
 
     if (isGet) {
       const params = collectQueryParams(firstArg, prefixKeys, endpoint);
-      return client.get(url, withTimeout(params ? { params } : undefined, endpoint.timeout));
+      return withOutput(
+        endpoint,
+        client.get(url, withTimeout(params ? { params } : undefined, endpoint.timeout)),
+      );
     }
 
     if (httpMethod === 'delete') {
       const params = collectQueryParams(firstArg, prefixKeys, endpoint);
-      return client.delete(
-        url,
-        withTimeout(params ? { params } : undefined, endpoint.timeout),
+      return withOutput(
+        endpoint,
+        client.delete(url, withTimeout(params ? { params } : undefined, endpoint.timeout)),
       );
     }
 
@@ -226,10 +252,13 @@ function createHttpMethod(
         payload[key] = value;
       }
     }
-    return client[httpMethod](
-      url,
-      Object.keys(payload).length > 0 ? payload : undefined,
-      withTimeout(undefined, endpoint.timeout),
+    return withOutput(
+      endpoint,
+      client[httpMethod](
+        url,
+        Object.keys(payload).length > 0 ? payload : undefined,
+        withTimeout(undefined, endpoint.timeout),
+      ),
     );
   };
 }
@@ -259,6 +288,12 @@ function createFetchMethod(
       Accept: 'application/json',
       ...(typeof config.headers === 'function' ? config.headers() : config.headers),
     };
+
+    // Apply the endpoint's declared `timeout` — the HttpClient path already did;
+    // the bare-fetch path used to ignore it, so a declared timeout silently did
+    // nothing here.
+    const signal =
+      endpoint.timeout !== undefined ? AbortSignal.timeout(endpoint.timeout) : undefined;
 
     const isQuery = inputIsQuery(endpoint.method);
     const hasBody = !isQuery && !endpoint.multipart && endpoint.input && args;
@@ -301,6 +336,7 @@ function createFetchMethod(
         headers,
         credentials: config.credentials,
         body: formData,
+        signal,
       });
 
       if (!res.ok) {
@@ -317,6 +353,7 @@ function createFetchMethod(
       method: endpoint.method,
       headers,
       credentials: config.credentials,
+      signal,
       ...(hasBody && {
         body: JSON.stringify(stripParams(hasBody, endpoint.path, prefixKeys)),
       }),

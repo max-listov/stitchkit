@@ -251,3 +251,51 @@ onError: (ctx, err) => {
   // … your own AppError / normalizeError path
 }
 ```
+
+## Domain errors — `defineErrors`
+
+Declaring your app's error codes once gives you typed throwers on the server and
+a code table the client matches with autocomplete — instead of reading the raw
+`message` string (which breaks the moment a code expects a string but gets an
+object):
+
+```ts
+export const { errors, codes, isCode } = defineErrors({
+  SESSION_NOT_FOUND: 404,
+  QUOTA_EXCEEDED: 429,
+})
+
+// server — a typed thrower, the right HTTP status baked in
+throw errors.SESSION_NOT_FOUND('no such session')
+
+// client — match the code, never a magic string
+if (err instanceof ApiError && err.code === codes.SESSION_NOT_FOUND) { … }
+```
+
+The `code` rides through unchanged in both the HTTP envelope and the MCP tool
+result, so one vocabulary covers every transport. The codes are yours; the core
+stays domain-free.
+
+## `createErrorHook`
+
+`createErrorHook` is the code-map above, packaged — you supply the exhaustive
+`codeMap` and the envelope shape, it does the normalisation (including the
+never-leak-an-internal-message rule for a raw throw):
+
+```ts
+const onError = createErrorHook({
+  codeMap: {
+    BAD_REQUEST: 'bad_request', VALIDATION_ERROR: 'bad_request',
+    UNAUTHORIZED: 'unauthenticated', FORBIDDEN: 'forbidden',
+    NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
+    CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
+    INTERNAL_SERVER_ERROR: 'internal',
+  } satisfies Record<StitchErrorCode, string>,
+  render: (info) => ({ ok: false, error: { code: info.code, message: info.message } }),
+})
+
+createServer({ services, hooks: { onError } })
+```
+
+Codes you threw yourself (not stitchkit's) pass through `codeMap` unchanged; the
+`satisfies Record<StitchErrorCode, …>` keeps the map exhaustive across upgrades.

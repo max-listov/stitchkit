@@ -1,4 +1,5 @@
 import { type ZodType, z } from 'zod';
+import { base64UrlToBytes, bytesToBase64Url } from '../internal/base64url';
 
 /**
  * Cursor-paginated response envelope — the family standard.
@@ -30,21 +31,16 @@ export function paginatedSchema<T extends ZodType>(itemSchema: T) {
 // it lives here. The keyset WHERE clause stays in the app (it is ORM-specific) —
 // this is only the string ⇄ value codec.
 //
-// base64url over UTF-8 via `btoa`/`atob` (not Node `Buffer`) — works in the
-// server, the typed client and the browser; UTF-8-safe, so a non-ASCII sort
-// value (a name, an emoji) round-trips, which a naïve `btoa(JSON)` corrupts.
+// UTF-8-safe base64url: a non-ASCII sort value (a name, an emoji) round-trips,
+// which a naïve `btoa(JSON)` corrupts. The byte codec is shared (see
+// `internal/base64url`); this wraps it around a UTF-8 string.
 
 function toBase64Url(str: string): string {
-  const bytes = new TextEncoder().encode(str);
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return bytesToBase64Url(new TextEncoder().encode(str));
 }
 
 function fromBase64Url(value: string): string {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
-  return new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0)));
+  return new TextDecoder().decode(base64UrlToBytes(value));
 }
 
 /**
