@@ -68,20 +68,92 @@ describe('multipart parsing', () => {
     expect(data.error).toContain('Missing file field');
   });
 
-  test('parses JSON string fields', async () => {
+  test('a numeric-looking id stays a string under z.string() (no content sniffing)', async () => {
+    // The regression this guards: `'33111715'` used to be JSON-parsed into a
+    // number, failing the `z.string()` schema at random by id digits.
     const form = new FormData();
     form.append('file', new File(['data'], 'f.bin'));
-    form.append('title', 'Test');
-    form.append('category', 'media');
+    form.append('title', '33111715');
 
     const res = await fetch(`http://localhost:${PORT}`, { method: 'POST', body: form });
     const data = await res.json();
-    expect(data.fields.title).toBe('Test');
+    expect(res.status).toBe(200);
+    expect(data.fields.title).toBe('33111715');
   });
 
   afterAll(() => {
     server?.stop();
   });
+});
+
+// ─── Field typing — the schema owns the type, never the content ──────────────
+
+describe('multipart field typing', () => {
+  const PORT = 9889;
+
+  // The convention: text fields arrive as strings; the schema coerces. A field
+  // that should be JSON opts in explicitly via z.preprocess.
+  const TypedSchema = z.object({
+    count: z.coerce.number(),
+    active: z.coerce.boolean(),
+    id: z.string(),
+    tags: z.preprocess((v) => JSON.parse(String(v)), z.array(z.string())),
+  });
+
+  let server: ReturnType<typeof Bun.serve>;
+
+  test('setup server', () => {
+    server = Bun.serve({
+      port: PORT,
+      async fetch(req) {
+        try {
+          const result = await parseMultipart(req, 'file', TypedSchema);
+          return Response.json({ fields: result.fields });
+        } catch (e) {
+          return Response.json({ error: (e as Error).message }, { status: 400 });
+        }
+      },
+    });
+  });
+
+  test('coerces via the schema, and JSON is an explicit opt-in', async () => {
+    const form = new FormData();
+    form.append('file', new File(['x'], 'f.bin'));
+    form.append('count', '5');
+    form.append('active', 'true');
+    form.append('id', 'ab12cd34');
+    form.append('tags', JSON.stringify(['a', 'b']));
+
+    const res = await fetch(`http://localhost:${PORT}`, { method: 'POST', body: form });
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    // z.coerce turns the strings into their types; the schema decided, not the value.
+    expect(data.fields).toEqual({ count: 5, active: true, id: 'ab12cd34', tags: ['a', 'b'] });
+  });
+
+  test('with no schema, fields come back as raw strings', async () => {
+    // No schema — the fields are exactly the decoded strings, nothing coerced or
+    // sniffed. Served over HTTP so the multipart boundary is real.
+    const rawServer = Bun.serve({
+      port: 9894,
+      async fetch(req) {
+        const result = await parseMultipart(req, 'file');
+        return Response.json({ fields: result.fields });
+      },
+    });
+    try {
+      const form = new FormData();
+      form.append('file', new File(['x'], 'f.bin'));
+      form.append('count', '42');
+      form.append('flag', 'true');
+      const res = await fetch('http://localhost:9894', { method: 'POST', body: form });
+      expect((await res.json()).fields).toEqual({ count: '42', flag: 'true' });
+    } finally {
+      rawServer.stop();
+    }
+  });
+
+  afterAll(() => server?.stop());
 });
 
 describe('multipart contract integration', () => {

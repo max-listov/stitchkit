@@ -1,6 +1,6 @@
 import type { ZodType } from 'zod';
 import { badRequest } from '../contract';
-import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
+import { isUnsafeKey } from '../internal/safe-json';
 
 /** A parsed multipart request — the uploaded `file` and the validated `fields`. */
 export interface MultipartResult {
@@ -51,9 +51,16 @@ async function readBodyCapped(
 
 /**
  * Parse a `multipart/form-data` request — extract the file at `fileField` and
- * the remaining fields (each JSON-decoded, then validated by `fieldsSchema`
- * when given). Rejects with a 400 if the file is missing or the upload exceeds
- * `maxBytes` (default 25 MB).
+ * the remaining fields, then validate them with `fieldsSchema` when given.
+ * Rejects with a 400 if the file is missing or the upload exceeds `maxBytes`
+ * (default 25 MB).
+ *
+ * A multipart text field is always a **string** (per the spec) and is handed to
+ * the schema as one — the schema decides its type, exactly as with query params:
+ * `z.coerce.number()` for a number, `z.coerce.boolean()` for a boolean, and
+ * `z.preprocess((v) => JSON.parse(String(v)), Schema)` to opt a field into JSON.
+ * Content is never sniffed to guess a type — the contract owns the type, not the
+ * value (so an id like `'33111715'` never turns into a number under a `z.string()`).
  */
 export async function parseMultipart(
   req: Request,
@@ -74,18 +81,14 @@ export async function parseMultipart(
     badRequest(`Missing file field: ${fileField}`);
   }
 
-  const fields: Record<string, unknown> = {};
+  const fields: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (key === fileField) continue;
     // A field literally named `__proto__` would pollute the prototype chain.
     if (isUnsafeKey(key)) continue;
-    if (typeof value === 'string') {
-      try {
-        fields[key] = safeJsonParse(value);
-      } catch {
-        fields[key] = value;
-      }
-    }
+    // Text fields stay raw strings — the schema coerces (see the doc above).
+    // Non-string entries are other `File`s, which are not form fields here.
+    if (typeof value === 'string') fields[key] = value;
   }
 
   return { file, fields: fieldsSchema ? fieldsSchema.parse(fields) : fields };

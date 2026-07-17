@@ -206,6 +206,25 @@ upload: {
 The client sends a `multipart/form-data` request; the field value must be a
 `Blob`. See [HTTP server → multipart](./server.md#multipart).
 
+### Multipart text fields
+
+Any non-file fields sent alongside the file are validated by the endpoint's
+`input` schema. A multipart text field is **always a string** (per the spec) —
+the schema owns its type, exactly as with [query input](#query-input-get--delete):
+
+```ts
+input: z.object({
+  id: z.string(),               // an id like '33111715' stays a string
+  count: z.coerce.number(),     // '5' → 5
+  active: z.coerce.boolean(),   // 'true' → true
+  meta: z.preprocess((v) => JSON.parse(String(v)), MetaSchema),  // opt a field into JSON
+})
+```
+
+The content is never sniffed to guess a type — a field is a string until the
+schema coerces it. Send a JSON blob as a stringified field and parse it with
+`z.preprocess`; do not rely on the framework to auto-decode it.
+
 ## Pagination
 
 Every list endpoint should return the cursor envelope — one shape, one infinite-

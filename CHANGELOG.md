@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-07-17
+
+### ⚠️ Breaking changes
+
+- **Multipart text fields are no longer JSON-decoded — they arrive as raw
+  strings, and the schema coerces.** `parseMultipart` used to run every text
+  field through `JSON.parse`, so a field's type depended on its *content*: an id
+  like `'33111715'` silently became a number and failed a `z.string()` schema by
+  the luck of its digits (`'true'` → boolean, `'[1,2]'` → array, and so on). A
+  multipart text field is always a string per the spec; the type belongs to the
+  contract, not the value — the same rule as query params. Update a multipart
+  `input` field to coerce, and opt a JSON field in explicitly:
+  `// before: z.number()` → `// after: z.coerce.number()`;
+  `// before: z.boolean()` → `// after: z.coerce.boolean()`;
+  `// before: z.object({ … })` → `// after: z.preprocess((v) => JSON.parse(String(v)), z.object({ … }))`.
+  A field already typed `z.string()` now works as written (it previously broke on
+  numeric-looking values). Removing the value-level `JSON.parse` also drops a
+  prototype-pollution vector; the `__proto__` key guard stays.
+
 ## [0.19.0] — 2026-07-10
 
 ### Fixed
@@ -1039,7 +1058,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/max-listov/stitchkit/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/max-listov/stitchkit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/max-listov/stitchkit/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/max-listov/stitchkit/compare/v0.16.0...v0.17.0
