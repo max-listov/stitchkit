@@ -11,6 +11,10 @@ export {
   type StitchErrorCode,
   unauthorized,
 } from '../contract';
+// The framework's canonical error classification — reuse it in a bespoke
+// `onError` (or for log attribution) instead of reinventing the ZodError → 400
+// mapping. `createErrorHook` and the framework default both run through these.
+export { errorCode, formatZodError, normalizeError } from '../internal/errors';
 export { cacheHeaders, createCache } from './cache';
 export { createHandler, createServer } from './create';
 export {

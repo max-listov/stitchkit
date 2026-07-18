@@ -144,6 +144,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ByteRange` | _type_ | an inclusive `{ start, end }` byte range |
 | `respondJson` | function | a raw route's JSON response (`204` for null/undefined) |
 | `errorResponse` | function | any thrown value → the framework error envelope + `x-request-id` |
+| `normalizeError` | function | any thrown value → an `AppError` (`ZodError` → `VALIDATION_ERROR` 400, else generic 500) — the framework's canonical classification, for a bespoke `onError` |
+| `errorCode` | function | the stable error code for a thrown value (side-effect-free — for log attribution) |
+| `formatZodError` | function | a `ZodError` → a readable, field-summarised string |
 | `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
 | `HandlerConfig` | _type_ | config for `createHandler` (runtime-agnostic) |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun) |

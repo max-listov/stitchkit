@@ -9,6 +9,10 @@
  * of leaking stitchkit's code to the wire. The envelope stays app-owned via
  * `render`, so the core prescribes no domain shape (ADR 0002).
  *
+ * The thrown value is classified through the framework's own `normalizeError`
+ * first, so a `ZodError` (invalid input) is an honest `VALIDATION_ERROR` 400 —
+ * not a 500 — exactly as the framework default would render it.
+ *
  * ```ts
  * const onError = createErrorHook({
  *   codeMap: {
@@ -23,7 +27,8 @@
  * createServer({ services, hooks: { onError } });
  * ```
  */
-import { AppError, isStitchErrorCode, type StitchErrorCode } from '../contract';
+import { isStitchErrorCode, type StitchErrorCode } from '../contract';
+import { normalizeError } from '../internal/errors';
 import type { LifecycleHooks } from './types';
 
 /** The normalised error handed to `render` — code already remapped. */
@@ -32,7 +37,7 @@ export interface ResolvedError {
   code: string;
   /** HTTP status. */
   status: number;
-  /** Safe message — the `AppError` message, or a generic string for a raw throw. */
+  /** Safe message — the `AppError` / `ZodError` summary, or a generic string for a raw throw. */
   message: string;
   /** Structured details, when the thrown `AppError` carried them. */
   details?: Record<string, unknown>;
@@ -59,17 +64,22 @@ export function createErrorHook<TWireCode extends string = string>(
   config: ErrorHookConfig<TWireCode>,
 ): NonNullable<LifecycleHooks['onError']> {
   return (_ctx, error) => {
-    const isApp = AppError.is(error);
-    // A raw (non-`AppError`) throw is an internal fault — never leak its message.
-    const rawCode = isApp ? error.code : 'INTERNAL_SERVER_ERROR';
+    // Normalise first — the same classification the framework default uses:
+    // a `ZodError` (bad input) becomes `VALIDATION_ERROR` 400, an `AppError`
+    // keeps its code / status / details, anything else becomes a generic 500
+    // with no message leak. Without this a client fault (invalid input) would
+    // reach `render` as a raw non-`AppError` and be dressed as a 500.
+    const appErr = normalizeError(error);
     const code =
-      config.codeMap && isStitchErrorCode(rawCode) ? config.codeMap[rawCode] : rawCode;
+      config.codeMap && isStitchErrorCode(appErr.code)
+        ? config.codeMap[appErr.code]
+        : appErr.code;
     const info: ResolvedError = {
       code,
-      status: isApp ? error.status : 500,
-      message: isApp ? error.message : 'Internal server error',
-      details: isApp ? error.details : undefined,
-      hint: isApp ? error.hint : undefined,
+      status: appErr.status,
+      message: appErr.message,
+      details: appErr.details,
+      hint: appErr.hint,
     };
     config.onError?.(error, info);
     return new Response(JSON.stringify(config.render(info)), {

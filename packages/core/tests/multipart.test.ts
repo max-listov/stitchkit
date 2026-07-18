@@ -92,10 +92,12 @@ describe('multipart field typing', () => {
   const PORT = 9889;
 
   // The convention: text fields arrive as strings; the schema coerces. A field
-  // that should be JSON opts in explicitly via z.preprocess.
+  // that should be JSON opts in explicitly via z.preprocess. Booleans use
+  // `z.stringbool()`, NOT `z.coerce.boolean()` (which is `Boolean(str)` — every
+  // non-empty string, including 'false', is truthy).
   const TypedSchema = z.object({
     count: z.coerce.number(),
-    active: z.coerce.boolean(),
+    active: z.stringbool(),
     id: z.string(),
     tags: z.preprocess((v) => JSON.parse(String(v)), z.array(z.string())),
   });
@@ -129,6 +131,20 @@ describe('multipart field typing', () => {
     expect(res.status).toBe(200);
     // z.coerce turns the strings into their types; the schema decided, not the value.
     expect(data.fields).toEqual({ count: 5, active: true, id: 'ab12cd34', tags: ['a', 'b'] });
+  });
+
+  test("z.stringbool() decodes 'false' correctly (z.coerce.boolean would give true)", async () => {
+    const form = new FormData();
+    form.append('file', new File(['x'], 'f.bin'));
+    form.append('count', '0');
+    form.append('active', 'false');
+    form.append('id', 'x');
+    form.append('tags', '[]');
+
+    const res = await fetch(`http://localhost:${PORT}`, { method: 'POST', body: form });
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.fields.active).toBe(false);
   });
 
   test('with no schema, fields come back as raw strings', async () => {

@@ -57,8 +57,9 @@ async function readBodyCapped(
  *
  * A multipart text field is always a **string** (per the spec) and is handed to
  * the schema as one — the schema decides its type, exactly as with query params:
- * `z.coerce.number()` for a number, `z.coerce.boolean()` for a boolean, and
- * `z.preprocess((v) => JSON.parse(String(v)), Schema)` to opt a field into JSON.
+ * `z.coerce.number()` for a number, `z.stringbool()` for a boolean (NOT
+ * `z.coerce.boolean()`, which is `Boolean(str)` — `'false'` would become `true`),
+ * and `z.preprocess((v) => JSON.parse(String(v)), Schema)` to opt a field into JSON.
  * Content is never sniffed to guess a type — the contract owns the type, not the
  * value (so an id like `'33111715'` never turns into a number under a `z.string()`).
  */

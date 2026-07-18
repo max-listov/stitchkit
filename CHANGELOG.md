@@ -15,6 +15,36 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-07-18
+
+### Fixed
+
+- **`createErrorHook` now returns an honest `400 VALIDATION_ERROR` for invalid
+  input, not a `500`.** It classified any non-`AppError` as
+  `INTERNAL_SERVER_ERROR`, so a `ZodError` from input validation — a client fault
+  — was dressed as a server fault (every consumer had to add its own ZodError
+  branch). It now runs the thrown value through the framework's `normalizeError`
+  first, exactly as the framework default does: `ZodError` → `VALIDATION_ERROR`
+  400 (remapped through `codeMap` like any stitch code), `AppError` keeps its
+  code/status, anything else stays a generic 500 with no message leak.
+
+### Added
+
+- **`normalizeError`, `errorCode` and `formatZodError` are exported from
+  `stitchkit/server`.** The framework's canonical error classification — reuse it
+  in a bespoke `onError` (or for log attribution) instead of reinventing the
+  `ZodError` → 400 mapping. `createErrorHook` and the framework default both run
+  through `normalizeError`.
+
+### Docs
+
+- **Corrected the multipart / query boolean-coercion guidance to `z.stringbool()`
+  (Zod v4).** The 0.20.0 migration note recommended `z.coerce.boolean()` for a
+  boolean field, but that is `Boolean(str)` — every non-empty string, including
+  `'false'`, is truthy, so a `'false'` field silently became `true`.
+  `z.stringbool()` decodes `'true'` / `'false'` (and `'1'` / `'0'`, `'yes'` /
+  `'no'`) correctly. Applies to both multipart and query-string boolean fields.
+
 ## [0.20.0] — 2026-07-17
 
 ### ⚠️ Breaking changes
@@ -28,7 +58,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   contract, not the value — the same rule as query params. Update a multipart
   `input` field to coerce, and opt a JSON field in explicitly:
   `// before: z.number()` → `// after: z.coerce.number()`;
-  `// before: z.boolean()` → `// after: z.coerce.boolean()`;
+  `// before: z.boolean()` → `// after: z.stringbool()` (Zod v4 — **not**
+  `z.coerce.boolean()`, which is `Boolean(str)`, so `'false'` would become `true`);
   `// before: z.object({ … })` → `// after: z.preprocess((v) => JSON.parse(String(v)), z.object({ … }))`.
   A field already typed `z.string()` now works as written (it previously broke on
   numeric-looking values). Removing the value-level `JSON.parse` also drops a
@@ -1058,7 +1089,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/max-listov/stitchkit/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/max-listov/stitchkit/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/max-listov/stitchkit/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/max-listov/stitchkit/compare/v0.17.0...v0.18.0

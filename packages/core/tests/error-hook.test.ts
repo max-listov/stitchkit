@@ -3,6 +3,7 @@
  * stitchkit's codes to the app's, never leaking an internal message.
  */
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import { AppError, type RuntimeContext, type StitchErrorCode } from '../src/contract';
 import { createErrorHook } from '../src/server';
 
@@ -49,6 +50,18 @@ describe('createErrorHook', () => {
       ok: false,
       error: { code: 'internal', message: 'Internal server error' },
     });
+  });
+
+  test('a ZodError (invalid input) is an honest 400, not a 500', async () => {
+    // The regression this locks: a validation failure used to reach `render` as
+    // a raw non-AppError and be dressed as a 500. Normalising first makes it a
+    // VALIDATION_ERROR 400 — remapped through `codeMap` like any stitch code.
+    const zodError = z.object({ name: z.string() }).safeParse({ name: 42 }).error;
+    const res = await onError(ctx, zodError);
+    expect(res?.status).toBe(400);
+    const body = await res?.json();
+    expect(body.error.code).toBe('bad_request'); // VALIDATION_ERROR → codeMap
+    expect(body.error.message).toContain('name'); // the offending field surfaces
   });
 
   test('the onError observer sees the raw error and resolved info', async () => {

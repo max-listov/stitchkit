@@ -112,8 +112,9 @@ await api.search({ q: 'x', filter: { status: 'active' } })
 
 Flatten the field (`status: 'active'`) or move the operation to a body verb
 (`POST`). Remember the server parses query values from **strings** — use
-`z.coerce.number()` / `z.coerce.boolean()` in a query-input schema for
-non-string fields.
+`z.coerce.number()` for numbers and `z.stringbool()` for booleans in a
+query-input schema (not `z.coerce.boolean()`, which is `Boolean(str)`, so
+`'false'` would become `true`).
 
 ## Transports
 
@@ -216,7 +217,7 @@ the schema owns its type, exactly as with [query input](#query-input-get--delete
 input: z.object({
   id: z.string(),               // an id like '33111715' stays a string
   count: z.coerce.number(),     // '5' → 5
-  active: z.coerce.boolean(),   // 'true' → true
+  active: z.stringbool(),       // 'true' → true, 'false' → false
   meta: z.preprocess((v) => JSON.parse(String(v)), MetaSchema),  // opt a field into JSON
 })
 ```

@@ -299,3 +299,18 @@ createServer({ services, hooks: { onError } })
 
 Codes you threw yourself (not stitchkit's) pass through `codeMap` unchanged; the
 `satisfies Record<StitchErrorCode, …>` keeps the map exhaustive across upgrades.
+
+Invalid input (a `ZodError`) is classified as `VALIDATION_ERROR` 400 before it
+reaches `render` — a client fault is an honest 400, not a 500. If you write a
+**bespoke** `onError` instead of using `createErrorHook`, run the thrown value
+through the exported `normalizeError` to get the same classification (a raw
+`ZodError` reaches your hook untouched, so the framework can inspect it):
+
+```ts
+import { normalizeError } from 'stitchkit/server'
+
+onError: (ctx, err) => {
+  const e = normalizeError(err)   // ZodError → VALIDATION_ERROR 400, else generic 500
+  return jsonError(e.code, e.status, e.message)
+}
+```
