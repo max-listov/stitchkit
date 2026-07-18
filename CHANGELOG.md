@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-07-18
+
+### Added
+
+- **`VALIDATION_ERROR` now carries the offending fields as structured
+  `details.issues`** — `{ path, code, message }[]` — alongside the text
+  `message`. A machine client (or an MCP tool caller) matches on fields instead
+  of parsing the message. It flows through the default error envelope,
+  `normalizeError`, and `createErrorHook`'s `render` (`info.details.issues`), so
+  the batteries-included path now serves a machine client without a hand-rolled
+  `ZodError` branch. Additive — `details` was absent before.
+- **`zodIssues(error)` exported from `stitchkit/server`** (with `ZodIssueSummary`)
+  — project a `ZodError` into that structured `{ path, code, message }[]`, the
+  machine-readable sibling of `formatZodError`. Use it in a bespoke `onError`.
+
+### Docs
+
+- Documented the `onError` contract explicitly: a hook receives the **raw**
+  thrown value (a `ZodError`, an `AppError`, anything) — the framework normalises
+  only when no hook is set. Call `normalizeError` / `zodIssues` yourself for the
+  canonical classification or structured fields.
+
 ## [0.21.0] — 2026-07-18
 
 ### Fixed
@@ -1089,7 +1111,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/max-listov/stitchkit/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/max-listov/stitchkit/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/max-listov/stitchkit/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/max-listov/stitchkit/compare/v0.18.0...v0.19.0

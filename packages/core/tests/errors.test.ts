@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError, appError, isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
-import { formatZodError, normalizeError } from '../src/internal/errors';
+import { formatZodError, normalizeError, zodIssues } from '../src/internal/errors';
 
 describe('stitch error registry', () => {
   test('STITCH_ERROR_STATUS maps codes → status (incl. METHOD_NOT_ALLOWED 405)', () => {
@@ -77,6 +77,21 @@ describe('normalizeError', () => {
     expect(appErr.message).toContain('name');
   });
 
+  test('ZodError carries structured field issues in details', () => {
+    const schema = z.object({ name: z.string(), age: z.number() });
+    const result = schema.safeParse({ name: 123, age: 'x' });
+    if (result.success) throw new Error('Expected failure');
+
+    const appErr = normalizeError(result.error);
+    // Machine clients match on fields, not the text message.
+    expect(appErr.details?.issues).toEqual([
+      { path: 'name', code: 'invalid_type', message: expect.any(String) },
+      { path: 'age', code: 'invalid_type', message: expect.any(String) },
+    ]);
+    // And the details survive the envelope.
+    expect(appErr.toJSON().error.details).toBeDefined();
+  });
+
   test('generic Error → INTERNAL_SERVER_ERROR with a generic message', () => {
     const err = normalizeError(new Error('Something broke'));
     expect(err.code).toBe('INTERNAL_SERVER_ERROR');
@@ -130,5 +145,23 @@ describe('formatZodError', () => {
     const lines = formatted.split('\n').filter(Boolean);
     expect(lines.length).toBeLessThanOrEqual(6);
     expect(formatted).toContain('more issues');
+  });
+});
+
+describe('zodIssues', () => {
+  test('projects every issue to { path, code, message }', () => {
+    const schema = z.object({ user: z.object({ name: z.string() }) });
+    const result = schema.safeParse({ user: { name: 5 } });
+    if (result.success) throw new Error('Expected failure');
+
+    expect(zodIssues(result.error)).toEqual([
+      { path: 'user.name', code: 'invalid_type', message: expect.any(String) },
+    ]);
+  });
+
+  test('a root-level issue reports (root)', () => {
+    const result = z.string().safeParse(123);
+    if (result.success) throw new Error('Expected failure');
+    expect(zodIssues(result.error)[0]?.path).toBe('(root)');
   });
 });

@@ -216,7 +216,27 @@ transport (HTTP, MCP, agent). → ADR 0032.
 `details` and `hint` are included when present. On HTTP this is the response
 body with the matching status; for an MCP or agent call the same `code` and
 `details` come back as a tool error. A schema-validation failure on the request
-is turned into a `400 VALIDATION_ERROR` automatically.
+is turned into a `400 VALIDATION_ERROR` automatically — and it carries the
+offending fields as structured `details.issues`, so a machine client matches on
+them instead of parsing the text `message`:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "name: Invalid input\nage: Invalid input",
+    "details": {
+      "issues": [
+        { "path": "name", "code": "invalid_type", "message": "Invalid input" },
+        { "path": "age",  "code": "invalid_type", "message": "Invalid input" }
+      ]
+    }
+  }
+}
+```
+
+Use the exported `zodIssues(error)` to build the same structured list from a
+`ZodError` in your own hook.
 
 ### On the client
 
@@ -301,10 +321,14 @@ Codes you threw yourself (not stitchkit's) pass through `codeMap` unchanged; the
 `satisfies Record<StitchErrorCode, …>` keeps the map exhaustive across upgrades.
 
 Invalid input (a `ZodError`) is classified as `VALIDATION_ERROR` 400 before it
-reaches `render` — a client fault is an honest 400, not a 500. If you write a
-**bespoke** `onError` instead of using `createErrorHook`, run the thrown value
-through the exported `normalizeError` to get the same classification (a raw
-`ZodError` reaches your hook untouched, so the framework can inspect it):
+reaches `render` — a client fault is an honest 400, not a 500 — and the
+offending fields arrive as structured `info.details.issues`, so your `render`
+can surface them to a machine client without parsing the message.
+
+If you write a **bespoke** `onError` instead of using `createErrorHook`, run the
+thrown value through the exported `normalizeError` to get the same classification
+(a raw `ZodError` reaches your hook untouched, so the framework can inspect it —
+call `zodIssues(err)` yourself if you want the structured fields):
 
 ```ts
 import { normalizeError } from 'stitchkit/server'
