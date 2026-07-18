@@ -178,7 +178,10 @@ beforeHandle: (ctx, endpoint) => {
 }
 ```
 
-`meta` is **app-private** — it is never serialized into the OpenAPI document.
+`meta` is **app-private** — it is never serialized into the OpenAPI document. It
+can still *drive* generation: `generateOpenApiDocument`'s `includeMethod` reads
+it to curate a public spec (e.g. `meta: { public: true }`), without ever emitting
+`meta` itself — see [Curating the spec](./server.md#curating-the-spec--includemethod).
 
 > **Declare a meta type as a `type`, an inline literal, or with `satisfies` — not
 > an `interface`.** A TS `interface` has no implicit index signature (it can be

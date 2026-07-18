@@ -14,7 +14,7 @@
 import { inputIsQuery } from '../internal/http-input';
 import { isRecord } from '../internal/typed';
 import { jsonSchemaFields, toJsonSchema } from '../tools/json-schema';
-import type { RawRoute, ServiceDef } from './types';
+import type { MethodDef, RawRoute, ServiceDef } from './types';
 
 export interface OpenApiInfo {
   title: string;
@@ -35,6 +35,19 @@ export interface OpenApiConfig {
   groups?: Array<{ pathPrefix?: string; services: ServiceDef[] }>;
   /** `servers` block for the spec. */
   servers?: OpenApiServer[];
+  /**
+   * Emit only the methods this predicate keeps — a curated public spec instead
+   * of the whole HTTP surface. The predicate decides the policy (the core stays
+   * generic): filter on `method.scope`, `method.meta` (the recommended
+   * declarative allowlist — mark endpoints `meta: { public: true }` and keep
+   * `(m) => m.meta?.public === true`), `method.key`, anything on the method.
+   * Omit to include every HTTP method (the default).
+   *
+   * This controls what the spec **advertises**, not access — a hidden endpoint
+   * is still callable; the auth `scope` gate is the actual guard. Build a
+   * separate filtered document for a public route (see the guide).
+   */
+  includeMethod?: (method: Readonly<MethodDef>) => boolean;
 }
 
 export interface OpenApiDocument {
@@ -115,7 +128,9 @@ function errorResponses(scope: string | undefined): Record<string, unknown> {
 /**
  * Generate an OpenAPI 3.1 document from contract services. Only methods exposed
  * on HTTP are included — a method whose `expose` omits `'HTTP'` (an MCP/agent
- * only tool) is skipped, matching the router's own route-building rule.
+ * only tool) is skipped, matching the router's own route-building rule. Pass
+ * `includeMethod` to emit a curated subset (a public spec) instead of the whole
+ * surface.
  */
 export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument {
   const groups = [
@@ -130,6 +145,13 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
   for (const { pathPrefix, service } of groups) {
     for (const [key, method] of Object.entries(service.methods)) {
       if (method.expose && !method.expose.includes('HTTP')) continue;
+      // Curation filter — an excluded method's whole `paths[…]` entry (and every
+      // schema inlined within it) is simply never emitted, so nothing about a
+      // hidden endpoint leaks. NOTE: schemas are inlined per-operation (there is
+      // no shared `components/schemas`); if `$ref` de-duplication is ever added
+      // (ADR 0018), it MUST run AFTER this filter or a hidden method's schema
+      // would leak into the shared section.
+      if (config.includeMethod && !config.includeMethod(method)) continue;
 
       const servicePath = joinPath(
         '/',

@@ -240,7 +240,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 |--------|------|---------|
 | `generateOpenApiDocument` | function | an OpenAPI 3.1 document from contract services — [ADR 0018](../decisions/0018-openapi-generation.md) |
 | `openApiRoute` | function | a `RawRoute` that serves the document as JSON |
-| `OpenApiConfig` | _type_ | config for `generateOpenApiDocument` |
+| `OpenApiConfig` | _type_ | config for `generateOpenApiDocument` (incl. `includeMethod` — curate a public subset) — [guide](../guide/server.md#curating-the-spec--includemethod) |
 | `OpenApiDocument` | _type_ | the generated document |
 | `OpenApiInfo` | _type_ | the spec `info` block |
 | `OpenApiServer` | _type_ | a spec `servers` entry |

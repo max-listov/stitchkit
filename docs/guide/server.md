@@ -375,3 +375,57 @@ bus.emit('user.created', { id: '1' })
 
 A typed in-process pub/sub — decouple a handler from the side effects of its
 write without reaching for an external queue.
+
+## OpenAPI
+
+`generateOpenApiDocument` builds an OpenAPI 3.1 document straight from the
+contracts — the contract *is* the spec, no decorators or hand-maintained
+annotations (→ ADR 0018). `openApiRoute` serves it as a raw route:
+
+```ts
+import { generateOpenApiDocument, openApiRoute } from 'stitchkit/server'
+
+const doc = generateOpenApiDocument({
+  info: { title: 'My API', version: '1.0.0' },
+  services: [users, orders],
+})
+createServer({ services: [users, orders], rawRoutes: [openApiRoute('/openapi.json', doc)] })
+```
+
+Only HTTP-exposed methods appear (an MCP/agent-only tool is skipped).
+
+### Curating the spec — `includeMethod`
+
+To publish a **subset** — a public spec that advertises only some methods
+without revealing the rest — pass `includeMethod`. It keeps the core generic:
+*you* decide the policy, filtering on anything the method carries. The
+recommended declarative allowlist marks endpoints with the existing `meta`
+passthrough and keeps those:
+
+```ts
+// contract — declarative, one source of truth
+getBalance: { method: 'GET', path: '/balance', desc: '…', scope: 'account',
+              meta: { public: true }, output: BalanceSchema }
+
+// generation — the app's policy
+const publicDoc = generateOpenApiDocument({
+  info: { title: 'Public API', version: '1.0.0' },
+  services: [account],
+  includeMethod: (m) => m.meta?.public === true,
+})
+```
+
+An excluded method's whole entry — path *and* every schema inlined within it —
+is simply never emitted, so nothing about a hidden endpoint leaks.
+
+> **The filter advertises; it does not authorize.** Hiding a method from the
+> spec does **not** protect it — it is still callable, and the auth `scope` gate
+> is the only thing guarding it. And because `openApiRoute` closes over the
+> document you hand it, the filter only matters if you feed it a filtered one:
+> serve **two** documents — a full internal spec and a filtered public spec on
+> separate routes — never one unfiltered `openApiRoute` on a public path.
+
+```ts
+const internal = openApiRoute('/internal/openapi.json', fullDoc)   // behind auth
+const publicSpec = openApiRoute('/openapi.json', publicDoc)         // curated
+```

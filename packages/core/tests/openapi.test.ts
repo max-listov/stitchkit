@@ -115,3 +115,62 @@ describe('openApiRoute', () => {
     expect(body.openapi).toBe('3.1.0');
   });
 });
+
+// ─── Curated subset — includeMethod + the meta.public allowlist ───────────────
+
+const curatedContract = defineContract(
+  { prefix: 'acct', scope: 'account' },
+  {
+    // Advertised to external clients — flagged declaratively via `meta`.
+    balance: {
+      method: 'GET',
+      path: '/balance',
+      desc: 'Get account balance',
+      meta: { public: true },
+      output: z.object({ publicBalanceField: z.number() }),
+    },
+    // Internal — no flag; must not appear (nor its schema shape) in a public spec.
+    rotateKeys: {
+      method: 'POST',
+      path: '/rotate-keys',
+      desc: 'Rotate API keys',
+      input: z.object({ internalSecretField: z.string() }),
+      output: z.object({ ok: z.boolean() }),
+    },
+  },
+);
+
+const curatedService = implement(curatedContract, {
+  balance: () => ({ publicBalanceField: 0 }),
+  rotateKeys: () => ({ ok: true }),
+});
+
+describe('generateOpenApiDocument — includeMethod', () => {
+  const publicDoc = generateOpenApiDocument({
+    info: { title: 'Public API', version: '1.0.0' },
+    services: [curatedService],
+    includeMethod: (m) => m.meta?.public === true,
+  });
+  const publicJson = JSON.stringify(publicDoc);
+
+  test('emits only the flagged methods', () => {
+    expect(Object.keys(publicDoc.paths)).toEqual(['/acct/balance']);
+    expect(publicDoc.paths['/acct/rotate-keys']).toBeUndefined();
+  });
+
+  test("a hidden method's inlined schema shape does not leak anywhere", () => {
+    // Schemas are inlined per-operation (no shared components) — an excluded
+    // method's shape must be absent from the whole document, not just its path.
+    expect(publicJson).toContain('publicBalanceField');
+    expect(publicJson).not.toContain('internalSecretField');
+    expect(publicJson).not.toContain('rotate-keys');
+  });
+
+  test('without the predicate every HTTP method is still included (default unchanged)', () => {
+    const full = generateOpenApiDocument({
+      info: { title: 'Internal API', version: '1.0.0' },
+      services: [curatedService],
+    });
+    expect(Object.keys(full.paths).sort()).toEqual(['/acct/balance', '/acct/rotate-keys']);
+  });
+});

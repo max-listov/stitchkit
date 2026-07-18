@@ -15,6 +15,23 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-07-18
+
+### Added
+
+- **`generateOpenApiDocument` — `includeMethod` predicate for a curated public
+  spec.** Emit only the methods a predicate keeps, instead of the whole HTTP
+  surface — a public `/openapi.json` that advertises a subset without revealing
+  the rest. The core stays generic (no `public` field): the policy is the app's,
+  filtering on anything the method carries. The recommended declarative allowlist
+  uses the existing `meta` passthrough —
+  `includeMethod: (m) => m.meta?.public === true` over endpoints flagged
+  `meta: { public: true }`. An excluded method's path and every inlined schema
+  are never emitted, so nothing about a hidden endpoint leaks. Additive — omit
+  it for the previous behaviour (every HTTP method). **The filter advertises, it
+  does not authorize** — the `scope` gate is still the guard; serve a full
+  internal spec and a filtered public spec on separate routes.
+
 ## [0.22.0] — 2026-07-18
 
 ### Added
@@ -1111,7 +1128,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/max-listov/stitchkit/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/max-listov/stitchkit/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/max-listov/stitchkit/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/max-listov/stitchkit/compare/v0.19.0...v0.20.0
