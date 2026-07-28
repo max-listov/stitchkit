@@ -18,11 +18,20 @@ import type { RawRoute } from '../server/types';
 
 // ─── Domain-supplied stores & callbacks ──────────────────────────────────────
 
+/**
+ * OpenID Connect DCR `application_type` (SEP-837). A `native` client (desktop /
+ * CLI) may register an `http` loopback redirect; a `web` client may not — the
+ * mismatch is the usual cause of a `redirect_uri` rejection for CLI clients.
+ */
+export type ApplicationType = 'native' | 'web';
+
 /** A client as registered via DCR. Public clients (PKCE) carry no secret. */
 export interface RegisteredClient {
   clientId: string;
   redirectUris: string[];
   clientName?: string;
+  /** The `application_type` the client declared, when it declared one. */
+  applicationType?: ApplicationType;
 }
 
 /** Metadata posted to `/register` (RFC 7591) before a client id is assigned. */
@@ -30,6 +39,8 @@ export interface ClientMetadata {
   redirectUris: string[];
   clientName?: string;
   tokenEndpointAuthMethod?: string;
+  /** `native` (desktop / CLI, loopback allowed) or `web` (https only). */
+  applicationType?: ApplicationType;
 }
 
 /** State persisted between `/authorize` and `/token`, keyed by the auth code. */
@@ -126,16 +137,23 @@ function oauthError(error: string, description: string, status = 400): Response 
 }
 
 /**
- * True for a registrable redirect URI: any `https`, or `http` ONLY on a loopback
- * host (RFC 8252 §7.3 — native apps). Cleartext `http` to a remote host is
- * refused so a self-registered client cannot receive the authorization code in
- * the clear at an attacker-controlled address.
+ * True for a registrable redirect URI. `https` is always allowed; `http` ONLY on
+ * a loopback host (RFC 8252 §7.3 — native apps), so a self-registered client
+ * cannot receive the authorization code in the clear at an attacker-controlled
+ * address.
+ *
+ * `applicationType` is the OpenID Connect DCR hint (SEP-837): a `web` client is
+ * held to https-only (loopback is meaningless for it and a common
+ * misconfiguration), a `native` client keeps the loopback allowance. Omitted —
+ * the permissive default, so a client that never sends the field behaves
+ * exactly as before.
  */
-function isHttpUri(value: string): boolean {
+function isRegistrableRedirectUri(value: string, applicationType?: ApplicationType): boolean {
   try {
     const url = new URL(value);
     if (url.protocol === 'https:') return true;
     if (url.protocol !== 'http:') return false;
+    if (applicationType === 'web') return false;
     const host = url.hostname.replace(/^\[|\]$/g, '');
     return host === '127.0.0.1' || host === '::1' || host === 'localhost';
   } catch {
@@ -182,6 +200,16 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
   const authorizePath = `${base}/authorize`;
   const tokenPath = `${base}/token`;
 
+  /**
+   * Every authorization response — success or error — carries `iss` (RFC 9207,
+   * SEP-2468). A client talking to several authorization servers validates it
+   * before redeeming the code, which closes the mix-up attack: an attacker's
+   * server cannot pass off a response as coming from this issuer. Routed through
+   * one helper so no redirect can silently omit it.
+   */
+  const redirectToClient = (uri: string, params: Record<string, string>): Response =>
+    redirectWith(uri, { ...params, iss: config.issuer });
+
   const metadataRoute: RawRoute = {
     method: 'ALL',
     path: AS_METADATA_PATH,
@@ -199,6 +227,10 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
           : ['authorization_code'],
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none'],
+        // RFC 9207 §3 — tells a client it can (and should) validate `iss` on the
+        // authorization response. Without this advertisement a client has no way
+        // to know the parameter is authoritative here.
+        authorization_response_iss_parameter_supported: true,
         ...(config.scopesSupported && { scopes_supported: config.scopesSupported }),
       });
     },
@@ -216,15 +248,32 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
       if (!isRecord(meta)) {
         return oauthError('invalid_client_metadata', 'Body must be a JSON object');
       }
+      // SEP-837 — the client declares whether it is a desktop/CLI (`native`) or
+      // browser (`web`) app, which decides whether an `http` loopback redirect
+      // is registrable. An unknown value is a client mistake, not a default.
+      const rawAppType = meta.application_type;
+      if (rawAppType !== undefined && rawAppType !== 'native' && rawAppType !== 'web') {
+        return oauthError(
+          'invalid_client_metadata',
+          "application_type must be 'native' or 'web'",
+        );
+      }
+      const applicationType: ApplicationType | undefined = rawAppType;
+
       const redirectUris = meta.redirect_uris;
       if (
         !Array.isArray(redirectUris) ||
         redirectUris.length === 0 ||
-        !redirectUris.every((u): u is string => typeof u === 'string' && isHttpUri(u))
+        !redirectUris.every(
+          (u): u is string =>
+            typeof u === 'string' && isRegistrableRedirectUri(u, applicationType),
+        )
       ) {
         return oauthError(
           'invalid_redirect_uri',
-          'redirect_uris must be a non-empty array of absolute https URLs (http is allowed only on a loopback host)',
+          applicationType === 'web'
+            ? 'redirect_uris must be a non-empty array of absolute https URLs (a web client cannot register an http loopback URI)'
+            : 'redirect_uris must be a non-empty array of absolute https URLs (http is allowed only on a loopback host)',
         );
       }
 
@@ -235,6 +284,7 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
           typeof meta.token_endpoint_auth_method === 'string'
             ? meta.token_endpoint_auth_method
             : undefined,
+        ...(applicationType && { applicationType }),
       });
 
       return json(
@@ -250,6 +300,7 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
             : ['authorization_code'],
           response_types: ['code'],
           ...(client.clientName && { client_name: client.clientName }),
+          ...(client.applicationType && { application_type: client.applicationType }),
         },
         201,
       );
@@ -285,20 +336,20 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
       }
       // From here errors go back to the client via the redirect (OAuth 2.1 §4.1.2.1).
       if (responseType !== 'code') {
-        return redirectWith(redirectUri, {
+        return redirectToClient(redirectUri, {
           error: 'unsupported_response_type',
           ...(state && { state }),
         });
       }
       if (!codeChallenge || codeChallengeMethod !== 'S256') {
-        return redirectWith(redirectUri, {
+        return redirectToClient(redirectUri, {
           error: 'invalid_request',
           error_description: 'PKCE S256 code_challenge is required',
           ...(state && { state }),
         });
       }
       if (!resource) {
-        return redirectWith(redirectUri, {
+        return redirectToClient(redirectUri, {
           error: 'invalid_target',
           error_description: 'resource parameter is required',
           ...(state && { state }),
@@ -307,7 +358,7 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
       // RFC 8707 — reject a resource this server does not serve rather than
       // silently issuing a token for a different audience.
       if (resource !== config.resource) {
-        return redirectWith(redirectUri, {
+        return redirectToClient(redirectUri, {
           error: 'invalid_target',
           error_description: 'resource is not served by this authorization server',
           ...(state && { state }),
@@ -330,7 +381,7 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
         expiresAt: Date.now() + AUTH_CODE_TTL_MS,
       });
 
-      return redirectWith(redirectUri, { code, ...(state && { state }) });
+      return redirectToClient(redirectUri, { code, ...(state && { state }) });
     },
   };
 

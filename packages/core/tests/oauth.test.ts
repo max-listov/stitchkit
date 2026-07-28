@@ -187,6 +187,7 @@ function buildProvider(overrides?: Partial<OAuthProviderConfig>): Routes {
           clientId: `client-${++clientSeq}`,
           redirectUris: meta.redirectUris,
           clientName: meta.clientName,
+          applicationType: meta.applicationType,
         };
         clientStore.set(client.clientId, client);
         return client;
@@ -583,5 +584,147 @@ describe('authorization-code flow with PKCE', () => {
     });
     expect(res.status).toBe(302);
     expect(header(res, 'Location')).toBe('https://app/login');
+  });
+});
+
+// ─── MCP 2026-07-28 authorization hardening ──────────────────────────────────
+
+/** Register with an explicit metadata body (the helper above is the happy path). */
+function registerWith(routes: Routes, body: Record<string, unknown>): Promise<Response> {
+  return callRoute(
+    routes,
+    '/oauth/register',
+    new Request(`${ISSUER}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+const LOOPBACK = 'http://127.0.0.1:8976/callback';
+
+describe('RFC 9207 — iss on the authorization response (SEP-2468)', () => {
+  test('AS metadata advertises iss support', async () => {
+    const routes = buildProvider();
+    const res = await callRoute(
+      routes,
+      '/.well-known/oauth-authorization-server',
+      new Request(`${ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    expect((await res.json()).authorization_response_iss_parameter_supported).toBe(true);
+  });
+
+  test('the success redirect carries iss', async () => {
+    const routes = buildProvider();
+    const clientId = await registerClient(routes);
+    const challenge = await deriveCodeChallenge('v'.repeat(64));
+
+    const res = await authorize(routes, {
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+      state: 'xyz',
+    });
+    const location = new URL(header(res, 'Location') ?? '');
+    expect(location.searchParams.get('code')).toBeTruthy();
+    expect(location.searchParams.get('iss')).toBe(ISSUER);
+    expect(location.searchParams.get('state')).toBe('xyz');
+  });
+
+  test('an error redirect carries iss too (mix-up protection covers failures)', async () => {
+    const routes = buildProvider();
+    const clientId = await registerClient(routes);
+
+    const res = await authorize(routes, {
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      response_type: 'token', // unsupported → error redirect
+      resource: RESOURCE,
+    });
+    const location = new URL(header(res, 'Location') ?? '');
+    expect(location.searchParams.get('error')).toBe('unsupported_response_type');
+    expect(location.searchParams.get('iss')).toBe(ISSUER);
+  });
+
+  test('the access token is bound to the issuer', async () => {
+    const routes = buildProvider();
+    const clientId = await registerClient(routes);
+    const verifier = 'v'.repeat(64);
+    const challenge = await deriveCodeChallenge(verifier);
+
+    const authRes = await authorize(routes, {
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    const code = new URL(header(authRes, 'Location') ?? '').searchParams.get('code') ?? '';
+
+    const tokenRes = await token(routes, {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+      client_id: clientId,
+    });
+    const { access_token } = await tokenRes.json();
+    const claims = await verifyJwt(access_token, SECRET, { audience: RESOURCE });
+    expect(claims.iss).toBe(ISSUER);
+  });
+});
+
+describe('application_type in DCR (SEP-837)', () => {
+  test('a native client may register an http loopback redirect', async () => {
+    const routes = buildProvider();
+    const res = await registerWith(routes, {
+      redirect_uris: [LOOPBACK],
+      application_type: 'native',
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.redirect_uris).toEqual([LOOPBACK]);
+    expect(body.application_type).toBe('native');
+  });
+
+  test('a web client may not — https only', async () => {
+    const routes = buildProvider();
+    const res = await registerWith(routes, {
+      redirect_uris: [LOOPBACK],
+      application_type: 'web',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_redirect_uri');
+  });
+
+  test('a web client registers an https redirect fine', async () => {
+    const routes = buildProvider();
+    const res = await registerWith(routes, {
+      redirect_uris: [REDIRECT],
+      application_type: 'web',
+    });
+    expect(res.status).toBe(201);
+  });
+
+  test('omitting application_type keeps the previous permissive behaviour', async () => {
+    const routes = buildProvider();
+    const res = await registerWith(routes, { redirect_uris: [LOOPBACK] });
+    expect(res.status).toBe(201);
+    expect((await res.json()).application_type).toBeUndefined();
+  });
+
+  test('an unknown application_type is rejected, not silently defaulted', async () => {
+    const routes = buildProvider();
+    const res = await registerWith(routes, {
+      redirect_uris: [REDIRECT],
+      application_type: 'desktop',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_client_metadata');
   });
 });

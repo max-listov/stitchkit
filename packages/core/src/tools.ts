@@ -39,6 +39,7 @@ export {
   wwwAuthenticateHeader,
 } from './tools/oauth-metadata';
 export {
+  type ApplicationType,
   type AuthCodeData,
   type AuthRequest,
   type ClientMetadata,

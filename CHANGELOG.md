@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-28
+
+### Added
+
+- **OAuth provider — `iss` on every authorization response (RFC 9207,
+  MCP 2026-07-28 / SEP-2468).** `mountOAuthProvider` now returns the `iss`
+  parameter on both the success and the error redirect from `/authorize`, and
+  the authorization-server metadata advertises
+  `authorization_response_iss_parameter_supported: true`. A client that talks to
+  several authorization servers validates `iss` before redeeming the code, which
+  closes the **authorization-server mix-up** attack. Additive on the wire — a
+  client that ignores the parameter is unaffected.
+- **OAuth provider — `application_type` on Dynamic Client Registration
+  (SEP-837).** `/register` accepts `application_type: "native" | "web"`, echoes
+  it back, and carries it on `RegisteredClient`. A **native** client (desktop /
+  CLI) may register an `http` loopback redirect (RFC 8252 §7.3); a **web** client
+  is held to `https` only — the mismatch behind the `redirect_uri` errors CLI
+  clients hit. Omitting the field keeps the previous permissive behaviour, so no
+  existing client breaks; an unknown value is rejected with
+  `invalid_client_metadata` rather than silently defaulted. New exported type
+  `ApplicationType`.
+
 ## [0.23.0] — 2026-07-18
 
 ### Added
@@ -1128,7 +1150,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/max-listov/stitchkit/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/max-listov/stitchkit/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/max-listov/stitchkit/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/max-listov/stitchkit/compare/v0.20.0...v0.21.0

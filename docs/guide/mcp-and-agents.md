@@ -240,13 +240,35 @@ createServer({
 })
 ```
 
-Access tokens are signed HS256 JWTs (`signJwt`) whose `aud` is the resource —
-validate them in `auth` with `verifyJwt(token, secret, { audience: resource })`.
-`authorizeUser` is where the app authenticates the user (reuse an existing
-session) and records consent; return `{ userId }` to issue a code, or a
-`Response` to redirect the browser to a login page first. The AS and resource
-server can co-locate or live on separate origins. See
+Access tokens are signed HS256 JWTs (`signJwt`) whose `aud` is the resource and
+whose `iss` is the issuer — validate both in `auth` with
+`verifyJwt(token, secret, { audience: resource, issuer })`. `authorizeUser` is
+where the app authenticates the user (reuse an existing session) and records
+consent; return `{ userId }` to issue a code, or a `Response` to redirect the
+browser to a login page first. The AS and resource server can co-locate or live
+on separate origins. See
 [ADR 0015](../decisions/0015-oauth-resource-server.md).
+
+### Authorization hardening (MCP 2026-07-28)
+
+- **`iss` on every authorization response (RFC 9207, SEP-2468).** Success *and*
+  error redirects carry `iss`, and the AS metadata advertises
+  `authorization_response_iss_parameter_supported: true`. A client that talks to
+  several authorization servers validates `iss` before redeeming the code, which
+  closes the **mix-up attack** — an attacker's server cannot pass its response
+  off as this issuer's. Additive on the wire: a client that ignores `iss` is
+  unaffected.
+- **`application_type` on registration (SEP-837).** A client may declare
+  `"native"` (desktop / CLI) or `"web"` in its DCR body. A **native** client may
+  register an `http` loopback redirect (`http://127.0.0.1:…`, RFC 8252 §7.3); a
+  **web** client is held to `https` only — that mismatch is the usual cause of
+  the `redirect_uri` rejection CLI clients hit. Omit the field and registration
+  behaves exactly as before (loopback allowed); an unknown value is rejected
+  rather than silently defaulted.
+
+> Dynamic Client Registration is **deprecated** in the 2026-07-28 spec in favour
+> of Client ID Metadata Documents (CIMD), with a ≥12-month window. DCR keeps
+> working and stays supported here; CIMD support is tracked separately.
 
 ## Proxying a remote API — `implementRemote`
 

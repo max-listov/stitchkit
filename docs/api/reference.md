@@ -367,6 +367,7 @@ A native remote-connector auth surface for MCP — [guide](../guide/mcp-and-agen
 | `PROTECTED_RESOURCE_PATH` | const | the well-known metadata path |
 | `OAuthProviderConfig` | _type_ | config for `mountOAuthProvider` |
 | `ProtectedResourceConfig` | _type_ | config for `oauthProtectedResourceRoute` |
+| `ApplicationType` | _type_ | DCR `application_type` — `'native'` (loopback allowed) \| `'web'` (https only) |
 | `AuthCodeData` | _type_ | a stored authorization-code record |
 | `AuthRequest` | _type_ | a parsed authorization request |
 | `ClientMetadata` | _type_ | dynamic-client-registration metadata |
