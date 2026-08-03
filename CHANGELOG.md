@@ -15,6 +15,64 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-08-03
+
+### ⚠️ Breaking changes
+
+- **The advertised tool schema no longer deletes unknown keys — a `.strict()`
+  contract schema is now enforced on the wire.** The MCP and AI SDKs parse a
+  tool call's arguments *with the advertised schema* and hand the handler the
+  parsed result, so every object stitchkit rebuilt while deriving that schema
+  (the union flatten walk, the `params` + `input` merge, the `ToolExtend` fold)
+  silently **removed** keys before validation could see them: a call carrying a
+  key a `.strict()` schema forbids **succeeded**, with the key gone. Objects now
+  carry their own key policy through every rebuild. → ADR 0034.
+
+  ```ts
+  // contract, unchanged
+  input: z.object({ node: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('send'), outputs: z.object({ ok: z.string() }).strict() }),
+  ]) })
+
+  // before: tools/call { node: { kind: 'send', outputs: { ok: 'x', typo: 1 } } }
+  //         → 200, handler receives outputs: { ok: 'x' } — `typo` silently dropped
+  // after:  → rejected, the caller is told `Unrecognized key: "typo"`
+  ```
+
+  What to check when upgrading:
+  - **A previously-accepted call may now fail.** Anything that leaned on the
+    sanitising behaviour (a client sending a stale or extra field to a strict
+    tool) must stop sending it. `.loose()` / `.passthrough()` / `.catchall()`
+    schemas keep receiving their extra keys, as they always did on HTTP.
+  - **A strict violation arrives on a different channel.** The SDK rejects it
+    *before* the tool callback runs. `callTool` still resolves (it does not
+    throw), but with an `isError: true` result carrying the SDK's own
+    `MCP error -32602: Input validation error: … Unrecognized key: "…"` instead of
+    stitchkit's `{ error, details, _hint }` envelope (agent: an `invalid: true`
+    tool call) — and **`beforeToolCall` / `afterToolCall` do not fire**. Such
+    calls move from "logged as a success" to "not logged at all"; audit
+    dashboards counting tool calls will shift.
+  - **A filtered `ToolExtend` can now reject cross-tool.** Where `extend.filter`
+    advertises `tenantId` on some tools only, a model that sends it to a strict
+    *non*-extended tool was sanitised before and is rejected now.
+  - **The advertised JSON Schema changed** for strict/loose objects
+    (`additionalProperties: false` / `{}`) on the MCP surface and in
+    `buildToolManifest` — a snapshot test of a generated manifest will diff.
+    OpenAPI output is unchanged.
+  - Not covered: `z.intersection` (a `params` + union-`input` tool on the agent
+    surface) still strips — Zod drops both sides' key policy when intersecting.
+
+### Fixed
+
+- **`flattenUnionInput` no longer injects a non-matching variant's `.default()`
+  into the payload.** Every field of the flattened object is advertised optional,
+  so a variant's default materialised on *every* call: sending variant `a` came
+  back carrying variant `b`'s defaulted field, which the real union then rejected
+  as an unrecognized key — a legal call turned into a hard `VALIDATION_ERROR`.
+  `.default()` is now unwrapped when variant fields are merged, exactly as
+  `.optional()` already was. Pre-existing since 0.14.0; it bites hardest on the
+  all-`.strict()` unions the change above makes the sound choice.
+
 ## [0.24.0] — 2026-07-28
 
 ### Added
@@ -1150,7 +1208,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/max-listov/stitchkit/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/max-listov/stitchkit/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/max-listov/stitchkit/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/max-listov/stitchkit/compare/v0.21.0...v0.22.0

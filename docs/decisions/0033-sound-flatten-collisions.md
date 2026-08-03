@@ -64,6 +64,11 @@ value that passes both the SDK and validation.
   *advertised* hint (validation still enforces it); it is invariant-safe (looser).
   The residual cross-variant "lure" is a guidance issue the describe hint
   mitigates; revisit if a second consumer reports it.
+  > ⚠️ **Superseded by [ADR 0034](0034-advertised-schema-key-policy.md).** The
+  > premise is wrong: the transport SDKs *parse arguments with* the advertised
+  > schema and hand the handler the parsed result, so dropping strictness is not
+  > "looser" — it **deletes** the offending key before validation sees it. Object
+  > key policy is now carried through every rebuild.
 
 ## Consequences
 
@@ -79,7 +84,9 @@ value that passes both the SDK and validation.
   custom check / pipe constraint does not serialize to JSON Schema, so it would
   otherwise leak onto a sibling variant). The 0.15.0 check was shallow (top node
   only); 0.15.1 made it deep.
-- **Known residual (documented, not silent):** `.strict()`/`catchall`/object-level
+- **Known residual (documented, not silent):** ~~`.strict()`/`catchall`~~ (carried
+  through since [ADR 0034](0034-advertised-schema-key-policy.md) — dropping them
+  deleted data, it was never merely "looser") / object-level
   refinements are dropped from the advertised hint; a non-flattenable union (non-
   string discriminator) keeps its `oneOf`; `ZodTuple`/`ZodMap`/`ZodSet` members and
   `z.lazy` are not walked (`coerceJsonArgs` likewise stops at a `z.lazy` boundary).

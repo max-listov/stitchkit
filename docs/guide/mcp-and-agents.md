@@ -150,10 +150,22 @@ each variant's fields become optional with a `Required if <disc> = …` hint.
 It is **deep**: unions are flattened at every depth — top level, object fields,
 array items, and through `optional` / `nullable` / `default` / intersection
 wrappers — so no `oneOf` survives anywhere (e.g. a `content.parts[]` that is an
-array of a discriminated union). It is **advertised-only and lossy**: the original
-schemas stay the validation schemas in `executeToolMethod`, so requests are still
-validated against the real union. Schemas a transform cannot safely rebuild
+array of a discriminated union). Schemas a transform cannot safely rebuild
 (refined / piped / lazy / plain non-discriminated unions) are left as-is.
+
+The flattened form is **lossy but never destructive**. Lossy: per-variant
+strictness and object-level refinements are not advertised — the original schemas
+enforce them in `executeToolMethod`. Not destructive: every object keeps its own
+**key policy** (`.strict()` stays strict, `.loose()` / `.catchall()` still keep
+extra keys), because the advertised schema is not advertised-only — the MCP and
+AI SDKs parse the caller's arguments *with it* and hand the handler the parsed
+result. An object advertised without its policy would silently delete keys the
+contract would have rejected. → [ADR 0034](../decisions/0034-advertised-schema-key-policy.md).
+
+A consequence worth knowing when you read logs: a `.strict()` violation is caught
+by the SDK **before** the tool callback runs, so it comes back as an MCP
+`InvalidParams` protocol error rather than a stitchkit `VALIDATION_ERROR`
+envelope, and `beforeToolCall` / `afterToolCall` do not fire for it.
 
 ## `mountMcp`
 

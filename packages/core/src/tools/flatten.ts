@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isRecord } from '../internal/typed';
 import { toJsonSchema } from './json-schema';
+import { type KeyPolicy, keyPolicyOf, rebuildObject, withKeyPolicy } from './schema';
 
 /**
  * Flatten a `ZodDiscriminatedUnion` into a single `ZodObject` for LLM transports
@@ -21,10 +22,18 @@ import { toJsonSchema } from './json-schema';
  * 0033) **and** a superset of the original union, so a model can always produce a
  * value that passes both the transport SDK and validation.
  *
- * **Lossy and advertised-only:** the original union remains the validation schema
- * in `executeToolMethod`. `.strict()` / `.catchall()` / object-level refinements
- * on variants are dropped from the *advertised* hint (validation still enforces
- * them — see ADR 0033 on the strict-variant caveat).
+ * **Key policy is merged, not dropped.** The flat object stands in for every
+ * variant, so it takes the policy that cannot remove what any variant would have
+ * kept: every variant `.strict()` → strict (sound, because the flat shape is the
+ * union of all variant keys); any variant with a catchall → loose; otherwise
+ * plain. A *typed* catchall is never copied onto the flat object — it would
+ * reject a sibling variant's differently-typed extra key.
+ *
+ * **Still lossy:** per-variant strictness (a key legal in variant A and illegal
+ * in B) is unrepresentable in one flat object, as are object-level refinements.
+ * Those stay enforced only by the original union in `executeToolMethod`. What is
+ * *not* lossy any more is deletion — the advertised schema can no longer drop a
+ * key the contract would have seen. → ADR 0034.
  */
 export function flattenDiscriminatedUnion(
   union: z.ZodDiscriminatedUnion,
@@ -52,7 +61,11 @@ export function flattenDiscriminatedUnion(
       if (key === discriminator) continue;
       const entry = perKey.get(key) ?? { schemas: [], variants: [] };
       // Compare/merge the inner type — a field's optionality is re-applied below.
-      entry.schemas.push(field instanceof z.ZodOptional ? field.unwrap() : field);
+      // A `.default()` is unwrapped for the same reason it must be: every field of
+      // the flat object is advertised as optional, so a surviving default would
+      // materialise on EVERY call — injecting a non-matching variant's field into
+      // the payload, which the real union then rejects as an unrecognized key.
+      entry.schemas.push(unwrapField(field));
       entry.variants.push(label);
       perKey.set(key, entry);
     }
@@ -72,7 +85,42 @@ export function flattenDiscriminatedUnion(
     const hint = `Required if ${discriminator} = ${[...new Set(entry.variants)].join(' | ')}`;
     shape[key] = z.optional(advertised).describe(hint);
   }
-  return z.object(shape);
+  return withKeyPolicy(z.object(shape), mergeVariantKeyPolicies(union.def.options));
+}
+
+/**
+ * The key policy for the object that replaces a whole union. One object stands in
+ * for variants that may disagree, so it takes the policy that **cannot destroy
+ * the evidence** the original union needs to judge the call:
+ * - every variant `.strict()` → strict. Sound: the flat shape is the union of all
+ *   variant keys, so it only rejects a key no variant declares.
+ * - no variant strict → plain. Strips exactly as every variant would.
+ * - **mixed, or any variant that keeps unknown keys** (`.loose()`,
+ *   `.catchall(T)`) → loose. Plain would *delete* the very key a strict sibling
+ *   exists to reject: the flat object cannot tell which variant the caller meant,
+ *   so it must forward the key and let the real union decide. A typed catchall is
+ *   widened rather than copied — variants may type the same extra key differently.
+ */
+function mergeVariantKeyPolicies(options: readonly z.core.$ZodType[]): KeyPolicy {
+  let strict = 0;
+  let counted = 0;
+  for (const option of options) {
+    const policy = option instanceof z.ZodObject ? keyPolicyOf(option) : undefined;
+    // A variant that keeps unknown keys forces loose — never delete what it kept.
+    if (policy !== undefined && !(policy instanceof z.ZodNever)) return z.unknown();
+    counted++;
+    if (policy instanceof z.ZodNever) strict++;
+  }
+  if (counted === 0 || strict === 0) return undefined;
+  return strict === counted ? z.never() : z.unknown();
+}
+
+/** The inner type of a variant field — optionality and defaults are not merged. */
+function unwrapField(field: z.core.$ZodType): z.core.$ZodType {
+  if (field instanceof z.ZodOptional || field instanceof z.ZodDefault) {
+    return unwrapField(field.unwrap());
+  }
+  return field;
 }
 
 /** Copy a `.describe()` description from `from` onto a rebuilt schema `to`. */
@@ -210,8 +258,10 @@ function mergeCollidingFields(schemas: z.core.$ZodType[]): z.core.$ZodType {
  * and `optional` / `nullable` / `default` / intersection wrappers — so the
  * advertised JSON Schema carries no `oneOf` / `anyOf` at any depth. A union that
  * cannot be flattened (non-string discriminator, non-object variant) is left
- * untouched rather than crashing the mount (→ ADR 0033). Advertised-only; the
- * original schemas remain the validation schemas.
+ * untouched rather than crashing the mount (→ ADR 0033).
+ *
+ * Every object is rebuilt **with its key policy** (`rebuildObject`) — the walk
+ * changes union shape, never what an object does with an undeclared key. → ADR 0034.
  */
 export function flattenUnionsDeep(schema: z.core.$ZodType): z.ZodType {
   if (!(schema instanceof z.ZodType)) return z.unknown();
@@ -226,7 +276,10 @@ export function flattenUnionsDeep(schema: z.core.$ZodType): z.ZodType {
     for (const [key, field] of Object.entries(schema.shape)) {
       shape[key] = flattenUnionsDeep(field);
     }
-    return preserveDescription(schema, z.object(shape));
+    // `rebuildObject`, not `z.object` — the rebuilt object is what the SDK parses
+    // arguments with, so dropping the source's key policy would silently delete
+    // keys the contract schema would have rejected or kept. → ADR 0034.
+    return preserveDescription(schema, rebuildObject(schema, shape));
   }
   if (schema instanceof z.ZodArray) {
     return preserveDescription(schema, z.array(flattenUnionsDeep(schema.element)));

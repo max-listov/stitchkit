@@ -404,7 +404,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
 | `flattenDiscriminatedUnion` | function | flatten one discriminated union into a single object schema |
-| `flattenUnionsDeep` | function | flatten discriminated unions at every depth (advertised schema only) |
+| `flattenUnionsDeep` | function | flatten discriminated unions at every depth — union shape only; each object keeps its own key policy (`.strict()` / `.loose()` / `.catchall()`) |
 | `MountableTool` | _type_ | one contract method resolved for mounting |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
 

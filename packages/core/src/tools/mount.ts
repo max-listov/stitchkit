@@ -15,7 +15,7 @@ import {
 } from './execute';
 import { flattenUnionsDeep } from './flatten';
 import { toToolName } from './names';
-import { mergeSchemas } from './schema';
+import { mergeSchemas, rebuildObject } from './schema';
 
 /**
  * Extra arguments folded into a mounted tool's schema — the host supplies them,
@@ -48,7 +48,14 @@ export interface MountableTool {
   shouldExtend: boolean;
 }
 
-/** Fold a `ToolExtend`'s extra fields into a tool's base schema. */
+/**
+ * Fold a `ToolExtend`'s extra fields into a tool's base schema.
+ *
+ * The extend fields join the advertised **shape**, so a `.strict()` base stays
+ * strict and still admits them (`createToolRunner` strips them again before the
+ * contract parse). Carrying the policy over matters because the SDK parses
+ * arguments with this schema — see `rebuildObject`. → ADR 0034.
+ */
 function applyExtend(base: z.ZodType, extra: Record<string, z.ZodType>): z.ZodType {
   if (base instanceof z.ZodObject) {
     const conflicts = Object.keys(extra).filter((key) => key in base.shape);
@@ -57,7 +64,7 @@ function applyExtend(base: z.ZodType, extra: Record<string, z.ZodType>): z.ZodTy
         `Tool extend conflict: ${conflicts.join(', ')} already declared by the contract`,
       );
     }
-    return z.object({ ...extra, ...base.shape });
+    return rebuildObject(base, { ...extra, ...base.shape });
   }
   // A non-object base (a union / discriminated union) — intersect rather than
   // spread, so the extend fields are still required alongside it.
@@ -97,8 +104,9 @@ export function collectTools(
     // Flatten params and input SEPARATELY, then merge — so a union input becomes
     // a ZodObject and merges with params into one object, instead of a
     // non-mountable `allOf` intersection. Deep: discriminated unions flatten at
-    // every depth (object fields, array items, …). Advertised-only; validation
-    // stays on the originals. → ADR 0031 / 0033.
+    // every depth (object fields, array items, …). → ADR 0031 / 0033.
+    // The result is not advertised-only: the transport SDKs parse arguments with
+    // it, so every rebuild carries its source's key policy. → ADR 0034.
     const baseSchema = flattenUnionInput
       ? mergeSchemas(
           method.paramsSchema ? flattenUnionsDeep(method.paramsSchema) : undefined,

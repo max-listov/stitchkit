@@ -47,7 +47,8 @@ These records were consolidated from the project's internal design notes on
 | [0030](0030-audit-verb-and-json-error-details.md) | Audit verb, sanitised error details, complete error-code logging | Accepted — extends 0029, 0026, 0022 |
 | [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 |
 | [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 |
-| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031 |
+| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 |
+| [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Accepted — supersedes the "advertised-only" premise of 0031 / 0033 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

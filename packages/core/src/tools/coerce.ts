@@ -89,7 +89,8 @@ function coerceValue(value: unknown, schema: z.core.$ZodType | undefined): unkno
  * Operates recursively against the schema (object fields, array items, and the
  * matching variant of a discriminated union) so a stringified value at any depth
  * is repaired, not just a top-level field. The transform touches the **arguments**
- * only — the advertised tool schema stays exactly the contract schema.
+ * only — it never rebuilds a schema, so it cannot alter what an object does with
+ * an undeclared key (→ ADR 0034).
  */
 export function coerceJsonArgs(
   args: Record<string, unknown>,

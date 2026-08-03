@@ -48,6 +48,12 @@ Properties kept from the shallow version:
 - **Advertised-only and lossy.** The original `params` / `input` schemas remain the
   validation schemas in `executeToolMethod`; only the advertised hint changes, so
   a mis-flatten degrades a hint, never validation.
+  > ⚠️ **Superseded by [ADR 0034](0034-advertised-schema-key-policy.md)** — this is
+  > the load-bearing claim that turned out false. The transport SDKs *parse
+  > arguments with* the advertised schema and hand the handler the parsed result,
+  > so a mis-flatten does **not** merely degrade a hint: an object rebuilt without
+  > its key policy deletes keys before validation ever sees them. The deep walk
+  > itself stands; every rebuild now carries the policy.
 - **Opt-in.** Behind the existing `flattenUnionInput` flag — no change for anyone
   not setting it.
 - **Best-effort.** Schemas a transform cannot safely rebuild (refined / piped /
@@ -60,6 +66,10 @@ Properties kept from the shallow version:
   Rejected — the feature exists precisely to remove `oneOf` for weak transports;
   leaving nested `oneOf` means it silently fails its purpose. The evidence (a
   rigorous A/B) is strong, and the fix is low-risk because it is advertised-only.
+  > ⚠️ "Advertised-only" is **wrong** — see
+  > [ADR 0034](0034-advertised-schema-key-policy.md): the SDKs parse arguments
+  > with the advertised schema, so a rebuild that loses an object's key policy
+  > deletes data. The deep walk stands; every rebuild now carries the policy.
 - **`isMutation`-style heuristics / per-model schema variants.** Out of scope —
   the flat-object form already works for every model (a B-test shows the strong
   models were fine before and stay fine).
