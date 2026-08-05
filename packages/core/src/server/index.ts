@@ -21,6 +21,9 @@ export {
   type ZodIssueSummary,
   zodIssues,
 } from '../internal/errors';
+// The containment check `serveFile` deliberately leaves to its caller — the guide
+// and ADRs 0023 / 0038 tell consumers to call it, so it has to be reachable.
+export { isWithinDir } from '../internal/within-dir';
 export { cacheHeaders, createCache } from './cache';
 export { createHandler, createServer } from './create';
 export {
@@ -62,6 +65,7 @@ export {
   corsHeaders,
   corsPreflightResponse,
   DEFAULT_CORS_ALLOW_HEADERS,
+  DEFAULT_CORS_EXPOSE_HEADERS,
 } from './middleware/cors';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
 export { parseMultipart } from './multipart';

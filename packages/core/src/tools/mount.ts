@@ -106,6 +106,12 @@ export function collectTools(
       continue;
     }
     if (method.multipart) continue;
+    // A raw endpoint returns a `Response`. Every tool transport would serialize
+    // that into `{}` and hand the model an empty object as the answer — the
+    // exact failure a consumer hit before this endpoint kind existed. The skip
+    // is load-bearing, not tidiness: without `expose`, MCP and AGENT are on by
+    // default, so a raw endpoint would otherwise mount as a tool. → ADR 0038.
+    if (method.rawResponse) continue;
 
     const name = method.toolName ?? toToolName(service.name, methodName);
     // CLI is exempt: `[a-zA-Z0-9_-]{1,64}` is a *provider* rule, and a CLI command

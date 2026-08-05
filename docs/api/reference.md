@@ -139,6 +139,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `staticRoute` | function | a raw route that serves a directory |
 | `serveFile` | function | serve a file with `Range` / `304` / `HEAD` — [guide](../guide/server.md#serving-files--range-requests) |
 | `parseByteRange` | function | parse a single `Range` header → range / `unsatisfiable` / `null` |
+| `isWithinDir` | function | path containment — `(root, resolvedTarget) => boolean`; call it before `serveFile` on any URL-derived path |
 | `weakETag` | function | a weak `ETag` from size + mtime |
 | `ServeFileOptions` | _type_ | options for `serveFile` |
 | `ByteRange` | _type_ | an inclusive `{ start, end }` byte range |
@@ -195,6 +196,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `corsHeaders` | function | compute CORS response headers |
 | `corsPreflightResponse` | function | build a preflight `Response` |
 | `DEFAULT_CORS_ALLOW_HEADERS` | const | the default `Access-Control-Allow-Headers` (incl. `traceparent`) — extend it when overriding `cors.headers` |
+| `DEFAULT_CORS_EXPOSE_HEADERS` | const | the default `Access-Control-Expose-Headers` (incl. `Content-Disposition`, `ETag`, `Content-Range`) — extend it when overriding `cors.exposeHeaders` |
 | `CookieDef` | _type_ | the `defineCookie` handle |
 | `CookieOptions` | _type_ | cookie attributes |
 | `CorsConfig` | _type_ | CORS policy |

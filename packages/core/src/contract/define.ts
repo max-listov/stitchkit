@@ -100,6 +100,7 @@ export interface EndpointToolAnnotations {
 interface HttpOnlyEndpointDef extends EndpointDefBase {
   expose: readonly ['HTTP'];
   toolName?: never;
+  rawResponse?: never;
 }
 
 interface ToolEndpointDef extends EndpointDefBase {
@@ -109,9 +110,57 @@ interface ToolEndpointDef extends EndpointDefBase {
   ui?: EndpointUiMeta;
   /** MCP behavioural hints (read-only / destructive / title) for hosts. */
   annotations?: EndpointToolAnnotations;
+  rawResponse?: never;
 }
 
-export type EndpointDef = HttpOnlyEndpointDef | ToolEndpointDef;
+/**
+ * An endpoint whose handler returns the **`Response` itself** instead of data —
+ * a file download, a PDF, an SSE stream, a redirect. → ADR 0038.
+ *
+ * ```ts
+ * pdf: {
+ *   method: 'GET', path: '/:id/pdf', desc: 'Download the offer as a PDF',
+ *   params: z.object({ id: z.uuid() }),
+ *   rawResponse: true, contentType: 'application/pdf',
+ * }
+ * ```
+ *
+ * Only the **response** is raw — hence the name, and the difference from
+ * `rawRoutes`, which sit outside the contract entirely. Here the request half is
+ * unchanged: `params` / `input` / `multipart` parse and validate exactly as
+ * elsewhere, and `beforeHandle` runs, so the auth gate applies with no guard in
+ * the handler. What is handed over is the response, so there is no `output` to
+ * validate, nothing to serialize into a tool result, and the endpoint is
+ * **HTTP-only**: never an MCP tool, an agent tool or a CLI command.
+ * `afterHandle` is skipped (it transforms data; there is none).
+ */
+interface RawResponseEndpointDef extends EndpointDefBase {
+  /**
+   * Marks the response as raw. Must be the literal `true` — it is the
+   * discriminant of the union, so `rawResponse: false` is not a way to say
+   * "normal".
+   */
+  rawResponse: true;
+  /**
+   * The `Content-Type` this endpoint answers with, for documentation only —
+   * the handler still sets the real header (`serveFile` detects it from the
+   * path). Drives the OpenAPI response media type; without it the endpoint
+   * documents as `application/octet-stream`.
+   */
+  contentType?: string;
+  /** There is no output schema — the handler owns the whole response. */
+  output?: never;
+  /** Never a tool, so a tool name would be dead metadata. */
+  toolName?: never;
+  /** MCP-only decoration; a raw endpoint never reaches MCP. */
+  ui?: never;
+  /** MCP-only decoration; a raw endpoint never reaches MCP. */
+  annotations?: never;
+  /** Redundant but allowed, so `expose: ['HTTP']` survives a migration. */
+  expose?: readonly ['HTTP'];
+}
+
+export type EndpointDef = HttpOnlyEndpointDef | ToolEndpointDef | RawResponseEndpointDef;
 
 export interface ContractMeta<TScope extends string = string> {
   prefix: string;
@@ -120,7 +169,9 @@ export interface ContractMeta<TScope extends string = string> {
    * Contract-wide default for every endpoint's opaque `meta` (→ ADR 0021).
    * Endpoints **shallow-merge** over it, key by key — so a contract-wide
    * `{ public: true }` survives an endpoint that adds `{ rateTier: 2 }`. One
-   * level only: no deep merge, no unset sentinel. → ADR 0036.
+   * level only, no deep merge. An explicit `key: undefined` on the endpoint is
+   * the opt-out: it shadows the contract's value, so `meta?.key` readers see
+   * nothing — test values, not key membership. → ADR 0036.
    *
    * `expose` deliberately has no equivalent — see ADR 0036 for why, and pin
    * `listToolNames` in a snapshot to catch an endpoint that forgot it.
@@ -165,6 +216,8 @@ export function defineContract(
       throw new Error(`Contract "${meta.prefix}": endpoint "${key}" has an empty desc`);
     }
 
+    if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
+
     if (!('toolName' in ep) || !ep.toolName) continue;
     const transports = new Set(
       ep.expose
@@ -172,8 +225,10 @@ export function defineContract(
         : (['MCP', 'AGENT'] satisfies Transport[]),
     );
     // A `toolName` only means anything on a tool transport — setting one on an
-    // HTTP-only endpoint is a contract mistake (the type also forbids it, but
-    // a runtime-built contract bypasses the type).
+    // HTTP-only endpoint is a contract mistake. The type does **not** catch it:
+    // `expose: ['HTTP']` also satisfies `ToolEndpointDef`, whose members are all
+    // optional, so the union admits the pair. This guard is the real check —
+    // and it also covers a contract assembled at runtime, past the types.
     if (transports.size === 0) {
       throw new Error(
         `Contract "${meta.prefix}": endpoint "${key}" sets toolName "${ep.toolName}" but is not exposed on any tool transport (MCP / AGENT)`,
@@ -199,6 +254,27 @@ export function defineContract(
   }
 
   return { meta, endpoints };
+}
+
+/**
+ * A raw endpoint hands the whole response to the handler, so everything that
+ * only makes sense for a *tool* is meaningless on it. The type already forbids
+ * each of these; this repeats the rule for a contract assembled at runtime —
+ * and it fails loudly at definition time rather than shipping a tool that
+ * serializes a `Response` into `{}`. → ADR 0038.
+ */
+function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": raw endpoint "${key}"`;
+  if (ep.output) throw new Error(`${where} cannot declare an output schema`);
+  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
+  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
+  if ('annotations' in ep && ep.annotations) {
+    throw new Error(`${where} cannot set MCP annotations`);
+  }
+  const nonHttp = (ep.expose ?? []).filter((t) => t !== 'HTTP');
+  if (nonHttp.length > 0) {
+    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
+  }
 }
 
 // ─── Runtime Context (built by transport, loose types) ───
@@ -312,7 +388,16 @@ type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &
   InferInput<Prop<E, 'input'>> &
   MultipartArgs<E>;
 
-type EndpointOutput<E> = Prop<E, 'output'> extends ZodType<infer O> ? O : undefined;
+/**
+ * What the typed client resolves to. A `raw` endpoint hands back the untouched
+ * `Response` — its body is bytes, and the headers carry what the caller needs
+ * (`Content-Disposition`, `Content-Range`, `ETag`). → ADR 0038.
+ */
+type EndpointOutput<E> = E extends { rawResponse: true }
+  ? Response
+  : Prop<E, 'output'> extends ZodType<infer O>
+    ? O
+    : undefined;
 
 export type EndpointFn<E> = [keyof EndpointArgs<E>] extends [never]
   ? () => Promise<EndpointOutput<E>>

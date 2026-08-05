@@ -47,6 +47,15 @@ transports**, and must not let a handler construct a transport object.
 - ❌ Kills transport-neutrality outright; a handler returning `Response` is
   meaningless on MCP/CLI. Rejected without further analysis.
 
+> **Обновлено 2026-08-05 (ADR 0038 — raw-response endpoints).** Формулировка
+> «убивает нейтральность» больше не абсолют: исключение выдано, но **только**
+> эндпоинту, у которого JSON-ответа нет вовсе (файл, PDF, SSE) — он объявляется
+> `rawResponse: true`, теряет `output` и становится HTTP-only. Здесь случай
+> другой: эндпоинт **остаётся** JSON-овым и на всех транспортах, ему нужен лишь
+> ДОПОЛНИТЕЛЬНЫЙ заголовок. Отклонение Option B в силе, но теперь по границе
+> «есть ли у эндпоинта ответ-данные», а не по абсолютному запрету. Размораживая
+> таску, читать ADR 0038 → «What this does to ADR 0027 and to the cookie task».
+
 ### Option C — response meta on `ctx` (recommended shape)
 
 `ctx.setHeader(name, value)` / `ctx.setCookie(name, value, opts)` writing into a

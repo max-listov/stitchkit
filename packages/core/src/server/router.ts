@@ -167,6 +167,57 @@ export function validateRoutes(routeMap: RouteMap): void {
   }
 }
 
+/** One contract route that a raw route matches first, so the contract route is dead. */
+export interface ShadowedRoute {
+  /** The contract route pattern, e.g. `GET /documents/:id/pdf`. */
+  pattern: string;
+  /** `serviceName.key` of the endpoint that will never run. */
+  endpoint: string;
+  /** The raw route that wins, e.g. `GET /documents/:id/pdf` or `ALL /files/*`. */
+  rawRoute: string;
+  /** The shadowed endpoint's scope — the auth gate the raw route bypasses. */
+  scope?: string;
+}
+
+/**
+ * Startup diagnostic — raw routes are matched **before** contract routes, so a
+ * raw route covering a contract path silently wins and the endpoint never runs.
+ *
+ * This matters most for the migration raw-response endpoints exist to enable
+ * (→ ADR 0038): move a download out of `rawRoutes` into the contract to gain the
+ * auth gate, forget to delete the old raw route, and the bytes keep being served
+ * ungated — with no error anywhere. Reported, not thrown: an overlapping
+ * wildcard (a SPA fallback) can be deliberate, and refusing to boot a working
+ * app would be the worse failure.
+ *
+ * Detection runs the **real** `matchRawRoute` against a concrete probe path
+ * built from each contract route, so it can never disagree with what the
+ * dispatcher actually does.
+ */
+export function findShadowedRoutes(
+  routeMap: RouteMap,
+  rawRoutes: RawRoute[] | undefined,
+): ShadowedRoute[] {
+  if (!rawRoutes || rawRoutes.length === 0) return [];
+  const shadowed: ShadowedRoute[] = [];
+  for (const [httpMethod, entries] of routeMap) {
+    for (const entry of entries) {
+      // `:id` → a literal that cannot collide with a real path segment, so the
+      // probe tests the route *shape* rather than one lucky value.
+      const probe = `/${entry.segments.map((s) => (s.startsWith(':') ? '__param__' : s)).join('/')}`;
+      const match = matchRawRoute(rawRoutes, httpMethod, probe);
+      if (!match) continue;
+      shadowed.push({
+        pattern: `${httpMethod} ${entry.pattern}`,
+        endpoint: `${entry.method.serviceName}.${entry.method.key}`,
+        rawRoute: `${match.route.method} ${match.route.path}`,
+        scope: entry.method.scope,
+      });
+    }
+  }
+  return shadowed;
+}
+
 // ─── Raw routes ──────────────────────────────────────
 
 export function matchRawRoute(

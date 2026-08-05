@@ -86,7 +86,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `rawRoutes` | non-contract routes (see below) |
 | `maxUploadBytes` | default multipart upload cap (bytes); per-route `EndpointDef.maxUploadBytes` overrides |
 | `port` / `hostname` | listen address — port defaults to `3000` |
-| `cors` | CORS policy — `{ origin, … }` |
+| `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }` |
 | `hooks` | lifecycle hooks (see below) |
 | `logging` | `true` for built-in request logs, or a custom `StitchLogger` |
 | `traceId` | override per-request trace-id resolution |
@@ -206,6 +206,87 @@ createServer({
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
 That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).
 
+## Raw-response endpoints
+
+An endpoint that answers with **bytes rather than data** — a PDF download, a
+file, an SSE stream — declares `rawResponse: true` and returns the `Response` itself:
+
+```ts
+// contract
+export const documents = defineContract(
+  { prefix: 'documents', scope: 'admin' },
+  {
+    download: {
+      method: 'GET', path: '/:id/pdf', desc: 'Download a document as a PDF',
+      params: z.object({ id: z.uuid() }),
+      rawResponse: true, contentType: 'application/pdf',
+    },
+  },
+)
+
+// handler — no guard on the first line; `beforeHandle` already ran
+download: (ctx) => serveFile(ctx.req, { path: pathFor(ctx.params.id),
+                                        filename: 'offer.pdf' }),
+```
+
+The request half is untouched: `params`, `input` and `multipart` parse and
+validate exactly as elsewhere, and the endpoint goes through `beforeHandle` — so
+the **auth gate applies without a guard in the handler**. Only the response is
+handed over, so there is no `output` schema, `afterHandle` is skipped (it
+transforms data; there is none) and the endpoint is HTTP-only: never an MCP
+tool, an agent tool or a CLI command. Declaring `output`, `toolName`, `ui`,
+`annotations` or a non-HTTP `expose` alongside `rawResponse` is a type error, and throws
+at definition time for a contract assembled at runtime.
+
+On the typed client the method resolves to the untouched `Response` — the
+filename lives in `Content-Disposition`, so a `Blob` alone would lose it:
+
+```ts
+const client = createClient(documents, http)
+const res = await client.download({ id })          // Response
+const name = res.headers.get('Content-Disposition')
+const blob = await res.blob()
+```
+
+Cross-origin, remember that those headers are readable only because CORS exposes
+them — see [`cors.exposeHeaders`](#serving-files--range-requests).
+
+**Raw response or [raw route](#raw-routes)?** Both hand the `Response` to your
+code. A raw-response *endpoint* stays in the contract: only its response is
+raw — it is still routed, gated, typed and documented like every other endpoint.
+A raw *route* is outside the contract entirely — no schemas, no auth gate, no
+client — which is what you want for an OAuth redirect or a webhook, and what you
+do not want for a download.
+
+⚠️ **Delete the old raw route when you move an endpoint into the contract.** Raw
+routes are matched **first**, so a leftover one keeps serving the bytes and the
+contract endpoint — with its auth gate — never runs. stitchkit warns at startup
+when a raw route shadows a contract route, naming both and the scope being
+bypassed; treat that warning as a bug.
+
+⚠️ **A path built from user input needs a containment check.** `staticRoute`
+enforces it; `serveFile` deliberately leaves it to the caller, so an endpoint
+serving `/:filename` must not pass it through:
+
+```ts
+import { isWithinDir, serveFile } from 'stitchkit/server'
+import { resolve } from 'node:path'
+
+const ROOT = resolve('./uploads')
+
+file: (ctx) => {
+  const target = resolve(ROOT, ctx.params.filename)
+  // `../../etc/passwd` resolves outside ROOT — reject before touching disk.
+  if (!isWithinDir(ROOT, target)) throw notFound('File not found')
+  return serveFile(ctx.req, { path: target })
+},
+```
+
+`implementRemote` proxies a raw-response endpoint like any other — the remote
+`Response` is forwarded verbatim. Request headers are not relayed, so a `Range`
+sent to the proxy does not reach the origin and the full body comes back.
+→ ADR 0038.
+
 ## Raw routes
 
 Some routes cannot be a clean JSON contract — an OAuth redirect, a webhook with
@@ -299,6 +380,13 @@ It always sets `Accept-Ranges: bytes`, a weak `ETag` and `Last-Modified` (so
 and `nosniff`. `Content-Type` is auto-detected from the path — override it, or
 pass `disposition` / `cacheControl` / `etag: false`, via the options.
 
+Cross-origin, the browser lets JavaScript read only the CORS-safelisted response
+headers. stitchkit therefore exposes the download-relevant ones by default
+(`Content-Disposition`, `Content-Range`, `ETag`, …) — without that a `fetch`-based
+download cannot recover the file's name. Override with `cors.exposeHeaders`
+(extend `DEFAULT_CORS_EXPOSE_HEADERS` rather than replacing it), or pass `[]` to
+emit none.
+
 `serveFile` takes an explicit `path` and trusts it — **the caller owns
 containment**. For a URL-derived path use `staticRoute` (which enforces it) or
 `isWithinDir` first. The byte-range parser is exported on its own as
@@ -320,11 +408,20 @@ focused helper — not a sub-framework.
 
 ### SSE streaming
 
+`streamSSE` returns a `Response`, so its endpoint declares
+[`rawResponse: true`](#raw-response-endpoints) — in a plain contract handler the response
+would be serialized into `{}` (that now fails loudly instead of shipping silently).
+
 ```ts
 import { streamSSE } from 'stitchkit/server'
 
+// contract
+stream: { method: 'GET', path: '/stream', desc: 'Stream tokens',
+          rawResponse: true, contentType: 'text/event-stream' },
+
+// handler
 async function* tokens() { yield 'a'; yield 'b' }
-return streamSSE(tokens())            // → a text/event-stream Response
+stream: () => streamSSE(tokens()),    // → a text/event-stream Response
 ```
 
 The client side is [`parseSSE`](./client.md#sse).

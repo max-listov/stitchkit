@@ -15,15 +15,35 @@ type InferParams<E> = Prop<E, 'params'> extends ZodType<infer P> ? P : undefined
 type InferInput<E> = Prop<E, 'input'> extends ZodType<infer I> ? I : undefined;
 type InferOutput<E> = Prop<E, 'output'> extends ZodType<infer O> ? O : never;
 
+/**
+ * What an endpoint's handler must return: the `Response` itself for a `raw`
+ * endpoint, the output type when there is an output schema, nothing otherwise.
+ * Enforced in both directions — a raw handler returning data and a normal
+ * handler returning a `Response` are both compile errors (the latter used to
+ * be accepted and silently serialized to `{}`).
+ */
+type HandlerReturn<E> = E extends { rawResponse: true }
+  ? Response | Promise<Response>
+  : Prop<E, 'output'> extends ZodType
+    ? Promise<InferOutput<E>> | InferOutput<E>
+    : void | Promise<void>;
+
+/**
+ * `ctx.req` is optional in general — a tool call has no `Request`. A raw
+ * endpoint is HTTP-only by declaration, and its handler needs the request
+ * (`serveFile(ctx.req, …)` reads `Range` / `If-None-Match`), so it is narrowed
+ * to a guaranteed `Request` there rather than making every raw handler write
+ * a non-null assertion. → ADR 0038.
+ */
+type RequiredRequest<E> = E extends { rawResponse: true } ? { req: Request } : unknown;
+
 export type Handlers<
   C extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = HandlerContext,
 > = {
   [K in keyof C]: (
-    ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> },
-  ) => Prop<C[K], 'output'> extends ZodType
-    ? Promise<InferOutput<C[K]>> | InferOutput<C[K]>
-    : void | Promise<void>;
+    ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> } & RequiredRequest<C[K]>,
+  ) => HandlerReturn<C[K]>;
 };
 
 export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknown> {
@@ -69,6 +89,14 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
    * the consumer narrows the type. Never serialized to OpenAPI. → ADR 0021.
    */
   meta?: Record<string, unknown>;
+  /**
+   * The handler returns the `Response` itself — from `EndpointDef.rawResponse`. Routed
+   * and gated like any endpoint, but never serialized, never validated against
+   * an output schema and never mounted as a tool. → ADR 0038.
+   */
+  rawResponse?: true;
+  /** Documented response media type of a raw-response endpoint — OpenAPI only. */
+  contentType?: string;
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;
 }
 

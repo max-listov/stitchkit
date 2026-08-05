@@ -10,6 +10,9 @@ import { mergeMeta } from '../contract/define';
 import { isRecord } from '../internal/typed';
 import type { MethodDef, ServiceDef } from '../server/types';
 
+/** Frozen so the same array cannot be mutated through one method and seen by another. */
+const HTTP_ONLY = Object.freeze(['HTTP'] as const);
+
 /** A contract's typed client, viewed as a flat string-keyed call map. */
 type RemoteCalls = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
 
@@ -65,7 +68,8 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       serviceName: contract.meta.prefix,
       key,
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
-      expose: endpoint.expose,
+      // Forced for a raw endpoint, exactly as in `implement` — see there.
+      expose: endpoint.rawResponse ? HTTP_ONLY : endpoint.expose,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       // Opaque app metadata rides through (was dropped here), with the
@@ -78,7 +82,16 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       multipart: endpoint.multipart,
       // Transport-neutral retry/replay hint — rides through (→ ADR 0027).
       idempotent: endpoint.idempotent,
+      // Carried so the tool mounts skip it for the same reason as a local
+      // service, rather than by accident. → ADR 0038.
+      rawResponse: endpoint.rawResponse,
+      contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: async (ctx: RuntimeContext) => {
+        // A raw endpoint proxies like any other: `createClient` asks for
+        // `responseType: 'response'`, so the remote `Response` — bytes, status
+        // and headers — is forwarded verbatim. Request headers are NOT relayed,
+        // so a `Range` on the proxy is not seen by the origin and the full body
+        // comes back. → ADR 0038.
         const call = client[key];
         if (!call) {
           throw new Error(`implementRemote: endpoint "${key}" is not exposed over HTTP`);

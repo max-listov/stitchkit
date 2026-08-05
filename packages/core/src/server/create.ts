@@ -24,6 +24,7 @@ import { type ClientIpOptions, extractIp, resolveSocketIp, resolveTraceId } from
 import {
   allowedMethods,
   buildRouteMap,
+  findShadowedRoutes,
   matchRawRoute,
   matchRoute,
   type NormalizedGroup,
@@ -47,6 +48,20 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
 
   const routeMap = buildRouteMap(normalizeGroups(config));
   validateRoutes(routeMap);
+
+  // Raw routes match first, so one covering a contract path makes that endpoint
+  // dead — and takes its auth gate with it. Reported at startup because the
+  // silent version of this is the failure raw-response endpoints exist to
+  // prevent: move a download into the contract for the gate, forget the old raw
+  // route, keep serving the bytes ungated. → ADR 0038.
+  for (const shadow of findShadowedRoutes(routeMap, config.rawRoutes)) {
+    const gate = shadow.scope && shadow.scope !== 'public' ? ` (scope "${shadow.scope}")` : '';
+    const line =
+      `[stitchkit] raw route ${shadow.rawRoute} shadows contract route ${shadow.pattern}` +
+      ` → ${shadow.endpoint}${gate} will never run, and its hooks never apply`;
+    if (customLogger) customLogger.warn(line);
+    else console.warn(line);
+  }
 
   async function dispatch(
     req: Request,
@@ -203,6 +218,25 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
 
       let result = await method.handler(ctx);
 
+      // A raw endpoint owns its response: no `afterHandle` (that hook
+      // transforms *data*, and there is none), no output validation, no
+      // serialization. Only CORS is applied — in place, so a `206` keeps its
+      // body intact. Everything before this point ran normally, which is the
+      // whole point: the auth gate, params and input validation are the same
+      // as for any endpoint. → ADR 0038.
+      if (method.rawResponse) {
+        if (!(result instanceof Response)) {
+          throw new AppError(
+            'INTERNAL_SERVER_ERROR',
+            `Raw endpoint ${method.serviceName}.${method.key} must return a Response`,
+            500,
+          );
+        }
+        const rawRes = applyCors(result, cors, req);
+        logDone(rawRes.status);
+        return rawRes;
+      }
+
       if (groupHooks?.afterHandle) {
         const transformed = await groupHooks.afterHandle(ctx, result, method);
         if (transformed !== undefined) result = transformed;
@@ -210,6 +244,20 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
       if (hooks?.afterHandle) {
         const transformed = await hooks.afterHandle(ctx, result, method);
         if (transformed !== undefined) result = transformed;
+      }
+
+      // The mirror image of the branch above, and the reason this endpoint kind
+      // exists: a `Response` on the data path used to be serialized into `{}`
+      // with status 200 — headers, status and body gone, no error anywhere.
+      // Checked *after* the hooks so it also catches an `afterHandle` that
+      // returns one; the type forbids the handler doing it, but a service
+      // assembled past the types, and any hook, still can.
+      if (result instanceof Response) {
+        throw new AppError(
+          'INTERNAL_SERVER_ERROR',
+          `${method.serviceName}.${method.key} produced a Response on the data path — only a \`rawResponse: true\` endpoint may return one (an afterHandle hook must return data)`,
+          500,
+        );
       }
 
       if (method.outputSchema) {
@@ -330,20 +378,54 @@ function corsHeaders(cors: HandlerConfig['cors'], req: Request): Record<string, 
 }
 
 /**
- * Apply CORS headers to a response produced outside the framework (a raw route
- * or an `onError` hook). The response is rebuilt rather than mutated — a
- * `Response.redirect()` (a documented raw-route use) has immutable headers.
+ * Apply CORS headers to a response produced outside the framework (a raw route,
+ * a binary endpoint or an `onError` hook).
+ *
+ * Headers are mutated **in place**. Rebuilding with `new Response(res.body, …)`
+ * silently corrupts partial responses: on Bun, reading `.body` of a response
+ * built from `Bun.file().slice()` re-reads the *whole* file, so a `206` keeps
+ * its honest `Content-Range` and `Content-Length` while the payload becomes the
+ * entire file — a client stitching ranges gets garbage.
+ *
+ * A rebuild survives only as the fallback: WHATWG marks `Response.redirect()`
+ * headers immutable (Node throws; Bun currently allows the set), and a redirect
+ * has no body to corrupt.
  */
 function applyCors(res: Response, cors: HandlerConfig['cors'], req: Request): Response {
   const extra = corsHeaders(cors, req);
   if (Object.keys(extra).length === 0) return res;
-  const headers = new Headers(res.headers);
-  for (const [key, value] of Object.entries(extra)) headers.set(key, value);
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-  });
+  try {
+    for (const [key, value] of Object.entries(extra)) setCorsHeader(res.headers, key, value);
+    return res;
+  } catch {
+    const headers = new Headers(res.headers);
+    for (const [key, value] of Object.entries(extra)) setCorsHeader(headers, key, value);
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  }
+}
+
+/**
+ * `Vary` is a list the handler may already contribute to (a file response
+ * carrying `Vary: Accept-Encoding`); overwriting it with `Origin` would make a
+ * shared cache serve one encoding to everyone. Every other CORS header is
+ * single-valued and ours alone, so it is set.
+ */
+function setCorsHeader(headers: Headers, key: string, value: string): void {
+  if (key !== 'Vary') {
+    headers.set(key, value);
+    return;
+  }
+  const existing = headers.get('Vary');
+  if (existing === null || existing.trim() === '') {
+    headers.set('Vary', value);
+    return;
+  }
+  const present = existing.split(',').some((field) => field.trim().toLowerCase() === 'origin');
+  if (!present) headers.set('Vary', `${existing}, ${value}`);
 }
 
 function json(

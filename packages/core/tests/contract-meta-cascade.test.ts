@@ -70,6 +70,22 @@ describe('contract-level meta cascade', () => {
   test('only the endpoint declares → unchanged from 0.25.0', () => {
     expect(serviceWith(undefined, { owner: 'x' }).methods.get?.meta).toEqual({ owner: 'x' });
   });
+
+  test('an explicit undefined is the documented opt-out — it shadows the contract key', () => {
+    // The real consumer case (ADR 0036): a public form-submission endpoint inside
+    // an admin-gated contract turns the inherited RBAC page OFF. Their previous
+    // `??`-cascade swallowed exactly this (`undefined ?? PAGE` is `PAGE`) and put
+    // an admin gate on a public endpoint.
+    const meta = serviceWith({ page: 'LEADS', owner: 'crm' }, { page: undefined }).methods.get
+      ?.meta;
+    if (!meta) throw new Error('expected meta');
+    // Value-readers see nothing; the other inherited key survives.
+    expect(meta.page).toBeUndefined();
+    expect(meta.owner).toBe('crm');
+    // The key is PRESENT with value undefined — readers must test values, not
+    // membership. Pinned so the semantics cannot silently drift either way.
+    expect('page' in meta).toBe(true);
+  });
 });
 
 describe('each MethodDef owns its meta — no aliasing', () => {

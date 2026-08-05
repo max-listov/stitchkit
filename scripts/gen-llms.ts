@@ -34,7 +34,7 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
   [
     'server.md',
     'HTTP server',
-    'createServer/createHandler, implement, lifecycle hooks, raw routes + helpers, scopePrefixes, serveFile, primitives',
+    'createServer/createHandler, implement, lifecycle hooks, raw routes + raw-response endpoints + helpers, scopePrefixes, serveFile, primitives',
   ],
   [
     'client.md',

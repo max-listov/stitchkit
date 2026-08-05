@@ -9,13 +9,20 @@ import {
   type RequestOptions,
 } from './http';
 
-/** Merge an endpoint timeout into request options. */
+/** Merge an endpoint's timeout and response mode into request options. */
 function withTimeout(
   options: RequestOptions | undefined,
-  timeout: number | undefined,
+  endpoint: EndpointDef,
 ): RequestOptions | undefined {
-  if (timeout === undefined) return options;
-  return { ...options, timeout };
+  // A raw endpoint answers with bytes — parsing it as JSON is how the old
+  // hand-rolled transports produced empty objects. → ADR 0038.
+  const responseType = endpoint.rawResponse ? ('response' as const) : undefined;
+  if (endpoint.timeout === undefined && responseType === undefined) return options;
+  return {
+    ...options,
+    ...(endpoint.timeout !== undefined && { timeout: endpoint.timeout }),
+    ...(responseType && { responseType }),
+  };
 }
 
 /**
@@ -220,7 +227,7 @@ function createHttpMethod(
       appendFormFields(formData, firstArg, new Set([...prefixKeys, endpoint.multipart]));
       return withOutput(
         endpoint,
-        client[httpMethod](url, formData, withTimeout(undefined, endpoint.timeout)),
+        client[httpMethod](url, formData, withTimeout(undefined, endpoint)),
       );
     }
 
@@ -228,7 +235,7 @@ function createHttpMethod(
       const params = collectQueryParams(firstArg, prefixKeys, endpoint);
       return withOutput(
         endpoint,
-        client.get(url, withTimeout(params ? { params } : undefined, endpoint.timeout)),
+        client.get(url, withTimeout(params ? { params } : undefined, endpoint)),
       );
     }
 
@@ -236,7 +243,7 @@ function createHttpMethod(
       const params = collectQueryParams(firstArg, prefixKeys, endpoint);
       return withOutput(
         endpoint,
-        client.delete(url, withTimeout(params ? { params } : undefined, endpoint.timeout)),
+        client.delete(url, withTimeout(params ? { params } : undefined, endpoint)),
       );
     }
 
@@ -251,7 +258,7 @@ function createHttpMethod(
       client[httpMethod](
         url,
         Object.keys(payload).length > 0 ? payload : undefined,
-        withTimeout(undefined, endpoint.timeout),
+        withTimeout(undefined, endpoint),
       ),
     );
   };
@@ -337,6 +344,12 @@ function createFetchMethod(
         await throwForErrorResponse(res, config, null);
       }
 
+      // An upload that answers with bytes ("convert this file and give it back")
+      // is a legal combination — `multipart` describes the request, `raw` the
+      // response. Checked here too, or this path would parse the bytes as JSON
+      // while the ky path returned the `Response`. → ADR 0038.
+      if (endpoint.rawResponse) return res;
+
       if (res.status === 204) return undefined;
 
       const json = await res.json();
@@ -356,6 +369,12 @@ function createFetchMethod(
     if (!res.ok) {
       await throwForErrorResponse(res, config, { error: res.statusText });
     }
+
+    // A raw endpoint answers with bytes and headers — hand the whole `Response`
+    // back untouched (the caller reads `Content-Disposition` for the filename,
+    // then `.blob()` / `.body`). No 204 short-circuit: `undefined` would erase a
+    // legitimately empty-bodied response. → ADR 0038.
+    if (endpoint.rawResponse) return res;
 
     if (res.status === 204) return undefined;
 

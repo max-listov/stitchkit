@@ -3,6 +3,12 @@ export interface CorsConfig {
   credentials?: boolean;
   methods?: string;
   headers?: string;
+  /**
+   * Response headers a cross-origin caller is allowed to *read*
+   * (`Access-Control-Expose-Headers`). Defaults to
+   * {@link DEFAULT_CORS_EXPOSE_HEADERS}; pass `[]` to emit none.
+   */
+  exposeHeaders?: string | string[];
 }
 
 /**
@@ -19,6 +25,21 @@ export interface CorsConfig {
  */
 export const DEFAULT_CORS_ALLOW_HEADERS =
   'Content-Type, Authorization, X-Trace-Id, traceparent, tracestate';
+
+/**
+ * The default `Access-Control-Expose-Headers`. Without it a cross-origin
+ * `fetch` can read only the CORS-safelisted response headers, so a browser
+ * downloading a file cannot recover its name (`Content-Disposition`), and a
+ * client cannot revalidate (`ETag`) or resume (`Content-Range`) — the very
+ * headers `serveFile` exists to emit.
+ *
+ * An explicit list rather than `*`, because the wildcard is ignored whenever
+ * the request carries credentials — exactly the authenticated download case.
+ * These are headers the server already chose to send; exposing them reveals
+ * nothing new. Opt out with `exposeHeaders: []`.
+ */
+export const DEFAULT_CORS_EXPOSE_HEADERS =
+  'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Trace-Id';
 
 /**
  * Reject an unsafe CORS config at construction. `credentials: true` with a
@@ -63,6 +84,12 @@ export function corsHeaders(
     'Access-Control-Allow-Methods': config.methods ?? 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': config.headers ?? DEFAULT_CORS_ALLOW_HEADERS,
   };
+  const expose = Array.isArray(config.exposeHeaders)
+    ? config.exposeHeaders.join(', ')
+    : (config.exposeHeaders ?? DEFAULT_CORS_EXPOSE_HEADERS);
+  if (expose !== '') {
+    headers['Access-Control-Expose-Headers'] = expose;
+  }
   if (allowOrigin !== undefined) {
     headers['Access-Control-Allow-Origin'] = allowOrigin;
     // Credentials are emitted only alongside a resolved origin — never on a

@@ -30,7 +30,8 @@ const TOOL_TRANSPORTS = ['MCP', 'AGENT', 'CLI'] satisfies Transport[];
 
 /**
  * Resolve every tool name the given services expose, sorted by name (then
- * service) — a stable shape to snapshot. Multipart endpoints are absent
+ * service) — a stable shape to snapshot. Multipart and raw-response endpoints
+ * are absent
  * (never mounted as tools) and CLI appears only where `expose` opts in,
  * mirroring the real mounts.
  */

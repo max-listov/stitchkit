@@ -28,10 +28,22 @@ a model.* That framing is right about the default and wrong about the remedy.
 ### `meta` cascades, shallow-merged
 
 `ContractMeta` gains `meta?`, and an endpoint's own `meta` merges **over** it, key
-by key. One level: no deep merge, no unset sentinel — a deep merge invites "how do
-I unset an inherited key", which has no answer without one. Neither side declaring
-anything leaves `meta` `undefined`, not `{}`, because readers test
-`method.meta?.x` and an empty object reads as "declared".
+by key. One level, no deep merge — a deep merge invites nested-unset questions
+with no clean answer. Neither side declaring anything leaves `meta` `undefined`,
+not `{}`, because readers test `method.meta?.x` and an empty object reads as
+"declared".
+
+**An explicit `key: undefined` on the endpoint is the opt-out.** The key survives
+the spread with value `undefined`, so it shadows the contract's value and every
+`meta?.key` reader sees nothing — "the contract turns this on for everyone, this
+endpoint turns it off". This is deliberate, not an artifact: a consuming project's
+public form-submission endpoint sits in an otherwise admin-gated contract and opts
+out of the inherited RBAC page exactly this way. (Their previous `??`-based
+cascade *swallowed* the opt-out — `undefined ?? PAGE` is `PAGE` — which silently
+put an admin gate on a public endpoint; the live probe returned 401 on the public
+form. The spread semantics fix that class.) Note the asymmetry this creates for
+`in`-style readers: the key is *present* with value `undefined` — readers must
+test the value (`meta?.key`), not membership.
 
 Shallow merge rather than override because `meta` is not decoration: the OpenAPI
 generator documents `meta: { public: true }` as the recommended declarative

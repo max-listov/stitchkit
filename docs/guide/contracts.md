@@ -65,6 +65,8 @@ export const users = defineContract({ prefix: 'users' }, {
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
 | `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
 | `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
+| `rawResponse` | no | the handler returns the `Response` itself — a download, a file, an SSE stream. HTTP-only, never a tool, no `output`. See [Raw-response endpoints](./server.md#raw-response-endpoints) |
+| `contentType` | no | documented response media type of a `rawResponse` endpoint (OpenAPI only) |
 
 ## `params` vs `input` vs `output`
 
@@ -136,8 +138,10 @@ tools. Narrow it with `expose`:
 - `expose: ['MCP', 'AGENT']` — a tool only; no HTTP route.
 - omit `expose` — all transports.
 
-Tool transports (`MCP`, `AGENT`) skip `multipart` endpoints automatically — a
-file upload is not a tool call.
+Tool transports (`MCP`, `AGENT`) skip two kinds of endpoint automatically:
+`multipart` (a file upload is not a tool call) and
+[`rawResponse`](./server.md#raw-response-endpoints) (its answer is bytes, which
+a tool result cannot carry — it would serialize to `{}`).
 
 ## `toolName`
 
@@ -179,10 +183,22 @@ defineContract({ prefix: 'admin', meta: { public: true } }, {
 })
 ```
 
-One level deep — no deep merge, no way to unset an inherited key; declare it on
-the endpoint instead. `expose` deliberately has **no** contract-level equivalent
-(→ [ADR 0036](../decisions/0036-contract-level-meta.md)).
+One level deep — no deep merge. To **opt an endpoint out** of an inherited key,
+declare it with an explicit `undefined`:
 
+```ts
+defineContract({ prefix: 'leads', meta: { page: 'LEADS' } }, {
+  // Public website form inside an otherwise admin-gated contract:
+  submit: { method: 'POST', path: '/', desc: 'Submit', meta: { page: undefined } },
+  //                                       meta → { page: undefined } — gate off
+  list: { method: 'GET', path: '/list', desc: 'List' },   // meta → { page: 'LEADS' }
+})
+```
+
+The key stays *present* with value `undefined`, so read `meta` by **value**
+(`method.meta?.page`), never by key membership. `expose` deliberately has **no**
+contract-level equivalent
+(→ [ADR 0036](../decisions/0036-contract-level-meta.md)).
 
 `meta` is an **opaque, app-defined** bag the core attaches no meaning to — the
 same escape-hatch spirit as `scope` being a free string ([ADR 0002](../decisions/0002-generic-core.md) /

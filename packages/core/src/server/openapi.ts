@@ -189,7 +189,19 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       }
 
       const responses: Record<string, unknown> = { ...errorResponses(method.scope) };
-      if (method.outputSchema) {
+      if (method.rawResponse) {
+        // A raw endpoint has no output schema, but "204 No content" would be a
+        // lie — it answers with a body the handler owns. Document the declared
+        // media type, falling back to the honest unknown. → ADR 0038.
+        responses['200'] = {
+          description: 'Success',
+          content: {
+            [method.contentType ?? 'application/octet-stream']: {
+              schema: { type: 'string', format: 'binary' },
+            },
+          },
+        };
+      } else if (method.outputSchema) {
         responses['200'] = {
           description: 'Success',
           content: { 'application/json': { schema: safeJson(method.outputSchema, 'output') } },

@@ -16,8 +16,14 @@ By default every endpoint is a tool on every transport. `expose` narrows it:
 { method: 'GET', path: '/lookup', desc: 'Look up a price', expose: ['MCP'] }     // MCP tool only
 ```
 
+Two kinds of endpoint are **never** tools, whatever `expose` says: a `multipart`
+upload (not a tool call), and a
+[`rawResponse`](./server.md#raw-response-endpoints) endpoint (its answer is
+bytes — a tool result cannot carry them, and it would reach the model as `{}`).
+Pin the full list with `listToolNames` in a snapshot test.
+
 `desc` is the tool description the model reads — write it for the model, not
-just for a human. A `multipart` endpoint is never a tool. The tool name defaults
+just for a human. The tool name defaults
 to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
 `get_widget`); set `toolName` for an explicit one. Derivation normalises every
 character outside `[a-zA-Z0-9_]` to `_` — the hyphen included, so `bot-status`

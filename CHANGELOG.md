@@ -15,6 +15,104 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-08-05
+
+### ⚠️ Breaking changes
+
+- **CORS now sends `Access-Control-Expose-Headers` by default.** Every response
+  from a server with `cors` configured — JSON endpoints included — begins
+  advertising `Content-Disposition, Content-Length, Content-Range,
+  Accept-Ranges, ETag, Last-Modified, X-Trace-Id` as readable cross-origin.
+  Without this a browser cannot recover a downloaded file's name, revalidate or
+  resume, so file responses were unusable cross-origin; but it is a **changed
+  default**, and widening what cross-origin JavaScript may read is a
+  security-review surface. These are headers the server already sends — nothing
+  new is disclosed to the network — but review it rather than assume.
+  `// before: (no header)` → `// after: cors: { origin, exposeHeaders: [] }` to
+  keep the old behaviour, or pass your own list.
+
+### Added
+
+- **Raw-response endpoints — `rawResponse: true`.** An endpoint that answers with bytes
+  rather than data (a PDF, a file download, an SSE stream) declares `rawResponse: true`
+  and returns the `Response` itself. Until now such endpoints had to leave the
+  contract for `rawRoutes`, which costs three things unrelated to bytes: the
+  typed client, a single route registry, and — the serious one — the **auth
+  gate**, since raw routes never run `hooks.beforeHandle` and each handler had
+  to call the guard on its own first line. A raw endpoint keeps all three: the
+  request half (`params` / `input` / `multipart`, `beforeHandle`) is completely
+  unchanged; only the response is handed over. It is never an MCP tool, an agent
+  tool or a CLI command, and declaring `output`, `toolName`, `ui`, `annotations`
+  or a non-HTTP `expose` beside it is a type error (and throws at definition
+  time for a contract assembled at runtime). `afterHandle` is **skipped** for
+  raw endpoints — it transforms data, and there is none. On the typed client the
+  method resolves to the untouched `Response`, so `Content-Disposition` (the
+  download filename) survives, which a `Blob` would lose. → ADR 0038.
+
+  ```ts
+  download: {
+    method: 'GET', path: '/:id/pdf', desc: 'Download a document as a PDF',
+    params: z.object({ id: z.uuid() }),
+    rawResponse: true, contentType: 'application/pdf',
+  }
+  // handler — no guard on the first line; beforeHandle already ran
+  download: (ctx) => serveFile(ctx.req, { path: pathFor(ctx.params.id) }),
+  ```
+
+- **`RequestOptions.responseType: 'response'`** — hand back the untouched
+  `Response` instead of parsed JSON or a `Blob`. What `rawResponse` endpoints use; also
+  available for a direct `HttpClient` call.
+
+- **`cors.exposeHeaders`** — control `Access-Control-Expose-Headers`, which the
+  framework emitted nowhere. Pass `[]` to emit none, or a list to replace the
+  default (see the breaking note above).
+
+- **`isWithinDir` is exported** from `stitchkit/server`. `serveFile` deliberately
+  leaves path containment to its caller, and the guide and ADRs 0023 / 0038 tell
+  you to call this before serving a URL-derived path — but it was internal, so
+  the advice was unactionable. The guide now carries the full recipe.
+
+- **A raw route that shadows a contract route is reported at startup.** Raw
+  routes match first, so a leftover one keeps serving while the contract
+  endpoint — and its auth gate — never runs. The warning names the raw route,
+  the dead endpoint and the scope being bypassed. Silent, this is the exact
+  failure raw-response endpoints exist to prevent.
+
+### Fixed
+
+- **A `Response` on the data path no longer vanishes.** Returned from a normal
+  handler it was wrapped by `afterHandle`, serialized by `json()` into `{}` and
+  answered with status 200 — headers, status and body gone, and nothing logged.
+  The guide's own SSE example (`return streamSSE(tokens())`) sat in that hole.
+  The handler's return type already rejected it (`void | Promise<void>` admits
+  no `Response`); what is new is that it now **fails at runtime** with a 500
+  naming the fix, instead of answering 200. Checked after the hooks, so an
+  `afterHandle` returning a `Response` is caught too. Declare `rawResponse: true` (see above); the SSE guide section is updated.
+
+- **CORS no longer corrupts a partial response.** `applyCors` rebuilt every
+  response it decorated (`new Response(res.body, …)`), and on Bun reading `.body`
+  off a response built from `Bun.file().slice()` re-reads the *whole* file. A
+  `206` therefore kept its honest `Content-Range` while shipping the rest of the
+  file — a client stitching ranges (a video player, a download manager,
+  `curl -C -`) got garbage. Measured: `Range: bytes=10-14` on a 26-byte file
+  returned 16 bytes. Headers are now mutated in place, with the rebuild kept only
+  as the fallback for the immutable-header case it was written for
+  (`Response.redirect()`, which has no body to corrupt). Affects any raw route,
+  `onError` response or `serveFile` handler behind `cors`.
+- **`Vary` is appended, not overwritten.** With a list `origin`, CORS set
+  `Vary: Origin` over whatever the handler had put there — a file response
+  carrying `Vary: Accept-Encoding` lost it, and a shared cache would then serve
+  one encoding to every client.
+
+### Docs
+
+- **`meta` opt-out documented:** an endpoint declaring `key: undefined` shadows
+  the contract-level value — "the contract turns this on for everyone, this
+  endpoint turns it off". This was already how 0.26.0 behaves; the ADR and guide
+  wrongly said "no unset sentinel". Driven by a real consumer case (a public
+  form-submission endpoint inside an admin-gated contract). The key stays present
+  with value `undefined`, so read `meta` by value (`meta?.key`), not membership.
+
 ## [0.26.0] — 2026-08-05
 
 ### ⚠️ Breaking changes
@@ -1290,7 +1388,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/max-listov/stitchkit/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/max-listov/stitchkit/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/max-listov/stitchkit/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/max-listov/stitchkit/compare/v0.23.0...v0.24.0

@@ -3,6 +3,9 @@ import { mergeMeta } from '../contract/define';
 import { typedEntries } from '../internal/typed';
 import type { Handlers, MethodDef, ServiceDef } from './types';
 
+/** Frozen so the same array cannot be mutated through one method and seen by another. */
+const HTTP_ONLY = Object.freeze(['HTTP'] as const);
+
 /**
  * Bind a contract to its typed `handlers`, producing a `ServiceDef` to mount on
  * `createServer`. Every handler is type-checked against its endpoint's schemas.
@@ -31,7 +34,12 @@ export function implement<
       serviceName: contract.meta.prefix,
       key: String(key),
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
-      expose: endpoint.expose,
+      // A raw endpoint's exposure is forced, not inherited: with `expose`
+      // undefined the framework's own default convention reads "MCP + AGENT on",
+      // so every pre-existing exposure reader — audit scripts, a bring-your-own
+      // transport — would conclude a download is a tool. Making it explicit keeps
+      // them correct without teaching them about `raw`. → ADR 0038.
+      expose: endpoint.rawResponse ? HTTP_ONLY : endpoint.expose,
       // Effective scope: per-endpoint override, else the contract group scope.
       // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
       // `endpoint.scope` alone — no consumer ever re-resolves against a service.
@@ -49,6 +57,10 @@ export function implement<
       // endpoint's, endpoint keys winning. Undefined on both sides stays
       // undefined: readers test `method.meta?.x`. → ADR 0021 / 0036.
       meta: mergeMeta(contract.meta.meta, endpoint.meta),
+      // The handler owns the response — skip output validation, serialization
+      // and every tool surface. → ADR 0038.
+      rawResponse: endpoint.rawResponse,
+      contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: (ctx: RuntimeContext) =>
         (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),
     };

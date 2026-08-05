@@ -89,7 +89,13 @@ type ParamArrayValue = Array<string | number>;
 export interface RequestOptions {
   params?: Record<string, ParamValue | ParamArrayValue>;
   timeout?: number;
-  responseType?: 'json' | 'blob';
+  /**
+   * How to read the body. `'response'` hands back the untouched `Response` —
+   * what a `raw` endpoint answers with, and strictly more than `'blob'`: the
+   * caller still gets `.blob()` / `.body`, plus the headers where
+   * `Content-Disposition` (the download filename) lives.
+   */
+  responseType?: 'json' | 'blob' | 'response';
 }
 
 /** The HTTP transport adapter `createClient` builds typed methods on. */
@@ -228,6 +234,12 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
     try {
       if (options.responseType === 'blob') {
         return client[method](url, kyOptions).blob() as Promise<T>;
+      }
+      if (options.responseType === 'response') {
+        // No parsing, no 204 special-case — the caller owns the body. Errors
+        // still surface as `ApiError` through the catch below, so a failed
+        // download does not masquerade as a zero-byte file.
+        return (await client[method](url, kyOptions)) as T;
       }
       const response = await client[method](url, kyOptions);
       if (response.status === 204 || response.headers.get('content-length') === '0') {
