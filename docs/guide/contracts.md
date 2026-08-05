@@ -60,7 +60,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `output` | no | Zod schema for the **response body** |
 | `scope` | no | access scope for this endpoint — see [Auth & errors](./auth-and-errors.md) |
 | `expose` | no | which transports carry this endpoint — see [below](#transports) |
-| `toolName` | no | explicit MCP / agent tool name (defaults to `prefix_key`) |
+| `toolName` | no | explicit MCP / agent tool name (default: a verb-aware derivation, see below — not a literal `prefix_key`) |
 | `multipart` | no | field name of a file upload — see [below](#file-uploads) |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
 | `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
@@ -149,7 +149,40 @@ derivation from the method key + prefix (`users` + `create` ⇒ `create_user`,
 { method: 'POST', path: '/', desc: 'Create a user', toolName: 'create_user', /* … */ }
 ```
 
+**Every tool name — derived or explicit — must match `[a-zA-Z0-9_-]` and be at
+most 64 characters**, the character class every major provider accepts.
+
+Note the two classes differ. What is *accepted* includes the hyphen; what
+derivation *keeps* does not — a derived name normalises everything outside
+`[a-zA-Z0-9_]` to `_`, the hyphen included, so `bot-status` + `get` ⇒
+`get_bot_status` and `admin/analytics` + `get` ⇒ `get_admin_analytics`. A hyphen
+survives only in an explicit `toolName`, which is taken verbatim.
+
+A prefix with *no* usable character at all (`'///'`, `'_'`, a fully non-ASCII
+prefix) and any explicit `toolName` outside the accepted class **throw at
+mount**. An unusable prefix is rescued by setting an explicit `toolName` — the
+prefix then never enters the name. An over-long name is fixed by a shorter
+explicit `toolName` (or a shorter prefix / method key). Nothing downstream checks this: the provider rejects the whole
+request, so one bad name takes every tool of that mount down with it.
+→ [ADR 0035](../decisions/0035-tool-name-derivation-and-validation.md).
+
 ## Endpoint metadata (`meta`)
+
+A contract can declare a **default** `meta` that every endpoint inherits, and an
+endpoint's own keys are **shallow-merged over** it:
+
+```ts
+defineContract({ prefix: 'admin', meta: { public: true } }, {
+  list: { method: 'GET', path: '/', desc: 'List', /* meta → { public: true } */ },
+  purge: { method: 'POST', path: '/purge', desc: 'Purge', meta: { rateTier: 2 } },
+  //                                          meta → { public: true, rateTier: 2 }
+})
+```
+
+One level deep — no deep merge, no way to unset an inherited key; declare it on
+the endpoint instead. `expose` deliberately has **no** contract-level equivalent
+(→ [ADR 0036](../decisions/0036-contract-level-meta.md)).
+
 
 `meta` is an **opaque, app-defined** bag the core attaches no meaning to — the
 same escape-hatch spirit as `scope` being a free string ([ADR 0002](../decisions/0002-generic-core.md) /

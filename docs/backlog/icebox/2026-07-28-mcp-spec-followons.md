@@ -2,9 +2,10 @@
 title: MCP 2026-07-28 — followons (MRTR/elicitation, cacheable list, extensions framework, CIMD, header-routing)
 description: Остаток спеки 2026-07-28 после auth-hardening и stateless-миграции. Всё опционально и гейтится либо SDK v2, либо реальным запросом потребителя. Держим списком, чтобы не потерять и не делать «на всякий случай».
 type: task
-status: inbox
+status: icebox
 created: 2026-07-28
 updated: 2026-07-28
+defrost: the stateless-core migration above is unfrozen — MRTR, cacheable list results and header routing all sit on top of it. CIMD is independent but has a ≥12-month deprecation window.
 ---
 
 # MCP 2026-07-28 — followons

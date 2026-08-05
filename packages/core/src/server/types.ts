@@ -183,6 +183,19 @@ export interface HandlerConfig {
   cors?: CorsConfig;
   hooks?: LifecycleHooks;
   logging?: boolean | StitchLogger;
+  /**
+   * Report handler-output keys the contract schema removed, as dot-paths, through
+   * the configured logger. **Off by default** — the strip itself is correct (the
+   * contract is the published shape of the response), it is only *invisible*, and
+   * a permanent key-diff on every response is the wrong price for that.
+   *
+   * Turn it on while migrating a live API: your handlers may be returning more
+   * than the contract declares, and nothing else will tell you — types cannot
+   * (structural typing does not reject excess properties) and the client just
+   * receives fewer fields. Read the list, fix or widen the contracts, turn it off.
+   * → ADR 0037.
+   */
+  warnOnOutputStrip?: boolean;
   traceId?: (req: Request) => string;
   /**
    * Trust the `x-forwarded-for` / `x-real-ip` headers for the client IP.

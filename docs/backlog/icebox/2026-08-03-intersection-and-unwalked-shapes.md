@@ -2,10 +2,11 @@
 title: "Two gaps the key-policy fix could not close: z.intersection strips, and unwalked shapes keep their oneOf"
 description: Zod drops both sides' catchall when intersecting objects, so a params + union-input tool still strips on the agent surface; and the shapes flattenUnionsDeep does not walk (tuple, lazy, pipe, readonly) never flatten, so a union nested there still reaches the wire as oneOf.
 type: task
-status: inbox
+status: icebox
 created: 2026-08-03
 updated: 2026-08-03
 related: docs/decisions/0034-advertised-schema-key-policy.md
+defrost: a consumer actually hits it — a `params` + union-`input` tool on the agent surface (MCP rejects those at mount), or a discriminated union nested under a tuple / `z.lazy` / `.transform()`. Both need a different instrument than the ADR 0034 catchall copy, and neither has a reported case.
 ---
 
 # Two residual gaps after ADR 0034

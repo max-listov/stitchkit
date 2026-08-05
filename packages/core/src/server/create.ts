@@ -216,7 +216,19 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
         // A handler returning the wrong shape is a server fault, not a client
         // one — `INTERNAL_SERVER_ERROR`, never the `VALIDATION_ERROR` a bad
         // request produces. Same rule as the tool transport (ADR 0014).
-        const checked = validateHandlerOutput(method.outputSchema, result);
+        const checked = validateHandlerOutput(
+          method.outputSchema,
+          result,
+          config.warnOnOutputStrip
+            ? (paths) => {
+                // The endpoint identity is in the message on purpose: a dot-path
+                // alone is not actionable without knowing which handler produced it.
+                const line = `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`;
+                if (customLogger) customLogger.warn(line);
+                else console.warn(line);
+              }
+            : undefined,
+        );
         if (!checked.ok) {
           throw new AppError('INTERNAL_SERVER_ERROR', checked.message, 500);
         }

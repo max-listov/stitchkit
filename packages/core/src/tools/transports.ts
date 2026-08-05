@@ -42,7 +42,9 @@ export function summarizeTransports(services: ServiceDef[]): TransportSummary {
     }
     // Tool transports: exactly what the mounts would collect.
     for (const transport of TOOL_TRANSPORTS) {
-      counts[transport] = collectTools(service, transport).length;
+      counts[transport] = // Read-only counter: it must report, not refuse — a boot summary that dies
+        // would hide the very diagnostic the upgrade guide points at. → ADR 0035.
+        collectTools(service, transport, { assertNames: false }).length;
     }
     for (const transport of Object.keys(counts) as Transport[]) {
       totals[transport] += counts[transport];

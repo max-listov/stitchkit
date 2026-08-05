@@ -1,4 +1,5 @@
 import type { ContractDef, EndpointDef, RuntimeContext } from '../contract';
+import { mergeMeta } from '../contract/define';
 import { typedEntries } from '../internal/typed';
 import type { Handlers, MethodDef, ServiceDef } from './types';
 
@@ -44,9 +45,10 @@ export function implement<
       idempotent: endpoint.idempotent,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
-      // Opaque app metadata — rides through untouched (on the shared base, so no
-      // `in` guard). Readable in hooks / on tool mounts. → ADR 0021.
-      meta: endpoint.meta,
+      // Opaque app metadata — the contract-wide default shallow-merged with the
+      // endpoint's, endpoint keys winning. Undefined on both sides stays
+      // undefined: readers test `method.meta?.x`. → ADR 0021 / 0036.
+      meta: mergeMeta(contract.meta.meta, endpoint.meta),
       handler: (ctx: RuntimeContext) =>
         (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),
     };

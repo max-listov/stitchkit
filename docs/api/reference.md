@@ -75,7 +75,7 @@ from the root `stitchkit`.
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
-| `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` |
+| `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition |
 | `HttpMethod` | _type_ | `GET \| POST \| PUT \| PATCH \| DELETE` |
 | `Transport` | _type_ | `HTTP \| MCP \| AGENT \| CLI` |

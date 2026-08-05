@@ -311,7 +311,13 @@ const onError = createErrorHook({
     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
     INTERNAL_SERVER_ERROR: 'internal',
   } satisfies Record<StitchErrorCode, string>,
-  render: (info) => ({ ok: false, error: { code: info.code, message: info.message } }),
+  // `ctx` is the request's RuntimeContext — read `ctx.traceId` for a
+  // correlation id in the envelope. Declaring it is optional.
+  render: (info, ctx) => ({
+    ok: false,
+    error: { code: info.code, message: info.message },
+    traceId: ctx.traceId,
+  }),
 })
 
 createServer({ services, hooks: { onError } })

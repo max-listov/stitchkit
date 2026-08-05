@@ -19,13 +19,12 @@
  * writes the executable (`#!/usr/bin/env node` → `createCli({ … })`) and the
  * `bin` entry in its own `package.json`.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import process from 'node:process';
 import { safeJsonParse } from '../internal/safe-json';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
-import { isWithinDir } from '../internal/within-dir';
+import { writeDownload } from '../internal/write-download';
 import type { ServiceDef, StitchLogger } from '../server/types';
 import { parseCliArgs } from './cli-args';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
@@ -39,6 +38,7 @@ import {
 } from './execute';
 import { jsonSchemaFields, toJsonSchema } from './json-schema';
 import { collectTools, createToolRunner, type MountableTool } from './mount';
+import { assertUniqueToolName } from './names';
 import { objectShapeKeys } from './schema';
 
 export interface CliConfig<
@@ -267,7 +267,6 @@ async function downloadResults(
   maxBytes: number,
 ): Promise<void> {
   const root = resolve(dir);
-  await mkdir(root, { recursive: true });
   for (const file of files) {
     try {
       // `file.url` is handler/remote-derived → SSRF-guard it (private hosts,
@@ -280,8 +279,7 @@ async function downloadResults(
       // `file.name` is untrusted → basename-only, then re-check containment so a
       // crafted name (`../../etc/x`, absolute path) cannot escape the output dir.
       const target = resolve(root, basename(file.name));
-      if (!isWithinDir(root, target)) throw new Error('download name escapes the output dir');
-      await writeFile(target, buffer);
+      await writeDownload(root, target, buffer);
       if (!quiet) stderr(`saved ${target} (${(buffer.length / 1024).toFixed(0)}KB)\n`);
     } catch (err) {
       stderr(
@@ -314,9 +312,7 @@ export async function createCli<
   const tools = new Map<string, MountableTool>();
   for (const service of services) {
     for (const mountable of collectTools(service, 'CLI')) {
-      if (tools.has(mountable.name)) {
-        throw new Error(`Duplicate CLI command "${mountable.name}" across mounted services`);
-      }
+      assertUniqueToolName(mountable.name, tools.has(mountable.name), 'CLI command');
       tools.set(mountable.name, mountable);
     }
   }

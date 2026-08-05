@@ -15,6 +15,88 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-08-05
+
+### ⚠️ Breaking changes
+
+- **Tool names are normalised across the whole character class, and an
+  undeliverable name now throws at mount.** `toToolName` normalised only the
+  hyphen, so anything else rode into the advertised name (`prefix:
+  'admin/analytics'` derived `overview_admin/analytic`). Nothing downstream checks
+  this — the MCP SDK only *warns* (SEP-986) and registers anyway, the `ai` SDK has
+  no rule — so the provider rejected the request and **every** tool of that mount
+  went dark, at the first model call. The enforced rule is `[a-zA-Z0-9_-]`, ≤64
+  characters: OpenAI's, the tightest of the surfaces, so a passing name is
+  deliverable everywhere (MCP and Anthropic both allow 128 and a dot, so an
+  MCP-only consumer may need a shorter explicit `toolName`). → ADR 0035.
+
+  ```ts
+  // before: prefix 'admin/analytics' + `overview` → "overview_admin/analytic" (illegal, ships)
+  // after:                                       → "overview_admin_analytics"
+  ```
+
+  Two things can now fail or move:
+  - **An illegal name throws at mount**, naming the endpoint — an explicit
+    `toolName` outside `[a-zA-Z0-9_-]`, a name over 64 characters (the only remedy
+    is a shorter explicit `toolName`), or a prefix with no usable character at
+    all — `'///'`, `'_'`, `''`, a fully non-ASCII prefix. Those last ones derived
+    a degenerate name (`get____`, `get__`, `get_`) that *passes* the charset check
+    while being meaningless and identical for every such service, so they are
+    rejected on their own terms; setting an explicit `toolName` rescues them,
+    since the prefix then never enters the name. Note this is the one sub-case
+    where a name that was **provider-legal** now throws — an underscore-only or
+    empty prefix. Otherwise nothing that worked stops working: an illegal name was
+    already rejected provider-side.
+  - **Some legal names are renamed**, because `singularize` now applies to the
+    last `_` segment instead of the whole name — the exception list previously
+    only ever matched an unprefixed service. `get_bot_statu` → `get_bot_status`,
+    `get_user_setting` → `get_user_settings`, `get_chat_analytic` →
+    `get_chat_analytics`, `get_site_new` → `get_site_news`. A host config or agent
+    prompt pinned to an old name breaks — diff with `listToolNames` before and
+    after (see `docs/guide/upgrading.md`).
+
+  Names that are legal today are otherwise **byte-identical**: no run-collapsing,
+  no trimming, and a hyphen in a *method key* is kept (`get-user_note` still
+  derives as before) — so `get__internal`, `list_a__b` and `get_foo_` are
+  untouched. **The CLI is exempt** from the charset and length rules entirely: a
+  command name goes to a shell, not to a provider. The built-in native tools
+  (`mountWait` / `mountDownload` / `mountUpload`) now assert their names too, since
+  they share the `tools/list` with contract tools.
+  `implementRemote` inherits the check — it derives names over someone else's
+  contract. `listToolNames` deliberately does **not** throw, so it can still show
+  you the offending row.
+
+### Added
+
+- **`warnOnOutputStrip` — see what the `output` schema is removing.** A handler
+  returning more than its contract declares has the extra fields deleted, which is
+  correct but invisible: types cannot catch it and nothing logged it. Turn the flag
+  on while migrating a live API and every removed key is reported as a dot-path
+  with the endpoint identity (`notes.get: secret, nested.alsoSecret`); tool mounts
+  take the same via `onOutputStrip: (toolName, paths) => …`. Off by default, and
+  the key diff only runs when a reporter is attached, so nothing changes for anyone
+  who does not opt in. → ADR 0037.
+- **`createErrorHook`'s `render` and `onError` receive the `RuntimeContext`.** The
+  helper dropped it, so putting a `traceId` in the error envelope — the ordinary
+  reason to have one — meant abandoning the helper and hand-rolling `onError`,
+  re-implementing the normalisation it already does. Additive: a one-argument
+  `render` stays assignable.
+  `// before: render: (info) => …` → `// after: render: (info, ctx) => ({ …, traceId: ctx.traceId })`
+- **`nativeTools` receives the resolved identity**, like `services` and `context`
+  already did — `nativeTools: (server, auth) => …`. A native tool can now be
+  per-tenant. It is **not** a scope gate: native tools are not contract methods, so
+  `lifecycle` still does not run for them.
+- **A contract can declare a default `meta` that endpoints inherit** —
+  `defineContract({ prefix, meta: { owner: 'auth' } }, …)`. An endpoint's own
+  `meta` is **shallow-merged over** it (endpoint keys win, one level), so a
+  contract-wide `{ public: true }` survives an endpoint that adds
+  `{ rateTier: 2 }` — which matters because `meta: { public: true }` is the
+  documented allowlist for the generated OpenAPI spec. Applies through
+  `implement`, `implementRemote` and `createContractFactory` (which previously
+  rebuilt the meta object and would have dropped the field). `expose`
+  deliberately does **not** cascade — → ADR 0036 for the reasoning, and pin
+  `listToolNames` in a snapshot to catch an endpoint that forgot it.
+
 ## [0.25.0] — 2026-08-03
 
 ### ⚠️ Breaking changes
@@ -1208,7 +1290,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/max-listov/stitchkit/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/max-listov/stitchkit/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/max-listov/stitchkit/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/max-listov/stitchkit/compare/v0.22.0...v0.23.0

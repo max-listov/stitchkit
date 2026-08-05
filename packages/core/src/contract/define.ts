@@ -116,6 +116,16 @@ export type EndpointDef = HttpOnlyEndpointDef | ToolEndpointDef;
 export interface ContractMeta<TScope extends string = string> {
   prefix: string;
   scope?: TScope;
+  /**
+   * Contract-wide default for every endpoint's opaque `meta` (→ ADR 0021).
+   * Endpoints **shallow-merge** over it, key by key — so a contract-wide
+   * `{ public: true }` survives an endpoint that adds `{ rateTier: 2 }`. One
+   * level only: no deep merge, no unset sentinel. → ADR 0036.
+   *
+   * `expose` deliberately has no equivalent — see ADR 0036 for why, and pin
+   * `listToolNames` in a snapshot to catch an endpoint that forgot it.
+   */
+  meta?: Record<string, unknown>;
 }
 
 export interface ContractDef<
@@ -133,13 +143,16 @@ export interface ContractDef<
  * definition time on a duplicate `toolName`.
  */
 export function defineContract<const T extends Record<string, EndpointDef>>(
-  meta: { prefix: string },
+  meta: { prefix: string; meta?: Record<string, unknown> },
   endpoints: T,
 ): ContractDef<T, 'public'>;
 export function defineContract<
   TScope extends string,
   const T extends Record<string, EndpointDef>,
->(meta: { prefix: string; scope: TScope }, endpoints: T): ContractDef<T, TScope>;
+>(
+  meta: { prefix: string; scope: TScope; meta?: Record<string, unknown> },
+  endpoints: T,
+): ContractDef<T, TScope>;
 export function defineContract(
   meta: ContractMeta,
   endpoints: Record<string, EndpointDef>,
@@ -189,6 +202,26 @@ export function defineContract(
 }
 
 // ─── Runtime Context (built by transport, loose types) ───
+
+/**
+ * Shallow-merge a contract-wide `meta` default with an endpoint's own — endpoint
+ * keys win. Returns `undefined` when neither side declares anything, because
+ * readers test `method.meta?.x` and an empty object would read as "declared".
+ * One level deep by design: a deep merge invites "how do I unset an inherited
+ * key", which has no answer without a sentinel. → ADR 0036.
+ */
+export function mergeMeta(
+  contractMeta: Record<string, unknown> | undefined,
+  endpointMeta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!contractMeta) return endpointMeta;
+  // Copy even when there is nothing to merge: returning the contract's own object
+  // would alias it across every endpoint AND across every later `implement` of the
+  // same contract, so one hook mutating `endpoint.meta` would corrupt all of them.
+  // Identity is then consistent — a `MethodDef` always owns its `meta`.
+  if (!endpointMeta) return { ...contractMeta };
+  return { ...contractMeta, ...endpointMeta };
+}
 
 export interface RuntimeContext {
   params: unknown;

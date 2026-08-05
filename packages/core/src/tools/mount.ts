@@ -14,7 +14,7 @@ import {
   type ToolResult,
 } from './execute';
 import { flattenUnionsDeep } from './flatten';
-import { toToolName } from './names';
+import { assertToolName, hasUsableChars, toToolName } from './names';
 import { mergeSchemas, rebuildObject } from './schema';
 
 /**
@@ -75,6 +75,13 @@ export interface CollectToolsConfig {
   extend?: ToolExtend;
   /** Flatten discriminated union inputs into a single object for MCP. Default: false. */
   flattenUnionInput?: boolean;
+  /**
+   * Throw on a tool name no provider will accept. Default: true — every mount
+   * wants it. The read-only listers pass `false`: `listToolNames` is the
+   * documented way to *find* an offending name before an upgrade, so it must
+   * report one rather than die on it. → ADR 0035.
+   */
+  assertNames?: boolean;
 }
 
 /**
@@ -86,7 +93,7 @@ export function collectTools(
   transport: Transport,
   config: CollectToolsConfig = {},
 ): MountableTool[] {
-  const { extend, flattenUnionInput = false } = config;
+  const { extend, flattenUnionInput = false, assertNames = true } = config;
   const tools: MountableTool[] = [];
   for (const [methodName, method] of Object.entries(service.methods)) {
     // CLI is opt-IN: a method surfaces as a command only when its `expose`
@@ -101,6 +108,21 @@ export function collectTools(
     if (method.multipart) continue;
 
     const name = method.toolName ?? toToolName(service.name, methodName);
+    // CLI is exempt: `[a-zA-Z0-9_-]{1,64}` is a *provider* rule, and a CLI command
+    // is typed into a shell — there is no provider to reject it. Holding it to the
+    // provider charset would refuse `поиск`, a command that worked. → ADR 0035.
+    if (assertNames && transport !== 'CLI') {
+      // A prefix of only illegal characters normalises to separators, and the
+      // resulting `get_` / `list_` PASSES the charset check while being both
+      // meaningless and identical for every such service — so it is rejected on
+      // its own terms, not by the regex. → ADR 0035.
+      if (!method.toolName && !hasUsableChars(service.name)) {
+        throw new Error(
+          `Service prefix "${service.name}" (method "${methodName}") has no characters usable in a tool name — set an explicit \`toolName\` or rename the prefix`,
+        );
+      }
+      assertToolName(name, service.name, methodName);
+    }
     // Flatten params and input SEPARATELY, then merge — so a union input becomes
     // a ZodObject and merges with params into one object, instead of a
     // non-mountable `allOf` intersection. Deep: discriminated unions flatten at
@@ -138,6 +160,12 @@ export interface ToolRunnerConfig {
   errorHint?: ErrorHintFn;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
+  /**
+   * Report handler-output keys the contract schema removed — the tool-side twin of
+   * `createServer`'s `warnOnOutputStrip`. Off unless a reporter is passed; the key
+   * diff only runs when one is. → ADR 0037.
+   */
+  onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
 /**
@@ -172,6 +200,7 @@ export function createToolRunner(
       config.hooks,
       config.lifecycle,
       config.coerceJsonArgs ?? true,
+      config.onOutputStrip ? (paths) => config.onOutputStrip?.(tool.name, paths) : undefined,
     );
   };
 }

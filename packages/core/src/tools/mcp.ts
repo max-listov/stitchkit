@@ -19,6 +19,7 @@ import {
   type MountableTool,
   type ToolExtend,
 } from './mount';
+import { assertUniqueToolName } from './names';
 
 /**
  * What to do when a tool's schema cannot be advertised on the MCP surface — a
@@ -138,9 +139,7 @@ function prepareMcpTool(
   failures: string[],
   seen: Set<string>,
 ): PreparedMcpTool | null {
-  if (seen.has(mountable.name)) {
-    throw new Error(`Duplicate MCP tool name "${mountable.name}" across mounted services`);
-  }
+  assertUniqueToolName(mountable.name, seen.has(mountable.name), 'MCP tool name');
   seen.add(mountable.name);
 
   // MCP advertises a tool's arguments as a JSON Schema object, and the SDK only
@@ -209,6 +208,8 @@ export interface McpMountConfig {
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
+  /** Report output keys the contract schema removed — → ADR 0037. */
+  onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
 /**
@@ -254,6 +255,7 @@ export function mountMcp(
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,
     coerceJsonArgs: config.coerceJsonArgs,
+    onOutputStrip: config.onOutputStrip,
   });
 
   const seen = new Set<string>();
@@ -345,9 +347,12 @@ export interface McpServerBuildConfig<TAuth> {
   onIncompatibleSchema?: IncompatibleSchemaPolicy;
   /** Logger for schema-incompatibility warnings — defaults to `console`. */
   logger?: StitchLogger;
-  /** Register native (non-contract) MCP tools — receives the `McpServer`
-   *  directly. For tools returning multimodal content, e.g. `mountViewFile`. */
-  nativeTools?: (server: McpServer) => void;
+  /** Register native (non-contract) MCP tools — receives the `McpServer` and the
+   *  resolved identity, like `services` and `context` do, so a native tool can be
+   *  per-tenant. For tools returning multimodal content, e.g. `mountViewFile`.
+   *  Note this is **not** a scope gate: native tools are not contract methods and
+   *  `lifecycle` does not run for them. */
+  nativeTools?: (server: McpServer, auth: TAuth) => void;
   /** MCP Apps UI resources (`ui://…`) served for tools that declare `ui`. */
   resources?: McpResourceDef[];
   /** Server instructions — a short (≤2KB) hint to the host on when and how to
@@ -359,6 +364,8 @@ export interface McpServerBuildConfig<TAuth> {
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
+  /** Report output keys the contract schema removed — → ADR 0037. */
+  onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
 /**
@@ -387,7 +394,7 @@ export function buildMcpServer<TAuth>(
     flattenUnionInput: config.flattenUnionInput,
     errorHint: config.errorHint,
   });
-  config.nativeTools?.(server);
+  config.nativeTools?.(server, auth);
   for (const resource of config.resources ?? []) {
     mountMcpResource(server, resource);
   }

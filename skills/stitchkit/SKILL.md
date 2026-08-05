@@ -55,6 +55,10 @@ Work in this order; each step links a contract field to a transport.
 - **`scope` drives auth (and optionally paths).** One `createAuthHook` guards
   every transport at once — don't re-check auth per handler. For resource-scoped
   APIs, `scopePrefixes` maps a scope to a URL prefix.
+- **Tool names**: a tool name must match `[a-zA-Z0-9_-]`, ≤64 chars. Derivation
+  normalises everything outside `[a-zA-Z0-9_]` to `_` — hyphen included, so
+  `bot-status` ⇒ `get_bot_status`; a hyphen survives only in an explicit
+  `toolName`. A name that still cannot be delivered throws at mount.
 - **One error model.** Throw `AppError` (`badRequest`, `notFound`, …). It renders
   the same envelope on HTTP and as a tool error, and the client parses it back
   into `ApiError`. To map stitch's own framework codes to your app codes, key off

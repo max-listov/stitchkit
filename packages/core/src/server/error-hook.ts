@@ -22,11 +22,17 @@
  *     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
  *     INTERNAL_SERVER_ERROR: 'internal',
  *   } satisfies Record<StitchErrorCode, string>,
- *   render: (info) => ({ ok: false, error: { code: info.code, message: info.message } }),
+ *   render: (info, ctx) => ({
+ *     ok: false,
+ *     error: { code: info.code, message: info.message },
+ *     traceId: ctx.traceId,
+ *   }),
  * });
  * createServer({ services, hooks: { onError } });
  * ```
  */
+
+import type { RuntimeContext } from '../contract';
 import { isStitchErrorCode, type StitchErrorCode } from '../contract';
 import { normalizeError } from '../internal/errors';
 import type { LifecycleHooks } from './types';
@@ -54,16 +60,22 @@ export interface ErrorHookConfig<TWireCode extends string = string> {
    */
   codeMap?: Record<StitchErrorCode, TWireCode>;
   /** Build the response body from the resolved error. */
-  render: (info: ResolvedError) => unknown;
+  /**
+   * Build the response body from the resolved error. `ctx` is the request's
+   * `RuntimeContext` — read `ctx.traceId` / `ctx.spanId` to put a correlation id
+   * in the envelope, which is the ordinary reason to have one. Declaring the
+   * parameter is optional: a one-argument `render` stays assignable.
+   */
+  render: (info: ResolvedError, ctx: RuntimeContext) => unknown;
   /** Observe the raw thrown value before rendering — logging / metrics. */
-  onError?: (error: unknown, info: ResolvedError) => void;
+  onError?: (error: unknown, info: ResolvedError, ctx: RuntimeContext) => void;
 }
 
 /** Build an `onError` hook from a code map + envelope renderer. */
 export function createErrorHook<TWireCode extends string = string>(
   config: ErrorHookConfig<TWireCode>,
 ): NonNullable<LifecycleHooks['onError']> {
-  return (_ctx, error) => {
+  return (ctx, error) => {
     // Normalise first — the same classification the framework default uses:
     // a `ZodError` (bad input) becomes `VALIDATION_ERROR` 400, an `AppError`
     // keeps its code / status / details, anything else becomes a generic 500
@@ -81,8 +93,8 @@ export function createErrorHook<TWireCode extends string = string>(
       details: appErr.details,
       hint: appErr.hint,
     };
-    config.onError?.(error, info);
-    return new Response(JSON.stringify(config.render(info)), {
+    config.onError?.(error, info, ctx);
+    return new Response(JSON.stringify(config.render(info, ctx)), {
       status: info.status,
       headers: { 'content-type': 'application/json' },
     });

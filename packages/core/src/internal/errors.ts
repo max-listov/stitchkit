@@ -1,5 +1,6 @@
 import { type ZodType, z } from 'zod';
 import { AppError } from '../contract';
+import { isRecord } from './typed';
 
 /** The dotted path of a Zod issue — `(root)` for a top-level issue. */
 function issuePath(path: ReadonlyArray<PropertyKey>): string {
@@ -72,16 +73,56 @@ export function normalizeError(err: unknown): AppError {
 }
 
 /**
+ * Every key present before validation and absent after it, as dot-paths.
+ *
+ * Deep on purpose: a field trimmed three levels down is exactly what a top-level
+ * comparison misses, and a half-answer sends someone hunting the wrong endpoint.
+ * Arrays are walked by index; a `.loose()` / `.catchall()` schema keeps its
+ * extras, so it reports nothing.
+ */
+function strippedPaths(before: unknown, after: unknown, prefix: string): string[] {
+  if (Array.isArray(before)) {
+    if (!Array.isArray(after)) return [];
+    return before.flatMap((item, i) => strippedPaths(item, after[i], `${prefix}[${i}]`));
+  }
+  if (!isRecord(before) || !isRecord(after)) return [];
+  const paths: string[] = [];
+  for (const [key, value] of Object.entries(before)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (!(key in after)) {
+      paths.push(path);
+      continue;
+    }
+    paths.push(...strippedPaths(value, after[key], path));
+  }
+  return paths;
+}
+
+/**
  * Validate a handler's return value against the contract `output` schema. A
  * mismatch is a **server** fault (the handler broke its own contract) — shared
  * by the HTTP and tool transports so both report it identically.
+ *
+ * `onStripped` is the migration diagnostic: a handler returning more than its
+ * contract declares has the extra fields **deleted**, correctly but invisibly —
+ * types cannot catch it (structural typing does not reject excess properties) and
+ * nothing logs it. Pass a reporter to find out; omit it and nothing is computed.
  */
 export function validateHandlerOutput(
   schema: ZodType,
   data: unknown,
+  onStripped?: (paths: string[]) => void,
 ): { ok: true; data: unknown } | { ok: false; message: string } {
   const parsed = schema.safeParse(data);
-  if (parsed.success) return { ok: true, data: parsed.data };
+  if (parsed.success) {
+    // The diff runs ONLY when a diagnostic is attached — with the flag off there
+    // is no walk and no cost on the response path. → ADR 0037.
+    if (onStripped) {
+      const paths = strippedPaths(data, parsed.data, '');
+      if (paths.length > 0) onStripped(paths);
+    }
+    return { ok: true, data: parsed.data };
+  }
   return {
     ok: false,
     message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,

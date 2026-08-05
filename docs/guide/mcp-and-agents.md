@@ -19,7 +19,14 @@ By default every endpoint is a tool on every transport. `expose` narrows it:
 `desc` is the tool description the model reads — write it for the model, not
 just for a human. A `multipart` endpoint is never a tool. The tool name defaults
 to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
-`get_widget`); set `toolName` for an explicit one. See
+`get_widget`); set `toolName` for an explicit one. Derivation normalises every
+character outside `[a-zA-Z0-9_]` to `_` — the hyphen included, so `bot-status`
+derives `get_bot_status` — while a name is *accepted* if it matches
+`[a-zA-Z0-9_-]`, so a hyphen survives in an explicit `toolName`. A name that
+still cannot be delivered (illegal explicit `toolName`, over 64 characters, or a
+prefix with no usable character) throws at mount rather than at the first model
+call —
+→ [ADR 0035](../decisions/0035-tool-name-derivation-and-validation.md). See
 [Contracts → transports](./contracts.md#transports).
 
 ### Pinning tool names — `listToolNames`
@@ -42,6 +49,14 @@ A stitchkit upgrade (or a contract refactor) that would shift a derived name
 now fails this test instead of silently breaking the clients that call the
 tool. It is also the mechanical diff when migrating a service: run it before
 and after, compare.
+
+> **This is also the guard against a forgotten `expose`.** An endpoint that
+> declares none is a tool on MCP **and** AGENT — the default is fail-open, and
+> there is no contract-level `expose` to set once (→
+> [ADR 0036](../decisions/0036-contract-level-meta.md)). A snapshot of
+> `listToolNames` fails the build the moment an endpoint you meant to keep
+> HTTP-only shows up in the list, which is the one check that catches it however
+> many places the line was forgotten.
 
 ## MCP — `createMcpHandler`
 
@@ -81,11 +96,11 @@ createServer({
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `onIncompatibleSchema` | `'throw'` (default) · `'skip'` · `'warn'` — see below |
 | `logger` | a `StitchLogger` for the `'warn'` policy |
-| `nativeTools` | register non-contract tools directly on the `McpServer` |
+| `nativeTools` | `(server, auth) => …` — register non-contract tools directly on the `McpServer`; receives the resolved identity, but is **not** a scope gate (`lifecycle` does not run for native tools) |
 | `instructions` | a short host-facing usage hint, surfaced to MCP tool-search |
 
-`services` and `context` receive the resolved identity, so a tenant can be
-shown only its own tools and every handler can read `ctx.tenantId`.
+`services`, `context` and `nativeTools` all receive the resolved identity, so a
+tenant can be shown only its own tools and every handler can read `ctx.tenantId`.
 
 ### Guarding tools — `lifecycle`
 

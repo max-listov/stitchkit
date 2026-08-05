@@ -6,6 +6,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { isRecord } from '../internal/typed';
+import { assertToolName } from './names';
 import { textResult } from './native-result';
 
 export interface UploadToolConfig {
@@ -21,8 +22,12 @@ export interface UploadToolConfig {
  * `config.upload` (which reads + sends it) and returns the result.
  */
 export function mountUpload(server: McpServer, config: UploadToolConfig): void {
+  const name = config.name ?? 'upload';
+  // A native tool lands in the SAME `tools/list` as the contract tools, so one
+  // undeliverable name here takes them all down too. → ADR 0035.
+  assertToolName(name, '<native>', 'upload');
   server.registerTool(
-    config.name ?? 'upload',
+    name,
     {
       description: config.description,
       inputSchema: { path: z.string().describe('Path to a local file on this machine') },

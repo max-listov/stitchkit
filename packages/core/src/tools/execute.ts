@@ -83,6 +83,7 @@ export async function executeToolMethod(
   hooks?: ToolCallHooks,
   lifecycle?: ToolLifecycle,
   coerceJson = false,
+  onOutputStrip?: (paths: string[]) => void,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
 
@@ -180,7 +181,7 @@ export async function executeToolMethod(
     // A mismatch is a server fault — `INTERNAL_SERVER_ERROR`, not the client
     // `VALIDATION_ERROR` an invalid argument produces.
     if (method.outputSchema) {
-      const checked = validateHandlerOutput(method.outputSchema, data);
+      const checked = validateHandlerOutput(method.outputSchema, data, onOutputStrip);
       if (!checked.ok) {
         return finish({
           ok: false,

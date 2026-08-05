@@ -6,6 +6,7 @@ import {
   type EndpointDef,
   type RuntimeContext,
 } from '../contract';
+import { mergeMeta } from '../contract/define';
 import { isRecord } from '../internal/typed';
 import type { MethodDef, ServiceDef } from '../server/types';
 
@@ -67,8 +68,9 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       expose: endpoint.expose,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
-      // Opaque app metadata rides through (was dropped here) — → ADR 0021.
-      meta: endpoint.meta,
+      // Opaque app metadata rides through (was dropped here), with the
+      // contract-wide default merged under it. → ADR 0021 / 0036.
+      meta: mergeMeta(contract.meta.meta, endpoint.meta),
       scope: endpoint.scope ?? groupScope,
       paramsSchema: endpoint.params,
       inputSchema: endpoint.input,

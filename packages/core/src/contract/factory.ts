@@ -28,7 +28,7 @@ import { defineContract } from './define';
 export type ScopedDefineContract<TScope extends string> = <
   const T extends Record<string, EndpointDef>,
 >(
-  meta: { prefix: string; scope: TScope },
+  meta: { prefix: string; scope: TScope; meta?: Record<string, unknown> },
   endpoints: T,
 ) => ContractDef<T, TScope>;
 
@@ -48,7 +48,10 @@ export function createContractFactory<TScope extends string>(): {
       const validated = defineContract({ prefix: meta.prefix }, endpoints);
       return {
         endpoints: validated.endpoints,
-        meta: { prefix: meta.prefix, scope: meta.scope },
+        // Every field of the given meta is forwarded — rebuilding it by hand
+        // silently dropped anything added to `ContractMeta` (a contract-level
+        // `meta` default would never reach an endpoint). → ADR 0036.
+        meta: { ...meta, prefix: meta.prefix, scope: meta.scope },
       };
     },
   };

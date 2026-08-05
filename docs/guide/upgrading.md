@@ -60,6 +60,42 @@ current one *up to* your target, and apply each snippet.
    (`STITCH_ERROR_STATUS`, `serveFile`, `scopePrefixes`, `afterToolCall`'s
    `MethodDef`, `maxUploadBytes`) are available to adopt, not required.
 
+## Your handlers may be returning more than the contract declares
+
+stitchkit validates every handler's return value against the endpoint's `output`
+schema and **passes on the parsed result** — so any field the schema does not
+declare is silently removed. That is deliberate (the contract is the published
+shape of the response), but when you are moving a *live* API onto stitchkit it is
+invisible: TypeScript does not reject excess properties, nothing logs it, and the
+client just receives fewer fields.
+
+While migrating, turn the diagnostic on:
+
+```ts
+createServer({ services, warnOnOutputStrip: true })   // off by default
+```
+
+Every removed key is logged as a dot-path with the endpoint that produced it
+(`notes.get: secret, nested.alsoSecret`). Tool transports strip identically —
+`mountMcp` / `mountAgent` take `onOutputStrip: (toolName, paths) => …`. Read the
+list, then either widen the contract or stop returning the field, and turn the
+flag back off: it is for the migration window, not for production.
+
+## Tool names may shift between versions
+
+Derived tool names are part of your public surface — an MCP client config or an
+agent prompt refers to them by string. Before and after any upgrade that touches
+name derivation, diff them mechanically:
+
+```ts
+import { listToolNames } from 'stitchkit/tools'
+console.log(JSON.stringify(listToolNames(services), null, 2))
+```
+
+`listToolNames` never throws on an illegal name — that is deliberate, so it can
+show you the offending row when a mount would refuse it. Pin it in a snapshot
+test and a shift fails your build instead of your clients.
+
 ## When you author a breaking change in stitchkit
 
 You are on the other side of this flow — see

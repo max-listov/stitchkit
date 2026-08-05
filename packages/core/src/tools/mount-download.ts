@@ -3,12 +3,13 @@
  * local filesystem. The app injects how to resolve the URL from the call's
  * args; the fetch / extension / write mechanics live here. → ADR 0019.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
+import { writeDownload } from '../internal/write-download';
+import { assertToolName } from './names';
 import { textResult } from './native-result';
 
 /** Default memory cap for a download — overridable per tool via `maxBytes`. */
@@ -76,8 +77,12 @@ export interface DownloadToolConfig {
  * the saved path / size / mime.
  */
 export function mountDownload(server: McpServer, config: DownloadToolConfig): void {
+  const name = config.name ?? 'download';
+  // A native tool lands in the SAME `tools/list` as the contract tools, so one
+  // undeliverable name here takes them all down too. → ADR 0035.
+  assertToolName(name, '<native>', 'download');
   server.registerTool(
-    config.name ?? 'download',
+    name,
     { description: config.description, inputSchema: config.inputSchema },
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
@@ -110,9 +115,8 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
           return textResult(`Download failed: file exceeds the ${max}-byte cap`, true);
 
         const dir = config.dirFromArgs?.(args) ?? config.defaultDir;
-        await mkdir(dir, { recursive: true });
         const filePath = join(dir, `${baseNameFor(url)}${extensionFor(url, mimeType)}`);
-        await writeFile(filePath, buffer);
+        await writeDownload(dir, filePath, buffer);
 
         return textResult(
           JSON.stringify({ path: filePath, size: buffer.length, mimeType }, null, 2),

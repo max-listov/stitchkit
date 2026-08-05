@@ -2,9 +2,10 @@
 title: Миграция MCP-слоя на stateless core (спека 2026-07-28) — stateless по умолчанию, удаление session-store и SSE event-store
 description: Спека 2026-07-28 сделала MCP stateless request/response — убраны initialize-рукопожатие и Mcp-Session-Id, legacy HTTP+SSE транспорт deprecated. У нас stateless-режим уже есть, но дефолт `false`. Миграция = перевернуть дефолт и УДАЛИТЬ stateful-обвязку (session-store, TTL, LRU, InMemoryEventStore). Гейтится мажорным бампом @modelcontextprotocol/sdk (v2).
 type: task
-status: inbox
+status: icebox
 created: 2026-07-28
 updated: 2026-07-28
+defrost: the MCP SDK v2 has settled (several patch releases) OR a consumer hits `404 Session not found` at scale that the existing `stateless: true` flag cannot solve OR a client host starts requiring the `2026-07-28` spec. The migration is a deletion (~60-90 lines), so there is no feature value in doing it early.
 ---
 
 # MCP stateless core — миграция транспорта
@@ -46,7 +47,7 @@ docstring это и обещал как мотивацию stateless-режим�
 Новый спек = **SDK v2** (ломающий; в анонсе «client-server split, −83% размера»).
 **Не бросаться на day-0.** Условия начала работ (любое из):
 1. SDK v2 устоялся (несколько патч-релизов, API перестали плыть);
-2. реальный потребитель (gecko-gen / bro MCP) упёрся в масштаб/`404 Session`,
+2. реальный потребитель упёрся в масштаб/`404 Session`,
    который решает stateless.
 
 До этого — задача лежит в inbox осознанно.

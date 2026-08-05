@@ -9,6 +9,7 @@ import {
   toolResultFromError,
 } from './execute';
 import { collectTools, createToolRunner, formatToolError, type ToolExtend } from './mount';
+import { assertUniqueToolName } from './names';
 
 export interface AgentContext {
   [key: string]: unknown;
@@ -27,6 +28,8 @@ export interface AgentMountConfig {
   extend?: ToolExtend;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
+  /** Report output keys the contract schema removed — → ADR 0037. */
+  onOutputStrip?: (toolName: string, paths: string[]) => void;
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
@@ -47,6 +50,7 @@ export function mountAgent(
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,
     coerceJsonArgs: config.coerceJsonArgs,
+    onOutputStrip: config.onOutputStrip,
   });
 
   for (const service of serviceList) {
@@ -54,11 +58,15 @@ export function mountAgent(
       extend: config.extend,
       flattenUnionInput: config.flattenUnionInput,
     })) {
-      if (mountable.name in tools) {
-        throw new Error(
-          `Duplicate agent tool name "${mountable.name}" across mounted services`,
-        );
-      }
+      // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so a tool
+      // legitimately named `toString` / `valueOf` / `constructor` would be
+      // reported as a duplicate of nothing. MCP (a `Set`) and CLI (a `Map`) were
+      // always immune; this makes the guarantee actually uniform.
+      assertUniqueToolName(
+        mountable.name,
+        Object.hasOwn(tools, mountable.name),
+        'agent tool name',
+      );
       tools[mountable.name] = tool({
         description: mountable.method.desc,
         inputSchema: zodSchema(mountable.schema),

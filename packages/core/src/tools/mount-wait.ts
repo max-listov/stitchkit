@@ -7,6 +7,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { z } from 'zod';
 import { isRecord } from '../internal/typed';
+import { assertToolName } from './names';
 import { textResult } from './native-result';
 import { pollUntil } from './wait-core';
 
@@ -35,8 +36,12 @@ export interface WaitToolConfig {
  * `config.done` or the timeout, then returns the final state.
  */
 export function mountWait(server: McpServer, config: WaitToolConfig): void {
+  const name = config.name ?? 'wait';
+  // A native tool lands in the SAME `tools/list` as the contract tools, so one
+  // undeliverable name here takes them all down too. → ADR 0035.
+  assertToolName(name, '<native>', 'wait');
   server.registerTool(
-    config.name ?? 'wait',
+    name,
     { description: config.description, inputSchema: config.inputSchema },
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};

@@ -49,6 +49,9 @@ These records were consolidated from the project's internal design notes on
 | [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 |
 | [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 |
 | [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Accepted — supersedes the "advertised-only" premise of 0031 / 0033 |
+| [0035](0035-tool-name-derivation-and-validation.md) | Tool names: normalise the whole character class, assert at mount | Accepted — refines the tool pipeline of 0007 |
+| [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 |
+| [0037](0037-output-strip-diagnostics.md) | The output strip stays, and becomes visible on demand | Accepted — extends 0014 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

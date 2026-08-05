@@ -38,7 +38,10 @@ export function listToolNames(services: ServiceDef[]): ToolNameEntry[] {
   const entries = new Map<string, ToolNameEntry>();
   for (const service of services) {
     for (const transport of TOOL_TRANSPORTS) {
-      for (const tool of collectTools(service, transport)) {
+      // `assertNames: false` — this lister is the documented way to FIND an
+      // illegal name before an upgrade, so it must report one, not die on it.
+      // → ADR 0035.
+      for (const tool of collectTools(service, transport, { assertNames: false })) {
         // NUL-joined so the composite key can never collide with real names.
         const id = `${service.name}\u0000${tool.method.key}`;
         const existing = entries.get(id);
