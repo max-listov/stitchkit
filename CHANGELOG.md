@@ -15,6 +15,38 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-08-06
+
+### Added
+
+- **An audited HTTP failure names its cause without being wired to.** Every error
+  travels one path inside the framework, and that path now records
+  `{ code, message, details }` onto the request context — so `createAuditHook`'s
+  HTTP row says *why* a request failed whether or not you wrote an `onError`, and
+  whether or not your `onError` returns its own `Response` (that branch recorded
+  nothing at all before).
+
+  Where the envelope was scrubbed to `INTERNAL_SERVER_ERROR` the row gets the
+  real message instead of the placeholder — the same rule 0.32.0 gave the tool
+  row, now shared in one place rather than written twice. The caller still
+  receives the scrubbed envelope, byte-identical to before.
+
+  `setRequestError` becomes an **override** rather than the wiring: the framework
+  writes only when the context carries nothing yet, so a project that curates its
+  own value keeps winning and needs no change. → ADR 0043
+
+### Internal
+
+- **A consumer lane in the gate** (`bun run consumer-lane`, part of `verify`).
+  The suite imports from `src`, in one process, with everything in scope; a
+  consumer gets a tarball, an `exports` map and the emitted declarations. Four
+  defects in one day lived in that gap and were all reported from outside. The
+  lane packs the built package, installs it into fixture apps and uses it through
+  the published entrypoints only — annotating types on purpose, so a missing
+  export is a compile error, and asserting behaviour only the built artifact can
+  show. Each of the four defects was reintroduced and confirmed to fail it. No
+  runtime change.
+
 ## [0.32.0] — 2026-08-06
 
 ### Added
@@ -1635,7 +1667,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/max-listov/stitchkit/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/max-listov/stitchkit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/max-listov/stitchkit/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/max-listov/stitchkit/compare/v0.29.0...v0.30.0

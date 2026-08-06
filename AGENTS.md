@@ -61,7 +61,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 
 ```bash
 bun run dev       # watch-rebuild packages/core/dist
-bun run verify    # lint + typecheck + test + build + node smoke — the gate
+bun run verify    # lint + typecheck + test + build + node smoke + consumer lane — the gate
 bun run build     # build dist/ + generate llms.txt
 bun run lint:fix  # auto-fix formatting / safe lint
 ```

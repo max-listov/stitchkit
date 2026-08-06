@@ -16,8 +16,9 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "verify": "bun run lint && bun run check && bun run test && bun run build && bun run smoke:node",
+    "verify": "bun run lint && bun run check && bun run test && bun run build && bun run smoke:node && bun run consumer-lane",
     "smoke:node": "bun --filter stitchkit smoke:node",
+    "consumer-lane": "bun --filter stitchkit consumer-lane",
     "sync:readme": "cp README.md packages/core/README.md",
     "release": "bun run sync:readme && bun run verify && cd packages/core && bun publish"
   },

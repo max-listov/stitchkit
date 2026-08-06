@@ -32,12 +32,33 @@ bun run lint      # Biome — strict, warnings fail
 bun run check     # tsc — typecheck src + tests
 bun run test      # the test suite
 bun run build     # build dist/ (bun build + tsc declarations)
-bun run verify    # lint + check + test + build + node smoke, in CI order — the single gate
+bun run consumer-lane  # install the packed tarball into a fixture app and use it
+bun run verify    # lint + check + test + build + node smoke + consumer lane — the single gate
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
 
 `bun run verify` must be green before a change is opened as a PR — CI runs the
 same suite, and the `pre-push` hook runs `verify` automatically.
+
+### The consumer lane
+
+The suite imports from `src`, in one process, with everything in scope. A
+consumer gets a tarball, an `exports` map and the emitted declarations — and the
+gap between those two views is where defects live: a bundler-folded environment
+read, a type named in a public signature but exported nowhere, a value delivered
+to a hook nobody can reach. All three shipped, and all three were reported from
+outside.
+
+`bun run consumer-lane` packs the built package, installs it into throwaway
+fixture apps and uses it through the published entrypoints only — annotating
+types on purpose, so a missing export is a compile error, and asserting on
+behaviour that only the **built** artifact can show. Two fixtures, split by what
+a consumer had to install: `minimal` (stitchkit + zod, no optional peer) and
+`full` (the peers the tool surface needs). About 8 seconds.
+
+When it fails it keeps its work directory and prints the path — reproduce by
+hand there. Adding a public API? Name its types in a fixture; that is what keeps
+the export honest.
 
 ### Git hooks
 

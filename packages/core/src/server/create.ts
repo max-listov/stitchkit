@@ -3,8 +3,17 @@
  * context assembly in `context.ts`, request helpers in `request.ts`.
  */
 import { AppError, type RuntimeContext } from '../contract';
-import { errorCode, normalizeError, validateHandlerOutput } from '../internal/errors';
-import { setRequestEndpoint } from '../observability/context';
+import {
+  errorCode,
+  normalizeError,
+  recordedErrorMessage,
+  validateHandlerOutput,
+} from '../internal/errors';
+import {
+  getRequestContext,
+  setRequestEndpoint,
+  setRequestError,
+} from '../observability/context';
 import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
 import {
   buildLogFields,
@@ -205,6 +214,27 @@ export function createHandler(config: HandlerConfig): FetchHandler {
       errCtx?: RuntimeContext,
       endpoint?: MethodDef,
     ): Promise<Response> => {
+      // Record the failure on the request context so an audit row can name it
+      // without the project hand-wiring `setRequestError` — the same thing the
+      // tool row does for itself. Written after `onError` has had its turn and
+      // only when nothing is there: a project that curates its own value wins,
+      // a project that wires nothing still gets a row. → ADR 0042.
+      //
+      // `AppError.is` and `errorCode` are side-effect-free; `normalizeError` is
+      // not — it logs the raw cause — so the custom-`onError` branch passes
+      // nothing and must never reach for it, or customising the envelope would
+      // start writing a stderr line that was not there before.
+      const recordFailure = (normalized?: AppError): void => {
+        if (getRequestContext()?.error !== undefined) return;
+        const known = AppError.is(err) ? err : normalized;
+        const code = known?.code ?? errorCode(err) ?? 'INTERNAL_SERVER_ERROR';
+        setRequestError({
+          code,
+          message: recordedErrorMessage(code, known?.message, err),
+          details: known?.details,
+        });
+      };
+
       if (hooks?.onError) {
         try {
           const response = await hooks.onError(
@@ -213,6 +243,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
             endpoint,
           );
           if (response instanceof Response) {
+            recordFailure();
             const withCors = applyCors(response, cors, req);
             // The hook owns the response, but the access log still wants the
             // error's code — derive it from the original error (no normalize /
@@ -226,6 +257,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
         }
       }
       const appErr = normalizeError(err);
+      recordFailure(appErr);
       logDone(appErr.status, appErr.code);
       return json(appErr.toJSON(), appErr.status, cors, req);
     };

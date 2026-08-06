@@ -123,9 +123,21 @@ import {
 } from 'stitchkit/observability'
 
 createAuthHook({ /* … */ inject: (ctx, user) => user && setRequestUser(user.id) })
-// in your onError hook:
+// only to override what the framework already recorded — see below:
 setRequestError({ code: err.code, message: err.message, details: err.issues })
 ```
+
+**The failure is recorded for you.** Every error travels one path inside the
+framework, and that path writes `{ code, message, details }` onto the context —
+so an audited failure names its cause whether or not you wrote an `onError`, and
+whether or not your `onError` returns its own `Response`. Where the envelope was
+scrubbed to `INTERNAL_SERVER_ERROR`, the row gets the **real** message rather than
+the placeholder; the caller still receives the scrubbed one. → ADR 0043
+
+`setRequestError` is therefore an **override**, not the wiring: call it when you
+want the row to say something other than what the framework derived (a domain
+code, a curated message, structured issues). The framework writes only when the
+context carries nothing yet, so your value always wins.
 
 **Endpoint identity is automatic.** The framework writes the matched operation's
 `(serviceName, action)` into the context at route-match, *before* validation — so

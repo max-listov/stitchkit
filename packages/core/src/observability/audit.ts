@@ -4,6 +4,7 @@
  * every completed call into a `RequestEvent`, and hands it to the project's
  * sink. The project supplies only `write` — the table and how to persist a row.
  */
+import { recordedErrorMessage } from '../internal/errors';
 import { isRecord } from '../internal/typed';
 import type { ToolCallHooks, ToolResult } from '../tools/execute';
 import { getRequestContext } from './context';
@@ -55,25 +56,14 @@ function toolErrorMessage(result: Extract<ToolResult, { ok: false }>): string | 
 }
 
 /**
- * The message for a failed tool row. Normally the envelope's — it is truthful
- * for an `AppError` or a `ZodError`, and it is what the caller was told.
- *
- * The exception is the scrubbed one: an unexpected throw becomes
- * `INTERNAL_SERVER_ERROR` / "Internal server error", which tells a later reader
- * nothing at all. There the raw message goes in instead. This is a *server-side*
- * record the project owns — the same bargain the HTTP row has always had, where
- * the message comes from whatever `setRequestError` curated — and the caller
- * still receives the scrubbed envelope either way. → ADR 0042.
+ * The message for a failed tool row — the shared rule (→ ADR 0042) applied to a
+ * `ToolResult`. Its HTTP twin lives in `respondError`.
  */
 function auditErrorMessage(
   result: Extract<ToolResult, { ok: false }>,
   thrown: unknown,
 ): string | undefined {
-  if (result.code === 'INTERNAL_SERVER_ERROR' && thrown !== undefined) {
-    if (thrown instanceof Error) return thrown.message;
-    if (typeof thrown === 'string') return thrown;
-  }
-  return toolErrorMessage(result);
+  return recordedErrorMessage(result.code, toolErrorMessage(result), thrown);
 }
 
 /** A context field is only useful when it is actually a string. */

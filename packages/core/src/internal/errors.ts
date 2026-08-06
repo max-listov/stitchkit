@@ -54,6 +54,32 @@ export function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The message a **server-side record** should carry for a failure — an audit
+ * row, not a response.
+ *
+ * Normally the envelope's: it is truthful for an `AppError` or a `ZodError`, and
+ * it is what the caller was told, so the record and the response agree. The
+ * exception is the scrubbed one — an unexpected throw becomes
+ * `INTERNAL_SERVER_ERROR` / "Internal server error", which tells a later reader
+ * nothing at all, and there the raw message goes in instead.
+ *
+ * The line this holds is not "the framework never touches a raw message" but
+ * **"a raw message never crosses to the caller"**. Shared by the HTTP and tool
+ * paths so that line is one rule in one place. → ADR 0042.
+ */
+export function recordedErrorMessage(
+  code: string,
+  envelopeMessage: string | undefined,
+  thrown: unknown,
+): string | undefined {
+  if (code === 'INTERNAL_SERVER_ERROR' && thrown !== undefined) {
+    if (thrown instanceof Error) return thrown.message;
+    if (typeof thrown === 'string') return thrown;
+  }
+  return envelopeMessage;
+}
+
 export function normalizeError(err: unknown): AppError {
   if (AppError.is(err)) return err;
 

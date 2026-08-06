@@ -1,0 +1,10 @@
+{
+  "name": "stitchkit-consumer-minimal",
+  "private": true,
+  "type": "module",
+  "comment": "The smallest real consumer: stitchkit + zod, not one optional peer. The tarball path is rewritten by run.mjs.",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3"
+  }
+}

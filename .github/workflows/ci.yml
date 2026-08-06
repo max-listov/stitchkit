@@ -92,6 +92,15 @@ jobs:
         working-directory: packages/core
         run: bun run smoke:node
 
+      # Packs the built package and installs it into fixture apps that use it
+      # through the published entrypoints only — the view a consumer has, which
+      # the in-repo suite structurally cannot take. Catches a folded environment
+      # read, a type named in a public signature but never exported, and a value
+      # that never reaches a consumer hook.
+      - name: Consumer lane (packed tarball, public entrypoints only)
+        working-directory: packages/core
+        run: bun run consumer-lane
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
