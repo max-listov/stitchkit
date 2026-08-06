@@ -303,12 +303,11 @@ createMcpHandler({
   serverInfo, auth, services,
   hooks: {
     onToolError: (toolName, error, _context, endpoint) => {
-      // The request context is live here, so the cause lands on the HTTP log
-      // line for the MCP request as well as in your own sink.
-      setRequestError({
-        code: 'TOOL_FAILED',
+      reportToolFailure({
+        tool: toolName,
+        action: endpoint.key,
         message: error instanceof Error ? error.message : String(error),
-        details: { tool: toolName, action: endpoint.key },
+        stack: error instanceof Error ? error.stack : undefined,
       })
     },
   },
@@ -330,6 +329,36 @@ observe. (This is also why it lives on `ToolCallHooks` rather than being an
 `onError` twin on `ToolLifecycle` — `LifecycleHooks.onError` returns a
 `Response`, which a tool call has no use for, and a whole `createServer` hooks
 object must stay assignable to `ToolLifecycle`.)
+
+**`setRequestError` is the wrong sink here — mind which record you are filling.**
+It writes to the *request* context, and `createAuditHook`'s **tool** row does not
+read it: `errorCode` / `errorMessage` / `errorDetail` on a tool event come from
+the `ToolResult`, and only `userId` / `clientId` / `ipAddress` / `userAgent` /
+`dimensions` come from the context. So calling it in `onToolError` leaves the
+tool audit row exactly as scrubbed as before — and for MCP over HTTP it also
+writes the cause into the log line of the enclosing `/mcp` request, turning one
+incident into two records.
+
+Route the cause to your own sink from `onToolError`, as above, and let the audit
+row stay the record of the *call*. If you want one row carrying both, correlate
+the two hooks yourself — key the cause by the call and read it back in
+`afterToolCall`:
+
+```ts
+const causes = new WeakMap<object, unknown>()
+
+hooks: {
+  onToolError: (_tool, error, context) => { causes.set(context, error) },
+  afterToolCall: (toolName, _args, result, durationMs, context, endpoint) => {
+    void writeRow({ toolName, result, durationMs, cause: causes.get(context), endpoint })
+  },
+}
+```
+
+Every mount builds a fresh context object per call and hands the same reference
+to both hooks, so it is a safe key and nothing leaks. `setRequestError` remains
+right for the **HTTP** path, where the request *is* the record — see the fields
+section above.
 
 ### Keying a row on (service, action)
 

@@ -4,7 +4,13 @@ export { type CliConfig, createCli } from './tools/cli';
 export type { ExitCodeMap } from './tools/cli-format';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
-export type { ErrorHintFn, ToolCallHooks, ToolLifecycle, ToolResult } from './tools/execute';
+export type {
+  ErrorHintFn,
+  ToolCallContext,
+  ToolCallHooks,
+  ToolLifecycle,
+  ToolResult,
+} from './tools/execute';
 export { flattenDiscriminatedUnion, flattenUnionsDeep } from './tools/flatten';
 export { listToolNames, type ToolNameEntry } from './tools/list-names';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';

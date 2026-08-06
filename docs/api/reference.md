@@ -344,6 +344,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` / `onToolError` observability hooks — the last carries the value **as thrown**, before normalisation scrubs an unexpected error to `INTERNAL_SERVER_ERROR` ([guide](../guide/observability.md#the-cause-behind-a-failed-tool-call)) |
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
+| `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
