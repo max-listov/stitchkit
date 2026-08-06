@@ -40,6 +40,7 @@ export {
   weakETag,
 } from './file';
 export { createImplement, implement } from './implement';
+export type { LogFormat } from './logger';
 export {
   type AuthHook,
   type AuthHookConfig,

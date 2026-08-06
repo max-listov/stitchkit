@@ -1,8 +1,9 @@
 /**
- * Request logger. Development: pretty colored `→` / `←` lines. Production:
- * one structured JSON line per completed request. Zero dependencies — a
- * project that wants its own sink passes a `StitchLogger` to
- * `createHandler({ logging })` instead.
+ * Request logger — two formats, chosen by `logging.format`: `pretty` (coloured
+ * `→` / `←` lines for a terminal) or `json` (one structured record per
+ * completed request). Unset, the choice follows `NODE_ENV` at request time.
+ * Zero dependencies — a project that wants its own sink passes a `StitchLogger`
+ * as `logging.logger` instead, and then the format does not apply.
  */
 const c = {
   reset: '\x1b[0m',
@@ -25,7 +26,26 @@ const METHOD_COLOR: Record<string, string> = {
   OPTIONS: c.gray,
 };
 
-const isProd = process.env.NODE_ENV === 'production';
+/**
+ * The environment table, reached through a variable **on purpose**. A bundler
+ * folds a literal `process.env.NODE_ENV` into its value at build time — and for
+ * a library that is *our* build, not the consumer's, so the decision would be
+ * frozen for everyone who installs the package. Read the bag instead, and read
+ * it per call: a library cannot know the environment it will be run in.
+ */
+const runtimeEnv: Record<string, string | undefined> = process.env;
+
+/** How a completed request is written. */
+export type LogFormat = 'pretty' | 'json';
+
+/**
+ * The format to use: the caller's choice, else derived from `NODE_ENV` at the
+ * moment of the call.
+ */
+export function resolveLogFormat(preference?: LogFormat): LogFormat {
+  if (preference) return preference;
+  return runtimeEnv.NODE_ENV === 'production' ? 'json' : 'pretty';
+}
 
 function timestamp(): string {
   const now = new Date();
@@ -128,15 +148,20 @@ export function shouldLog(pathname: string, method: string): boolean {
   return !SKIP_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
-/** Open the timing window for a request. Development prints a `→` line. */
+/**
+ * Open the timing window for a request. The `pretty` format prints a `→` line
+ * so a hanging request is visible before it finishes; `json` does not — a
+ * record store wants one row per completed request, not a half of one.
+ */
 export function logIncoming(
   req: Request,
   pathname: string,
   traceId: string,
+  format: LogFormat,
   ipAddress?: string,
 ): RequestLog {
   const log: RequestLog = { traceId, startTime: performance.now() };
-  if (!isProd) {
+  if (format === 'pretty') {
     const mc = METHOD_COLOR[req.method] ?? c.dim;
     console.log(
       `${c.gray}[${timestamp()}]${c.reset} ${mc}${req.method}${c.reset} ${c.dim}${traceId}${c.reset} ${c.cyan}→${c.reset} ${safePath(pathname)} ${ipLabel(ipAddress ?? '')}`,
@@ -171,6 +196,8 @@ export interface CompletedRequest {
   errorCode?: string;
   /** Duration the caller already measured — the one `enrich` was shown. */
   durationMs: number;
+  /** Which of the two lines to write. */
+  format: LogFormat;
   /**
    * Consumer-supplied fields for the structured line — request-context
    * identity and whatever `enrich` returned. Spread *first* so the framework's
@@ -180,15 +207,16 @@ export interface CompletedRequest {
 }
 
 /**
- * Close a request. Development: `←` line — deliberately unchanged by `extra`,
- * it is a line to read, not a record to query. Production: one structured JSON
- * line, enriched.
+ * Close a request. `json` writes one structured record, carrying `extra`.
+ * `pretty` writes a `←` line to read — deliberately without `extra`: a line
+ * sized for a terminal is not a record to query.
  */
 export function logOutgoing(entry: CompletedRequest): void {
-  const { req, pathname, status, log, ipAddress, errorCode, durationMs, extra } = entry;
+  const { req, pathname, status, log, ipAddress, errorCode, durationMs, format, extra } =
+    entry;
   const ms = elapsedMs(log.startTime);
 
-  if (isProd) {
+  if (format === 'json') {
     // The framework's own fields are one object so they can be re-emitted
     // alone: an `enrich` value that cannot be serialised (a cycle, a `BigInt`)
     // must cost the extra fields, never the whole line.

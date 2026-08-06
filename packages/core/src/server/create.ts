@@ -13,6 +13,7 @@ import {
   logIncoming,
   logOutgoing,
   type RequestLog,
+  resolveLogFormat,
   shouldLog,
 } from './logger';
 import { collectExtraLogFields, resolveLoggingConfig, shouldSkipLog } from './logging';
@@ -118,9 +119,13 @@ export function createHandler(config: HandlerConfig): FetchHandler {
       !shouldSkipLog(logConfig, req, url);
     const ipAddress = extractIp(req, clientIp) || undefined;
 
+    // Resolved once per request, not at import and not at this package's build:
+    // the environment that decides the format is the consumer's, at run time.
+    const logFormat = resolveLogFormat(logConfig?.format);
+
     let reqLog: RequestLog | undefined;
     if (shouldLogRequest && useDefaultLog) {
-      reqLog = logIncoming(req, url.pathname, traceId, ipAddress);
+      reqLog = logIncoming(req, url.pathname, traceId, logFormat, ipAddress);
     }
     if (shouldLogRequest && customLogger) {
       // The timing window opens regardless: a breadcrumb that fails must cost
@@ -163,6 +168,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
             ipAddress,
             errorCode,
             durationMs,
+            format: logFormat,
             extra,
           });
         }

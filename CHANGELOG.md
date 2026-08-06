@@ -15,6 +15,46 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-08-06
+
+### Added
+
+- **`logging.format: 'pretty' | 'json'`** — the built-in formatter's output is
+  now the consumer's choice, not a guess.
+
+  ```ts
+  createServer({ services, logging: { format: 'json' } })
+  ```
+
+  | `format` | Writes | Carries `enrich` / context identity |
+  |---|---|---|
+  | `'pretty'` | two coloured lines per request (`→`, `←`) | no |
+  | `'json'` | one structured line per completed request | yes |
+
+  Unset, it follows `NODE_ENV` — `json` under `production`, `pretty` otherwise —
+  read **per request**, so it reflects the environment your app runs in. Set it
+  and the environment is not consulted at all. It governs the **built-in**
+  formatter only: a custom `logger` always receives the structured object.
+  → ADR 0040
+
+### Fixed
+
+- **The structured log line was unreachable in every installed copy of this
+  package.** The format was decided by a module-scope
+  `process.env.NODE_ENV === 'production'`, which a bundler folds into a literal
+  at build time — *this package's* build, not yours. The published bundle
+  carried `var isProd = false`, so every consumer got the pretty format
+  permanently, whatever they ran under, and no `NODE_ENV` on their own build
+  could change it (that only freezes their code the same way). The environment
+  is now read through an indirection, per request.
+
+  This is why anything the structured line carries — the request-context
+  identity and `enrich` fields added in 0.28.0 — appeared not to work outside a
+  custom `logger`. It affected every version since 0.1.0.
+
+  A build guard (`check-env-live`) now fails the build if the read is ever
+  folded away again.
+
 ## [0.28.1] — 2026-08-06
 
 ### Fixed
@@ -1499,7 +1539,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.28.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/max-listov/stitchkit/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/max-listov/stitchkit/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/max-listov/stitchkit/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/max-listov/stitchkit/compare/v0.26.0...v0.27.0

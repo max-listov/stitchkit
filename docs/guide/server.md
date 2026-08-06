@@ -103,6 +103,8 @@ on**, and the fields tune it:
 createServer({
   services,
   logging: {
+    // What the built-in formatter writes. Omit it and it follows NODE_ENV.
+    format: 'json',
     // Route lines into your stack instead of the built-in formatter.
     logger: myLogger,
     // Silence noise. Runs after the built-in filter (framework assets,
@@ -117,16 +119,33 @@ createServer({
 })
 ```
 
-Three things worth knowing about `enrich`: it reaches the **structured** output
-only (the production JSON line and a custom logger's `data`) — the development
-`←` line stays human-readable, so enriched fields are invisible in dev; it runs
-at close, when the request body is already consumed; and framework fields
-(`traceId`, `status`, `path`, …) always win a key collision. A throw in `skip`
-or `enrich` is swallowed — neither can fail a request.
+### Two formats, and who chooses
 
-With an observability context active, the line also carries `userId`,
-`serviceName`, `action` and `dimensions` for free — and, like `enrich`'s fields,
-only in the structured output, never on the development `←` line. See
+| `format` | What it writes | Carries `enrich` / context identity |
+|---|---|---|
+| `'pretty'` | two coloured lines per request — `→` on arrival, `←` on completion | no — a line sized for a terminal is not a record |
+| `'json'` | one structured line per completed request | yes |
+
+Unset, `format` follows `NODE_ENV`: `json` under `production`, `pretty`
+otherwise. That default is read **per request** — not at import, not when this
+package was built — so it reflects the environment your app actually runs in.
+Set `format` and the environment stops being consulted at all.
+
+`format` applies to the **built-in** formatter only. With `logger` set, your
+sink always receives the structured object, in every environment — the format
+is not involved.
+
+**Want the structured line in development?** Set `format: 'json'`. That is the
+way to see what `enrich` and the request context actually put on the record;
+changing `NODE_ENV` is not needed, and neither is deploying.
+
+Three more things about `enrich`: it runs at close, when the request body is
+already consumed; framework fields (`traceId`, `status`, `path`, …) always win a
+key collision; and a throw in `skip` or `enrich` is swallowed — neither can fail
+a request.
+
+With an observability context active, the structured line also carries `userId`,
+`serviceName`, `action` and `dimensions` for free. See
 [Observability](./observability.md).
 
 ## Route groups

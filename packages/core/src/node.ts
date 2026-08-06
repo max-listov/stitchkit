@@ -16,6 +16,7 @@ export {
 } from './contract';
 export { createHandler } from './server/create';
 export { createImplement, implement } from './server/implement';
+export type { LogFormat } from './server/logger';
 export { type NodeServerConfig, type NodeServerHandle, serveNode } from './server/node';
 export {
   createSocketIOServer,

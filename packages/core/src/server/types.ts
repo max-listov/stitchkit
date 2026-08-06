@@ -8,6 +8,7 @@ import type {
   RuntimeContext,
   Transport,
 } from '../contract';
+import type { LogFormat } from './logger';
 import type { CorsConfig } from './middleware/cors';
 
 type Prop<T, K extends string> = K extends keyof T ? T[K] : undefined;
@@ -198,6 +199,24 @@ export interface LogOutcome {
 export interface LoggingConfig {
   /** Send lines here instead of to the built-in formatter. */
   logger?: StitchLogger;
+  /**
+   * What the **built-in** formatter writes.
+   *
+   * - `'pretty'` — two coloured lines per request (`→` on arrival, `←` on
+   *   completion), sized for a terminal. Carries no extra fields: a line to
+   *   read is not a record to query.
+   * - `'json'` — one structured line per completed request, carrying the
+   *   request-context identity and whatever `enrich` returned.
+   *
+   * Unset, it follows `NODE_ENV`: `'json'` under `production`, `'pretty'`
+   * otherwise — read **per request**, never at import or at build time, so the
+   * environment that matters is the one the app runs in. Set it and the
+   * environment stops being consulted at all.
+   *
+   * Irrelevant when `logger` is set: a sink always receives the structured
+   * object, in every environment.
+   */
+  format?: LogFormat;
   /**
    * Silence a request. Consulted *after* the built-in noise filter (framework
    * assets, `favicon`, preflights), so it can only quieten more, never restore

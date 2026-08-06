@@ -163,7 +163,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `BunServer` | _type_ | the `Bun.serve` instance type |
 | `ServerPassthrough` | _type_ | extra `Bun.serve` options |
 | `StitchLogger` | _type_ | the custom-logger interface |
-| `LoggingConfig` | _type_ | the `logging` object — `logger` / `skip` / `enrich` |
+| `LoggingConfig` | _type_ | the `logging` object — `logger` / `format` / `skip` / `enrich` |
+| `LogFormat` | _type_ | `'pretty'` or `'json'` — what the built-in formatter writes |
 | `LogOutcome` | _type_ | how a request finished, as `enrich` sees it |
 | `FetchHandler` | _type_ | what `createHandler` returns |
 | `FetchComposition` | _type_ | the `wrapFetch` seam shared by the servers |

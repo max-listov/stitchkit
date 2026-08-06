@@ -162,11 +162,11 @@ The **request log picks the context up on its own**: with a context active, each
 completion line carries `userId`, `serviceName`, `action` and `dimensions`
 without any configuration.
 
-⚠️ In the **structured** output only — the production JSON line and a custom
-`logger`'s `data`. The development `←` line is a line to read, not a record to
-query, and never carries them (nor `enrich`'s fields). On `logging: true` in
-development you will see no difference; check with `NODE_ENV=production` or a
-custom `logger`.
+⚠️ In the **structured** output only — the `json` line and a custom `logger`'s
+`data`. The `pretty` `←` line is a line to read, not a record to query, and
+never carries them (nor `enrich`'s fields). Set
+[`logging.format: 'json'`](./server.md#two-formats-and-who-chooses) to see them
+locally; you do not need to change `NODE_ENV` or deploy.
 
 ### Correlating with a reverse proxy
 

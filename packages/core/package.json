@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.28.1",
+  "version": "0.29.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -86,7 +86,7 @@
     "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/observability/index.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",
-    "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs",
+    "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-env-live.mjs",
     "dev": "bun run build:js -- --watch",
     "prepublishOnly": "cp ../../README.md ./README.md && bun ../../scripts/gen-llms.ts && bun run build",
     "test": "bun test",
