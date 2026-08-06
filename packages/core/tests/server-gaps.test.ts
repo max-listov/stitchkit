@@ -7,7 +7,7 @@ import { createImplement, createServer, implement } from '../src/server';
 // ─── Gap 1: GET query params ────────────────────────
 
 describe('GET query params', () => {
-  const PORT = 9890;
+  let PORT = 0;
 
   const ListInputSchema = z.object({
     status: z.string().optional(),
@@ -51,7 +51,8 @@ describe('GET query params', () => {
   let server: ReturnType<typeof createServer>;
 
   test('setup', () => {
-    server = createServer({ services: [service], port: PORT });
+    server = createServer({ services: [service], port: 0 });
+    PORT = server.port ?? 0;
   });
 
   test('GET with query params parsed by inputSchema', async () => {
@@ -86,7 +87,7 @@ describe('GET query params', () => {
 // ─── Gap 2: Route groups ────────────────────────────
 
 describe('route groups', () => {
-  const PORT = 9891;
+  let PORT = 0;
 
   const broadcasts = defineContract(
     { prefix: 'broadcasts' },
@@ -131,8 +132,9 @@ describe('route groups', () => {
           services: [broadcastService],
         },
       ],
-      port: PORT,
+      port: 0,
     });
+    PORT = server.port ?? 0;
   });
 
   test('grouped route: GET /bots/:botId/broadcasts', async () => {
@@ -161,7 +163,7 @@ describe('route groups', () => {
 // ─── Gap 2b: Per-group hooks ────────────────────────
 
 describe('per-group hooks', () => {
-  const PORT = 9892;
+  let PORT = 0;
 
   const contract = defineContract(
     { prefix: 'data' },
@@ -194,8 +196,9 @@ describe('per-group hooks', () => {
           },
         },
       ],
-      port: PORT,
+      port: 0,
     });
+    PORT = server.port ?? 0;
 
     const res = await fetch(`http://localhost:${PORT}/scope/abc/data`);
     expect(res.status).toBe(200);
@@ -239,7 +242,7 @@ describe('createImplement factory', () => {
 // ─── Gap 5: Client GET query params ─────────────────
 
 describe('client GET query params (fetch path)', () => {
-  const PORT = 9893;
+  let PORT = 0;
 
   const contract = defineContract(
     { prefix: 'search' },
@@ -261,7 +264,8 @@ describe('client GET query params (fetch path)', () => {
   let server: ReturnType<typeof createServer>;
 
   test('setup', () => {
-    server = createServer({ services: [service], port: PORT });
+    server = createServer({ services: [service], port: 0 });
+    PORT = server.port ?? 0;
   });
 
   test('createClient sends query params on GET', async () => {

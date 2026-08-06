@@ -172,33 +172,145 @@ function stripAnnotations(node: unknown): void {
  * such fields can normalize equal yet validate differently. The check is deep
  * (recurses through wrappers, object fields, array items, pipe sides) because a
  * hidden constraint nested below the kept node leaks just as badly as one on it.
- * A collided key whose kept schema returns true is widened to `z.unknown()`
+ * A collided key whose kept schema returns true keeps its base type
  * rather than advertised verbatim, so a refinement from one variant can never
  * reject another variant's valid value. Erring toward `unknown` is invariant-safe
  * (only looser advertising).
  */
-function hasChecks(schema: z.core.$ZodType): boolean {
+function hasInvisibleConstraint(schema: z.core.$ZodType): boolean {
   if (!(schema instanceof z.ZodType)) return false;
   const def: unknown = schema.def;
-  if (isRecord(def) && Array.isArray(def.checks) && def.checks.length > 0) return true;
+
+  // A node JSON Schema cannot express at all (`z.custom()`, `z.date()`,
+  // `z.bigint()`, `z.map()`…) converts to `{}`, so every constraint on it is
+  // invisible — including ones whose *kind* looks serializable.
+  if (isRecord(def) && def.type !== 'unknown' && def.type !== 'any') {
+    if (normalizedJson(schema) === '{}') return true;
+  }
+  // `.catch()` swallows a parse failure and substitutes a value, so the real
+  // schema accepts strictly more than its JSON says. Advertising it verbatim
+  // would be narrower than the variant it came from.
+  if (schema instanceof z.ZodCatch) return true;
+  // Coercion is not serialized: `z.coerce.number()` and `z.number()` are
+  // byte-identical in JSON and accept different value sets.
+  if (isRecord(def) && def.coerce === true) return true;
+
+  if (isRecord(def) && Array.isArray(def.checks)) {
+    for (const check of def.checks) {
+      if (isInvisibleCheck(check)) return true;
+    }
+  }
 
   if (
     schema instanceof z.ZodOptional ||
     schema instanceof z.ZodNullable ||
     schema instanceof z.ZodDefault
   ) {
-    return hasChecks(schema.unwrap());
+    return hasInvisibleConstraint(schema.unwrap());
   }
-  if (schema instanceof z.ZodPipe)
-    return hasChecks(schema.def.in) || hasChecks(schema.def.out);
-  if (schema instanceof z.ZodObject) return Object.values(schema.shape).some(hasChecks);
-  if (schema instanceof z.ZodArray) return hasChecks(schema.element);
-  if (schema instanceof z.ZodUnion) return schema.def.options.some(hasChecks);
-  if (schema instanceof z.ZodRecord) return hasChecks(schema.valueType);
+  // A pipe's *output* is never serialized (`io: 'input'`), so any constraint on
+  // it is invisible however ordinary its kind looks.
+  if (schema instanceof z.ZodPipe) return true;
+  if (schema instanceof z.ZodObject) {
+    return Object.values(schema.shape).some(hasInvisibleConstraint);
+  }
+  if (schema instanceof z.ZodArray) return hasInvisibleConstraint(schema.element);
+  if (schema instanceof z.ZodUnion) return schema.def.options.some(hasInvisibleConstraint);
+  if (schema instanceof z.ZodRecord) return hasInvisibleConstraint(schema.valueType);
   if (schema instanceof z.ZodIntersection) {
-    return hasChecks(schema.def.left) || hasChecks(schema.def.right);
+    return hasInvisibleConstraint(schema.def.left) || hasInvisibleConstraint(schema.def.right);
   }
   return false;
+}
+
+/**
+ * Check kinds whose effect never reaches JSON Schema. `custom` is `.refine()` /
+ * `.superRefine()`; `overwrite` is `.trim()` / `.toLowerCase()` / `.normalize()`,
+ * which are worse than a rejection — they **change the value** on its way to a
+ * handler that never asked for it.
+ *
+ * Read from `_zod.def.check`: the top-level `.check` property is the check
+ * *function*, and comparing that to a string is silently always false.
+ */
+const INVISIBLE_CHECK_KINDS = new Set(['custom', 'overwrite']);
+
+/**
+ * A node that accepts **more** than its own type keyword says — coercion turns
+ * `"1"` into a number, `.catch()` swallows any failure and substitutes. For
+ * these the base type is not a superset but a *narrowing*: advertising `number`
+ * would reject a string the variant happily takes. They are the one case where
+ * `z.unknown()` is still the honest answer.
+ */
+function acceptsMoreThanItsType(schema: z.core.$ZodType): boolean {
+  if (!(schema instanceof z.ZodType)) return false;
+  if (schema instanceof z.ZodCatch) return true;
+  if (isRecord(schema.def) && schema.def.coerce === true) return true;
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodDefault
+  ) {
+    return acceptsMoreThanItsType(schema.unwrap());
+  }
+  // A pipe's input side is what the caller sends; a `z.preprocess` widens it.
+  if (schema instanceof z.ZodPipe) return acceptsMoreThanItsType(schema.def.in);
+  return false;
+}
+
+function isInvisibleCheck(check: unknown): boolean {
+  if (!isRecord(check)) return false;
+  const inner: unknown = check._zod;
+  const def: unknown = isRecord(inner) ? inner.def : undefined;
+  const kind: unknown = isRecord(def) ? def.check : undefined;
+  return typeof kind === 'string' && INVISIBLE_CHECK_KINDS.has(kind);
+}
+
+/**
+ * The advertised schema for a field whose own constraints cannot be trusted
+ * across variants: its **base type**, and nothing else.
+ *
+ * This is the difference between "the model is told nothing" and "the model is
+ * told it is a number". A collided field is by definition a field every variant
+ * declared, so the type is the one thing provably shared — and a bare type is a
+ * superset of every variant by construction, which is what the invariant needs
+ * (→ ADR 0033). Widening all the way to `z.unknown()` throws that away for
+ * nothing. → ADR 0044.
+ */
+function projectToBaseType(schema: z.core.$ZodType): z.core.$ZodType {
+  if (!(schema instanceof z.ZodType)) return z.unknown();
+  // Nullability is part of the accepted set, not a constraint on it: dropping it
+  // would advertise a rejection of `null` that no variant makes. Optionality is
+  // re-applied by the caller (`z.optional` at the field site); `null` is not.
+  if (schema instanceof z.ZodNullable) {
+    return z.nullable(projectToBaseType(schema.unwrap()));
+  }
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault) {
+    return projectToBaseType(schema.unwrap());
+  }
+  // The advertised truth about a pipe is its input side — the only side
+  // `io: 'input'` ever serialized.
+  if (schema instanceof z.ZodPipe) return projectToBaseType(schema.def.in);
+  // `.catch()` accepts anything and substitutes; no type is honest here.
+  if (schema instanceof z.ZodCatch) return z.unknown();
+  // Coercion is kept, not dropped: a coercing base still advertises the type
+  // keyword AND still accepts what the variant accepts, so it is the honest
+  // projection rather than a narrowing.
+  const coerces = isRecord(schema.def) && schema.def.coerce === true;
+  if (schema instanceof z.ZodNumber) return coerces ? z.coerce.number() : z.number();
+  if (schema instanceof z.ZodString) return coerces ? z.coerce.string() : z.string();
+  if (schema instanceof z.ZodBoolean && coerces) return z.coerce.boolean();
+  // A string enum or literal is a string. Saying so costs nothing and is the
+  // difference between an enum-vs-free-string collision advertising `string`
+  // and advertising nothing at all.
+  if (schema instanceof z.ZodEnum || schema instanceof z.ZodLiteral) {
+    return stringLiteralOrEnumValues(schema) === null ? z.unknown() : z.string();
+  }
+  if (schema instanceof z.ZodBoolean) return z.boolean();
+  if (schema instanceof z.ZodArray) return z.array(z.unknown());
+  // Loose, never strict: an advertised object must not delete a key a variant
+  // keeps. → ADR 0034.
+  if (schema instanceof z.ZodObject) return z.looseObject({});
+  return z.unknown();
 }
 
 /** A normalized (annotation-stripped) JSON-Schema string for de-duping fields. */
@@ -215,7 +327,8 @@ function normalizedJson(schema: z.core.$ZodType): string {
  * `oneOf` / `anyOf`:
  * - one distinct type → keep it.
  * - all string literal/enum → one widened `z.enum`.
- * - otherwise → `z.unknown()` (the original union still validates the real shape).
+ * - otherwise → the shared base type if the variants agree on one, else
+ *   `z.unknown()` (the original union still validates the real shape).
  */
 function mergeCollidingFields(schemas: z.core.$ZodType[]): z.core.$ZodType {
   const distinct = new Map<string, z.core.$ZodType>();
@@ -227,11 +340,31 @@ function mergeCollidingFields(schemas: z.core.$ZodType[]): z.core.$ZodType {
   const only = values[0];
   if (values.length <= 1) {
     if (only === undefined) return z.unknown();
-    // A single distinct JSON shape across ≥2 variants can still hide a
-    // non-serializable check (`.refine()`, a `.pipe()` output, a nested refine)
-    // that holds for only one variant — widen so it cannot reject another
-    // variant's valid value (the union still validates it). `hasChecks` is deep.
-    return schemas.length > 1 && hasChecks(only) ? z.unknown() : only;
+    // One JSON shape across ≥2 variants still proves only that the constraints
+    // **JSON can express** are identical. A `.refine()`, a pipe's output side, a
+    // `.trim()`, a node JSON cannot represent at all — each holds for one variant
+    // and is invisible here. Where one is present the field cannot be advertised
+    // verbatim; it is advertised as its base type, which is looser than every
+    // variant rather than blank. `hasInvisibleConstraint` is deep.
+    if (schemas.length <= 1) return only;
+    // Scan **every** variant, not just the one that happened to be kept. The
+    // whole branch exists for constraints JSON cannot show, so a hazard on a
+    // sibling is exactly as invisible — and reading only `values[0]` would make
+    // the answer depend on the order the variants were declared in.
+    // An accept-more hazard forces `unknown` only when the variants **disagree**
+    // about it. All coercing (or all `.catch()`) is the shape they share, and
+    // advertising it verbatim is exactly what happened before this rule existed —
+    // blanking it would trade a useful type for no type and fix nothing.
+    const hazards = schemas.map(acceptsMoreThanItsType);
+    if (hazards.some(Boolean) && !hazards.every(Boolean)) return z.unknown();
+    if (schemas.some(hasInvisibleConstraint)) {
+      // A node JSON Schema cannot represent has always failed the mount loudly
+      // (`probeSchema`). Projecting it would convert cleanly and ship a blank
+      // property instead — a silent version of a caught error.
+      if (normalizedJson(only) === '{}') return only;
+      return projectToBaseType(only);
+    }
+    return only;
   }
 
   const merged: string[] = [];
@@ -248,6 +381,24 @@ function mergeCollidingFields(schemas: z.core.$ZodType[]): z.core.$ZodType {
     const uniq = [...new Set(merged)];
     const [first, ...rest] = uniq;
     if (first !== undefined) return z.enum([first, ...rest]);
+  }
+
+  // The variants disagree on more than their values — different constraints on
+  // the same kind (`min(0)` vs `min(5)`), an enum against a free string, two
+  // differently-shaped objects. They can still agree on the **kind**, and that
+  // is worth advertising: a field that is a number in every variant must not
+  // reach the model blank just because the variants bound it differently.
+  // Project each to its base type; if they all land on the same one, that is the
+  // shared truth. Kinds that genuinely differ stay `unknown` — JSON Schema could
+  // say `"type": ["string", "number"]`, but no Zod node emits that and inventing
+  // one is a separate decision. → ADR 0044.
+  const hazards = schemas.map(acceptsMoreThanItsType);
+  if (hazards.some(Boolean) && !hazards.every(Boolean)) return z.unknown();
+  const projected = values.map(projectToBaseType);
+  const first = projected[0];
+  if (first !== undefined) {
+    const shape = normalizedJson(first);
+    if (shape !== '{}' && projected.every((p) => normalizedJson(p) === shape)) return first;
   }
   return z.unknown();
 }

@@ -30,16 +30,16 @@ describe('error context on a pre-handler (validation) failure', () => {
 
   test('onError still receives the path params, the request and the endpoint', async () => {
     let captured: { ctx: RuntimeContext; endpoint?: MethodDef } | undefined;
-    const PORT = 9971;
     server = createServer({
       services: [service],
-      port: PORT,
+      port: 0,
       hooks: {
         onError: (ctx, _err, endpoint) => {
           captured = { ctx, endpoint };
         },
       },
     });
+    const PORT = server.port;
 
     // Invalid body (`name` missing) → validation fails before beforeHandle.
     const res = await fetch(`http://localhost:${PORT}/items/abc`, {

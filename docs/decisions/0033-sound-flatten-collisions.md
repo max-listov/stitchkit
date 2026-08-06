@@ -84,6 +84,12 @@ value that passes both the SDK and validation.
   custom check / pipe constraint does not serialize to JSON Schema, so it would
   otherwise leak onto a sibling variant). The 0.15.0 check was shallow (top node
   only); 0.15.1 made it deep.
+
+  > **Narrowed by [ADR 0044](0044-a-collided-field-keeps-its-type.md)
+  > (2026-08-06).** "Any check" was too wide: `.int().min(0)` is visible in JSON
+  > Schema and cost a live agent its type. The widen now fires only for
+  > constraints JSON cannot show, and it keeps the base type instead of going to
+  > `z.unknown()`.
 - **Known residual (documented, not silent):** ~~`.strict()`/`catchall`~~ (carried
   through since [ADR 0034](0034-advertised-schema-key-policy.md) — dropping them
   deleted data, it was never merely "looser") / object-level

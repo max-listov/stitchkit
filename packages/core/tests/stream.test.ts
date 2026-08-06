@@ -53,8 +53,6 @@ describe('SSE streaming', () => {
   });
 
   test('SSE round-trip through HTTP server', async () => {
-    const PORT = 9881;
-
     async function* generate() {
       for (let i = 0; i < 5; i++) {
         yield { n: i };
@@ -62,13 +60,13 @@ describe('SSE streaming', () => {
     }
 
     const server = Bun.serve({
-      port: PORT,
+      port: 0,
       fetch() {
         return streamSSE(generate());
       },
     });
 
-    const response = await fetch(`http://localhost:${PORT}`);
+    const response = await fetch(`http://localhost:${server.port}`);
     expect(response.headers.get('content-type')).toBe('text/event-stream');
 
     const chunks: Array<{ n: number }> = [];

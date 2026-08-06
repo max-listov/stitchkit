@@ -354,6 +354,8 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ViewFileOptions` | _type_ | options for `mountViewFile` |
 | `McpAnnotations` | _type_ | MCP annotations on a media result |
 | `CollectToolsConfig` | _type_ | options for `collectTools` |
+| `findUntypedProperties` | function | every property in a JSON Schema with no `type`/`enum`/`$ref` — what a model is shown and cannot obey ([guide](../guide/mcp-and-agents.md)) |
+| `UntypedProperty` | _type_ | one such property — `{ path, description? }` |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |

@@ -15,6 +15,51 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-08-06
+
+### ⚠️ Breaking changes
+
+- **A collided field in a flattened discriminated union now advertises its
+  type.** Previously a key present in more than one variant whose kept schema
+  carried *any* check was widened to `z.unknown()` — a bare `description` in the
+  JSON Schema a model is handed. `.int().min(0)` triggered it, so the more
+  precisely a field was described the less the model was told.
+
+  ```ts
+  // before: {"description": "Required if op = setText | setButton"}
+  // after:  {"description": "…", "type": "integer", "minimum": 0}
+  ```
+
+  Listed as breaking because the **advertised** schema changes for existing
+  contracts, and the MCP SDK parses arguments with it: a call that previously
+  slipped through as `unknown` and failed inside stitchkit with a
+  `VALIDATION_ERROR` is now rejected by the SDK as `MCP error -32602` — **before**
+  the tool callback, so `afterToolCall` does not fire and no audit row is written
+  for it. If you detect bad calls through those rows, expect this class to stop
+  appearing there. Nothing about your contracts or handlers needs to change.
+  → ADR 0044
+
+### Added
+
+- **`validateMcpSchemas(…, { requireTypedProperties, allowUntyped })`** — fail a
+  build when an advertised property carries no `type` / `enum` / `anyOf` /
+  `$ref`, i.e. nothing a model can obey. Off by default; `allowUntyped` takes
+  dotted `tool.property` paths for fields that are deliberately free-form.
+  `findUntypedProperties` is exported for asserting on a schema you built
+  yourself. It lives in a consumer-facing function on purpose: the framework
+  ships no contracts, so a build-time check here would have nothing to inspect.
+
+### Internal
+
+- **No test binds a fixed port any more**, and a guard keeps it that way. Every
+  hardcoded port (27 of them, plus the Node smoke script) now binds `port: 0` and
+  reads the assigned port back. They were a scheduled flake: the ephemeral range
+  on the development machine starts at 1024, so an unrelated process's
+  **outgoing** connection can hold any of those numbers, and the bind then fails
+  reporting a server that does not exist. Worse, when the bind happened at module
+  scope the file dropped out of the run and the suite reported green — a gate
+  that could pass by not running its tests.
+
 ## [0.34.0] — 2026-08-06
 
 ### Added
@@ -1689,7 +1734,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/max-listov/stitchkit/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/max-listov/stitchkit/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/max-listov/stitchkit/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/max-listov/stitchkit/compare/v0.31.0...v0.32.0

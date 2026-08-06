@@ -39,11 +39,14 @@ const contract = defineContract(
 );
 const service = implement(contract, { ping: () => ({ ok: true }) });
 
+// Port 0 — the kernel picks a free one and the handle reports it back. A fixed
+// number is a scheduled flake: an ephemeral range that starts at 1024 lets any
+// outgoing connection on the machine hold it.
 const http = await serveNode({
   groups: [{ pathPrefix: '/api', services: [service] }],
-  port: 4599,
+  port: 0,
 });
-const res = await fetch('http://localhost:4599/api/smoke');
+const res = await fetch(`${http.url}/api/smoke`);
 assert.equal(res.status, 200, 'serveNode HTTP should return 200');
 assert.deepEqual(
   await res.json(),
@@ -57,9 +60,9 @@ await http.close();
 const { io: ioClient } = await import('socket.io-client');
 const socket = await createSocketIOServer({ cors: { origin: '*' } });
 socket.io.on('connection', (s) => s.on('ping', (n) => s.emit('pong', n + 1)));
-const realtime = await serveNode({ socket, port: 4598 });
+const realtime = await serveNode({ socket, port: 0 });
 
-const client = ioClient('http://localhost:4598', { transports: ['websocket'] });
+const client = ioClient(realtime.url, { transports: ['websocket'] });
 const pong = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('socket round-trip timed out')), 8000);
   client.on('connect', () => client.emit('ping', 41));

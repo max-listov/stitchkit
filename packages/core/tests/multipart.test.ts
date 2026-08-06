@@ -6,7 +6,11 @@ import { createServer, implement } from '../src/server';
 import { parseMultipart } from '../src/server/multipart';
 
 describe('multipart parsing', () => {
-  const PORT = 9882;
+  // Port 0 — the kernel picks a free one and `server.port` reports it. A fixed
+  // number is a scheduled flake wherever the ephemeral range reaches down to it:
+  // an unrelated *outgoing* connection can already hold the number, and the bind
+  // then fails with a message about a server that does not exist.
+  let PORT = 0;
 
   const MetaSchema = z.object({
     title: z.string(),
@@ -17,7 +21,7 @@ describe('multipart parsing', () => {
 
   test('setup server', () => {
     server = Bun.serve({
-      port: PORT,
+      port: 0,
       async fetch(req) {
         try {
           const result = await parseMultipart(req, 'file', MetaSchema);
@@ -32,6 +36,7 @@ describe('multipart parsing', () => {
         }
       },
     });
+    PORT = server.port ?? 0;
   });
 
   test('parses file + fields', async () => {
@@ -89,7 +94,7 @@ describe('multipart parsing', () => {
 // ─── Field typing — the schema owns the type, never the content ──────────────
 
 describe('multipart field typing', () => {
-  const PORT = 9889;
+  let PORT = 0;
 
   // The convention: text fields arrive as strings; the schema coerces. A field
   // that should be JSON opts in explicitly via z.preprocess. Booleans use
@@ -106,7 +111,7 @@ describe('multipart field typing', () => {
 
   test('setup server', () => {
     server = Bun.serve({
-      port: PORT,
+      port: 0,
       async fetch(req) {
         try {
           const result = await parseMultipart(req, 'file', TypedSchema);
@@ -116,6 +121,7 @@ describe('multipart field typing', () => {
         }
       },
     });
+    PORT = server.port ?? 0;
   });
 
   test('coerces via the schema, and JSON is an explicit opt-in', async () => {
@@ -151,7 +157,7 @@ describe('multipart field typing', () => {
     // No schema — the fields are exactly the decoded strings, nothing coerced or
     // sniffed. Served over HTTP so the multipart boundary is real.
     const rawServer = Bun.serve({
-      port: 9894,
+      port: 0,
       async fetch(req) {
         const result = await parseMultipart(req, 'file');
         return Response.json({ fields: result.fields });
@@ -162,7 +168,10 @@ describe('multipart field typing', () => {
       form.append('file', new File(['x'], 'f.bin'));
       form.append('count', '42');
       form.append('flag', 'true');
-      const res = await fetch('http://localhost:9894', { method: 'POST', body: form });
+      const res = await fetch(`http://localhost:${rawServer.port}`, {
+        method: 'POST',
+        body: form,
+      });
       expect((await res.json()).fields).toEqual({ count: '42', flag: 'true' });
     } finally {
       rawServer.stop();
@@ -173,7 +182,7 @@ describe('multipart field typing', () => {
 });
 
 describe('multipart contract integration', () => {
-  const PORT = 9883;
+  let PORT = 0;
 
   const uploads = defineContract(
     { prefix: 'uploads' },
@@ -200,7 +209,8 @@ describe('multipart contract integration', () => {
   let server: ReturnType<typeof createServer>;
 
   test('setup server', () => {
-    server = createServer({ services: [service], port: PORT });
+    server = createServer({ services: [service], port: 0 });
+    PORT = server.port ?? 0;
   });
 
   test('client sends FormData and server injects ctx.file + ctx.input', async () => {
@@ -221,9 +231,6 @@ describe('multipart contract integration', () => {
 });
 
 describe('multipart — platform file descriptor (React Native)', () => {
-  const PORT = 9904;
-  const base = `http://localhost:${PORT}`;
-
   const uploads = defineContract(
     { prefix: 'rn' },
     {
@@ -242,7 +249,8 @@ describe('multipart — platform file descriptor (React Native)', () => {
   // it from disk). Bun's `FormData` has no notion of that, so this asserts the
   // *client* no longer rejects a non-`Blob` file and still sends the request —
   // not RN's on-device streaming, which only a device can exercise.
-  const server = Bun.serve({ port: PORT, fetch: () => Response.json({ ok: true }) });
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) });
+  const base = `http://localhost:${server.port}`;
   afterAll(() => server.stop(true));
 
   test('typed client accepts a { uri, name, type } descriptor and sends the request', async () => {
@@ -278,9 +286,6 @@ describe('multipart — platform file descriptor (React Native)', () => {
 });
 
 describe('multipart maxUploadBytes — per-route + global', () => {
-  const PORT = 9903;
-  const base = `http://localhost:${PORT}`;
-
   // tiny: per-route cap 2000; normal: no per-route → falls back to global.
   const uploads = defineContract(
     { prefix: 'up' },
@@ -309,7 +314,8 @@ describe('multipart maxUploadBytes — per-route + global', () => {
     normal: (ctx) => ({ size: ctx.file?.size ?? 0 }),
   });
   // global default 4000 — per-route `tiny` (2000) overrides it.
-  const server = createServer({ port: PORT, services: [svc], maxUploadBytes: 4000 });
+  const server = createServer({ port: 0, services: [svc], maxUploadBytes: 4000 });
+  const base = `http://localhost:${server.port}`;
 
   afterAll(() => server.stop(true));
 

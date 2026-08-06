@@ -26,12 +26,11 @@ const service = implement(widgets, {
 
 // Mount the contract under a resource-scoped prefix — the scoped client must
 // build `tenants/:tenantId/widgets` for the request to land here at all.
-const PORT = 9886;
-const baseUrl = `http://localhost:${PORT}`;
 const server = createServer({
-  port: PORT,
+  port: 0,
   groups: [{ pathPrefix: 'tenants/:tenantId', services: [service] }],
 });
+const baseUrl = `http://localhost:${server.port}`;
 
 describe('scoped client (stripPrefixKeys) — runtime', () => {
   afterAll(() => server.stop(true));

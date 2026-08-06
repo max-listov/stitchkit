@@ -25,9 +25,8 @@ describe('createContractFactory', () => {
 
   test('the returned contract is an ordinary one — implement + serve + client', async () => {
     const service = implement(users, { list: () => ['alice', 'bob'] });
-    const PORT = 9888;
-    const server = createServer({ services: [service], port: PORT });
-    const api = createClient(users, { baseUrl: `http://localhost:${PORT}` });
+    const server = createServer({ services: [service], port: 0 });
+    const api = createClient(users, { baseUrl: `http://localhost:${server.port}` });
     expect(await api.list()).toEqual(['alice', 'bob']);
     server.stop();
   });

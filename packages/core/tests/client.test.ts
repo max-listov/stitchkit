@@ -40,12 +40,13 @@ const service = implement(users, {
   },
 });
 
-const PORT = 9878;
+let PORT = 0;
 let server: ReturnType<typeof createServer>;
 
 describe('createClient', () => {
   test('setup server', () => {
-    server = createServer({ services: [service], port: PORT });
+    server = createServer({ services: [service], port: 0 });
+    PORT = server.port ?? 0;
   });
 
   test('list — no args', async () => {
@@ -156,16 +157,16 @@ const traceService = implement(traceEcho, {
   get: (ctx) => ({ tp: ctx.req?.headers.get('traceparent') ?? null }),
 });
 
-const QUERY_PORT = 9884;
-const queryBaseUrl = `http://localhost:${QUERY_PORT}`;
+let queryBaseUrl = '';
 let queryServer: ReturnType<typeof createServer>;
 
 describe('GET / DELETE query input', () => {
   test('setup server', () => {
     queryServer = createServer({
       services: [searchService, traceService],
-      port: QUERY_PORT,
+      port: 0,
     });
+    queryBaseUrl = `http://localhost:${queryServer.port}`;
   });
 
   test('flat fields and primitive arrays travel as query params', async () => {

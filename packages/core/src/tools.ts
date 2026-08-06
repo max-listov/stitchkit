@@ -71,6 +71,7 @@ export {
   type TransportCounts,
   type TransportSummary,
 } from './tools/transports';
+export { findUntypedProperties, type UntypedProperty } from './tools/untyped-properties';
 export {
   type McpAnnotations,
   type McpMediaContent,

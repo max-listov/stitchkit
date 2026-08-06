@@ -20,6 +20,7 @@ import {
   type ToolExtend,
 } from './mount';
 import { assertUniqueToolName } from './names';
+import { findUntypedProperties } from './untyped-properties';
 
 /**
  * What to do when a tool's schema cannot be advertised on the MCP surface — a
@@ -114,7 +115,7 @@ function reportIncompatible(
 function throwIfFailures(failures: string[]): void {
   if (failures.length > 0) {
     throw new Error(
-      `[stitchkit] ${failures.length} MCP tool(s) have an incompatible schema:\n - ${failures.join('\n - ')}`,
+      `[stitchkit] ${failures.length} problem(s) with MCP tool schemas:\n - ${failures.join('\n - ')}`,
     );
   }
 }
@@ -226,14 +227,48 @@ export function validateMcpSchemas(
   // Must mirror the live mount (`extend` / `flattenUnionInput`) — otherwise the
   // build-time probe vets a DIFFERENT schema than `mountMcp` advertises, hiding
   // flatten incompatibilities and falsely failing union inputs. → ADR 0033.
-  options?: { extend?: ToolExtend; flattenUnionInput?: boolean },
+  options?: {
+    extend?: ToolExtend;
+    flattenUnionInput?: boolean;
+    /**
+     * Also fail a tool whose advertised schema has a property with no type
+     * information — nothing for a model to obey. Off by default because a
+     * contract may legitimately declare `z.unknown()`; `allowUntyped` lists the
+     * dotted paths that are deliberate, and anything else is a finding. → ADR 0044.
+     */
+    requireTypedProperties?: boolean;
+    /** Dotted paths (`tool.property`) that are deliberately unconstrained. */
+    allowUntyped?: readonly string[];
+  },
 ): void {
   const seen = new Set<string>();
   const failures: string[] = [];
+  const allowed = new Set(options?.allowUntyped ?? []);
 
   for (const service of services) {
     for (const mountable of collectTools(service, 'MCP', options)) {
-      prepareMcpTool(mountable, onIncompatibleSchema, logger, failures, seen);
+      const prepared = prepareMcpTool(mountable, onIncompatibleSchema, logger, failures, seen);
+      if (!prepared || !options?.requireTypedProperties) continue;
+      // The input schema as advertised — after `flattenUnionInput` and `extend`,
+      // because that is the document the model is handed. `prepareMcpTool` has
+      // already rejected anything that will not convert.
+      for (const untyped of findUntypedProperties(toJsonSchema(mountable.schema, 'input'))) {
+        const path = `${mountable.name}.${untyped.path}`;
+        if (allowed.has(path)) continue;
+        const clue = untyped.description
+          ? ` (only a description: "${untyped.description}")`
+          : '';
+        reportIncompatible(
+          `MCP tool "${mountable.name}" — property "${untyped.path}" carries no type, enum or $ref${clue}. ` +
+            'A model is given no way to know what to send. Widen the contract, or list it in `allowUntyped` if it is deliberately free-form.',
+          // Never 'skip': a project that switched this guard ON asked to hear
+          // about it, and dropping the tool is not on the table here — nothing
+          // is incompatible, a property is merely unusable by a model.
+          onIncompatibleSchema === 'skip' ? 'warn' : onIncompatibleSchema,
+          logger,
+          failures,
+        );
+      }
     }
   }
 

@@ -58,6 +58,7 @@ These records were consolidated from the project's internal design notes on
 | [0041](0041-tool-error-cause-is-observable.md) | The cause of a failed tool call is observable (`onToolError`) | Accepted — closes an HTTP/tool asymmetry in 0007/0014; extends 0012 |
 | [0042](0042-the-audit-row-may-name-the-cause.md) | The audit row may name the cause, the caller may not | Accepted — completes 0041; makes 0030 true on the tool path |
 | [0043](0043-the-framework-records-the-failure.md) | The framework records the failure; the project overrides it | Accepted — applies 0042's rule to the HTTP path; extends 0012 |
+| [0044](0044-a-collided-field-keeps-its-type.md) | A collided field keeps its type (never `unknown` where a type is provable) | Accepted — narrows 0033's collision rule, keeps its invariant |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

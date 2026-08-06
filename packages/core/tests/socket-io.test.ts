@@ -13,19 +13,17 @@ interface ClientEvents {
   ping: (data: { n: number }) => void;
 }
 
-const PORT = 9895;
-const URL = `http://localhost:${PORT}`;
-
 const sock = await createSocketIOServer<ServerEvents, ClientEvents>({ cors: { origin: '*' } });
 sock.io.on('connection', (s) => {
   s.on('ping', (data) => s.emit('pong', { n: data.n + 1 }));
 });
 
 const server = createServer({
-  port: PORT,
+  port: 0,
   websocket: sock.websocket,
   rawRoutes: [sock.route],
 });
+const URL = `http://localhost:${server.port}`;
 
 /** Resolve once the client reports a live connection (next `connected` event). */
 function whenConnected(client: {
@@ -143,9 +141,6 @@ interface AuthClientEvents {
   who: () => void;
 }
 
-const AUTH_PORT = 9896;
-const AUTH_URL = `http://localhost:${AUTH_PORT}`;
-
 const authSock = await createSocketIOServer<AuthServerEvents, AuthClientEvents>({
   cors: { origin: '*' },
 });
@@ -165,10 +160,11 @@ authSock.io.on('connection', (s) => {
   );
 });
 const authServer = createServer({
-  port: AUTH_PORT,
+  port: 0,
   websocket: authSock.websocket,
   rawRoutes: [authSock.route],
 });
+const AUTH_URL = `http://localhost:${authServer.port}`;
 
 function makeAuthClient(config: Partial<SocketIOClientConfig<AuthServerEvents>> = {}) {
   return createSocketIOClient<AuthServerEvents, AuthClientEvents>({
@@ -302,9 +298,6 @@ function isEchoSocket(ws: ServerWebSocket<unknown>): ws is ServerWebSocket<EchoD
   return typeof data === 'object' && data !== null && 'lane' in data && data.lane === 'echo';
 }
 
-const COMPOSE_PORT = 9897;
-const COMPOSE_URL = `http://localhost:${COMPOSE_PORT}`;
-
 const composeSock = await createSocketIOServer<ServerEvents, ClientEvents>({
   cors: { origin: '*' },
 });
@@ -340,15 +333,16 @@ const composedWebSocket = composeWebSocketHandlers(
   { maxPayloadLength: 4 * 1024 * 1024 },
 );
 const composeServer = createServer({
-  port: COMPOSE_PORT,
+  port: 0,
   websocket: composedWebSocket,
   rawRoutes: [composeSock.route, echoUpgradeRoute],
 });
+const COMPOSE_URL = `http://localhost:${composeServer.port}`;
 
 /** Open a native WebSocket to the raw lane, collect `count` messages. */
 function rawRoundTrip(payload: string, count: number): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${COMPOSE_PORT}/ws/echo`);
+    const ws = new WebSocket(`ws://localhost:${composeServer.port}/ws/echo`);
     const messages: string[] = [];
     const timer = setTimeout(() => reject(new Error('raw ws timed out')), 3000);
     ws.addEventListener('message', (event) => {
@@ -424,9 +418,6 @@ interface KickClientEvents {
   kick: () => void;
 }
 
-const KICK_PORT = 9899;
-const KICK_URL = `http://localhost:${KICK_PORT}`;
-
 const kickSock = await createSocketIOServer<KickServerEvents, KickClientEvents>({
   cors: { origin: '*' },
 });
@@ -436,10 +427,11 @@ kickSock.io.on('connection', (s) => {
   s.on('kick', () => s.disconnect(true));
 });
 const kickServer = createServer({
-  port: KICK_PORT,
+  port: 0,
   websocket: kickSock.websocket,
   rawRoutes: [kickSock.route],
 });
+const KICK_URL = `http://localhost:${kickServer.port}`;
 
 describe('Socket.IO server-initiated disconnect', () => {
   afterAll(() => {
@@ -530,9 +522,6 @@ interface StateClientEvents {
   noop: () => void;
 }
 
-const STICKY_PORT = 9898;
-const STICKY_URL = `http://localhost:${STICKY_PORT}`;
-
 const stickySock = await createSocketIOServer<StateServerEvents, StateClientEvents>({
   cors: { origin: '*' },
 });
@@ -542,10 +531,11 @@ stickySock.io.on('connection', (s) => {
   s.emit('state', { value: 7 });
 });
 const stickyServer = createServer({
-  port: STICKY_PORT,
+  port: 0,
   websocket: stickySock.websocket,
   rawRoutes: [stickySock.route],
 });
+const STICKY_URL = `http://localhost:${stickyServer.port}`;
 
 describe('Socket.IO sticky events (retain)', () => {
   afterAll(() => {

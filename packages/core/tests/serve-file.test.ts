@@ -214,16 +214,15 @@ describe('serveFile — disabled validators are not matched', () => {
 });
 
 describe('serveFile — via a raw route (HEAD reaches it through method ALL)', () => {
-  const PORT = 9902;
-  const base = `http://localhost:${PORT}`;
   const server = createServer({
-    port: PORT,
+    port: 0,
     // `ALL` so a HEAD probe reaches serveFile — raw routes match the method
     // exactly and `HEAD` is not a contract `HttpMethod`.
     rawRoutes: [
       { method: 'ALL', path: '/media', handler: (req) => serveFile(req, { path: PATH }) },
     ],
   });
+  const base = `http://localhost:${server.port}`;
   afterAll(() => server.stop(true));
 
   test('GET → 200 with full body', async () => {

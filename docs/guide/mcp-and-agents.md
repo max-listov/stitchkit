@@ -159,6 +159,30 @@ cannot become a tool. `onIncompatibleSchema` decides what happens:
 `validateMcpSchemas(services)` runs the same check on its own — useful in a
 startup assertion or a test.
 
+#### Is every property actually usable by a model?
+
+A tool schema is the only instruction a model gets about the shape of its
+arguments. A property that carries a `description` and no `type` / `enum` /
+`anyOf` / `$ref` tells it nothing — and nothing fails: the schema converts, the
+mount succeeds, the tool is advertised, and the model then guesses, retrying the
+same wrong guess because the error does not say what the right one would be.
+
+```ts
+validateMcpSchemas(services, 'throw', logger, {
+  flattenUnionInput: true,          // mirror the live mount
+  requireTypedProperties: true,
+  allowUntyped: ['docs_create.payload'],   // deliberately free-form
+})
+```
+
+Off by default, because a contract may legitimately declare `z.unknown()`.
+`allowUntyped` takes dotted `tool.property` paths — an entry there is a decision,
+anything else is a finding. Pass the **same** `extend` / `flattenUnionInput` the
+mount uses, or the check vets a different document than the one advertised.
+
+`findUntypedProperties(jsonSchema)` is the same walk, exported on its own if you
+want to assert on a schema you built elsewhere.
+
 ### Discriminated unions for weaker models — `flattenUnionInput`
 
 A discriminated union in a tool's input becomes a JSON Schema `oneOf` / `anyOf`.
@@ -167,6 +191,15 @@ the field or mangle its strings. Set `flattenUnionInput: true` (on
 `createMcpHandler` / `mountMcp` / `mountAgent`) to advertise each discriminated
 union as a **single flat object** instead — the discriminator becomes an enum and
 each variant's fields become optional with a `Required if <disc> = …` hint.
+
+**A field several variants declare keeps its type.** Flattening puts every
+variant's fields side by side, so a key two variants share has to be advertised
+as one thing. Where they agree, that is what you get; where they disagree — a
+`.refine()` only one of them carries, two different bounds on the same number, an
+enum against a free string — the *constraint* is dropped and the **type** is not.
+A field that is a number in every variant is advertised as a number, not as a
+bare description. Only genuinely different kinds (a string in one variant, a
+number in another) fall back to unconstrained. → ADR 0044
 
 It is **deep**: unions are flattened at every depth — top level, object fields,
 array items, and through `optional` / `nullable` / `default` / intersection

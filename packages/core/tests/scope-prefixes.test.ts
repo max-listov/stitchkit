@@ -21,13 +21,12 @@ const widgetsService = implement(widgets, {
 });
 const healthService = implement(health, { check: () => ({ ok: true }) });
 
-const PORT = 9901;
-const base = `http://localhost:${PORT}`;
 const server = createServer({
-  port: PORT,
+  port: 0,
   services: [widgetsService, healthService],
   scopePrefixes: { tenant: 'tenants/:tenantId' },
 });
+const base = `http://localhost:${server.port}`;
 
 describe('scopePrefixes — scope drives the mount prefix', () => {
   afterAll(() => server.stop(true));

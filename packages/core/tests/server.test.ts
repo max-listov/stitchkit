@@ -52,17 +52,20 @@ const usersService = implement(users, {
   },
 });
 
-const PORT = 9876;
+let PORT = 0;
 let server: ReturnType<typeof createServer>;
 
 describe('createServer + implement', () => {
   test('starts server', () => {
     server = createServer({
       services: [usersService],
-      port: PORT,
+      port: 0,
       cors: { origin: '*' },
     });
-    expect(server.port).toBe(PORT);
+    PORT = server.port ?? 0;
+    // The kernel assigned it — a fixed number would be a scheduled flake, see
+    // docs/backlog/done/2026-08-05-fixed-test-ports-are-flaky.md.
+    expect(PORT).toBeGreaterThan(0);
   });
 
   test('GET /users — list', async () => {
@@ -136,7 +139,7 @@ describe('createServer + implement', () => {
 
 describe('lifecycle hooks', () => {
   let hookServer: ReturnType<typeof createServer>;
-  const HOOK_PORT = 9877;
+  let HOOK_PORT = 0;
   const logs: string[] = [];
 
   const PongSchema = z.object({ pong: z.boolean() });
@@ -155,7 +158,7 @@ describe('lifecycle hooks', () => {
 
     hookServer = createServer({
       services: [service],
-      port: HOOK_PORT,
+      port: 0,
       hooks: {
         onRequest: () => {
           logs.push('onRequest');
@@ -172,6 +175,7 @@ describe('lifecycle hooks', () => {
         },
       },
     });
+    HOOK_PORT = hookServer.port ?? 0;
 
     const res = await fetch(`http://localhost:${HOOK_PORT}/test`);
     expect(res.status).toBe(200);
@@ -180,7 +184,7 @@ describe('lifecycle hooks', () => {
 
   test('onRequest can return early Response', async () => {
     hookServer?.stop();
-    const BLOCK_PORT = 9879;
+    let BLOCK_PORT = 0;
 
     const contract = defineContract(
       { prefix: 'blocked' },
@@ -195,11 +199,12 @@ describe('lifecycle hooks', () => {
 
     hookServer = createServer({
       services: [service],
-      port: BLOCK_PORT,
+      port: 0,
       hooks: {
         onRequest: () => new Response('Blocked', { status: 403 }),
       },
     });
+    BLOCK_PORT = hookServer.port ?? 0;
 
     const res = await fetch(`http://localhost:${BLOCK_PORT}/blocked`);
     expect(res.status).toBe(403);

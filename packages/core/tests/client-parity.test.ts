@@ -34,8 +34,7 @@ describe('onRequest early response carries CORS', () => {
 });
 
 describe('HttpClient path validates output', () => {
-  const PORT = 9887;
-  const baseUrl = `http://localhost:${PORT}`;
+  let baseUrl = '';
 
   // The server answers with only `{ id }` …
   const serverContract = defineContract(
@@ -59,7 +58,8 @@ describe('HttpClient path validates output', () => {
   );
 
   test('setup', () => {
-    server = createServer({ services: [service], port: PORT });
+    server = createServer({ services: [service], port: 0 });
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   test('the ky adapter path rejects a response that fails the output schema', async () => {
