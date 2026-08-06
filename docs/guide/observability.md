@@ -268,9 +268,10 @@ metric, a custom log line, anything that is not a full audit row.
 
 `afterHandle(ctx, result, endpoint)` runs after a handler returns;
 `onError(ctx, error, endpoint)` when one throws. `afterToolCall(toolName, args,
-result, durationMs, context)` runs after every tool call — success and error
-alike — carrying the tool name, the arguments, the result, the duration and the
-call context.
+result, durationMs, context, endpoint, error)` runs after every tool call —
+success and error alike — carrying the tool name, the arguments, the result, the
+duration, the call context, the endpoint identity, and (only when the call failed
+by throwing) the raw thrown value.
 
 ```ts
 createMcpHandler({
@@ -330,35 +331,43 @@ observe. (This is also why it lives on `ToolCallHooks` rather than being an
 `Response`, which a tool call has no use for, and a whole `createServer` hooks
 object must stay assignable to `ToolLifecycle`.)
 
-**`setRequestError` is the wrong sink here — mind which record you are filling.**
-It writes to the *request* context, and `createAuditHook`'s **tool** row does not
-read it: `errorCode` / `errorMessage` / `errorDetail` on a tool event come from
-the `ToolResult`, and only `userId` / `clientId` / `ipAddress` / `userAgent` /
-`dimensions` come from the context. So calling it in `onToolError` leaves the
-tool audit row exactly as scrubbed as before — and for MCP over HTTP it also
-writes the cause into the log line of the enclosing `/mcp` request, turning one
-incident into two records.
+**Do not reach for `setRequestError` here.** It writes to the *request* context,
+which `createAuditHook`'s **tool** row does not read: a tool event takes
+`errorCode` / `errorMessage` / `errorDetail` from the `ToolResult`, and only
+identity and `dimensions` from the context. Calling it in `onToolError` would
+leave the tool row exactly as scrubbed as before — and for MCP over HTTP it would
+also write the cause into the log line of the enclosing `/mcp` request, turning
+one incident into two records. It is right for the **HTTP** path, where the
+request *is* the record.
 
-Route the cause to your own sink from `onToolError`, as above, and let the audit
-row stay the record of the *call*. If you want one row carrying both, correlate
-the two hooks yourself — key the cause by the call and read it back in
-`afterToolCall`:
+### One row that names the cause
+
+You do not need to correlate the two hooks yourself. `afterToolCall` receives the
+same raw value as a **seventh parameter**, so one hook can build one record:
 
 ```ts
-const causes = new WeakMap<object, unknown>()
-
 hooks: {
-  onToolError: (_tool, error, context) => { causes.set(context, error) },
-  afterToolCall: (toolName, _args, result, durationMs, context, endpoint) => {
-    void writeRow({ toolName, result, durationMs, cause: causes.get(context), endpoint })
+  afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {
+    void writeRow({ toolName, result, durationMs, cause: error, endpoint })
   },
 }
 ```
 
-Every mount builds a fresh context object per call and hands the same reference
-to both hooks, so it is a safe key and nothing leaks. `setRequestError` remains
-right for the **HTTP** path, where the request *is* the record — see the fields
-section above.
+`error` is present only when the call failed by **throwing** — a
+validation failure or a `beforeToolCall` rejection leaves it `undefined`, because
+neither ever had a raw value to lose. The parameter is additive: a six-parameter
+hook written before it keeps compiling and keeps firing.
+
+`createAuditHook` uses it already. Where the envelope was scrubbed to
+`INTERNAL_SERVER_ERROR`, the row's `errorMessage` becomes the real message
+instead of the placeholder; a truthful envelope (a thrown `AppError`, a
+`ZodError`) is left alone, `errorCode` and `errorDetail` are untouched, and the
+stack is not written — that is `onToolError`'s job, for a tracker that wants it.
+The caller still receives the scrubbed envelope in every case: the raw text
+reaches your server-side record, never the response. → ADR 0042
+
+So the two hooks divide by **purpose**, not by capability — `onToolError` for a
+sink of your own (a tracker, a stack, an alert), `afterToolCall` for the record.
 
 ### Keying a row on (service, action)
 

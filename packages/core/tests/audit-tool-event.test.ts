@@ -69,3 +69,93 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
     expect(e?.errorDetail).toEqual({ issues: [{ path: 'name', message: 'Required' }] });
   });
 });
+
+describe('audit — the tool row names the cause of an unexpected throw', () => {
+  test('the scrubbed message is replaced by the real one', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+
+    audit.toolCall.afterToolCall?.(
+      'broadcast_create',
+      { name: 'x' },
+      // What the caller was told, and all the row used to have.
+      {
+        ok: false,
+        code: 'INTERNAL_SERVER_ERROR',
+        details: { message: 'Internal server error' },
+      },
+      7,
+      { source: 'agent' },
+      endpoint,
+      new Error('ECONNREFUSED 10.0.0.4:5432'),
+    );
+    await Bun.sleep(5);
+
+    const e = events[0];
+    expect(e?.errorCode).toBe('INTERNAL_SERVER_ERROR');
+    expect(e?.errorMessage).toBe('ECONNREFUSED 10.0.0.4:5432');
+    // The code stays the contract's; only the message gains information.
+    expect(e?.errorDetail).toEqual({ message: 'Internal server error' });
+  });
+
+  test('a thrown string is taken as the message', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+
+    audit.toolCall.afterToolCall?.(
+      'broadcast_create',
+      {},
+      {
+        ok: false,
+        code: 'INTERNAL_SERVER_ERROR',
+        details: { message: 'Internal server error' },
+      },
+      2,
+      { source: 'agent' },
+      endpoint,
+      'worker pool exhausted',
+    );
+    await Bun.sleep(5);
+
+    expect(events[0]?.errorMessage).toBe('worker pool exhausted');
+  });
+
+  test('a truthful envelope is left alone — an AppError keeps its own message', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+
+    audit.toolCall.afterToolCall?.(
+      'broadcast_create',
+      {},
+      { ok: false, code: 'NOT_FOUND', details: { message: 'No such broadcast' } },
+      2,
+      { source: 'agent' },
+      endpoint,
+      new Error('No such broadcast'),
+    );
+    await Bun.sleep(5);
+
+    expect(events[0]?.errorMessage).toBe('No such broadcast');
+  });
+
+  test('without a raw error the row is exactly what it was', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+
+    audit.toolCall.afterToolCall?.(
+      'broadcast_create',
+      {},
+      {
+        ok: false,
+        code: 'INTERNAL_SERVER_ERROR',
+        details: { message: 'Internal server error' },
+      },
+      2,
+      { source: 'agent' },
+      endpoint,
+    );
+    await Bun.sleep(5);
+
+    expect(events[0]?.errorMessage).toBe('Internal server error');
+  });
+});

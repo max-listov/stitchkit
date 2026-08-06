@@ -21,6 +21,17 @@ export interface ToolCallHooks {
     context: ToolCallContext,
     endpoint: MethodDef,
   ) => void | Promise<void>;
+  /**
+   * Every finished call, success and failure alike — the record of the call.
+   *
+   * `error` is the value **as thrown**, present only when the call failed by
+   * throwing (never for an argument-validation failure, an output-schema
+   * mismatch or a `beforeToolCall` rejection — those never had a raw value).
+   * It is the same value `onToolError` receives, handed here too so a single
+   * hook can build one row that names the cause: the `result` alone cannot,
+   * because an unexpected throw is scrubbed to a bare `INTERNAL_SERVER_ERROR`.
+   * A six-parameter hook is unaffected.
+   */
   afterToolCall?: (
     toolName: string,
     args: Record<string, unknown>,
@@ -28,6 +39,7 @@ export interface ToolCallHooks {
     durationMs: number,
     context: ToolCallContext,
     endpoint: MethodDef,
+    error?: unknown,
   ) => void | Promise<void>;
   /**
    * The handler path threw — the value **as thrown**, before it is normalised
@@ -124,7 +136,10 @@ export async function executeToolMethod(
   // `method` (the resolved `MethodDef`) is passed so the hook reads identity
   // (`serviceName` / `key` / `meta`) directly — the tool-side twin of
   // `afterHandle(ctx, result, endpoint)`, no toolName→identity map. → ADR 0022.
-  const finish = async (result: ToolResult): Promise<ToolResult> => {
+  // `thrown` is passed only on the throw path, so a hook can tell "the handler
+  // threw and this is why" from "the call failed a check" — the latter never had
+  // a raw value to lose.
+  const finish = async (result: ToolResult, thrown?: unknown): Promise<ToolResult> => {
     await hooks?.afterToolCall?.(
       toolName,
       rawArgs,
@@ -132,6 +147,7 @@ export async function executeToolMethod(
       Date.now() - startedAt,
       context,
       method,
+      thrown,
     );
     return result;
   };
@@ -245,7 +261,8 @@ export async function executeToolMethod(
     }
     // The result carries the cause (message in `details` when there is nothing
     // structured) so a model sees why it failed. Result logging is the
-    // consumer's job, via the `afterToolCall` hook.
-    return finish(toolResultFromError(err));
+    // consumer's job, via the `afterToolCall` hook — which is handed the raw
+    // value too, so one hook can build a record the scrubbed result cannot.
+    return finish(toolResultFromError(err), err);
   }
 }

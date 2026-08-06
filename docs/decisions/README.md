@@ -56,6 +56,7 @@ These records were consolidated from the project's internal design notes on
 | [0039](0039-request-logging-reads-the-request-context.md) | Request logging reads the request context; `logging` becomes a config object | Accepted — connects 0012's logger to its context; upholds 0013, 0021 |
 | [0040](0040-the-log-format-is-chosen-not-guessed.md) | The log format is chosen (`logging.format`), not guessed from `NODE_ENV` | Accepted — repairs the delivery of 0039; upholds 0013 |
 | [0041](0041-tool-error-cause-is-observable.md) | The cause of a failed tool call is observable (`onToolError`) | Accepted — closes an HTTP/tool asymmetry in 0007/0014; extends 0012 |
+| [0042](0042-the-audit-row-may-name-the-cause.md) | The audit row may name the cause, the caller may not | Accepted — completes 0041; makes 0030 true on the tool path |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

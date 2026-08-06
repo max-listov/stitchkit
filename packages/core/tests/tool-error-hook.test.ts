@@ -398,3 +398,101 @@ describe('onToolError — reaches the real mounts', () => {
     expect(seen[0]?.context.source).toBe('agent');
   });
 });
+
+describe('the raw cause reaches afterToolCall too', () => {
+  test('the same value, by identity, alongside the scrubbed result', async () => {
+    const thrown = new Error('db timeout');
+    const seen: Array<{ result: ToolResult; error: unknown }> = [];
+    const hooks: ToolCallHooks = {
+      afterToolCall: (_n, _a, result, _d, _c, _e, error) => {
+        seen.push({ result, error });
+      },
+    };
+    const method = makeMethod({
+      handler: () => {
+        throw thrown;
+      },
+    });
+
+    await quietly(() =>
+      executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks),
+    );
+
+    expect(seen[0]?.error).toBe(thrown);
+    // The pairing is the point: the envelope says nothing, the cause is beside it.
+    expect(seen[0]?.result).toMatchObject({ ok: false, code: 'INTERNAL_SERVER_ERROR' });
+  });
+
+  test('undefined when nothing was thrown — success and both non-throw failures', async () => {
+    const seen: unknown[] = [];
+    let calls = 0;
+    const hooks: ToolCallHooks = {
+      afterToolCall: (_n, _a, _r, _d, _c, _e, error) => {
+        calls += 1;
+        seen.push(error);
+      },
+    };
+
+    // Success.
+    await executeToolMethod(makeMethod(), 'w', {}, { source: 'mcp' }, hooks);
+    // Argument validation.
+    await executeToolMethod(
+      makeMethod({ inputSchema: z.object({ name: z.string() }) }),
+      'w',
+      { name: 42 },
+      { source: 'mcp' },
+      hooks,
+    );
+    // Output-schema mismatch.
+    await executeToolMethod(
+      makeMethod({ outputSchema: z.object({ id: z.string() }), handler: () => ({ id: 1 }) }),
+      'w',
+      {},
+      { source: 'mcp' },
+      hooks,
+    );
+    // `beforeToolCall` rejection.
+    await executeToolMethod(
+      makeMethod(),
+      'w',
+      {},
+      { source: 'mcp' },
+      {
+        ...hooks,
+        beforeToolCall: () => {
+          throw new AppError('UNAUTHORIZED', 'no', 401);
+        },
+      },
+    );
+
+    expect(calls).toBe(4);
+    expect(seen).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  test('a six-parameter hook still compiles and still fires', async () => {
+    // The parameter is additive: every hook written before it keeps working,
+    // which is why this is not a breaking change.
+    let fired = 0;
+    const hooks: ToolCallHooks = {
+      afterToolCall: (_toolName, _args, _result, _durationMs, _context, _endpoint) => {
+        fired += 1;
+      },
+    };
+
+    await quietly(() =>
+      executeToolMethod(
+        makeMethod({
+          handler: () => {
+            throw new Error('boom');
+          },
+        }),
+        'w',
+        {},
+        { source: 'mcp' },
+        hooks,
+      ),
+    );
+
+    expect(fired).toBe(1);
+  });
+});

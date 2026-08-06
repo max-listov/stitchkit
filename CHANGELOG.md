@@ -15,6 +15,42 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-08-06
+
+### Added
+
+- **`afterToolCall` receives the raw thrown value as a seventh parameter**, and
+  **`createAuditHook` uses it** — a tool audit row can finally name why the call
+  failed.
+
+  0.30.0 made the cause observable; it was still not *recordable*, because the
+  hook holding the raw value and the hook building the row were different hooks.
+  The HTTP row has always taken its message from `ctx.error` (whatever the project
+  curated); the tool row took it from the scrubbed envelope, so every unexpected
+  throw was recorded as `Internal server error`.
+
+  ```ts
+  hooks: {
+    afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {
+      void writeRow({ toolName, result, durationMs, cause: error, endpoint })
+    },
+  }
+  ```
+
+  `error` is present **only** when the call failed by throwing — a validation
+  failure, an output-schema mismatch and a `beforeToolCall` rejection leave it
+  `undefined`. Additive: a six-parameter hook stays assignable, keeps compiling
+  and keeps firing, so no existing hook needs touching.
+
+  In `createAuditHook` the raw message replaces the placeholder **only** where the
+  envelope was scrubbed to `INTERNAL_SERVER_ERROR`; a truthful envelope keeps its
+  own message, `errorCode` and `errorDetail` are untouched, and the stack is never
+  written to a row. The caller still receives the scrubbed envelope in every case
+  — the raw text reaches your server-side record, never the response. → ADR 0042
+
+  If you were correlating `onToolError` with `afterToolCall` through a `WeakMap`
+  to get this, you can drop it.
+
 ## [0.31.0] — 2026-08-06
 
 ### Added
@@ -1599,7 +1635,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/max-listov/stitchkit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/max-listov/stitchkit/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/max-listov/stitchkit/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/max-listov/stitchkit/compare/v0.28.1...v0.29.0

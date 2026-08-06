@@ -54,6 +54,28 @@ function toolErrorMessage(result: Extract<ToolResult, { ok: false }>): string | 
   return hint;
 }
 
+/**
+ * The message for a failed tool row. Normally the envelope's — it is truthful
+ * for an `AppError` or a `ZodError`, and it is what the caller was told.
+ *
+ * The exception is the scrubbed one: an unexpected throw becomes
+ * `INTERNAL_SERVER_ERROR` / "Internal server error", which tells a later reader
+ * nothing at all. There the raw message goes in instead. This is a *server-side*
+ * record the project owns — the same bargain the HTTP row has always had, where
+ * the message comes from whatever `setRequestError` curated — and the caller
+ * still receives the scrubbed envelope either way. → ADR 0042.
+ */
+function auditErrorMessage(
+  result: Extract<ToolResult, { ok: false }>,
+  thrown: unknown,
+): string | undefined {
+  if (result.code === 'INTERNAL_SERVER_ERROR' && thrown !== undefined) {
+    if (thrown instanceof Error) return thrown.message;
+    if (typeof thrown === 'string') return thrown;
+  }
+  return toolErrorMessage(result);
+}
+
 /** A context field is only useful when it is actually a string. */
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -125,7 +147,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
   };
 
   const toolCall: ToolCallHooks = {
-    afterToolCall: (toolName, args, result, durationMs, context, endpoint) => {
+    afterToolCall: (toolName, args, result, durationMs, context, endpoint, thrown) => {
       // Each tool call is a span. Under an HTTP request it is a child of that
       // request's span; on its own (a stdio server) it opens a fresh trace.
       const requestCtx = getRequestContext();
@@ -149,7 +171,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
         statusCode: result.ok ? 200 : 400,
         durationMs,
         errorCode: result.ok ? undefined : result.code,
-        errorMessage: result.ok ? undefined : toolErrorMessage(result),
+        errorMessage: result.ok ? undefined : auditErrorMessage(result, thrown),
         ...(!result.ok &&
           result.details !== undefined && {
             errorDetail: sanitizePayload(result.details, sanitize),
