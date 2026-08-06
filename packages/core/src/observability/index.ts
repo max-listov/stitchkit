@@ -17,6 +17,7 @@ export {
   setRequestEndpoint,
   setRequestError,
   setRequestUser,
+  type WrapRequestContextOptions,
   wrapInRequestContext,
 } from './context';
 export type { RequestEvent } from './event';

@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-08-06
+
+### Added
+
+- **Nine types that a public signature names are now exported.** A consumer who
+  has to write a type down must be able to import it; these could not be, so the
+  only way to name one was `Parameters<...>` gymnastics.
+
+  `stitchkit/tools` — `ViewFileOptions`, `McpAnnotations`, `CollectToolsConfig`.
+  `stitchkit/server` — `MultipartResult`, `VerifyJwtOptions`, `EventBusOptions`,
+  `EventHandler`, `DefaultEventMap`. `stitchkit/observability` —
+  `WrapRequestContextOptions`.
+
+### Internal
+
+- **A guard for the rule** (`check-public-types.mjs`, part of `build`): every
+  type named in a public signature must be exported from some entrypoint, read
+  off the emitted declarations with the TypeScript compiler API. It is what found
+  four of the nine. Types this package keeps internal — inference helpers, union
+  members, aliases over `@types/bun` — are listed with their reason, and an entry
+  that stops being referenced is reported so the list cannot rot.
+
 ## [0.33.0] — 2026-08-06
 
 ### Added
@@ -1667,7 +1689,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/max-listov/stitchkit/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/max-listov/stitchkit/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/max-listov/stitchkit/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/max-listov/stitchkit/compare/v0.30.0...v0.31.0

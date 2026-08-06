@@ -33,7 +33,12 @@ export {
 } from './tools/mcp-app';
 export { createMcpHandler, type McpHandlerConfig } from './tools/mcp-handler';
 export { createStdioMcpServer, type StdioMcpServerConfig } from './tools/mcp-stdio';
-export { collectTools, type MountableTool, type ToolExtend } from './tools/mount';
+export {
+  type CollectToolsConfig,
+  collectTools,
+  type MountableTool,
+  type ToolExtend,
+} from './tools/mount';
 export { type DownloadToolConfig, mountDownload } from './tools/mount-download';
 export { mountUpload, type UploadToolConfig } from './tools/mount-upload';
 export { mountWait, type WaitToolConfig } from './tools/mount-wait';
@@ -66,4 +71,10 @@ export {
   type TransportCounts,
   type TransportSummary,
 } from './tools/transports';
-export { type McpMediaContent, mountViewFile, resolveMedia } from './tools/view-file';
+export {
+  type McpAnnotations,
+  type McpMediaContent,
+  mountViewFile,
+  resolveMedia,
+  type ViewFileOptions,
+} from './tools/view-file';

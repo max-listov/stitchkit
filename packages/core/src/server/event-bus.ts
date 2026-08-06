@@ -1,4 +1,4 @@
-type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
+export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
 
 /** Default event map — untyped string-keyed events (ad-hoc buses). */
 export type DefaultEventMap = Record<string, unknown>;

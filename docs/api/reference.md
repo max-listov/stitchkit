@@ -179,6 +179,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
 | `createBearerResolver` | function | a bearer-token identity resolver |
 | `signJwt` | function | sign an HS256 JWT |
+| `VerifyJwtOptions` | _type_ | options for `verifyJwt` |
 | `verifyJwt` | function | verify an HS256 JWT |
 | `extractToken` | function | read a bearer token from header or cookie |
 | `deriveCodeChallenge` | function | PKCE — derive the `code_challenge` from a verifier |
@@ -226,10 +227,14 @@ Also re-exports the error helpers from `stitchkit/contract`.
 |--------|------|---------|
 | `streamSSE` | function | an async generator → SSE `Response` — [guide](../guide/server.md#sse-streaming) |
 | `parseSSE` | function | parse an SSE `Response` (also on the root entrypoint) |
+| `MultipartResult` | _type_ | what `parseMultipart` returns |
 | `parseMultipart` | function | parse a `multipart/form-data` request — [guide](../guide/server.md#multipart) |
 | `createRateLimiter` | function | token-bucket rate limiting — [guide](../guide/server.md#rate-limiting) |
 | `createCache` | function | an in-memory TTL cache |
 | `cacheHeaders` | function | build a `Cache-Control` header |
+| `EventBusOptions` | _type_ | options for `createEventBus` |
+| `EventHandler` | _type_ | one event-bus subscriber |
+| `DefaultEventMap` | _type_ | the default event map — `Record<string, unknown>` |
 | `createEventBus` | function | typed in-process pub/sub — [guide](../guide/server.md#event-bus) |
 | `generateTraceId` | function | a fresh trace id |
 | `resolveTraceId` | function | the default per-request trace-id resolver |
@@ -273,6 +278,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 
 | Export | Kind | Summary |
 |--------|------|---------|
+| `WrapRequestContextOptions` | _type_ | options for `wrapInRequestContext` |
 | `wrapInRequestContext` | function | run a fetch handler inside a request context — [guide](../guide/observability.md#request-context) |
 | `getRequestContext` | function | the active request context |
 | `getTraceId` | function | the active trace id — pass as `traceId` to `createServer` |
@@ -345,6 +351,9 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
+| `ViewFileOptions` | _type_ | options for `mountViewFile` |
+| `McpAnnotations` | _type_ | MCP annotations on a media result |
+| `CollectToolsConfig` | _type_ | options for `collectTools` |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |

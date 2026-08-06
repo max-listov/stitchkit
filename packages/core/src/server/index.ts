@@ -31,7 +31,13 @@ export {
   type ErrorHookConfig,
   type ResolvedError,
 } from './error-hook';
-export { createEventBus, type EventBus } from './event-bus';
+export {
+  createEventBus,
+  type DefaultEventMap,
+  type EventBus,
+  type EventBusOptions,
+  type EventHandler,
+} from './event-bus';
 export {
   type ByteRange,
   parseByteRange,
@@ -52,6 +58,7 @@ export {
   type JwtPayload,
   type SignJwtOptions,
   signJwt,
+  type VerifyJwtOptions,
   verifyJwt,
 } from './middleware/auth';
 export {
@@ -69,7 +76,7 @@ export {
   DEFAULT_CORS_EXPOSE_HEADERS,
 } from './middleware/cors';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
-export { parseMultipart } from './multipart';
+export { type MultipartResult, parseMultipart } from './multipart';
 export {
   generateOpenApiDocument,
   type OpenApiConfig,
