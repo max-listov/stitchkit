@@ -341,7 +341,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
-| `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` observability hooks |
+| `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` / `onToolError` observability hooks — the last carries the value **as thrown**, before normalisation scrubs an unexpected error to `INTERNAL_SERVER_ERROR` ([guide](../guide/observability.md#the-cause-behind-a-failed-tool-call)) |
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |

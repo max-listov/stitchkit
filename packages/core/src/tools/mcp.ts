@@ -332,7 +332,8 @@ export interface McpServerBuildConfig<TAuth> {
   /** Context merged into every contract handler (`mountMcp` context). */
   context?: (auth: TAuth) => Record<string, unknown>;
   /** Tool-call observability hooks — `afterToolCall` fires for every result
-   *  (success and error), so the consuming app can log MCP tool outcomes. */
+   *  (success and error), so the consuming app can log MCP tool outcomes;
+   *  `onToolError` adds the raw thrown value behind a failed one. */
   hooks?: ToolCallHooks;
   /** Auth / scope gate and result transform for every tool call — pass the
    *  same `createAuthHook` result used for the HTTP `beforeHandle` to guard

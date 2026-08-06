@@ -29,6 +29,34 @@ export interface ToolCallHooks {
     context: ToolCallContext,
     endpoint: MethodDef,
   ) => void | Promise<void>;
+  /**
+   * The handler path threw — the value **as thrown**, before it is normalised
+   * into a `ToolResult`. The tool-side answer to HTTP's `hooks.onError`, and the
+   * only place the real cause of an unexpected failure is reachable: an error
+   * that is not an `AppError` is scrubbed to a bare `INTERNAL_SERVER_ERROR` with
+   * no details, so by the time `afterToolCall` sees the result, the stack, the
+   * `cause` chain and the message are gone.
+   *
+   * Fires for a throw from `lifecycle.beforeHandle`, the handler, or
+   * `lifecycle.afterHandle` — the span where information is destroyed. It does
+   * **not** fire for a `beforeToolCall` rejection, an argument-validation
+   * failure or an output-schema mismatch: each of those is already described in
+   * full by the `ToolResult` that `afterToolCall` receives, and a second path to
+   * the same information only invites double-logging.
+   *
+   * This is observation, not an error handler — the tool envelope is always
+   * `toolResultFromError`, so the return value is ignored and a throw from the
+   * hook itself is reported and swallowed rather than replacing the failure it
+   * was called to observe. Awaited before `afterToolCall`, so anything the hook
+   * records (a request-context error, say) is already in place when the audit
+   * hook reads it.
+   */
+  onToolError?: (
+    toolName: string,
+    error: unknown,
+    context: ToolCallContext,
+    endpoint: MethodDef,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -48,6 +76,11 @@ export type ErrorHintFn = (toolName: string, errorCode: string) => string | null
  *
  * Structurally a subset of `LifecycleHooks` — the same hook object used for
  * `createServer({ hooks })` is assignable here.
+ *
+ * There is deliberately no `onError` twin: `LifecycleHooks.onError` returns a
+ * `Response`, which the tool path has no use for, and narrowing the return type
+ * here would break the assignability above. Observing a thrown tool error is
+ * `ToolCallHooks.onToolError`.
  */
 export interface ToolLifecycle {
   /** Auth / scope gate — throw to reject the call. */
@@ -199,6 +232,17 @@ export async function executeToolMethod(
       (data === undefined || data === null) && !method.outputSchema ? { status: 'ok' } : data;
     return finish({ ok: true, data: output });
   } catch (err) {
+    // Report the value as thrown BEFORE normalising it: `normalizeError` scrubs
+    // anything that is not an `AppError` down to a bare `INTERNAL_SERVER_ERROR`,
+    // so this is the last point at which the real cause exists. Guarded — the
+    // hook observes the failure, it must not become one.
+    if (hooks?.onToolError) {
+      try {
+        await hooks.onToolError(toolName, err, context, method);
+      } catch (hookErr) {
+        console.error('[stitchkit] onToolError hook failed:', hookErr);
+      }
+    }
     // The result carries the cause (message in `details` when there is nothing
     // structured) so a model sees why it failed. Result logging is the
     // consumer's job, via the `afterToolCall` hook.

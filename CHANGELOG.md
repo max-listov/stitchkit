@@ -15,6 +15,44 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-08-06
+
+### Added
+
+- **`ToolCallHooks.onToolError`** — the raw value behind a failed tool call, as
+  thrown, before it is normalised into a `ToolResult`.
+
+  A thrown `AppError` already reaches `afterToolCall` intact. Anything else does
+  not: `normalizeError` scrubs an unexpected throw down to a bare
+  `INTERNAL_SERVER_ERROR` with the message `Internal server error` (a raw
+  `Error.message` can carry a connection string), so the cause existed only for
+  the framework's own `console.error` and no consumer hook could reach it — while
+  the HTTP path has handed the value as thrown to `hooks.onError` all along.
+
+  ```ts
+  createMcpHandler({
+    serverInfo, auth, services,
+    hooks: {
+      onToolError: (toolName, error, _context, endpoint) => {
+        setRequestError({
+          code: 'TOOL_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+          details: { tool: toolName, action: endpoint.key },
+        })
+      },
+    },
+  })
+  ```
+
+  Fires for a throw from `lifecycle.beforeHandle`, the handler or
+  `lifecycle.afterHandle`, and runs **before** `afterToolCall` so what it records
+  is in place when the audit hook reads it. It does not fire for an
+  argument-validation failure, an output-schema mismatch or a `beforeToolCall`
+  rejection — each is already described in full by the `ToolResult`. Observation
+  only: the return value is ignored and a throw from the hook is reported and
+  swallowed. Reaches every mount that takes `hooks` — `mountMcp`,
+  `createMcpHandler`, `mountAgent`, `createCli`.
+
 ## [0.29.0] — 2026-08-06
 
 ### Added
@@ -1539,7 +1577,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/max-listov/stitchkit/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/max-listov/stitchkit/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/max-listov/stitchkit/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/max-listov/stitchkit/compare/v0.27.0...v0.28.0

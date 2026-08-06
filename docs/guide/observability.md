@@ -264,6 +264,7 @@ metric, a custom log line, anything that is not a full audit row.
 |---------|------|-------|
 | HTTP | `LifecycleHooks.afterHandle` / `onError` | after each HTTP request |
 | MCP & agent tools | `ToolCallHooks.afterToolCall` | after each tool call |
+| MCP & agent tools | `ToolCallHooks.onToolError` | when a tool handler throws |
 
 `afterHandle(ctx, result, endpoint)` runs after a handler returns;
 `onError(ctx, error, endpoint)` when one throws. `afterToolCall(toolName, args,
@@ -284,6 +285,51 @@ createMcpHandler({
 
 Log **after** completion — a record is of a *finished* call; you need the
 outcome and the duration, neither of which exists before the handler runs.
+
+### The cause behind a failed tool call
+
+`afterToolCall` gives you the `ToolResult`, and for a thrown `AppError` that is
+the whole story — `code` and `details` are yours to route. For anything else it
+is not: an unexpected throw (a dropped connection, a `TypeError`) is scrubbed to
+a bare `INTERNAL_SERVER_ERROR` with the message `Internal server error`, because
+a raw `Error.message` can carry a connection string or a file path. The result
+your sink receives says nothing about why.
+
+`onToolError` is where that value still exists — **as thrown**, before
+normalisation, stack and `cause` intact:
+
+```ts
+createMcpHandler({
+  serverInfo, auth, services,
+  hooks: {
+    onToolError: (toolName, error, _context, endpoint) => {
+      // The request context is live here, so the cause lands on the HTTP log
+      // line for the MCP request as well as in your own sink.
+      setRequestError({
+        code: 'TOOL_FAILED',
+        message: error instanceof Error ? error.message : String(error),
+        details: { tool: toolName, action: endpoint.key },
+      })
+    },
+  },
+})
+```
+
+It fires for a throw from `beforeHandle`, the handler or `afterHandle` — the
+span where information is destroyed — and runs **before** `afterToolCall`, so
+whatever it records is in place when the audit hook reads it. It deliberately
+does not fire for an argument-validation failure, an output-schema mismatch or a
+`beforeToolCall` rejection: each of those is already described in full by the
+`ToolResult`, and a second path to the same information only invites
+double-logging.
+
+It observes, it does not handle: the tool envelope is always the framework's, a
+returned value is ignored, and a throw from the hook itself is reported to
+`console.error` and swallowed rather than replacing the failure it was called to
+observe. (This is also why it lives on `ToolCallHooks` rather than being an
+`onError` twin on `ToolLifecycle` — `LifecycleHooks.onError` returns a
+`Response`, which a tool call has no use for, and a whole `createServer` hooks
+object must stay assignable to `ToolLifecycle`.)
 
 ### Keying a row on (service, action)
 

@@ -62,7 +62,8 @@ export interface CliConfig<
    * when the CLI is built via `createToolkit<AppContext>()`.
    */
   context?: (auth: Awaited<TAuth> | undefined) => TContext;
-  /** Tool-call observability hooks — `afterToolCall` fires for every result. */
+  /** Tool-call observability hooks — `afterToolCall` fires for every result,
+   *  `onToolError` for the raw value behind a thrown one. */
   hooks?: ToolCallHooks;
   /**
    * Auth / scope gate — pass the same `createAuthHook` result used for the HTTP
