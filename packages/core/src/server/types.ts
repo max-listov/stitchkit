@@ -183,6 +183,70 @@ export interface StitchLogger {
   debug(msg: string, data?: Record<string, unknown>): void;
 }
 
+/** How a request finished — what `LoggingConfig.enrich` gets to react to. */
+export interface LogOutcome {
+  status: number;
+  durationMs: number;
+  errorCode?: string;
+}
+
+/**
+ * Request-logging configuration. `logging: true` is shorthand for `logging: {}`
+ * — **any** object turns request logging on; `logger` replaces the built-in
+ * sink, and `skip` / `enrich` apply to whichever sink is active.
+ */
+export interface LoggingConfig {
+  /** Send lines here instead of to the built-in formatter. */
+  logger?: StitchLogger;
+  /**
+   * Silence a request. Consulted *after* the built-in noise filter (framework
+   * assets, `favicon`, preflights), so it can only quieten more, never restore
+   * a line the framework drops — `/_bun/` assets are served by the runtime
+   * before `fetch` sees them, so un-skipping would be a promise the router
+   * cannot keep. A throw is swallowed and treated as "do not skip".
+   *
+   * The case this exists for: a monitoring probe on a path that 404s every
+   * cycle, and Socket.IO's polling transport, which logs a line per poll.
+   */
+  skip?: (req: Request, url: URL) => boolean;
+  /**
+   * Extra fields for the completion line. Runs once per request, at close —
+   * not on the development `→` breadcrumb — and its keys are merged **under**
+   * the framework's own, which always win: `traceId`, `method`, `path`,
+   * `status`, `durationMs`, `errorCode` and `ip` in both sinks, plus `ts`,
+   * `level` and `msg` on the built-in production line.
+   *
+   * Four things to know:
+   * - It reaches the structured output only: the production JSON line and a
+   *   custom logger's `data`. The development `←` line stays as it is — it is a
+   *   human-readable line, not a record — so **enriched fields are invisible in
+   *   development**, which is exactly where they get written.
+   * - Values must survive `JSON.stringify` on the built-in line. One that does
+   *   not (a cycle, a `BigInt`) costs the extra fields for that line; the
+   *   framework's own are re-emitted alone rather than losing the record.
+   * - It is synchronous and the request body is **already consumed** by the
+   *   time it runs. Anything body-derived belongs in `createAuditHook`, which
+   *   clones the request before the handler.
+   * - Its values reach the sink as given. A header echoed straight into a
+   *   text-based logger can inject line breaks — sanitise anything
+   *   caller-controlled, as the framework does for the request path.
+   *
+   * A throw is swallowed; the line is still written without the extra fields.
+   */
+  enrich?: (
+    req: Request,
+    url: URL,
+    outcome: LogOutcome,
+  ) => Record<string, unknown> | undefined;
+}
+
+/**
+ * A fetch handler — what `createHandler` returns and what the servers hand to
+ * the runtime. The optional second argument is the runtime's server handle:
+ * Bun passes one (raw routes need it for upgrades), Node adapters never do.
+ */
+export type FetchHandler = (req: Request, server?: BunServer) => Promise<Response>;
+
 /**
  * Runtime-neutral handler config — everything `createHandler` needs.
  * No Bun globals, no Bun types. This is the portability seam.
@@ -210,7 +274,7 @@ export interface HandlerConfig {
   maxUploadBytes?: number;
   cors?: CorsConfig;
   hooks?: LifecycleHooks;
-  logging?: boolean | StitchLogger;
+  logging?: boolean | LoggingConfig;
   /**
    * Report handler-output keys the contract schema removed, as dot-paths, through
    * the configured logger. **Off by default** — the strip itself is correct (the
@@ -224,7 +288,14 @@ export interface HandlerConfig {
    * → ADR 0037.
    */
   warnOnOutputStrip?: boolean;
-  traceId?: (req: Request) => string;
+  /**
+   * Resolve the trace id for a request. Returning `undefined` falls back to
+   * {@link resolveTraceId} (a trusted inbound `x-request-id` / `x-trace-id`,
+   * else a fresh id) — which is what makes `traceId: getTraceId` work: outside
+   * an active observability context it yields `undefined`, and the framework
+   * mints one instead of stamping the string `"undefined"`.
+   */
+  traceId?: (req: Request) => string | undefined;
   /**
    * Trust the `x-forwarded-for` / `x-real-ip` headers for the client IP.
    * These are client-controllable — enable only when the server runs behind a
@@ -247,10 +318,29 @@ export type ServerPassthrough = Omit<
 >;
 
 /**
+ * The composition seam shared by the servers that own their own `fetch`.
+ *
+ * `wrapInRequestContext` and `createAuditHook` must sit **outside** the
+ * handler, which used to mean building the server by hand — `createServer` and
+ * `serveNode` construct `fetch` internally, so neither could reach the
+ * observability layer at all. `wrapFetch` is where those wrappers go.
+ *
+ * Order is the consumer's, and it matters: `wrapInRequestContext` outermost,
+ * the audit wrapper inside it, because the audit hook reads that context.
+ *
+ * ```ts
+ * createServer({ services, wrapFetch: (h) => wrapInRequestContext(audit.http(h)) })
+ * ```
+ */
+export interface FetchComposition {
+  wrapFetch?: (fetch: FetchHandler) => FetchHandler;
+}
+
+/**
  * Full config for `createServer` — extends `HandlerConfig` with Bun-specific
  * options (`Bun.serve` routes, websocket, development, passthrough).
  */
-export interface BunServerConfig extends HandlerConfig {
+export interface BunServerConfig extends HandlerConfig, FetchComposition {
   port?: number;
   hostname?: string;
   routes?: BunRoutes;

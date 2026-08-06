@@ -453,7 +453,10 @@ mountMcp(server, services, { hooks: createToolLogger() })
 ```
 
 Pass `log` to redirect the line, or `onRecord` to feed a metrics sink the
-structured `ToolCallRecord`. For a boot-time picture of what is exposed where,
+structured `ToolCallRecord`. That record carries `traceId` whenever an
+observability context is active, so a tool call made inside an HTTP request
+joins that request's log line on one key — see
+[Observability](./observability.md). For a boot-time picture of what is exposed where,
 `summarizeTransports(services)` returns per-transport operation counts (HTTP /
 MCP / AGENT / CLI) for you to log.
 

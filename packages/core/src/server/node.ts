@@ -1,9 +1,9 @@
 import type { Server as HttpServer } from 'node:http';
 import { serve } from 'srvx';
 import { createHandler } from './create';
-import type { HandlerConfig } from './types';
+import type { FetchComposition, HandlerConfig } from './types';
 
-export interface NodeServerConfig extends HandlerConfig {
+export interface NodeServerConfig extends HandlerConfig, FetchComposition {
   port?: number;
   hostname?: string;
   /**
@@ -21,10 +21,11 @@ export interface NodeServerHandle {
 }
 
 export async function serveNode(config: NodeServerConfig): Promise<NodeServerHandle> {
-  const { port = 3000, hostname, socket, ...handlerConfig } = config;
+  const { port = 3000, hostname, socket, wrapFetch, ...handlerConfig } = config;
   const handler = createHandler(handlerConfig);
+  const fetch = wrapFetch ? wrapFetch(handler) : handler;
 
-  const server = serve({ port, hostname, fetch: handler });
+  const server = serve({ port, hostname, fetch });
   await server.ready();
 
   if (socket) {

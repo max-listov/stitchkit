@@ -113,10 +113,13 @@ Notes for a Node host:
 
 - **CORS** — set `cors.origin` to your real front-end origin(s). Do not ship
   `origin: '*'` with credentials.
-- **Logging** — `logging: true` for built-in request logs, or pass a
-  `StitchLogger` to route them into your logging stack.
+- **Logging** — `logging: true` for built-in request logs, or
+  `logging: { logger, skip, enrich }` to route them into your logging stack,
+  drop probe noise and add your own fields.
 - **Trace ids** — override `traceId` to reuse an id your platform already
-  assigns, so request logs and application logs share one id.
+  assigns, so request logs and application logs share one id. Every response
+  carries it as `x-request-id`; log `$upstream_http_x_request_id` at the proxy
+  to join the two logs.
 - **Rate limiting** — `createRateLimiter` in `onRequest` for a global limit;
   per-route limits belong in `beforeHandle`.
 - **Auth** — a `createAuthHook` `beforeHandle` guards every transport at once;

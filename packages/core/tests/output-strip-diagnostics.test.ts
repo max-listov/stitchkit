@@ -90,7 +90,7 @@ describe('HTTP transport — warnOnOutputStrip', () => {
     const lines: string[] = [];
     const handler = createHandler({
       services: [leakyService()],
-      logging: silentLogger(lines),
+      logging: { logger: silentLogger(lines) },
     });
     const res = await handler(new Request('http://x/notes'));
     expect(res.status).toBe(200);
@@ -104,7 +104,7 @@ describe('HTTP transport — warnOnOutputStrip', () => {
     const handler = createHandler({
       services: [leakyService()],
       warnOnOutputStrip: true,
-      logging: silentLogger(lines),
+      logging: { logger: silentLogger(lines) },
     });
     await handler(new Request('http://x/notes'));
     expect(lines).toHaveLength(1);

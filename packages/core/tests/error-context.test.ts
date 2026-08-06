@@ -72,8 +72,8 @@ describe('error context on a pre-handler (validation) failure', () => {
         // not asserted
       },
     };
-    const PORT = 9972;
-    server = createServer({ services: [service], port: PORT, logging: logger });
+    server = createServer({ services: [service], port: 0, logging: { logger } });
+    const PORT = server.port;
 
     const res = await fetch(`http://localhost:${PORT}/items/abc`, {
       method: 'POST',
@@ -98,15 +98,15 @@ describe('error context on a pre-handler (validation) failure', () => {
         // not asserted
       },
     };
-    const PORT = 9973;
     server = createServer({
       services: [service],
-      port: PORT,
-      logging: logger,
+      port: 0,
+      logging: { logger },
       // A consuming project's custom error envelope — the framework no longer
       // produces the response, but the access log must still carry the code.
       hooks: { onError: () => new Response('{"e":1}', { status: 400 }) },
     });
+    const PORT = server.port;
 
     const res = await fetch(`http://localhost:${PORT}/items/abc`, {
       method: 'POST',

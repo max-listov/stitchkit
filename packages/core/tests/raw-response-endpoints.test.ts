@@ -386,10 +386,12 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
       rawRoutes,
       // Only `warn` is under test; the rest are deliberately silent sinks.
       logging: {
-        debug: noop,
-        info: noop,
-        warn: (line: string) => lines.push(line),
-        error: noop,
+        logger: {
+          debug: noop,
+          info: noop,
+          warn: (line: string) => lines.push(line),
+          error: noop,
+        },
       },
     });
     s.stop(true);

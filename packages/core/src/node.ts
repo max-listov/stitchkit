@@ -23,7 +23,11 @@ export {
   type SocketIOServerHandle,
 } from './server/socket-io';
 export type {
+  FetchComposition,
+  FetchHandler,
   HandlerConfig,
+  LoggingConfig,
+  LogOutcome,
   RawRoute,
   RawRouteContext,
   ServiceDef,

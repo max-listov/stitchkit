@@ -15,6 +15,7 @@
  * It only reads the hook the mounts already fire — a thin wrapper, no new
  * machinery (ADR 0008). Pass `onRecord` to feed a metrics backend the raw parts.
  */
+import { getTraceId } from '../observability/context';
 import type { MethodDef } from '../server/types';
 import type { ToolCallHooks } from './execute';
 
@@ -34,6 +35,13 @@ export interface ToolCallRecord {
   durationMs: number;
   /** Transport tag the call came in on (`ctx.source`). */
   source: string;
+  /**
+   * The active trace id, when an observability context is running — the key
+   * that joins this line to the HTTP request that triggered the tool call.
+   * Absent when nothing established a context (`wrapInRequestContext`, or a
+   * server's `wrapFetch`).
+   */
+  traceId?: string;
 }
 
 /** Config for `createToolLogger`. */
@@ -60,6 +68,7 @@ export function createToolLogger(config: ToolLoggerConfig = {}): ToolCallHooks {
         code: result.ok ? undefined : result.code,
         durationMs: Math.round(durationMs),
         source: String(context.source),
+        traceId: getTraceId(),
       };
       const codePart = result.ok ? '' : ` ${result.code}`;
       log(

@@ -53,6 +53,7 @@ These records were consolidated from the project's internal design notes on
 | [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 |
 | [0037](0037-output-strip-diagnostics.md) | The output strip stays, and becomes visible on demand | Accepted — extends 0014 |
 | [0038](0038-raw-response-endpoints.md) | Raw-response endpoints — the handler owns the `Response` | Accepted — documented HTTP-only exception to 0027 |
+| [0039](0039-request-logging-reads-the-request-context.md) | Request logging reads the request context; `logging` becomes a config object | Accepted — connects 0012's logger to its context; upholds 0013, 0021 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

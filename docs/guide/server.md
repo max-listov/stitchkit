@@ -88,10 +88,46 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }` |
 | `hooks` | lifecycle hooks (see below) |
-| `logging` | `true` for built-in request logs, or a custom `StitchLogger` |
-| `traceId` | override per-request trace-id resolution |
+| `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
+| `traceId` | override per-request trace-id resolution — may return `undefined` to fall back |
+| `wrapFetch` | compose wrappers around the finished handler (request context, audit) |
 | `websocket` | Bun WebSocket handlers — e.g. from `createSocketIOServer` |
 | `routes` / `development` / `bun` | passthrough to `Bun.serve` |
+
+### Request logging
+
+`logging: true` is shorthand for `logging: {}` — **any object turns logging
+on**, and the fields tune it:
+
+```ts
+createServer({
+  services,
+  logging: {
+    // Route lines into your stack instead of the built-in formatter.
+    logger: myLogger,
+    // Silence noise. Runs after the built-in filter (framework assets,
+    // favicon, preflights), so it can only quieten more.
+    skip: (_req, url) => url.pathname === '/health' || url.pathname.startsWith('/socket.io/'),
+    // Extra fields on the completion line.
+    enrich: (req, _url, { status }) => ({
+      userAgent: req.headers.get('user-agent') ?? undefined,
+      cacheable: status === 200,
+    }),
+  },
+})
+```
+
+Three things worth knowing about `enrich`: it reaches the **structured** output
+only (the production JSON line and a custom logger's `data`) — the development
+`←` line stays human-readable, so enriched fields are invisible in dev; it runs
+at close, when the request body is already consumed; and framework fields
+(`traceId`, `status`, `path`, …) always win a key collision. A throw in `skip`
+or `enrich` is swallowed — neither can fail a request.
+
+With an observability context active, the line also carries `userId`,
+`serviceName`, `action` and `dimensions` for free — and, like `enrich`'s fields,
+only in the structured output, never on the development `←` line. See
+[Observability](./observability.md).
 
 ## Route groups
 

@@ -3,6 +3,7 @@
  * feeds an optional metrics sink, keyed by the endpoint's identity.
  */
 import { describe, expect, test } from 'bun:test';
+import { wrapInRequestContext } from '../src/observability';
 import type { MethodDef } from '../src/server';
 import { createToolLogger, type ToolCallRecord } from '../src/tools';
 
@@ -63,6 +64,25 @@ describe('createToolLogger', () => {
       code: undefined,
       durationMs: 8,
       source: 'mcp',
+      traceId: undefined,
     });
+  });
+
+  test('carries the active trace id, so the call joins its HTTP request', async () => {
+    const records: ToolCallRecord[] = [];
+    const hooks = createToolLogger({ log: () => undefined, onRecord: (r) => records.push(r) });
+    const call = () =>
+      hooks.afterToolCall?.('list_widgets', {}, { ok: true, data: [] }, 1, ctx, endpoint);
+
+    await wrapInRequestContext(async () => {
+      await call();
+      return new Response(null);
+    })(new Request('http://x/'), undefined);
+
+    // Outside a context there is nothing to join to, and the field is absent.
+    await call();
+
+    expect(records[0]?.traceId).toBeTruthy();
+    expect(records[1]?.traceId).toBeUndefined();
   });
 });

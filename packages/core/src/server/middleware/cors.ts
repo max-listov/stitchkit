@@ -37,9 +37,15 @@ export const DEFAULT_CORS_ALLOW_HEADERS =
  * the request carries credentials — exactly the authenticated download case.
  * These are headers the server already chose to send; exposing them reveals
  * nothing new. Opt out with `exposeHeaders: []`.
+ *
+ * `X-Request-Id` is the trace id every response carries — the id a browser
+ * client needs to quote in a bug report and the one a reverse proxy logs.
+ * Note the deliberate asymmetry with {@link DEFAULT_CORS_ALLOW_HEADERS}:
+ * inbound the id may arrive as `X-Trace-Id`, outbound it is always
+ * `X-Request-Id` — one name on the wire out, no alias.
  */
 export const DEFAULT_CORS_EXPOSE_HEADERS =
-  'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Trace-Id';
+  'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Request-Id';
 
 /**
  * Reject an unsafe CORS config at construction. `credentials: true` with a

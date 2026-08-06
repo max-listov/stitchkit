@@ -103,6 +103,16 @@ Bun.serve({
 })
 ```
 
+`createServer` and `serveNode` build their own `fetch`, so compose through
+**`wrapFetch`** instead — same order, the context outermost:
+
+```ts
+createServer({
+  services,
+  wrapFetch: (fetch) => wrapInRequestContext(audit.http(fetch)),
+})
+```
+
 Some fields are filled in late. Set them from the hooks that know:
 
 ```ts
@@ -142,8 +152,51 @@ application logs carry one id — by passing `getTraceId` as the resolver:
 createHandler({ /* … */ traceId: getTraceId })
 ```
 
+`getTraceId` returns `undefined` outside an active context, and the framework
+falls back to its own resolver — a trusted inbound `x-request-id` / `x-trace-id`,
+else a fresh id — so the line never carries the string `"undefined"`.
+
 `getRequestContext()` / `getTraceId()` then return the active values from
 anywhere in the call — stamp `getTraceId()` onto every line your logger writes.
+The **request log picks the context up on its own**: with a context active, each
+completion line carries `userId`, `serviceName`, `action` and `dimensions`
+without any configuration.
+
+⚠️ In the **structured** output only — the production JSON line and a custom
+`logger`'s `data`. The development `←` line is a line to read, not a record to
+query, and never carries them (nor `enrich`'s fields). On `logging: true` in
+development you will see no difference; check with `NODE_ENV=production` or a
+custom `logger`.
+
+### Correlating with a reverse proxy
+
+Every response the stitchkit handler produces carries the resolved id as
+**`x-request-id`**. With `cors` configured it is in the default
+`Access-Control-Expose-Headers`, so a browser client can read it and quote it in
+a bug report. Note the deliberate asymmetry: inbound the id may arrive as
+`X-Trace-Id` *or* `X-Request-Id`; outbound there is one name and no alias.
+
+Log the same id from nginx and the two logs join on one key. `log_format` and
+`map` are `http {}`-context directives — put the block there, not inside
+`server {}`:
+
+```nginx
+log_format  stitch  '$remote_addr $status $request_time rid=$rid "$request"';
+
+# Fall back to nginx's own id for responses stitchkit never produced — Bun's
+# native `routes`, a throwing `onRequest` (which escapes before any response
+# exists), a redirect whose headers are immutable.
+map $upstream_http_x_request_id $rid {
+    ""      $request_id;
+    default $upstream_http_x_request_id;
+}
+
+access_log /var/log/nginx/access.log stitch;
+```
+
+`grep rid=<id>` across both logs then reconstructs the whole request. Tool calls
+join too: `createToolLogger`'s record carries `traceId`, so an MCP or agent call
+made inside a request lines up with it.
 
 ### Trace context
 

@@ -94,9 +94,13 @@ export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
   BunServer,
   BunServerConfig,
+  FetchComposition,
+  FetchHandler,
   HandlerConfig,
   Handlers,
   LifecycleHooks,
+  LoggingConfig,
+  LogOutcome,
   MethodDef,
   RawRoute,
   RawRouteContext,

@@ -141,10 +141,14 @@ export interface WrapRequestContextOptions {
  * (the inbound `traceparent` continued, or freshly minted), timing and client
  * info.
  *
- * Compose it as the OUTERMOST wrapper of the server's fetch handler. To make
- * the framework router reuse this trace id (so request logs and application
- * logs share one id), pass `traceId: getTraceId` to `createServer` /
- * `createHandler`.
+ * Compose it as the OUTERMOST wrapper of the server's fetch handler — with raw
+ * `Bun.serve`, or through `wrapFetch` on `createServer` / `serveNode`, which own
+ * their own `fetch`.
+ *
+ * To make the framework router reuse this trace id (so request logs and
+ * application logs share one id), pass `traceId: getTraceId` to `createServer` /
+ * `createHandler`: outside an active context it yields `undefined` and the
+ * framework falls back to its own resolver.
  */
 export function wrapInRequestContext<S>(
   handler: (req: Request, server: S) => Promise<Response>,

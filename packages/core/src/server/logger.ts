@@ -68,7 +68,12 @@ export function levelForStatus(status: number): 'error' | 'warn' | 'info' {
   return 'info';
 }
 
-/** The structured fields shared by every completed-request log line. */
+/**
+ * The structured fields shared by every completed-request log line. `errorCode`
+ * is always present, `undefined` on success — a conditional key would let an
+ * `enrich` value survive on a 200, and these fields must always win the merge.
+ * `JSON.stringify` drops the undefined, so the production line is unchanged.
+ */
 export function buildLogFields(
   method: string,
   path: string,
@@ -82,9 +87,9 @@ export function buildLogFields(
   path: string;
   status: number;
   durationMs: number;
-  errorCode?: string;
+  errorCode: string | undefined;
 } {
-  return { traceId, method, path, status, durationMs, ...(errorCode && { errorCode }) };
+  return { traceId, method, path, status, durationMs, errorCode };
 }
 
 function formatMs(ms: number): string {
@@ -140,34 +145,61 @@ export function logIncoming(
   return log;
 }
 
-/** Close a request. Development: `←` line. Production: one structured JSON line. */
-export function logOutgoing(
-  req: Request,
-  pathname: string,
-  status: number,
-  log: RequestLog,
-  ipAddress?: string,
-  errorCode?: string,
-): void {
+/**
+ * Serialise one structured line: consumer fields under the framework's own. A
+ * value `JSON.stringify` refuses (a cycle, a `BigInt`) costs the consumer
+ * fields for that line — never the record, which is re-emitted alone.
+ */
+export function structuredLine(
+  own: Record<string, unknown>,
+  extra?: Record<string, unknown>,
+): string {
+  try {
+    return JSON.stringify({ ...extra, ...own });
+  } catch {
+    return JSON.stringify(own);
+  }
+}
+
+/** One finished request, as the formatter needs it. */
+export interface CompletedRequest {
+  req: Request;
+  pathname: string;
+  status: number;
+  log: RequestLog;
+  ipAddress?: string;
+  errorCode?: string;
+  /** Duration the caller already measured — the one `enrich` was shown. */
+  durationMs: number;
+  /**
+   * Consumer-supplied fields for the structured line — request-context
+   * identity and whatever `enrich` returned. Spread *first* so the framework's
+   * own fields overwrite anything that collides with them.
+   */
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * Close a request. Development: `←` line — deliberately unchanged by `extra`,
+ * it is a line to read, not a record to query. Production: one structured JSON
+ * line, enriched.
+ */
+export function logOutgoing(entry: CompletedRequest): void {
+  const { req, pathname, status, log, ipAddress, errorCode, durationMs, extra } = entry;
   const ms = elapsedMs(log.startTime);
 
   if (isProd) {
-    console.log(
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        level: levelForStatus(status),
-        msg: `${req.method} ${pathname} ${status}`,
-        ...buildLogFields(
-          req.method,
-          pathname,
-          status,
-          Math.round(ms),
-          log.traceId,
-          errorCode,
-        ),
-        ip: ipAddress,
-      }),
-    );
+    // The framework's own fields are one object so they can be re-emitted
+    // alone: an `enrich` value that cannot be serialised (a cycle, a `BigInt`)
+    // must cost the extra fields, never the whole line.
+    const own = {
+      ts: new Date().toISOString(),
+      level: levelForStatus(status),
+      msg: `${req.method} ${pathname} ${status}`,
+      ...buildLogFields(req.method, pathname, status, durationMs, log.traceId, errorCode),
+      ip: ipAddress,
+    };
+    console.log(structuredLine(own, extra));
     return;
   }
 

@@ -15,6 +15,99 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-08-06
+
+### ⚠️ Breaking changes
+
+- **`logging` no longer takes a `StitchLogger` directly** — it takes a config
+  object, so the logger can finally be tuned instead of only replaced.
+  `logging: true` is now shorthand for `logging: {}`: **any** object turns
+  request logging on, `logger` decides which sink writes it, and `skip` /
+  `enrich` apply to whichever is active.
+
+  ```ts
+  // before
+  createServer({ logging: myLogger })
+  // after
+  createServer({ logging: { logger: myLogger } })
+  ```
+
+  The migration is mechanical and loud: `LoggingConfig` shares no property with
+  `StitchLogger`, so TypeScript's weak-type detection rejects the old form.
+  A logger typed `any` or carrying an index signature would slip past the
+  compiler and silently mean "a config with no logger" — that case **throws at
+  `createHandler`** with the line above rather than booting with logging off.
+  → ADR 0039
+
+- **`DEFAULT_CORS_EXPOSE_HEADERS` no longer advertises `X-Trace-Id`; it
+  advertises `X-Request-Id`.** The old value named a header the server has never
+  sent, while the one it does send on every response was unreadable
+  cross-origin. This is the **one change here the compiler cannot catch**: if
+  something else in your chain (a proxy, a middleware) sets an `X-Trace-Id`
+  *response* header that browser code reads, that read starts returning `null`.
+
+  ```ts
+  // before: the default list ended in `X-Trace-Id`
+  // after: keep reading a proxy-set X-Trace-Id by asking for it explicitly
+  createServer({ cors: { origin, exposeHeaders: `${DEFAULT_CORS_EXPOSE_HEADERS}, X-Trace-Id` } })
+  ```
+
+  `DEFAULT_CORS_ALLOW_HEADERS` is unchanged — inbound `X-Trace-Id` is still
+  accepted and read by `resolveTraceId`. (0.27.0 introduced this default and
+  quoted the old list verbatim in its own breaking note; this corrects it.)
+
+- **`logging: true` emits more in production.** With an observability context
+  active, every completion line now also carries `userId`, `serviceName`,
+  `action` and nested `dimensions` — see *Added* below. A log store with a fixed
+  schema will see new keys. Development output is unchanged.
+
+### Added
+
+- **`logging.skip(req, url)`** — drop chosen requests from the log. Runs after
+  the built-in filter (framework assets, favicon, preflights), so it can only
+  quieten more: health probes, a monitoring path that 404s every cycle,
+  Socket.IO's polling transport.
+- **`logging.enrich(req, url, outcome)`** — extra fields on the completion
+  line. Runs once at close and is merged *under* the framework's own fields,
+  which always win. A throw in either callback is swallowed — neither can fail a
+  request.
+- **The completion line picks up the active request context** — `userId`,
+  `serviceName`, `action` and nested `dimensions`, with no configuration, when
+  something established a context. Unchanged when nothing did.
+
+  ⚠️ Both of the above reach the **structured** output only: the production JSON
+  line and a custom `logger`'s `data`. The development `←` line is a line to
+  read, not a record to query, and never carries them — so with
+  `logging: true` in development you will see no difference at all.
+- **`wrapFetch` on `createServer` / `serveNode`** — the seam for
+  `wrapInRequestContext` and `createAuditHook`, which must wrap the handler from
+  outside. Both servers build their own `fetch`, so until now neither could
+  reach the observability layer at all.
+  ```ts
+  createServer({ services, wrapFetch: (h) => wrapInRequestContext(audit.http(h)) })
+  ```
+- **`ToolCallRecord.traceId`** — joins a tool call to the HTTP request that
+  triggered it.
+- New exported types: `LoggingConfig`, `LogOutcome`, `FetchHandler`,
+  `FetchComposition`.
+
+### Fixed
+
+- **`traceId: getTraceId` now compiles.** The option demanded `string` while
+  `getTraceId` returns `string | undefined`, so the documented way to share one
+  id between request and application logs was a type error. `traceId` may now
+  return `undefined`, and the framework falls back to its own resolver instead
+  of stamping `"undefined"`.
+- **A throwing logger can no longer take the request with it.** On the error
+  path the throw was swallowed by the `onError` catch and then re-thrown,
+  uncaught, by the fallback call. The whole log step is now guarded.
+- **One completion line per request.** A result `Response.json` cannot
+  serialise (a `BigInt`, a cycle) logged a `200` and then a `500` for the same
+  request; the line is now written only once the response exists.
+- **A custom logger now receives `ip`** on the completion line, as the built-in
+  formatter always has, and `errorCode` is always present (`undefined` on
+  success) so an `enrich` value can never forge one.
+
 ## [0.27.0] — 2026-08-05
 
 ### ⚠️ Breaking changes
@@ -1388,7 +1481,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/max-listov/stitchkit/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/max-listov/stitchkit/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/max-listov/stitchkit/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/max-listov/stitchkit/compare/v0.24.0...v0.25.0

@@ -15,6 +15,7 @@ import {
   type RequestLog,
   shouldLog,
 } from './logger';
+import { collectExtraLogFields, resolveLoggingConfig, shouldSkipLog } from './logging';
 import {
   assertCorsConfig,
   corsHeaders as buildCorsHeaders,
@@ -33,18 +34,22 @@ import {
 import type {
   BunServer,
   BunServerConfig,
+  FetchHandler,
   HandlerConfig,
   MethodDef,
   StitchLogger,
 } from './types';
 
-export function createHandler(config: HandlerConfig): (req: Request) => Promise<Response> {
+export function createHandler(config: HandlerConfig): FetchHandler {
   const { cors, hooks, logging = false, trustProxy = false } = config;
   if (cors) assertCorsConfig(cors);
 
-  const customLogger: StitchLogger | null = typeof logging === 'object' ? logging : null;
-  const useDefaultLog = logging === true;
-  const resolveId = config.traceId ?? resolveTraceId;
+  // `true` is shorthand for `{}`: any object turns logging on, and `logger`
+  // decides which sink writes it. Throws on a pre-0.28 bare `StitchLogger`.
+  const logConfig = resolveLoggingConfig(logging);
+  const customLogger: StitchLogger | null = logConfig?.logger ?? null;
+  const useDefaultLog = logConfig !== null && !logConfig.logger;
+  const customTraceId = config.traceId;
 
   const routeMap = buildRouteMap(normalizeGroups(config));
   validateRoutes(routeMap);
@@ -70,7 +75,10 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     server: BunServer | undefined,
     clientIp: ClientIpOptions,
   ): Promise<Response> {
-    const shouldLogRequest = logging && shouldLog(url.pathname, req.method);
+    const shouldLogRequest =
+      logConfig !== null &&
+      shouldLog(url.pathname, req.method) &&
+      !shouldSkipLog(logConfig, req, url);
     const ipAddress = extractIp(req, clientIp) || undefined;
 
     let reqLog: RequestLog | undefined;
@@ -78,32 +86,71 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
       reqLog = logIncoming(req, url.pathname, traceId, ipAddress);
     }
     if (shouldLogRequest && customLogger) {
-      customLogger.debug(`${req.method} ${url.pathname}`, {
-        traceId,
-        method: req.method,
-        path: url.pathname,
-        ip: ipAddress,
-      });
+      // The timing window opens regardless: a breadcrumb that fails must cost
+      // the breadcrumb, not the completion line — and never the request.
       reqLog = { traceId, startTime: performance.now() };
+      try {
+        customLogger.debug(`${req.method} ${url.pathname}`, {
+          traceId,
+          method: req.method,
+          path: url.pathname,
+          ip: ipAddress,
+        });
+      } catch {
+        // A logger must never break the request it observes.
+      }
     }
 
+    // At most one completion line per request, and a sink that throws can never
+    // take the request with it. Both matter on the error path: `respondError`
+    // calls this once for a hook-supplied response and once for the framework
+    // default, and a throw in the first call would be swallowed by the
+    // `onError` catch only to be re-thrown — uncaught — by the second.
+    let logged = false;
     const logDone = (status: number, errorCode?: string) => {
-      if (!reqLog) return;
-      if (useDefaultLog) logOutgoing(req, url.pathname, status, reqLog, ipAddress, errorCode);
-      if (customLogger) {
+      if (!reqLog || logged || !logConfig) return;
+      logged = true;
+      try {
         const durationMs = Math.round(elapsedMs(reqLog.startTime));
-        const level = levelForStatus(status);
-        customLogger[level](
-          `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
-          buildLogFields(
-            req.method,
-            url.pathname,
+        const extra = collectExtraLogFields(logConfig, req, url, {
+          status,
+          durationMs,
+          errorCode,
+        });
+        if (useDefaultLog) {
+          logOutgoing({
+            req,
+            pathname: url.pathname,
             status,
-            durationMs,
-            reqLog.traceId,
+            log: reqLog,
+            ipAddress,
             errorCode,
-          ),
-        );
+            durationMs,
+            extra,
+          });
+        }
+        if (customLogger) {
+          const level = levelForStatus(status);
+          customLogger[level](
+            `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
+            {
+              ...extra,
+              ...buildLogFields(
+                req.method,
+                url.pathname,
+                status,
+                durationMs,
+                reqLog.traceId,
+                errorCode,
+              ),
+              // Written last for the same reason as the rest, and present here
+              // as well as on the built-in line so both sinks carry one shape.
+              ip: ipAddress,
+            },
+          );
+        }
+      } catch {
+        // A logger must never break the request it observes.
       }
     };
 
@@ -141,9 +188,9 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     };
 
     if (cors && req.method === 'OPTIONS') {
-      const res = corsPreflightResponse(cors, req);
-      logDone(204);
-      return res;
+      // No completion line: `shouldLog` drops `OPTIONS` before the timing
+      // window opens, so a preflight has nothing to close.
+      return corsPreflightResponse(cors, req);
     }
 
     if (hooks?.onRequest) {
@@ -272,8 +319,13 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
                 // The endpoint identity is in the message on purpose: a dot-path
                 // alone is not actionable without knowing which handler produced it.
                 const line = `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`;
-                if (customLogger) customLogger.warn(line);
-                else console.warn(line);
+                try {
+                  if (customLogger) customLogger.warn(line);
+                  else console.warn(line);
+                } catch {
+                  // This runs on the success path: a broken diagnostic sink must
+                  // not turn a 200 into a 500.
+                }
               }
             : undefined,
         );
@@ -283,13 +335,19 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
         result = checked.data;
       }
 
+      // The line is written only once the response exists. `json()` throws on
+      // data `Response.json` cannot serialise (a `BigInt`, a cycle), and that
+      // throw belongs to the error path — logging `200` first would record a
+      // success the caller never received.
       if (result === undefined || result === null) {
+        const empty = new Response(null, { status: 204, headers: corsHeaders(cors, req) });
         logDone(204);
-        return new Response(null, { status: 204, headers: corsHeaders(cors, req) });
+        return empty;
       }
 
+      const body = json(result, 200, cors, req);
       logDone(200);
-      return json(result, 200, cors, req);
+      return body;
     } catch (err) {
       return respondError(err, ctx, method);
     }
@@ -299,7 +357,10 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
     // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
-    const traceId = resolveId(req);
+    // A custom resolver may legitimately have no id to offer — `getTraceId`
+    // returns `undefined` outside an active observability context — so the
+    // framework resolver is the floor, never a stamped `"undefined"`.
+    const traceId = customTraceId?.(req) ?? resolveTraceId(req);
     // Resolve the real socket peer once per request — the adapter (Bun server
     // / srvx) knows it; `extractIp` prefers `x-forwarded-for` over it only
     // when `trustProxy` is set.
@@ -324,7 +385,8 @@ export function createHandler(config: HandlerConfig): (req: Request) => Promise<
 export function createServer(config: BunServerConfig) {
   const { routes, websocket, development, bun: bunExtra, port = 3000, hostname } = config;
 
-  const fetch = createHandler(config);
+  const handler = createHandler(config);
+  const fetch = config.wrapFetch ? config.wrapFetch(handler) : handler;
 
   return websocket
     ? Bun.serve({
