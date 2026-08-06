@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-08-06
+
+### Fixed
+
+- **A throwing `hooks.onRequest` no longer escapes the handler.** It ran before
+  the dispatch `try`, so an exception from the gate skipped every layer — no
+  `onError`, no error envelope, no CORS headers, no log line, no
+  `x-request-id` — and the runtime answered with a bare 500. It now takes the
+  same path as any other failure. An `AppError` thrown by the gate keeps its
+  status.
+- **A throwing `traceId` resolver no longer costs the response.** The id exists
+  to label a log line; a resolver that throws now falls back to the framework
+  resolver, and the failure is reported **once per handler** (not once per
+  request) through the configured logger. Consumers who wrapped `getTraceId` in
+  a throwing guard — the shape the pre-0.28.0 type error forced — were one
+  forgotten `wrapInRequestContext` away from bare 500s on every request. With
+  the signature fixed in 0.28.0, `traceId: getTraceId` needs no guard at all.
+
 ## [0.28.0] — 2026-08-06
 
 ### ⚠️ Breaking changes
@@ -1481,7 +1499,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.28.1...HEAD
+[0.28.1]: https://github.com/max-listov/stitchkit/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/max-listov/stitchkit/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/max-listov/stitchkit/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/max-listov/stitchkit/compare/v0.25.0...v0.26.0

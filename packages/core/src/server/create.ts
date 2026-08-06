@@ -51,6 +51,44 @@ export function createHandler(config: HandlerConfig): FetchHandler {
   const useDefaultLog = logConfig !== null && !logConfig.logger;
   const customTraceId = config.traceId;
 
+  /**
+   * Report a framework-level problem through the configured sink. Guarded: a
+   * broken logger must never surface as the outcome of the request it observes.
+   */
+  const warn = (line: string): void => {
+    try {
+      if (customLogger) customLogger.warn(line);
+      else console.warn(line);
+    } catch {
+      // A logger must never break the request it observes.
+    }
+  };
+
+  /**
+   * The request's trace id. A custom resolver is consumer code called before
+   * any error handling exists, so it is contained here: `undefined` and a throw
+   * both fall back to the framework resolver rather than costing the response.
+   * The throw is reported once per handler — silence would lose every
+   * correlation id without a word, and one line per request would be noise.
+   */
+  let traceResolverBroken = false;
+  const resolveId = (req: Request): string => {
+    if (!customTraceId) return resolveTraceId(req);
+    try {
+      return customTraceId(req) ?? resolveTraceId(req);
+    } catch (err) {
+      if (!traceResolverBroken) {
+        traceResolverBroken = true;
+        warn(
+          '[stitchkit] `traceId` resolver threw — falling back to the framework resolver. ' +
+            'Ids will not match your observability context until it is fixed: ' +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      return resolveTraceId(req);
+    }
+  };
+
   const routeMap = buildRouteMap(normalizeGroups(config));
   validateRoutes(routeMap);
 
@@ -64,8 +102,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
     const line =
       `[stitchkit] raw route ${shadow.rawRoute} shadows contract route ${shadow.pattern}` +
       ` → ${shadow.endpoint}${gate} will never run, and its hooks never apply`;
-    if (customLogger) customLogger.warn(line);
-    else console.warn(line);
+    warn(line);
   }
 
   async function dispatch(
@@ -193,17 +230,24 @@ export function createHandler(config: HandlerConfig): FetchHandler {
       return corsPreflightResponse(cors, req);
     }
 
-    if (hooks?.onRequest) {
-      const earlyResponse = await hooks.onRequest(req);
-      if (earlyResponse instanceof Response) {
-        // Apply CORS like every other exit — an `onRequest` short-circuit (an
-        // auth wall, a maintenance page) answered to a browser must still carry
-        // `Access-Control-Allow-Origin`, or the response is unreadable
-        // cross-origin.
-        const withCors = applyCors(earlyResponse, cors, req);
-        logDone(withCors.status);
-        return withCors;
+    // `onRequest` is consumer code, so a throw takes the same path as any other
+    // failure — `onError`, the project's envelope, CORS, one log line — instead
+    // of escaping `dispatch` for the runtime to answer bare.
+    try {
+      if (hooks?.onRequest) {
+        const earlyResponse = await hooks.onRequest(req);
+        if (earlyResponse instanceof Response) {
+          // Apply CORS like every other exit — an `onRequest` short-circuit (an
+          // auth wall, a maintenance page) answered to a browser must still
+          // carry `Access-Control-Allow-Origin`, or the response is unreadable
+          // cross-origin.
+          const withCors = applyCors(earlyResponse, cors, req);
+          logDone(withCors.status);
+          return withCors;
+        }
       }
+    } catch (err) {
+      return respondError(err);
     }
 
     // Raw (non-contract) routes — matched before contracts, take precedence.
@@ -318,14 +362,9 @@ export function createHandler(config: HandlerConfig): FetchHandler {
             ? (paths) => {
                 // The endpoint identity is in the message on purpose: a dot-path
                 // alone is not actionable without knowing which handler produced it.
-                const line = `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`;
-                try {
-                  if (customLogger) customLogger.warn(line);
-                  else console.warn(line);
-                } catch {
-                  // This runs on the success path: a broken diagnostic sink must
-                  // not turn a 200 into a 500.
-                }
+                warn(
+                  `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`,
+                );
               }
             : undefined,
         );
@@ -357,10 +396,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
     // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
-    // A custom resolver may legitimately have no id to offer — `getTraceId`
-    // returns `undefined` outside an active observability context — so the
-    // framework resolver is the floor, never a stamped `"undefined"`.
-    const traceId = customTraceId?.(req) ?? resolveTraceId(req);
+    const traceId = resolveId(req);
     // Resolve the real socket peer once per request — the adapter (Bun server
     // / srvx) knows it; `extractIp` prefers `x-forwarded-for` over it only
     // when `trustProxy` is set.
