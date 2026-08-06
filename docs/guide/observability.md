@@ -123,6 +123,8 @@ import {
 } from 'stitchkit/observability'
 
 createAuthHook({ /* … */ inject: (ctx, user) => user && setRequestUser(user.id) })
+// ↑ on the HTTP path. Inside a tool call this writes to that call's own context
+//   (→ ADR 0045); a tool row takes its identity from the mount's `context`.
 // only to override what the framework already recorded — see below:
 setRequestError({ code: err.code, message: err.message, details: err.issues })
 ```
@@ -150,6 +152,12 @@ meaning to (→ ADR 0021). Resolve it cheaply from `ctx.params` / headers in
 `beforeHandle` (success) or `onError` (a pre-handler failure — `ctx.params` /
 `ctx.req` are available there) and it lands on `event.dimensions` for the request
 either way, so your sink reads it as a column instead of re-parsing the path:
+
+> **On the tool path it lands on that call's own event, not the request's.** The
+> same hooks object is assignable to `ToolLifecycle`, so this recipe is the one
+> people apply to tools — and since ADR 0045 each tool call runs in its own
+> context. Read the value off the tool row (`event.toolName != null`); both rows
+> carry the same `traceId`.
 
 ```ts
 // beforeHandle (success) and onError (failure) alike:
@@ -347,10 +355,10 @@ object must stay assignable to `ToolLifecycle`.)
 which `createAuditHook`'s **tool** row does not read: a tool event takes
 `errorCode` / `errorMessage` / `errorDetail` from the `ToolResult`, and only
 identity and `dimensions` from the context. Calling it in `onToolError` would
-leave the tool row exactly as scrubbed as before — and for MCP over HTTP it would
-also write the cause into the log line of the enclosing `/mcp` request, turning
-one incident into two records. It is right for the **HTTP** path, where the
-request *is* the record.
+leave the tool row exactly as scrubbed as before. It is right for the **HTTP**
+path, where the request *is* the record. (Since ADR 0045 a tool call runs in its
+own context, so it can no longer write into the enclosing `/mcp` request's row
+either — the call is simply not where that helper belongs.)
 
 ### One row that names the cause
 

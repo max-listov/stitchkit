@@ -53,6 +53,12 @@ followed, both reported by a consuming project:
   carries `ctx.params` / `ctx.req` since 0.10.0) and it lands on the event for the
   request, success or failure alike.
 
+  > **Scoped by [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+  > (2026-08-06).** "The event for the request" held only while one request meant
+  > one call. Concurrent tool calls shared the request's store and overwrote each
+  > other, so a row could name another call's entity. A tool call now writes into
+  > its own forked context and the value lands on **that call's** event.
+
 ## Alternatives considered
 
 - **Add `projectId` / `botId` / `entityId` fields.** Rejected — domain modelling

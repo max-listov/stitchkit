@@ -23,9 +23,14 @@ Verified before answering, and the report was accurate — though not for the
 reason given. It was framed as "`ToolLifecycle` has only `beforeHandle` /
 `afterHandle`, so there is nothing to hook". `ToolCallHooks.afterToolCall` does
 fire for every failure and does carry the `ToolResult`, so a thrown `AppError`
-is fully legible today: `code` and `details` are there, and the request context
-is live inside `executeToolMethod`, so `setRequestError` from that hook reaches
-the log line. Those cases were never broken.
+is fully legible today: `code` and `details` are there. Those cases were never
+broken.
+
+> **Amended by [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+> (2026-08-06).** This paragraph also said `setRequestError` from that hook
+> reaches the enclosing request's log line. A tool call now runs in its own
+> context, so it does not — which only strengthens the conclusion below: route
+> the cause to your own sink.
 
 The hole is the **unexpected** throw — a dropped connection, a `TypeError` — the
 case you actually consult logs for. `normalizeError` handles it like this

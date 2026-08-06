@@ -59,6 +59,7 @@ These records were consolidated from the project's internal design notes on
 | [0042](0042-the-audit-row-may-name-the-cause.md) | The audit row may name the cause, the caller may not | Accepted — completes 0041; makes 0030 true on the tool path |
 | [0043](0043-the-framework-records-the-failure.md) | The framework records the failure; the project overrides it | Accepted — applies 0042's rule to the HTTP path; extends 0012 |
 | [0044](0044-a-collided-field-keeps-its-type.md) | A collided field keeps its type (never `unknown` where a type is provable) | Accepted — narrows 0033's collision rule, keeps its invariant |
+| [0045](0045-a-tool-call-runs-in-its-own-context.md) | A tool call runs in its own request context | Accepted — scopes 0012's context; makes 0029's dimensions hold under concurrency |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

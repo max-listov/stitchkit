@@ -15,6 +15,62 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-08-06
+
+### ⚠️ Breaking changes
+
+- **A tool call runs in its own request context; its writes no longer reach the
+  enclosing HTTP request.** `executeToolMethod` opened no scope, so every tool
+  call in a request wrote into one `AsyncLocalStorage` store. The AI SDK runs a
+  step's calls with `Promise.all`, so the last `setRequestDimensions` won for
+  **every** row — call A's audit row could name call B's entity, silently. Found
+  in production on rows that looked perfectly ordinary.
+
+  ```ts
+  // The documented recipe — a lifecycle that stamps the entity it acted on:
+  lifecycle: { beforeHandle: (ctx) => setRequestDimensions({ entityId: ctx.input.id }) }
+
+  // before: the value landed on that call's tool row AND on the enclosing
+  //         POST /mcp audit row and its access-log line. Under two concurrent
+  //         calls, both rows named one entity — whichever wrote last.
+  // after:  it lands on that call's tool row only.
+  ```
+
+  Each call now runs in a copy of the ambient context — same `traceId`, same
+  client info, inherited identity — with its own `dimensions` and `error`.
+
+  **If you read `dimensions` off the `POST /mcp` row, read the tool row instead**
+  (`event.toolName != null`). The value is not lost and the join is one field:
+  both rows carry the same `traceId`, and the tool row's `parentSpanId` is the
+  request's `spanId`. Identity for a tool row is better injected through the
+  mount's `context` — `createMcpHandler({ context: (auth) => ({ userId: auth.id }) })`
+  — which the row already reads.
+
+  **Sequential calls change too.** Dimensions used to *accumulate* through the
+  shared store, so a second call's row carried the first call's keys. Each row is
+  now what that call would have produced alone.
+
+  **Two more writes change destination, and both are recommended patterns.**
+  `setRequestError` from `onToolError` no longer names the enclosing HTTP row —
+  and, less obviously, it no longer *suppresses* the framework's own error
+  recording on that row (which only fires when the context carries nothing yet,
+  → ADR 0043). `setRequestUser` from a tool `lifecycle.beforeHandle` — the shape
+  a `createAuthHook` result takes — now reaches no audit row at all: the tool row
+  reads identity from the mount's `context`, never from the request context.
+  Inject it there instead.
+
+  The forked context also **describes the call**: `source`, `path`, `serviceName`
+  and `action` name the tool rather than the enclosing route. It still carries the
+  request's `trace` and `startedAt`, because the audit hook needs them as the
+  parent — so a span id or a duration read out of `getRequestContext()` inside a
+  tool handler is the *request's*, not the call's.
+
+  Unchanged: a call with **no** ambient context — stdio MCP, `createCli`, an
+  agent loop outside a request — is not forked and behaves exactly as before.
+  There is no shared store there to corrupt, and inventing one would have stamped
+  every such row with a `parentSpanId` pointing at a span no row carries.
+  → ADR 0045
+
 ## [0.35.0] — 2026-08-06
 
 ### ⚠️ Breaking changes
@@ -1734,7 +1790,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/max-listov/stitchkit/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/max-listov/stitchkit/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/max-listov/stitchkit/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/max-listov/stitchkit/compare/v0.32.0...v0.33.0

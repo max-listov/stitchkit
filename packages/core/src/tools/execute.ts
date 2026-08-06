@@ -1,6 +1,7 @@
 import type { RuntimeContext, TransportSource } from '../contract';
 import { formatZodError, normalizeError, validateHandlerOutput } from '../internal/errors';
 import { isUnsafeKey } from '../internal/safe-json';
+import { getRequestContext, runWithRequestContext } from '../observability/context';
 import type { MethodDef } from '../server/types';
 import { coerceJsonArgs } from './coerce';
 import { objectShapeKeys } from './schema';
@@ -129,6 +130,73 @@ export async function executeToolMethod(
   lifecycle?: ToolLifecycle,
   coerceJson = false,
   onOutputStrip?: (paths: string[]) => void,
+): Promise<ToolResult> {
+  // Each call gets its own request context, forked from the ambient one.
+  //
+  // Without this every tool call in a request writes into **one** store, and the
+  // AI SDK runs a step's calls with `Promise.all`: `beforeHandle(A)` stamps its
+  // entity, `beforeHandle(B)` overwrites it, and both audit rows then name B.
+  // Observed in production, on rows that looked perfectly ordinary. → ADR 0045.
+  //
+  // Forked only where a parent exists. With no ambient context there is no
+  // shared store, so there is nothing to corrupt — and inventing a root here
+  // would stamp every stdio / CLI row with a `parentSpanId` pointing at a span
+  // no row ever carries (`audit.ts` treats any context's trace as the *parent*).
+  const parent = getRequestContext();
+  if (!parent) {
+    return runToolMethod(
+      method,
+      toolName,
+      rawArgs,
+      context,
+      hooks,
+      lifecycle,
+      coerceJson,
+      onOutputStrip,
+    );
+  }
+  return runWithRequestContext(
+    {
+      ...parent,
+      // Restated for emphasis (the spread already copies it): the audit hook
+      // derives the tool's span as a **child** of this trace, so minting a child
+      // here would point every tool row at a span nobody emits.
+      trace: parent.trace,
+      // Own copies of everything a call can write, or the fork changes nothing.
+      dimensions: parent.dimensions ? { ...parent.dimensions } : undefined,
+      error: undefined,
+      // Self-describing: the enclosing request says `http` / `/mcp`, which is
+      // true of the request and misleading about the call.
+      source: context.source,
+      method: 'TOOL',
+      path: `/${context.source}/${toolName}`,
+      serviceName: method.serviceName,
+      action: method.key,
+    },
+    () =>
+      runToolMethod(
+        method,
+        toolName,
+        rawArgs,
+        context,
+        hooks,
+        lifecycle,
+        coerceJson,
+        onOutputStrip,
+      ),
+  );
+}
+
+/** The call itself. Always runs inside the context `executeToolMethod` chose. */
+async function runToolMethod(
+  method: MethodDef<unknown, unknown, unknown>,
+  toolName: string,
+  rawArgs: Record<string, unknown>,
+  context: ToolCallContext,
+  hooks: ToolCallHooks | undefined,
+  lifecycle: ToolLifecycle | undefined,
+  coerceJson: boolean,
+  onOutputStrip: ((paths: string[]) => void) | undefined,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
 
