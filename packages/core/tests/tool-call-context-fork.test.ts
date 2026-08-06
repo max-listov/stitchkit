@@ -279,19 +279,40 @@ describe('the shape the incident actually had', () => {
 });
 
 describe('a failure stays inside the call that failed', () => {
-  test("an error recorded before the call does not become the call's error", async () => {
-    const { events, audit, call } = mount();
+  test('an error recorded before the call is not visible inside the call', async () => {
+    // Read the context, not the emitted row: `createAuditHook` derives a tool
+    // row's error fields from the `ToolResult` and never from `ctx.error`, so a
+    // row assertion here would pass with the reset deleted — and did.
+    let seenInHandler: unknown;
+    let seenInHook: unknown;
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const tools = mountAgent(service, {
+      hooks: {
+        afterToolCall: (...args) => {
+          seenInHook = getRequestContext()?.error;
+          return audit.toolCall.afterToolCall?.(...args);
+        },
+      },
+      lifecycle: {
+        beforeHandle: () => {
+          seenInHandler = getRequestContext()?.error;
+        },
+      },
+    });
+    const execute = tools.widget_touch?.execute;
+    if (!execute) throw new Error('test setup: no tool');
 
     await inRequest(audit, async () => {
-      // The request already failed at something; the tool must not inherit it.
+      // The request already failed at something; a successful call must not
+      // inherit it, or a consumer's own row marks the call failed.
       setRequestError({ code: 'EARLIER_FAILURE', message: 'not the call' });
-      await call('A');
+      await execute({ id: 'A' }, { toolCallId: 'A', messages: [], context: undefined });
     });
 
-    const row = rowFor(events, 'A');
-    expect(row?.ok).toBe(true);
-    expect(row?.errorCode).toBeUndefined();
-    expect(row?.errorMessage).toBeUndefined();
+    expect(seenInHandler).toBeUndefined();
+    expect(seenInHook).toBeUndefined();
+    expect(rowFor(events, 'A')?.ok).toBe(true);
   });
 
   test('a throwing tool records its own failure and leaves the request row alone', async () => {
@@ -302,7 +323,14 @@ describe('a failure stays inside the call that failed', () => {
         throw new Error('handler exploded');
       },
     });
-    const tools = mountAgent(boom, { hooks: audit.toolCall });
+    // The hook that makes this bite: without it nothing writes `ctx.error`, and
+    // the assertion below would hold even on the un-forked executor.
+    const tools = mountAgent(boom, {
+      hooks: {
+        ...audit.toolCall,
+        onToolError: () => setRequestError({ code: 'TOOL_BLEW_UP' }),
+      },
+    });
     const execute = tools.widget_touch?.execute;
     if (!execute) throw new Error('test setup: no tool');
 
@@ -310,6 +338,7 @@ describe('a failure stays inside the call that failed', () => {
     console.error = () => undefined;
     try {
       await inRequest(audit, async () => {
+        setRequestError({ code: 'PARENT_ERR' });
         await execute({ id: 'A' }, { toolCallId: 'A', messages: [], context: undefined });
       });
     } finally {
@@ -317,6 +346,48 @@ describe('a failure stays inside the call that failed', () => {
     }
 
     expect(rowFor(events, 'A')?.ok).toBe(false);
-    expect(httpRow(events)?.errorCode).toBeUndefined();
+    // The request kept its own error; the tool's did not overwrite it.
+    expect(httpRow(events)?.errorCode).toBe('PARENT_ERR');
+  });
+});
+
+describe('the fork starts before the call does', () => {
+  test('a ToolExtend.resolve write belongs to its own call', async () => {
+    // `resolve` is where a project resolves the tenant for THIS call, and it
+    // runs before the executor. Left outside the fork it wrote into the shared
+    // store and reproduced the original defect at one remove.
+    const events: RequestEvent[] = [];
+    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const tools = mountAgent(service, {
+      hooks: audit.toolCall,
+      extend: {
+        schema: { tenantId: z.string() },
+        resolve: async (args) => {
+          const tenantId = String((args as { tenantId: string }).tenantId);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          setRequestDimensions({ tenant: tenantId });
+          return { tenantId };
+        },
+      },
+    });
+    const execute = tools.widget_touch?.execute;
+    if (!execute) throw new Error('test setup: no tool');
+
+    await inRequest(audit, async () => {
+      await Promise.all([
+        execute(
+          { id: 'A', tenantId: 'T-A' },
+          { toolCallId: 'A', messages: [], context: undefined },
+        ),
+        execute(
+          { id: 'B', tenantId: 'T-B' },
+          { toolCallId: 'B', messages: [], context: undefined },
+        ),
+      ]);
+    });
+
+    expect(rowFor(events, 'A')?.dimensions).toEqual({ tenant: 'T-A' });
+    expect(rowFor(events, 'B')?.dimensions).toEqual({ tenant: 'T-B' });
+    expect(httpRow(events)?.dimensions).toBeUndefined();
   });
 });

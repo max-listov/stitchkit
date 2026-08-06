@@ -9,6 +9,7 @@ import type { MethodDef, ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
   executeToolMethod,
+  inToolCallContext,
   type ToolCallHooks,
   type ToolLifecycle,
   type ToolResult,
@@ -182,7 +183,20 @@ export function createToolRunner(
   config: ToolRunnerConfig,
 ): (tool: MountableTool, rawArgs: Record<string, unknown>) => Promise<ToolResult> {
   const extendKeys = config.extend ? new Set(Object.keys(config.extend.schema)) : null;
-  return async (tool, rawArgs) => {
+  return async (tool, rawArgs) =>
+    // The fork starts here, not inside the executor: `extend.resolve` is the
+    // documented place a project resolves a tenant per call, and it runs first.
+    // Left outside, it wrote into the shared store and two concurrent calls
+    // stamped each other exactly as before the fix. → ADR 0045.
+    inToolCallContext(
+      { source: config.source, toolName: tool.name, method: tool.method },
+      () => runOneToolCall(tool, rawArgs),
+    );
+
+  async function runOneToolCall(
+    tool: MountableTool,
+    rawArgs: Record<string, unknown>,
+  ): Promise<ToolResult> {
     let extraContext: Record<string, unknown> = {};
     if (tool.shouldExtend && config.extend) {
       extraContext = await config.extend.resolve(rawArgs);
@@ -208,7 +222,7 @@ export function createToolRunner(
       config.coerceJsonArgs ?? true,
       config.onOutputStrip ? (paths) => config.onOutputStrip?.(tool.name, paths) : undefined,
     );
-  };
+  }
 }
 
 /**

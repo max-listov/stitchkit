@@ -43,6 +43,13 @@ fork time — the natural thing to write — would make every tool row point at 
 consuming project stitches request → loop → tool by exactly this id and said
 plainly that losing it would be worse than the bug.
 
+**The fork starts at the mount, not at the executor.** `ToolExtend.resolve` runs
+before `executeToolMethod` and is the documented place a project resolves a
+tenant for *this* call — left outside, it wrote into the shared store and two
+concurrent calls stamped each other exactly as before the fix. `createToolRunner`
+opens the fork and the executor keeps its own for a direct call, which nests
+harmlessly.
+
 **The fork wraps the whole call, `afterToolCall` included.** The audit row is
 built there and reads the context at that moment; a fork around the handler alone
 still reproduces the original bug.

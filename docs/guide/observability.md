@@ -176,6 +176,9 @@ createHandler({ /* … */ traceId: getTraceId })
 falls back to its own resolver — a trusted inbound `x-request-id` / `x-trace-id`,
 else a fresh id — so the line never carries the string `"undefined"`.
 
+Inside a **tool call** the context is that call's own (→ ADR 0045), so the
+enrichment a request log picks up describes the request, not the call.
+
 `getRequestContext()` / `getTraceId()` then return the active values from
 anywhere in the call — stamp `getTraceId()` onto every line your logger writes.
 The **request log picks the context up on its own**: with a context active, each

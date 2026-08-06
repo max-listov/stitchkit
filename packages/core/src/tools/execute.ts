@@ -142,9 +142,8 @@ export async function executeToolMethod(
   // shared store, so there is nothing to corrupt — and inventing a root here
   // would stamp every stdio / CLI row with a `parentSpanId` pointing at a span
   // no row ever carries (`audit.ts` treats any context's trace as the *parent*).
-  const parent = getRequestContext();
-  if (!parent) {
-    return runToolMethod(
+  return inToolCallContext({ source: context.source, toolName, method }, () =>
+    runToolMethod(
       method,
       toolName,
       rawArgs,
@@ -153,8 +152,30 @@ export async function executeToolMethod(
       lifecycle,
       coerceJson,
       onOutputStrip,
-    );
-  }
+    ),
+  );
+}
+
+/**
+ * Run `body` in a request context forked for one tool call — the shared rule,
+ * so every entry point isolates the same way. A mount uses it around
+ * `ToolExtend.resolve` as well, which runs before the executor and is a
+ * documented per-call resolution point. → ADR 0045.
+ *
+ * No fork where there is no ambient context: nothing is shared there, and
+ * inventing a root would stamp every stdio / CLI row with a `parentSpanId`
+ * pointing at a span no row emits.
+ */
+export function inToolCallContext<T>(
+  call: {
+    source: TransportSource;
+    toolName: string;
+    method: MethodDef<unknown, unknown, unknown>;
+  },
+  body: () => Promise<T>,
+): Promise<T> {
+  const parent = getRequestContext();
+  if (!parent) return body();
   return runWithRequestContext(
     {
       ...parent,
@@ -167,23 +188,13 @@ export async function executeToolMethod(
       error: undefined,
       // Self-describing: the enclosing request says `http` / `/mcp`, which is
       // true of the request and misleading about the call.
-      source: context.source,
+      source: call.source,
       method: 'TOOL',
-      path: `/${context.source}/${toolName}`,
-      serviceName: method.serviceName,
-      action: method.key,
+      path: `/${call.source}/${call.toolName}`,
+      serviceName: call.method.serviceName,
+      action: call.method.key,
     },
-    () =>
-      runToolMethod(
-        method,
-        toolName,
-        rawArgs,
-        context,
-        hooks,
-        lifecycle,
-        coerceJson,
-        onOutputStrip,
-      ),
+    body,
   );
 }
 

@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.36.1] — 2026-08-06
+
+### Fixed
+
+- **`ToolExtend.resolve` was still outside the per-call context**, so the defect
+  0.36.0 fixed survived at one remove: `resolve` runs *before* the executor, and
+  it is the documented place a project resolves a tenant for the call. Two
+  concurrent calls stamped each other's rows exactly as before. The fork now
+  opens in the mount, around `resolve` as well. → ADR 0045
+
+### Changed
+
+- **0.36.0's note on injecting identity is qualified.** `createMcpHandler({
+  context })` is resolved **once per server build** — in the default stateful mode
+  that is once per *session*, not per request, so it carries the session's opening
+  identity. For a per-request value use a stateless mount, or read identity from
+  the tool row's own arguments.
+- Spelled out, having been understated in 0.36.0: the enclosing `POST /mcp` audit
+  row loses tool-written **`userId`** as well as `dimensions`, and the same four
+  fields (`userId`, `serviceName`, `action`, `dimensions`) leave that request's
+  **access-log line**, which reads the same context.
+
 ## [0.36.0] — 2026-08-06
 
 ### ⚠️ Breaking changes
@@ -1790,7 +1812,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.36.1...HEAD
+[0.36.1]: https://github.com/max-listov/stitchkit/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/max-listov/stitchkit/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/max-listov/stitchkit/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/max-listov/stitchkit/compare/v0.33.0...v0.34.0
