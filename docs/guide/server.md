@@ -131,6 +131,17 @@ otherwise. That default is read **per request** — not at import, not when this
 package was built — so it reflects the environment your app actually runs in.
 Set `format` and the environment stops being consulted at all.
 
+**If your project validates its environment through a single door** — a Zod
+schema, `@t3-oss/env-core`, anything of that shape — set `format` explicitly
+from *your* value rather than leaning on the default. The library reads raw
+`process.env`, which is a second source of truth: let the two disagree on one
+deployment and production writes `pretty` without a word.
+
+```ts
+import { env } from '@/config'
+createServer({ services, logging: { format: env.NODE_ENV === 'production' ? 'json' : 'pretty' } })
+```
+
 `format` applies to the **built-in** formatter only. With `logger` set, your
 sink always receives the structured object, in every environment — the format
 is not involved.

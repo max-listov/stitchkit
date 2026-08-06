@@ -213,6 +213,11 @@ export interface LoggingConfig {
    * environment that matters is the one the app runs in. Set it and the
    * environment stops being consulted at all.
    *
+   * A project that validates its environment through one door (a Zod schema,
+   * `@t3-oss/env-core`) should set this from *its* value: the raw `process.env`
+   * this default reads is a second source of truth, and when the two disagree
+   * the symptom is production quietly writing `'pretty'`.
+   *
    * Irrelevant when `logger` is set: a sink always receives the structured
    * object, in every environment.
    */
