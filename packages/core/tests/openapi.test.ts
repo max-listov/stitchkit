@@ -33,6 +33,13 @@ const contract = defineContract(
       params: z.strictObject({ id: z.string() }),
       output: z.object({ id: z.string() }),
     },
+    appFallback: {
+      method: 'GET',
+      path: '/apps/:slug/*',
+      desc: 'Serve an app deep link',
+      params: z.object({ slug: z.string(), '*': z.string().describe('Nested path') }),
+      output: z.object({ ok: z.boolean() }),
+    },
     toolOnly: {
       method: 'POST',
       path: '/tool',
@@ -41,6 +48,19 @@ const contract = defineContract(
       expose: ['MCP'],
       input: z.object({ x: z.number() }),
     },
+    accepted: {
+      method: 'POST',
+      path: '/accepted',
+      desc: 'Return typed data with a declared success status',
+      output: z.object({ queued: z.boolean() }),
+      responseMeta: { status: 202 },
+    },
+    reset: {
+      method: 'POST',
+      path: '/reset',
+      desc: 'Return an explicit empty success status',
+      responseMeta: { status: 205 },
+    },
   },
 );
 
@@ -48,7 +68,13 @@ const service = implement(contract, {
   list: () => ({ items: [] }),
   create: () => ({ id: '1' }),
   get: (ctx) => ({ id: ctx.params.id }),
+  appFallback: () => ({ ok: true }),
   toolOnly: () => undefined,
+  accepted: ({ response }) => {
+    response.headers.set('x-queued', 'true');
+    return { queued: true };
+  },
+  reset: () => undefined,
 });
 
 const doc = generateOpenApiDocument({
@@ -67,7 +93,13 @@ describe('generateOpenApiDocument', () => {
   });
 
   test('builds paths for HTTP methods and skips tool-only ones', () => {
-    expect(Object.keys(doc.paths).sort()).toEqual(['/api/items', '/api/items/{id}']);
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      '/api/accepted',
+      '/api/apps/{slug}/*',
+      '/api/items',
+      '/api/items/{id}',
+      '/api/reset',
+    ]);
     expect(doc.paths['/api/tool']).toBeUndefined();
   });
 
@@ -87,6 +119,20 @@ describe('generateOpenApiDocument', () => {
     expect(id.required).toBe(true);
   });
 
+  test('marks a trailing wildcard honestly without an invalid OpenAPI path param', () => {
+    const operation = spec.paths['/api/apps/{slug}/*'].get;
+    expect(operation.parameters.map((parameter: { name: string }) => parameter.name)).toEqual([
+      'slug',
+    ]);
+    expect(operation['x-stitchkit-trailing-wildcard']).toEqual({
+      parameter: '*',
+      required: true,
+      schema: { type: 'string', description: 'Nested path' },
+      description:
+        "Matches zero or more trailing path segments and exposes their '/'-joined remainder as params['*'].",
+    });
+  });
+
   test('non-GET input becomes a JSON request body', () => {
     const schema =
       spec.paths['/api/items'].post.requestBody.content['application/json'].schema;
@@ -99,6 +145,14 @@ describe('generateOpenApiDocument', () => {
     expect(responses['200']).toBeDefined();
     expect(responses['401']).toBeDefined();
     expect(responses['403']).toBeDefined();
+  });
+
+  test('uses the declared success status for typed and empty metadata endpoints', () => {
+    expect(spec.paths['/api/accepted'].post.responses['202']).toBeDefined();
+    expect(spec.paths['/api/accepted'].post.responses['200']).toBeUndefined();
+    expect(spec.paths['/api/reset'].post.responses['205']).toEqual({
+      description: 'No content',
+    });
   });
 });
 

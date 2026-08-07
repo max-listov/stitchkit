@@ -168,6 +168,20 @@ session.clear()         // → a Set-Cookie value that expires it
 config is not repeated at every call site. `parseCookies(header)` and
 `serializeCookie(name, value, opts)` are the lower-level primitives.
 
+To set a cookie from a schema-validated JSON endpoint without losing its typed
+client result, declare [`responseMeta`](./server.md#typed-json-response-metadata)
+and append the generated value:
+
+```ts
+complete: async ({ response }) => {
+  response.headers.append('Set-Cookie', session.set('abc123'))
+  return authenticatedUser
+}
+```
+
+Append once per cookie; Stitchkit preserves separate `Set-Cookie` fields through
+both Bun and Node. Cookie/session policy remains application logic.
+
 ## The error model
 
 One error type, `AppError`, is shared by the contract, the server and the

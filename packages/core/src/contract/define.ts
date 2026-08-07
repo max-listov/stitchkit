@@ -5,6 +5,22 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
 export type Transport = (typeof ALL_TRANSPORTS)[number];
 
+/** Successful HTTP statuses that may be declared by a typed-data endpoint. */
+export type HttpSuccessStatus = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
+
+/** Successful statuses that permit a response body. */
+export type BodyHttpSuccessStatus = Exclude<HttpSuccessStatus, 204 | 205>;
+
+/** Static HTTP response metadata declared in a contract. */
+export interface EndpointResponseMeta {
+  status?: HttpSuccessStatus;
+}
+
+/** Per-request outbound metadata available only to a `responseMeta` handler. */
+export interface ResponseMetadata {
+  headers: Headers;
+}
+
 /**
  * The transport tag on `ctx.source`. The four built-ins keep autocomplete, but
  * the union is **open** (`string & {}`) so a bring-your-own transport — e.g. a
@@ -16,6 +32,11 @@ export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli' | (string & {});
 
 interface EndpointDefBase {
   method: HttpMethod;
+  /**
+   * Route under the contract prefix. Named segments (`/:id`) are exposed through
+   * `params`; a terminal `/*` additionally exposes the slash-joined remainder as
+   * `params['*']` and matches an empty remainder.
+   */
   path: string;
   desc: string;
   scope?: string;
@@ -108,6 +129,7 @@ interface HttpOnlyEndpointDef extends EndpointDefBase {
   toolName?: never;
   rawResponse?: never;
   rawBody?: never;
+  responseMeta?: never;
 }
 
 interface ToolEndpointDef extends EndpointDefBase {
@@ -119,6 +141,7 @@ interface ToolEndpointDef extends EndpointDefBase {
   annotations?: EndpointToolAnnotations;
   rawResponse?: never;
   rawBody?: never;
+  responseMeta?: never;
 }
 
 /** A validated JSON endpoint that also retains the original decoded body text. */
@@ -132,6 +155,51 @@ interface RawBodyEndpointDef extends EndpointDefBase {
   ui?: never;
   annotations?: never;
   expose?: readonly ['HTTP'];
+  responseMeta?: never;
+}
+
+interface ResponseMetaEndpointDefBase extends EndpointDefBase {
+  responseMeta: EndpointResponseMeta;
+  rawResponse?: never;
+  toolName?: never;
+  ui?: never;
+  annotations?: never;
+  contentType?: never;
+  expose?: readonly ['HTTP'];
+}
+
+/** HTTP-only typed data with a declared body-capable success status. */
+interface ResponseMetaDataEndpointDef extends ResponseMetaEndpointDefBase {
+  output: ZodType<unknown>;
+  responseMeta: { status?: BodyHttpSuccessStatus };
+  rawBody?: never;
+}
+
+/** HTTP-only empty response; bodyless 204/205 statuses are legal here. */
+interface ResponseMetaEmptyEndpointDef extends ResponseMetaEndpointDefBase {
+  output?: never;
+  responseMeta: EndpointResponseMeta;
+  rawBody?: never;
+}
+
+/** Response metadata composed with validated raw JSON retention. */
+interface ResponseMetaRawBodyDataEndpointDef extends ResponseMetaEndpointDefBase {
+  method: 'POST' | 'PUT' | 'PATCH';
+  input: ZodType<unknown>;
+  output: ZodType<unknown>;
+  responseMeta: { status?: BodyHttpSuccessStatus };
+  rawBody: true;
+  multipart?: never;
+}
+
+/** Empty response metadata composed with validated raw JSON retention. */
+interface ResponseMetaRawBodyEmptyEndpointDef extends ResponseMetaEndpointDefBase {
+  method: 'POST' | 'PUT' | 'PATCH';
+  input: ZodType<unknown>;
+  output?: never;
+  responseMeta: EndpointResponseMeta;
+  rawBody: true;
+  multipart?: never;
 }
 
 /**
@@ -181,12 +249,17 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   annotations?: never;
   /** Redundant but allowed, so `expose: ['HTTP']` survives a migration. */
   expose?: readonly ['HTTP'];
+  responseMeta?: never;
 }
 
 export type EndpointDef =
   | HttpOnlyEndpointDef
   | ToolEndpointDef
   | RawBodyEndpointDef
+  | ResponseMetaDataEndpointDef
+  | ResponseMetaEmptyEndpointDef
+  | ResponseMetaRawBodyDataEndpointDef
+  | ResponseMetaRawBodyEmptyEndpointDef
   | RawResponseEndpointDef;
 
 export interface ContractMeta<TScope extends string = string> {
@@ -254,6 +327,7 @@ export function defineContract(
 
     if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
+    if ('responseMeta' in ep) assertResponseMetaEndpoint(meta.prefix, key, ep);
 
     if (!('toolName' in ep) || !ep.toolName) continue;
     const transports = new Set(
@@ -322,6 +396,34 @@ function assertRawBodyEndpoint(prefix: string, key: string, ep: EndpointDef): vo
   if (ep.method !== 'POST' && ep.method !== 'PUT' && ep.method !== 'PATCH') {
     throw new Error(`${where} must use POST, PUT or PATCH`);
   }
+  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
+  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
+  if ('annotations' in ep && ep.annotations) {
+    throw new Error(`${where} cannot set MCP annotations`);
+  }
+  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
+  if (nonHttp.length > 0) {
+    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
+  }
+}
+
+/** Typed response metadata is a static, HTTP-only addition to the data path. */
+function assertResponseMetaEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": responseMeta endpoint "${key}"`;
+  if (!ep.responseMeta || typeof ep.responseMeta !== 'object') {
+    throw new Error(`${where} must declare responseMeta as an object`);
+  }
+  const status = ep.responseMeta.status;
+  if (
+    status !== undefined &&
+    (!Number.isSafeInteger(status) || status < 200 || status > 299)
+  ) {
+    throw new Error(`${where} status must be a successful 2xx integer, received ${status}`);
+  }
+  if (ep.output && (status === 204 || status === 205)) {
+    throw new Error(`${where} cannot combine output with bodyless status ${status}`);
+  }
+  if (ep.rawResponse) throw new Error(`${where} cannot also be a rawResponse endpoint`);
   if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
   if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
   if ('annotations' in ep && ep.annotations) {
@@ -493,6 +595,25 @@ export type ScopedHttpClient<C extends Record<string, EndpointDef>, Extra> = {
 // A plain client is the scoped client with no extra keys (`unknown`), so
 // `ScopedEndpointFn<E, unknown>` collapses to `EndpointFn<E>`.
 export type TypedHttpClient<C extends Record<string, EndpointDef>> = ScopedHttpClient<
+  C,
+  unknown
+>;
+
+type IsUrlBuildable<E> = E extends { method: 'GET' }
+  ? E extends { multipart: string }
+    ? false
+    : ExposesHttp<E>
+  : false;
+
+export type ScopedUrlFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
+  ? () => string
+  : (args: ArgsWith<E, Extra>) => string;
+
+export type ScopedUrlBuilder<C extends Record<string, EndpointDef>, Extra> = {
+  [K in keyof C as IsUrlBuildable<C[K]> extends true ? K : never]: ScopedUrlFn<C[K], Extra>;
+};
+
+export type TypedUrlBuilder<C extends Record<string, EndpointDef>> = ScopedUrlBuilder<
   C,
   unknown
 >;

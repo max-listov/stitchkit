@@ -35,9 +35,23 @@ const { z } = await import('zod');
 // 2 — serveNode HTTP round-trip.
 const contract = defineContract(
   { prefix: 'smoke' },
-  { ping: { method: 'GET', path: '/', desc: 'ping', output: z.object({ ok: z.boolean() }) } },
+  {
+    ping: {
+      method: 'GET',
+      path: '/',
+      desc: 'ping',
+      output: z.object({ ok: z.boolean() }),
+      responseMeta: { status: 201 },
+    },
+  },
 );
-const service = implement(contract, { ping: () => ({ ok: true }) });
+const service = implement(contract, {
+  ping: ({ response }) => {
+    response.headers.append('Set-Cookie', 'smoke=one; Path=/');
+    response.headers.append('Set-Cookie', 'smoke=two; Path=/');
+    return { ok: true };
+  },
+});
 
 // Port 0 — the kernel picks a free one and the handle reports it back. A fixed
 // number is a scheduled flake: an ephemeral range that starts at 1024 lets any
@@ -47,7 +61,12 @@ const http = await serveNode({
   port: 0,
 });
 const res = await fetch(`${http.url}/api/smoke`);
-assert.equal(res.status, 200, 'serveNode HTTP should return 200');
+assert.equal(res.status, 201, 'serveNode HTTP should return the declared success status');
+assert.deepEqual(
+  res.headers.getSetCookie(),
+  ['smoke=one; Path=/', 'smoke=two; Path=/'],
+  'serveNode HTTP should preserve repeated Set-Cookie fields',
+);
 assert.deepEqual(
   await res.json(),
   { ok: true },

@@ -1,10 +1,12 @@
 import type { ZodType } from 'zod';
 import type {
   EndpointDef,
+  EndpointResponseMeta,
   EndpointToolAnnotations,
   EndpointUiMeta,
   HandlerContext,
   HttpMethod,
+  ResponseMetadata,
   RuntimeContext,
   Transport,
 } from '../contract';
@@ -40,6 +42,9 @@ type RequiredRequest<E> = E extends { rawResponse: true } ? { req: Request } : u
 type RetainedRawBody<E> = E extends { rawBody: true }
   ? { req: Request; rawBody: string }
   : unknown;
+type RequiredResponseMetadata<E> = E extends { responseMeta: EndpointResponseMeta }
+  ? { req: Request; response: ResponseMetadata }
+  : unknown;
 
 export type Handlers<
   C extends Record<string, EndpointDef>,
@@ -49,7 +54,8 @@ export type Handlers<
     ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> } & RequiredRequest<
         C[K]
       > &
-      RetainedRawBody<C[K]>,
+      RetainedRawBody<C[K]> &
+      RequiredResponseMetadata<C[K]>,
   ) => HandlerReturn<C[K]>;
 };
 
@@ -115,6 +121,8 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   rawResponse?: true;
   /** Retain the decoded JSON request text on `ctx.rawBody`. HTTP-only. */
   rawBody?: true;
+  /** Static success metadata for an HTTP-only typed-data endpoint. → ADR 0052. */
+  responseMeta?: EndpointResponseMeta;
   /** Documented response media type of a raw-response endpoint — OpenAPI only. */
   contentType?: string;
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;

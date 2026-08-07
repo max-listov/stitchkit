@@ -33,6 +33,7 @@ import {
 } from './middleware/cors';
 import { type ClientIpOptions, extractIp, resolveSocketIp, resolveTraceId } from './request';
 import { assertJsonBodyLimit } from './request-body';
+import { applyResponseMetadata, createResponseMetadata } from './response-metadata';
 import {
   allowedMethods,
   buildRouteMap,
@@ -364,6 +365,9 @@ export function createHandler<TServer = unknown>(
         await groupHooks.beforeHandle(ctx, method);
       }
 
+      const responseMetadata = method.responseMeta ? createResponseMetadata() : undefined;
+      if (responseMetadata) ctx.response = responseMetadata;
+
       let result = await method.handler(ctx);
 
       // A raw endpoint owns its response: no `afterHandle` (that hook
@@ -431,18 +435,46 @@ export function createHandler<TServer = unknown>(
         result = checked.data;
       }
 
+      const responseStatus =
+        method.responseMeta?.status ?? (result === undefined || result === null ? 204 : 200);
+      if (method.outputSchema && (responseStatus === 204 || responseStatus === 205)) {
+        throw new AppError(
+          'INTERNAL_SERVER_ERROR',
+          `${method.serviceName}.${method.key} cannot combine output with bodyless status ${responseStatus}`,
+          500,
+        );
+      }
+      if (
+        result !== undefined &&
+        result !== null &&
+        (responseStatus === 204 || responseStatus === 205)
+      ) {
+        throw new AppError(
+          'INTERNAL_SERVER_ERROR',
+          `${method.serviceName}.${method.key} produced data for bodyless status ${responseStatus}`,
+          500,
+        );
+      }
+
+      const responseHeaders = new Headers(corsHeaders(cors, req));
+      applyResponseMetadata(
+        responseHeaders,
+        responseMetadata,
+        `${method.serviceName}.${method.key}`,
+      );
+
       // The line is written only once the response exists. `json()` throws on
       // data `Response.json` cannot serialise (a `BigInt`, a cycle), and that
       // throw belongs to the error path — logging `200` first would record a
       // success the caller never received.
       if (result === undefined || result === null) {
-        const empty = new Response(null, { status: 204, headers: corsHeaders(cors, req) });
-        logDone(204);
+        const empty = new Response(null, { status: responseStatus, headers: responseHeaders });
+        logDone(responseStatus);
         return empty;
       }
 
-      const body = json(result, 200, cors, req);
-      logDone(200);
+      const body = Response.json(result, { status: responseStatus, headers: responseHeaders });
+      logDone(responseStatus);
       return body;
     } catch (err) {
       return respondError(err, ctx, method);

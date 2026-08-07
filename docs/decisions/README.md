@@ -66,6 +66,7 @@ These records were consolidated from the project's internal design notes on
 | [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Accepted — restart-safe request isolation; sessions are explicit |
 | [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 |
 | [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input |
+| [0052](0052-typed-json-response-metadata.md) | Typed JSON response metadata | Accepted — HTTP-only dynamic headers plus a declared success status without transferring `Response` ownership |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

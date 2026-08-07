@@ -113,12 +113,17 @@ export interface HttpClient {
   resetLogoutState(): void;
 }
 
+/** A framework-created HTTP client that can also seed contract URL builders. */
+export interface ConfiguredHttpClient extends HttpClient {
+  readonly baseUrl: string;
+}
+
 /**
  * Create a Ky-based `HttpClient` — the transport `createClient` builds on.
  * Handles cookie auth, SSR cookie forwarding, error parsing into `ApiError`, a
  * `401 → unauthorized` event stream, and safe transport retry.
  */
-export function createHttpClient(config: HttpClientConfig): HttpClient {
+export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient {
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
@@ -259,6 +264,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
   }
 
   return {
+    baseUrl: config.baseUrl,
     get: <T>(url: string, options?: RequestOptions) =>
       request<T>('get', url, undefined, options),
     post: <T>(url: string, data?: unknown, options?: RequestOptions) =>

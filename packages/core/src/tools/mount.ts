@@ -113,6 +113,9 @@ export function collectTools(
     // `rawBody` exists only on an HTTP request. `implement` forces HTTP
     // exposure, and this guard keeps a manually assembled ServiceDef honest.
     if (method.rawBody) continue;
+    // Response metadata belongs to an HTTP response and is forced HTTP-only by
+    // both MethodDef producers. Keep manually assembled services honest too.
+    if (method.responseMeta) continue;
     // A raw endpoint returns a `Response`. Every tool transport would serialize
     // that into `{}` and hand the model an empty object as the answer — the
     // exact failure a consumer hit before this endpoint kind existed. The skip

@@ -22,6 +22,11 @@ describe('matchRawRoute — :param + trailing /* wildcard', () => {
     expect(m?.params).toEqual({ slug: 'x', '*': '' });
   });
 
+  test('wildcard segments are decoded before reaching the handler', () => {
+    const m = matchRawRoute(fallback, 'GET', '/app/x/folder%20one/leaf%23two');
+    expect(m?.params).toEqual({ slug: 'x', '*': 'folder one/leaf#two' });
+  });
+
   test('shorter-than-prefix path does not match', () => {
     expect(matchRawRoute(fallback, 'GET', '/app')).toBeNull();
   });

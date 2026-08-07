@@ -24,6 +24,21 @@ const users = defineContract(
   },
 );
 
+const WildcardClientParamsSchema = z.object({ slug: z.string(), '*': z.string() });
+const WildcardClientOutputSchema = z.object({ slug: z.string(), remainder: z.string() });
+const wildcardClientContract = defineContract(
+  { prefix: 'wildcard-client' },
+  {
+    get: {
+      method: 'GET',
+      path: '/:slug/*',
+      desc: 'Get a nested wildcard path',
+      params: WildcardClientParamsSchema,
+      output: WildcardClientOutputSchema,
+    },
+  },
+);
+
 const db = [{ id: '1', name: 'Alice' }];
 
 const service = implement(users, {
@@ -40,12 +55,16 @@ const service = implement(users, {
   },
 });
 
+const wildcardClientService = implement(wildcardClientContract, {
+  get: ({ params }) => ({ slug: params.slug, remainder: params['*'] }),
+});
+
 let PORT = 0;
 let server: ReturnType<typeof createServer>;
 
 describe('createClient', () => {
   test('setup server', () => {
-    server = createServer({ services: [service], port: 0 });
+    server = createServer({ services: [service, wildcardClientService], port: 0 });
     PORT = server.port ?? 0;
   });
 
@@ -67,6 +86,23 @@ describe('createClient', () => {
     const api = createClient(users, { baseUrl: `http://localhost:${PORT}` });
     const result = await api.get({ id: '1' });
     expect(result.name).toBe('Alice');
+  });
+
+  test('bare-fetch client expands a terminal wildcard into path segments', async () => {
+    const api = createClient(wildcardClientContract, {
+      baseUrl: `http://localhost:${PORT}`,
+    });
+    const result = await api.get({ slug: 'foo', '*': 'folder one/leaf#two' });
+    expect(result).toEqual({ slug: 'foo', remainder: 'folder one/leaf#two' });
+  });
+
+  test('HttpClient adapter expands and segment-encodes a terminal wildcard', async () => {
+    const api = createClient(
+      wildcardClientContract,
+      createHttpClient({ baseUrl: `http://localhost:${PORT}` }),
+    );
+    const result = await api.get({ slug: 'foo', '*': 'folder one/leaf#two' });
+    expect(result).toEqual({ slug: 'foo', remainder: 'folder one/leaf#two' });
   });
 
   test('client validates response with output schema', async () => {

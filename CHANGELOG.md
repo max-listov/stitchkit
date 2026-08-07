@@ -15,6 +15,39 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-08-07
+
+### Added
+
+- **Scoped batch clients and typed prefix callbacks.** `createClients` now
+  accepts the same scoped third argument and transport choices as
+  `createClient`; every registry entry keeps exact endpoint, multipart,
+  raw-response and HTTP-exposure types. Keys in `stripPrefixKeys` also type the
+  `pathPrefix` callback, so `({ tenantId }) => ...` needs no cast or coercion.
+- **Contract-driven URL builders.** `createUrlBuilder` and `createUrlBuilders`
+  synchronously generate absolute or relative links for HTTP-exposed,
+  non-multipart GET endpoints. They reuse the exact request planner used by both
+  typed-client transports, including scoped prefixes, named/trailing-wildcard
+  params and flat query serialization. `createHttpClient` now returns the
+  additive `ConfiguredHttpClient` subtype carrying its readonly `baseUrl`.
+- **Typed JSON response metadata.** An HTTP-only endpoint may declare
+  `responseMeta: { status? }`; its handler receives a fresh
+  `ctx.response.headers` collector while still returning schema-validated data.
+  Repeated `Set-Cookie` values survive Bun and Node, success metadata is
+  discarded on errors, OpenAPI uses the declared 2xx status, and framework-owned
+  framing/CORS/request-id headers cannot be replaced.
+
+### Fixed
+
+- **Contract routes now support a trailing `/*` wildcard.**
+  `GET /app/:slug/*` matches nested paths, validates
+  `{ slug, '*': remainder }` through the endpoint's `params` schema, respects
+  specific-route precedence and returns 405 (not 404) for a wrong method. Both
+  typed-client transports expand the `'*'` argument segment-by-segment, and the
+  shared router decodes each segment back to its semantic handler value. OpenAPI
+  marks the non-standard catch-all with
+  `x-stitchkit-trailing-wildcard` instead of emitting an invalid path parameter.
+
 ## [0.37.0] — 2026-08-07
 
 ### ⚠️ Breaking changes
@@ -2010,7 +2043,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/max-listov/stitchkit/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/max-listov/stitchkit/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/max-listov/stitchkit/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/max-listov/stitchkit/compare/v0.35.0...v0.36.0

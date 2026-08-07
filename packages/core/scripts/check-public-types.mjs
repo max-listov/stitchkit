@@ -62,11 +62,15 @@ const ACCEPTED = {
   WithAuthContext: 'inference helper — toolkit context shape',
 
   // Members of an exported union. Narrow `EndpointDef` with its discriminant
-  // (`expose`, `rawResponse`, `rawBody`), not by naming the member.
+  // (`expose`, `rawResponse`, `rawBody`, `responseMeta`), not by naming the member.
   HttpOnlyEndpointDef: 'member of the exported EndpointDef union',
   ToolEndpointDef: 'member of the exported EndpointDef union',
   RawResponseEndpointDef: 'member of the exported EndpointDef union',
   RawBodyEndpointDef: 'member of the exported EndpointDef union',
+  ResponseMetaDataEndpointDef: 'member of the exported EndpointDef union',
+  ResponseMetaEmptyEndpointDef: 'member of the exported EndpointDef union',
+  ResponseMetaRawBodyDataEndpointDef: 'member of the exported EndpointDef union',
+  ResponseMetaRawBodyEmptyEndpointDef: 'member of the exported EndpointDef union',
 
   // Local aliases over `@types/bun`. A consumer on Bun names Bun's own types;
   // re-exporting ours would fork them. → ADR 0013.

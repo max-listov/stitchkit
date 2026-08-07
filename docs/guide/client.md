@@ -16,6 +16,10 @@ import { createHttpClient } from 'stitchkit'
 const http = createHttpClient({ baseUrl: '/api' })
 ```
 
+The returned `ConfiguredHttpClient` keeps that `baseUrl` as a readonly public
+field. Besides executing requests, it can therefore seed contract URL builders
+without repeating transport configuration.
+
 ### `HttpClientConfig`
 
 | Field | Default | Purpose |
@@ -61,6 +65,8 @@ Each call takes one argument object. The client routes each field by the
 contract:
 
 - a **path param** (`:id`) is substituted into the URL,
+- a terminal wildcard (`/*`) consumes the `'*'` field and preserves its path
+  segments (`{ '*': 'a/b' }` → `/a/b`, not `/%2Fa%2Fb` or a query field),
 - for `GET` / `DELETE`, the remaining fields become the **query string**
   (arrays become repeated keys),
 - for `POST` / `PUT` / `PATCH`, they become the **JSON body**,
@@ -80,7 +86,53 @@ await api.posts.create({ title: 'Hi' })
 ```
 
 `createClients` builds one typed client per contract from a registry — list the
-contracts once, get the whole API typed.
+contracts once, get the whole API typed. It accepts the same optional scoped
+config as `createClient`, so a whole registry can share one resource prefix:
+
+```ts
+const tenantApi = createClients({ users, posts }, http, {
+  stripPrefixKeys: ['tenantId'],
+  pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
+})
+```
+
+Every method now requires `tenantId`, and the callback sees it as a `string`.
+The batch form delegates to the same single-contract client runtime, including
+HTTP exposure filtering, multipart, raw responses and output validation.
+
+## Contract URL builders
+
+Browser-native consumers such as `<img src>`, downloads and navigation need a
+URL, not a fetched response. `createUrlBuilder` derives those URLs from the same
+contract path planner used by both typed-client transports:
+
+```ts
+import { createUrlBuilder, createUrlBuilders } from 'stitchkit'
+
+const mediaUrls = createUrlBuilder(media, http, {
+  stripPrefixKeys: ['tenantId'],
+  pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
+})
+
+const src = mediaUrls.file({
+  tenantId: 't_123',
+  fileId: 'f_456',
+  thumbnail: true,
+})
+
+const urls = createUrlBuilders({ media, exports }, http)
+```
+
+Only HTTP-exposed, non-multipart `GET` endpoints appear on a URL builder. Raw
+response GET endpoints are included, so downloads and streams stay
+contract-driven. Path and scoped-prefix keys are consumed by the path; remaining
+GET input becomes the query string, including repeated keys for arrays.
+
+Building a URL is synchronous and performs no request, auth event, header
+resolution or output validation. A `ConfiguredHttpClient` created by
+`createHttpClient` supplies its base URL; custom transports can pass an explicit
+`{ baseUrl: 'https://api.example.com' }` instead. Relative bases produce relative
+URLs.
 
 ## `ApiError`
 
@@ -151,7 +203,7 @@ segment to every URL — the client half of a multi-tenant API
 interface ContractClientConfig {
   /** Prepended to every request URL. A function is called per request with the
    *  call's argument object, so the prefix can depend on the arguments. */
-  pathPrefix?: string | ((args: Record<string, unknown>) => string)
+  pathPrefix?: string | ((args: { [K in ConsumedKey]: string }) => string)
   /** Argument keys consumed by `pathPrefix` — stripped from the query/body so
    *  they are not also sent there (the endpoint's own path `:params` are
    *  stripped automatically; list any *extra* keys here). */
@@ -163,8 +215,8 @@ A per-tenant client — `tenantId` goes into the URL, not the body:
 
 ```ts
 const widgets = createClient(widgetsContract, http, {
-  pathPrefix: (args) => `tenants/${args.tenantId}/`,
   stripPrefixKeys: ['tenantId'],
+  pathPrefix: ({ tenantId }) => `tenants/${tenantId}/`,
 })
 
 widgets.list({ tenantId: 't_123' })            // GET  /tenants/t_123/widgets

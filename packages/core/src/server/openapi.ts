@@ -163,7 +163,16 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       );
 
       const parameters: Array<Record<string, unknown>> = [];
+      const trailingWildcard = fullPath.endsWith('/*');
+      let wildcardSchema: Record<string, unknown> = { type: 'string' };
       for (const field of jsonSchemaFields(safeJson(method.paramsSchema, 'input'))) {
+        // OpenAPI has no standard multi-segment path parameter. Advertising `*`
+        // as a normal `in: path` value would produce an invalid path template;
+        // preserve its schema in the explicit extension below instead.
+        if (trailingWildcard && field.name === '*') {
+          wildcardSchema = field.schema;
+          continue;
+        }
         parameters.push({
           name: field.name,
           in: 'path',
@@ -202,12 +211,12 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
           },
         };
       } else if (method.outputSchema) {
-        responses['200'] = {
+        responses[String(method.responseMeta?.status ?? 200)] = {
           description: 'Success',
           content: { 'application/json': { schema: safeJson(method.outputSchema, 'output') } },
         };
       } else {
-        responses['204'] = { description: 'No content' };
+        responses[String(method.responseMeta?.status ?? 204)] = { description: 'No content' };
       }
 
       const operation: Record<string, unknown> = {
@@ -216,6 +225,15 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         ...(parameters.length > 0 && { parameters }),
         responses,
       };
+      if (trailingWildcard) {
+        operation['x-stitchkit-trailing-wildcard'] = {
+          parameter: '*',
+          required: true,
+          schema: wildcardSchema,
+          description:
+            "Matches zero or more trailing path segments and exposes their '/'-joined remainder as params['*'].",
+        };
+      }
       if (!inputInQuery && (method.inputSchema || method.multipart)) {
         if (method.multipart) {
           // A file-upload endpoint is `multipart/form-data` at runtime, with the

@@ -20,12 +20,17 @@ The browser-and-server entrypoint. Re-exports everything from
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createClient` | function | build a typed client from a contract — [guide](../guide/client.md#createclient) |
-| `createClients` | function | build one typed client per contract from a registry |
+| `createClients` | function | build one exact typed client per contract from a registry; accepts the same scoped config and transports as `createClient` |
+| `createUrlBuilder` | function | build synchronous browser-native URLs for one contract's HTTP GET endpoints — [guide](../guide/client.md#contract-url-builders) |
+| `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
+| `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
+| `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
 | `createHttpClient` | function | the Ky-based HTTP transport — [guide](../guide/client.md#createhttpclient) |
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
+| `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient` |
 | `RequestOptions` | _type_ | per-call options — params, timeout, response type |
 | `HeaderProvider` | _type_ | static or per-request headers |
@@ -77,6 +82,10 @@ from the root `stitchkit`.
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition |
+| `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
+| `ResponseMetadata` | _type_ | per-request outbound collector exposed as `ctx.response` only for a `responseMeta` endpoint |
+| `HttpSuccessStatus` | _type_ | supported declared 2xx success statuses |
+| `BodyHttpSuccessStatus` | _type_ | supported 2xx statuses excluding bodyless 204/205 |
 | `HttpMethod` | _type_ | `GET \| POST \| PUT \| PATCH \| DELETE` |
 | `Transport` | _type_ | `HTTP \| MCP \| AGENT \| CLI` |
 | `TransportSource` | _type_ | `http \| mcp \| agent \| cli` — the value of `ctx.source` |
@@ -87,6 +96,9 @@ from the root `stitchkit`.
 | `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
 | `ScopedHttpClient` | _type_ | a client whose `stripPrefixKeys` become required args ([guide](../guide/multi-tenant.md)) |
 | `ScopedEndpointFn` | _type_ | one method's signature with the consumed keys folded in |
+| `TypedUrlBuilder` | _type_ | one contract's HTTP, non-multipart GET endpoints as synchronous URL functions |
+| `ScopedUrlBuilder` | _type_ | a URL builder whose scoped-prefix keys are required method arguments |
+| `ScopedUrlFn` | _type_ | one URL method's signature with scoped-prefix keys folded in |
 | `MultipartFile` | _type_ | a `multipart` file field — `Blob \| FileDescriptor` |
 | `FileDescriptor` | _type_ | a React Native / Expo file — `{ uri, name, type }` |
 | `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`) |

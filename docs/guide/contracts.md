@@ -53,7 +53,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | Field | Required | Purpose |
 |-------|----------|---------|
 | `method` | yes | `GET` · `POST` · `PUT` · `PATCH` · `DELETE` |
-| `path` | yes | route path under the contract `prefix`; `:name` marks a path param |
+| `path` | yes | route path under the contract `prefix`; `:name` marks a path param and a terminal `/*` captures the remaining path |
 | `desc` | yes | human description — also the MCP / agent tool description |
 | `params` | no | Zod schema for **path params** (`:id`, …) |
 | `input` | no | Zod schema for the **request body** (or query, for GET/DELETE) |
@@ -68,6 +68,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
 | `rawResponse` | no | the handler returns the `Response` itself — a download, a file, an SSE stream. HTTP-only, never a tool, no `output`. See [Raw-response endpoints](./server.md#raw-response-endpoints) |
 | `rawBody` | no | retain original JSON text for a signed HTTP webhook. See [Signed JSON webhooks](./server.md#signed-json-webhooks) |
+| `responseMeta` | no | make a typed-data endpoint HTTP-only, optionally declare its success status and expose `ctx.response.headers` — [Typed JSON response metadata](./server.md#typed-json-response-metadata) |
 | `contentType` | no | documented response media type of a `rawResponse` endpoint (OpenAPI only) |
 
 ## `params` vs `input` vs `output`
@@ -76,7 +77,10 @@ The three schemas are distinct on purpose:
 
 - **`params`** — values in the URL path. `path: '/:id'` ⇒
   `params: z.object({ id: z.string() })`. The client takes them from the call
-  argument and substitutes them into the URL.
+  argument and substitutes them into the URL. A terminal wildcard is the
+  quoted `'*'` field: `path: '/:slug/*'` with
+  `params: z.object({ slug: z.string(), '*': z.string() })` matches both
+  `/foo/page` and `/foo/a/b`; the handler receives `'page'` or `'a/b'`.
 - **`input`** — the request payload. For `POST` / `PUT` / `PATCH` it is the JSON
   body; for `GET` / `DELETE` it is the query string. The handler reads it as
   `ctx.input`.
@@ -90,6 +94,9 @@ the body.
 ```ts
 // path: '/:id', params: { id }, input: { text }
 await api.update({ id: '1', text: 'new' })   // PUT /users/1  body: { text: 'new' }
+
+// path: '/:slug/*', params: { slug, '*': remainder }
+await api.app({ slug: 'foo', '*': 'a/b' })   // GET /apps/foo/a/b
 ```
 
 ### Input vs. output types
@@ -140,10 +147,12 @@ tools. Narrow it with `expose`:
 - `expose: ['MCP', 'AGENT']` — a tool only; no HTTP route.
 - omit `expose` — all transports.
 
-Tool transports (`MCP`, `AGENT`) skip two kinds of endpoint automatically:
+Tool transports (`MCP`, `AGENT`) skip three kinds of endpoint automatically:
 `multipart` (a file upload is not a tool call) and
 [`rawResponse`](./server.md#raw-response-endpoints) (its answer is bytes, which
-a tool result cannot carry — it would serialize to `{}`).
+a tool result cannot carry — it would serialize to `{}`), plus
+[`responseMeta`](./server.md#typed-json-response-metadata) (outbound HTTP
+headers have no meaning on a tool call).
 
 ## `toolName`
 

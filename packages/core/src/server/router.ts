@@ -43,16 +43,22 @@ function joinPath(...parts: string[]): string {
 /**
  * Match request path segments against a route's pattern segments. A `:param`
  * segment matches any value and is collected; a static segment must be equal.
- * Returns the collected path params, or `null` when the route does not match
- * (segment count differs, or a static segment mismatched).
+ * A terminal `*` consumes zero or more remaining segments into `params['*']`.
+ * Returns the collected path params, or `null` when the route does not match.
  */
 function matchSegments(
   patternSegments: string[],
   requestSegments: string[],
 ): Record<string, string> | null {
-  if (patternSegments.length !== requestSegments.length) return null;
+  const wildcard = patternSegments.at(-1) === '*';
+  const prefixLength = wildcard ? patternSegments.length - 1 : patternSegments.length;
+  if (wildcard) {
+    if (requestSegments.length < prefixLength) return null;
+  } else if (patternSegments.length !== requestSegments.length) {
+    return null;
+  }
   const params: Record<string, string> = {};
-  for (const [i, pattern] of patternSegments.entries()) {
+  for (const [i, pattern] of patternSegments.slice(0, prefixLength).entries()) {
     const actual = requestSegments[i];
     if (actual === undefined) return null;
     if (pattern.startsWith(':')) {
@@ -61,7 +67,17 @@ function matchSegments(
       return null;
     }
   }
+  if (wildcard) {
+    params['*'] = requestSegments.slice(prefixLength).map(decodeURIComponent).join('/');
+  }
   return params;
+}
+
+/** Static routes win over params, and params win over a terminal catch-all. */
+function segmentRank(segment: string | undefined): number {
+  if (segment === '*') return 2;
+  if (segment?.startsWith(':')) return 1;
+  return 0;
 }
 
 // ─── Contract routes ─────────────────────────────────
@@ -87,14 +103,13 @@ export function buildRouteMap(groups: NormalizedGroup[]): RouteMap {
     }
   }
 
-  // Static segments before `:param` segments — exact matches win.
+  // Static segments before `:param`, terminal wildcard last — exact matches win.
   for (const [, entries] of map) {
     entries.sort((a, b) => {
       const len = Math.min(a.segments.length, b.segments.length);
       for (let i = 0; i < len; i++) {
-        const aIsParam = a.segments[i]?.startsWith(':');
-        const bIsParam = b.segments[i]?.startsWith(':');
-        if (aIsParam !== bIsParam) return aIsParam ? 1 : -1;
+        const rankDifference = segmentRank(a.segments[i]) - segmentRank(b.segments[i]);
+        if (rankDifference !== 0) return rankDifference;
       }
       return a.segments.length - b.segments.length;
     });
@@ -204,7 +219,13 @@ export function findShadowedRoutes<TServer>(
     for (const entry of entries) {
       // `:id` → a literal that cannot collide with a real path segment, so the
       // probe tests the route *shape* rather than one lucky value.
-      const probe = `/${entry.segments.map((s) => (s.startsWith(':') ? '__param__' : s)).join('/')}`;
+      const probe = `/${entry.segments
+        .map((segment) => {
+          if (segment.startsWith(':')) return '__param__';
+          if (segment === '*') return '__wildcard__';
+          return segment;
+        })
+        .join('/')}`;
       const match = matchRawRoute(rawRoutes, httpMethod, probe);
       if (!match) continue;
       shadowed.push({
@@ -228,21 +249,13 @@ export function matchRawRoute<TServer>(
   for (const route of rawRoutes) {
     if (route.method !== 'ALL' && route.method !== httpMethod) continue;
 
-    // Trailing `/*` — prefix wildcard, matched per segment so a `:param` in the
-    // prefix is interpolated (`/app/:slug/*` matches `/app/x/a/b`, `slug` = `x`).
-    // The wildcard remainder (everything after the prefix) is `params['*']`.
-    // A pure literal prefix (`/app/*`) still matches `/app` and `/app/...`.
+    // Trailing `/*` — shared segment semantics interpolate named prefix params
+    // and collect the remaining segments in `params['*']`.
     if (route.path.endsWith('/*')) {
-      const prefixSegs = route.path.slice(0, -2).split('/').filter(Boolean);
+      const routeSegs = route.path.split('/').filter(Boolean);
       const pathSegs = pathname.split('/').filter(Boolean);
-      if (pathSegs.length < prefixSegs.length) continue;
-      const params = matchSegments(prefixSegs, pathSegs.slice(0, prefixSegs.length));
-      if (params) {
-        return {
-          route,
-          params: { ...params, '*': pathSegs.slice(prefixSegs.length).join('/') },
-        };
-      }
+      const params = matchSegments(routeSegs, pathSegs);
+      if (params) return { route, params };
       continue;
     }
 

@@ -230,6 +230,17 @@ prefix param in the schema, use a non-strict `z.object` (extra keys are dropped
 from `ctx.params`, but `ctx.tenantId` still works), or read the param off the
 context root.
 
+**Trailing wildcard.** A contract path may end in `/*`. `/app/:slug/*` matches
+both `/app/foo` and nested paths such as `/app/foo/a/b`; the collected params are
+`{ slug: 'foo', '*': '' }` and `{ slug: 'foo', '*': 'a/b' }` respectively. Put
+the quoted `'*'` field in the endpoint's `params` schema to keep it in typed
+`ctx.params`. Each captured segment is URL-decoded before the remainder is
+joined, so encoded spaces and reserved characters reach the handler as their
+semantic values while `/` remains the segment boundary. Static and named-param
+routes are matched before a catch-all, so a
+more specific endpoint wins regardless of declaration order. The same matcher
+drives `405 Allow` resolution.
+
 ### Scope-driven mounting (`scopePrefixes`)
 
 With several scopes, hand-partitioning services into `groups` duplicates the
@@ -262,7 +273,7 @@ createServer({
   hooks: {
     onRequest(req)               { /* logging, global rate limit — may return a Response to short-circuit */ },
     beforeHandle(ctx, endpoint)  { /* auth, scope checks — throw to reject */ },
-    afterHandle(ctx, result, ep) { /* transform the result, set cache headers */ },
+    afterHandle(ctx, result, ep) { /* transform the result data */ },
     onError(ctx, error, ep)      { /* custom error response — return a Response */ },
   },
 })
@@ -315,6 +326,46 @@ not retain the text. `maxJsonBodyBytes` may also be set once on `createServer` /
 `createHandler`; a route value wins. Both limits are opt-in and abort an
 oversized stream before it is fully buffered. → ADR 0051
 
+## Typed JSON response metadata
+
+A JSON endpoint that must attach dynamic HTTP headers while preserving typed
+output declares `responseMeta`. The handler still returns ordinary data:
+
+```ts
+const auth = defineContract({ prefix: 'auth' }, {
+  complete: {
+    method: 'POST', path: '/complete', desc: 'Complete authentication',
+    input: CompleteAuthSchema,
+    output: AuthUserSchema,
+    responseMeta: { status: 200 },
+  },
+})
+
+complete: async ({ input, response }) => {
+  const result = await authenticate(input.token)
+  response.headers.append('Set-Cookie', session.set(result.sessionId))
+  response.headers.append('Set-Cookie', preferences.set(result.preferencesId))
+  return result.user
+}
+```
+
+`ctx.response.headers` is a fresh Web Fetch `Headers` bag per request. `append`
+preserves repeated `Set-Cookie` values on Bun and Node. The endpoint is
+HTTP-only, but its typed client method still resolves to `AuthUser` — not
+`Response` — and the final data still passes group/global `afterHandle` and the
+declared `output` schema exactly once.
+
+`responseMeta.status` is static contract metadata and OpenAPI publishes the same
+2xx code. Without it, data keeps status `200` and no-data keeps `204`. Bodyless
+`204`/`205` cannot be combined with `output`. Redirects, streams, files and
+handler-owned status/body logic remain [`rawResponse: true`](#raw-response-endpoints).
+
+Collected headers are merged only after the complete success pipeline. A
+handler, hook or output-validation failure discards them. `Content-Type`,
+`Content-Length`, `x-request-id` and every `Access-Control-*` header remain
+framework-owned; trying to set one fails loudly with the endpoint identity.
+→ [ADR 0052](../decisions/0052-typed-json-response-metadata.md)
+
 ## Raw-response endpoints
 
 An endpoint that answers with **bytes rather than data** — a PDF download, a
@@ -357,6 +408,10 @@ const name = res.headers.get('Content-Disposition')
 const blob = await res.blob()
 ```
 
+When the browser should navigate or assign the endpoint directly to `src`, use
+[`createUrlBuilder`](./client.md#contract-url-builders). Raw-response GET methods
+are included, while mutation and multipart methods are intentionally absent.
+
 Cross-origin, remember that those headers are readable only because CORS exposes
 them — see [`cors.exposeHeaders`](#serving-files--range-requests).
 
@@ -367,6 +422,11 @@ A raw *route* is outside the contract entirely — no schemas, no auth gate, no
 client — which is what you want for an OAuth redirect or a non-JSON webhook. A
 signed JSON webhook can stay validated through
 [`rawBody: true`](#signed-json-webhooks).
+
+If an endpoint returns typed JSON and only needs an additional status/header,
+use [`responseMeta`](#typed-json-response-metadata), not `rawResponse`: the raw
+variant deliberately transfers response ownership and changes the client result
+to `Response`.
 
 ⚠️ **Delete the old raw route when you move an endpoint into the contract.** Raw
 routes are matched **first**, so a leftover one keeps serving the bytes and the
@@ -600,6 +660,14 @@ createServer({ services: [users, orders], rawRoutes: [openApiRoute('/openapi.jso
 ```
 
 Only HTTP-exposed methods appear (an MCP/agent-only tool is skipped).
+
+OpenAPI 3.1 has no standard multi-segment path parameter. For a contract path
+ending in `/*`, Stitchkit keeps the literal runtime path, omits `*` from the
+standard `in: path` parameter list, and emits
+`x-stitchkit-trailing-wildcard` on the operation with its parameter name,
+schema and semantics. A generic OpenAPI client therefore cannot invent
+catch-all expansion; use Stitchkit's typed client or teach the generator that
+extension.
 
 ### Curating the spec — `includeMethod`
 

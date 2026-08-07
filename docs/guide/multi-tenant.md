@@ -83,7 +83,7 @@ keeps `tenantId` out of the body/query
 
 ```ts
 const widgetsApi = createClient(widgets, http, {
-  pathPrefix: (args) => `tenants/${args.tenantId}/`,
+  pathPrefix: ({ tenantId }) => `tenants/${tenantId}/`,
   stripPrefixKeys: ['tenantId'],
 })
 

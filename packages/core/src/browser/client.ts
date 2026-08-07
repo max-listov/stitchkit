@@ -1,7 +1,14 @@
-import type { ContractDef, EndpointDef, ScopedHttpClient, TypedHttpClient } from '../contract';
-import { inputIsQuery } from '../internal/http-input';
+import type {
+  ContractDef,
+  EndpointDef,
+  ScopedHttpClient,
+  ScopedUrlBuilder,
+  TypedHttpClient,
+  TypedUrlBuilder,
+} from '../contract';
 import { mapObject, typedEntries } from '../internal/typed';
 import { appendFormFields, appendMultipartFile, isMultipartFile } from './client-multipart';
+import { joinClientBaseUrl, planClientRequest } from './client-url';
 import {
   ApiError,
   type HttpClient as HttpAdapter,
@@ -38,61 +45,6 @@ function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<un
   return result.then((value) => (value === undefined ? undefined : schema.parse(value)));
 }
 
-type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
-
-/** Narrow an unknown value to a query-param array (`string`/`number` items). */
-function isParamArray(value: unknown): value is Array<string | number> {
-  return (
-    Array.isArray(value) && value.every((v) => typeof v === 'string' || typeof v === 'number')
-  );
-}
-
-/**
- * Collect query params from a call's argument object — primitives passed
- * through, `string`/`number` arrays kept as arrays (repeated query keys),
- * path-param and other keys skipped. `undefined` when nothing qualifies.
- *
- * GET / DELETE input travels as query parameters (`inputIsQuery`), and a query
- * string can only carry primitives and primitive arrays — a nested object has
- * no canonical query encoding. Such a field is a contract-usage mistake, so it
- * throws loudly instead of being dropped silently (the request would otherwise
- * go out subtly incomplete). Shared by both client paths — the `HttpClient`
- * adapter and the bare fetch client — so the rule cannot drift.
- */
-function collectQueryParams(
-  args: Record<string, unknown>,
-  skipKeys: Set<string>,
-  endpoint: EndpointDef,
-): QueryParams | undefined {
-  const params: QueryParams = {};
-  let hasParams = false;
-  for (const [key, value] of Object.entries(args)) {
-    if (skipKeys.has(key) || value === undefined || value === null) continue;
-    if (
-      typeof value === 'string' ||
-      typeof value === 'number' ||
-      typeof value === 'boolean' ||
-      isParamArray(value)
-    ) {
-      params[key] = value;
-      hasParams = true;
-      continue;
-    }
-    const what = Array.isArray(value)
-      ? 'an array with non-primitive items'
-      : typeof value === 'object'
-        ? 'a nested object'
-        : `a ${typeof value}`;
-    throw new Error(
-      `${endpoint.method} ${endpoint.path}: input field "${key}" is ${what} — it cannot ` +
-        'travel as a query parameter. GET / DELETE input must be flat (string / number / ' +
-        'boolean, or an array of string / number); flatten the field or move the ' +
-        'operation to a body verb (POST).',
-    );
-  }
-  return hasParams ? params : undefined;
-}
-
 /** Config for the built-in fetch client — used when no `HttpClient` is passed. */
 export interface ClientConfig {
   baseUrl: string;
@@ -109,6 +61,9 @@ export type ScopedKeys<K extends string> = [K] extends [never]
   ? unknown
   : { [P in K]: string };
 
+/** The declared keys available to a dynamic path-prefix callback. */
+export type PathPrefixArgs<K extends string> = { [P in K]: string };
+
 /**
  * Per-contract client tweaks — a dynamic URL `pathPrefix` and the keys it
  * consumes. List the consumed keys in `stripPrefixKeys` (e.g. `['tenantId']`)
@@ -116,7 +71,7 @@ export type ScopedKeys<K extends string> = [K] extends [never]
  * no hand-written scoped-client wrapper.
  */
 export interface ContractClientConfig<K extends string = never> {
-  pathPrefix?: string | ((args: Record<string, unknown>) => string);
+  pathPrefix?: string | ((args: PathPrefixArgs<K>) => string);
   stripPrefixKeys?: readonly K[];
 }
 
@@ -157,10 +112,17 @@ export function createClient<
  */
 export function createClients<
   T extends Record<string, ContractDef<Record<string, EndpointDef>, string>>,
->(contracts: T, http: HttpAdapter): { [K in keyof T]: TypedHttpClient<T[K]['endpoints']> } {
-  return mapObject<T, { [K in keyof T]: TypedHttpClient<T[K]['endpoints']> }>(
-    contracts,
-    (_key, contract) => createClient(contract, http),
+  const K extends string = never,
+>(
+  contracts: T,
+  configOrClient: ClientConfig | HttpAdapter,
+  contractConfig?: ContractClientConfig<K>,
+): { [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>> } {
+  type BatchClients = {
+    [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>>;
+  };
+  return mapObject<T, BatchClients>(contracts, (_key, contract) =>
+    createClient(contract, configOrClient, contractConfig),
   );
 }
 
@@ -172,11 +134,11 @@ function setClientMethod(target: object, key: PropertyKey, method: unknown): voi
   (target as Record<PropertyKey, unknown>)[key] = method;
 }
 
-function createHttpMethod(
+function createHttpMethod<K extends string>(
   endpoint: EndpointDef,
   prefix: string,
   client: HttpAdapter,
-  config?: ContractClientConfig<string>,
+  config?: ContractClientConfig<K>,
 ): (...args: unknown[]) => Promise<unknown> {
   const httpMethod = endpoint.method.toLowerCase() as
     | 'get'
@@ -184,31 +146,9 @@ function createHttpMethod(
     | 'put'
     | 'patch'
     | 'delete';
-  const isGet = httpMethod === 'get';
-  const paramNames = extractParamNames(endpoint.path);
-  const prefixKeys = new Set([...(config?.stripPrefixKeys ?? []), ...paramNames]);
-
   return (...args: unknown[]) => {
     const firstArg = (args[0] ?? {}) as Record<string, unknown>;
-
-    let pathPrefixStr = '';
-    if (config?.pathPrefix) {
-      pathPrefixStr =
-        typeof config.pathPrefix === 'function'
-          ? config.pathPrefix(firstArg)
-          : config.pathPrefix;
-      if (pathPrefixStr && !pathPrefixStr.endsWith('/')) pathPrefixStr += '/';
-    }
-
-    let url = `${pathPrefixStr}${prefix}${endpoint.path}`;
-    for (const name of paramNames) {
-      const value = firstArg[name];
-      if (value === undefined || value === null) {
-        throw new Error(`Missing path param: ${name}`);
-      }
-      url = url.replace(`:${name}`, encodeURIComponent(String(value)));
-    }
-    if (url.endsWith('/')) url = url.slice(0, -1);
+    const plan = planClientRequest(endpoint, prefix, firstArg, config);
 
     if (endpoint.multipart) {
       const file = firstArg[endpoint.multipart];
@@ -224,66 +164,47 @@ function createHttpMethod(
       }
       const formData = new FormData();
       appendMultipartFile(formData, endpoint.multipart, file);
-      appendFormFields(formData, firstArg, new Set([...prefixKeys, endpoint.multipart]));
+      appendFormFields(formData, plan.remainingArgs, new Set([endpoint.multipart]));
       return withOutput(
         endpoint,
-        client[httpMethod](url, formData, withTimeout(undefined, endpoint)),
+        client[httpMethod](plan.relativeUrl, formData, withTimeout(undefined, endpoint)),
       );
     }
 
-    if (isGet) {
-      const params = collectQueryParams(firstArg, prefixKeys, endpoint);
+    if (httpMethod === 'get') {
       return withOutput(
         endpoint,
-        client.get(url, withTimeout(params ? { params } : undefined, endpoint)),
+        client.get(plan.relativeUrl, withTimeout(undefined, endpoint)),
       );
     }
 
     if (httpMethod === 'delete') {
-      const params = collectQueryParams(firstArg, prefixKeys, endpoint);
       return withOutput(
         endpoint,
-        client.delete(url, withTimeout(params ? { params } : undefined, endpoint)),
+        client.delete(plan.relativeUrl, withTimeout(undefined, endpoint)),
       );
     }
 
-    const payload: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(firstArg)) {
-      if (!prefixKeys.has(key) && value !== undefined) {
-        payload[key] = value;
-      }
-    }
     return withOutput(
       endpoint,
       client[httpMethod](
-        url,
-        Object.keys(payload).length > 0 ? payload : undefined,
+        plan.relativeUrl,
+        Object.keys(plan.remainingArgs).length > 0 ? plan.remainingArgs : undefined,
         withTimeout(undefined, endpoint),
       ),
     );
   };
 }
 
-function createFetchMethod(
+function createFetchMethod<K extends string>(
   endpoint: EndpointDef,
   prefix: string,
   config: ClientConfig,
-  contractConfig?: ContractClientConfig<string>,
+  contractConfig?: ContractClientConfig<K>,
 ): (args?: Record<string, unknown>) => Promise<unknown> {
-  const prefixKeys = new Set(contractConfig?.stripPrefixKeys ?? []);
   return async (args?: Record<string, unknown>) => {
-    // Resolve the dynamic path prefix (per-tenant / resource-scoped) and strip
-    // the keys it consumes from the query / body — same as the HttpClient path.
-    let pathPrefixStr = '';
-    if (contractConfig?.pathPrefix) {
-      pathPrefixStr =
-        typeof contractConfig.pathPrefix === 'function'
-          ? contractConfig.pathPrefix(args ?? {})
-          : contractConfig.pathPrefix;
-      if (pathPrefixStr && !pathPrefixStr.endsWith('/')) pathPrefixStr += '/';
-    }
-
-    let url = buildFetchUrl(config.baseUrl, prefix, endpoint.path, args, pathPrefixStr);
+    const plan = planClientRequest(endpoint, prefix, args ?? {}, contractConfig);
+    const url = joinClientBaseUrl(config.baseUrl, plan.relativeUrl);
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -296,26 +217,12 @@ function createFetchMethod(
     const signal =
       endpoint.timeout !== undefined ? AbortSignal.timeout(endpoint.timeout) : undefined;
 
-    const isQuery = inputIsQuery(endpoint.method);
-    const hasBody = !isQuery && !endpoint.multipart && endpoint.input && args;
-
-    if (isQuery && args) {
-      const remaining = stripParams(args, endpoint.path, prefixKeys);
-      // Same collection + fail-first rule as the HttpClient path (path params
-      // are already stripped, so nothing extra to skip).
-      const params = collectQueryParams(remaining, new Set(), endpoint);
-      if (params) {
-        const searchParams = new URLSearchParams();
-        for (const [k, v] of Object.entries(params)) {
-          if (Array.isArray(v)) {
-            for (const item of v) searchParams.append(k, String(item));
-          } else {
-            searchParams.set(k, String(v));
-          }
-        }
-        url += `?${searchParams}`;
-      }
-    }
+    const hasBody =
+      endpoint.method !== 'GET' &&
+      endpoint.method !== 'DELETE' &&
+      !endpoint.multipart &&
+      endpoint.input &&
+      args;
 
     if (hasBody) headers['Content-Type'] = 'application/json';
 
@@ -326,11 +233,7 @@ function createFetchMethod(
       }
       const formData = new FormData();
       appendMultipartFile(formData, endpoint.multipart, file);
-      appendFormFields(
-        formData,
-        stripParams(args, endpoint.path, prefixKeys),
-        new Set([endpoint.multipart]),
-      );
+      appendFormFields(formData, plan.remainingArgs, new Set([endpoint.multipart]));
 
       const res = await fetch(url, {
         method: endpoint.method,
@@ -362,7 +265,7 @@ function createFetchMethod(
       credentials: config.credentials,
       signal,
       ...(hasBody && {
-        body: JSON.stringify(stripParams(hasBody, endpoint.path, prefixKeys)),
+        body: JSON.stringify(plan.remainingArgs),
       }),
     });
 
@@ -398,43 +301,48 @@ async function throwForErrorResponse(
   throw new ApiError('HTTP_ERROR', res.status, { body });
 }
 
-function extractParamNames(path: string): string[] {
-  const matches = path.match(/:(\w+)/g);
-  return matches ? matches.map((m) => m.slice(1)) : [];
+/** Base URL source for synchronous contract URL builders. */
+export interface UrlBuilderConfig {
+  baseUrl: string;
 }
 
-function buildFetchUrl(
-  baseUrl: string,
-  prefix: string,
-  path: string,
-  args?: Record<string, unknown>,
-  pathPrefix = '',
-): string {
-  let fullPath = `/${pathPrefix}${prefix}${path === '/' ? '' : path}`;
-  if (args) {
-    fullPath = fullPath.replace(/:(\w+)/g, (_, key) => {
-      const val = args[key];
-      if (val === undefined || val === null) {
-        throw new Error(`Missing path param: ${key}`);
-      }
-      return encodeURIComponent(String(val));
+export function createUrlBuilder<
+  T extends Record<string, EndpointDef>,
+  const K extends string = never,
+>(
+  contract: ContractDef<T, string>,
+  source: UrlBuilderConfig,
+  contractConfig?: ContractClientConfig<K>,
+): ScopedUrlBuilder<T, ScopedKeys<K>> {
+  const builder: Partial<TypedUrlBuilder<T>> = {};
+  for (const [key, endpoint] of typedEntries(contract.endpoints)) {
+    if (endpoint.method !== 'GET' || endpoint.multipart) continue;
+    if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;
+    setClientMethod(builder, key, (args?: Record<string, unknown>) => {
+      const plan = planClientRequest(
+        endpoint,
+        contract.meta.prefix,
+        args ?? {},
+        contractConfig,
+      );
+      return joinClientBaseUrl(source.baseUrl, plan.relativeUrl);
     });
   }
-  return `${baseUrl}${fullPath}`;
+  return builder as unknown as ScopedUrlBuilder<T, ScopedKeys<K>>;
 }
 
-function stripParams(
-  args: Record<string, unknown>,
-  path: string,
-  extra?: ReadonlySet<string>,
-): Record<string, unknown> {
-  const skip = new Set(extra);
-  for (const match of path.matchAll(/:(\w+)/g)) {
-    if (match[1]) skip.add(match[1]);
-  }
-  const result: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (!skip.has(k)) result[k] = v;
-  }
-  return result;
+export function createUrlBuilders<
+  T extends Record<string, ContractDef<Record<string, EndpointDef>, string>>,
+  const K extends string = never,
+>(
+  contracts: T,
+  source: UrlBuilderConfig,
+  contractConfig?: ContractClientConfig<K>,
+): { [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>> } {
+  type BatchBuilders = {
+    [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>>;
+  };
+  return mapObject<T, BatchBuilders>(contracts, (_key, contract) =>
+    createUrlBuilder(contract, source, contractConfig),
+  );
 }

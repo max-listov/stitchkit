@@ -58,6 +58,13 @@ const widgets = defineContract(
       params: z.object({ id: z.string() }),
       output: z.object({ id: z.string() }),
     },
+    complete: {
+      method: 'POST',
+      path: '/complete',
+      desc: 'Complete a typed HTTP operation',
+      output: z.object({ id: z.string() }),
+      responseMeta: { status: 201 },
+    },
   },
 );
 
@@ -65,6 +72,12 @@ const service = implement(widgets, {
   get: (ctx) => {
     if (ctx.params.id === 'boom') throw new AppError('NOT_FOUND', 'No such widget', 404);
     return { id: ctx.params.id };
+  },
+  complete: ({ req, response }) => {
+    const request: Request = req;
+    response.headers.append('Set-Cookie', 'fixture=ok; Path=/');
+    void request;
+    return { id: 'complete' };
   },
 });
 

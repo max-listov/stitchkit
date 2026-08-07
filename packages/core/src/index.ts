@@ -3,11 +3,16 @@ export {
   type ContractClientConfig,
   createClient,
   createClients,
+  createUrlBuilder,
+  createUrlBuilders,
+  type PathPrefixArgs,
+  type UrlBuilderConfig,
 } from './browser/client';
 export {
   ApiError,
   type ApiEvent,
   type ApiEventListener,
+  type ConfiguredHttpClient,
   createHttpClient,
   type HeaderProvider,
   type HttpClient,
