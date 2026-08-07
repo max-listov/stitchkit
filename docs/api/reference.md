@@ -151,23 +151,24 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `zodIssues` | function | a `ZodError` → structured `{ path, code, message }[]` — the machine-readable sibling of `formatZodError` |
 | `ZodIssueSummary` | _type_ | one structured validation issue (`{ path, code, message }`) |
 | `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
-| `HandlerConfig` | _type_ | config for `createHandler` (runtime-agnostic) |
+| `HandlerConfig` | _type_ | config for `createHandler`, including optional `maxJsonBodyBytes`; bound to `BunServer` on this entrypoint |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun) |
 | `ServiceDef` | _type_ | the result of `implement` |
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
+| `OperationIdentity` | _type_ | path-free service/action/scope/method identity shared by contract and native tool operations |
 | `Handlers` | _type_ | the typed handler map `implement` expects |
 | `LifecycleHooks` | _type_ | `onRequest` / `beforeHandle` / `afterHandle` / `onError` |
 | `RouteGroup` | _type_ | a prefixed group of services with its own hooks |
-| `RawRoute` | _type_ | a non-contract `Request → Response` route |
-| `RawRouteContext` | _type_ | the routing context a raw handler receives |
+| `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context |
+| `RawRouteContext` | _type_ | the Bun-bound routing context a raw handler receives |
 | `BunServer` | _type_ | the `Bun.serve` instance type |
 | `ServerPassthrough` | _type_ | extra `Bun.serve` options |
 | `StitchLogger` | _type_ | the custom-logger interface |
 | `LoggingConfig` | _type_ | the `logging` object — `logger` / `format` / `skip` / `enrich` |
 | `LogFormat` | _type_ | `'pretty'` or `'json'` — what the built-in formatter writes |
 | `LogOutcome` | _type_ | how a request finished, as `enrich` sees it |
-| `FetchHandler` | _type_ | what `createHandler` returns |
-| `FetchComposition` | _type_ | the `wrapFetch` seam shared by the servers |
+| `FetchHandler` | _type_ | what `createHandler` returns, bound to `BunServer` here |
+| `FetchComposition` | _type_ | the Bun-bound `wrapFetch` seam |
 
 ### Auth
 
@@ -332,13 +333,21 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
-| `validateMcpSchemas` | function | assert every tool schema is JSON Schema-compatible — [guide](../guide/mcp-and-agents.md#incompatible-schemas--onincompatibleschema) |
+| `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
 | `listToolNames` | function | every mounted tool name with its `(service, method)` identity — for name-baseline snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
 | `McpHandlerConfig` | _type_ | config for `createMcpHandler` |
+| `McpSessionMode` | _type_ | `'stateless' \| 'stateful'`; HTTP defaults to request-isolated stateless mode |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
 | `ImplementRemoteOptions` | _type_ | options for `implementRemote` |
 | `McpMountConfig` | _type_ | config for `mountMcp` |
+| `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
+| `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
+| `NativeMcpRegistrar` | _type_ | protected `registerTool` plus explicit unprotected `rawServer` access |
+| `NativeMcpToolDefinition` | _type_ | native name, operation identity, Zod schemas and MCP-result handler |
+| `NativeMcpOperationIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for native lifecycle/audit |
+| `NativeMcpHandlerContext` | _type_ | runtime context with the definition's parsed native input |
+| `NativeMcpResult` | _type_ | MCP content result, with typed `structuredContent` when output is declared |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli` |
@@ -347,7 +356,11 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
-| `ToolCallHooks` | _type_ | `beforeToolCall` / `afterToolCall` / `onToolError` observability hooks — the raw thrown value reaches both of the last two (`afterToolCall`'s 7th parameter), because normalisation scrubs an unexpected error to `INTERNAL_SERVER_ERROR` ([guide](../guide/observability.md#the-cause-behind-a-failed-tool-call)) |
+| `ToolOperation` | _type_ | executable path-free operation shape shared by contract and framework-native runners |
+| `ToolCallHooks` | _type_ | object-shaped `beforeToolCall` / `afterToolCall` / `onToolError` observability hooks; the raw thrown value reaches the last two as `error` ([guide](../guide/observability.md#the-cause-behind-a-failed-tool-call)) |
+| `BeforeToolCallOptions` | _type_ | `{ toolName, args, context, endpoint }` passed before execution |
+| `AfterToolCallOptions` | _type_ | completed call options plus `{ result, durationMs, error? }` |
+| `ToolErrorOptions` | _type_ | `{ toolName, error, context, endpoint }` for a thrown handler-path value |
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
@@ -356,6 +369,9 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `CollectToolsConfig` | _type_ | options for `collectTools` |
 | `findUntypedProperties` | function | every property in a JSON Schema with no `type`/`enum`/`$ref` — what a model is shown and cannot obey ([guide](../guide/mcp-and-agents.md)) |
 | `UntypedProperty` | _type_ | one such property — `{ path, description? }` |
+| `findNonPortableFormats` | function | deep finder for formats outside the portable MCP/AJV baseline |
+| `NonPortableFormat` | _type_ | one `{ path, format }` portability finding |
+| `PORTABLE_JSON_SCHEMA_FORMATS` | constant | portable-format baseline used by MCP validation |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
@@ -422,9 +438,9 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportSummary` | _type_ | the result of `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
-| `flattenDiscriminatedUnion` | function | flatten one discriminated union into a single object schema |
-| `flattenUnionsDeep` | function | flatten discriminated unions at every depth — union shape only; each object keeps its own key policy (`.strict()` / `.loose()` / `.catchall()`) |
-| `MountableTool` | _type_ | one contract method resolved for mounting |
+| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions in a JSON Schema document into conservative object joins; never executes validation |
+| `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
+| `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
 
 ---
@@ -440,11 +456,12 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 |--------|------|---------|
 | `serveNode` | function | build the router and start a Node HTTP server (via `srvx`) |
 | `createHandler` | function | the router as a bare `(req) => Response` (same as `/server`) |
-| `createSocketIOServer` | function | the typed Socket.IO server (same as `/server`) |
+| `createSocketIOServer` | function | the typed Node Socket.IO server (`io` + `attach`; no Bun engine declarations) |
 | `implement` / `createImplement` | function | bind a contract to typed handlers (same as `/server`) |
 | `NodeServerConfig` | _type_ | config for `serveNode` |
 | `NodeServerHandle` | _type_ | the `serveNode` handle (`{ port, stop }`) |
-| `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` / `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | re-exported from `/server` |
+| `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
+| `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | shared config and the Node-only `{ io, attach }` handle |
 | `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---

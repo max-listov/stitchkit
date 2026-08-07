@@ -1,26 +1,36 @@
 export type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+export type { OperationIdentity } from './server/types';
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
 export { type CliConfig, createCli } from './tools/cli';
 export type { ExitCodeMap } from './tools/cli-format';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
 export type {
+  AfterToolCallOptions,
+  BeforeToolCallOptions,
   ErrorHintFn,
   ToolCallContext,
   ToolCallHooks,
+  ToolErrorOptions,
   ToolLifecycle,
+  ToolOperation,
   ToolResult,
 } from './tools/execute';
-export { flattenDiscriminatedUnion, flattenUnionsDeep } from './tools/flatten';
+export {
+  flattenToolJsonSchema,
+  type ToolPresentationSchema,
+} from './tools/flatten';
 export { listToolNames, type ToolNameEntry } from './tools/list-names';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';
 export {
   buildMcpServer,
   type IncompatibleSchemaPolicy,
   type McpMountConfig,
+  type McpSchemaValidationConfig,
   type McpServerBuildConfig,
   mountMcp,
   mountMcpResource,
+  type ValidateMcpSchemasConfig,
   validateMcpSchemas,
 } from './tools/mcp';
 export {
@@ -31,7 +41,11 @@ export {
   type McpResourceDef,
   RESOURCE_MIME_TYPE,
 } from './tools/mcp-app';
-export { createMcpHandler, type McpHandlerConfig } from './tools/mcp-handler';
+export {
+  createMcpHandler,
+  type McpHandlerConfig,
+  type McpSessionMode,
+} from './tools/mcp-handler';
 export { createStdioMcpServer, type StdioMcpServerConfig } from './tools/mcp-stdio';
 export {
   type CollectToolsConfig,
@@ -42,6 +56,13 @@ export {
 export { type DownloadToolConfig, mountDownload } from './tools/mount-download';
 export { mountUpload, type UploadToolConfig } from './tools/mount-upload';
 export { mountWait, type WaitToolConfig } from './tools/mount-wait';
+export type {
+  NativeMcpHandlerContext,
+  NativeMcpOperationIdentity,
+  NativeMcpRegistrar,
+  NativeMcpResult,
+  NativeMcpToolDefinition,
+} from './tools/native-mcp';
 export {
   oauthProtectedResourceRoute,
   PROTECTED_RESOURCE_PATH,
@@ -59,6 +80,11 @@ export {
   type RefreshData,
   type RegisteredClient,
 } from './tools/oauth-provider';
+export {
+  findNonPortableFormats,
+  type NonPortableFormat,
+  PORTABLE_JSON_SCHEMA_FORMATS,
+} from './tools/portable-formats';
 export { type ImplementRemoteOptions, implementRemote } from './tools/remote';
 export {
   createToolLogger,

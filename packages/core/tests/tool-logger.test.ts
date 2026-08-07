@@ -22,14 +22,14 @@ describe('createToolLogger', () => {
   test('logs a successful call with identity and duration', async () => {
     const lines: string[] = [];
     const hooks = createToolLogger({ log: (l) => lines.push(l) });
-    await hooks.afterToolCall?.(
-      'list_widgets',
-      {},
-      { ok: true, data: [] },
-      12.4,
-      ctx,
+    await hooks.afterToolCall?.({
+      toolName: 'list_widgets',
+      args: {},
+      result: { ok: true, data: [] },
+      durationMs: 12.4,
+      context: ctx,
       endpoint,
-    );
+    });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toBe('[tool] ok list_widgets (widgets.list) 12ms');
   });
@@ -37,10 +37,13 @@ describe('createToolLogger', () => {
   test('logs a failed call with the error code', async () => {
     const lines: string[] = [];
     const hooks = createToolLogger({ log: (l) => lines.push(l) });
-    await hooks.afterToolCall?.('get_widget', {}, { ok: false, code: 'NOT_FOUND' }, 4, ctx, {
-      ...endpoint,
-      key: 'get',
-      desc: 'Get a widget',
+    await hooks.afterToolCall?.({
+      toolName: 'get_widget',
+      args: {},
+      result: { ok: false, code: 'NOT_FOUND' },
+      durationMs: 4,
+      context: ctx,
+      endpoint: { ...endpoint, key: 'get', desc: 'Get a widget' },
     });
     expect(lines[0]).toBe('[tool] warn get_widget (widgets.get) NOT_FOUND 4ms');
   });
@@ -48,14 +51,14 @@ describe('createToolLogger', () => {
   test('feeds onRecord the structured parts', async () => {
     const records: ToolCallRecord[] = [];
     const hooks = createToolLogger({ log: () => undefined, onRecord: (r) => records.push(r) });
-    await hooks.afterToolCall?.(
-      'list_widgets',
-      {},
-      { ok: true, data: [] },
-      7.9,
-      ctx,
+    await hooks.afterToolCall?.({
+      toolName: 'list_widgets',
+      args: {},
+      result: { ok: true, data: [] },
+      durationMs: 7.9,
+      context: ctx,
       endpoint,
-    );
+    });
     expect(records[0]).toEqual({
       tool: 'list_widgets',
       service: 'widgets',
@@ -72,7 +75,14 @@ describe('createToolLogger', () => {
     const records: ToolCallRecord[] = [];
     const hooks = createToolLogger({ log: () => undefined, onRecord: (r) => records.push(r) });
     const call = () =>
-      hooks.afterToolCall?.('list_widgets', {}, { ok: true, data: [] }, 1, ctx, endpoint);
+      hooks.afterToolCall?.({
+        toolName: 'list_widgets',
+        args: {},
+        result: { ok: true, data: [] },
+        durationMs: 1,
+        context: ctx,
+        endpoint,
+      });
 
     await wrapInRequestContext(async () => {
       await call();

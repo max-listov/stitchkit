@@ -2,74 +2,102 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { implement } from '../src/server/implement';
-import { flattenUnionsDeep } from '../src/tools/flatten';
+import { flattenToolJsonSchema } from '../src/tools/flatten';
 import { collectTools } from '../src/tools/mount';
+import { buildToolPresentationSchema } from '../src/tools/presentation';
 
-// broadcast_create shape: a plain object whose `content.parts[]` is an array of a
-// discriminated union — the union is NESTED, not the top-level input.
+function hasUnionKeyword(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(hasUnionKeyword);
+  if (typeof node !== 'object' || node === null) return false;
+  if ('oneOf' in node || 'anyOf' in node) return true;
+  return Object.values(node).some(hasUnionKeyword);
+}
+
 const part = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }),
-  z.object({ type: z.literal('image'), url: z.string() }),
+  z.object({ type: z.literal('image'), url: z.url() }),
 ]);
-
 const contract = defineContract(
   { prefix: 'broadcast' },
   {
     create: {
       method: 'POST',
       path: '/',
-      desc: 'Create a broadcast',
-      input: z.object({
-        name: z.string(),
-        content: z.object({ parts: z.array(part) }),
-      }),
-      output: z.object({ id: z.string() }),
+      desc: 'Create',
+      input: z.object({ content: z.object({ parts: z.array(part) }) }),
     },
   },
 );
-const service = implement(contract, { create: () => ({ id: 'x' }) });
+const service = implement(contract, { create: () => undefined });
 
-/** True if a JSON Schema node contains `oneOf` / `anyOf` at any depth. */
-function hasUnionKeyword(node: unknown): boolean {
-  if (Array.isArray(node)) return node.some(hasUnionKeyword);
-  if (typeof node === 'object' && node !== null) {
-    if ('oneOf' in node || 'anyOf' in node) return true;
-    return Object.values(node).some(hasUnionKeyword);
-  }
-  return false;
-}
-
-describe('deep union flatten — nested discriminated unions', () => {
-  test('without flatten, a nested union reaches the schema as oneOf/anyOf (the gap)', () => {
-    const [tool] = collectTools(service, 'AGENT', { flattenUnionInput: false });
+describe('presentation flattening walks the JSON Schema graph', () => {
+  test('nested discriminated unions stay intact by default', () => {
+    const [tool] = collectTools(service, 'AGENT');
     if (!tool) throw new Error('expected tool');
-    const json = z.toJSONSchema(tool.schema, { io: 'input' });
-    expect(hasUnionKeyword(json)).toBe(true);
+    expect(hasUnionKeyword(tool.presentationSchema)).toBe(true);
   });
 
-  test('with flatten, no oneOf/anyOf survives at ANY depth', () => {
+  test('nested discriminated unions become conservative object joins', () => {
     const [tool] = collectTools(service, 'AGENT', { flattenUnionInput: true });
     if (!tool) throw new Error('expected tool');
-    const json = z.toJSONSchema(tool.schema, { io: 'input' });
-    expect(hasUnionKeyword(json)).toBe(false);
+    expect(hasUnionKeyword(tool.presentationSchema)).toBe(false);
+    const text = JSON.stringify(tool.presentationSchema);
+    expect(text).toContain('Required if type = text');
+    expect(text).toContain('Required if type = image');
   });
 
-  test('the nested union becomes a flat object carrying the "Required if" hints', () => {
-    const flat = flattenUnionsDeep(
-      z.object({ name: z.string(), content: z.object({ parts: z.array(part) }) }),
+  test('the source Zod schema and generated document are immutable', () => {
+    const before = JSON.stringify(z.toJSONSchema(part, { io: 'input' }));
+    const [tool] = collectTools(service, 'AGENT', { flattenUnionInput: true });
+    if (!tool) throw new Error('expected tool');
+    expect(JSON.stringify(z.toJSONSchema(part, { io: 'input' }))).toBe(before);
+    expect(Object.isFrozen(tool.presentationSchema)).toBe(true);
+  });
+
+  test('tuple items and definition nodes are traversed without resolving references', () => {
+    const source = {
+      type: 'object',
+      properties: {
+        tuple: { type: 'array', prefixItems: [{ $ref: '#/$defs/operation' }] },
+      },
+      $defs: {
+        operation: {
+          oneOf: [
+            {
+              type: 'object',
+              properties: { kind: { const: 'a' }, value: { type: 'string' } },
+              required: ['kind', 'value'],
+            },
+            {
+              type: 'object',
+              properties: { kind: { const: 'b' }, count: { type: 'number' } },
+              required: ['kind', 'count'],
+            },
+          ],
+        },
+      },
+    };
+    const snapshot = JSON.stringify(source);
+    const flattened = flattenToolJsonSchema(source);
+    expect(JSON.stringify(source)).toBe(snapshot);
+    expect(hasUnionKeyword(flattened)).toBe(false);
+    expect(JSON.stringify(flattened)).toContain('#/$defs/operation');
+  });
+
+  test('params/input merging namespaces recursive root references', () => {
+    const RecursiveInput: z.ZodType = z.lazy(() =>
+      z.object({ name: z.string(), child: RecursiveInput.optional() }),
     );
-    const json = z.toJSONSchema(flat, { io: 'input' });
-    // The discriminator survives as an enum, and the per-variant fields as
-    // described optionals — proof the hint text is preserved through the walk.
-    const text = JSON.stringify(json);
-    expect(text).toContain('Required if type =');
-    expect(text).toContain('text');
-    expect(text).toContain('image');
-  });
-
-  test('a top-level union still flattens (the original shallow behaviour)', () => {
-    const flat = flattenUnionsDeep(part);
-    expect(flat).toBeInstanceOf(z.ZodObject);
-    expect(hasUnionKeyword(z.toJSONSchema(flat, { io: 'input' }))).toBe(false);
+    const presentation = buildToolPresentationSchema({
+      paramsSchema: z.object({ tenantId: z.string() }),
+      inputSchema: RecursiveInput,
+      unrepresentable: 'throw',
+    });
+    const text = JSON.stringify(presentation);
+    expect(presentation.$schema).toBe('http://json-schema.org/draft-07/schema#');
+    expect(text).toContain('"$ref":"#/definitions/input"');
+    expect(text).toContain('"definitions":{"input"');
+    expect(text).not.toContain('"$defs"');
+    expect(text).not.toContain('"$ref":"#"');
   });
 });

@@ -16,7 +16,6 @@
  * machinery (ADR 0008). Pass `onRecord` to feed a metrics backend the raw parts.
  */
 import { getTraceId } from '../observability/context';
-import type { MethodDef } from '../server/types';
 import type { ToolCallHooks } from './execute';
 
 /** The structured record behind each logged line — for metrics via `onRecord`. */
@@ -59,7 +58,7 @@ export interface ToolLoggerConfig {
 export function createToolLogger(config: ToolLoggerConfig = {}): ToolCallHooks {
   const log = config.log ?? ((line: string) => console.info(line));
   return {
-    afterToolCall: (toolName, _args, result, durationMs, context, endpoint: MethodDef) => {
+    afterToolCall: ({ toolName, result, durationMs, context, endpoint }) => {
       const record: ToolCallRecord = {
         tool: toolName,
         service: endpoint.serviceName,

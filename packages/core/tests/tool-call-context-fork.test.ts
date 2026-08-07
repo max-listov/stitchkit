@@ -110,7 +110,7 @@ describe('concurrent calls do not write into each other', () => {
     const audit = createAuditHook({ write: (e) => void events.push(e) });
     const tools = mountAgent(service, {
       hooks: {
-        beforeToolCall: (_name, args) => {
+        beforeToolCall: ({ args }) => {
           setRequestDimensions({ stampedEarly: String((args as { id: string }).id) });
         },
         afterToolCall: audit.toolCall.afterToolCall,
@@ -289,9 +289,9 @@ describe('a failure stays inside the call that failed', () => {
     const audit = createAuditHook({ write: (e) => void events.push(e) });
     const tools = mountAgent(service, {
       hooks: {
-        afterToolCall: (...args) => {
+        afterToolCall: (options) => {
           seenInHook = getRequestContext()?.error;
-          return audit.toolCall.afterToolCall?.(...args);
+          return audit.toolCall.afterToolCall?.(options);
         },
       },
       lifecycle: {

@@ -77,7 +77,7 @@ export function hasUsableChars(value: string): boolean {
  * that mount goes dark, not just the bad one. A tool name is an
  * *identity* defect like a duplicate name (which also throws unconditionally), not
  * a *representability* one like an unconvertible schema (which gets the
- * `onIncompatibleSchema` policy). → ADR 0035.
+ * schema-validation policy). → ADR 0035.
  */
 export function assertToolName(name: string, serviceName: string, key: string): void {
   const where = `service "${serviceName}", method "${key}"`;

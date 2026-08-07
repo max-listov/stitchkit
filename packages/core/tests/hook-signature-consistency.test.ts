@@ -8,7 +8,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppError, type RuntimeContext } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
@@ -67,9 +66,9 @@ describe('nativeTools receives the resolved auth', () => {
           seen.push(auth);
           return {};
         },
-        nativeTools: (mcp: McpServer, auth) => {
+        nativeTools: ({ rawServer }, auth) => {
           seen.push(auth);
-          mcp.registerTool(
+          rawServer.registerTool(
             'whoami',
             { description: 'Who am I', inputSchema: {} },
             async () => ({ content: [{ type: 'text', text: auth.tenantId }] }),

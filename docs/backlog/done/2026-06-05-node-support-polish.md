@@ -1,14 +1,18 @@
 ---
-title: Node-поддержка — полировка (type-leak, Biome-guard, доки)
-description: Три некритичных остатка после закрытия runtime-agnostic-ядра. Node уже полноценно работает; это polish — убрать утечку Bun-типов из .d.ts, добавить Fetch-purity Biome-guard, дописать Node-доки (serveNode в getting-started + deployment).
+title: Node-поддержка — чистые .d.ts и Fetch-purity guard
+description: Remove Bun namespace leakage from Node-facing declarations and add a static guard that forbids Bun globals in runtime-neutral source.
 type: task
-status: inbox
+status: done
 created: 2026-06-05
-updated: 2026-06-05
+updated: 2026-08-07
 related: docs/backlog/done/2026-05-20-runtime-agnostic-core.md
+completed: 2026-08-07 07:13 +00:00
 ---
 
 # Node-поддержка — полировка (остатки runtime-agnostic-ядра)
+
+> **Target release:** 0.37.0. Only Item 1 and Item 2 remain; the Node docs from
+> Item 3 already shipped and are outside this implementation pass.
 
 > **Вынесено из** [`runtime-agnostic-core`](../done/2026-05-20-runtime-agnostic-core.md)
 > при его закрытии. Само ядро (Node работает, verified, зашипано в 0.3.0) —
@@ -57,21 +61,38 @@ Node-консьюмер без `@types/bun` ловит `TS2503: Cannot find name
   core-директории. Проверить, что не ломает легитимные `Bun.*` в
   `create.ts`/`socket-io.ts`/`router.ts` (они вне «чистых» дир).
 
-## Item 3 — Node-доки: `serveNode` в getting-started + deployment (Ф5)
+## Item 3 — Node docs (complete)
 
-**Приоритет: P3 (docs).**
+The `serveNode` getting-started and deployment documentation shipped in the
+0.6.0 pass. It stays out of this task; implementation must not rewrite it unless
+the public type cleanup changes an example.
 
-`docs/guide/getting-started.md` упоминает Node только строкой в prerequisites
-(«Node ≥ 22 supported via `stitchkit/node`») — **нет примера `serveNode`**.
-`docs/guide/testing-and-deployment.md` — только предупреждение, что Bun-only код
-не пойдёт на Node; **нет секции деплоя на Node**. Единственный реальный
-`serveNode`-пример — в `realtime.md` (про сокеты).
+## Implementation plan
 
-- **Фикс:** в getting-started — короткий Node-вариант запуска (`serveNode`
-  рядом с `createServer`); в testing-and-deployment — секция «Deploy on Node»
-  (serveNode + `engines`/`@types/bun` peer + `transports:['websocket']` для
-  Socket.IO на Node). `staticRoute` помечать Bun-only (статика на Node — через
-  фронт/CDN).
+1. Trace every exported declaration reachable from `stitchkit/node` and the
+   runtime-neutral handler surface; pin the current `Bun` namespace leak with a
+   minimal consumer fixture that has no `@types/bun`.
+2. Make the raw/fetch context server type generic at the neutral boundary,
+   defaulting to `unknown`. Keep the concrete `BunServer` type only on Bun-owned
+   APIs such as `createServer`; update all call sites without casts.
+3. Add a declaration-level consumer test proving `stitchkit/node` typechecks in
+   a Node-only fixture and that Bun consumers still receive the concrete server
+   type where Bun owns the API.
+4. Add a path-scoped static guard for runtime-neutral directories and
+   `createHandler`. If the installed Biome version cannot express the rule
+   precisely, implement one repository check script and include it in `lint` or
+   `build`; do not weaken the boundary or suppress findings.
+5. Update the API reference/JSDoc if the public generic surface changes and add
+   the additive change under the 0.37.0 changelog entry.
+
+## Acceptance
+
+- [x] A Node-only consumer imports and uses `stitchkit/node` without installing `@types/bun`
+- [x] Bun-owned entrypoints retain their concrete `BunServer` typing
+- [x] Runtime-neutral source fails a repository gate when a `Bun` global is introduced
+- [x] The guard excludes only the explicitly Bun-owned implementation files
+- [x] No casts, suppression comments or duplicate server-context types are introduced
+- [x] Existing Node smoke and consumer lanes remain part of the final `bun run verify` gate
 
 ## Ссылки
 
@@ -79,3 +100,26 @@ Node-консьюмер без `@types/bun` ловит `TS2503: Cannot find name
 - ADR 0013 (runtime-agnostic core) — `docs/decisions/0013-runtime-agnostic-core.md`.
 - Код: `packages/core/src/server/types.ts`, `server/index.ts`, `server/create.ts`,
   `biome.json`, `docs/guide/{getting-started,testing-and-deployment}.md`.
+
+## Что сделано
+
+- [x] **Runtime boundary:** `packages/core/src/server/bun.ts` now owns
+      `Bun.serve`, its config and concrete aliases; `server/create.ts` is a
+      generic Fetch-only handler with no Bun global or Bun declaration.
+- [x] **Single context model:** `RawRoute`, `RawRouteContext`, `HandlerConfig`,
+      `FetchHandler` and `FetchComposition` take one host-server generic.
+      `stitchkit/server` binds it to `BunServer`; `stitchkit/node` defaults it to
+      `unknown` without a duplicate context type.
+- [x] **Node Socket.IO declarations:** `server/socket-io-node.ts` exposes only
+      the Node capabilities (`io`, `attach`) while sharing one config schema;
+      the Node declaration graph no longer reaches the Bun engine.
+- [x] **Static guard:** `biome.json` rejects the `Bun` global across core source
+      except `server/bun.ts` and `server/file.ts`. A temporary probe under
+      `tools/` failed with `lint/style/noRestrictedGlobals`, then was removed.
+- [x] **Consumer/gates:** a third packed fixture under
+      `packages/core/scripts/consumer-lane/fixtures/node` installs Node peers
+      without `@types/bun` and runs strict declaration checking. Lint, typecheck,
+      34 Bun server/Socket.IO tests, build, Node HTTP/Socket.IO smoke and all
+      three packed consumers are green.
+- [x] **Docs:** API reference, Node deployment guide, changelog and generated
+      LLM docs describe the runtime-specific type surfaces and migration.

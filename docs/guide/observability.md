@@ -157,7 +157,16 @@ either way, so your sink reads it as a column instead of re-parsing the path:
 > same hooks object is assignable to `ToolLifecycle`, so this recipe is the one
 > people apply to tools — and since ADR 0045 each tool call runs in its own
 > context. Read the value off the tool row (`event.toolName != null`); both rows
-> carry the same `traceId`.
+> carry the same `traceId`, so recovering the enclosing request is one filter:
+>
+> ```bash
+> jq -s '[.[] | select(.dimensions.botId == "B7") | .traceId] as $t
+>        | .[] | select(.traceId | IN($t[]))' audit.jsonl
+> ```
+>
+> Worth checking your **runbooks** as well as your code when this lands: a
+> dimension filter written against request rows keeps parsing and starts
+> returning nothing.
 
 ```ts
 // beforeHandle (success) and onError (failure) alike:
@@ -287,11 +296,11 @@ metric, a custom log line, anything that is not a full audit row.
 |---------|------|-------|
 | HTTP | `LifecycleHooks.afterHandle` / `onError` | after each HTTP request |
 | MCP & agent tools | `ToolCallHooks.afterToolCall` | after each tool call |
-| MCP & agent tools | `ToolCallHooks.onToolError` | when a tool handler throws |
+| MCP & agent tools | `ToolCallHooks.onToolError` | when executable parsing, extension resolution, lifecycle or the handler throws |
 
 `afterHandle(ctx, result, endpoint)` runs after a handler returns;
-`onError(ctx, error, endpoint)` when one throws. `afterToolCall(toolName, args,
-result, durationMs, context, endpoint, error)` runs after every tool call —
+`onError(ctx, error, endpoint)` when one throws. `afterToolCall(options)` runs
+after every tool call —
 success and error alike — carrying the tool name, the arguments, the result, the
 duration, the call context, the endpoint identity, and (only when the call failed
 by throwing) the raw thrown value.
@@ -300,7 +309,7 @@ by throwing) the raw thrown value.
 createMcpHandler({
   serverInfo, auth, services,
   hooks: {
-    afterToolCall: (toolName, _args, result, durationMs, context) => {
+    afterToolCall: ({ toolName, result, durationMs }) => {
       metrics.timing(`tool.${toolName}`, durationMs, { ok: String(result.ok) })
     },
   },
@@ -326,7 +335,7 @@ normalisation, stack and `cause` intact:
 createMcpHandler({
   serverInfo, auth, services,
   hooks: {
-    onToolError: (toolName, error, _context, endpoint) => {
+    onToolError: ({ toolName, error, endpoint }) => {
       reportToolFailure({
         tool: toolName,
         action: endpoint.key,
@@ -338,13 +347,12 @@ createMcpHandler({
 })
 ```
 
-It fires for a throw from `beforeHandle`, the handler or `afterHandle` — the
-span where information is destroyed — and runs **before** `afterToolCall`, so
-whatever it records is in place when the audit hook reads it. It deliberately
-does not fire for an argument-validation failure, an output-schema mismatch or a
-`beforeToolCall` rejection: each of those is already described in full by the
-`ToolResult`, and a second path to the same information only invites
-double-logging.
+It fires for a throw from executable params/input/`ToolExtend` parsing,
+extension resolution, `beforeHandle`, the handler or `afterHandle` — every span
+where information is destroyed — and runs **before** `afterToolCall`. It does
+not fire for an ordinary validation result, an output-schema mismatch or a
+`beforeToolCall` rejection: each is already described in full by its
+`ToolResult`.
 
 It observes, it does not handle: the tool envelope is always the framework's, a
 returned value is ignored, and a throw from the hook itself is reported to
@@ -366,11 +374,11 @@ either — the call is simply not where that helper belongs.)
 ### One row that names the cause
 
 You do not need to correlate the two hooks yourself. `afterToolCall` receives the
-same raw value as a **seventh parameter**, so one hook can build one record:
+same raw value as the named `error` field, so one hook can build one record:
 
 ```ts
 hooks: {
-  afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {
+  afterToolCall: ({ toolName, result, durationMs, endpoint, error }) => {
     void writeRow({ toolName, result, durationMs, cause: error, endpoint })
   },
 }
@@ -378,8 +386,8 @@ hooks: {
 
 `error` is present only when the call failed by **throwing** — a
 validation failure or a `beforeToolCall` rejection leaves it `undefined`, because
-neither ever had a raw value to lose. The parameter is additive: a six-parameter
-hook written before it keeps compiling and keeps firing.
+neither ever had a raw value to lose. Consumers destructure only the fields they
+use; future optional fields do not change callback arity.
 
 `createAuditHook` uses it already. Where the envelope was scrubbed to
 `INTERNAL_SERVER_ERROR`, the row's `errorMessage` becomes the real message
@@ -397,11 +405,13 @@ sink of your own (a tracker, a stack, an alert), `afterToolCall` for the record.
 `createAuditHook` already keys every event by **service** and **action**
 (`event.serviceName` / `event.action`, → ADR 0029) — reach for the raw hook only
 when you also need the handler **output**, which the audit wrapper never sees. For
-that, read the endpoint identity off the `MethodDef` the hook receives —
-`endpoint.serviceName` (the contract prefix) and `endpoint.key` (the endpoint key,
+that, read the endpoint identity off the `OperationIdentity` the tool hook
+receives — `endpoint.serviceName` and `endpoint.key` (the endpoint key or native
+action,
 e.g. `updatePartial`). They are stable and always present (→ ADR 0022); the action
 is not in the URL and `toolName` is absent on HTTP-only endpoints, so this is the
-only reliable pair. `afterHandle` also gives you the handler `result` — so it is
+only reliable pair. Contract operations are full `MethodDef` values; native MCP
+operations intentionally have no HTTP `path`. `afterHandle` also gives you the handler `result` — so it is
 the home for a rich mutation audit that records output:
 
 ```ts

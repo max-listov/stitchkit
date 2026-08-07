@@ -96,9 +96,12 @@ describe('inlineMcpAppBundle', () => {
     expect(inlineMcpAppBundle(html)).toBe(html);
   });
 
-  test('throws a clear error when ext-apps is absent but the placeholder is present', () => {
-    // ext-apps is not installed in this workspace — the inliner must fail loud.
+  test('inlines the installed ext-apps runtime', () => {
     const html = `<script>${EXT_APPS_BUNDLE_PLACEHOLDER}</script>`;
-    expect(() => inlineMcpAppBundle(html)).toThrow(/ext-apps/);
+    const inlined = inlineMcpAppBundle(html);
+
+    expect(inlined).not.toContain(EXT_APPS_BUNDLE_PLACEHOLDER);
+    expect(inlined).toContain('globalThis.ExtApps=');
+    expect(inlined.length).toBeGreaterThan(html.length);
   });
 });

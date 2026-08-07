@@ -60,6 +60,130 @@ current one *up to* your target, and apply each snippet.
    (`STITCH_ERROR_STATUS`, `serveFile`, `scopePrefixes`, `afterToolCall`'s
    `MethodDef`, `maxUploadBytes`) are available to adopt, not required.
 
+## The 0.37 migration
+
+Tool presentation is no longer an executable Zod parser. Replace the removed
+flatten helpers with the JSON Schema compiler, and choose the explicit
+`MountableTool` surface when using the advanced collection API:
+
+```ts
+// before
+const flat = flattenUnionsDeep(zodSchema)
+mountable.schema
+
+// after
+const flat = flattenToolJsonSchema(
+  z.toJSONSchema(zodSchema, { target: 'draft-07', io: 'input' }),
+)
+mountable.presentationSchema // model/MCP/manifest JSON Schema
+mountable.argumentSchema     // executable CLI argument adapter only
+```
+
+Contract and native handlers keep their original Zod schemas; MCP and agent SDK
+adapters now forward raw arguments so defaults, coercions, refinements and
+transforms execute exactly once inside Stitchkit. There are no compatibility
+exports for `flattenDiscriminatedUnion`, `flattenUnionsDeep` or
+`MountableTool.schema`. → ADR 0050
+
+Tool-call hooks now take one options object. Migrate all three callbacks; there
+are no positional overloads:
+
+```ts
+// before
+beforeToolCall: (toolName, args, context, endpoint) => {}
+afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {}
+onToolError: (toolName, error, context, endpoint) => {}
+
+// after
+beforeToolCall: ({ toolName, args, context, endpoint }) => {}
+afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {}
+onToolError: ({ toolName, error, context, endpoint }) => {}
+```
+
+### MCP schema validation
+
+The standalone validator now takes one object and live MCP configs carry the
+same rules under `schemaValidation`. Migrate every positional call and every
+`onIncompatibleSchema` field; there is no old-shape overload:
+
+```ts
+// before
+validateMcpSchemas(services, 'throw', logger, { requireTypedProperties: true })
+createMcpHandler({ services, onIncompatibleSchema: 'throw' })
+
+// after
+validateMcpSchemas({ services, policy: 'throw', logger, requireTypedProperties: true })
+createMcpHandler({ services, schemaValidation: { policy: 'throw' } })
+```
+
+Put `extend` and `flattenUnionInput` beside `services`, not inside
+`schemaValidation`. The handler applies the profile to the exact prepared schema
+it advertises. Add `requirePortableFormats: true` when every custom JSON Schema
+format must be rejected before a client sees it.
+
+Native MCP registration also changed shape in 0.37. Move protected tools to the
+framework registrar; keep an SDK-raw tool only by naming the opt-out:
+
+```ts
+// before
+nativeTools: (server, auth) => server.registerTool(name, config, handler)
+
+// after — lifecycle, hooks and schema policy apply
+nativeTools: ({ registerTool }, auth) => registerTool({
+  name, description, identity, input, output, handler,
+})
+
+// after — intentionally raw
+nativeTools: ({ rawServer }, auth) => rawServer.registerTool(name, config, handler)
+```
+
+If a tool hook annotated `endpoint` as `MethodDef`, remove that annotation or
+use `OperationIdentity`: native operations have service/action/scope/method but
+no HTTP path.
+
+### MCP HTTP sessions
+
+Finally, replace the MCP HTTP session boolean. Omission changed meaning:
+
+```ts
+// before → after
+stateless: true  // → sessionMode: 'stateless'
+stateless: false // → sessionMode: 'stateful'
+
+// before: omission was stateful
+// after:  omission is stateless
+```
+
+If the client relies on `Mcp-Session-Id`, server push, progress across requests
+or resumable SSE, set `sessionMode: 'stateful'` explicitly. Synchronous tool
+servers should omit it and use the new restart-safe default.
+
+### Node-facing server types
+
+`stitchkit/server` remains Bun-concrete: an explicitly annotated `RawRoute`
+still receives `BunServer`. `stitchkit/node` no longer drags Bun declarations
+into a Node project. Its raw routes default the host server to `unknown`, and
+its Socket.IO handle exposes only Node capabilities:
+
+```ts
+// before — Node entry still leaked Bun-only fields and ambient types
+const route: RawRoute = { handler: (_req, ctx) => ctx.server?.upgrade(...) }
+const socket = await createSocketIOServer(config)
+socket.websocket
+
+// after — name a custom embedding host only when one exists
+const route: RawRoute<MyHostServer> = {
+  handler: (_req, ctx) => useHost(ctx.server),
+}
+const socket = await createSocketIOServer(config)
+socket.io
+socket.attach(nodeHttpServer)
+```
+
+Inline Bun routes passed to `createServer` continue to infer `BunServer`; no
+annotation is needed. Node consumers can remove `@types/bun` unless another
+dependency independently requires it.
+
 ## Your handlers may be returning more than the contract declares
 
 stitchkit validates every handler's return value against the endpoint's `output`

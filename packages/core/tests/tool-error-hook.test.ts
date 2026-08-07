@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError } from '../src/contract';
-import type { MethodDef } from '../src/server/types';
+import type { MethodDef, OperationIdentity } from '../src/server/types';
 import { mountAgent } from '../src/tools/agent';
 import { executeToolMethod, type ToolCallHooks, type ToolResult } from '../src/tools/execute';
 
@@ -43,7 +43,7 @@ interface Seen {
   toolName: string;
   error: unknown;
   context: Record<string, unknown>;
-  endpoint: MethodDef;
+  endpoint: OperationIdentity;
 }
 
 function recorder(): { seen: Seen[]; hooks: ToolCallHooks } {
@@ -51,7 +51,7 @@ function recorder(): { seen: Seen[]; hooks: ToolCallHooks } {
   return {
     seen,
     hooks: {
-      onToolError: (toolName, error, context, endpoint) => {
+      onToolError: ({ toolName, error, context, endpoint }) => {
         seen.push({ toolName, error, context, endpoint });
       },
     },
@@ -188,10 +188,10 @@ describe('onToolError — the span it covers', () => {
       beforeToolCall: () => {
         throw new AppError('UNAUTHORIZED', 'no scope', 401);
       },
-      onToolError: (_n, error) => {
+      onToolError: ({ error }) => {
         seen.push(error);
       },
-      afterToolCall: (_n, _a, result) => {
+      afterToolCall: ({ result }) => {
         results.push(result);
       },
     };
@@ -322,7 +322,7 @@ describe('onToolError — it observes, it does not interfere', () => {
       onToolError: () => {
         throw new Error('the sink is down');
       },
-      afterToolCall: (_n, _a, result) => {
+      afterToolCall: ({ result }) => {
         results.push(result);
       },
     };
@@ -404,7 +404,7 @@ describe('the raw cause reaches afterToolCall too', () => {
     const thrown = new Error('db timeout');
     const seen: Array<{ result: ToolResult; error: unknown }> = [];
     const hooks: ToolCallHooks = {
-      afterToolCall: (_n, _a, result, _d, _c, _e, error) => {
+      afterToolCall: ({ result, error }) => {
         seen.push({ result, error });
       },
     };
@@ -427,7 +427,7 @@ describe('the raw cause reaches afterToolCall too', () => {
     const seen: unknown[] = [];
     let calls = 0;
     const hooks: ToolCallHooks = {
-      afterToolCall: (_n, _a, _r, _d, _c, _e, error) => {
+      afterToolCall: ({ error }) => {
         calls += 1;
         seen.push(error);
       },
@@ -469,12 +469,13 @@ describe('the raw cause reaches afterToolCall too', () => {
     expect(seen).toEqual([undefined, undefined, undefined, undefined]);
   });
 
-  test('a six-parameter hook still compiles and still fires', async () => {
-    // The parameter is additive: every hook written before it keeps working,
-    // which is why this is not a breaking change.
+  test('a hook may destructure only the fields it needs', async () => {
+    // Future fields are additive because callbacks accept one object and
+    // consumers destructure only the stable vocabulary they use.
     let fired = 0;
     const hooks: ToolCallHooks = {
-      afterToolCall: (_toolName, _args, _result, _durationMs, _context, _endpoint) => {
+      afterToolCall: ({ toolName }) => {
+        expect(toolName).toBe('w');
         fired += 1;
       },
     };

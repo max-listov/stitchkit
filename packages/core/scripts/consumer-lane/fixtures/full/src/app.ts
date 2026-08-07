@@ -11,12 +11,20 @@ import { defineContract } from 'stitchkit/contract';
 import { createAuditHook, type RequestEvent } from 'stitchkit/observability';
 import { implement } from 'stitchkit/server';
 import {
+  buildMcpServer,
+  createMcpHandler,
   type ErrorHintFn,
+  EXT_APPS_BUNDLE_PLACEHOLDER,
+  flattenToolJsonSchema,
+  inlineMcpAppBundle,
   mountAgent,
+  type NativeMcpToolDefinition,
   type ToolCallContext,
   type ToolCallHooks,
   type ToolLifecycle,
+  type ToolPresentationSchema,
   type ToolResult,
+  validateMcpSchemas,
 } from 'stitchkit/tools';
 import { z } from 'zod';
 
@@ -28,6 +36,20 @@ function check(what: string, ok: boolean, detail?: unknown): void {
   failures += 1;
   console.error(`  ✗ ${what}`, detail === undefined ? '' : detail);
 }
+
+const presentation: ToolPresentationSchema = flattenToolJsonSchema(
+  z.toJSONSchema(
+    z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('a'), value: z.string() }),
+      z.object({ kind: z.literal('b'), count: z.number() }),
+    ]),
+    { io: 'input' },
+  ),
+);
+check(
+  'the packed presentation compiler exposes one object without executable Zod',
+  presentation.type === 'object' && !('oneOf' in presentation),
+);
 
 const widgets = defineContract(
   { prefix: 'widgets' },
@@ -54,6 +76,89 @@ const service = implement(widgets, {
   },
 });
 
+const signedWebhook = defineContract(
+  { prefix: 'signed-webhook' },
+  {
+    receive: {
+      method: 'POST',
+      path: '/',
+      desc: 'Receive signed webhook',
+      rawBody: true,
+      input: z.object({ event: z.string() }),
+      output: z.object({ rawLength: z.number() }),
+    },
+  },
+);
+implement(signedWebhook, {
+  receive: (context) => {
+    const rawBody: string = context.rawBody;
+    const request: Request = context.req;
+    void request;
+    return { rawLength: rawBody.length };
+  },
+});
+
+const NativeInputSchema = z.object({ id: z.string() });
+const NativeOutputSchema = z.object({ updated: z.boolean() });
+const nativeDefinition: NativeMcpToolDefinition<
+  typeof NativeInputSchema,
+  typeof NativeOutputSchema
+> = {
+  name: 'native_update',
+  description: 'Update through native MCP content',
+  identity: {
+    serviceName: 'nativeWidgets',
+    action: 'update',
+    scope: 'admin',
+    method: 'PATCH',
+  },
+  input: NativeInputSchema,
+  output: NativeOutputSchema,
+  handler: ({ input }) => ({
+    content: [{ type: 'text', text: input.id }],
+    structuredContent: { updated: true },
+  }),
+};
+
+let nativeRegistered = false;
+buildMcpServer(
+  {
+    serverInfo: { name: 'consumer', version: '1' },
+    services: [],
+    nativeTools: ({ registerTool }) => {
+      registerTool(nativeDefinition);
+      nativeRegistered = true;
+    },
+  },
+  undefined,
+);
+check('the packed native registrar accepts a typed definition', nativeRegistered);
+
+const defaultMcpHandler = createMcpHandler({
+  serverInfo: { name: 'consumer', version: '1' },
+  auth: () => ({ id: 'consumer' }),
+  services: [],
+});
+check(
+  'the packed handler accepts the default stateless config',
+  typeof defaultMcpHandler === 'function',
+);
+if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+  createMcpHandler({
+    serverInfo: { name: 'consumer', version: '1' },
+    auth: () => ({ id: 'consumer' }),
+    services: [],
+    // @ts-expect-error 0.37 removed the boolean; sessionMode is the only shape.
+    stateless: true,
+  });
+}
+
+validateMcpSchemas({ services: [service], requirePortableFormats: true });
+if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+  // @ts-expect-error 0.37 accepts one object; positional validation is gone.
+  validateMcpSchemas([service], 'throw');
+}
+
 // ── types a consumer is required to name ─────────────────────────────────────
 
 const lifecycle: ToolLifecycle = { beforeHandle: () => undefined };
@@ -70,13 +175,13 @@ const events: RequestEvent[] = [];
 const audit = createAuditHook({ write: (e: RequestEvent) => void events.push(e) });
 
 const hooks: ToolCallHooks = {
-  onToolError: (_toolName, error) => {
+  onToolError: ({ error }) => {
     seenByOnToolError.push(error);
   },
-  afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {
+  afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
     seenByAfterToolCall.push({ result, error, context });
     // Chain the framework's own audit hook, exactly as a project would.
-    void audit.toolCall.afterToolCall?.(
+    void audit.toolCall.afterToolCall?.({
       toolName,
       args,
       result,
@@ -84,7 +189,7 @@ const hooks: ToolCallHooks = {
       context,
       endpoint,
       error,
-    );
+    });
   },
 };
 
@@ -153,6 +258,20 @@ check(
     serviceName: failedRow?.serviceName,
     action: failedRow?.action,
   },
+);
+
+// This fixture installs the tool peers but deliberately omits ext-apps. The
+// tools entrypoint remains usable; only requesting its browser bundle fails.
+let missingExtAppsMessage = '';
+try {
+  inlineMcpAppBundle(`<script>${EXT_APPS_BUNDLE_PLACEHOLDER}</script>`);
+} catch (error) {
+  missingExtAppsMessage = error instanceof Error ? error.message : String(error);
+}
+check(
+  'missing ext-apps fails only when bundle inlining is requested',
+  missingExtAppsMessage.includes('@modelcontextprotocol/ext-apps'),
+  missingExtAppsMessage,
 );
 
 if (failures > 0) {

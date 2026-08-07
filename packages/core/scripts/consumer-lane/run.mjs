@@ -49,7 +49,8 @@ const ACCEPTED_UNRESOLVED = [
   '@socket.io/component-emitter',
 ];
 
-const FIXTURES = ['minimal', 'full'];
+const FIXTURES = ['minimal', 'full', 'node'];
+const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
 let failed = false;
 const timings = [];
@@ -107,7 +108,20 @@ try {
     manifest.dependencies.stitchkit = `file:${tarball}`;
     writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
+    // Checked-in templates point at local source so editors can type them before
+    // a package exists. The consumer lane must prove the opposite boundary:
+    // remove that authoring-only path before installing and checking the tarball.
+    const tsconfigPath = join(dir, 'tsconfig.json');
+    const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
+    delete tsconfig.compilerOptions.paths;
+    writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
+
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
+
+    if (name === 'node' && existsSync(join(dir, 'node_modules', '@types', 'bun'))) {
+      failed = true;
+      console.error('[consumer-lane] node: unexpectedly installed @types/bun');
+    }
 
     // The consumer's default. Any error here is the package's fault, full stop.
     const strict = step(`${name}: typecheck`, () => tsc(dir, []));
@@ -121,12 +135,27 @@ try {
     const libCheck = step(`${name}: declaration check`, () =>
       tsc(dir, ['--skipLibCheck', 'false']),
     );
+    const fixtureUnresolved = new Set();
     for (const line of libCheck.split('\n')) {
       if (!line.includes('node_modules/stitchkit/')) continue;
       const module = line.match(/Cannot find module '([^']+)'/);
       const namespace = line.match(/Cannot find (?:namespace|name) '([^']+)'/);
       const found = module?.[1] ?? namespace?.[1];
-      if (found) unresolved.add(found);
+      if (found) {
+        unresolved.add(found);
+        fixtureUnresolved.add(found);
+      }
+    }
+    if (name === 'node') {
+      const bunLeaks = [...fixtureUnresolved].filter((name) =>
+        NODE_FORBIDDEN_UNRESOLVED.includes(name),
+      );
+      if (bunLeaks.length > 0) {
+        failed = true;
+        console.error(
+          `[consumer-lane] node: Bun declarations leaked into stitchkit/node: ${bunLeaks.join(', ')}`,
+        );
+      }
     }
 
     const output = step(`${name}: run`, () => {

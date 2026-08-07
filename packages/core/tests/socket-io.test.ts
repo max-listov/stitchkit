@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { createSocketIOClient, type SocketIOClientConfig } from '../src/browser/socket-io';
-import { createServer } from '../src/server/create';
+import { type BunServer, createServer } from '../src/server/bun';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
 import type { RawRoute } from '../src/server/types';
 import { composeWebSocketHandlers, webSocketLane } from '../src/server/websocket';
@@ -306,7 +306,7 @@ composeSock.io.on('connection', (s) => {
 });
 
 // Raw lane: a separate upgrade route stamps the discriminator onto ws.data.
-const echoUpgradeRoute: RawRoute = {
+const echoUpgradeRoute: RawRoute<BunServer> = {
   method: 'GET',
   path: '/ws/echo',
   handler: (req, ctx) => {

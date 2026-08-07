@@ -69,7 +69,7 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       key,
       toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
       // Forced for a raw endpoint, exactly as in `implement` — see there.
-      expose: endpoint.rawResponse ? HTTP_ONLY : endpoint.expose,
+      expose: endpoint.rawResponse || endpoint.rawBody ? HTTP_ONLY : endpoint.expose,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
       // Opaque app metadata rides through (was dropped here), with the
@@ -80,11 +80,13 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
+      maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
       // Transport-neutral retry/replay hint — rides through (→ ADR 0027).
       idempotent: endpoint.idempotent,
       // Carried so the tool mounts skip it for the same reason as a local
       // service, rather than by accident. → ADR 0038.
       rawResponse: endpoint.rawResponse,
+      rawBody: endpoint.rawBody,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: async (ctx: RuntimeContext) => {
         // A raw endpoint proxies like any other: `createClient` asks for

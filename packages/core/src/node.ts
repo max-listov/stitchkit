@@ -19,10 +19,10 @@ export { createImplement, implement } from './server/implement';
 export type { LogFormat } from './server/logger';
 export { type NodeServerConfig, type NodeServerHandle, serveNode } from './server/node';
 export {
-  createSocketIOServer,
+  createNodeSocketIOServer as createSocketIOServer,
+  type NodeSocketIOServerHandle as SocketIOServerHandle,
   type SocketIOServerConfig,
-  type SocketIOServerHandle,
-} from './server/socket-io';
+} from './server/socket-io-node';
 export type {
   FetchComposition,
   FetchHandler,

@@ -67,9 +67,8 @@ and after, compare.
 ## MCP — `createMcpHandler`
 
 `createMcpHandler` builds a complete Streamable-HTTP MCP server as a single
-`Request → Response` handler. It owns the whole MCP lifecycle — the SSE event
-store, per-session transports, the server instances — so your app never imports
-`@modelcontextprotocol/sdk` itself.
+`Request → Response` handler. It owns the SDK server and transport lifecycle, so
+your app never imports `@modelcontextprotocol/sdk` itself.
 
 ```ts
 import { createMcpHandler } from 'stitchkit/tools'
@@ -100,13 +99,33 @@ createServer({
 | `context` | `(auth) => {…}` — values merged into every tool handler's `ctx` |
 | `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see below) |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
-| `onIncompatibleSchema` | `'throw'` (default) · `'skip'` · `'warn'` — see below |
+| `extend` | extra advertised arguments resolved into handler context |
+| `schemaValidation` | compatibility policy, typed-property guard and portable-format guard |
 | `logger` | a `StitchLogger` for the `'warn'` policy |
-| `nativeTools` | `(server, auth) => …` — register non-contract tools directly on the `McpServer`; receives the resolved identity, but is **not** a scope gate (`lifecycle` does not run for native tools) |
+| `nativeTools` | `({ registerTool, rawServer }, auth) => …` — protected native registration plus an explicit raw SDK escape hatch |
+| `resources` | MCP Apps `ui://` resources mounted on every server |
 | `instructions` | a short host-facing usage hint, surfaced to MCP tool-search |
+| `coerceJsonArgs` | coerce JSON-stringified object/array arguments (default `true`) |
+| `flattenUnionInput` | advertise discriminated unions as one object (default `false`) |
+| `errorHint` | add a project-owned hint to failed tool results |
+| `onOutputStrip` | observe output keys removed by contract validation |
+| `protectedResource` | RFC 9728 metadata used by HTTP `401` responses |
+| `sessionMode` | `'stateless'` (default) or explicit `'stateful'` session/SSE continuity |
 
 `services`, `context` and `nativeTools` all receive the resolved identity, so a
 tenant can be shown only its own tools and every handler can read `ctx.tenantId`.
+
+### Stateless by default; stateful only when required
+
+The default `sessionMode: 'stateless'` creates a fresh SDK server, transport,
+resolved auth/context and runner for each HTTP request. Static contract schemas
+are still prepared once when the handler is constructed. There is no session
+map, event store, sweep timer or `Mcp-Session-Id`, so process replacement and
+load balancing cannot strand a client on an in-memory session.
+
+Opt into `sessionMode: 'stateful'` only when the client needs server-initiated
+messages, cross-request progress or resumable SSE. That mode issues a server
+session id and retains the bounded session/event stores until idle expiry.
 
 ### Guarding tools — `lifecycle`
 
@@ -125,15 +144,20 @@ Without it, a tool call bypasses the HTTP `beforeHandle` — the contract's
 `buildMcpServer` take `lifecycle` too.
 
 The observability `hooks` are symmetric with the HTTP side too: `beforeToolCall`
-and `afterToolCall` receive the resolved **`MethodDef`** as their last argument —
+and `afterToolCall` receive the resolved **`MethodDef`** as `endpoint` —
 the tool-side twin of `afterHandle(ctx, result, endpoint)`. Read
 `endpoint.serviceName` / `.key` / `.meta` directly for an audit row; you do not
 need to rebuild a `toolName → identity` map:
 
 ```ts
 hooks: {
-  afterToolCall: (toolName, args, result, ms, ctx, endpoint) => {
-    audit({ service: endpoint.serviceName, action: endpoint.key, ok: result.ok, ms })
+  afterToolCall: ({ result, durationMs, endpoint }) => {
+    audit({
+      service: endpoint.serviceName,
+      action: endpoint.key,
+      ok: result.ok,
+      ms: durationMs,
+    })
   },
 }
 ```
@@ -144,10 +168,10 @@ hooks: {
 > has no identity and **fails closed**. See
 > [Auth on the tool surface](./auth-and-errors.md#auth-on-the-tool-surface--resolvefromcontext).
 
-### Incompatible schemas — `onIncompatibleSchema`
+### MCP schema validation profile
 
 A contract schema that JSON Schema cannot represent (a `z.date()`, a `z.map()`)
-cannot become a tool. `onIncompatibleSchema` decides what happens:
+cannot become a tool. `schemaValidation.policy` decides what happens:
 
 - `'throw'` (default) — fail the build, listing every offending tool. A static
   `services` array is checked when `createMcpHandler` is constructed, so a bad
@@ -156,8 +180,15 @@ cannot become a tool. `onIncompatibleSchema` decides what happens:
 - `'warn'` — log through `logger` and drop the tool.
 - `'skip'` — drop the tool silently.
 
-`validateMcpSchemas(services)` runs the same check on its own — useful in a
+`validateMcpSchemas({ services })` runs the same check on its own — useful in a
 startup assertion or a test.
+
+For a static `services` array, collection, schema conversion and every enabled
+validation guard run once when the handler is created. Each HTTP request or
+stateful session still receives a fresh `McpServer`, runner, context and native
+registration over that immutable prepared surface. A `services(auth)` factory
+is deliberately prepared after resolving each identity because its tool set may
+change by tenant.
 
 #### Is every property actually usable by a model?
 
@@ -168,17 +199,30 @@ mount succeeds, the tool is advertised, and the model then guesses, retrying the
 same wrong guess because the error does not say what the right one would be.
 
 ```ts
-validateMcpSchemas(services, 'throw', logger, {
-  flattenUnionInput: true,          // mirror the live mount
+validateMcpSchemas({
+  services,
+  policy: 'throw',
+  logger,
+  extend,
+  flattenUnionInput: true,
   requireTypedProperties: true,
   allowUntyped: ['docs_create.payload'],   // deliberately free-form
+  requirePortableFormats: true,
+  allowFormats: [],
 })
 ```
 
 Off by default, because a contract may legitimately declare `z.unknown()`.
 `allowUntyped` takes dotted `tool.property` paths — an entry there is a decision,
-anything else is a finding. Pass the **same** `extend` / `flattenUnionInput` the
-mount uses, or the check vets a different document than the one advertised.
+anything else is a finding. On `createMcpHandler`, put the policy under
+`schemaValidation`; the handler supplies its real `extend` and
+`flattenUnionInput`, so the check cannot vet a different document from the one
+advertised.
+
+`requirePortableFormats` rejects custom `format` values common MCP/AJV clients
+do not know, such as the `cuid2` emitted by `z.cuid2()`. Use a portable
+schema/pattern, or list it in `allowFormats` only when every client supports it.
+stitchkit never removes or rewrites the keyword.
 
 `findUntypedProperties(jsonSchema)` is the same walk, exported on its own if you
 want to assert on a schema you built elsewhere.
@@ -201,25 +245,19 @@ A field that is a number in every variant is advertised as a number, not as a
 bare description. Only genuinely different kinds (a string in one variant, a
 number in another) fall back to unconstrained. → ADR 0044
 
-It is **deep**: unions are flattened at every depth — top level, object fields,
-array items, and through `optional` / `nullable` / `default` / intersection
-wrappers — so no `oneOf` survives anywhere (e.g. a `content.parts[]` that is an
-array of a discriminated union). Schemas a transform cannot safely rebuild
-(refined / piped / lazy / plain non-discriminated unions) are left as-is.
+It is **deep** because the projection walks the generated JSON Schema document,
+including objects, arrays, tuples and schema-definition nodes. Structurally
+identifiable discriminated object unions are flattened wherever they occur.
+Plain unions and unions hidden behind unresolved external references remain
+unions because Stitchkit cannot soundly invent a discriminator.
 
-The flattened form is **lossy but never destructive**. Lossy: per-variant
-strictness and object-level refinements are not advertised — the original schemas
-enforce them in `executeToolMethod`. Not destructive: every object keeps its own
-**key policy** (`.strict()` stays strict, `.loose()` / `.catchall()` still keep
-extra keys), because the advertised schema is not advertised-only — the MCP and
-AI SDKs parse the caller's arguments *with it* and hand the handler the parsed
-result. An object advertised without its policy would silently delete keys the
-contract would have rejected. → [ADR 0034](../decisions/0034-advertised-schema-key-policy.md).
-
-A consequence worth knowing when you read logs: a `.strict()` violation is caught
-by the SDK **before** the tool callback runs, so it comes back as an MCP
-`InvalidParams` protocol error rather than a stitchkit `VALIDATION_ERROR`
-envelope, and `beforeToolCall` / `afterToolCall` do not fire for it.
+The flattened form is **lossy but never executable**. Per-variant refinements
+and incompatible constraints are widened in the presentation document; the
+original Zod contract enforces them exactly once inside `executeToolMethod`.
+MCP and AI adapters forward the raw argument object unchanged, so defaults,
+coercions and transforms cannot run before Stitchkit. Strict violations return
+the normal `VALIDATION_ERROR` tool envelope and fire `beforeToolCall` /
+`afterToolCall`. → [ADR 0050](../decisions/0050-presentation-schema-is-not-a-parser.md).
 
 ## `mountMcp`
 
@@ -455,10 +493,60 @@ so one handler serves both surfaces. Pair `extend` with `lifecycle` (your
 
 ## Native multimodal tools
 
-Contract tools return JSON. For a tool that returns an image or other
-multimodal content, register a native tool. `mountViewFile` is the built-in one
-— it lets a model fetch and view a file (with SSRF and path-traversal
-defenses):
+Contract tools return JSON. A native tool can return MCP text/image/audio/
+resource content directly while still using stitchkit's input/output validation,
+isolated per-call context, lifecycle/RBAC and tool hooks:
+
+```ts
+import { createMcpHandler } from 'stitchkit/tools'
+import { z } from 'zod'
+
+const handleMcp = createMcpHandler({
+  serverInfo: { name: 'my-app', version: '1.0.0' },
+  auth,
+  services: [service],
+  lifecycle: { beforeHandle: authHook },
+  hooks: audit.toolCall,
+  nativeTools: ({ registerTool }, identity) => {
+    registerTool({
+      name: 'render_preview',
+      description: 'Render and inspect a preview',
+      identity: {
+        serviceName: 'mediaTools',
+        action: 'renderPreview',
+        scope: 'admin',
+        method: 'POST',
+      },
+      input: z.object({ prompt: z.string() }),
+      output: z.object({ assetId: z.string() }),
+      handler: async ({ input, traceId }) => ({
+        content: [
+          { type: 'image', data: await renderBase64(input.prompt), mimeType: 'image/png' },
+          { type: 'text', text: `trace: ${traceId}` },
+        ],
+        structuredContent: { assetId: await saveAsset(identity) },
+      }),
+    })
+  },
+})
+```
+
+The configured identity becomes the hook/lifecycle `OperationIdentity` and the
+tool `RequestEvent` (`serviceName`, `action`, `httpMethod`). A native operation
+has no HTTP route, so no fake `path` is added to that identity. If `output` is
+declared, stitchkit parses `structuredContent` with it after `afterHandle`; all
+other MCP fields and content blocks are preserved.
+
+The MCP registration uses an identity carrier: the SDK advertises the compiled
+JSON Schema but forwards the raw object into Stitchkit. Input failures therefore
+use the same validation, lifecycle and hook path as contract tools.
+
+### Explicit raw SDK registration
+
+`rawServer` is deliberately named as an escape hatch. A tool registered there
+does **not** receive stitchkit schema policy, lifecycle, per-call context or
+hooks. The built-in `mountViewFile` helper remains raw for callers that choose
+that boundary; it fetches media with SSRF and path-traversal defenses:
 
 ```ts
 import { createMcpHandler, mountViewFile } from 'stitchkit/tools'
@@ -467,9 +555,14 @@ const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth,
   services: [service],
-  nativeTools: (server) => mountViewFile(server, { baseDir: '/srv/uploads' }),
+  nativeTools: ({ rawServer }) =>
+    mountViewFile(rawServer, { baseDir: '/srv/uploads' }),
 })
 ```
+
+Use raw registration only when opting out is intentional. For a protected
+`view_file`, define it through `registerTool` and call the exported
+`resolveMedia` core from its handler.
 
 ## Logging tool calls — `createToolLogger`
 

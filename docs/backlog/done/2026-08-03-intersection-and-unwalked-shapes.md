@@ -2,11 +2,11 @@
 title: "Two gaps the key-policy fix could not close: z.intersection strips, and unwalked shapes keep their oneOf"
 description: Zod drops both sides' catchall when intersecting objects, so a params + union-input tool still strips on the agent surface; and the shapes flattenUnionsDeep does not walk (tuple, lazy, pipe, readonly) never flatten, so a union nested there still reaches the wire as oneOf.
 type: task
-status: icebox
+status: done
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-07
+completed: 2026-08-07 07:43 +00:00
 related: docs/decisions/0034-advertised-schema-key-policy.md
-defrost: a consumer actually hits it — a `params` + union-`input` tool on the agent surface (MCP rejects those at mount), or a discriminated union nested under a tuple / `z.lazy` / `.transform()`. Both need a different instrument than the ADR 0034 catchall copy, and neither has a reported case.
 ---
 
 # Two residual gaps after ADR 0034
@@ -60,3 +60,17 @@ Before implementing, probe what the hosts actually do with a nested `oneOf` — 
 whole feature exists because weak models mishandled it, and that evidence is from
 ADR 0031's era. If current hosts cope, documenting the limit beats widening the
 walk.
+
+## Что сделано
+
+- [x] **Intersection gap removed at the root** — MCP and agent SDK adapters no
+      longer execute the merged Zod schema, so an intersection cannot strip
+      handler-bound arguments before the original contract parser.
+- [x] **Unwalked-shape gap removed** — flattening now walks generated JSON Schema
+      recursively, including tuple and `$defs` nodes, in
+      `packages/core/src/tools/flatten.ts`.
+- [x] **Executable flatten walker removed** — replaced by the presentation-only
+      compiler recorded in ADR 0050 and covered by
+      `packages/core/tests/flatten-deep.test.ts`.
+- [x] **No separate deferred work remains** — this task is completed by
+      `2026-08-07-decouple-tool-presentation-schema.md`.

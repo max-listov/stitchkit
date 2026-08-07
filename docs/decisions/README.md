@@ -48,7 +48,7 @@ These records were consolidated from the project's internal design notes on
 | [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 |
 | [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 |
 | [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 |
-| [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Accepted — supersedes the "advertised-only" premise of 0031 / 0033 |
+| [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Superseded by 0050 |
 | [0035](0035-tool-name-derivation-and-validation.md) | Tool names: normalise the whole character class, assert at mount | Accepted — refines the tool pipeline of 0007 |
 | [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 |
 | [0037](0037-output-strip-diagnostics.md) | The output strip stays, and becomes visible on demand | Accepted — extends 0014 |
@@ -60,6 +60,12 @@ These records were consolidated from the project's internal design notes on
 | [0043](0043-the-framework-records-the-failure.md) | The framework records the failure; the project overrides it | Accepted — applies 0042's rule to the HTTP path; extends 0012 |
 | [0044](0044-a-collided-field-keeps-its-type.md) | A collided field keeps its type (never `unknown` where a type is provable) | Accepted — narrows 0033's collision rule, keeps its invariant |
 | [0045](0045-a-tool-call-runs-in-its-own-context.md) | A tool call runs in its own request context | Accepted — scopes 0012's context; makes 0029's dimensions hold under concurrency |
+| [0046](0046-tool-hooks-take-options-objects.md) | Tool hooks take one options object | Accepted — makes future hook fields additive; refines 0041/0042 |
+| [0047](0047-one-mcp-schema-validation-profile.md) | One MCP schema validation profile | Accepted — validation and the advertised surface cannot drift |
+| [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Accepted — protected registrar plus an explicit raw SDK escape hatch |
+| [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Accepted — restart-safe request isolation; sessions are explicit |
+| [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 |
+| [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

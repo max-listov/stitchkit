@@ -15,6 +15,181 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-08-07
+
+### ⚠️ Breaking changes
+
+- **Executable flatten helpers are replaced by a presentation-only compiler.**
+  `flattenDiscriminatedUnion` and `flattenUnionsDeep` are removed because a
+  derived executable Zod parser caused SDK + framework transforms to run twice.
+
+  ```ts
+  // before — returns a second executable Zod parser
+  flattenUnionsDeep(zodSchema)
+
+  // after — presentation only; the original Zod schema remains the parser
+  flattenToolJsonSchema(
+    z.toJSONSchema(zodSchema, { target: 'draft-07', io: 'input' }),
+  )
+  ```
+
+  `MountableTool.schema` is split into `argumentSchema` (CLI adapter) and
+  `presentationSchema` (MCP/agent/manifest). → ADR 0050
+
+- **Every `ToolCallHooks` callback now takes one options object.** The three
+  callbacks use the same field vocabulary and future observability fields can
+  be added without extending positional arity. There are no positional
+  overloads or compatibility adapters. → ADR 0046
+
+  ```ts
+  // before
+  beforeToolCall: (toolName, args, context, endpoint) => {}
+  afterToolCall: (toolName, args, result, durationMs, context, endpoint, error) => {}
+  onToolError: (toolName, error, context, endpoint) => {}
+
+  // after
+  beforeToolCall: ({ toolName, args, context, endpoint }) => {}
+  afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {}
+  onToolError: ({ toolName, error, context, endpoint }) => {}
+  ```
+
+- **MCP schema validation is one object-shaped profile.** The positional
+  `validateMcpSchemas` signature is removed, and MCP configs replace
+  `onIncompatibleSchema` with `schemaValidation.policy`.
+
+  ```ts
+  // before
+  validateMcpSchemas(services, 'throw', logger, { requireTypedProperties: true })
+  createMcpHandler({ services, onIncompatibleSchema: 'throw' })
+
+  // after
+  validateMcpSchemas({ services, policy: 'throw', logger, requireTypedProperties: true })
+  createMcpHandler({ services, schemaValidation: { policy: 'throw' } })
+  ```
+
+- **`nativeTools` now receives a registrar, not a server.** Protected native
+  tools register through `registerTool`; direct SDK registration is still
+  available only through the visibly unprotected `rawServer` escape hatch.
+
+  ```ts
+  // before — raw; lifecycle and ToolCallHooks never ran
+  nativeTools: (server, auth) => server.registerTool(name, config, handler)
+
+  // after — framework-owned validation/lifecycle/hooks
+  nativeTools: ({ registerTool }, auth) => registerTool({
+    name, description, identity, input, output, handler,
+  })
+
+  // after — deliberate raw opt-out
+  nativeTools: ({ rawServer }, auth) => rawServer.registerTool(name, config, handler)
+  ```
+
+  Tool hook and `ToolLifecycle` endpoints are now the path-free
+  `OperationIdentity`; contract values remain full `MethodDef` objects, while a
+  native operation does not invent an HTTP `path`. → ADR 0048
+
+- **MCP HTTP now uses `sessionMode` and defaults to stateless.** The boolean
+  `stateless` field is removed. Omission now creates a fresh server/transport per
+  request with no session store; clients that need server push, cross-request
+  progress or resumable SSE must opt into stateful mode.
+
+  ```ts
+  // before
+  createMcpHandler({ stateless: true,  ...config })
+  createMcpHandler({ stateless: false, ...config })
+  createMcpHandler({ ...config }) // stateful by omission
+
+  // after
+  createMcpHandler({ sessionMode: 'stateless', ...config })
+  createMcpHandler({ sessionMode: 'stateful',  ...config })
+  createMcpHandler({ ...config }) // stateless by omission
+  ```
+
+  There is no boolean alias. → ADR 0049
+
+- **Node raw-route and Socket.IO types are now runtime-neutral.** The Bun
+  `stitchkit/server` entry keeps its concrete `BunServer` context. The Node
+  entry no longer exposes Bun-only `websocket` / `route` fields on its
+  `SocketIOServerHandle`, and an explicitly annotated Node `RawRoute` receives
+  `server: unknown` unless the consumer supplies its own runtime generic.
+
+  ```ts
+  // before — importing from stitchkit/node still required Bun ambient types
+  const route: RawRoute = { handler: (_req, ctx) => ctx.server?.upgrade(...) }
+  const socket = await createSocketIOServer(config)
+  socket.websocket
+
+  // after — Node capabilities only; no @types/bun required
+  const route: RawRoute<MyHostServer> = { handler: (_req, ctx) => use(ctx.server) }
+  const socket = await createSocketIOServer(config)
+  socket.io
+  socket.attach(nodeHttpServer)
+  ```
+
+### Changed
+
+- **The optional Node adapter peer now targets `srvx ^0.12.5`.** Projects using
+  `serveNode` must install the current 0.12 line; the adapter and Node smoke lane
+  are tested against that version.
+- **Static MCP services are prepared once per handler.** Collection, schema
+  conversion and validation now produce one immutable descriptor set reused by
+  fresh servers. Auth-dependent service factories remain uncached, and every
+  request/session still owns its server, context, runner and callbacks.
+- **The Fetch-clean handler boundary is now structurally enforced.** Bun-owned
+  listener types and `Bun.serve` live in a dedicated adapter, `RawRouteContext`
+  / `HandlerConfig` / `FetchHandler` are runtime-parameterised, a packed Node
+  consumer typechecks without `@types/bun`, and Biome rejects the `Bun` global
+  anywhere outside the two explicitly Bun-owned source files.
+
+### Fixed
+
+- **Tool input transforms, defaults, coercions and refinements now execute only
+  once.** MCP and AI SDK adapters advertise an immutable JSON Schema through an
+  identity carrier and forward raw arguments into Stitchkit's shared runner.
+  Protected native MCP inputs no longer parse a third time; `ToolExtend` parses
+  its own fields once inside the same hooks/audit path. Strict MCP failures now
+  produce Stitchkit's `VALIDATION_ERROR` envelope and remain observable.
+
+- **`logging.enrich` can now supply `errorCode` for a raw error response.** A
+  `4xx`/`5xx` returned as `Response` previously lost the only available code
+  because the framework's empty field overwrote it. Success responses still
+  reject enriched error codes, and a framework-derived code still wins. Any
+  discarded framework-owned enrichment key now warns once per handler.
+
+### Added
+
+- **Signed JSON webhook bodies can be retained without dropping validation.**
+  Declare `rawBody: true` on a body-bearing HTTP endpoint and its handler gets a
+  guaranteed `ctx.rawBody` string alongside validated `ctx.input`. The text is
+  retained before JSON/Zod parsing, reaches `onError` on parser failures and is
+  never kept for endpoints without the flag. Optional route/server
+  `maxJsonBodyBytes` caps the stream before full buffering. → ADR 0051
+
+- **Portable MCP JSON Schema format validation.** Set
+  `schemaValidation.requirePortableFormats` to catch client-specific formats
+  such as `cuid2`, with the tool, input/output side and nested property path.
+  `allowFormats` is explicit; stitchkit never strips or rewrites a schema
+  keyword.
+- **Framework-owned native MCP tools.** `NativeMcpRegistrar.registerTool`
+  preserves multimodal MCP content while applying the canonical schema profile,
+  isolated call context, lifecycle/RBAC, output validation and tool hooks. The
+  configured service/action/scope/semantic method flows into `RequestEvent`.
+
+### Documentation
+
+- Refreshed VISION and ROADMAP to describe the current Bun/Node, OpenAPI, MCP,
+  CLI, observability and packed-consumer surface; removed the volatile source
+  line count and completed work that was still presented as future scope.
+
+### Internal
+
+- Updated the development and starter dependency set to current releases.
+  TypeScript 7 remains the build/typecheck CLI, while the semantic public-type
+  declaration guard uses the official side-by-side TypeScript 6 compiler API
+  until that API returns in the TypeScript 7 package. MCP Apps bundle inlining
+  is now tested both with the optional peer installed and from a packed consumer
+  that deliberately omits it.
+
 ## [0.36.1] — 2026-08-06
 
 ### Fixed
@@ -64,7 +239,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   **If you read `dimensions` off the `POST /mcp` row, read the tool row instead**
   (`event.toolName != null`). The value is not lost and the join is one field:
   both rows carry the same `traceId`, and the tool row's `parentSpanId` is the
-  request's `spanId`. Identity for a tool row is better injected through the
+  request's `spanId`.
+
+  Concretely — "every row belonging to bot B7", where the id now lives on the
+  tool rows and you still want the request row with them:
+
+  ```bash
+  # before: the id was on the request row, so one filter did it
+  jq 'select(.dimensions.botId == "B7")' audit.jsonl
+
+  # after: collect the traces the id appears in, then take every row in them
+  jq -s '[.[] | select(.dimensions.botId == "B7") | .traceId] as $t
+         | .[] | select(.traceId | IN($t[]))' audit.jsonl
+  ```
+  ```sql
+  -- the same in SQL
+  SELECT * FROM audit WHERE trace_id IN (
+    SELECT trace_id FROM audit WHERE dimensions->>'botId' = $1
+  );
+  ```
+
+  **Check your incident recipes, not only your code.** A consuming project
+  upgraded with a clean typecheck and no code changes at all, and still had a
+  documented `jq` filter over request rows return nothing — the schema compiles,
+  a runbook does not. Identity for a tool row is better injected through the
   mount's `context` — `createMcpHandler({ context: (auth) => ({ userId: auth.id }) })`
   — which the row already reads.
 
@@ -1812,7 +2010,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.36.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/max-listov/stitchkit/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/max-listov/stitchkit/compare/v0.36.0...v0.36.1
 [0.36.0]: https://github.com/max-listov/stitchkit/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/max-listov/stitchkit/compare/v0.34.0...v0.35.0

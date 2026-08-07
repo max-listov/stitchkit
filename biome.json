@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -161,6 +161,27 @@
     }
   },
   "overrides": [
+    {
+      "includes": [
+        "packages/core/src/**/*.ts",
+        "!packages/core/src/server/bun.ts",
+        "!packages/core/src/server/file.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Bun": "Fetch-clean source cannot use the Bun global; keep it in server/bun.ts or server/file.ts."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": ["*.ts", "*.tsx", "*.mts", "*.cts"],
       "linter": {

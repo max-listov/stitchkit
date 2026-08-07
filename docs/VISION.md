@@ -4,7 +4,7 @@ description: Contract-first backend framework for Bun and Node. One defineContra
 type: vision
 status: active
 created: 2025-05-01
-updated: 2026-05-29
+updated: 2026-08-07
 ---
 
 # stitchkit
@@ -37,20 +37,31 @@ client. One source of truth; the transports cannot drift.
 - **Thin over what you already use.** WebSocket is Socket.IO; the React data
   layer is `react-query-kit`. stitchkit owns the contract and the transport —
   it does not ship a competing WebSocket engine or hook library.
-- **Small.** ~8500 lines of source. No magic, no codegen, no build step in the
-  consuming app.
+- **Inspectable.** A focused core with explicit adapters and no generated
+  application code or framework build step in the consuming app. Public
+  behaviour is pinned by source tests, runtime smoke tests and packed-consumer
+  checks.
 - **Generic by design.** No domain-specific types — apps bring their own
   scopes, contexts and error codes.
 
 ## Status
 
-Pre-1.0. The core is stable and tested, but the public API may still change
-between minor versions until 1.0.
+Pre-1.0 and used by real applications. The shipped surface includes Bun and
+Node HTTP adapters, contract and raw/binary responses, OpenAPI 3.1, typed
+clients, Socket.IO, MCP contract and native tools, MCP Apps resources, agent
+tools, CLI generation and request/tool observability.
+
+Breaking changes are still allowed between minor versions, but never silently:
+each one has a mechanical migration in the changelog and is exercised through
+the published package before release.
 
 ## Direction
 
-- Stabilise the API toward 1.0 once it has been proven across more projects.
-- OpenAPI generation from contracts.
-- Broaden the examples beyond the bundled `starter`.
+- Stabilise the API toward 1.0 through evidence from real consumers rather than
+  speculative abstraction.
+- Keep the guide, API reference, generated agent-facing docs and migration notes
+  aligned with the public surface.
+- Broaden end-to-end examples only where they clarify already-shipped
+  capabilities beyond the bundled `starter`.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).

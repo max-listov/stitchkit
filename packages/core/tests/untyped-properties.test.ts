@@ -73,13 +73,14 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
 
   test('off by default — a contract with an unknown field still mounts', () => {
     expect(() =>
-      validateMcpSchemas([service(freeForm)], 'throw', undefined, { flattenUnionInput: true }),
+      validateMcpSchemas({ services: [service(freeForm)], flattenUnionInput: true }),
     ).not.toThrow();
   });
 
   test('on, it names the property, the tool and the clue the model was given', () => {
     expect(() =>
-      validateMcpSchemas([service(freeForm)], 'throw', undefined, {
+      validateMcpSchemas({
+        services: [service(freeForm)],
         flattenUnionInput: true,
         requireTypedProperties: true,
       }),
@@ -88,7 +89,8 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
 
   test('a deliberately free-form field can be listed and stops being a finding', () => {
     expect(() =>
-      validateMcpSchemas([service(freeForm)], 'throw', undefined, {
+      validateMcpSchemas({
+        services: [service(freeForm)],
         flattenUnionInput: true,
         requireTypedProperties: true,
         allowUntyped: ['broadcast_patch.operations.payload'],
@@ -99,7 +101,8 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
   test('a fully typed contract passes', () => {
     const typed = z.object({ partIndex: z.number().int().min(0), text: z.string() });
     expect(() =>
-      validateMcpSchemas([service(typed)], 'throw', undefined, {
+      validateMcpSchemas({
+        services: [service(typed)],
         flattenUnionInput: true,
         requireTypedProperties: true,
       }),
@@ -115,7 +118,8 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
       z.object({ op: z.literal('setButton'), partIndex: z.number().int().min(0) }),
     ]);
     expect(() =>
-      validateMcpSchemas([service(operations)], 'throw', undefined, {
+      validateMcpSchemas({
+        services: [service(operations)],
         flattenUnionInput: true,
         requireTypedProperties: true,
       }),
@@ -130,7 +134,8 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
       z.object({ op: z.literal('b'), target: z.number() }),
     ]);
     expect(() =>
-      validateMcpSchemas([service(operations)], 'throw', undefined, {
+      validateMcpSchemas({
+        services: [service(operations)],
         flattenUnionInput: true,
         requireTypedProperties: true,
       }),

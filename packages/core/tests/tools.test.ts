@@ -94,31 +94,35 @@ function collidingServices() {
 
 describe('validateMcpSchemas', () => {
   test('passes a clean service', () => {
-    expect(() => validateMcpSchemas([notesService])).not.toThrow();
+    expect(() => validateMcpSchemas({ services: [notesService] })).not.toThrow();
   });
 
   test('throws on a schema not representable as JSON Schema', () => {
-    expect(() => validateMcpSchemas([badService])).toThrow('JSON Schema');
+    expect(() => validateMcpSchemas({ services: [badService] })).toThrow('JSON Schema');
   });
 
   test('throws on a non-object (union) input — MCP needs an object', () => {
-    expect(() => validateMcpSchemas([unionService])).toThrow('must be an object schema');
+    expect(() => validateMcpSchemas({ services: [unionService] })).toThrow(
+      'must be an object schema',
+    );
   });
 
   test('warn policy does not throw', () => {
-    expect(() => validateMcpSchemas([badService], 'warn')).not.toThrow();
+    expect(() => validateMcpSchemas({ services: [badService], policy: 'warn' })).not.toThrow();
   });
 
   test('skip policy does not throw', () => {
-    expect(() => validateMcpSchemas([badService], 'skip')).not.toThrow();
+    expect(() => validateMcpSchemas({ services: [badService], policy: 'skip' })).not.toThrow();
   });
 
   test('throws on a cross-service tool-name collision', () => {
-    expect(() => validateMcpSchemas(collidingServices())).toThrow('Duplicate MCP tool name');
+    expect(() => validateMcpSchemas({ services: collidingServices() })).toThrow(
+      'Duplicate MCP tool name',
+    );
   });
 
   test('a multipart-only service contributes no tools', () => {
-    expect(() => validateMcpSchemas([multipartService])).not.toThrow();
+    expect(() => validateMcpSchemas({ services: [multipartService] })).not.toThrow();
   });
 });
 
@@ -140,7 +144,9 @@ describe('mountMcp', () => {
 
   test('skip policy drops the tool without throwing', () => {
     const server = new McpServer({ name: 't', version: '1' });
-    expect(() => mountMcp(server, badService, { onIncompatibleSchema: 'skip' })).not.toThrow();
+    expect(() =>
+      mountMcp(server, badService, { schemaValidation: { policy: 'skip' } }),
+    ).not.toThrow();
   });
 
   test('throws when an extend field collides with a contract field', () => {

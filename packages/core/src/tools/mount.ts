@@ -9,13 +9,15 @@ import type { MethodDef, ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
   executeToolMethod,
-  inToolCallContext,
+  type ToolArgumentExtension,
   type ToolCallHooks,
   type ToolLifecycle,
+  type ToolOperation,
   type ToolResult,
 } from './execute';
-import { flattenUnionsDeep } from './flatten';
+import type { ToolPresentationSchema } from './flatten';
 import { assertToolName, hasUsableChars, toToolName } from './names';
+import { buildToolPresentationSchema } from './presentation';
 import { mergeSchemas, rebuildObject } from './schema';
 
 /**
@@ -37,14 +39,16 @@ export interface ToolExtend<
   filter?: (service: ServiceDef, method: MethodDef) => boolean;
 }
 
-/** One contract method resolved for mounting as a tool. */
+/** One contract or framework-native operation resolved for mounting as a tool. */
 export interface MountableTool {
-  /** The contract method behind the tool. */
-  method: MethodDef<unknown, unknown, unknown>;
+  /** The executable operation identity and schemas behind the tool. */
+  method: ToolOperation;
   /** Tool name — the `toolName` override, else derived from service + method. */
   name: string;
-  /** Merged params + input schema, with the extend fields folded in when they apply. */
-  schema: z.ZodType;
+  /** Executable source schema used only by the CLI argument adapter. */
+  argumentSchema: z.ZodType;
+  /** Immutable model-facing JSON Schema; never used to execute validation effects. */
+  presentationSchema: ToolPresentationSchema;
   /** Whether `ToolExtend` applies to this method. */
   shouldExtend: boolean;
 }
@@ -52,10 +56,9 @@ export interface MountableTool {
 /**
  * Fold a `ToolExtend`'s extra fields into a tool's base schema.
  *
- * The extend fields join the advertised **shape**, so a `.strict()` base stays
- * strict and still admits them (`createToolRunner` strips them again before the
- * contract parse). Carrying the policy over matters because the SDK parses
- * arguments with this schema — see `rebuildObject`. → ADR 0034.
+ * The extend fields join the executable CLI argument shape. MCP and agent
+ * presentation is compiled separately; the shared runner parses extension keys
+ * once and strips them before the contract parse. → ADR 0050.
  */
 function applyExtend(base: z.ZodType, extra: Record<string, z.ZodType>): z.ZodType {
   if (base instanceof z.ZodObject) {
@@ -107,6 +110,9 @@ export function collectTools(
       continue;
     }
     if (method.multipart) continue;
+    // `rawBody` exists only on an HTTP request. `implement` forces HTTP
+    // exposure, and this guard keeps a manually assembled ServiceDef honest.
+    if (method.rawBody) continue;
     // A raw endpoint returns a `Response`. Every tool transport would serialize
     // that into `{}` and hand the model an empty object as the answer — the
     // exact failure a consumer hit before this endpoint kind existed. The skip
@@ -130,23 +136,20 @@ export function collectTools(
       }
       assertToolName(name, service.name, methodName);
     }
-    // Flatten params and input SEPARATELY, then merge — so a union input becomes
-    // a ZodObject and merges with params into one object, instead of a
-    // non-mountable `allOf` intersection. Deep: discriminated unions flatten at
-    // every depth (object fields, array items, …). → ADR 0031 / 0033.
-    // The result is not advertised-only: the transport SDKs parse arguments with
-    // it, so every rebuild carries its source's key policy. → ADR 0034.
-    const baseSchema = flattenUnionInput
-      ? mergeSchemas(
-          method.paramsSchema ? flattenUnionsDeep(method.paramsSchema) : undefined,
-          method.inputSchema ? flattenUnionsDeep(method.inputSchema) : undefined,
-        )
-      : mergeSchemas(method.paramsSchema, method.inputSchema);
-
     const shouldExtend = !!extend && (!extend.filter || extend.filter(service, method));
-    const schema =
-      shouldExtend && extend ? applyExtend(baseSchema, extend.schema) : baseSchema;
-    tools.push({ method, name, schema, shouldExtend });
+    const baseArgumentSchema = mergeSchemas(method.paramsSchema, method.inputSchema);
+    const argumentSchema =
+      shouldExtend && extend
+        ? applyExtend(baseArgumentSchema, extend.schema)
+        : baseArgumentSchema;
+    const presentationSchema = buildToolPresentationSchema({
+      paramsSchema: method.paramsSchema,
+      inputSchema: method.inputSchema,
+      extendSchema: shouldExtend ? extend?.schema : undefined,
+      flattenUnionInput,
+      unrepresentable: 'any',
+    });
+    tools.push({ method, name, argumentSchema, presentationSchema, shouldExtend });
   }
   return tools;
 }
@@ -182,47 +185,28 @@ export interface ToolRunnerConfig {
 export function createToolRunner(
   config: ToolRunnerConfig,
 ): (tool: MountableTool, rawArgs: Record<string, unknown>) => Promise<ToolResult> {
-  const extendKeys = config.extend ? new Set(Object.keys(config.extend.schema)) : null;
-  return async (tool, rawArgs) =>
-    // The fork starts here, not inside the executor: `extend.resolve` is the
-    // documented place a project resolves a tenant per call, and it runs first.
-    // Left outside, it wrote into the shared store and two concurrent calls
-    // stamped each other exactly as before the fix. → ADR 0045.
-    inToolCallContext(
-      { source: config.source, toolName: tool.name, method: tool.method },
-      () => runOneToolCall(tool, rawArgs),
-    );
-
-  async function runOneToolCall(
+  const extension: ToolArgumentExtension | undefined = config.extend
+    ? {
+        schema: z.object(config.extend.schema),
+        resolve: config.extend.resolve,
+      }
+    : undefined;
+  return async function runOneToolCall(
     tool: MountableTool,
     rawArgs: Record<string, unknown>,
   ): Promise<ToolResult> {
-    let extraContext: Record<string, unknown> = {};
-    if (tool.shouldExtend && config.extend) {
-      extraContext = await config.extend.resolve(rawArgs);
-    }
-    // Strip the extend keys ONLY for a tool that was actually extended — that is
-    // where they were injected (and `applyExtend` forbids a name clash, so they
-    // are never the contract's own). A non-extended tool that legitimately owns a
-    // param named like an extend key must keep it, or it reaches the handler as
-    // `undefined`. Gated identically to `resolve` above.
-    const cleanArgs =
-      tool.shouldExtend && extendKeys
-        ? Object.fromEntries(Object.entries(rawArgs).filter(([key]) => !extendKeys.has(key)))
-        : rawArgs;
     return executeToolMethod(
       tool.method,
       tool.name,
-      cleanArgs,
-      // `source` is written last — neither the static context nor a
-      // `ToolExtend.resolve` result can shadow the real transport tag.
-      { ...config.context, ...extraContext, source: config.source },
+      rawArgs,
+      { ...config.context, source: config.source },
       config.hooks,
       config.lifecycle,
       config.coerceJsonArgs ?? true,
       config.onOutputStrip ? (paths) => config.onOutputStrip?.(tool.name, paths) : undefined,
+      tool.shouldExtend ? extension : undefined,
     );
-  }
+  };
 }
 
 /**

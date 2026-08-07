@@ -1,9 +1,9 @@
 /**
  * A type a consumer can be required to name is public.
  *
- * `ToolCallContext` broke this in 0.30: it was the third parameter of a shipped
- * hook and exported from nowhere, so the consumer who hit it recovered the type
- * with `Parameters<NonNullable<ToolCallHooks['afterToolCall']>>[4]`. Sweeping
+ * `ToolCallContext` broke this in 0.30: it was part of a shipped hook options
+ * shape and exported from nowhere, so the consumer who hit it recovered the type
+ * through `Parameters<NonNullable<ToolCallHooks['afterToolCall']>>[0]`. Sweeping
  * afterwards found three more of exactly that shape, which is what makes it a
  * class rather than a slip — and a class wants a check, not four fixes.
  *
@@ -20,7 +20,11 @@
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import ts from 'typescript';
+// TypeScript 7.0 ships the CLI without the compiler API. Keep the latest CLI
+// for project builds and use the official side-by-side API package for this
+// semantic declaration walk. Replace this import with `typescript` once its
+// package exposes `createProgram` again (expected from TypeScript 7.1).
+import ts from '@typescript/typescript6';
 
 const pkgRoot = join(import.meta.dirname, '..');
 const distDir = join(pkgRoot, 'dist');
@@ -58,10 +62,11 @@ const ACCEPTED = {
   WithAuthContext: 'inference helper — toolkit context shape',
 
   // Members of an exported union. Narrow `EndpointDef` with its discriminant
-  // (`expose`, `rawResponse`), not by naming the member.
+  // (`expose`, `rawResponse`, `rawBody`), not by naming the member.
   HttpOnlyEndpointDef: 'member of the exported EndpointDef union',
   ToolEndpointDef: 'member of the exported EndpointDef union',
   RawResponseEndpointDef: 'member of the exported EndpointDef union',
+  RawBodyEndpointDef: 'member of the exported EndpointDef union',
 
   // Local aliases over `@types/bun`. A consumer on Bun names Bun's own types;
   // re-exporting ours would fork them. → ADR 0013.

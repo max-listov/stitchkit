@@ -32,6 +32,7 @@ import {
   corsPreflightResponse,
 } from './middleware/cors';
 import { type ClientIpOptions, extractIp, resolveSocketIp, resolveTraceId } from './request';
+import { assertJsonBodyLimit } from './request-body';
 import {
   allowedMethods,
   buildRouteMap,
@@ -41,18 +42,14 @@ import {
   type NormalizedGroup,
   validateRoutes,
 } from './router';
-import type {
-  BunServer,
-  BunServerConfig,
-  FetchHandler,
-  HandlerConfig,
-  MethodDef,
-  StitchLogger,
-} from './types';
+import type { FetchHandler, HandlerConfig, MethodDef, StitchLogger } from './types';
 
-export function createHandler(config: HandlerConfig): FetchHandler {
+export function createHandler<TServer = unknown>(
+  config: HandlerConfig<TServer>,
+): FetchHandler<TServer> {
   const { cors, hooks, logging = false, trustProxy = false } = config;
   if (cors) assertCorsConfig(cors);
+  assertJsonBodyLimit(config.maxJsonBodyBytes, 'HandlerConfig.maxJsonBodyBytes');
 
   // `true` is shorthand for `{}`: any object turns logging on, and `logger`
   // decides which sink writes it. Throws on a pre-0.28 bare `StitchLogger`.
@@ -82,6 +79,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
    * correlation id without a word, and one line per request would be noise.
    */
   let traceResolverBroken = false;
+  const warnedEnrichKeys = new Set<string>();
   const resolveId = (req: Request): string => {
     if (!customTraceId) return resolveTraceId(req);
     try {
@@ -119,7 +117,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
     req: Request,
     url: URL,
     traceId: string,
-    server: BunServer | undefined,
+    server: TServer | undefined,
     clientIp: ClientIpOptions,
   ): Promise<Response> {
     const shouldLogRequest =
@@ -163,11 +161,32 @@ export function createHandler(config: HandlerConfig): FetchHandler {
       logged = true;
       try {
         const durationMs = Math.round(elapsedMs(reqLog.startTime));
-        const extra = collectExtraLogFields(logConfig, req, url, {
+        const collected = collectExtraLogFields(logConfig, req, url, {
           status,
           durationMs,
           errorCode,
         });
+        const frameworkFields = buildLogFields(
+          req.method,
+          url.pathname,
+          status,
+          durationMs,
+          reqLog.traceId,
+          errorCode,
+        );
+        const ownedFields = { ...frameworkFields, ip: ipAddress };
+        for (const key of collected.enrichKeys) {
+          const ownedByActiveSink =
+            Object.hasOwn(ownedFields, key) ||
+            (useDefaultLog && (key === 'ts' || key === 'level' || key === 'msg'));
+          if (ownedByActiveSink && !warnedEnrichKeys.has(key)) {
+            warnedEnrichKeys.add(key);
+            warn(
+              `[stitchkit] logging.enrich field "${key}" was discarded because the framework owns it`,
+            );
+          }
+        }
+        const extra = collected.fields;
         if (useDefaultLog) {
           logOutgoing({
             req,
@@ -187,14 +206,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
             `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
             {
               ...extra,
-              ...buildLogFields(
-                req.method,
-                url.pathname,
-                status,
-                durationMs,
-                reqLog.traceId,
-                errorCode,
-              ),
+              ...frameworkFields,
               // Written last for the same reason as the rest, and present here
               // as well as on the built-in line so both sinks carry one shape.
               ip: ipAddress,
@@ -336,7 +348,14 @@ export function createHandler(config: HandlerConfig): FetchHandler {
     setRequestEndpoint(method.serviceName, method.key);
 
     try {
-      await parseRequestInto(ctx, req, url, method, config.maxUploadBytes);
+      await parseRequestInto(
+        ctx,
+        req,
+        url,
+        method,
+        config.maxUploadBytes,
+        config.maxJsonBodyBytes,
+      );
 
       if (hooks?.beforeHandle) {
         await hooks.beforeHandle(ctx, method);
@@ -430,7 +449,7 @@ export function createHandler(config: HandlerConfig): FetchHandler {
     }
   }
 
-  return async (req: Request, server?: BunServer): Promise<Response> => {
+  return async (req: Request, server?: TServer): Promise<Response> => {
     // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
@@ -456,34 +475,9 @@ export function createHandler(config: HandlerConfig): FetchHandler {
   };
 }
 
-export function createServer(config: BunServerConfig) {
-  const { routes, websocket, development, bun: bunExtra, port = 3000, hostname } = config;
-
-  const handler = createHandler(config);
-  const fetch = config.wrapFetch ? config.wrapFetch(handler) : handler;
-
-  return websocket
-    ? Bun.serve({
-        ...bunExtra,
-        ...(routes && { routes }),
-        ...(development && { development }),
-        port,
-        hostname,
-        websocket,
-        fetch,
-      })
-    : Bun.serve({
-        ...bunExtra,
-        ...(development && { development }),
-        port,
-        hostname,
-        fetch,
-      });
-}
-
 // ─── Group normalization ─────────────────────────────
 
-function normalizeGroups(config: HandlerConfig): NormalizedGroup[] {
+function normalizeGroups<TServer>(config: HandlerConfig<TServer>): NormalizedGroup[] {
   const result: NormalizedGroup[] = [];
 
   if (config.services) {

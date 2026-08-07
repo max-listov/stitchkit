@@ -37,19 +37,29 @@ type HandlerReturn<E> = E extends { rawResponse: true }
  * a non-null assertion. → ADR 0038.
  */
 type RequiredRequest<E> = E extends { rawResponse: true } ? { req: Request } : unknown;
+type RetainedRawBody<E> = E extends { rawBody: true }
+  ? { req: Request; rawBody: string }
+  : unknown;
 
 export type Handlers<
   C extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = HandlerContext,
 > = {
   [K in keyof C]: (
-    ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> } & RequiredRequest<C[K]>,
+    ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> } & RequiredRequest<
+        C[K]
+      > &
+      RetainedRawBody<C[K]>,
   ) => HandlerReturn<C[K]>;
 };
 
-export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknown> {
+/**
+ * Stable identity shared by HTTP contract endpoints and pathless native tool
+ * operations. Tool lifecycle/audit consume this shape; only `MethodDef` adds an
+ * HTTP route path and executable contract schemas.
+ */
+export interface OperationIdentity {
   method: HttpMethod;
-  path: string;
   desc: string;
   /**
    * Owning contract's prefix — the "service" half of a stable `(service, action)`
@@ -64,22 +74,7 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
    */
   key: string;
   toolName?: string;
-  expose?: readonly Transport[];
   scope?: string;
-  paramsSchema?: ZodType<TParams>;
-  inputSchema?: ZodType<TInput>;
-  outputSchema?: ZodType<TOutput>;
-  multipart?: string;
-  /** Per-route upload ceiling (bytes) for a multipart endpoint — overrides the
-   *  server `maxUploadBytes` default; from `EndpointDef.maxUploadBytes`. */
-  maxUploadBytes?: number;
-  /**
-   * Whether the operation is safe to call twice with the same input — from
-   * `EndpointDef.idempotent`. The core attaches no behaviour; a retrying
-   * transport reads it to decide whether to replay a call after a reconnect.
-   * → ADR 0027.
-   */
-  idempotent?: boolean;
   /** MCP Apps widget metadata — carried onto the MCP tool's `_meta.ui`. */
   ui?: EndpointUiMeta;
   /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
@@ -90,12 +85,36 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
    * the consumer narrows the type. Never serialized to OpenAPI. → ADR 0021.
    */
   meta?: Record<string, unknown>;
+}
+
+export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknown>
+  extends OperationIdentity {
+  path: string;
+  expose?: readonly Transport[];
+  paramsSchema?: ZodType<TParams>;
+  inputSchema?: ZodType<TInput>;
+  outputSchema?: ZodType<TOutput>;
+  multipart?: string;
+  /** Per-route upload ceiling (bytes) for a multipart endpoint — overrides the
+   *  server `maxUploadBytes` default; from `EndpointDef.maxUploadBytes`. */
+  maxUploadBytes?: number;
+  /** Per-route JSON body ceiling; enforced before full buffering. */
+  maxJsonBodyBytes?: number;
+  /**
+   * Whether the operation is safe to call twice with the same input — from
+   * `EndpointDef.idempotent`. The core attaches no behaviour; a retrying
+   * transport reads it to decide whether to replay a call after a reconnect.
+   * → ADR 0027.
+   */
+  idempotent?: boolean;
   /**
    * The handler returns the `Response` itself — from `EndpointDef.rawResponse`. Routed
    * and gated like any endpoint, but never serialized, never validated against
    * an output schema and never mounted as a tool. → ADR 0038.
    */
   rawResponse?: true;
+  /** Retain the decoded JSON request text on `ctx.rawBody`. HTTP-only. */
+  rawBody?: true;
   /** Documented response media type of a raw-response endpoint — OpenAPI only. */
   contentType?: string;
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;
@@ -138,11 +157,8 @@ export interface RouteGroup {
  * but the handler is raw `Request → Response` — no schema parsing and no
  * `beforeHandle` auth gate; the route authorizes itself.
  */
-/** The concrete `Bun.serve` server instance, passed through to raw handlers. */
-export type BunServer = ReturnType<typeof Bun.serve>;
-
 /** Context passed to a `RawRoute` handler alongside the raw `Request`. */
-export interface RawRouteContext {
+export interface RawRouteContext<TServer = unknown> {
   /**
    * Matched `:param` path segments. A trailing `/*` wildcard also adds its
    * remainder (everything after the prefix) as `params['*']`. Empty for an exact
@@ -150,10 +166,11 @@ export interface RawRouteContext {
    */
   params: Record<string, string>;
   /**
-   * The `Bun.serve` instance — needed for connection upgrades (e.g. WebSocket).
+   * The runtime server instance. It defaults to `unknown` at the Fetch-clean
+   * boundary and is concrete on runtime-owned APIs such as `createServer`.
    * Absent when the handler runs via the bare `createHandler` fetch.
    */
-  server?: BunServer;
+  server?: TServer;
   /**
    * Client IP — the real socket peer, or the `x-forwarded-for` client when
    * `trustProxy` is set. Resolved by the framework; never spoofable by default.
@@ -161,7 +178,7 @@ export interface RawRouteContext {
   ipAddress?: string;
 }
 
-export interface RawRoute {
+export interface RawRoute<TServer = unknown> {
   method: HttpMethod | 'ALL';
   /**
    * Exact path, `:param` segments, or a trailing `/*` prefix wildcard. The
@@ -174,7 +191,7 @@ export interface RawRoute {
    * `ctx` (matched path params, the server). Errors thrown here are caught by
    * the router and run through `hooks.onError` — same shape as contract errors.
    */
-  handler: (req: Request, ctx: RawRouteContext) => Response | Promise<Response>;
+  handler: (req: Request, ctx: RawRouteContext<TServer>) => Response | Promise<Response>;
 }
 
 export interface StitchLogger {
@@ -240,6 +257,12 @@ export interface LoggingConfig {
    * `status`, `durationMs`, `errorCode` and `ip` in both sinks, plus `ts`,
    * `level` and `msg` on the built-in production line.
    *
+   * One outcome-aware exception: on a `4xx`/`5xx` where the framework derived
+   * no code (for example, a raw route returned an error `Response`), enrichment
+   * may supply `errorCode`. It still cannot forge one on a `2xx`/`3xx` or
+   * replace a framework-derived code. A discarded owned key warns once per
+   * handler instead of failing silently.
+   *
    * Four things to know:
    * - It reaches the structured output only: the production JSON line and a
    *   custom logger's `data`. The development `←` line stays as it is — it is a
@@ -269,13 +292,16 @@ export interface LoggingConfig {
  * the runtime. The optional second argument is the runtime's server handle:
  * Bun passes one (raw routes need it for upgrades), Node adapters never do.
  */
-export type FetchHandler = (req: Request, server?: BunServer) => Promise<Response>;
+export type FetchHandler<TServer = unknown> = (
+  req: Request,
+  server?: TServer,
+) => Promise<Response>;
 
 /**
  * Runtime-neutral handler config — everything `createHandler` needs.
  * No Bun globals, no Bun types. This is the portability seam.
  */
-export interface HandlerConfig {
+export interface HandlerConfig<TServer = unknown> {
   services?: ServiceDef[];
   groups?: RouteGroup[];
   /**
@@ -289,13 +315,19 @@ export interface HandlerConfig {
    * the core attaches no meaning beyond this lookup. → ADR 0024.
    */
   scopePrefixes?: Record<string, string>;
-  rawRoutes?: RawRoute[];
+  rawRoutes?: RawRoute<TServer>[];
   /**
    * Default upload ceiling (bytes) for every `multipart` endpoint. A per-route
    * `EndpointDef.maxUploadBytes` overrides it; without either, multipart uploads
    * are capped at the 25 MB framework default.
    */
   maxUploadBytes?: number;
+  /**
+   * Default JSON request-body ceiling in bytes. A per-route
+   * `EndpointDef.maxJsonBodyBytes` overrides it. Unset preserves the existing
+   * unbounded JSON-body behaviour.
+   */
+  maxJsonBodyBytes?: number;
   cors?: CorsConfig;
   hooks?: LifecycleHooks;
   logging?: boolean | LoggingConfig;
@@ -329,18 +361,6 @@ export interface HandlerConfig {
   trustProxy?: boolean;
 }
 
-// ─── Bun-specific server config ─────────────────────
-
-type BunServeOptions = Parameters<typeof Bun.serve>[0];
-type BunWebSocketHandlers = BunServeOptions extends { websocket?: infer T } ? T : never;
-type BunRoutes = BunServeOptions extends { routes?: infer T } ? T : never;
-type BunDevelopmentOptions = BunServeOptions extends { development?: infer T } ? T : never;
-
-export type ServerPassthrough = Omit<
-  BunServeOptions,
-  'fetch' | 'port' | 'hostname' | 'unix' | 'routes' | 'websocket' | 'development'
->;
-
 /**
  * The composition seam shared by the servers that own their own `fetch`.
  *
@@ -356,19 +376,6 @@ export type ServerPassthrough = Omit<
  * createServer({ services, wrapFetch: (h) => wrapInRequestContext(audit.http(h)) })
  * ```
  */
-export interface FetchComposition {
-  wrapFetch?: (fetch: FetchHandler) => FetchHandler;
-}
-
-/**
- * Full config for `createServer` — extends `HandlerConfig` with Bun-specific
- * options (`Bun.serve` routes, websocket, development, passthrough).
- */
-export interface BunServerConfig extends HandlerConfig, FetchComposition {
-  port?: number;
-  hostname?: string;
-  routes?: BunRoutes;
-  websocket?: BunWebSocketHandlers;
-  development?: BunDevelopmentOptions;
-  bun?: ServerPassthrough;
+export interface FetchComposition<TServer = unknown> {
+  wrapFetch?: (fetch: FetchHandler<TServer>) => FetchHandler<TServer>;
 }

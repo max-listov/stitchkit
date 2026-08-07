@@ -4,7 +4,6 @@ import { defineContract } from '../src/contract';
 import { implement } from '../src/server/implement';
 import { coerceJsonArgs } from '../src/tools/coerce';
 import { executeToolMethod } from '../src/tools/execute';
-import { flattenDiscriminatedUnion } from '../src/tools/flatten';
 import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools, formatToolError } from '../src/tools/mount';
 
@@ -74,7 +73,7 @@ describe('coerceJsonArgs in the tool runner — schema stays clean', () => {
   test('advertised schema keeps `required` (no preprocess wrapper)', () => {
     const [first] = collectTools(service, 'AGENT', {});
     if (!first) throw new Error('expected tool');
-    const json = z.toJSONSchema(first.schema, { io: 'input' });
+    const json = first.presentationSchema;
     expect(json.required).toEqual(['items']);
   });
 
@@ -109,54 +108,28 @@ describe('coerceJsonArgs in the tool runner — schema stays clean', () => {
 
 // ─── Gap 2: Discriminated union flatten ─────────────────────────────────
 
-describe('flattenDiscriminatedUnion', () => {
+describe('flattenUnionInput presentation', () => {
   const union = z.discriminatedUnion('type', [
     z.object({ type: z.literal('setMeta'), title: z.string() }),
     z.object({ type: z.literal('addPart'), content: z.string(), position: z.number() }),
     z.object({ type: z.literal('removePart'), partId: z.string() }),
   ]);
 
-  test('flattens to single object with enum discriminator', () => {
-    const flat = flattenDiscriminatedUnion(union);
-    expect(flat).toBeInstanceOf(z.ZodObject);
-
-    const shape = flat.shape;
-    expect(shape.type).toBeInstanceOf(z.ZodEnum);
-  });
-
-  test('all variant fields present as optional', () => {
-    const flat = flattenDiscriminatedUnion(union);
-    const shape = flat.shape;
-    expect('title' in shape).toBe(true);
-    expect('content' in shape).toBe(true);
-    expect('position' in shape).toBe(true);
-    expect('partId' in shape).toBe(true);
-  });
-
-  test('parses valid variant data', () => {
-    const flat = flattenDiscriminatedUnion(union);
-    const result = flat.safeParse({ type: 'setMeta', title: 'Hello' });
-    expect(result.success).toBe(true);
-  });
-
-  test('parses variant without other variant fields', () => {
-    const flat = flattenDiscriminatedUnion(union);
-    const result = flat.safeParse({ type: 'removePart', partId: 'abc' });
-    expect(result.success).toBe(true);
-  });
-
-  test('enum includes all discriminator values', () => {
-    const flat = flattenDiscriminatedUnion(union);
-    const typeField = flat.shape.type;
-    expect(typeField).toBeInstanceOf(z.ZodEnum);
-    const values = (typeField as z.ZodEnum).def.entries;
-    expect(Object.keys(values)).toContain('setMeta');
-    expect(Object.keys(values)).toContain('addPart');
-    expect(Object.keys(values)).toContain('removePart');
-  });
-
-  test('throws on empty union', () => {
-    expect(() => flattenDiscriminatedUnion(z.discriminatedUnion('t', [] as never))).toThrow();
+  test('is compiled without changing the executable union', () => {
+    const contract = defineContract(
+      { prefix: 'union' },
+      { run: { method: 'POST', path: '/', desc: 'Run', input: union } },
+    );
+    const [mounted] = collectTools(implement(contract, { run: () => undefined }), 'AGENT', {
+      flattenUnionInput: true,
+    });
+    if (!mounted) throw new Error('expected tool');
+    expect(mounted.argumentSchema).toBe(union);
+    const text = JSON.stringify(mounted.presentationSchema);
+    expect(text).toContain('setMeta');
+    expect(text).toContain('addPart');
+    expect(text).toContain('removePart');
+    expect(text).not.toContain('oneOf');
   });
 });
 
@@ -180,13 +153,15 @@ describe('flattenUnionInput in collectTools', () => {
   test('without flatten — schema stays non-object', () => {
     const [first] = collectTools(service, 'MCP', { flattenUnionInput: false });
     if (!first) throw new Error('expected tool');
-    expect(first.schema).not.toBeInstanceOf(z.ZodObject);
+    expect(first.argumentSchema).not.toBeInstanceOf(z.ZodObject);
+    expect(JSON.stringify(first.presentationSchema)).toContain('oneOf');
   });
 
   test('with flatten — schema becomes ZodObject', () => {
     const [first] = collectTools(service, 'MCP', { flattenUnionInput: true });
     if (!first) throw new Error('expected tool');
-    expect(first.schema).toBeInstanceOf(z.ZodObject);
+    expect(first.argumentSchema).not.toBeInstanceOf(z.ZodObject);
+    expect(JSON.stringify(first.presentationSchema)).not.toContain('oneOf');
   });
 });
 

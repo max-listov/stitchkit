@@ -17,7 +17,7 @@ import {
   setRequestUser,
   wrapInRequestContext,
 } from '../src/observability';
-import type { LoggingConfig, StitchLogger } from '../src/server';
+import type { LoggingConfig, RawRoute, StitchLogger } from '../src/server';
 import {
   createHandler,
   createServer,
@@ -215,6 +215,114 @@ describe('enrich', () => {
     const done = completions(lines)[0];
     expect(done?.fields.errorCode).toBeUndefined();
     expect(done?.fields.ip).toBeUndefined();
+  });
+
+  test('can describe a raw error Response when the framework derived no code', async () => {
+    const lines: Line[] = [];
+    const handler = createHandler({
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/raw-failure',
+          handler: () => new Response('down', { status: 503 }),
+        },
+      ],
+      logging: {
+        logger: recordingLogger(lines),
+        enrich: () => ({ errorCode: 'UPSTREAM_UNAVAILABLE' }),
+      },
+    });
+
+    const response = await handler(new Request('http://x/raw-failure'));
+
+    expect(response.status).toBe(503);
+    expect(completions(lines)[0]?.fields.errorCode).toBe('UPSTREAM_UNAVAILABLE');
+  });
+
+  test('cannot forge an error code on either a 2xx or 3xx response', async () => {
+    const lines: Line[] = [];
+    const handler = createHandler({
+      rawRoutes: [
+        { method: 'GET', path: '/ok', handler: () => new Response(null, { status: 204 }) },
+        {
+          method: 'GET',
+          path: '/cached',
+          handler: () => new Response(null, { status: 304 }),
+        },
+      ],
+      logging: {
+        logger: recordingLogger(lines),
+        enrich: () => ({ errorCode: 'FORGED' }),
+      },
+    });
+
+    await handler(new Request('http://x/ok'));
+    await handler(new Request('http://x/cached'));
+
+    expect(completions(lines).map((line) => line.fields.errorCode)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  test('keeps a framework-derived error code over enrichment', async () => {
+    const lines: Line[] = [];
+    const handler = handlerWith({
+      logger: recordingLogger(lines),
+      enrich: () => ({ errorCode: 'FORGED' }),
+    });
+
+    await handler(new Request('http://x/missing'));
+
+    expect(completions(lines)[0]?.fields.errorCode).toBe('NOT_FOUND');
+  });
+
+  test('built-in JSON and a custom logger agree on the raw error code', async () => {
+    const rawRoutes: RawRoute[] = [
+      {
+        method: 'GET',
+        path: '/raw-failure',
+        handler: () => new Response('down', { status: 503 }),
+      },
+    ];
+    const enrich = () => ({ errorCode: 'UPSTREAM_UNAVAILABLE' });
+    const customLines: Line[] = [];
+    const custom = createHandler({
+      rawRoutes,
+      logging: { logger: recordingLogger(customLines), enrich },
+    });
+    await custom(new Request('http://x/raw-failure'));
+
+    const written: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => void written.push(args.join(' '));
+    try {
+      const builtIn = createHandler({ rawRoutes, logging: { format: 'json', enrich } });
+      await builtIn(new Request('http://x/raw-failure'));
+    } finally {
+      console.log = original;
+    }
+
+    const builtInFields = JSON.parse(written[0] ?? '{}');
+    expect(builtInFields.errorCode).toBe('UPSTREAM_UNAVAILABLE');
+    expect(completions(customLines)[0]?.fields.errorCode).toBe(builtInFields.errorCode);
+  });
+
+  test('warns once per handler for each discarded owned enrichment key', async () => {
+    const lines: Line[] = [];
+    const handler = handlerWith({
+      logger: recordingLogger(lines),
+      enrich: () => ({ status: 'FORGED', traceId: 'FORGED' }),
+    });
+
+    await handler(new Request('http://x/items'));
+    await handler(new Request('http://x/items'));
+
+    const warnings = lines.filter((line) => line.msg.includes('was discarded'));
+    expect(warnings.map((line) => line.msg)).toEqual([
+      '[stitchkit] logging.enrich field "status" was discarded because the framework owns it',
+      '[stitchkit] logging.enrich field "traceId" was discarded because the framework owns it',
+    ]);
   });
 
   test('a throwing enrich still leaves the line written', async () => {

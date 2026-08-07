@@ -39,7 +39,7 @@ export function implement<
       // so every pre-existing exposure reader — audit scripts, a bring-your-own
       // transport — would conclude a download is a tool. Making it explicit keeps
       // them correct without teaching them about `raw`. → ADR 0038.
-      expose: endpoint.rawResponse ? HTTP_ONLY : endpoint.expose,
+      expose: endpoint.rawResponse || endpoint.rawBody ? HTTP_ONLY : endpoint.expose,
       // Effective scope: per-endpoint override, else the contract group scope.
       // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
       // `endpoint.scope` alone — no consumer ever re-resolves against a service.
@@ -49,6 +49,7 @@ export function implement<
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
       maxUploadBytes: endpoint.maxUploadBytes,
+      maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
       // Transport-neutral retry/replay hint — rides through untouched (→ ADR 0027).
       idempotent: endpoint.idempotent,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
@@ -60,6 +61,7 @@ export function implement<
       // The handler owns the response — skip output validation, serialization
       // and every tool surface. → ADR 0038.
       rawResponse: endpoint.rawResponse,
+      rawBody: endpoint.rawBody,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: (ctx: RuntimeContext) =>
         (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),

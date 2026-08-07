@@ -36,7 +36,7 @@ import {
   type ToolResult,
   toolResultFromError,
 } from './execute';
-import { jsonSchemaFields, toJsonSchema } from './json-schema';
+import { jsonSchemaFields } from './json-schema';
 import { collectTools, createToolRunner, type MountableTool } from './mount';
 import { assertUniqueToolName } from './names';
 import { objectShapeKeys } from './schema';
@@ -238,7 +238,7 @@ function renderCommandHelp(name: string, command: string, tool: MountableTool): 
   const lines = [tool.method.desc, '', `Usage: ${name} ${command} [args] [--flags]`, ''];
   let fields: ReturnType<typeof jsonSchemaFields> = [];
   try {
-    fields = jsonSchemaFields(toJsonSchema(tool.schema, 'input'));
+    fields = jsonSchemaFields(tool.presentationSchema);
   } catch {
     lines.push('(arguments: pass a JSON object — this command has a complex schema)', '');
   }
@@ -351,7 +351,7 @@ export async function createCli<
     return exit(1);
   }
 
-  const { toolArgs, options } = parseCliArgs(commandArgv, tool.schema);
+  const { toolArgs, options } = parseCliArgs(commandArgv, tool.argumentSchema);
 
   if (options.help) {
     stdout(renderCommandHelp(config.name, command, tool));
@@ -368,7 +368,7 @@ export async function createCli<
 
   const passthroughField = config.passthrough?.[command];
   if (passthroughField) {
-    collectPassthrough(toolArgs, passthroughField, objectShapeKeys(tool.schema));
+    collectPassthrough(toolArgs, passthroughField, objectShapeKeys(tool.argumentSchema));
   }
 
   if (options.dryRun) {
@@ -430,9 +430,5 @@ export async function createCli<
 
 /** A tool's input JSON Schema, or `{}` when it cannot be represented. */
 function safeInputSchema(tool: MountableTool): Record<string, unknown> {
-  try {
-    return toJsonSchema(tool.schema, 'input');
-  } catch {
-    return {};
-  }
+  return tool.presentationSchema;
 }

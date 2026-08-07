@@ -36,7 +36,8 @@ completed: 2026-07-17 12:00 +08:00
 
 - Клиент (`appendFormFields`) не трогался — он и так шлёт `String(value)`/`JSON.stringify`, симметрично: скаляр→строка→`z.coerce`, объект→JSON-текст→`z.preprocess`.
 - Костыль B (`z.coerce.string()` в потребителе) отвергнут (§28/§12 — симптом, футган остаётся всем).
-- Потребители (hub/gecko/bro) — их `z.string()` заработает как есть; `z.number()` на multipart-поле → `z.coerce.number()` (делает агент в их репо).
+- Потребители — их `z.string()` заработает как есть; `z.number()` на
+  multipart-поле → `z.coerce.number()` (делает агент в их репо).
 
 ## Ссылки
 

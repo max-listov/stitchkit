@@ -137,7 +137,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
   };
 
   const toolCall: ToolCallHooks = {
-    afterToolCall: (toolName, args, result, durationMs, context, endpoint, thrown) => {
+    afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
       // Each tool call is a span. Under an HTTP request it is a child of that
       // request's span; on its own (a stdio server) it opens a fresh trace.
       const requestCtx = getRequestContext();
@@ -161,7 +161,7 @@ export function createAuditHook(config: AuditConfig): AuditHook {
         statusCode: result.ok ? 200 : 400,
         durationMs,
         errorCode: result.ok ? undefined : result.code,
-        errorMessage: result.ok ? undefined : auditErrorMessage(result, thrown),
+        errorMessage: result.ok ? undefined : auditErrorMessage(result, error),
         ...(!result.ok &&
           result.details !== undefined && {
             errorDetail: sanitizePayload(result.details, sanitize),

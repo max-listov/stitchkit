@@ -1,8 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError } from '../src/contract';
-import type { MethodDef } from '../src/server/types';
-import { executeToolMethod, type ToolCallHooks, type ToolResult } from '../src/tools/execute';
+import type { MethodDef, OperationIdentity } from '../src/server/types';
+import {
+  type AfterToolCallOptions,
+  type BeforeToolCallOptions,
+  executeToolMethod,
+  type ToolCallHooks,
+  type ToolErrorOptions,
+  type ToolResult,
+} from '../src/tools/execute';
 
 function makeMethod(
   overrides: Partial<MethodDef<unknown, unknown, unknown>> = {},
@@ -134,12 +141,12 @@ describe('executeToolMethod', () => {
   test('hooks — beforeToolCall + afterToolCall', async () => {
     const calls: string[] = [];
     const hooks: ToolCallHooks = {
-      beforeToolCall: (name) => {
-        calls.push(`before:${name}`);
+      beforeToolCall: ({ toolName }) => {
+        calls.push(`before:${toolName}`);
       },
-      afterToolCall: (name, _args, result, ms) => {
-        calls.push(`after:${name}:${result.ok}`);
-        expect(ms).toBeGreaterThanOrEqual(0);
+      afterToolCall: ({ toolName, result, durationMs }) => {
+        calls.push(`after:${toolName}:${result.ok}`);
+        expect(durationMs).toBeGreaterThanOrEqual(0);
       },
     };
 
@@ -149,14 +156,38 @@ describe('executeToolMethod', () => {
     expect(calls).toEqual(['before:my_tool', 'after:my_tool:true']);
   });
 
-  test('beforeToolCall / afterToolCall receive the MethodDef (identity)', async () => {
-    let before: MethodDef | undefined;
-    let after: MethodDef | undefined;
+  test('each hook exposes its named public options type', () => {
     const hooks: ToolCallHooks = {
-      beforeToolCall: (_n, _a, _ctx, endpoint) => {
+      beforeToolCall: ({ toolName, args, context, endpoint }: BeforeToolCallOptions) => {
+        expect([toolName, args, context, endpoint]).toHaveLength(4);
+      },
+      afterToolCall: ({
+        toolName,
+        args,
+        result,
+        durationMs,
+        context,
+        endpoint,
+        error,
+      }: AfterToolCallOptions) => {
+        expect([toolName, args, result, durationMs, context, endpoint, error]).toHaveLength(7);
+      },
+      onToolError: ({ toolName, error, context, endpoint }: ToolErrorOptions) => {
+        expect([toolName, error, context, endpoint]).toHaveLength(4);
+      },
+    };
+
+    expect(hooks).toBeDefined();
+  });
+
+  test('beforeToolCall / afterToolCall receive the operation identity', async () => {
+    let before: OperationIdentity | undefined;
+    let after: OperationIdentity | undefined;
+    const hooks: ToolCallHooks = {
+      beforeToolCall: ({ endpoint }) => {
         before = endpoint;
       },
-      afterToolCall: (_n, _a, _r, _ms, _ctx, endpoint) => {
+      afterToolCall: ({ endpoint }) => {
         after = endpoint;
       },
     };
@@ -164,7 +195,7 @@ describe('executeToolMethod', () => {
     const method = makeMethod({ handler: () => 'data' });
     await executeToolMethod(method, 'my_tool', {}, { source: 'mcp' }, hooks);
 
-    // Same MethodDef the HTTP path's afterHandle gets — no toolName→identity map.
+    // Same stable identity fields as the HTTP MethodDef — no toolName→identity map.
     expect(before?.serviceName).toBe('test');
     expect(after?.key).toBe('test');
     expect(after?.method).toBe('POST');
@@ -173,7 +204,7 @@ describe('executeToolMethod', () => {
   test('hooks called even on validation error', async () => {
     const afterResults: ToolResult[] = [];
     const hooks: ToolCallHooks = {
-      afterToolCall: (_name, _args, result) => {
+      afterToolCall: ({ result }) => {
         afterResults.push(result);
       },
     };

@@ -7,7 +7,12 @@ import {
   WebStandardStreamableHTTPServerTransport,
 } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import { buildMcpServer, type McpServerBuildConfig, validateMcpSchemas } from './mcp';
+import {
+  buildMcpServer,
+  buildMcpServerFromPrepared,
+  type McpServerBuildConfig,
+  prepareMcpSurface,
+} from './mcp';
 import { type ProtectedResourceConfig, wwwAuthenticateHeader } from './oauth-metadata';
 
 // ─── In-memory event store (SSE resumability) ───────────────────────────────
@@ -87,17 +92,12 @@ export interface McpHandlerConfig<TAuth> extends McpServerBuildConfig<TAuth> {
    * with `oauthProtectedResourceRoute(protectedResource)`.
    */
   protectedResource?: ProtectedResourceConfig;
-  /**
-   * Stateless mode (default `false`). Each request builds a fresh transport +
-   * server and is handled in isolation — no `Mcp-Session-Id`, no in-memory
-   * session store. A restart / deploy / scale-out therefore never invalidates a
-   * client (no `404 Session not found`), which is what most request/response
-   * tool servers want. The trade-off is no server-initiated messages
-   * (`notifications/progress`, standalone SSE) between requests — fine for
-   * synchronous tools. Leave `false` only when you need that server push.
-   */
-  stateless?: boolean;
+  /** HTTP transport state. Default `'stateless'`; opt into `'stateful'` only
+   *  for cross-request progress, server push or resumable SSE sessions. */
+  sessionMode?: McpSessionMode;
 }
+
+export type McpSessionMode = 'stateful' | 'stateless';
 
 interface SessionData {
   transport: WebStandardStreamableHTTPServerTransport;
@@ -120,9 +120,9 @@ function jsonRpcError(
 /**
  * Build a Streamable-HTTP MCP request handler (`Request → Response`).
  *
- * Owns the entire MCP server lifecycle — SSE event store, per-session
- * transports, the `McpServer` instances — so the consuming app never imports
- * `@modelcontextprotocol/sdk` itself. The app only declares WHAT to expose:
+ * Owns the MCP server/transport lifecycle — and, only in explicit stateful
+ * mode, the SSE event/session stores — so the consuming app never imports the
+ * SDK itself. The app only declares WHAT to expose:
  * how to authenticate and which contract services. MCP tools come from
  * contracts; native multimodal tools attach via `nativeTools`.
  *
@@ -134,15 +134,21 @@ function jsonRpcError(
 export function createMcpHandler<TAuth>(
   config: McpHandlerConfig<TAuth>,
 ): (req: Request) => Promise<Response> {
-  // Fail the deploy, not the first request: when `services` is a static array
-  // the tool schemas can be validated up front. A function-form `services`
-  // depends on the per-request identity, so it is validated when each session
-  // builds (`buildMcpServer` → `mountMcp`).
+  let buildServer: (auth: TAuth) => McpServer;
   if (Array.isArray(config.services)) {
-    validateMcpSchemas(config.services, config.onIncompatibleSchema, config.logger, {
+    // Static services are deterministic: prepare and validate once, then every
+    // session/request gets a fresh server and runtime over this immutable surface.
+    const prepared = prepareMcpSurface(config.services, {
+      logger: config.logger,
       extend: config.extend,
       flattenUnionInput: config.flattenUnionInput,
+      schemaValidation: config.schemaValidation,
     });
+    buildServer = (auth) => buildMcpServerFromPrepared(config, auth, prepared);
+  } else {
+    // Identity-dependent service factories may expose a different surface, so
+    // each resolved server prepares only that identity's descriptors.
+    buildServer = (auth) => buildMcpServer(config, auth);
   }
 
   /** RFC 9728 §5.1 401 — points the client at the OAuth resource metadata. */
@@ -157,7 +163,7 @@ export function createMcpHandler<TAuth>(
   // A fresh transport + server per request, no session store. A restart never
   // invalidates a client (no `404 Session not found`). The SDK requires a new
   // transport per request in stateless mode — reuse collides message ids.
-  if (config.stateless) {
+  if ((config.sessionMode ?? 'stateless') === 'stateless') {
     return async (req: Request): Promise<Response> => {
       const auth = await config.auth(req);
       if (!auth) return unauthorized();
@@ -167,7 +173,7 @@ export function createMcpHandler<TAuth>(
         // self-contained, so the transport can be discarded once it returns.
         enableJsonResponse: true,
       });
-      const server = buildMcpServer(config, auth);
+      const server = buildServer(auth);
       await server.connect(transport);
       return transport.handleRequest(req);
     };
@@ -240,7 +246,7 @@ export function createMcpHandler<TAuth>(
       sessionIdGenerator: () => newSessionId,
       eventStore,
     });
-    const server = buildMcpServer(config, auth);
+    const server = buildServer(auth);
 
     sessions.set(newSessionId, { transport, server, lastSeen: Date.now() });
     transport.onclose = () => {

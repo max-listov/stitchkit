@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { EndpointToolAnnotations } from '../contract';
 import { isRecord } from '../internal/typed';
@@ -10,6 +11,7 @@ import {
   type ToolResult,
   toolResultFromError,
 } from './execute';
+import type { ToolPresentationSchema } from './flatten';
 import { type JsonSchemaIo, toJsonSchema } from './json-schema';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './mcp-app';
 import {
@@ -20,6 +22,13 @@ import {
   type ToolExtend,
 } from './mount';
 import { assertUniqueToolName } from './names';
+import { createNativeMcpRegistrar, type NativeMcpRegistrar } from './native-mcp';
+import { findNonPortableFormats } from './portable-formats';
+import {
+  buildToolPresentationSchema,
+  isObjectPresentationSchema,
+  presentationMetadata,
+} from './presentation';
 import { findUntypedProperties } from './untyped-properties';
 
 /**
@@ -32,6 +41,28 @@ import { findUntypedProperties } from './untyped-properties';
  * - `skip` — drop the tool silently.
  */
 export type IncompatibleSchemaPolicy = 'throw' | 'skip' | 'warn';
+
+/** One schema policy shared by validation, mounting and every MCP transport. */
+export interface McpSchemaValidationConfig {
+  /** What to do when a tool schema fails the profile. Default `'throw'`. */
+  policy?: IncompatibleSchemaPolicy;
+  /** Require every advertised input property to carry usable type information. */
+  requireTypedProperties?: boolean;
+  /** Dotted `tool.property` paths deliberately left unconstrained. */
+  allowUntyped?: readonly string[];
+  /** Reject formats outside the portable JSON Schema/AJV baseline. */
+  requirePortableFormats?: boolean;
+  /** Custom formats known to every client used by this server. */
+  allowFormats?: readonly string[];
+}
+
+/** Standalone schema-validation input, including the exact surface-shaping options. */
+export interface ValidateMcpSchemasConfig extends McpSchemaValidationConfig {
+  services: ServiceDef[];
+  logger?: StitchLogger;
+  extend?: ToolExtend;
+  flattenUnionInput?: boolean;
+}
 
 /** A single-element MCP text content block list. */
 function textBlock(text: string): Array<{ type: 'text'; text: string }> {
@@ -52,7 +83,7 @@ function formatMcpResult(
   mode: StructuredMode,
   toolName?: string,
   errorHint?: ErrorHintFn,
-) {
+): CallToolResult {
   if (result.ok) {
     const content = textBlock(JSON.stringify(result.data, null, 2));
     if (mode === 'wrapped') {
@@ -120,10 +151,21 @@ function throwIfFailures(failures: string[]): void {
   }
 }
 
-/** What `prepareMcpTool` resolves for a tool cleared to register. */
-interface PreparedMcpTool {
+/** One immutable descriptor cleared to register on any fresh MCP server. */
+export interface PreparedMcpTool {
+  mountable: MountableTool;
+  inputSchema: ToolPresentationSchema;
   outputSchema?: z.ZodType;
   outputMode: StructuredMode;
+}
+
+export type PreparedMcpSurface = readonly PreparedMcpTool[];
+
+export interface McpSurfacePreparationConfig {
+  extend?: ToolExtend;
+  flattenUnionInput?: boolean;
+  schemaValidation?: McpSchemaValidationConfig;
+  logger?: StitchLogger;
 }
 
 /**
@@ -135,18 +177,36 @@ interface PreparedMcpTool {
  */
 function prepareMcpTool(
   mountable: MountableTool,
-  policy: IncompatibleSchemaPolicy,
+  config: McpSurfacePreparationConfig,
+  validation: McpSchemaValidationConfig,
   logger: StitchLogger | undefined,
   failures: string[],
   seen: Set<string>,
 ): PreparedMcpTool | null {
+  const policy = validation.policy ?? 'throw';
   assertUniqueToolName(mountable.name, seen.has(mountable.name), 'MCP tool name');
   seen.add(mountable.name);
 
-  // MCP advertises a tool's arguments as a JSON Schema object, and the SDK only
-  // introspects a `ZodObject`. A union / discriminated union / scalar input
-  // would be advertised as an empty schema — reject it loudly instead.
-  if (!(mountable.schema instanceof z.ZodObject)) {
+  let inputJsonSchema: ToolPresentationSchema;
+  try {
+    inputJsonSchema = buildToolPresentationSchema({
+      paramsSchema: mountable.method.paramsSchema,
+      inputSchema: mountable.method.inputSchema,
+      extendSchema: mountable.shouldExtend && config.extend ? config.extend.schema : undefined,
+      flattenUnionInput: config.flattenUnionInput,
+      unrepresentable: 'throw',
+    });
+  } catch (err) {
+    reportIncompatible(
+      `MCP tool "${mountable.name}" — input schema is not JSON Schema-compatible: ${err instanceof Error ? err.message : String(err)}`,
+      policy,
+      logger,
+      failures,
+    );
+    return null;
+  }
+
+  if (!isObjectPresentationSchema(inputJsonSchema)) {
     reportIncompatible(
       `MCP tool "${mountable.name}" — input must be an object schema; a union, discriminated union or scalar cannot be an MCP tool input (flatten it in the contract, or drop MCP from \`expose\`)`,
       policy,
@@ -156,15 +216,33 @@ function prepareMcpTool(
     return null;
   }
 
-  const inputError = probeSchema(mountable.schema, 'input');
-  if (inputError) {
-    reportIncompatible(
-      `MCP tool "${mountable.name}" — input schema is not JSON Schema-compatible: ${inputError}`,
-      policy,
-      logger,
-      failures,
-    );
-    return null;
+  if (validation.requireTypedProperties) {
+    const allowed = new Set(validation.allowUntyped ?? []);
+    for (const untyped of findUntypedProperties(inputJsonSchema)) {
+      const path = `${mountable.name}.${untyped.path}`;
+      if (allowed.has(path)) continue;
+      const clue = untyped.description
+        ? ` (only a description: "${untyped.description}")`
+        : '';
+      reportIncompatible(
+        `MCP tool "${mountable.name}" — input property "${untyped.path}" carries no type, enum or $ref${clue}. ` +
+          'A model is given no way to know what to send. Widen the contract, or list it in `allowUntyped` if it is deliberately free-form.',
+        policy === 'skip' ? 'warn' : policy,
+        logger,
+        failures,
+      );
+    }
+  }
+  if (validation.requirePortableFormats) {
+    for (const finding of findNonPortableFormats(inputJsonSchema, validation.allowFormats)) {
+      reportIncompatible(
+        `MCP tool "${mountable.name}" — input property "${finding.path}" uses non-portable JSON Schema format "${finding.format}". ` +
+          'Use a portable pattern/schema, or list the format in `allowFormats` only when every MCP client supports it.',
+        policy === 'skip' ? 'warn' : policy,
+        logger,
+        failures,
+      );
+    }
   }
 
   // An object `output` becomes the tool's `outputSchema` directly; a non-object
@@ -172,7 +250,7 @@ function prepareMcpTool(
   // `structuredContent`. An incompatible output is reported but the tool still
   // registers, text-only.
   const resolved = resolveOutputSchema(mountable.method.outputSchema);
-  if (!resolved) return { outputMode: 'none' };
+  if (!resolved) return { mountable, inputSchema: inputJsonSchema, outputMode: 'none' };
 
   const outputError = probeSchema(resolved.schema, 'output');
   if (outputError) {
@@ -182,9 +260,69 @@ function prepareMcpTool(
       logger,
       failures,
     );
-    return { outputMode: 'none' };
+    return { mountable, inputSchema: inputJsonSchema, outputMode: 'none' };
   }
-  return { outputSchema: resolved.schema, outputMode: resolved.mode };
+  if (validation.requirePortableFormats) {
+    for (const finding of findNonPortableFormats(
+      toJsonSchema(resolved.schema, 'output'),
+      validation.allowFormats,
+    )) {
+      reportIncompatible(
+        `MCP tool "${mountable.name}" — output property "${finding.path}" uses non-portable JSON Schema format "${finding.format}". ` +
+          'Use a portable pattern/schema, or list the format in `allowFormats` only when every MCP client supports it.',
+        policy === 'skip' ? 'warn' : policy,
+        logger,
+        failures,
+      );
+    }
+  }
+  return {
+    mountable,
+    inputSchema: inputJsonSchema,
+    outputSchema: resolved.schema,
+    outputMode: resolved.mode,
+  };
+}
+
+/**
+ * Prepare the deterministic MCP surface once. No auth, context, hooks,
+ * lifecycle closures, server or transport enters this value.
+ */
+export function prepareMcpSurface(
+  services: ServiceDef | ServiceDef[],
+  config: McpSurfacePreparationConfig = {},
+): PreparedMcpSurface {
+  const serviceList = Array.isArray(services) ? services : [services];
+  const tools = serviceList.flatMap((service) => collectTools(service, 'MCP', config));
+  return prepareMcpTools(tools, config);
+}
+
+/** Prepare already-resolved tool operations through the canonical MCP schema profile. */
+export function prepareMcpTools(
+  tools: readonly MountableTool[],
+  config: McpSurfacePreparationConfig = {},
+): PreparedMcpSurface {
+  const seen = new Set<string>();
+  const failures: string[] = [];
+  const prepared: PreparedMcpTool[] = [];
+
+  for (const mountable of tools) {
+    const tool = prepareMcpTool(
+      mountable,
+      config,
+      config.schemaValidation ?? {},
+      config.logger,
+      failures,
+      seen,
+    );
+    if (tool) {
+      Object.freeze(tool.mountable);
+      prepared.push(Object.freeze(tool));
+    }
+  }
+
+  throwIfFailures(failures);
+  return Object.freeze(prepared);
 }
 
 export interface McpMountConfig {
@@ -199,8 +337,8 @@ export interface McpMountConfig {
    */
   lifecycle?: ToolLifecycle;
   extend?: ToolExtend;
-  /** What to do when a tool's schema is not MCP-compatible. Default `'throw'`. */
-  onIncompatibleSchema?: IncompatibleSchemaPolicy;
+  /** Validation policy applied to the exact advertised MCP schemas. */
+  schemaValidation?: McpSchemaValidationConfig;
   /** Logger for the `'warn'` policy — defaults to `console`. */
   logger?: StitchLogger;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
@@ -220,59 +358,13 @@ export interface McpMountConfig {
  * callable on its own (a startup assertion, a test) to fail a deploy before
  * the first request.
  */
-export function validateMcpSchemas(
-  services: ServiceDef[],
-  onIncompatibleSchema: IncompatibleSchemaPolicy = 'throw',
-  logger?: StitchLogger,
-  // Must mirror the live mount (`extend` / `flattenUnionInput`) — otherwise the
-  // build-time probe vets a DIFFERENT schema than `mountMcp` advertises, hiding
-  // flatten incompatibilities and falsely failing union inputs. → ADR 0033.
-  options?: {
-    extend?: ToolExtend;
-    flattenUnionInput?: boolean;
-    /**
-     * Also fail a tool whose advertised schema has a property with no type
-     * information — nothing for a model to obey. Off by default because a
-     * contract may legitimately declare `z.unknown()`; `allowUntyped` lists the
-     * dotted paths that are deliberate, and anything else is a finding. → ADR 0044.
-     */
-    requireTypedProperties?: boolean;
-    /** Dotted paths (`tool.property`) that are deliberately unconstrained. */
-    allowUntyped?: readonly string[];
-  },
-): void {
-  const seen = new Set<string>();
-  const failures: string[] = [];
-  const allowed = new Set(options?.allowUntyped ?? []);
-
-  for (const service of services) {
-    for (const mountable of collectTools(service, 'MCP', options)) {
-      const prepared = prepareMcpTool(mountable, onIncompatibleSchema, logger, failures, seen);
-      if (!prepared || !options?.requireTypedProperties) continue;
-      // The input schema as advertised — after `flattenUnionInput` and `extend`,
-      // because that is the document the model is handed. `prepareMcpTool` has
-      // already rejected anything that will not convert.
-      for (const untyped of findUntypedProperties(toJsonSchema(mountable.schema, 'input'))) {
-        const path = `${mountable.name}.${untyped.path}`;
-        if (allowed.has(path)) continue;
-        const clue = untyped.description
-          ? ` (only a description: "${untyped.description}")`
-          : '';
-        reportIncompatible(
-          `MCP tool "${mountable.name}" — property "${untyped.path}" carries no type, enum or $ref${clue}. ` +
-            'A model is given no way to know what to send. Widen the contract, or list it in `allowUntyped` if it is deliberately free-form.',
-          // Never 'skip': a project that switched this guard ON asked to hear
-          // about it, and dropping the tool is not on the table here — nothing
-          // is incompatible, a property is merely unusable by a model.
-          onIncompatibleSchema === 'skip' ? 'warn' : onIncompatibleSchema,
-          logger,
-          failures,
-        );
-      }
-    }
-  }
-
-  throwIfFailures(failures);
+export function validateMcpSchemas(config: ValidateMcpSchemasConfig): void {
+  prepareMcpSurface(config.services, {
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+    schemaValidation: config,
+    logger: config.logger,
+  });
 }
 
 export function mountMcp(
@@ -280,8 +372,21 @@ export function mountMcp(
   services: ServiceDef | ServiceDef[],
   config: McpMountConfig = {},
 ): void {
-  const serviceList = Array.isArray(services) ? services : [services];
-  const policy = config.onIncompatibleSchema ?? 'throw';
+  const prepared = prepareMcpSurface(services, {
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+    schemaValidation: config.schemaValidation,
+    logger: config.logger,
+  });
+  mountPreparedMcp(mcpServer, prepared, config);
+}
+
+/** Register a prepared immutable surface onto one fresh server/runtime. */
+export function mountPreparedMcp(
+  mcpServer: McpServer,
+  prepared: PreparedMcpSurface,
+  config: McpMountConfig = {},
+): void {
   const runTool = createToolRunner({
     source: 'mcp',
     extend: config.extend,
@@ -293,64 +398,56 @@ export function mountMcp(
     onOutputStrip: config.onOutputStrip,
   });
 
-  const seen = new Set<string>();
-  const failures: string[] = [];
+  for (const descriptor of prepared) {
+    const { mountable } = descriptor;
 
-  for (const service of serviceList) {
-    for (const mountable of collectTools(service, 'MCP', {
-      extend: config.extend,
-      flattenUnionInput: config.flattenUnionInput,
-    })) {
-      const prepared = prepareMcpTool(mountable, policy, config.logger, failures, seen);
-      if (!prepared) continue;
-
-      const toolConfig: {
-        description: string;
-        inputSchema: z.ZodType;
-        outputSchema?: z.ZodType;
-        annotations?: EndpointToolAnnotations;
-        _meta?: Record<string, unknown>;
-      } = { description: mountable.method.desc, inputSchema: mountable.schema };
-      if (prepared.outputSchema) toolConfig.outputSchema = prepared.outputSchema;
-      // MCP `ToolAnnotations` — behavioural hints a host reads to group tools
-      // (read-only vs destructive), pick permission defaults and show a title.
-      if (mountable.method.annotations) {
-        toolConfig.annotations = mountable.method.annotations;
-      }
-      // MCP Apps (SEP-1865): carry `_meta.ui` so a host renders the named
-      // `ui://` resource as an interactive widget for this tool's results. The
-      // legacy flat `ui/resourceUri` key is set alongside — some hosts still
-      // read it (matches the ext-apps `registerAppTool` normalization).
-      if (mountable.method.ui) {
-        toolConfig._meta = {
-          ui: mountable.method.ui,
-          'ui/resourceUri': mountable.method.ui.resourceUri,
-        };
-      }
-
-      mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs) => {
-        const args = isRecord(rawArgs) ? rawArgs : {};
-        try {
-          const result = await runTool(mountable, args);
-          return formatMcpResult(
-            result,
-            prepared.outputMode,
-            mountable.name,
-            config.errorHint,
-          );
-        } catch (err) {
-          return formatMcpResult(
-            toolResultFromError(err),
-            'none',
-            mountable.name,
-            config.errorHint,
-          );
-        }
-      });
+    const toolConfig: {
+      description: string;
+      inputSchema: z.ZodType;
+      outputSchema?: z.ZodType;
+      annotations?: EndpointToolAnnotations;
+      _meta?: Record<string, unknown>;
+    } = {
+      description: mountable.method.desc,
+      inputSchema: z.looseObject({}).meta(presentationMetadata(descriptor.inputSchema)),
+    };
+    if (descriptor.outputSchema) toolConfig.outputSchema = descriptor.outputSchema;
+    // MCP `ToolAnnotations` — behavioural hints a host reads to group tools
+    // (read-only vs destructive), pick permission defaults and show a title.
+    if (mountable.method.annotations) {
+      toolConfig.annotations = mountable.method.annotations;
     }
-  }
+    // MCP Apps (SEP-1865): carry `_meta.ui` so a host renders the named
+    // `ui://` resource as an interactive widget for this tool's results. The
+    // legacy flat `ui/resourceUri` key is set alongside — some hosts still
+    // read it (matches the ext-apps `registerAppTool` normalization).
+    if (mountable.method.ui) {
+      toolConfig._meta = {
+        ui: mountable.method.ui,
+        'ui/resourceUri': mountable.method.ui.resourceUri,
+      };
+    }
 
-  throwIfFailures(failures);
+    mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs) => {
+      const args = isRecord(rawArgs) ? rawArgs : {};
+      try {
+        const result = await runTool(mountable, args);
+        return formatMcpResult(
+          result,
+          descriptor.outputMode,
+          mountable.name,
+          config.errorHint,
+        );
+      } catch (err) {
+        return formatMcpResult(
+          toolResultFromError(err),
+          'none',
+          mountable.name,
+          config.errorHint,
+        );
+      }
+    });
+  }
 }
 
 /**
@@ -379,16 +476,14 @@ export interface McpServerBuildConfig<TAuth> {
    *  `mountMcp` — without this, the batteries-path (`createMcpHandler`) could not
    *  reach it and a consumer had to hand-wrap every service. */
   extend?: ToolExtend;
-  /** What to do when a tool's schema is not MCP-compatible. Default `'throw'`. */
-  onIncompatibleSchema?: IncompatibleSchemaPolicy;
+  /** Validation policy applied to the exact advertised MCP schemas. */
+  schemaValidation?: McpSchemaValidationConfig;
   /** Logger for schema-incompatibility warnings — defaults to `console`. */
   logger?: StitchLogger;
-  /** Register native (non-contract) MCP tools — receives the `McpServer` and the
-   *  resolved identity, like `services` and `context` do, so a native tool can be
-   *  per-tenant. For tools returning multimodal content, e.g. `mountViewFile`.
-   *  Note this is **not** a scope gate: native tools are not contract methods and
-   *  `lifecycle` does not run for them. */
-  nativeTools?: (server: McpServer, auth: TAuth) => void;
+  /** Register native multimodal MCP tools for the resolved identity. Use
+   *  `registerTool` for stitchkit lifecycle/hooks; `rawServer` is an explicit
+   *  unprotected SDK escape hatch. */
+  nativeTools?: (registrar: NativeMcpRegistrar, auth: TAuth) => void;
   /** MCP Apps UI resources (`ui://…`) served for tools that declare `ui`. */
   resources?: McpResourceDef[];
   /** Server instructions — a short (≤2KB) hint to the host on when and how to
@@ -412,25 +507,57 @@ export function buildMcpServer<TAuth>(
   config: McpServerBuildConfig<TAuth>,
   auth: TAuth,
 ): McpServer {
+  const services =
+    typeof config.services === 'function' ? config.services(auth) : config.services;
+  const prepared = prepareMcpSurface(services, {
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+    schemaValidation: config.schemaValidation,
+    logger: config.logger,
+  });
+  return buildMcpServerFromPrepared(config, auth, prepared);
+}
+
+/** Build one fresh server from a deterministic surface prepared by its owner. */
+export function buildMcpServerFromPrepared<TAuth>(
+  config: McpServerBuildConfig<TAuth>,
+  auth: TAuth,
+  prepared: PreparedMcpSurface,
+): McpServer {
   const server = new McpServer(
     config.serverInfo,
     config.instructions ? { instructions: config.instructions } : undefined,
   );
-  const services =
-    typeof config.services === 'function' ? config.services(auth) : config.services;
   const context = config.context?.(auth);
-  mountMcp(server, services, {
+  mountPreparedMcp(server, prepared, {
     context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     extend: config.extend,
-    onIncompatibleSchema: config.onIncompatibleSchema,
+    schemaValidation: config.schemaValidation,
     logger: config.logger,
     coerceJsonArgs: config.coerceJsonArgs,
     flattenUnionInput: config.flattenUnionInput,
     errorHint: config.errorHint,
+    onOutputStrip: config.onOutputStrip,
   });
-  config.nativeTools?.(server, auth);
+  if (config.nativeTools) {
+    const registrar = createNativeMcpRegistrar(server, {
+      context,
+      hooks: config.hooks,
+      lifecycle: config.lifecycle,
+      coerceJsonArgs: config.coerceJsonArgs,
+      onOutputStrip: config.onOutputStrip,
+      prepare: (tool) =>
+        prepareMcpTools([tool], {
+          schemaValidation: config.schemaValidation,
+          logger: config.logger,
+        }),
+      formatError: (result, toolName) =>
+        formatMcpResult(result, 'none', toolName, config.errorHint),
+    });
+    config.nativeTools(registrar, auth);
+  }
   for (const resource of config.resources ?? []) {
     mountMcpResource(server, resource);
   }

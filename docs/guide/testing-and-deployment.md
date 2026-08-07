@@ -99,6 +99,10 @@ serveNode({
 
 Notes for a Node host:
 
+- `stitchkit/node` declarations do not require `@types/bun`. Runtime-neutral
+  raw routes use `RawRoute<TServer = unknown>`; supply a host server generic
+  only when an embedding adapter passes one to `createHandler`.
+
 - Add **`@types/bun`** as a dev dependency — it is an optional peer that types the
   shared `stitchkit/server` surface (without it `tsc` reports a missing `Bun`
   namespace).

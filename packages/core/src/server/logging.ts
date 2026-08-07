@@ -67,8 +67,9 @@ export function collectExtraLogFields(
   req: Request,
   url: URL,
   outcome: LogOutcome,
-): Record<string, unknown> {
+): { fields: Record<string, unknown>; enrichKeys: string[] } {
   const fields: Record<string, unknown> = {};
+  const enrichKeys: string[] = [];
 
   const ctx = getRequestContext();
   if (ctx) {
@@ -85,11 +86,14 @@ export function collectExtraLogFields(
   if (config.enrich) {
     try {
       const extra = config.enrich(req, url, outcome);
-      if (extra) Object.assign(fields, extra);
+      if (extra) {
+        enrichKeys.push(...Object.keys(extra));
+        Object.assign(fields, extra);
+      }
     } catch {
       // An enricher must never break the request it observes.
     }
   }
 
-  return fields;
+  return { fields, enrichKeys };
 }

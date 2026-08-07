@@ -143,7 +143,7 @@ describe('mount-time assertion', () => {
       /Tool name "bad name"/,
     );
     expect(() => mountAgent(bad)).toThrow(/Tool name "bad name"/);
-    expect(() => validateMcpSchemas([bad])).toThrow(/Tool name "bad name"/);
+    expect(() => validateMcpSchemas({ services: [bad] })).toThrow(/Tool name "bad name"/);
   });
 });
 
@@ -201,7 +201,7 @@ describe('one duplicate guard, three surfaces', () => {
     expect(() => mountAgent([a, b])).toThrow(
       'Duplicate agent tool name "get_note" across mounted services',
     );
-    expect(() => validateMcpSchemas([a, b])).toThrow(
+    expect(() => validateMcpSchemas({ services: [a, b] })).toThrow(
       'Duplicate MCP tool name "get_note" across mounted services',
     );
     const cli = (prefix: string) =>
@@ -233,7 +233,7 @@ describe('the existing duplicate guards fire on merged names', () => {
     const a = serviceWith('admin/chat');
     const b = serviceWith('admin.chat');
     expect(() => mountAgent([a, b])).toThrow(/Duplicate agent tool name "get_admin_chat"/);
-    expect(() => validateMcpSchemas([a, b])).toThrow(
+    expect(() => validateMcpSchemas({ services: [a, b] })).toThrow(
       /Duplicate MCP tool name "get_admin_chat"/,
     );
   });

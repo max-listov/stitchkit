@@ -1,0 +1,13 @@
+{
+  "name": "stitchkit-consumer-node",
+  "private": true,
+  "type": "module",
+  "comment": "Node-facing declarations with every Node peer and no @types/bun.",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "srvx": "^0.12.5",
+    "socket.io": "^4.8.3",
+    "@types/node": "^26.1.2"
+  }
+}

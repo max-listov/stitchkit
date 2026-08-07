@@ -89,10 +89,10 @@ export function levelForStatus(status: number): 'error' | 'warn' | 'info' {
 }
 
 /**
- * The structured fields shared by every completed-request log line. `errorCode`
- * is always present, `undefined` on success — a conditional key would let an
- * `enrich` value survive on a 200, and these fields must always win the merge.
- * `JSON.stringify` drops the undefined, so the production line is unchanged.
+ * The structured fields shared by every completed-request log line. A missing
+ * framework error code is omitted only for an error response, where `enrich`
+ * may supply the code a raw `Response` cannot communicate to the framework.
+ * Successes retain `errorCode: undefined`, so enrichment cannot forge a failure.
  */
 export function buildLogFields(
   method: string,
@@ -107,9 +107,11 @@ export function buildLogFields(
   path: string;
   status: number;
   durationMs: number;
-  errorCode: string | undefined;
+  errorCode?: string;
 } {
-  return { traceId, method, path, status, durationMs, errorCode };
+  const fields = { traceId, method, path, status, durationMs };
+  if (errorCode === undefined && status >= 400) return fields;
+  return { ...fields, errorCode };
 }
 
 function formatMs(ms: number): string {

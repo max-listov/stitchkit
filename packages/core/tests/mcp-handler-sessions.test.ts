@@ -1,11 +1,11 @@
 /**
  * `createMcpHandler`'s session lifecycle — the only stateful code in the
- * framework, and until now the only substantial piece with no direct coverage.
+ * framework, with both the default request-isolated path and explicit sessions.
  *
  * What matters here is not the happy path (that is exercised by every other MCP
  * test through `mountMcp`) but the guarantees the handler makes on its own:
  * identity is resolved before anything else, a session id is **never** minted from
- * a client-supplied value, and `stateless: true` really means no session at all.
+ * a client-supplied value, and the default stateless mode keeps no session at all.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -45,12 +45,32 @@ function initRequest(headers: Record<string, string> = {}): Request {
   });
 }
 
-function handlerWith(config: { stateless?: boolean; auth?: (req: Request) => unknown }) {
+function toolCallRequest(name: string, headers: Record<string, string> = {}): Request {
+  return new Request('http://x/mcp', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      ...headers,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name, arguments: {} },
+    }),
+  });
+}
+
+function handlerWith(config: {
+  sessionMode?: 'stateful' | 'stateless';
+  auth?: (req: Request) => unknown;
+}) {
   return createMcpHandler({
     serverInfo: { name: 't', version: '1' },
     auth: config.auth ?? (() => ({ userId: 'u1' })),
     services: [notes],
-    ...(config.stateless !== undefined && { stateless: config.stateless }),
+    ...(config.sessionMode !== undefined && { sessionMode: config.sessionMode }),
   });
 }
 
@@ -73,7 +93,7 @@ describe('a session id is never minted from a client-supplied value', () => {
   test('an unknown session id is rejected 404, not adopted', async () => {
     // The guarantee: a forged or expired id must not cause the server to build a
     // session around it. This is what makes the id unguessable in practice.
-    const handler = handlerWith({});
+    const handler = handlerWith({ sessionMode: 'stateful' });
     const res = await handler(initRequest({ 'mcp-session-id': 'forged-by-client' }));
     expect(res.status).toBe(404);
     const body: unknown = await res.json();
@@ -82,7 +102,7 @@ describe('a session id is never minted from a client-supplied value', () => {
   });
 
   test('the server issues its own id on a fresh initialize', async () => {
-    const handler = handlerWith({});
+    const handler = handlerWith({ sessionMode: 'stateful' });
     const res = await handler(initRequest());
     expect(res.status).toBe(200);
     const issued = res.headers.get('mcp-session-id');
@@ -92,7 +112,7 @@ describe('a session id is never minted from a client-supplied value', () => {
   });
 
   test('the issued id is accepted on the next request', async () => {
-    const handler = handlerWith({});
+    const handler = handlerWith({ sessionMode: 'stateful' });
     const issued = (await handler(initRequest())).headers.get('mcp-session-id');
     if (!issued) throw new Error('expected a session id');
     const second = await handler(
@@ -110,12 +130,12 @@ describe('a session id is never minted from a client-supplied value', () => {
   });
 });
 
-describe('stateless: true keeps no session', () => {
+describe('stateless is the default', () => {
   test('no session id is issued, and an unknown one is not a 404', async () => {
     // With no session store there is nothing to "not find" — the whole 404 branch
     // is bypassed, which is the point: a restarted server never invalidates a
     // client.
-    const handler = handlerWith({ stateless: true });
+    const handler = handlerWith({});
     const first = await handler(initRequest());
     expect(first.status).toBe(200);
     expect(first.headers.get('mcp-session-id')).toBeNull();
@@ -124,11 +144,90 @@ describe('stateless: true keeps no session', () => {
     expect(withId.status).toBe(200);
   });
 
-  test('each stateless request stands alone — a second call needs no handshake', async () => {
-    const handler = handlerWith({ stateless: true });
-    const res = await handler(initRequest());
-    expect(res.status).toBe(200);
-    const again = await handler(initRequest());
-    expect(again.status).toBe(200);
+  test('each request stands alone — a tool call needs no retained handshake', async () => {
+    const handler = handlerWith({});
+    expect((await handler(initRequest())).status).toBe(200);
+    expect((await handler(toolCallRequest('list_notes'))).status).toBe(200);
+  });
+
+  test('auth is resolved independently for every request', async () => {
+    const identities: string[] = [];
+    const handler = handlerWith({
+      auth: (request) => {
+        const identity = request.headers.get('authorization') ?? 'anonymous';
+        identities.push(identity);
+        return { identity };
+      },
+    });
+
+    await handler(initRequest({ authorization: 'alpha' }));
+    await handler(initRequest({ authorization: 'beta' }));
+
+    expect(identities).toEqual(['alpha', 'beta']);
+  });
+
+  test('parallel requests isolate resolved auth, context and hooks', async () => {
+    const seen: string[] = [];
+    const handler = createMcpHandler({
+      serverInfo: { name: 't', version: '1' },
+      auth: (request) => ({ userId: request.headers.get('authorization') ?? 'anonymous' }),
+      services: [],
+      context: (auth) => auth,
+      hooks: {
+        afterToolCall: ({ context }) => {
+          if (typeof context.userId === 'string') seen.push(context.userId);
+        },
+      },
+      nativeTools: ({ registerTool }) => {
+        registerTool({
+          name: 'whoami',
+          description: 'Return the current identity',
+          identity: { serviceName: 'authTools', action: 'whoami', method: 'GET' },
+          input: z.object({}),
+          handler: ({ userId }) => ({
+            content: [{ type: 'text', text: String(userId) }],
+          }),
+        });
+      },
+    });
+
+    await Promise.all([
+      handler(toolCallRequest('whoami', { authorization: 'alpha' })),
+      handler(toolCallRequest('whoami', { authorization: 'beta' })),
+    ]);
+
+    expect(seen.sort()).toEqual(['alpha', 'beta']);
+  });
+
+  test('separate handler instances need no shared restart/session state', async () => {
+    const firstInstance = handlerWith({});
+    const replacementInstance = handlerWith({});
+
+    expect((await firstInstance(initRequest())).headers.get('mcp-session-id')).toBeNull();
+    expect((await replacementInstance(toolCallRequest('list_notes'))).status).toBe(200);
+  });
+});
+
+describe("sessionMode: 'stateful' preserves session continuity", () => {
+  test('unknown session ids fail and server-issued ids remain reusable', async () => {
+    const handler = handlerWith({ sessionMode: 'stateful' });
+    const unknown = await handler(initRequest({ 'mcp-session-id': 'unknown' }));
+    expect(unknown.status).toBe(404);
+
+    const first = await handler(initRequest());
+    const issued = first.headers.get('mcp-session-id');
+    if (!issued) throw new Error('expected a session id');
+    const next = await handler(
+      new Request('http://x/mcp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-session-id': issued,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+      }),
+    );
+    expect(next.status).toBe(200);
   });
 });

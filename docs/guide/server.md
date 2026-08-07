@@ -85,6 +85,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `scopePrefixes` | `scope → path prefix` map — mount `services` by `service.scope` (see below) |
 | `rawRoutes` | non-contract routes (see below) |
 | `maxUploadBytes` | default multipart upload cap (bytes); per-route `EndpointDef.maxUploadBytes` overrides |
+| `maxJsonBodyBytes` | optional JSON body cap (bytes); per-route value overrides; unset preserves existing behaviour |
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }` |
 | `hooks` | lifecycle hooks (see below) |
@@ -150,10 +151,18 @@ is not involved.
 way to see what `enrich` and the request context actually put on the record;
 changing `NODE_ENV` is not needed, and neither is deploying.
 
-Three more things about `enrich`: it runs at close, when the request body is
-already consumed; framework fields (`traceId`, `status`, `path`, …) always win a
-key collision; and a throw in `skip` or `enrich` is swallowed — neither can fail
-a request.
+Three more things about `enrich`:
+
+- It runs at close, when the request body is already consumed.
+- The framework owns `traceId`, `method`, `path`, `status`, `durationMs`,
+  `errorCode` and `ip` in both structured sinks; the built-in JSON line also
+  owns `ts`, `level` and `msg`. Its value wins a collision, and a discarded key
+  warns once per handler rather than disappearing silently.
+- `errorCode` has one outcome-aware exception: enrichment may supply it for a
+  `4xx`/`5xx` response when the framework derived no code, such as an error
+  `Response` returned by a raw route. It cannot add one to a `2xx`/`3xx` or
+  replace a framework-derived code.
+- A throw in `skip` or `enrich` is swallowed; neither can fail a request.
 
 With an observability context active, the structured line also carries `userId`,
 `serviceName`, `action` and `dimensions` for free. See
@@ -272,6 +281,40 @@ createServer({
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
 That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).
 
+## Signed JSON webhooks
+
+A provider signs the original JSON text, not `JSON.stringify(ctx.input)`.
+Declare `rawBody: true` to retain the same decoded text the router reads while
+keeping normal Zod validation:
+
+```ts
+const webhooks = defineContract(
+  { prefix: 'webhooks' },
+  {
+    receive: {
+      method: 'POST', path: '/provider', desc: 'Receive a signed event',
+      rawBody: true,
+      maxJsonBodyBytes: 256 * 1024,
+      input: ProviderEventSchema,
+      output: z.object({ accepted: z.boolean() }),
+    },
+  },
+)
+
+receive: async (ctx) => {
+  const signature = ctx.req.headers.get('x-signature')
+  await verifyWebhookHmac(ctx.rawBody, signature) // guaranteed string
+  return { accepted: true }
+}
+```
+
+This endpoint is HTTP-only and cannot be multipart or exposed as a tool. The
+router sets `ctx.rawBody` before JSON/Zod validation, so `onError` can inspect it
+after malformed JSON or a schema failure. Endpoints without `rawBody: true` do
+not retain the text. `maxJsonBodyBytes` may also be set once on `createServer` /
+`createHandler`; a route value wins. Both limits are opt-in and abort an
+oversized stream before it is fully buffered. → ADR 0051
+
 ## Raw-response endpoints
 
 An endpoint that answers with **bytes rather than data** — a PDF download, a
@@ -321,8 +364,9 @@ them — see [`cors.exposeHeaders`](#serving-files--range-requests).
 code. A raw-response *endpoint* stays in the contract: only its response is
 raw — it is still routed, gated, typed and documented like every other endpoint.
 A raw *route* is outside the contract entirely — no schemas, no auth gate, no
-client — which is what you want for an OAuth redirect or a webhook, and what you
-do not want for a download.
+client — which is what you want for an OAuth redirect or a non-JSON webhook. A
+signed JSON webhook can stay validated through
+[`rawBody: true`](#signed-json-webhooks).
 
 ⚠️ **Delete the old raw route when you move an endpoint into the contract.** Raw
 routes are matched **first**, so a leftover one keeps serving the bytes and the

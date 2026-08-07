@@ -194,9 +194,9 @@ export interface ShadowedRoute {
  * built from each contract route, so it can never disagree with what the
  * dispatcher actually does.
  */
-export function findShadowedRoutes(
+export function findShadowedRoutes<TServer>(
   routeMap: RouteMap,
-  rawRoutes: RawRoute[] | undefined,
+  rawRoutes: RawRoute<TServer>[] | undefined,
 ): ShadowedRoute[] {
   if (!rawRoutes || rawRoutes.length === 0) return [];
   const shadowed: ShadowedRoute[] = [];
@@ -220,11 +220,11 @@ export function findShadowedRoutes(
 
 // ─── Raw routes ──────────────────────────────────────
 
-export function matchRawRoute(
-  rawRoutes: RawRoute[],
+export function matchRawRoute<TServer>(
+  rawRoutes: RawRoute<TServer>[],
   httpMethod: string,
   pathname: string,
-): { route: RawRoute; params: Record<string, string> } | null {
+): { route: RawRoute<TServer>; params: Record<string, string> } | null {
   for (const route of rawRoutes) {
     if (route.method !== 'ALL' && route.method !== httpMethod) continue;
 

@@ -1,4 +1,3 @@
-import { toJsonSchema } from './json-schema';
 import type { MountableTool } from './mount';
 
 export interface ToolManifestEntry {
@@ -17,13 +16,9 @@ export interface ToolManifestEntry {
  * rather than crashing the whole manifest.
  */
 export function buildToolManifest(tools: MountableTool[]): ToolManifestEntry[] {
-  return tools.map((t) => {
-    let inputSchema: Record<string, unknown>;
-    try {
-      inputSchema = toJsonSchema(t.schema, 'input');
-    } catch {
-      inputSchema = {};
-    }
-    return { name: t.name, description: t.method.desc, inputSchema };
-  });
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.method.desc,
+    inputSchema: tool.presentationSchema,
+  }));
 }

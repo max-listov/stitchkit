@@ -27,10 +27,11 @@ export function toJsonSchema(
   schema: z.ZodType,
   io: JsonSchemaIo,
   unrepresentable: 'throw' | 'any' = 'throw',
+  target: 'draft-07' | 'draft-2020-12' = 'draft-2020-12',
 ): Record<string, unknown> {
   return z.toJSONSchema(schema, {
     io,
-    target: 'draft-2020-12',
+    target,
     unrepresentable,
     cycles: 'ref',
   });

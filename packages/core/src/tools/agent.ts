@@ -1,5 +1,5 @@
 import type { ToolSet } from 'ai';
-import { tool, zodSchema } from 'ai';
+import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
 import {
@@ -69,7 +69,12 @@ export function mountAgent(
       );
       tools[mountable.name] = tool({
         description: mountable.method.desc,
-        inputSchema: zodSchema(mountable.schema),
+        inputSchema: jsonSchema(mountable.presentationSchema, {
+          validate: async (value) =>
+            isRecord(value)
+              ? { success: true, value }
+              : { success: false, error: new Error('Tool arguments must be an object') },
+        }),
         execute: async (rawArgs) => {
           const args = isRecord(rawArgs) ? rawArgs : {};
           try {

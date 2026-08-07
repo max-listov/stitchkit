@@ -27,14 +27,14 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      { name: 'x' },
-      { ok: true, data: { id: 'x' } },
-      5,
-      { source: 'agent' },
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: { name: 'x' },
+      result: { ok: true, data: { id: 'x' } },
+      durationMs: 5,
+      context: { source: 'agent' },
       endpoint,
-    );
+    });
     await Bun.sleep(5);
 
     const e = events[0];
@@ -49,18 +49,18 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      { bad: 1 },
-      {
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: { bad: 1 },
+      result: {
         ok: false,
         code: 'VALIDATION_ERROR',
         details: { issues: [{ path: 'name', message: 'Required' }] },
       },
-      3,
-      { source: 'agent' },
+      durationMs: 3,
+      context: { source: 'agent' },
       endpoint,
-    );
+    });
     await Bun.sleep(5);
 
     const e = events[0];
@@ -75,20 +75,20 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      { name: 'x' },
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: { name: 'x' },
       // What the caller was told, and all the row used to have.
-      {
+      result: {
         ok: false,
         code: 'INTERNAL_SERVER_ERROR',
         details: { message: 'Internal server error' },
       },
-      7,
-      { source: 'agent' },
+      durationMs: 7,
+      context: { source: 'agent' },
       endpoint,
-      new Error('ECONNREFUSED 10.0.0.4:5432'),
-    );
+      error: new Error('ECONNREFUSED 10.0.0.4:5432'),
+    });
     await Bun.sleep(5);
 
     const e = events[0];
@@ -102,19 +102,19 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      {},
-      {
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: {},
+      result: {
         ok: false,
         code: 'INTERNAL_SERVER_ERROR',
         details: { message: 'Internal server error' },
       },
-      2,
-      { source: 'agent' },
+      durationMs: 2,
+      context: { source: 'agent' },
       endpoint,
-      'worker pool exhausted',
-    );
+      error: 'worker pool exhausted',
+    });
     await Bun.sleep(5);
 
     expect(events[0]?.errorMessage).toBe('worker pool exhausted');
@@ -124,15 +124,15 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      {},
-      { ok: false, code: 'NOT_FOUND', details: { message: 'No such broadcast' } },
-      2,
-      { source: 'agent' },
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: {},
+      result: { ok: false, code: 'NOT_FOUND', details: { message: 'No such broadcast' } },
+      durationMs: 2,
+      context: { source: 'agent' },
       endpoint,
-      new Error('No such broadcast'),
-    );
+      error: new Error('No such broadcast'),
+    });
     await Bun.sleep(5);
 
     expect(events[0]?.errorMessage).toBe('No such broadcast');
@@ -142,18 +142,18 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
     const events: RequestEvent[] = [];
     const audit = createAuditHook({ write: (e) => void events.push(e) });
 
-    audit.toolCall.afterToolCall?.(
-      'broadcast_create',
-      {},
-      {
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: {},
+      result: {
         ok: false,
         code: 'INTERNAL_SERVER_ERROR',
         details: { message: 'Internal server error' },
       },
-      2,
-      { source: 'agent' },
+      durationMs: 2,
+      context: { source: 'agent' },
       endpoint,
-    );
+    });
     await Bun.sleep(5);
 
     expect(events[0]?.errorMessage).toBe('Internal server error');

@@ -6,6 +6,7 @@ import { badRequest, type RuntimeContext } from '../contract';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
 import { parseMultipart } from './multipart';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from './request';
+import { readRequestText } from './request-body';
 import type { MethodDef } from './types';
 
 /** Context keys the router owns — a path `:param` may never shadow them. */
@@ -16,6 +17,7 @@ const RESERVED_KEYS = new Set([
   'req',
   'url',
   'headers',
+  'rawBody',
   'traceId',
   'spanId',
   'ipAddress',
@@ -28,8 +30,7 @@ const RESERVED_KEYS = new Set([
  * `text/plain` body is a simple cross-origin request a form can forge, so
  * rejecting it keeps CSRF off cookie-authenticated endpoints.
  */
-async function readJsonBody(req: Request): Promise<unknown> {
-  const text = await req.text();
+function parseJsonBody(req: Request, text: string): unknown {
   if (text.trim() === '') return {};
   if (!req.headers.get('content-type')?.includes('application/json')) {
     badRequest('Request body must be application/json');
@@ -90,6 +91,7 @@ export async function parseRequestInto(
   url: URL,
   method: MethodDef,
   maxUploadBytes?: number,
+  maxJsonBodyBytes?: number,
 ): Promise<void> {
   if (method.paramsSchema) {
     ctx.params = method.paramsSchema.parse(ctx.params);
@@ -107,11 +109,17 @@ export async function parseRequestInto(
       ctx.input = method.inputSchema.parse(parseQueryParams(url));
     } else if (req.method === 'DELETE') {
       const ct = req.headers.get('content-type');
-      ctx.input = ct?.includes('application/json')
-        ? method.inputSchema.parse(await readJsonBody(req))
-        : method.inputSchema.parse(parseQueryParams(url));
+      if (ct?.includes('application/json')) {
+        const text = await readRequestText(req, method.maxJsonBodyBytes ?? maxJsonBodyBytes);
+        if (method.rawBody) ctx.rawBody = text;
+        ctx.input = method.inputSchema.parse(parseJsonBody(req, text));
+      } else {
+        ctx.input = method.inputSchema.parse(parseQueryParams(url));
+      }
     } else {
-      ctx.input = method.inputSchema.parse(await readJsonBody(req));
+      const text = await readRequestText(req, method.maxJsonBodyBytes ?? maxJsonBodyBytes);
+      if (method.rawBody) ctx.rawBody = text;
+      ctx.input = method.inputSchema.parse(parseJsonBody(req, text));
     }
   }
 }

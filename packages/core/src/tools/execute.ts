@@ -1,8 +1,9 @@
+import type { ZodType, z } from 'zod';
 import type { RuntimeContext, TransportSource } from '../contract';
 import { formatZodError, normalizeError, validateHandlerOutput } from '../internal/errors';
 import { isUnsafeKey } from '../internal/safe-json';
 import { getRequestContext, runWithRequestContext } from '../observability/context';
-import type { MethodDef } from '../server/types';
+import type { OperationIdentity } from '../server/types';
 import { coerceJsonArgs } from './coerce';
 import { objectShapeKeys } from './schema';
 
@@ -15,13 +16,29 @@ export interface ToolCallContext {
   [key: string]: unknown;
 }
 
+export interface BeforeToolCallOptions {
+  toolName: string;
+  args: Record<string, unknown>;
+  context: ToolCallContext;
+  endpoint: OperationIdentity;
+}
+
+export interface AfterToolCallOptions extends BeforeToolCallOptions {
+  result: ToolResult;
+  durationMs: number;
+  /** The value as thrown; absent for failures that did not throw. */
+  error?: unknown;
+}
+
+export interface ToolErrorOptions {
+  toolName: string;
+  error: unknown;
+  context: ToolCallContext;
+  endpoint: OperationIdentity;
+}
+
 export interface ToolCallHooks {
-  beforeToolCall?: (
-    toolName: string,
-    args: Record<string, unknown>,
-    context: ToolCallContext,
-    endpoint: MethodDef,
-  ) => void | Promise<void>;
+  beforeToolCall?: (options: BeforeToolCallOptions) => void | Promise<void>;
   /**
    * Every finished call, success and failure alike — the record of the call.
    *
@@ -31,31 +48,22 @@ export interface ToolCallHooks {
    * It is the same value `onToolError` receives, handed here too so a single
    * hook can build one row that names the cause: the `result` alone cannot,
    * because an unexpected throw is scrubbed to a bare `INTERNAL_SERVER_ERROR`.
-   * A six-parameter hook is unaffected.
    */
-  afterToolCall?: (
-    toolName: string,
-    args: Record<string, unknown>,
-    result: ToolResult,
-    durationMs: number,
-    context: ToolCallContext,
-    endpoint: MethodDef,
-    error?: unknown,
-  ) => void | Promise<void>;
+  afterToolCall?: (options: AfterToolCallOptions) => void | Promise<void>;
   /**
-   * The handler path threw — the value **as thrown**, before it is normalised
+   * The tool execution path threw — the value **as thrown**, before it is normalised
    * into a `ToolResult`. The tool-side answer to HTTP's `hooks.onError`, and the
    * only place the real cause of an unexpected failure is reachable: an error
    * that is not an `AppError` is scrubbed to a bare `INTERNAL_SERVER_ERROR` with
    * no details, so by the time `afterToolCall` sees the result, the stack, the
    * `cause` chain and the message are gone.
    *
-   * Fires for a throw from `lifecycle.beforeHandle`, the handler, or
-   * `lifecycle.afterHandle` — the span where information is destroyed. It does
-   * **not** fire for a `beforeToolCall` rejection, an argument-validation
-   * failure or an output-schema mismatch: each of those is already described in
-   * full by the `ToolResult` that `afterToolCall` receives, and a second path to
-   * the same information only invites double-logging.
+   * Fires for a throw from executable input parsing (`ToolExtend`, params or
+   * input), extension resolution, `lifecycle.beforeHandle`, the handler, or
+   * `lifecycle.afterHandle` — every span where the raw cause would otherwise be
+   * destroyed. It does **not** fire for a normal validation result, a
+   * `beforeToolCall` rejection or an output-schema mismatch: each is already
+   * described in full by the `ToolResult` that `afterToolCall` receives.
    *
    * This is observation, not an error handler — the tool envelope is always
    * `toolResultFromError`, so the return value is ignored and a throw from the
@@ -64,12 +72,7 @@ export interface ToolCallHooks {
    * records (a request-context error, say) is already in place when the audit
    * hook reads it.
    */
-  onToolError?: (
-    toolName: string,
-    error: unknown,
-    context: ToolCallContext,
-    endpoint: MethodDef,
-  ) => void | Promise<void>;
+  onToolError?: (options: ToolErrorOptions) => void | Promise<void>;
 }
 
 /**
@@ -97,13 +100,29 @@ export type ErrorHintFn = (toolName: string, errorCode: string) => string | null
  */
 export interface ToolLifecycle {
   /** Auth / scope gate — throw to reject the call. */
-  beforeHandle?: (ctx: RuntimeContext, endpoint: MethodDef) => void | Promise<void>;
+  beforeHandle?: (ctx: RuntimeContext, endpoint: OperationIdentity) => void | Promise<void>;
   /** Transform the handler result before it is returned. */
   afterHandle?: (
     ctx: RuntimeContext,
     result: unknown,
-    endpoint: MethodDef,
+    endpoint: OperationIdentity,
   ) => unknown | Promise<unknown>;
+}
+
+/** Executable tool operation; contract methods and native tools share this runner shape. */
+export interface ToolOperation extends OperationIdentity {
+  paramsSchema?: ZodType;
+  inputSchema?: ZodType;
+  outputSchema?: ZodType;
+  handler(ctx: RuntimeContext): unknown | Promise<unknown>;
+}
+
+/** Executable extension parsed once inside the shared runner before resolution. */
+export interface ToolArgumentExtension {
+  schema: z.ZodObject;
+  resolve: (
+    args: Record<string, unknown>,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 /**
@@ -122,7 +141,7 @@ export function toolResultFromError(err: unknown): Extract<ToolResult, { ok: fal
 }
 
 export async function executeToolMethod(
-  method: MethodDef<unknown, unknown, unknown>,
+  method: ToolOperation,
   toolName: string,
   rawArgs: Record<string, unknown>,
   context: ToolCallContext,
@@ -130,6 +149,7 @@ export async function executeToolMethod(
   lifecycle?: ToolLifecycle,
   coerceJson = false,
   onOutputStrip?: (paths: string[]) => void,
+  extension?: ToolArgumentExtension,
 ): Promise<ToolResult> {
   // Each call gets its own request context, forked from the ambient one.
   //
@@ -152,6 +172,7 @@ export async function executeToolMethod(
       lifecycle,
       coerceJson,
       onOutputStrip,
+      extension,
     ),
   );
 }
@@ -170,7 +191,7 @@ export function inToolCallContext<T>(
   call: {
     source: TransportSource;
     toolName: string;
-    method: MethodDef<unknown, unknown, unknown>;
+    method: OperationIdentity;
   },
   body: () => Promise<T>,
 ): Promise<T> {
@@ -200,7 +221,7 @@ export function inToolCallContext<T>(
 
 /** The call itself. Always runs inside the context `executeToolMethod` chose. */
 async function runToolMethod(
-  method: MethodDef<unknown, unknown, unknown>,
+  method: ToolOperation,
   toolName: string,
   rawArgs: Record<string, unknown>,
   context: ToolCallContext,
@@ -208,38 +229,102 @@ async function runToolMethod(
   lifecycle: ToolLifecycle | undefined,
   coerceJson: boolean,
   onOutputStrip: ((paths: string[]) => void) | undefined,
+  extension: ToolArgumentExtension | undefined,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
+  let hookContext = context;
 
   // Single exit — fire `afterToolCall` for every result (success and error).
-  // `method` (the resolved `MethodDef`) is passed so the hook reads identity
+  // The resolved operation is passed so the hook reads identity
   // (`serviceName` / `key` / `meta`) directly — the tool-side twin of
   // `afterHandle(ctx, result, endpoint)`, no toolName→identity map. → ADR 0022.
   // `thrown` is passed only on the throw path, so a hook can tell "the handler
   // threw and this is why" from "the call failed a check" — the latter never had
   // a raw value to lose.
   const finish = async (result: ToolResult, thrown?: unknown): Promise<ToolResult> => {
-    await hooks?.afterToolCall?.(
+    await hooks?.afterToolCall?.({
       toolName,
-      rawArgs,
+      args: rawArgs,
       result,
-      Date.now() - startedAt,
-      context,
-      method,
-      thrown,
-    );
+      durationMs: Date.now() - startedAt,
+      context: hookContext,
+      endpoint: method,
+      ...(thrown !== undefined && { error: thrown }),
+    });
     return result;
   };
 
-  // `beforeToolCall` is guarded — a throw here must still fire `afterToolCall`,
-  // otherwise an auth-rejected call would produce no audit record.
-  if (hooks?.beforeToolCall) {
+  let beforeRan = false;
+  const runBefore = async (): Promise<ToolResult | null> => {
+    if (beforeRan || !hooks?.beforeToolCall) return null;
+    beforeRan = true;
     try {
-      await hooks.beforeToolCall(toolName, rawArgs, context, method);
+      await hooks.beforeToolCall({
+        toolName,
+        args: rawArgs,
+        context: hookContext,
+        endpoint: method,
+      });
+      return null;
     } catch (err) {
       return finish(toolResultFromError(err));
     }
+  };
+
+  const finishThrown = async (err: unknown): Promise<ToolResult> => {
+    const beforeFailure = await runBefore();
+    if (beforeFailure) return beforeFailure;
+    if (hooks?.onToolError) {
+      try {
+        await hooks.onToolError({
+          toolName,
+          error: err,
+          context: hookContext,
+          endpoint: method,
+        });
+      } catch (hookErr) {
+        console.error('[stitchkit] onToolError hook failed:', hookErr);
+      }
+    }
+    return finish(toolResultFromError(err), err);
+  };
+
+  let callArgs = rawArgs;
+  let callContext = context;
+  if (extension) {
+    const extensionKeys = new Set(Object.keys(extension.schema.shape));
+    const extensionArgs = Object.fromEntries(
+      Object.entries(rawArgs).filter(([key]) => extensionKeys.has(key)),
+    );
+    let parsed: ReturnType<typeof extension.schema.safeParse>;
+    try {
+      parsed = extension.schema.safeParse(extensionArgs);
+    } catch (err) {
+      return finishThrown(err);
+    }
+    if (!parsed.success) {
+      const beforeFailure = await runBefore();
+      if (beforeFailure) return beforeFailure;
+      return finish({
+        ok: false,
+        code: 'VALIDATION_ERROR',
+        details: { message: `Invalid tool extension: ${formatZodError(parsed.error)}` },
+      });
+    }
+    try {
+      const resolved = await extension.resolve({ ...rawArgs, ...parsed.data });
+      callContext = { ...context, ...resolved, source: context.source };
+      hookContext = callContext;
+      callArgs = Object.fromEntries(
+        Object.entries(rawArgs).filter(([key]) => !extensionKeys.has(key)),
+      );
+    } catch (err) {
+      return finishThrown(err);
+    }
   }
+
+  const beforeFailure = await runBefore();
+  if (beforeFailure) return beforeFailure;
 
   // Slice the flat tool args the way the HTTP transport slices a request: path
   // params and body/query are disjoint sets of keys. Parsing each schema over
@@ -249,7 +334,7 @@ async function runToolMethod(
   const paramKeys = new Set(objectShapeKeys(method.paramsSchema));
   let paramArgs: Record<string, unknown> = {};
   let inputArgs: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(rawArgs)) {
+  for (const [key, value] of Object.entries(callArgs)) {
     // A tool arg named `__proto__` would pollute the prototype chain.
     if (isUnsafeKey(key)) continue;
     if (paramKeys.has(key)) paramArgs[key] = value;
@@ -264,7 +349,12 @@ async function runToolMethod(
 
   let params: unknown;
   if (method.paramsSchema) {
-    const result = method.paramsSchema.safeParse(paramArgs);
+    let result: ReturnType<typeof method.paramsSchema.safeParse>;
+    try {
+      result = method.paramsSchema.safeParse(paramArgs);
+    } catch (err) {
+      return finishThrown(err);
+    }
     if (!result.success) {
       return finish({
         ok: false,
@@ -277,7 +367,12 @@ async function runToolMethod(
 
   let input: unknown;
   if (method.inputSchema) {
-    const result = method.inputSchema.safeParse(inputArgs);
+    let result: ReturnType<typeof method.inputSchema.safeParse>;
+    try {
+      result = method.inputSchema.safeParse(inputArgs);
+    } catch (err) {
+      return finishThrown(err);
+    }
     if (!result.success) {
       return finish({
         ok: false,
@@ -292,7 +387,12 @@ async function runToolMethod(
     // Framework-owned fields are written last so neither the static context
     // nor a `ToolExtend.resolve` result can shadow `params` / `input` /
     // `source` — the same guard the HTTP context builder applies.
-    const ctx: RuntimeContext = { ...context, params, input, source: context.source };
+    const ctx = {
+      ...callContext,
+      params,
+      input,
+      source: context.source,
+    };
 
     if (lifecycle?.beforeHandle) {
       await lifecycle.beforeHandle(ctx, method);
@@ -331,17 +431,10 @@ async function runToolMethod(
     // anything that is not an `AppError` down to a bare `INTERNAL_SERVER_ERROR`,
     // so this is the last point at which the real cause exists. Guarded — the
     // hook observes the failure, it must not become one.
-    if (hooks?.onToolError) {
-      try {
-        await hooks.onToolError(toolName, err, context, method);
-      } catch (hookErr) {
-        console.error('[stitchkit] onToolError hook failed:', hookErr);
-      }
-    }
     // The result carries the cause (message in `details` when there is nothing
     // structured) so a model sees why it failed. Result logging is the
     // consumer's job, via the `afterToolCall` hook — which is handed the raw
     // value too, so one hook can build a record the scrubbed result cannot.
-    return finish(toolResultFromError(err), err);
+    return finishThrown(err);
   }
 }

@@ -62,10 +62,12 @@ export const users = defineContract({ prefix: 'users' }, {
 | `expose` | no | which transports carry this endpoint — see [below](#transports) |
 | `toolName` | no | explicit MCP / agent tool name (default: a verb-aware derivation, see below — not a literal `prefix_key`) |
 | `multipart` | no | field name of a file upload — see [below](#file-uploads) |
+| `maxJsonBodyBytes` | no | per-route JSON body ceiling; overrides the server default |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
 | `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
 | `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
 | `rawResponse` | no | the handler returns the `Response` itself — a download, a file, an SSE stream. HTTP-only, never a tool, no `output`. See [Raw-response endpoints](./server.md#raw-response-endpoints) |
+| `rawBody` | no | retain original JSON text for a signed HTTP webhook. See [Signed JSON webhooks](./server.md#signed-json-webhooks) |
 | `contentType` | no | documented response media type of a `rawResponse` endpoint (OpenAPI only) |
 
 ## `params` vs `input` vs `output`

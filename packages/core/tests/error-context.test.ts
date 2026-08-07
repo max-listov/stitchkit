@@ -50,16 +50,18 @@ describe('error context on a pre-handler (validation) failure', () => {
     expect(res.status).toBe(400);
 
     expect(captured).toBeDefined();
+    if (!captured) throw new Error('onError did not capture the validation context');
     // The path param is a property of the URL — known the moment the route
     // matched, so it is on the context even though body validation threw.
-    expect((captured?.ctx.params as { id: string }).id).toBe('abc');
+    const params = z.object({ id: z.string() }).parse(captured.ctx.params);
+    expect(params.id).toBe('abc');
     // The raw request / url are first-class, typed, and reachable cast-free.
-    expect(captured?.ctx.req).toBeInstanceOf(Request);
-    expect(captured?.ctx.url).toBeInstanceOf(URL);
-    expect(captured?.ctx.req?.method).toBe('POST');
+    expect(captured.ctx.req).toBeInstanceOf(Request);
+    expect(captured.ctx.url).toBeInstanceOf(URL);
+    expect(captured.ctx.req?.method).toBe('POST');
     // The matched endpoint identity is passed through.
-    expect(captured?.endpoint?.key).toBe('update');
-    expect(captured?.endpoint?.serviceName).toBe('items');
+    expect(captured.endpoint?.key).toBe('update');
+    expect(captured.endpoint?.serviceName).toBe('items');
   });
 
   test('the access log renders the error code on a validation failure', async () => {

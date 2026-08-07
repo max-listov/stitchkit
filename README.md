@@ -26,7 +26,8 @@
 - **One contract, five surfaces.** Define your API once — get HTTP routes, MCP tools (for Claude/Cursor), AI SDK tools (for agents), a [CLI](./docs/guide/cli.md) (for scripts & Skills), and a typed client.
 - **Zero HTTP framework deps.** Built on `Bun.serve()` (Bun) or `srvx` (Node). No Hono, no Elysia, no Express.
 - **Fullstack type safety.** Server handlers, client calls, MCP tools — all typed from the same contract.
-- **Small.** ~8500 lines of source. No magic, no codegen, no build step.
+- **Inspectable.** A focused core with explicit adapters. No generated
+  application code or framework build step in your app.
 - **Thin over what you already use.** WebSocket = Socket.IO (`createSocketIOClient` / `createSocketIOServer`). React data layer = `react-query-kit` (`createCursorQuery`). stitchkit owns the contract and the transport — not its own competing WebSocket or hook engine.
 
 ### The problem it solves
@@ -344,7 +345,8 @@ app code share a single instance. Bundled copies would double `zod`, split the
 `react` hook runtime and break `instanceof`. Optional peers mean an app that
 never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/0011-bun-only-one-package.md)
 
-The framework itself is small — ~8500 lines, no codegen, no build step in your app.
+The framework stays focused and inspectable: explicit adapters, no generated
+application code and no framework build step in your app.
 
 ## Example
 

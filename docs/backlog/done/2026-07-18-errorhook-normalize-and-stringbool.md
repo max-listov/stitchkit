@@ -1,6 +1,6 @@
 ---
 title: createErrorHook нормализует ZodError → 400 + экспорт normalizeError + фикс boolean-migration на z.stringbool
-description: Два пункта от агента на живой миграции gecko-voice. 1) createErrorHook мапил любой не-AppError в 500 — client fault (ZodError) одет как server fault; фикс — нормализация через normalizeError + экспорт его наружу. 2) migration-подсказка z.coerce.boolean() — footgun ('false'→true); правильно z.stringbool() (Zod v4).
+description: Два пункта от агента на живой миграции потребителя. 1) createErrorHook мапил любой не-AppError в 500 — client fault (ZodError) одет как server fault; фикс — нормализация через normalizeError + экспорт его наружу. 2) migration-подсказка z.coerce.boolean() — footgun ('false'→true); правильно z.stringbool() (Zod v4).
 type: task
 status: done
 created: 2026-07-18
@@ -12,7 +12,7 @@ completed: 2026-07-18 12:00 +08:00
 
 ## Контекст
 
-Агент на миграции gecko-voice словил `500 UNKNOWN_ERROR` на кривой input вместо
+Агент на миграции потребителя словил `500 UNKNOWN_ERROR` на кривой input вместо
 честного 4xx. Прочитал исходник 0.20.0 (только читал), прислал два пункта.
 
 ## Анализ (проткнуто по исходнику)
@@ -39,4 +39,5 @@ completed: 2026-07-18 12:00 +08:00
 - Обёртка ZodError в `parseMultipart`/`parseRequestInto` — отвергнута (не тот слой, ломает инспекцию полей в onError).
 - Авто-коэрция multipart во фреймворке — отвергнута (противоречит фиксу 0.20, §7).
 
-Вышло в релизе 0.21.0. Срочность была нулевая (gecko-voice уже отдавал 400 сам), но фикс закрывает грабли для всех консьюмеров.
+Вышло в релизе 0.21.0. Потребитель уже отдавал 400 самостоятельно, но фикс
+закрывает грабли для всех консьюмеров.

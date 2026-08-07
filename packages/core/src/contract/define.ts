@@ -31,6 +31,12 @@ interface EndpointDefBase {
    */
   maxUploadBytes?: number;
   /**
+   * Per-route ceiling in bytes for a JSON request body. Overrides the server's
+   * `maxJsonBodyBytes`; without either, JSON body size is unchanged/unbounded.
+   * Enforced while streaming, before the complete body is buffered.
+   */
+  maxJsonBodyBytes?: number;
+  /**
    * HTTP client timeout in ms for this endpoint. Use it for slow synchronous
    * endpoints (AI generation) that need more than the client default. A
    * property of the endpoint — declared once, the typed client applies it.
@@ -101,6 +107,7 @@ interface HttpOnlyEndpointDef extends EndpointDefBase {
   expose: readonly ['HTTP'];
   toolName?: never;
   rawResponse?: never;
+  rawBody?: never;
 }
 
 interface ToolEndpointDef extends EndpointDefBase {
@@ -111,6 +118,20 @@ interface ToolEndpointDef extends EndpointDefBase {
   /** MCP behavioural hints (read-only / destructive / title) for hosts. */
   annotations?: EndpointToolAnnotations;
   rawResponse?: never;
+  rawBody?: never;
+}
+
+/** A validated JSON endpoint that also retains the original decoded body text. */
+interface RawBodyEndpointDef extends EndpointDefBase {
+  method: 'POST' | 'PUT' | 'PATCH';
+  input: ZodType<unknown>;
+  rawBody: true;
+  multipart?: never;
+  rawResponse?: never;
+  toolName?: never;
+  ui?: never;
+  annotations?: never;
+  expose?: readonly ['HTTP'];
 }
 
 /**
@@ -141,6 +162,8 @@ interface RawResponseEndpointDef extends EndpointDefBase {
    * "normal".
    */
   rawResponse: true;
+  /** Retain the validated JSON request's original decoded body text. */
+  rawBody?: true;
   /**
    * The `Content-Type` this endpoint answers with, for documentation only —
    * the handler still sets the real header (`serveFile` detects it from the
@@ -160,7 +183,11 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   expose?: readonly ['HTTP'];
 }
 
-export type EndpointDef = HttpOnlyEndpointDef | ToolEndpointDef | RawResponseEndpointDef;
+export type EndpointDef =
+  | HttpOnlyEndpointDef
+  | ToolEndpointDef
+  | RawBodyEndpointDef
+  | RawResponseEndpointDef;
 
 export interface ContractMeta<TScope extends string = string> {
   prefix: string;
@@ -216,7 +243,17 @@ export function defineContract(
       throw new Error(`Contract "${meta.prefix}": endpoint "${key}" has an empty desc`);
     }
 
+    if (
+      ep.maxJsonBodyBytes !== undefined &&
+      (!Number.isSafeInteger(ep.maxJsonBodyBytes) || ep.maxJsonBodyBytes <= 0)
+    ) {
+      throw new Error(
+        `Contract "${meta.prefix}": endpoint "${key}" maxJsonBodyBytes must be a positive safe integer, received ${ep.maxJsonBodyBytes}`,
+      );
+    }
+
     if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
+    if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
 
     if (!('toolName' in ep) || !ep.toolName) continue;
     const transports = new Set(
@@ -277,6 +314,25 @@ function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef): void {
   }
 }
 
+/** Raw JSON text exists only on a validated, body-bearing HTTP operation. */
+function assertRawBodyEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": rawBody endpoint "${key}"`;
+  if (!ep.input) throw new Error(`${where} must declare an input schema`);
+  if (ep.multipart) throw new Error(`${where} cannot be multipart`);
+  if (ep.method !== 'POST' && ep.method !== 'PUT' && ep.method !== 'PATCH') {
+    throw new Error(`${where} must use POST, PUT or PATCH`);
+  }
+  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
+  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
+  if ('annotations' in ep && ep.annotations) {
+    throw new Error(`${where} cannot set MCP annotations`);
+  }
+  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
+  if (nonHttp.length > 0) {
+    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
+  }
+}
+
 // ─── Runtime Context (built by transport, loose types) ───
 
 /**
@@ -303,6 +359,8 @@ export interface RuntimeContext {
   params: unknown;
   input: unknown;
   file?: File;
+  /** Original decoded JSON request text when the endpoint declares `rawBody: true`. */
+  rawBody?: string;
   source: TransportSource;
   /**
    * The raw Web `Request`, its parsed `URL` and `Headers` — set on the HTTP
@@ -328,6 +386,8 @@ export interface HandlerContext<TParams = undefined, TInput = undefined> {
   params: TParams;
   input: TInput;
   file?: File;
+  /** Original decoded JSON request text when the endpoint declares `rawBody: true`. */
+  rawBody?: string;
   source: TransportSource;
   /** Raw Web `Request` / `URL` / `Headers` — set on the HTTP transport, absent
    *  on the tool transports (see {@link RuntimeContext}). */

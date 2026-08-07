@@ -1,6 +1,6 @@
 ---
 title: VALIDATION_ERROR несёт структурные details.issues + экспорт zodIssues
-description: Ответ на фидбек агента gecko-voice. Он не мог использовать createErrorHook, потому что normalizeError плющил ZodError-issues в текстовый message, а его machine-клиенту нужны структурные поля. Фикс — normalizeError кладёт { path, code, message }[] в details, + экспорт zodIssues(). Отвергнуто его же предложение нормализовать ДО хука (теряет сырой ZodError).
+description: Ответ на фидбек агента потребителя. Он не мог использовать createErrorHook, потому что normalizeError плющил ZodError-issues в текстовый message, а его machine-клиенту нужны структурные поля. Фикс — normalizeError кладёт { path, code, message }[] в details, + экспорт zodIssues(). Отвергнуто его же предложение нормализовать ДО хука (теряет сырой ZodError).
 type: task
 status: done
 created: 2026-07-18

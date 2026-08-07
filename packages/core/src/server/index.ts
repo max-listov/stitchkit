@@ -24,8 +24,19 @@ export {
 // The containment check `serveFile` deliberately leaves to its caller — the guide
 // and ADRs 0023 / 0038 tell consumers to call it, so it has to be reachable.
 export { isWithinDir } from '../internal/within-dir';
+export {
+  type BunFetchComposition as FetchComposition,
+  type BunFetchHandler as FetchHandler,
+  type BunHandlerConfig as HandlerConfig,
+  type BunRawRoute as RawRoute,
+  type BunRawRouteContext as RawRouteContext,
+  type BunServer,
+  type BunServerConfig,
+  createServer,
+  type ServerPassthrough,
+} from './bun';
 export { cacheHeaders, createCache } from './cache';
-export { createHandler, createServer } from './create';
+export { createHandler } from './create';
 export {
   createErrorHook,
   type ErrorHookConfig,
@@ -100,20 +111,13 @@ export type { SocketIOServerConfig, SocketIOServerHandle } from './socket-io';
 export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
-  BunServer,
-  BunServerConfig,
-  FetchComposition,
-  FetchHandler,
-  HandlerConfig,
   Handlers,
   LifecycleHooks,
   LoggingConfig,
   LogOutcome,
   MethodDef,
-  RawRoute,
-  RawRouteContext,
+  OperationIdentity,
   RouteGroup,
-  ServerPassthrough,
   ServiceDef,
   StitchLogger,
 } from './types';

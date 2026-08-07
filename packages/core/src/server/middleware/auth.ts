@@ -3,7 +3,7 @@ import { forbidden, unauthorized } from '../../contract';
 import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
-import type { MethodDef } from '../types';
+import type { OperationIdentity } from '../types';
 import { parseCookies } from './cookies';
 
 export interface JwtPayload {
@@ -203,7 +203,7 @@ export interface AuthHookConfig<TIdentity> {
   onForbidden?: () => never;
 }
 
-export type AuthHook = (ctx: RuntimeContext, endpoint: MethodDef) => Promise<void>;
+export type AuthHook = (ctx: RuntimeContext, endpoint: OperationIdentity) => Promise<void>;
 
 /**
  * Build a `beforeHandle` hook that enforces `endpoint.scope`.

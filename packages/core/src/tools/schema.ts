@@ -23,14 +23,9 @@ export function keyPolicyOf(schema: z.ZodObject): KeyPolicy {
  * Rebuild an object schema with a new shape, **carrying the source object's key
  * policy over**.
  *
- * Load-bearing, not cosmetic: the advertised tool schema is not
- * advertised-only. Both transport SDKs parse the caller's arguments *with it* and
- * hand the handler the parsed result (MCP `validateToolInput` →
- * `parseResult.data`; the AI SDK's `doParseToolCall` → `parseResult.value`), so
- * an object rebuilt as a bare `z.object()` silently **deletes** every key the
- * contract schema would have rejected (`.strict()`) or kept (`.loose()` /
- * `.catchall()`) — the caller gets a success and never learns its argument was
- * wrong. → ADR 0034.
+ * This helper now serves only the CLI argument adapter. MCP and agent tools use
+ * a separate presentation JSON Schema and identity transport adapters, so this
+ * executable schema never runs before the original contract parser. → ADR 0050.
  *
  * A plain source (`undefined` policy) needs no special case: the rebuilt object
  * strips exactly as the contract object would have.

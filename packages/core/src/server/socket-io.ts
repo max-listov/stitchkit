@@ -21,38 +21,14 @@ import type {
   ServerOptions as BunEngineServerOptions,
 } from '@socket.io/bun-engine';
 import type { ServerWebSocket } from 'bun';
-import type { ServerOptions, Server as SocketIOServer } from 'socket.io';
+import type { Server as SocketIOServer } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
+import type { BunServer } from './bun';
+import type { SocketIOServerConfig } from './socket-io-config';
 import type { RawRoute } from './types';
 import { type ComposedLane, webSocketLane } from './websocket';
 
-export interface SocketIOServerConfig {
-  /** CORS — the browser origin(s) allowed to open a socket. */
-  cors: { origin: string | string[]; credentials?: boolean };
-  /** Socket.IO endpoint path. Default `/socket.io/`. */
-  path?: string;
-  /**
-   * Transports offered to clients. Default `['websocket', 'polling']` on Bun;
-   * on Node the default is `['websocket']` — Socket.IO shares the HTTP server
-   * with srvx there, so its polling request-handler would collide with srvx's;
-   * WebSocket uses the separate `upgrade` event and does not. Configure the
-   * client with `transports: ['websocket']` to match.
-   */
-  transports?: Array<'websocket' | 'polling'>;
-  /** Heartbeat: ms without a pong before the connection is dropped. Default `20000`. */
-  pingTimeout?: number;
-  /** Heartbeat: ms between pings. Default `10000`. */
-  pingInterval?: number;
-  /**
-   * Typed passthrough for any other Socket.IO `ServerOptions` the wrapper does
-   * not own — `maxHttpBufferSize` (raise above the 1 MB default for large
-   * emits), `connectionStateRecovery`, `perMessageDeflate`, `connectTimeout`, …
-   * Mirrors the `bun` passthrough on `createServer`. The wrapper-owned fields
-   * (`cors` / `path` / `transports` / `pingTimeout` / `pingInterval`) take
-   * precedence over the same keys here, so transport integration stays correct.
-   */
-  serverOptions?: Partial<ServerOptions>;
-}
+export type { SocketIOServerConfig } from './socket-io-config';
 
 export interface SocketIOServerHandle<
   TServerEvents extends SocketEventMap,
@@ -73,7 +49,7 @@ export interface SocketIOServerHandle<
    * and throws if it is ever mounted — so it is safe to spread into `rawRoutes`
    * unconditionally on either runtime.
    */
-  route: RawRoute;
+  route: RawRoute<BunServer>;
   /**
    * Node only — attach the Socket.IO server to the `node:http.Server` from
    * `serveNode`. A no-op on Bun (the engine + route handle transport there).
@@ -171,7 +147,7 @@ export async function createSocketIOServer<
     io.bind(engine);
     const { websocket } = engine.handler();
 
-    const route: RawRoute = {
+    const route: RawRoute<BunServer> = {
       method: 'ALL',
       path: `${path.replace(/\/+$/, '')}/*`,
       handler: (req, ctx) => {
