@@ -1,5 +1,6 @@
 import type { EndpointDef } from '../contract';
 import { inputIsQuery } from '../internal/http-input';
+import { parseTrailingWildcard } from '../internal/route-pattern';
 import type { ContractClientConfig, PathPrefixArgs } from './client';
 
 type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
@@ -74,14 +75,73 @@ function resolvePathPrefix<K extends string>(
   return config.pathPrefix(args);
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function decodePathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Compile the same contract/prefix structure used by the request planner into a pathname matcher. */
+export function createClientRouteMatcher<K extends string>(
+  endpoint: EndpointDef,
+  contractPrefix: string,
+  config?: ContractClientConfig<K>,
+): (pathname: string) => boolean {
+  if (
+    typeof config?.pathPrefix === 'function' &&
+    (!config.stripPrefixKeys || config.stripPrefixKeys.length === 0)
+  ) {
+    throw new Error('Dynamic pathPrefix matchers require stripPrefixKeys');
+  }
+  const markerByKey: Record<string, string> = {};
+  for (const [index, key] of (config?.stripPrefixKeys ?? []).entries()) {
+    markerByKey[key] = `__stitch_scope_${index}__`;
+  }
+  const pathPrefix = resolvePathPrefix(config, markerByKey);
+  const route = [pathPrefix, contractPrefix, endpoint.path === '/' ? '' : endpoint.path]
+    .filter(Boolean)
+    .join('/');
+  const patternSegments = route.split('/').filter(Boolean);
+  const wildcard = patternSegments.at(-1)?.startsWith('*') === true;
+  const fixedCount = wildcard ? patternSegments.length - 1 : patternSegments.length;
+  const markers = Object.values(markerByKey);
+
+  return (pathname: string): boolean => {
+    const actualSegments = pathname.split('/').filter(Boolean).map(decodePathSegment);
+    if (wildcard ? actualSegments.length < fixedCount : actualSegments.length !== fixedCount) {
+      return false;
+    }
+    for (let index = 0; index < fixedCount; index += 1) {
+      const pattern = patternSegments[index];
+      const actual = actualSegments[index];
+      if (!pattern || actual === undefined) return false;
+      if (pattern.startsWith(':')) continue;
+      let source = escapeRegex(pattern);
+      for (const marker of markers) {
+        source = source.replaceAll(escapeRegex(marker), '[^/]+');
+      }
+      if (!new RegExp(`^${source}$`).test(actual)) return false;
+    }
+    return true;
+  };
+}
+
 function extractParamNames(path: string): string[] {
   const matches = path.match(/:(\w+)/g);
   const names = matches ? matches.map((match) => match.slice(1)) : [];
-  if (path.endsWith('/*')) names.push('*');
+  const wildcard = parseTrailingWildcard(path);
+  if (wildcard) names.push(wildcard.name);
   return names;
 }
 
 function fillPathParams(path: string, args: Record<string, unknown>): string {
+  const wildcard = parseTrailingWildcard(path);
   let filled = path.replace(/:(\w+)/g, (_, key) => {
     const value = args[key];
     if (value === undefined || value === null) {
@@ -89,17 +149,17 @@ function fillPathParams(path: string, args: Record<string, unknown>): string {
     }
     return encodeURIComponent(String(value));
   });
-  if (!filled.endsWith('/*')) return filled;
+  if (!wildcard) return filled;
 
-  const wildcard = args['*'];
-  if (wildcard === undefined || wildcard === null) {
-    throw new Error('Missing path param: *');
+  const wildcardValue = args[wildcard.name];
+  if (wildcardValue === undefined || wildcardValue === null) {
+    throw new Error(`Missing path param: ${wildcard.name}`);
   }
-  const remainder = String(wildcard)
+  const remainder = String(wildcardValue)
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-  filled = `${filled.slice(0, -1)}${remainder}`;
+  filled = `${filled.slice(0, -(wildcard.name.length + 1))}${remainder}`;
   return filled;
 }
 

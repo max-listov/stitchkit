@@ -168,9 +168,8 @@ export interface RouteGroup {
 /** Context passed to a `RawRoute` handler alongside the raw `Request`. */
 export interface RawRouteContext<TServer = unknown> {
   /**
-   * Matched `:param` path segments. A trailing `/*` wildcard also adds its
-   * remainder (everything after the prefix) as `params['*']`. Empty for an exact
-   * path.
+   * Matched `:param` path segments. A named trailing wildcard such as
+   * `/*filePath` adds its remainder under `params.filePath`.
    */
   params: Record<string, string>;
   /**
@@ -189,9 +188,8 @@ export interface RawRouteContext<TServer = unknown> {
 export interface RawRoute<TServer = unknown> {
   method: HttpMethod | 'ALL';
   /**
-   * Exact path, `:param` segments, or a trailing `/*` prefix wildcard. The
-   * wildcard combines with params — `/app/:slug/*` matches `/app/x/a/b` with
-   * `params.slug === 'x'` and the remainder in `params['*']`.
+   * Exact path, `:param` segments, or a named trailing prefix wildcard. For
+   * example `/app/:slug/*filePath` exposes `params.slug` and `params.filePath`.
    */
   path: string;
   /**

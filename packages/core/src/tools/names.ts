@@ -109,7 +109,11 @@ export function toToolName(serviceName: string, methodName: string): string {
  * The surface a duplicate name is reported against — only the label differs
  * between the three mounts, the guarantee does not.
  */
-export type ToolNameSurface = 'MCP tool name' | 'agent tool name' | 'CLI command';
+export type ToolNameSurface =
+  | 'MCP tool name'
+  | 'agent tool name'
+  | 'CLI command'
+  | 'in-process tool name';
 
 /**
  * Throw when a tool name is already taken on this mount.

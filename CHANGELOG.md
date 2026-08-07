@@ -15,6 +15,147 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-08-07
+
+### ⚠️ Breaking changes
+
+- **Protected native MCP handlers now return neutral output.** The MCP-only
+  `NativeMcpToolDefinition`, `NativeMcpOperationIdentity`,
+  `NativeMcpHandlerContext` and `NativeMcpResult` types are removed. Define a
+  shared runtime operation; move MCP content and metadata into `present.mcp`.
+  Stitchkit owns validated `structuredContent` and `isError`.
+
+  ```ts
+  // before
+  registerTool({ input, output, handler: async () => ({
+    content: [{ type: 'image', data, mimeType: 'image/png' }],
+    structuredContent: { assetId },
+  }) })
+
+  // after
+  const preview = defineRuntimeTool({
+    input, output,
+    handler: async () => ({ assetId, data }),
+    present: {
+      mcp: (result) => ({
+        content: [{ type: 'image', data: result.data, mimeType: 'image/png' }],
+      }),
+    },
+  })
+  nativeTools: ({ registerTool }) => registerTool(preview)
+  mountAgent(services, { runtimeTools: [preview] })
+  ```
+
+- **`createEntityCacheHandlers` now declares the real list shape and item
+  projection.** The `listKey` shortcut and id-only `detailKey` callback are
+  removed. This prevents an untyped helper from guessing cache envelopes,
+  missing-update behavior or full-entity → list-item conversion.
+
+  ```ts
+  // before
+  createEntityCacheHandlers<Entity>({
+    getId, listKey: ['entities'], detailKey: (id) => ['entities', id],
+  })
+
+  // after
+  createEntityCacheHandlers<Entity, EntityListItem>({
+    getId,
+    getListItemId: (item) => item.id,
+    toListItem: projectEntity,
+    list: {
+      key: ['entities'],
+      shape: 'paginated',
+      createAt: 'start',
+      updateMissing: 'skip',
+    },
+    detailKey: (event) => ['entities', event.id],
+  })
+  ```
+
+- **Custom `HttpClient` adapters must implement `head`.** Contract-owned HEAD
+  operations need an explicit transport primitive; the built-in
+  `createHttpClient` already provides it.
+
+  ```ts
+  // before
+  const http: HttpClient = { get, post, put, patch, delete, /* lifecycle */ }
+
+  // after
+  const http: HttpClient = { get, head, post, put, patch, delete, /* lifecycle */ }
+  ```
+
+- **Trailing wildcards are now named.** Bare `/*` and the magic `params['*']`
+  key are removed. The name is shared by contract validation, router params,
+  typed clients, raw routes and the OpenAPI extension.
+
+  ```ts
+  // before
+  path: '/app/:slug/*'
+  params: z.object({ slug: z.string(), '*': z.string() })
+  ctx.params['*']
+
+  // after
+  path: '/app/:slug/*filePath'
+  params: z.object({ slug: z.string(), filePath: z.string() })
+  ctx.params.filePath
+  ```
+
+- **`HttpClientConfig.authEndpoints` is replaced by contract-derived expected-401
+  matchers.** Broad manual prefix suppression could hide a real session expiry
+  from a neighbouring endpoint. There is no default auth-path exception.
+
+  ```ts
+  // before
+  createHttpClient({ baseUrl, authEndpoints: ['/api/auth/'] })
+
+  // after
+  createHttpClient({
+    baseUrl,
+    suppressUnauthorizedFor: contractEndpointMatchers(authContract, ['login', 'verify']),
+  })
+  ```
+
+### Added
+
+- **Framework-owned runtime tools for MCP and AI agents.**
+  `defineRuntimeTool` describes a pathless operation once; protected MCP
+  registration and `mountAgent({ runtimeTools })` share its identity, neutral
+  handler, validation, lifecycle, hooks, audit and per-call context. Typed
+  `present.mcp` and AI SDK `toModelOutput` adapters preserve multimodal content
+  without a second execution engine. → ADR 0055
+
+- **Entity cache adapters for real list shapes.**
+  `createEntityCacheHandlers` now covers plain arrays, paginated lists and both
+  infinite page forms; event-aware scoped keys, full-entity projection,
+  explicit insertion/missing-update policies and backend-owned comparators stay
+  type-safe while preserving page/envelope metadata. → ADR 0056
+
+- **In-process contract tool invoker.** `createToolInvoker` compiles one
+  exposure-aware name lookup and dispatches nested/parallel calls through the
+  canonical tool runner—input/output validation, `ToolExtend`, lifecycle,
+  hooks, isolation and output-strip reporting included—without mounting an AI
+  SDK or MCP adapter.
+
+- **Explicit contract-owned HEAD endpoints.** `method: 'HEAD'` is an HTTP-only
+  `rawResponse` operation with normal routing, params, lifecycle/RBAC, logging,
+  typed-client and OpenAPI coverage. GET never gains an implicit HEAD alias,
+  and Stitchkit strips any accidental response body while preserving status
+  and headers.
+
+- **Scope-aware composed clients.** `createScopedClients` routes each contract by
+  its typed `meta.scope`; arrays merge contracts into one namespace with
+  fail-first duplicate detection.
+- **URLs for every HTTP operation.** `createUrlBuilder` and
+  `createUrlBuilders` now include POST, PUT, PATCH, DELETE and multipart
+  operations. Body methods accept only scoped-prefix and path params; body/file
+  fields are neither required nor silently serialized.
+- **Contract-derived expected-401 policy.** `contractEndpointMatchers` compiles
+  exact operation paths, including params, dynamic scoped prefixes and trailing
+  wildcards, for `HttpClientConfig.suppressUnauthorizedFor`.
+- **Named trailing wildcard params.** `/*filePath` captures a decoded,
+  slash-joined remainder as `params.filePath`; clients segment-encode the same
+  field and OpenAPI publishes its real name.
+
 ## [0.38.0] — 2026-08-07
 
 ### Added
@@ -2043,7 +2184,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/max-listov/stitchkit/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/max-listov/stitchkit/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/max-listov/stitchkit/compare/v0.36.1...v0.37.0
 [0.36.1]: https://github.com/max-listov/stitchkit/compare/v0.36.0...v0.36.1

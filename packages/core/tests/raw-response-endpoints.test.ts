@@ -410,7 +410,7 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
 
   test('a wildcard raw route is caught too', () => {
     const lines = warningsFor([
-      { method: 'ALL', path: '/documents/*', handler: () => new Response('x') },
+      { method: 'ALL', path: '/documents/*filePath', handler: () => new Response('x') },
     ]);
     // Both the raw endpoint and its sibling are shadowed by the wildcard.
     expect(lines.length).toBeGreaterThanOrEqual(2);

@@ -11,6 +11,7 @@ export {
   type EndpointUiMeta,
   type FileDescriptor,
   type HandlerContext,
+  type HeadEndpointDef,
   type HttpMethod,
   type HttpSuccessStatus,
   type MultipartFile,

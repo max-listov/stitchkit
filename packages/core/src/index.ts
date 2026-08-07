@@ -1,11 +1,18 @@
 export {
   type ClientConfig,
+  type ClientContract,
+  type ClientRegistryValue,
   type ContractClientConfig,
+  contractEndpointMatchers,
   createClient,
   createClients,
+  createScopedClients,
   createUrlBuilder,
   createUrlBuilders,
   type PathPrefixArgs,
+  type RegistryScope,
+  type ScopeClientConfigs,
+  type ScopedClientRegistry,
   type UrlBuilderConfig,
 } from './browser/client';
 export {
@@ -18,6 +25,7 @@ export {
   type HttpClient,
   type HttpClientConfig,
   type RequestOptions,
+  type UnauthorizedMatcher,
 } from './browser/http';
 export type {
   SocketEventMap,

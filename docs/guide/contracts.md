@@ -52,8 +52,8 @@ export const users = defineContract({ prefix: 'users' }, {
 
 | Field | Required | Purpose |
 |-------|----------|---------|
-| `method` | yes | `GET` · `POST` · `PUT` · `PATCH` · `DELETE` |
-| `path` | yes | route path under the contract `prefix`; `:name` marks a path param and a terminal `/*` captures the remaining path |
+| `method` | yes | `GET` · `HEAD` · `POST` · `PUT` · `PATCH` · `DELETE` |
+| `path` | yes | route path under the contract `prefix`; `:name` marks a path param and a named terminal `/*filePath` captures the remaining path |
 | `desc` | yes | human description — also the MCP / agent tool description |
 | `params` | no | Zod schema for **path params** (`:id`, …) |
 | `input` | no | Zod schema for the **request body** (or query, for GET/DELETE) |
@@ -71,16 +71,24 @@ export const users = defineContract({ prefix: 'users' }, {
 | `responseMeta` | no | make a typed-data endpoint HTTP-only, optionally declare its success status and expose `ctx.response.headers` — [Typed JSON response metadata](./server.md#typed-json-response-metadata) |
 | `contentType` | no | documented response media type of a `rawResponse` endpoint (OpenAPI only) |
 
+`HEAD` is an explicit HTTP-only operation, never an automatic alias for `GET`.
+It must declare `rawResponse: true`; request body, `input`, multipart, `rawBody`,
+typed `output` and tool exposure are rejected. The handler owns status and
+headers, while Stitchkit guarantees an empty wire body even if the returned
+`Response` accidentally contains one.
+
 ## `params` vs `input` vs `output`
 
 The three schemas are distinct on purpose:
 
 - **`params`** — values in the URL path. `path: '/:id'` ⇒
   `params: z.object({ id: z.string() })`. The client takes them from the call
-  argument and substitutes them into the URL. A terminal wildcard is the
-  quoted `'*'` field: `path: '/:slug/*'` with
-  `params: z.object({ slug: z.string(), '*': z.string() })` matches both
-  `/foo/page` and `/foo/a/b`; the handler receives `'page'` or `'a/b'`.
+  argument and substitutes them into the URL. A terminal wildcard is explicitly
+  named: `path: '/:slug/*filePath'` with
+  `params: z.object({ slug: z.string(), filePath: z.string() })` matches both
+  `/foo/page` and `/foo/a/b`; the handler reads `ctx.params.filePath` as
+  `'page'` or `'a/b'`. Bare `/*`, invalid/duplicate names and a wildcard before
+  the final segment fail at contract definition.
 - **`input`** — the request payload. For `POST` / `PUT` / `PATCH` it is the JSON
   body; for `GET` / `DELETE` it is the query string. The handler reads it as
   `ctx.input`.
@@ -95,8 +103,8 @@ the body.
 // path: '/:id', params: { id }, input: { text }
 await api.update({ id: '1', text: 'new' })   // PUT /users/1  body: { text: 'new' }
 
-// path: '/:slug/*', params: { slug, '*': remainder }
-await api.app({ slug: 'foo', '*': 'a/b' })   // GET /apps/foo/a/b
+// path: '/:slug/*filePath', params: { slug, filePath }
+await api.app({ slug: 'foo', filePath: 'a/b' })   // GET /apps/foo/a/b
 ```
 
 ### Input vs. output types

@@ -1,145 +1,276 @@
 /**
- * Declarative CRUD cache handlers for `createCacheBridge` — the created /
- * updated / deleted socket events of one entity, patched into its list and
- * detail queries. Every project hand-rolls this same updater; this builds it
- * from a small config.
- *
- * It patches stitchkit's own `Paginated<T>` list envelope (plain or a TanStack
- * `InfiniteData` of it) and the entity's detail query. It does **not** flatten
- * pages or expose a `useAllX` surface — flattening stays in the component (a
- * deliberate boundary): this only keeps the cache correct.
- *
- * ```ts
- * const handlers = createEntityCacheHandlers<Widget>({
- *   getId: (w) => w.id,
- *   listKey: ['widgets'],
- *   detailKey: (id) => ['widgets', id],
- * });
- * createCacheBridge({ socket, queryClient, handlers: {
- *   widgetCreated: handlers.created,
- *   widgetUpdated: handlers.updated,
- *   widgetDeleted: handlers.deleted,
- * }});
- * ```
+ * Declarative CRUD cache handlers for `createCacheBridge`. One config projects
+ * a full event entity into the cached list item and patches plain, paginated or
+ * infinite TanStack Query data without changing its envelope metadata.
  */
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 import type { Paginated } from '../contract';
 import { isRecord } from '../internal/typed';
 import type { CacheBridgeContext, CacheBridgeHandler } from './cache-bridge';
 
-/** A list query's cached shape — a plain page or an infinite list of pages. */
-type ListData<T> = Paginated<T> | InfiniteData<Paginated<T>>;
+/** The `deleted` event may carry the whole entity or only its id. */
+export type DeletedPayload<TData> = TData | { id: string };
 
-/** The `deleted` event may carry the whole entity or just its id. */
-export type DeletedPayload<T> = T | { id: string };
+/** Typed event passed to dynamic list/detail query-key selectors. */
+export type EntityCacheEvent<TData> =
+  | { type: 'created'; entity: TData; id: string }
+  | { type: 'updated'; entity: TData; id: string }
+  | { type: 'deleted'; payload: DeletedPayload<TData>; id: string };
+
+/** A static cache key/prefix or an event-aware key factory. */
+export type EntityCacheKey<TData> = QueryKey | ((event: EntityCacheEvent<TData>) => QueryKey);
+
+export type EntityCacheListShape =
+  | 'array'
+  | 'paginated'
+  | 'infinite-array'
+  | 'infinite-paginated';
+
+/** List envelope, scoped key and explicit CRUD policies. */
+export interface EntityCacheListConfig<TData, TListItem> {
+  /** Static query-key prefix or an event-aware scoped key factory. */
+  key: EntityCacheKey<TData>;
+  /** Edge/page used for a create or an inserted missing update. */
+  createAt: 'start' | 'end';
+  /** Explicit behavior when an update's id is absent from every cached page. */
+  updateMissing: 'skip' | 'insert';
+  /** Backend-equivalent ordering for each affected logical item array. */
+  compare?: (left: TListItem, right: TListItem) => number;
+  /** Cached data envelope; no runtime shape inference is performed. */
+  shape: EntityCacheListShape;
+}
 
 /** Config for `createEntityCacheHandlers`. */
-export interface EntityCacheConfig<T> {
-  /** Read the entity's id — the identity used to match, replace and remove. */
-  getId: (entity: T) => string;
-  /** Read the id from a `deleted` payload (entity or `{ id }`). Default `getId` / `.id`. */
-  getDeletedId?: (payload: DeletedPayload<T>) => string;
-  /** Query key (or prefix) of the list(s) to patch — matched by partial equality. */
-  listKey: QueryKey;
-  /** Build the detail query key for an id. Omit to skip detail-cache updates. */
-  detailKey?: (id: string) => QueryKey;
+export interface EntityCacheConfig<TData, TListItem = TData> {
+  /** Canonical id from a full created/updated entity. */
+  getId: (entity: TData) => string;
+  /** Canonical id from the projected item stored in list caches. */
+  getListItemId: (item: TListItem) => string;
+  /** Project a full mutation entity into the list cache's item type. */
+  toListItem: (entity: TData) => TListItem;
+  /** Read a deleted id. Default: a string `.id`, otherwise `getId(payload)`. */
+  getDeletedId?: (payload: DeletedPayload<TData>) => string;
+  /** List envelope, key/prefix, insertion policy and optional ordering. */
+  list: EntityCacheListConfig<TData, TListItem>;
+  /** Static detail key or event-aware key factory. Omit to skip detail updates. */
+  detailKey?: EntityCacheKey<TData>;
 }
 
-/** The three handlers to wire onto a `createCacheBridge` `handlers` map. */
-export interface EntityCacheHandlers<T> {
-  created: CacheBridgeHandler<T>;
-  updated: CacheBridgeHandler<T>;
-  deleted: CacheBridgeHandler<DeletedPayload<T>>;
+/** The three handlers to wire onto a `createCacheBridge` handlers map. */
+export interface EntityCacheHandlers<TData> {
+  created: CacheBridgeHandler<TData>;
+  updated: CacheBridgeHandler<TData>;
+  deleted: CacheBridgeHandler<DeletedPayload<TData>>;
 }
 
-/** Apply `fn` to every page's `items`, preserving the plain-vs-infinite shape. */
-function patchItems<T>(
-  data: ListData<T> | undefined,
-  fn: (items: T[]) => T[],
-): ListData<T> | undefined {
-  if (!data) return data;
-  if ('pages' in data) {
-    return { ...data, pages: data.pages.map((page) => ({ ...page, items: fn(page.items) })) };
+type ListMutation<TListItem> =
+  | { type: 'created'; id: string; item: TListItem }
+  | { type: 'updated'; id: string; item: TListItem }
+  | { type: 'deleted'; id: string };
+
+interface EntityCacheMutationPolicy<TListItem> {
+  createAt: 'start' | 'end';
+  updateMissing: 'skip' | 'insert';
+  compare?: (left: TListItem, right: TListItem) => number;
+}
+
+function resolveKey<TData>(
+  key: EntityCacheKey<TData>,
+  event: EntityCacheEvent<TData>,
+): QueryKey {
+  return typeof key === 'function' ? key(event) : key;
+}
+
+function ordered<TListItem>(
+  items: TListItem[],
+  compare: ((left: TListItem, right: TListItem) => number) | undefined,
+): TListItem[] {
+  return compare ? [...items].sort(compare) : items;
+}
+
+function insertAt<TListItem>(
+  items: TListItem[],
+  item: TListItem,
+  at: 'start' | 'end',
+  compare: ((left: TListItem, right: TListItem) => number) | undefined,
+): TListItem[] {
+  return ordered(at === 'start' ? [item, ...items] : [...items, item], compare);
+}
+
+/** Mutate one or more logical item arrays while keeping their outer envelopes intact. */
+function mutateItemArrays<TListItem>(
+  arrays: TListItem[][],
+  mutation: ListMutation<TListItem>,
+  config: EntityCacheMutationPolicy<TListItem>,
+  getId: (item: TListItem) => string,
+): TListItem[][] {
+  const present = arrays.some((items) => items.some((item) => getId(item) === mutation.id));
+  if (mutation.type === 'created' && present) return arrays;
+  if (mutation.type === 'updated' && !present && config.updateMissing === 'skip') {
+    return arrays;
   }
-  return { ...data, items: fn(data.items) };
+
+  if (mutation.type !== 'deleted' && (!present || mutation.type === 'created')) {
+    if (arrays.length === 0) return arrays;
+    const target = config.createAt === 'start' ? 0 : arrays.length - 1;
+    return arrays.map((items, index) =>
+      index === target
+        ? insertAt(items, mutation.item, config.createAt, config.compare)
+        : items,
+    );
+  }
+
+  if (mutation.type === 'deleted') {
+    return arrays.map((items) => items.filter((item) => getId(item) !== mutation.id));
+  }
+
+  return arrays.map((items) =>
+    ordered(
+      items.map((item) => (getId(item) === mutation.id ? mutation.item : item)),
+      config.compare,
+    ),
+  );
 }
 
-/** Prepend to the first page only (plain list, or `pages[0]` of an infinite one). */
-function prepend<T>(data: ListData<T> | undefined, entity: T): ListData<T> | undefined {
-  if (!data) return data;
-  if ('pages' in data) {
-    const [first, ...rest] = data.pages;
-    if (!first) return data;
-    return { ...data, pages: [{ ...first, items: [entity, ...first.items] }, ...rest] };
+function firstArray<TListItem>(arrays: TListItem[][]): TListItem[] {
+  const first = arrays[0];
+  if (!first) throw new Error('Entity cache list adapter lost its only item array');
+  return first;
+}
+
+function unsupportedListShape(shape: never): never {
+  throw new Error(`Unsupported entity cache list shape: ${String(shape)}`);
+}
+
+function patchList<TData, TListItem>(
+  context: CacheBridgeContext,
+  key: QueryKey,
+  config: EntityCacheListConfig<TData, TListItem>,
+  mutation: ListMutation<TListItem>,
+  getId: (item: TListItem) => string,
+): void {
+  const mutate = (arrays: TListItem[][]): TListItem[][] =>
+    mutateItemArrays(arrays, mutation, config, getId);
+
+  switch (config.shape) {
+    case 'array':
+      context.queryClient.setQueriesData<TListItem[]>({ queryKey: key }, (old) =>
+        Array.isArray(old) ? firstArray(mutate([old])) : old,
+      );
+      return;
+    case 'paginated':
+      context.queryClient.setQueriesData<Paginated<TListItem>>({ queryKey: key }, (old) =>
+        isRecord(old) && Array.isArray(old.items)
+          ? { ...old, items: firstArray(mutate([old.items])) }
+          : old,
+      );
+      return;
+    case 'infinite-array':
+      context.queryClient.setQueriesData<InfiniteData<TListItem[]>>(
+        { queryKey: key },
+        (old) =>
+          isRecord(old) &&
+          Array.isArray(old.pages) &&
+          old.pages.every((page) => Array.isArray(page))
+            ? { ...old, pages: mutate(old.pages) }
+            : old,
+      );
+      return;
+    case 'infinite-paginated':
+      context.queryClient.setQueriesData<InfiniteData<Paginated<TListItem>>>(
+        { queryKey: key },
+        (old) => {
+          if (
+            !isRecord(old) ||
+            !Array.isArray(old.pages) ||
+            !old.pages.every((page) => isRecord(page) && Array.isArray(page.items))
+          ) {
+            return old;
+          }
+          const items = mutate(old.pages.map((page) => page.items));
+          return {
+            ...old,
+            pages: old.pages.map((page, index) => {
+              const pageItems = items[index];
+              if (!pageItems) {
+                throw new Error('Entity cache list adapter changed the page count');
+              }
+              return { ...page, items: pageItems };
+            }),
+          };
+        },
+      );
+      return;
+    default:
+      unsupportedListShape(config.shape);
   }
-  return { ...data, items: [entity, ...data.items] };
 }
 
 /**
- * Build created / updated / deleted cache handlers for one entity. Each skips a
- * stale socket echo of a change the client just made (`ctx.isFresh`), keyed on
- * the entity's detail key when available, else the list key.
+ * Build created/updated/deleted cache handlers over one declared list shape.
+ * Every event resolves its own scoped keys and applies the same fresh-echo gate.
  */
-export function createEntityCacheHandlers<T>(
-  config: EntityCacheConfig<T>,
-): EntityCacheHandlers<T> {
-  const { getId, listKey, detailKey } = config;
+export function createEntityCacheHandlers<TData, TListItem = TData>(
+  config: EntityCacheConfig<TData, TListItem>,
+): EntityCacheHandlers<TData> {
   const deletedId =
-    config.getDeletedId ?? ((payload: DeletedPayload<T>) => idOf(payload, getId));
+    config.getDeletedId ?? ((payload: DeletedPayload<TData>) => idOf(payload, config.getId));
 
-  const freshKey = (id: string): QueryKey => (detailKey ? detailKey(id) : listKey);
-
-  const patchList = (ctx: CacheBridgeContext, fn: (items: T[]) => T[]): void => {
-    ctx.queryClient.setQueriesData<ListData<T>>({ queryKey: listKey }, (old) =>
-      patchItems(old, fn),
-    );
+  const apply = (
+    event: EntityCacheEvent<TData>,
+    mutation: ListMutation<TListItem>,
+    context: CacheBridgeContext,
+  ): boolean => {
+    const listKey = resolveKey(config.list.key, event);
+    const detailKey = config.detailKey ? resolveKey(config.detailKey, event) : undefined;
+    if (context.isFresh(detailKey ?? listKey)) return false;
+    patchList(context, listKey, config.list, mutation, config.getListItemId);
+    return true;
   };
 
   return {
-    created(entity, ctx) {
-      const id = getId(entity);
-      if (ctx.isFresh(freshKey(id))) return;
-      ctx.queryClient.setQueriesData<ListData<T>>({ queryKey: listKey }, (old) => {
-        // Skip if an item with this id is already cached (avoid a duplicate).
-        const present = hasId(old, getId, id);
-        return present ? old : prepend(old, entity);
-      });
-      if (detailKey) ctx.queryClient.setQueryData(detailKey(id), entity);
+    created(entity, context) {
+      const id = config.getId(entity);
+      const event: EntityCacheEvent<TData> = { type: 'created', entity, id };
+      if (!apply(event, { type: 'created', id, item: config.toListItem(entity) }, context)) {
+        return;
+      }
+      if (config.detailKey) {
+        context.queryClient.setQueryData(resolveKey(config.detailKey, event), entity);
+      }
     },
 
-    updated(entity, ctx) {
-      const id = getId(entity);
-      if (ctx.isFresh(freshKey(id))) return;
-      patchList(ctx, (items) => items.map((item) => (getId(item) === id ? entity : item)));
-      if (detailKey) ctx.queryClient.setQueryData(detailKey(id), entity);
+    updated(entity, context) {
+      const id = config.getId(entity);
+      const event: EntityCacheEvent<TData> = { type: 'updated', entity, id };
+      if (!apply(event, { type: 'updated', id, item: config.toListItem(entity) }, context)) {
+        return;
+      }
+      if (config.detailKey) {
+        context.queryClient.setQueryData(resolveKey(config.detailKey, event), entity);
+      }
     },
 
-    deleted(payload, ctx) {
+    deleted(payload, context) {
       const id = deletedId(payload);
-      if (ctx.isFresh(freshKey(id))) return;
-      patchList(ctx, (items) => items.filter((item) => getId(item) !== id));
-      if (detailKey) ctx.queryClient.removeQueries({ queryKey: detailKey(id) });
+      const event: EntityCacheEvent<TData> = { type: 'deleted', payload, id };
+      if (!apply(event, { type: 'deleted', id }, context)) return;
+      if (config.detailKey) {
+        context.queryClient.removeQueries({
+          queryKey: resolveKey(config.detailKey, event),
+        });
+      }
     },
   };
 }
 
-/** A payload carrying a string `id` — a type predicate, no cast. */
 function hasStringId(value: unknown): value is { id: string } {
   return isRecord(value) && typeof value.id === 'string';
 }
 
-/** Read the id from a `deleted` payload — a bare `{ id }`, else the entity via `getId`. */
-function idOf<T>(payload: DeletedPayload<T>, getId: (entity: T) => string): string {
+function idOf<TData>(
+  payload: DeletedPayload<TData>,
+  getId: (entity: TData) => string,
+): string {
   return hasStringId(payload) ? payload.id : getId(payload);
-}
-
-/** Whether any cached page already holds an item with `id`. */
-function hasId<T>(
-  data: ListData<T> | undefined,
-  getId: (entity: T) => string,
-  id: string,
-): boolean {
-  if (!data) return false;
-  const pages = 'pages' in data ? data.pages : [data];
-  return pages.some((page) => page.items.some((item) => getId(item) === id));
 }

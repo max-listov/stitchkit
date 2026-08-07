@@ -10,6 +10,11 @@ import {
 } from './execute';
 import { collectTools, createToolRunner, formatToolError, type ToolExtend } from './mount';
 import { assertUniqueToolName } from './names';
+import {
+  type RuntimeToolDefinition,
+  runtimeToolMountable,
+  runtimeToolSupports,
+} from './runtime-tool';
 
 export interface AgentContext {
   [key: string]: unknown;
@@ -34,6 +39,8 @@ export interface AgentMountConfig {
   flattenUnionInput?: boolean;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
+  /** Framework-managed pathless operations mounted beside contract tools. */
+  runtimeTools?: readonly RuntimeToolDefinition[];
 }
 
 export function mountAgent(
@@ -85,6 +92,58 @@ export function mountAgent(
             return formatToolError(toolResultFromError(err), mountable.name, config.errorHint);
           }
         },
+      });
+    }
+  }
+
+  for (const definition of config.runtimeTools ?? []) {
+    if (!runtimeToolSupports(definition, 'AGENT')) continue;
+    const mountable = runtimeToolMountable(definition);
+    assertUniqueToolName(
+      definition.name,
+      Object.hasOwn(tools, definition.name),
+      'agent tool name',
+    );
+
+    const inputSchema = jsonSchema(mountable.presentationSchema, {
+      validate: async (value) =>
+        isRecord(value)
+          ? { success: true, value }
+          : { success: false, error: new Error('Tool arguments must be an object') },
+    });
+    const execute = async (rawArgs: unknown) => {
+      const args = isRecord(rawArgs) ? rawArgs : {};
+      try {
+        const result = await runTool(mountable, args);
+        if (result.ok) return result.data;
+        return formatToolError(result, mountable.name, config.errorHint);
+      } catch (err) {
+        return formatToolError(toolResultFromError(err), mountable.name, config.errorHint);
+      }
+    };
+
+    if (definition.present?.agent) {
+      const presenter = definition.present.agent;
+      const output = definition.output;
+      tools[definition.name] = tool({
+        description: definition.description,
+        inputSchema,
+        outputSchema: output,
+        execute,
+        toModelOutput: async ({ output: rawOutput }) => {
+          const parsed = output.safeParse(rawOutput);
+          if (!parsed.success) {
+            return { type: 'text', value: JSON.stringify(rawOutput) };
+          }
+          return presenter(parsed.data);
+        },
+      });
+    } else {
+      tools[definition.name] = tool({
+        description: definition.description,
+        inputSchema,
+        ...(definition.output && { outputSchema: definition.output }),
+        execute,
       });
     }
   }

@@ -41,6 +41,7 @@ import {
   matchRawRoute,
   matchRoute,
   type NormalizedGroup,
+  validateRawRoutes,
   validateRoutes,
 } from './router';
 import type { FetchHandler, HandlerConfig, MethodDef, StitchLogger } from './types';
@@ -100,6 +101,7 @@ export function createHandler<TServer = unknown>(
 
   const routeMap = buildRouteMap(normalizeGroups(config));
   validateRoutes(routeMap);
+  validateRawRoutes(config.rawRoutes);
 
   // Raw routes match first, so one covering a contract path makes that endpoint
   // dead — and takes its auth gate with it. Reported at startup because the
@@ -384,7 +386,15 @@ export function createHandler<TServer = unknown>(
             500,
           );
         }
-        const rawRes = applyCors(result, cors, req);
+        const response =
+          method.method === 'HEAD'
+            ? new Response(null, {
+                status: result.status,
+                statusText: result.statusText,
+                headers: result.headers,
+              })
+            : result;
+        const rawRes = applyCors(response, cors, req);
         logDone(rawRes.status);
         return rawRes;
       }

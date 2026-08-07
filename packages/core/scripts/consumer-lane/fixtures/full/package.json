@@ -7,6 +7,9 @@
     "stitchkit": "TARBALL",
     "zod": "^4.4.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "ai": "^7.0.0"
+    "@tanstack/react-query": "^5.101.4",
+    "ai": "^7.0.0",
+    "react": "^19.2.4",
+    "react-query-kit": "^3.3.4"
   }
 }

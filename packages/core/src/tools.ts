@@ -20,6 +20,12 @@ export {
   flattenToolJsonSchema,
   type ToolPresentationSchema,
 } from './tools/flatten';
+export {
+  createToolInvoker,
+  type ToolInvoker,
+  type ToolInvokerConfig,
+  type ToolInvokerTransport,
+} from './tools/invoker';
 export { listToolNames, type ToolNameEntry } from './tools/list-names';
 export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';
 export {
@@ -56,13 +62,7 @@ export {
 export { type DownloadToolConfig, mountDownload } from './tools/mount-download';
 export { mountUpload, type UploadToolConfig } from './tools/mount-upload';
 export { mountWait, type WaitToolConfig } from './tools/mount-wait';
-export type {
-  NativeMcpHandlerContext,
-  NativeMcpOperationIdentity,
-  NativeMcpRegistrar,
-  NativeMcpResult,
-  NativeMcpToolDefinition,
-} from './tools/native-mcp';
+export type { NativeMcpRegistrar } from './tools/native-mcp';
 export {
   oauthProtectedResourceRoute,
   PROTECTED_RESOURCE_PATH,
@@ -86,6 +86,20 @@ export {
   PORTABLE_JSON_SCHEMA_FORMATS,
 } from './tools/portable-formats';
 export { type ImplementRemoteOptions, implementRemote } from './tools/remote';
+export {
+  defineRuntimeTool,
+  type RuntimeAgentModelOutput,
+  type RuntimeMcpPresentation,
+  type RuntimeToolDefinition,
+  type RuntimeToolDefinitionBase,
+  type RuntimeToolDefinitionWithOutput,
+  type RuntimeToolDefinitionWithoutOutput,
+  type RuntimeToolHandlerContext,
+  type RuntimeToolIdentity,
+  type RuntimeToolOutput,
+  type RuntimeToolPresenters,
+  type RuntimeToolTransport,
+} from './tools/runtime-tool';
 export {
   createToolLogger,
   type ToolCallRecord,

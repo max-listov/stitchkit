@@ -9,22 +9,22 @@ const route = (path: string, method: RawRoute['method'] = 'GET'): RawRoute => ({
   handler: noop,
 });
 
-describe('matchRawRoute — :param + trailing /* wildcard', () => {
-  const fallback = [route('/app/:slug/*')];
+describe('matchRawRoute — :param + named trailing wildcard', () => {
+  const fallback = [route('/app/:slug/*filePath')];
 
-  test('param + wildcard matches a nested path, slug captured, remainder in *', () => {
+  test('param + wildcard matches a nested path under its declared name', () => {
     const m = matchRawRoute(fallback, 'GET', '/app/x/a/b/c');
-    expect(m?.params).toEqual({ slug: 'x', '*': 'a/b/c' });
+    expect(m?.params).toEqual({ slug: 'x', filePath: 'a/b/c' });
   });
 
   test('param + wildcard matches the bare prefix (empty remainder)', () => {
     const m = matchRawRoute(fallback, 'GET', '/app/x');
-    expect(m?.params).toEqual({ slug: 'x', '*': '' });
+    expect(m?.params).toEqual({ slug: 'x', filePath: '' });
   });
 
   test('wildcard segments are decoded before reaching the handler', () => {
     const m = matchRawRoute(fallback, 'GET', '/app/x/folder%20one/leaf%23two');
-    expect(m?.params).toEqual({ slug: 'x', '*': 'folder one/leaf#two' });
+    expect(m?.params).toEqual({ slug: 'x', filePath: 'folder one/leaf#two' });
   });
 
   test('shorter-than-prefix path does not match', () => {
@@ -33,7 +33,11 @@ describe('matchRawRoute — :param + trailing /* wildcard', () => {
 });
 
 describe('matchRawRoute — ordering: specific before wildcard', () => {
-  const routes = [route('/app/:slug/c/:filename'), route('/app/:slug'), route('/app/:slug/*')];
+  const routes = [
+    route('/app/:slug/c/:filename'),
+    route('/app/:slug'),
+    route('/app/:slug/*filePath'),
+  ];
 
   test('exact chunk route wins', () => {
     const m = matchRawRoute(routes, 'GET', '/app/x/c/main.js');
@@ -47,18 +51,18 @@ describe('matchRawRoute — ordering: specific before wildcard', () => {
 
   test('wildcard catches an unmatched nested path', () => {
     const m = matchRawRoute(routes, 'GET', '/app/x/nested/deep');
-    expect(m?.route.path).toBe('/app/:slug/*');
-    expect(m?.params).toEqual({ slug: 'x', '*': 'nested/deep' });
+    expect(m?.route.path).toBe('/app/:slug/*filePath');
+    expect(m?.params).toEqual({ slug: 'x', filePath: 'nested/deep' });
   });
 });
 
-describe('matchRawRoute — literal wildcard still works (backward-compat)', () => {
-  const routes = [route('/static/*')];
+describe('matchRawRoute — wildcard-only named route', () => {
+  const routes = [route('/static/*filePath')];
 
   test('matches the bare prefix and nested', () => {
-    expect(matchRawRoute(routes, 'GET', '/static')?.params).toEqual({ '*': '' });
+    expect(matchRawRoute(routes, 'GET', '/static')?.params).toEqual({ filePath: '' });
     expect(matchRawRoute(routes, 'GET', '/static/a/b.css')?.params).toEqual({
-      '*': 'a/b.css',
+      filePath: 'a/b.css',
     });
   });
 
@@ -68,6 +72,8 @@ describe('matchRawRoute — literal wildcard still works (backward-compat)', () 
 
   test('method filter is respected', () => {
     expect(matchRawRoute(routes, 'POST', '/static/x')).toBeNull();
-    expect(matchRawRoute([route('/static/*', 'ALL')], 'POST', '/static/x')).not.toBeNull();
+    expect(
+      matchRawRoute([route('/static/*filePath', 'ALL')], 'POST', '/static/x'),
+    ).not.toBeNull();
   });
 });

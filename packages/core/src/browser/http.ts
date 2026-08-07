@@ -10,6 +10,9 @@ export type ApiEvent =
 
 export type ApiEventListener = (event: ApiEvent) => void;
 
+/** Exact pathname policy used to suppress an expected `401` event. */
+export type UnauthorizedMatcher = (pathname: string) => boolean;
+
 export class ApiError extends Error {
   constructor(
     public readonly code: string,
@@ -61,12 +64,8 @@ export interface HttpClientConfig {
    */
   retry?: { limit?: number; methods?: string[]; statusCodes?: number[] };
   parseError?: (body: unknown) => ErrorEnvelope['error'] | null;
-  /**
-   * Path prefixes whose `401` must NOT emit an `unauthorized` event — the
-   * login / session endpoints, where a `401` is an expected outcome. Matched
-   * against `URL.pathname`, so the prefixes start with `/`.
-   */
-  authEndpoints?: string[];
+  /** Contract-derived pathname matchers whose expected `401` must not emit an event. */
+  suppressUnauthorizedFor?: readonly UnauthorizedMatcher[];
   /**
    * Extra headers added to every request. A function is re-evaluated per
    * request — use it for runtime tokens (e.g. a short-lived auth token).
@@ -101,6 +100,7 @@ export interface RequestOptions {
 /** The HTTP transport adapter `createClient` builds typed methods on. */
 export interface HttpClient {
   get<T>(url: string, options?: RequestOptions): Promise<T>;
+  head<T>(url: string, options?: RequestOptions): Promise<T>;
   post<T>(url: string, data?: unknown, options?: RequestOptions): Promise<T>;
   put<T>(url: string, data?: unknown, options?: RequestOptions): Promise<T>;
   patch<T>(url: string, data?: unknown, options?: RequestOptions): Promise<T>;
@@ -127,7 +127,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
-  const authEndpoints = config.authEndpoints ?? ['/auth/'];
+  const suppressUnauthorizedFor = config.suppressUnauthorizedFor ?? [];
 
   const parseError = config.parseError ?? parseApiErrorBody;
 
@@ -177,7 +177,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
         async ({ request, response }) => {
           if (response.status === 401) {
             const url = new URL(request.url).pathname;
-            if (!isLoggedOut && !authEndpoints.some((path) => url.startsWith(path))) {
+            if (!isLoggedOut && !suppressUnauthorizedFor.some((matches) => matches(url))) {
               isLoggedOut = true;
               emit({ type: 'unauthorized' });
             }
@@ -206,7 +206,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
   });
 
   async function request<T>(
-    method: 'get' | 'post' | 'put' | 'patch' | 'delete',
+    method: 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete',
     url: string,
     data?: unknown,
     options: RequestOptions = {},
@@ -267,6 +267,8 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     baseUrl: config.baseUrl,
     get: <T>(url: string, options?: RequestOptions) =>
       request<T>('get', url, undefined, options),
+    head: <T>(url: string, options?: RequestOptions) =>
+      request<T>('head', url, undefined, options),
     post: <T>(url: string, data?: unknown, options?: RequestOptions) =>
       request<T>('post', url, data, options),
     put: <T>(url: string, data?: unknown, options?: RequestOptions) =>

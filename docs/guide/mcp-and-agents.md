@@ -4,7 +4,8 @@ The same contract that drives the HTTP API also drives AI tooling. An endpoint
 exposed on `MCP` becomes a [Model Context Protocol](https://modelcontextprotocol.io)
 tool — callable from Claude, Cursor and other MCP clients. An endpoint exposed on
 `AGENT` becomes a [Vercel AI SDK](https://sdk.vercel.ai) tool — callable from an
-agent loop. No tool is hand-written; both come from the contract.
+agent loop. Contract operations are never re-described by hand; pathless
+runtime operations use one framework definition shared by both tool transports.
 
 ## Which endpoints become tools
 
@@ -63,6 +64,38 @@ and after, compare.
 > `listToolNames` fails the build the moment an endpoint you meant to keep
 > HTTP-only shows up in the list, which is the one check that catches it however
 > many places the line was forgotten.
+
+## In-process calls — `createToolInvoker`
+
+When one application operation dispatches to a contract tool, do not mount an
+AI SDK `ToolSet` and call its transport adapter manually. Compile an in-process
+invoker once and call the shared framework runner directly:
+
+```ts
+import { createToolInvoker } from 'stitchkit/tools'
+
+const invoker = createToolInvoker(services, {
+  transport: 'AGENT',       // required exposure policy
+  source: 'internal',       // default; audit names the real call source
+  context: { identity },
+  lifecycle,
+  hooks,
+})
+
+const result = await invoker.invoke('update_entity', args)
+if (!result.ok) throw new AppError(result.code, 'Nested tool call failed')
+```
+
+`transport` is required and uses the exact existing `MCP`, `AGENT` or `CLI`
+exposure rules; there is no internal bypass mode. The immutable name lookup is
+compiled once. Every invocation—including parallel and recursive calls—gets a
+fresh tool-call context and runs the same extension resolution, input/output
+validation, lifecycle, hooks and output-strip reporter as mounted tools.
+
+`invoke` returns the canonical discriminated `ToolResult`, not an AI SDK or MCP
+presentation envelope. An unknown name throws `AppError('NOT_FOUND')` before
+the runner because there is no operation identity against which hooks could run.
+Duplicate and provider-invalid names fail when the invoker is created.
 
 ## MCP — `createMcpHandler`
 
@@ -441,6 +474,7 @@ the merged `params` + `input`. `context` is merged into every tool handler's
 | `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see [Guarding tools](#guarding-tools--lifecycle)) |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | add extra args resolved before the handler runs (see below) |
+| `runtimeTools` | framework-managed pathless operations from `defineRuntimeTool` |
 
 `lifecycle` works the same as on the MCP server — without it an agent tool call
 bypasses the HTTP `beforeHandle` auth gate. Pass your `createAuthHook` result.
@@ -491,15 +525,48 @@ as the HTTP prefix param — see
 so one handler serves both surfaces. Pair `extend` with `lifecycle` (your
 `createAuthHook`) so the tool call is still scope-gated.
 
-## Native multimodal tools
+## Pathless runtime tools and multimodal results
 
-Contract tools return JSON. A native tool can return MCP text/image/audio/
-resource content directly while still using stitchkit's input/output validation,
-isolated per-call context, lifecycle/RBAC and tool hooks:
+Use `defineRuntimeTool` for an operation that has no HTTP path but still needs
+the same validation, isolated per-call context, lifecycle/RBAC and hooks as a
+contract tool. The handler returns one transport-neutral, schema-validated
+result. Optional presentation callbacks map that result to MCP content and AI
+SDK model output without coupling the handler to either SDK:
 
 ```ts
-import { createMcpHandler } from 'stitchkit/tools'
+import { createMcpHandler, defineRuntimeTool, mountAgent } from 'stitchkit/tools'
 import { z } from 'zod'
+
+const renderPreview = defineRuntimeTool({
+  name: 'render_preview',
+  description: 'Render and inspect a preview',
+  identity: {
+    serviceName: 'mediaTools',
+    action: 'renderPreview',
+    scope: 'admin',
+    method: 'POST',
+  },
+  input: z.object({ prompt: z.string() }),
+  output: z.object({ assetId: z.string(), imageBase64: z.string() }),
+  handler: async ({ input }) => renderAndSave(input.prompt),
+  present: {
+    mcp: (output) => ({
+      content: [
+        { type: 'image', data: output.imageBase64, mimeType: 'image/png' },
+        { type: 'text', text: output.assetId },
+      ],
+    }),
+    agent: (output) => ({
+      type: 'content',
+      value: [{
+        type: 'file',
+        data: { type: 'data', data: output.imageBase64 },
+        mediaType: 'image/png',
+        filename: `${output.assetId}.png`,
+      }],
+    }),
+  },
+})
 
 const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
@@ -507,35 +574,29 @@ const handleMcp = createMcpHandler({
   services: [service],
   lifecycle: { beforeHandle: authHook },
   hooks: audit.toolCall,
-  nativeTools: ({ registerTool }, identity) => {
-    registerTool({
-      name: 'render_preview',
-      description: 'Render and inspect a preview',
-      identity: {
-        serviceName: 'mediaTools',
-        action: 'renderPreview',
-        scope: 'admin',
-        method: 'POST',
-      },
-      input: z.object({ prompt: z.string() }),
-      output: z.object({ assetId: z.string() }),
-      handler: async ({ input, traceId }) => ({
-        content: [
-          { type: 'image', data: await renderBase64(input.prompt), mimeType: 'image/png' },
-          { type: 'text', text: `trace: ${traceId}` },
-        ],
-        structuredContent: { assetId: await saveAsset(identity) },
-      }),
-    })
-  },
+  nativeTools: ({ registerTool }) => registerTool(renderPreview),
+})
+
+const agentTools = mountAgent([service], {
+  runtimeTools: [renderPreview],
+  lifecycle: { beforeHandle: authHook },
+  hooks: audit.toolCall,
 })
 ```
 
-The configured identity becomes the hook/lifecycle `OperationIdentity` and the
-tool `RequestEvent` (`serviceName`, `action`, `httpMethod`). A native operation
-has no HTTP route, so no fake `path` is added to that identity. If `output` is
-declared, stitchkit parses `structuredContent` with it after `afterHandle`; all
-other MCP fields and content blocks are preserved.
+`transports` defaults to `['MCP', 'AGENT']`; set an explicit subset when an
+operation belongs on only one surface. The configured identity becomes the
+hook/lifecycle `OperationIdentity` and the tool `RequestEvent`
+(`serviceName`, `action`, `httpMethod`). A runtime operation has no HTTP route,
+so no fake `path` is added.
+
+When `output` is declared, Stitchkit validates the neutral handler result after
+`afterHandle`. MCP owns `structuredContent` and `isError`: a presenter supplies
+only rich `content`/metadata, while the framework inserts the validated
+structured result and normalises failures. The Agent adapter uses the AI SDK's
+official `toModelOutput` callback, so `execute` and application UI keep the
+neutral output while the model receives text/file content. Presentation
+callbacks require an output schema.
 
 The MCP registration uses an identity carrier: the SDK advertises the compiled
 JSON Schema but forwards the raw object into Stitchkit. Input failures therefore

@@ -7,18 +7,21 @@
  * caught here, because in-repo tests call the executor directly — they never go
  * through a real mount, from an installed package, with the peer present.
  */
+
+import { QueryClient } from '@tanstack/react-query';
 import { defineContract } from 'stitchkit/contract';
 import { createAuditHook, type RequestEvent } from 'stitchkit/observability';
+import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
 import {
   buildMcpServer,
   createMcpHandler,
+  defineRuntimeTool,
   type ErrorHintFn,
   EXT_APPS_BUNDLE_PLACEHOLDER,
   flattenToolJsonSchema,
   inlineMcpAppBundle,
   mountAgent,
-  type NativeMcpToolDefinition,
   type ToolCallContext,
   type ToolCallHooks,
   type ToolLifecycle,
@@ -100,10 +103,7 @@ implement(signedWebhook, {
 
 const NativeInputSchema = z.object({ id: z.string() });
 const NativeOutputSchema = z.object({ updated: z.boolean() });
-const nativeDefinition: NativeMcpToolDefinition<
-  typeof NativeInputSchema,
-  typeof NativeOutputSchema
-> = {
+const nativeDefinition = defineRuntimeTool({
   name: 'native_update',
   description: 'Update through native MCP content',
   identity: {
@@ -114,11 +114,14 @@ const nativeDefinition: NativeMcpToolDefinition<
   },
   input: NativeInputSchema,
   output: NativeOutputSchema,
-  handler: ({ input }) => ({
-    content: [{ type: 'text', text: input.id }],
-    structuredContent: { updated: true },
-  }),
-};
+  handler: ({ input }) => ({ updated: input.id.length > 0 }),
+  present: {
+    mcp: (output) => ({
+      content: [{ type: 'text', text: output.updated ? 'updated' : 'unchanged' }],
+    }),
+    agent: (output) => ({ type: 'json', value: output }),
+  },
+});
 
 let nativeRegistered = false;
 buildMcpServer(
@@ -133,6 +136,53 @@ buildMcpServer(
   undefined,
 );
 check('the packed native registrar accepts a typed definition', nativeRegistered);
+check(
+  'the packed Agent mount accepts the same runtime definition',
+  typeof mountAgent([], { runtimeTools: [nativeDefinition] }).native_update?.execute ===
+    'function',
+);
+
+interface PackedEntity {
+  id: string;
+  workspaceId: string;
+  label: string;
+  internal: string;
+}
+interface PackedListItem {
+  id: string;
+  label: string;
+}
+function packedWorkspace(event: EntityCacheEvent<PackedEntity>): string {
+  if (event.type !== 'deleted') return event.entity.workspaceId;
+  if ('workspaceId' in event.payload && typeof event.payload.workspaceId === 'string') {
+    return event.payload.workspaceId;
+  }
+  throw new Error('A scoped delete must carry its entity');
+}
+const packedQueryClient = new QueryClient();
+packedQueryClient.setQueryData<PackedListItem[]>(['workspace', 'w1', 'entities'], []);
+const packedCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
+  getId: (entity) => entity.id,
+  getListItemId: (item) => item.id,
+  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  list: {
+    key: (event) => ['workspace', packedWorkspace(event), 'entities'],
+    shape: 'array',
+    createAt: 'start',
+    updateMissing: 'skip',
+    compare: (left, right) => left.label.localeCompare(right.label),
+  },
+  detailKey: (event) => ['entities', event.id],
+});
+packedCache.created(
+  { id: 'e1', workspaceId: 'w1', label: 'one', internal: 'private' },
+  { queryClient: packedQueryClient, isFresh: () => false },
+);
+check(
+  'the packed projected/scoped entity cache compiles without assertions',
+  packedQueryClient.getQueryData<PackedListItem[]>(['workspace', 'w1', 'entities'])?.[0]
+    ?.label === 'one',
+);
 
 const defaultMcpHandler = createMcpHandler({
   serverInfo: { name: 'consumer', version: '1' },

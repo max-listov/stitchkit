@@ -44,7 +44,7 @@ export interface SocketIOServerHandle<
    */
   websocket: ReturnType<BunEngine['handler']>['websocket'];
   /**
-   * `/socket.io/*` route for `createServer({ rawRoutes })`. Real on Bun; on Node
+   * `/socket.io/*socketPath` route for `createServer({ rawRoutes })`. Real on Bun; on Node
    * it is unused (sockets attach to the http.Server via `serveNode({ socket })`)
    * and throws if it is ever mounted — so it is safe to spread into `rawRoutes`
    * unconditionally on either runtime.
@@ -149,7 +149,7 @@ export async function createSocketIOServer<
 
     const route: RawRoute<BunServer> = {
       method: 'ALL',
-      path: `${path.replace(/\/+$/, '')}/*`,
+      path: `${path.replace(/\/+$/, '')}/*socketPath`,
       handler: (req, ctx) => {
         // The Bun server is needed for the WebSocket upgrade. `createServer`
         // always provides it; its absence means the route was mounted on a bare
@@ -177,7 +177,7 @@ export async function createSocketIOServer<
     websocket: { open: noop, message: noop, close: noop, maxPayloadLength: 0 },
     route: {
       method: 'ALL',
-      path: `${path.replace(/\/+$/, '')}/*`,
+      path: `${path.replace(/\/+$/, '')}/*socketPath`,
       handler: () => {
         throw new Error(
           '[stitchkit] On Node, Socket.IO attaches via serveNode({ socket }) — this route is not mounted.',

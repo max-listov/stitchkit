@@ -24,14 +24,14 @@ const users = defineContract(
   },
 );
 
-const WildcardClientParamsSchema = z.object({ slug: z.string(), '*': z.string() });
+const WildcardClientParamsSchema = z.object({ slug: z.string(), filePath: z.string() });
 const WildcardClientOutputSchema = z.object({ slug: z.string(), remainder: z.string() });
 const wildcardClientContract = defineContract(
   { prefix: 'wildcard-client' },
   {
     get: {
       method: 'GET',
-      path: '/:slug/*',
+      path: '/:slug/*filePath',
       desc: 'Get a nested wildcard path',
       params: WildcardClientParamsSchema,
       output: WildcardClientOutputSchema,
@@ -56,7 +56,7 @@ const service = implement(users, {
 });
 
 const wildcardClientService = implement(wildcardClientContract, {
-  get: ({ params }) => ({ slug: params.slug, remainder: params['*'] }),
+  get: ({ params }) => ({ slug: params.slug, remainder: params.filePath }),
 });
 
 let PORT = 0;
@@ -92,7 +92,7 @@ describe('createClient', () => {
     const api = createClient(wildcardClientContract, {
       baseUrl: `http://localhost:${PORT}`,
     });
-    const result = await api.get({ slug: 'foo', '*': 'folder one/leaf#two' });
+    const result = await api.get({ slug: 'foo', filePath: 'folder one/leaf#two' });
     expect(result).toEqual({ slug: 'foo', remainder: 'folder one/leaf#two' });
   });
 
@@ -101,7 +101,7 @@ describe('createClient', () => {
       wildcardClientContract,
       createHttpClient({ baseUrl: `http://localhost:${PORT}` }),
     );
-    const result = await api.get({ slug: 'foo', '*': 'folder one/leaf#two' });
+    const result = await api.get({ slug: 'foo', filePath: 'folder one/leaf#two' });
     expect(result).toEqual({ slug: 'foo', remainder: 'folder one/leaf#two' });
   });
 

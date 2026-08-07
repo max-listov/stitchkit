@@ -8,12 +8,13 @@ import type {
 } from '../contract';
 import { mapObject, typedEntries } from '../internal/typed';
 import { appendFormFields, appendMultipartFile, isMultipartFile } from './client-multipart';
-import { joinClientBaseUrl, planClientRequest } from './client-url';
+import { createClientRouteMatcher, joinClientBaseUrl, planClientRequest } from './client-url';
 import {
   ApiError,
   type HttpClient as HttpAdapter,
   parseApiErrorBody,
   type RequestOptions,
+  type UnauthorizedMatcher,
 } from './http';
 
 /** Merge an endpoint's timeout and response mode into request options. */
@@ -76,6 +77,39 @@ export interface ContractClientConfig<K extends string = never> {
 }
 
 /**
+ * Build exact expected-401 pathname matchers from selected contract operations.
+ * Omit `endpointNames` to select every HTTP-exposed operation in the contract.
+ */
+export function contractEndpointMatchers<
+  T extends Record<string, EndpointDef>,
+  const Names extends readonly (keyof T)[],
+  const K extends string = never,
+>(
+  contract: ContractDef<T, string>,
+  endpointNames?: Names,
+  contractConfig?: ContractClientConfig<K>,
+): UnauthorizedMatcher[] {
+  const selected = endpointNames ? new Set<PropertyKey>(endpointNames) : null;
+  const matchers: UnauthorizedMatcher[] = [];
+  for (const [key, endpoint] of typedEntries(contract.endpoints)) {
+    if (selected && !selected.has(key)) continue;
+    if (endpoint.expose && !endpoint.expose.includes('HTTP')) {
+      if (selected) {
+        throw new Error(
+          `Cannot create an HTTP route matcher for non-HTTP endpoint: ${String(key)}`,
+        );
+      }
+      continue;
+    }
+    matchers.push(createClientRouteMatcher(endpoint, contract.meta.prefix, contractConfig));
+  }
+  if (selected && matchers.length !== selected.size) {
+    throw new Error('Cannot create an HTTP route matcher for an unknown endpoint');
+  }
+  return matchers;
+}
+
+/**
  * Build a fully-typed client from a contract. Every endpoint becomes a typed
  * method — arguments and result inferred from its schemas. Pass an `HttpClient`
  * (from `createHttpClient`) for cookie auth, SSR and retry, or a plain
@@ -126,6 +160,77 @@ export function createClients<
   );
 }
 
+export type ClientContract = ContractDef<Record<string, EndpointDef>, string>;
+export type ClientRegistryValue = ClientContract | readonly ClientContract[];
+
+export type ScopeClientConfigs<TScope extends string> = {
+  [S in TScope]: ContractClientConfig<string>;
+};
+
+type RegistryContract<R> = R extends readonly (infer C)[] ? C : R;
+export type RegistryScope<R> =
+  RegistryContract<R> extends ContractDef<Record<string, EndpointDef>, infer S> ? S : never;
+type PrefixKeys<C> = C extends { stripPrefixKeys: readonly (infer K extends string)[] }
+  ? K
+  : never;
+type ClientForContract<C, Configs> =
+  C extends ContractDef<infer E, infer S>
+    ? S extends keyof Configs
+      ? ScopedHttpClient<E, ScopedKeys<PrefixKeys<Configs[S]>>>
+      : never
+    : never;
+type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
+  value: infer I,
+) => void
+  ? I
+  : never;
+type ScopedNamespace<R, Configs> = UnionToIntersection<
+  ClientForContract<RegistryContract<R>, Configs>
+>;
+
+export type ScopedClientRegistry<T extends Record<string, ClientRegistryValue>, Configs> = {
+  [P in keyof T]: ScopedNamespace<T[P], Configs>;
+};
+
+/** Build one client registry routed by contract scope; arrays compose a namespace. */
+export function createScopedClients<
+  const T extends Record<string, ClientRegistryValue>,
+  const Configs extends ScopeClientConfigs<RegistryScope<T[keyof T]>>,
+>(
+  contracts: T,
+  configOrClient: ClientConfig | HttpAdapter,
+  scopeConfigs: Configs,
+): ScopedClientRegistry<T, Configs> {
+  const registry: Record<string, object> = {};
+  for (const [namespace, value] of Object.entries(contracts)) {
+    const list: readonly ClientContract[] = Array.isArray(value) ? value : [value];
+    const client: Record<PropertyKey, unknown> = {};
+    for (const contract of list) {
+      const scope = contract.meta.scope;
+      if (!scope) {
+        throw new Error(`Contract in client namespace "${namespace}" has no scope`);
+      }
+      const scopeConfig = Object.entries(scopeConfigs).find(
+        ([configuredScope]) => configuredScope === scope,
+      )?.[1];
+      if (!scopeConfig) {
+        throw new Error(`Missing client config for scope: ${scope}`);
+      }
+      const scoped = createClient(contract, configOrClient, scopeConfig);
+      for (const [methodName, method] of Object.entries(scoped)) {
+        if (Object.hasOwn(client, methodName)) {
+          throw new Error(
+            `Client namespace "${namespace}" has duplicate method: ${methodName}`,
+          );
+        }
+        client[methodName] = method;
+      }
+    }
+    registry[namespace] = client;
+  }
+  return registry as ScopedClientRegistry<T, Configs>;
+}
+
 function isHttpAdapter(value: ClientConfig | HttpAdapter): value is HttpAdapter {
   return typeof value === 'object' && 'get' in value && typeof value.get === 'function';
 }
@@ -142,6 +247,7 @@ function createHttpMethod<K extends string>(
 ): (...args: unknown[]) => Promise<unknown> {
   const httpMethod = endpoint.method.toLowerCase() as
     | 'get'
+    | 'head'
     | 'post'
     | 'put'
     | 'patch'
@@ -157,7 +263,7 @@ function createHttpMethod<K extends string>(
       }
       // Multipart uses the endpoint's declared body verb — a `PUT` upload must
       // not silently become a `POST` (the bare-fetch path already honours it).
-      if (httpMethod === 'get' || httpMethod === 'delete') {
+      if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'delete') {
         throw new Error(
           `Multipart endpoint ${endpoint.method} ${endpoint.path} must be POST / PUT / PATCH`,
         );
@@ -171,10 +277,10 @@ function createHttpMethod<K extends string>(
       );
     }
 
-    if (httpMethod === 'get') {
+    if (httpMethod === 'get' || httpMethod === 'head') {
       return withOutput(
         endpoint,
-        client.get(plan.relativeUrl, withTimeout(undefined, endpoint)),
+        client[httpMethod](plan.relativeUrl, withTimeout(undefined, endpoint)),
       );
     }
 
@@ -219,6 +325,7 @@ function createFetchMethod<K extends string>(
 
     const hasBody =
       endpoint.method !== 'GET' &&
+      endpoint.method !== 'HEAD' &&
       endpoint.method !== 'DELETE' &&
       !endpoint.multipart &&
       endpoint.input &&
@@ -316,7 +423,6 @@ export function createUrlBuilder<
 ): ScopedUrlBuilder<T, ScopedKeys<K>> {
   const builder: Partial<TypedUrlBuilder<T>> = {};
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
-    if (endpoint.method !== 'GET' || endpoint.multipart) continue;
     if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;
     setClientMethod(builder, key, (args?: Record<string, unknown>) => {
       const plan = planClientRequest(
@@ -325,6 +431,16 @@ export function createUrlBuilder<
         args ?? {},
         contractConfig,
       );
+      if (
+        endpoint.method !== 'GET' &&
+        endpoint.method !== 'DELETE' &&
+        Object.keys(plan.remainingArgs).length > 0
+      ) {
+        const fields = Object.keys(plan.remainingArgs).join(', ');
+        throw new Error(
+          `URL builder for ${endpoint.method} ${endpoint.path} received non-URL fields: ${fields}`,
+        );
+      }
       return joinClientBaseUrl(source.baseUrl, plan.relativeUrl);
     });
   }

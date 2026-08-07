@@ -12,5 +12,9 @@ export {
   createEntityCacheHandlers,
   type DeletedPayload,
   type EntityCacheConfig,
+  type EntityCacheEvent,
   type EntityCacheHandlers,
+  type EntityCacheKey,
+  type EntityCacheListConfig,
+  type EntityCacheListShape,
 } from './react/entity-cache';

@@ -230,11 +230,12 @@ prefix param in the schema, use a non-strict `z.object` (extra keys are dropped
 from `ctx.params`, but `ctx.tenantId` still works), or read the param off the
 context root.
 
-**Trailing wildcard.** A contract path may end in `/*`. `/app/:slug/*` matches
+**Trailing wildcard.** A contract path may end in a named wildcard.
+`/app/:slug/*filePath` matches
 both `/app/foo` and nested paths such as `/app/foo/a/b`; the collected params are
-`{ slug: 'foo', '*': '' }` and `{ slug: 'foo', '*': 'a/b' }` respectively. Put
-the quoted `'*'` field in the endpoint's `params` schema to keep it in typed
-`ctx.params`. Each captured segment is URL-decoded before the remainder is
+`{ slug: 'foo', filePath: '' }` and `{ slug: 'foo', filePath: 'a/b' }`
+respectively. Put `filePath` in the endpoint's `params` schema to keep it in
+typed `ctx.params`. Each captured segment is URL-decoded before the remainder is
 joined, so encoded spaces and reserved characters reach the handler as their
 semantic values while `/` remains the segment boundary. Static and named-param
 routes are matched before a catch-all, so a
@@ -483,9 +484,9 @@ createServer({
 })
 ```
 
-A path may be exact, carry `:param` segments, or end in `/*` for a prefix
-wildcard — and the two combine: `/app/:slug/*` matches `/app/x/a/b` with
-`ctx.params.slug === 'x'` and the remainder in `ctx.params['*']` (a SPA
+A path may be exact, carry `:param` segments, or end in `/*filePath` for a prefix
+wildcard — and the two combine: `/app/:slug/*filePath` matches `/app/x/a/b` with
+`ctx.params.slug === 'x'` and the remainder in `ctx.params.filePath` (a SPA
 deep-link fallback). List more specific routes before the wildcard — the first
 match wins. `staticRoute()` builds a raw route that serves a directory.
 
@@ -524,23 +525,34 @@ seek and cache, use **`serveFile`** (Bun) — it streams the requested byte rang
 and speaks the conditional-request half of RFC 7233 / 9110:
 
 ```ts
-import { serveFile } from 'stitchkit/server'
+import { defineContract } from 'stitchkit/contract'
+import { implement, serveFile } from 'stitchkit/server'
+import { z } from 'zod'
 
-createServer({
-  services,
-  rawRoutes: [
-    {
-      // `ALL` — so a HEAD probe also reaches serveFile (raw routes match the
-      // method exactly, and `HEAD` is not a contract `HttpMethod`); serveFile
-      // itself handles GET + HEAD and answers 405 for anything else.
-      method: 'ALL',
-      path: '/media/:id',
-      handler: (req, ctx) =>
-        serveFile(req, { path: pathForId(ctx.params.id), filename: 'clip.mp4' }),
-    },
-  ],
+const MediaParams = z.object({ id: z.string() })
+const media = defineContract({ prefix: 'media' }, {
+  download: {
+    method: 'GET', path: '/:id', desc: 'Download media',
+    params: MediaParams, rawResponse: true, contentType: 'video/mp4',
+  },
+  inspect: {
+    method: 'HEAD', path: '/:id', desc: 'Inspect media',
+    params: MediaParams, rawResponse: true, contentType: 'video/mp4',
+  },
+})
+
+const mediaService = implement(media, {
+  download: ({ req, params }) =>
+    serveFile(req, { path: pathForId(params.id), filename: 'clip.mp4' }),
+  inspect: ({ req, params }) =>
+    serveFile(req, { path: pathForId(params.id), filename: 'clip.mp4' }),
 })
 ```
+
+GET and HEAD are separate operations deliberately: declaring GET never creates
+a hidden HEAD alias. Both travel through the normal contract router, params,
+lifecycle/RBAC and request logging. A HEAD handler may inspect the raw query via
+`ctx.req.url`, but cannot declare a request input schema or body.
 
 `serveFile` returns `206` (range, with `Content-Range` + `Content-Length`), `200`
 (full), `416` (unsatisfiable, `Content-Range: bytes */size`), `304`
@@ -662,7 +674,8 @@ createServer({ services: [users, orders], rawRoutes: [openApiRoute('/openapi.jso
 Only HTTP-exposed methods appear (an MCP/agent-only tool is skipped).
 
 OpenAPI 3.1 has no standard multi-segment path parameter. For a contract path
-ending in `/*`, Stitchkit keeps the literal runtime path, omits `*` from the
+ending in a named wildcard such as `/*filePath`, Stitchkit keeps the literal
+runtime path, omits `filePath` from the
 standard `in: path` parameter list, and emits
 `x-stitchkit-trailing-wildcard` on the operation with its parameter name,
 schema and semantics. A generic OpenAPI client therefore cannot invent

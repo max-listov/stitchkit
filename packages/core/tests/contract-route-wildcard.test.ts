@@ -10,7 +10,7 @@ import {
 } from '../src/server/router';
 
 const SlugParamsSchema = z.object({ slug: z.string() });
-const WildcardParamsSchema = z.object({ slug: z.string(), '*': z.string() });
+const WildcardParamsSchema = z.object({ slug: z.string(), filePath: z.string() });
 const MatchSchema = z.object({ route: z.string(), slug: z.string(), remainder: z.string() });
 
 const appContract = defineContract(
@@ -20,7 +20,7 @@ const appContract = defineContract(
     // keep the catch-all behind the more specific endpoints below.
     fallback: {
       method: 'GET',
-      path: '/:slug/*',
+      path: '/:slug/*filePath',
       desc: 'Catch nested app paths',
       params: WildcardParamsSchema,
       output: MatchSchema,
@@ -46,7 +46,7 @@ const appService = implement(appContract, {
   fallback: ({ params }) => ({
     route: 'fallback',
     slug: params.slug,
-    remainder: params['*'],
+    remainder: params.filePath,
   }),
   page: ({ params }) => ({ route: 'page', slug: params.slug, remainder: '' }),
   shell: ({ params }) => ({ route: 'shell', slug: params.slug, remainder: '' }),
@@ -58,11 +58,11 @@ describe('contract route — trailing wildcard matcher', () => {
   test('captures one or many trailing segments', () => {
     expect(matchRoute(routeMap, 'GET', '/app/foo/page/deep')?.pathParams).toEqual({
       slug: 'foo',
-      '*': 'page/deep',
+      filePath: 'page/deep',
     });
     expect(matchRoute(routeMap, 'GET', '/app/foo/a/b')?.pathParams).toEqual({
       slug: 'foo',
-      '*': 'a/b',
+      filePath: 'a/b',
     });
   });
 
@@ -81,7 +81,7 @@ describe('contract route — trailing wildcard matcher', () => {
             {
               fallback: {
                 method: 'GET',
-                path: '/:slug/*',
+                path: '/:slug/*filePath',
                 desc: 'Catch all',
                 params: WildcardParamsSchema,
               },
@@ -93,7 +93,7 @@ describe('contract route — trailing wildcard matcher', () => {
     ]);
     expect(matchRoute(wildcardOnly, 'GET', '/app/foo')?.pathParams).toEqual({
       slug: 'foo',
-      '*': '',
+      filePath: '',
     });
     expect(matchRoute(wildcardOnly, 'GET', '/app')).toBeNull();
   });
@@ -104,7 +104,7 @@ describe('contract route — trailing wildcard matcher', () => {
 
   test('shadow diagnostics probe a real nested path for a contract wildcard', () => {
     const shadowed = findShadowedRoutes(routeMap, [
-      { method: 'GET', path: '/app/:slug/*', handler: () => new Response('raw') },
+      { method: 'GET', path: '/app/:slug/*filePath', handler: () => new Response('raw') },
     ]);
     expect(shadowed.map((entry) => entry.endpoint)).toContain('app.fallback');
   });
@@ -147,7 +147,7 @@ describe('contract route — raw response endpoint', () => {
     {
       fallback: {
         method: 'GET',
-        path: '/:slug/*',
+        path: '/:slug/*filePath',
         desc: 'Serve nested asset bytes',
         params: WildcardParamsSchema,
         rawResponse: true,
@@ -158,7 +158,7 @@ describe('contract route — raw response endpoint', () => {
   const rawHandler = createHandler({
     services: [
       implement(rawContract, {
-        fallback: ({ params }) => new Response(`${params.slug}:${params['*']}`),
+        fallback: ({ params }) => new Response(`${params.slug}:${params.filePath}`),
       }),
     ],
   });
@@ -167,5 +167,50 @@ describe('contract route — raw response endpoint', () => {
     const response = await rawHandler(new Request('http://local/assets/foo/a/b'));
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('foo:a/b');
+  });
+});
+
+describe('named wildcard contract validation', () => {
+  const endpoint = (path: string, params?: z.ZodType) => ({
+    method: 'GET' as const,
+    path,
+    desc: 'Wildcard validation probe',
+    params,
+  });
+
+  test('rejects bare, invalid, non-terminal and duplicate wildcard names', () => {
+    expect(() =>
+      defineContract({ prefix: 'bad' }, { route: endpoint('/*', z.object({})) }),
+    ).toThrow('must be named');
+    expect(() =>
+      defineContract(
+        { prefix: 'bad' },
+        { route: endpoint('/*file-path', z.object({ 'file-path': z.string() })) },
+      ),
+    ).toThrow('must be named');
+    expect(() =>
+      defineContract(
+        { prefix: 'bad' },
+        { route: endpoint('/*filePath/tail', z.object({ filePath: z.string() })) },
+      ),
+    ).toThrow('must be the final segment');
+    expect(() =>
+      defineContract(
+        { prefix: 'bad' },
+        { route: endpoint('/:filePath/*filePath', z.object({ filePath: z.string() })) },
+      ),
+    ).toThrow('Duplicate route parameter name');
+  });
+
+  test('requires the named field in the params schema', () => {
+    expect(() => defineContract({ prefix: 'bad' }, { route: endpoint('/*filePath') })).toThrow(
+      'requires a params schema field',
+    );
+    expect(() =>
+      defineContract(
+        { prefix: 'bad' },
+        { route: endpoint('/*filePath', z.object({ other: z.string() })) },
+      ),
+    ).toThrow('is missing wildcard field "filePath"');
   });
 });

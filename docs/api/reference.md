@@ -21,17 +21,25 @@ The browser-and-server entrypoint. Re-exports everything from
 |--------|------|---------|
 | `createClient` | function | build a typed client from a contract — [guide](../guide/client.md#createclient) |
 | `createClients` | function | build one exact typed client per contract from a registry; accepts the same scoped config and transports as `createClient` |
-| `createUrlBuilder` | function | build synchronous browser-native URLs for one contract's HTTP GET endpoints — [guide](../guide/client.md#contract-url-builders) |
+| `createScopedClients` | function | build one registry routed by contract scope; arrays compose contracts into one namespace |
+| `ScopeClientConfigs` | _type_ | per-scope client routing configuration consumed by `createScopedClients` |
+| `ScopedClientRegistry` | _type_ | exact composed registry returned by `createScopedClients` |
+| `ClientRegistryValue` | _type_ | one contract or a contract array composing one client namespace |
+| `ClientContract` | _type_ | HTTP-client-compatible contract value used by scoped registries |
+| `RegistryScope` | _type_ | contract-scope union inferred from a scoped client registry value |
+| `createUrlBuilder` | function | build synchronous browser-native URLs for all HTTP endpoints; body methods accept URL-bound args only — [guide](../guide/client.md#contract-url-builders) |
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
+| `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
 | `createHttpClient` | function | the Ky-based HTTP transport — [guide](../guide/client.md#createhttpclient) |
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient` |
+| `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
 | `RequestOptions` | _type_ | per-call options — params, timeout, response type |
 | `HeaderProvider` | _type_ | static or per-request headers |
 | `ApiEvent` | _type_ | a client event — `unauthorized` / `network_error` / `logout` |
@@ -82,11 +90,12 @@ from the root `stitchkit`.
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition |
+| `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
 | `ResponseMetadata` | _type_ | per-request outbound collector exposed as `ctx.response` only for a `responseMeta` endpoint |
 | `HttpSuccessStatus` | _type_ | supported declared 2xx success statuses |
 | `BodyHttpSuccessStatus` | _type_ | supported 2xx statuses excluding bodyless 204/205 |
-| `HttpMethod` | _type_ | `GET \| POST \| PUT \| PATCH \| DELETE` |
+| `HttpMethod` | _type_ | `GET \| HEAD \| POST \| PUT \| PATCH \| DELETE` |
 | `Transport` | _type_ | `HTTP \| MCP \| AGENT \| CLI` |
 | `TransportSource` | _type_ | `http \| mcp \| agent \| cli` — the value of `ctx.source` |
 | `RuntimeContext` | _type_ | the loose context seen by transport and hooks |
@@ -96,7 +105,7 @@ from the root `stitchkit`.
 | `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
 | `ScopedHttpClient` | _type_ | a client whose `stripPrefixKeys` become required args ([guide](../guide/multi-tenant.md)) |
 | `ScopedEndpointFn` | _type_ | one method's signature with the consumed keys folded in |
-| `TypedUrlBuilder` | _type_ | one contract's HTTP, non-multipart GET endpoints as synchronous URL functions |
+| `TypedUrlBuilder` | _type_ | one contract's HTTP endpoints as synchronous, method-aware URL functions |
 | `ScopedUrlBuilder` | _type_ | a URL builder whose scoped-prefix keys are required method arguments |
 | `ScopedUrlFn` | _type_ | one URL method's signature with scoped-prefix keys folded in |
 | `MultipartFile` | _type_ | a `multipart` file field — `Blob \| FileDescriptor` |
@@ -341,6 +350,8 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `defineRuntimeTool` | function | define one validated pathless operation for MCP, Agent or both — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
+| `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
@@ -356,10 +367,17 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
 | `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
 | `NativeMcpRegistrar` | _type_ | protected `registerTool` plus explicit unprotected `rawServer` access |
-| `NativeMcpToolDefinition` | _type_ | native name, operation identity, Zod schemas and MCP-result handler |
-| `NativeMcpOperationIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for native lifecycle/audit |
-| `NativeMcpHandlerContext` | _type_ | runtime context with the definition's parsed native input |
-| `NativeMcpResult` | _type_ | MCP content result, with typed `structuredContent` when output is declared |
+| `RuntimeToolDefinition` | _type_ | transport-neutral pathless operation with identity, schemas, handler and optional presenters |
+| `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
+| `RuntimeToolDefinitionWithOutput` | _type_ | runtime definition whose handler and presenters share a validated output type |
+| `RuntimeToolDefinitionWithoutOutput` | _type_ | runtime definition without output validation or presentation callbacks |
+| `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for runtime lifecycle/audit |
+| `RuntimeToolHandlerContext` | _type_ | runtime context with the definition's parsed input |
+| `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |
+| `RuntimeToolPresenters` | _type_ | optional MCP and AI SDK `toModelOutput` presentation callbacks |
+| `RuntimeMcpPresentation` | _type_ | MCP content/metadata result without framework-owned `structuredContent` or `isError` |
+| `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
+| `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT'` |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli` |
@@ -375,6 +393,9 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ToolErrorOptions` | _type_ | `{ toolName, error, context, endpoint }` for a thrown handler-path value |
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
+| `ToolInvoker` | _type_ | immutable compiled dispatcher (`names` + `invoke`) |
+| `ToolInvokerConfig` | _type_ | exposure policy, context, lifecycle, hooks and runner options |
+| `ToolInvokerTransport` | _type_ | invoker exposure policy: `MCP \| AGENT \| CLI` |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
 | `ViewFileOptions` | _type_ | options for `mountViewFile` |
 | `McpAnnotations` | _type_ | MCP annotations on a media result |
@@ -513,6 +534,10 @@ and `react-query-kit` peers.
 | `createEntityCacheHandlers` | function | created/updated/deleted cache handlers for one entity — [guide](../guide/realtime.md#entity-cache-handlers) |
 | `EntityCacheConfig` | _type_ | config for `createEntityCacheHandlers` |
 | `EntityCacheHandlers` | _type_ | the `{ created, updated, deleted }` handlers it returns |
+| `EntityCacheEvent` | _type_ | discriminated created/updated/deleted input for dynamic cache keys |
+| `EntityCacheKey` | _type_ | static `QueryKey` or event-aware key factory |
+| `EntityCacheListConfig` | _type_ | list shape, scoped key, insertion/missing-update policy and comparator |
+| `EntityCacheListShape` | _type_ | `array \| paginated \| infinite-array \| infinite-paginated` |
 | `DeletedPayload` | _type_ | a `deleted` event payload — the entity or a bare `{ id }` |
 | `CursorQueryConfig` | _type_ | config for `createCursorQuery` |
 | `CacheBridge` | _type_ | the `createCacheBridge` handle |

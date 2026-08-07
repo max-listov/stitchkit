@@ -1,6 +1,7 @@
-import type { ZodType, z } from 'zod';
+import { type ZodType, z } from 'zod';
+import { parseTrailingWildcard } from '../internal/route-pattern';
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
 export type Transport = (typeof ALL_TRANSPORTS)[number];
@@ -31,11 +32,11 @@ export interface ResponseMetadata {
 export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli' | (string & {});
 
 interface EndpointDefBase {
-  method: HttpMethod;
+  method: Exclude<HttpMethod, 'HEAD'>;
   /**
    * Route under the contract prefix. Named segments (`/:id`) are exposed through
-   * `params`; a terminal `/*` additionally exposes the slash-joined remainder as
-   * `params['*']` and matches an empty remainder.
+   * `params`; a terminal named wildcard (`/*filePath`) additionally exposes the
+   * slash-joined remainder under that name and matches an empty remainder.
    */
   path: string;
   desc: string;
@@ -252,6 +253,31 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   responseMeta?: never;
 }
 
+/** An explicit HTTP HEAD operation. Headers/status are handler-owned; the body is always stripped. */
+export interface HeadEndpointDef {
+  method: 'HEAD';
+  path: string;
+  desc: string;
+  scope?: string;
+  params?: ZodType<unknown>;
+  timeout?: number;
+  idempotent?: boolean;
+  meta?: Record<string, unknown>;
+  rawResponse: true;
+  input?: never;
+  output?: never;
+  multipart?: never;
+  rawBody?: never;
+  maxUploadBytes?: never;
+  maxJsonBodyBytes?: never;
+  toolName?: never;
+  ui?: never;
+  annotations?: never;
+  expose?: readonly ['HTTP'];
+  responseMeta?: never;
+  contentType?: string;
+}
+
 export type EndpointDef =
   | HttpOnlyEndpointDef
   | ToolEndpointDef
@@ -260,7 +286,8 @@ export type EndpointDef =
   | ResponseMetaEmptyEndpointDef
   | ResponseMetaRawBodyDataEndpointDef
   | ResponseMetaRawBodyEmptyEndpointDef
-  | RawResponseEndpointDef;
+  | RawResponseEndpointDef
+  | HeadEndpointDef;
 
 export interface ContractMeta<TScope extends string = string> {
   prefix: string;
@@ -310,6 +337,20 @@ export function defineContract(
 ): ContractDef {
   const toolTransports = new Map<string, { key: string; transports: Set<Transport> }>();
   for (const [key, ep] of Object.entries(endpoints)) {
+    const wildcard = parseTrailingWildcard(ep.path);
+    if (wildcard) {
+      if (!ep.params) {
+        throw new Error(
+          `Contract "${meta.prefix}": endpoint "${key}" wildcard "${wildcard.name}" requires a params schema field`,
+        );
+      }
+      const paramsJson = z.toJSONSchema(ep.params, { io: 'input' });
+      if (!paramsJson.properties || !(wildcard.name in paramsJson.properties)) {
+        throw new Error(
+          `Contract "${meta.prefix}": endpoint "${key}" params schema is missing wildcard field "${wildcard.name}"`,
+        );
+      }
+    }
     // `desc` is the description a model reads to decide whether to call the
     // tool — an empty one passes the type check but ships an unusable tool.
     if (ep.desc.trim() === '') {
@@ -326,6 +367,7 @@ export function defineContract(
     }
 
     if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
+    if (ep.method === 'HEAD') assertHeadEndpoint(meta.prefix, key, ep);
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
     if ('responseMeta' in ep) assertResponseMetaEndpoint(meta.prefix, key, ep);
 
@@ -386,6 +428,15 @@ function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef): void {
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
   }
+}
+
+/** HEAD is an explicit, bodyless, HTTP-only raw-response operation. */
+function assertHeadEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": HEAD endpoint "${key}"`;
+  if (!ep.rawResponse) throw new Error(`${where} must declare rawResponse: true`);
+  if (ep.input) throw new Error(`${where} cannot declare an input schema`);
+  if (ep.multipart) throw new Error(`${where} cannot be multipart`);
+  if (ep.rawBody) throw new Error(`${where} cannot retain a raw body`);
 }
 
 /** Raw JSON text exists only on a validated, body-bearing HTTP operation. */
@@ -599,15 +650,16 @@ export type TypedHttpClient<C extends Record<string, EndpointDef>> = ScopedHttpC
   unknown
 >;
 
-type IsUrlBuildable<E> = E extends { method: 'GET' }
-  ? E extends { multipart: string }
-    ? false
-    : ExposesHttp<E>
-  : false;
+type IsUrlBuildable<E> = ExposesHttp<E>;
 
-export type ScopedUrlFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
+type EndpointUrlArgs<E> = InferInput<Prop<E, 'params'>> &
+  (E extends { method: 'GET' | 'DELETE' } ? InferInput<Prop<E, 'input'>> : unknown);
+
+type UrlArgsWith<E, Extra> = EndpointUrlArgs<E> & Extra;
+
+export type ScopedUrlFn<E, Extra> = [keyof UrlArgsWith<E, Extra>] extends [never]
   ? () => string
-  : (args: ArgsWith<E, Extra>) => string;
+  : (args: UrlArgsWith<E, Extra>) => string;
 
 export type ScopedUrlBuilder<C extends Record<string, EndpointDef>, Extra> = {
   [K in keyof C as IsUrlBuildable<C[K]> extends true ? K : never]: ScopedUrlFn<C[K], Extra>;

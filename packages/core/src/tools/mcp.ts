@@ -542,19 +542,21 @@ export function buildMcpServerFromPrepared<TAuth>(
     onOutputStrip: config.onOutputStrip,
   });
   if (config.nativeTools) {
+    const takenNames = new Set(prepared.map((tool) => tool.mountable.name));
     const registrar = createNativeMcpRegistrar(server, {
       context,
       hooks: config.hooks,
       lifecycle: config.lifecycle,
       coerceJsonArgs: config.coerceJsonArgs,
       onOutputStrip: config.onOutputStrip,
+      takenNames,
       prepare: (tool) =>
         prepareMcpTools([tool], {
           schemaValidation: config.schemaValidation,
           logger: config.logger,
         }),
-      formatError: (result, toolName) =>
-        formatMcpResult(result, 'none', toolName, config.errorHint),
+      formatResult: (result, mode, toolName) =>
+        formatMcpResult(result, mode, toolName, config.errorHint),
     });
     config.nativeTools(registrar, auth);
   }

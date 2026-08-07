@@ -35,9 +35,9 @@ const contract = defineContract(
     },
     appFallback: {
       method: 'GET',
-      path: '/apps/:slug/*',
+      path: '/apps/:slug/*filePath',
       desc: 'Serve an app deep link',
-      params: z.object({ slug: z.string(), '*': z.string().describe('Nested path') }),
+      params: z.object({ slug: z.string(), filePath: z.string().describe('Nested path') }),
       output: z.object({ ok: z.boolean() }),
     },
     toolOnly: {
@@ -95,7 +95,7 @@ describe('generateOpenApiDocument', () => {
   test('builds paths for HTTP methods and skips tool-only ones', () => {
     expect(Object.keys(doc.paths).sort()).toEqual([
       '/api/accepted',
-      '/api/apps/{slug}/*',
+      '/api/apps/{slug}/*filePath',
       '/api/items',
       '/api/items/{id}',
       '/api/reset',
@@ -120,16 +120,16 @@ describe('generateOpenApiDocument', () => {
   });
 
   test('marks a trailing wildcard honestly without an invalid OpenAPI path param', () => {
-    const operation = spec.paths['/api/apps/{slug}/*'].get;
+    const operation = spec.paths['/api/apps/{slug}/*filePath'].get;
     expect(operation.parameters.map((parameter: { name: string }) => parameter.name)).toEqual([
       'slug',
     ]);
     expect(operation['x-stitchkit-trailing-wildcard']).toEqual({
-      parameter: '*',
+      parameter: 'filePath',
       required: true,
       schema: { type: 'string', description: 'Nested path' },
       description:
-        "Matches zero or more trailing path segments and exposes their '/'-joined remainder as params['*'].",
+        "Matches zero or more trailing path segments and exposes their '/'-joined remainder as params.filePath.",
     });
   });
 

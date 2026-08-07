@@ -44,7 +44,7 @@ It returns a handle with three pieces, all wired into `createServer`:
 createServer({
   services,
   websocket: socket.websocket,   // → Bun.serve websocket handlers
-  rawRoutes: [socket.route],     // ready-made /socket.io/* route
+  rawRoutes: [socket.route],     // ready-made /socket.io/*socketPath route
 })
 
 // elsewhere — broadcast:
@@ -55,7 +55,7 @@ socket.io.emit('note:created', note)
 |--------------|---------|
 | `io` | the typed Socket.IO server — attach `connection` handlers, broadcast |
 | `websocket` | Bun WebSocket handlers — pass to `createServer({ websocket })` |
-| `route` | the `/socket.io/*` raw route — pass to `createServer({ rawRoutes })` |
+| `route` | the `/socket.io/*socketPath` raw route — pass to `createServer({ rawRoutes })` |
 
 `SocketIOServerConfig` also takes `path`, `transports`, `pingTimeout` and
 `pingInterval`. For anything else socket.io's `ServerOptions` exposes, use the
@@ -231,9 +231,16 @@ updater per entity:
 import { createEntityCacheHandlers } from 'stitchkit/react'
 
 const widgetCache = createEntityCacheHandlers<Widget>({
-  getId: (w) => w.id,
-  listKey: ['widgets'],
-  detailKey: (id) => ['widgets', id],
+  getId: (widget) => widget.id,
+  getListItemId: (widget) => widget.id,
+  toListItem: (widget) => widget,
+  list: {
+    key: ['widgets'],
+    shape: 'paginated',
+    createAt: 'start',
+    updateMissing: 'skip',
+  },
+  detailKey: (event) => ['widgets', event.id],
 })
 
 createCacheBridge({ socket, queryClient, handlers: {
@@ -243,10 +250,52 @@ createCacheBridge({ socket, queryClient, handlers: {
 }})
 ```
 
-It patches stitchkit's `Paginated<T>` list envelope (plain or an infinite list
-of pages) and honours the same `isFresh` echo guard. It deliberately does **not**
-flatten pages or add a `useAllX` surface — flattening stays in the component;
-this only keeps the cache correct.
+The `list.shape` discriminant supports `array`, `paginated`, `infinite-array`
+and `infinite-paginated`. Every mutation preserves the surrounding envelope,
+page metadata and `pageParams`; an infinite create changes only the selected
+edge page (`createAt: 'start' | 'end'`). Creates are deduplicated across every
+cached page. `updateMissing` makes an absent update explicitly skip or insert.
+
+The event entity may be richer than a list row. Keep the full value in detail
+cache, project it for lists, and provide the same comparator the backend uses:
+
+```ts
+const memberCache = createEntityCacheHandlers<Member, MemberListItem>({
+  getId: (member) => member.id,
+  getListItemId: (item) => item.id,
+  toListItem: (member) => ({
+    id: member.id,
+    name: member.name,
+    joinedAt: member.joinedAt,
+  }),
+  list: {
+    key: (event) => {
+      if (event.type !== 'deleted') {
+        return ['workspaces', event.entity.workspaceId, 'members']
+      }
+      if ('workspaceId' in event.payload) {
+        return ['workspaces', event.payload.workspaceId, 'members']
+      }
+      throw new Error('A scoped delete must carry its entity')
+    },
+    shape: 'array',
+    createAt: 'start',
+    updateMissing: 'skip',
+    compare: (left, right) => left.joinedAt.localeCompare(right.joinedAt),
+  },
+  detailKey: (event) => ['members', event.id],
+})
+```
+
+Static `QueryKey` values remain the short path. A key factory receives a typed
+`created | updated | deleted` event, so scoped keys can use the full entity or
+deleted payload without guessing. The same resolved detail key drives the
+`isFresh` echo guard. Shape checks also leave neighbouring detail caches alone
+when a list key is intentionally used as a partial query-key prefix.
+
+The helper deliberately does **not** flatten pages, update totals, derive a
+sort order or replace arbitrary `setQueryData` logic. Those are application
+policies; this helper only applies declared CRUD semantics.
 
 ## Raw binary lane (Bun)
 
@@ -320,7 +369,7 @@ Notes:
 - **Bun-only.** On Node, Socket.IO attaches to the `node:http.Server` `upgrade`
   event (`serveNode({ socket })`); a raw lane there is a separate upgrade
   handler, not this composition. See [ADR 0020](../decisions/0020-raw-websocket-lane.md).
-- The upgrade path must not collide with `/socket.io/*`.
+- The upgrade path must not collide with `/socket.io/*socketPath`.
 - The tuning (`maxPayloadLength`, `idleTimeout`, `backpressureLimit`, …) is
   global — keep `idleTimeout` ≥ Socket.IO needs (> 2 × `pingInterval`).
 - For high throughput, handle backpressure in the raw lane: `ws.send()` returns

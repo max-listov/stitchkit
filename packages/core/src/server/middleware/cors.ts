@@ -87,7 +87,8 @@ export function corsHeaders(
   const allowOrigin = resolveOrigin(config, requestOrigin);
 
   const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': config.methods ?? 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods':
+      config.methods ?? 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': config.headers ?? DEFAULT_CORS_ALLOW_HEADERS,
   };
   const expose = Array.isArray(config.exposeHeaders)

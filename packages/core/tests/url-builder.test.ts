@@ -10,7 +10,7 @@ import { createHttpClient } from '../src/browser/http';
 import { defineContract } from '../src/contract';
 
 const UrlEchoSchema = z.object({ url: z.string() });
-const LinkParamsSchema = z.object({ fileId: z.string(), '*': z.string() });
+const LinkParamsSchema = z.object({ fileId: z.string(), filePath: z.string() });
 const LinkQuerySchema = z.object({
   thumbnail: z.boolean().optional(),
   page: z.number().optional(),
@@ -28,7 +28,7 @@ const media = defineContract(
     },
     file: {
       method: 'GET',
-      path: '/:fileId/*',
+      path: '/:fileId/*filePath',
       desc: 'Media file',
       params: LinkParamsSchema,
       input: LinkQuerySchema,
@@ -47,7 +47,32 @@ const media = defineContract(
       path: '/',
       desc: 'Mutate media',
       input: z.object({ name: z.string() }),
-      output: z.object({ ok: z.boolean() }),
+      output: UrlEchoSchema,
+    },
+    replace: {
+      method: 'PUT',
+      path: '/:fileId',
+      desc: 'Replace media',
+      params: z.object({ fileId: z.string() }),
+      input: z.object({ name: z.string() }),
+      output: UrlEchoSchema,
+    },
+    edit: {
+      method: 'PATCH',
+      path: '/:fileId',
+      desc: 'Edit media',
+      params: z.object({ fileId: z.string() }),
+      input: z.object({ name: z.string() }),
+      output: UrlEchoSchema,
+    },
+    upload: {
+      method: 'POST',
+      path: '/upload/:fileId',
+      desc: 'Upload media',
+      params: z.object({ fileId: z.string() }),
+      input: z.object({ caption: z.string().optional() }),
+      output: UrlEchoSchema,
+      multipart: 'file',
     },
     toolOnly: {
       method: 'GET',
@@ -80,7 +105,7 @@ describe('contract URL builders', () => {
   const args = {
     tenantId: 't1',
     fileId: 'folder one',
-    '*': 'leaf#two/ü',
+    filePath: 'leaf#two/ü',
     thumbnail: true,
     page: 2,
     tags: ['a', 'b'],
@@ -112,19 +137,44 @@ describe('contract URL builders', () => {
   test('supports zero-arg endpoints and an empty wildcard remainder', () => {
     const plain = createUrlBuilder(media, { baseUrl: '' });
     expect(plain.root()).toBe('/media');
-    expect(urls.file({ tenantId: 't1', fileId: 'file', '*': '', tags: [], page: 0 })).toBe(
-      `${baseUrl}/tenants/t1/media/file?page=0`,
+    expect(plain.mutate()).toBe('/media');
+    expect(
+      urls.file({ tenantId: 't1', fileId: 'file', filePath: '', tags: [], page: 0 }),
+    ).toBe(`${baseUrl}/tenants/t1/media/file?page=0`);
+  });
+
+  test('builds body and multipart endpoint URLs from URL-bound args only', () => {
+    expect(urls.replace({ tenantId: 't1', fileId: 'a b' })).toBe(
+      `${baseUrl}/tenants/t1/media/a%20b`,
     );
+    expect(urls.edit({ tenantId: 't1', fileId: 'a b' })).toBe(
+      `${baseUrl}/tenants/t1/media/a%20b`,
+    );
+    expect(urls.upload({ tenantId: 't1', fileId: 'a b' })).toBe(
+      `${baseUrl}/tenants/t1/media/upload/a%20b`,
+    );
+  });
+
+  test('matches the request URL for a body endpoint', async () => {
+    const expected = new URL(urls.replace({ tenantId: 't1', fileId: 'a b' }));
+    const client = createClient(media, http, scope);
+    expect(await client.replace({ tenantId: 't1', fileId: 'a b', name: 'next' })).toEqual({
+      url: expected.pathname,
+    });
   });
 
   test('fails first on missing params and nested query values', () => {
     const loose: { file(args: Record<string, unknown>): string } = urls;
-    expect(() => loose.file({ tenantId: 't1', '*': '' })).toThrow(
+    expect(() => loose.file({ tenantId: 't1', filePath: '' })).toThrow(
       'Missing path param: fileId',
     );
     expect(() =>
-      loose.file({ tenantId: 't1', fileId: 'f', '*': '', filter: { active: true } }),
+      loose.file({ tenantId: 't1', fileId: 'f', filePath: '', filter: { active: true } }),
     ).toThrow('input field "filter" is a nested object');
+    const looseBody: { mutate(args: Record<string, unknown>): string } = urls;
+    expect(() => looseBody.mutate({ tenantId: 't1', name: 'body' })).toThrow(
+      'received non-URL fields: name',
+    );
   });
 });
 
@@ -136,16 +186,23 @@ function _typeChecks() {
   const url: string = urls.file({
     tenantId: 't1',
     fileId: 'f',
-    '*': 'a/b',
+    filePath: 'a/b',
     thumbnail: true,
   });
   void url;
   const rawUrl: string = urls.download({ tenantId: 't1', fileId: 'f' });
   void rawUrl;
   // @ts-expect-error scoped keys remain required
-  urls.file({ fileId: 'f', '*': '' });
-  // @ts-expect-error body operations are not linkable
-  void urls.mutate;
+  urls.file({ fileId: 'f', filePath: '' });
+  const mutationUrl: string = urls.mutate({ tenantId: 't1' });
+  void mutationUrl;
+  void urls.replace({ tenantId: 't1', fileId: 'f' });
+  void urls.edit({ tenantId: 't1', fileId: 'f' });
+  void urls.upload({ tenantId: 't1', fileId: 'f' });
+  // @ts-expect-error body fields are not URL arguments
+  urls.mutate({ tenantId: 't1', name: 'body' });
+  // @ts-expect-error multipart files are not URL arguments
+  urls.upload({ tenantId: 't1', fileId: 'f', file: new Blob() });
   // @ts-expect-error non-HTTP endpoints are not linkable
   void urls.toolOnly;
 
@@ -153,6 +210,6 @@ function _typeChecks() {
     stripPrefixKeys: ['tenantId'],
     pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
   });
-  void registry.media.file({ tenantId: 't1', fileId: 'f', '*': '' });
+  void registry.media.file({ tenantId: 't1', fileId: 'f', filePath: '' });
 }
 void _typeChecks;

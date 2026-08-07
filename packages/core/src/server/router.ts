@@ -4,6 +4,7 @@
  */
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { parseTrailingWildcard } from '../internal/route-pattern';
 import { isWithinDir } from '../internal/within-dir';
 import { mimeForPath } from './mime';
 import type { LifecycleHooks, MethodDef, RawRoute, ServiceDef } from './types';
@@ -43,16 +44,17 @@ function joinPath(...parts: string[]): string {
 /**
  * Match request path segments against a route's pattern segments. A `:param`
  * segment matches any value and is collected; a static segment must be equal.
- * A terminal `*` consumes zero or more remaining segments into `params['*']`.
+ * A terminal `*name` consumes zero or more remaining segments under that name.
  * Returns the collected path params, or `null` when the route does not match.
  */
 function matchSegments(
   patternSegments: string[],
   requestSegments: string[],
 ): Record<string, string> | null {
-  const wildcard = patternSegments.at(-1) === '*';
-  const prefixLength = wildcard ? patternSegments.length - 1 : patternSegments.length;
-  if (wildcard) {
+  const wildcardSegment = patternSegments.at(-1);
+  const wildcardName = wildcardSegment?.startsWith('*') ? wildcardSegment.slice(1) : null;
+  const prefixLength = wildcardName ? patternSegments.length - 1 : patternSegments.length;
+  if (wildcardName) {
     if (requestSegments.length < prefixLength) return null;
   } else if (patternSegments.length !== requestSegments.length) {
     return null;
@@ -67,15 +69,18 @@ function matchSegments(
       return null;
     }
   }
-  if (wildcard) {
-    params['*'] = requestSegments.slice(prefixLength).map(decodeURIComponent).join('/');
+  if (wildcardName) {
+    params[wildcardName] = requestSegments
+      .slice(prefixLength)
+      .map(decodeURIComponent)
+      .join('/');
   }
   return params;
 }
 
 /** Static routes win over params, and params win over a terminal catch-all. */
 function segmentRank(segment: string | undefined): number {
-  if (segment === '*') return 2;
+  if (segment?.startsWith('*')) return 2;
   if (segment?.startsWith(':')) return 1;
   return 0;
 }
@@ -167,8 +172,9 @@ export function validateRoutes(routeMap: RouteMap): void {
   for (const [method, entries] of routeMap) {
     const seen = new Map<string, string>();
     for (const entry of entries) {
+      parseTrailingWildcard(entry.pattern);
       const normalized = entry.segments
-        .map((s) => (s.startsWith(':') ? ':param' : s))
+        .map((s) => (s.startsWith(':') ? ':param' : s.startsWith('*') ? '*wildcard' : s))
         .join('/');
       const key = `${method} /${normalized}`;
       const existing = seen.get(key);
@@ -222,7 +228,7 @@ export function findShadowedRoutes<TServer>(
       const probe = `/${entry.segments
         .map((segment) => {
           if (segment.startsWith(':')) return '__param__';
-          if (segment === '*') return '__wildcard__';
+          if (segment.startsWith('*')) return '__wildcard__';
           return segment;
         })
         .join('/')}`;
@@ -249,9 +255,8 @@ export function matchRawRoute<TServer>(
   for (const route of rawRoutes) {
     if (route.method !== 'ALL' && route.method !== httpMethod) continue;
 
-    // Trailing `/*` — shared segment semantics interpolate named prefix params
-    // and collect the remaining segments in `params['*']`.
-    if (route.path.endsWith('/*')) {
+    // A named trailing wildcard shares the contract router's segment semantics.
+    if (parseTrailingWildcard(route.path)) {
       const routeSegs = route.path.split('/').filter(Boolean);
       const pathSegs = pathname.split('/').filter(Boolean);
       const params = matchSegments(routeSegs, pathSegs);
@@ -273,6 +278,11 @@ export function matchRawRoute<TServer>(
   return null;
 }
 
+/** Validate raw route parameter and named-wildcard structure once at startup. */
+export function validateRawRoutes<TServer>(rawRoutes: RawRoute<TServer>[] | undefined): void {
+  for (const route of rawRoutes ?? []) parseTrailingWildcard(route.path);
+}
+
 /**
  * Build a `RawRoute` that serves files from `dir` under `prefix`. Basic by
  * design — no Range, no conditional requests, reads the whole file into memory;
@@ -285,7 +295,7 @@ export function staticRoute(prefix: string, dir: string): RawRoute {
   const root = resolve(dir.replace(/\/+$/, ''));
   return {
     method: 'GET',
-    path: `${cleanPrefix}/*`,
+    path: `${cleanPrefix}/*filePath`,
     handler: async (req: Request): Promise<Response> => {
       const pathname = new URL(req.url).pathname;
       // Decode the path before resolving — so a percent-encoded `..` becomes a

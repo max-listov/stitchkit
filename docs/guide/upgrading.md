@@ -60,6 +60,109 @@ current one *up to* your target, and apply each snippet.
    (`STITCH_ERROR_STATUS`, `serveFile`, `scopePrefixes`, `afterToolCall`'s
    `MethodDef`, `maxUploadBytes`) are available to adopt, not required.
 
+## Unreleased breaking migrations
+
+Entity cache handlers now require the cached list shape and CRUD policies. Move
+`listKey` under `list`, make detail keys event-aware, and state the list-item
+identity/projection explicitly:
+
+```ts
+// before
+createEntityCacheHandlers<Entity>({
+  getId,
+  listKey: ['entities'],
+  detailKey: (id) => ['entities', id],
+})
+
+// after
+createEntityCacheHandlers<Entity, EntityListItem>({
+  getId,
+  getListItemId: (item) => item.id,
+  toListItem: (entity) => ({ id: entity.id, name: entity.name }),
+  list: {
+    key: ['entities'],
+    shape: 'paginated',
+    createAt: 'start',
+    updateMissing: 'skip',
+  },
+  detailKey: (event) => ['entities', event.id],
+})
+```
+
+Choose `array`, `paginated`, `infinite-array` or `infinite-paginated` to match
+the actual cached data. A dynamic `list.key` / `detailKey` receives a
+discriminated event and can derive scoped keys from the created/updated entity
+or deleted payload. Add `compare` only when the backend has a canonical order;
+the framework does not guess it or mutate pagination metadata.
+
+Protected native MCP operations now use the transport-neutral runtime tool
+definition. Return the schema-owned value from the handler and move MCP content
+or metadata into `present.mcp`; `structuredContent` and `isError` are
+framework-owned:
+
+```ts
+// before
+registerTool({ input, output, handler: async () => ({
+  content: [{ type: 'image', data, mimeType: 'image/png' }],
+  structuredContent: { assetId },
+}) })
+
+// after
+const preview = defineRuntimeTool({
+  name: 'render_preview', description, identity, input, output,
+  handler: async () => ({ assetId, data }),
+  present: {
+    mcp: (result) => ({
+      content: [{ type: 'image', data: result.data, mimeType: 'image/png' }],
+    }),
+  },
+})
+nativeTools: ({ registerTool }) => registerTool(preview)
+```
+
+The removed `NativeMcp*` types have no aliases. Use `RuntimeToolDefinition`,
+`RuntimeToolIdentity`, `RuntimeToolHandlerContext` and
+`RuntimeMcpPresentation`. The same definition can now be passed to
+`mountAgent(services, { runtimeTools: [preview] })`; add `present.agent` only
+when the model needs rich text/file content instead of the neutral JSON result.
+
+Trailing wildcards must be named consistently across the path and params schema:
+
+```ts
+// before
+path: '/app/:slug/*'
+params: z.object({ slug: z.string(), '*': z.string() })
+ctx.params['*']
+api.app({ slug: 'foo', '*': 'a/b' })
+
+// after
+path: '/app/:slug/*filePath'
+params: z.object({ slug: z.string(), filePath: z.string() })
+ctx.params.filePath
+api.app({ slug: 'foo', filePath: 'a/b' })
+```
+
+Bare wildcards have no compatibility alias; raw routes use the same named form.
+
+### Expected-401 matchers
+
+`HttpClientConfig.authEndpoints` is removed. Replace manual path prefixes with
+the operations whose 401 response is expected:
+
+```ts
+// before
+createHttpClient({ baseUrl, authEndpoints: ['/api/auth/'] })
+
+// after
+createHttpClient({
+  baseUrl,
+  suppressUnauthorizedFor: contractEndpointMatchers(authContract, ['login', 'verify']),
+})
+```
+
+There is no implicit `/auth/` suppression. Omit `suppressUnauthorizedFor` when
+every 401 should emit the global `unauthorized` event.
+
 ## The 0.37 migration
 
 Tool presentation is no longer an executable Zod parser. Replace the removed

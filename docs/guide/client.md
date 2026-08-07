@@ -11,9 +11,13 @@ and adds cookie auth, SSR cookie forwarding, error parsing into `ApiError`, a
 `401 → unauthorized` event stream and safe transport retry.
 
 ```ts
-import { createHttpClient } from 'stitchkit'
+import { contractEndpointMatchers, createHttpClient } from 'stitchkit'
+import { publicAuth } from '../shared/contracts'
 
-const http = createHttpClient({ baseUrl: '/api' })
+const http = createHttpClient({
+  baseUrl: '/api',
+  suppressUnauthorizedFor: contractEndpointMatchers(publicAuth, ['complete', 'verify']),
+})
 ```
 
 The returned `ConfiguredHttpClient` keeps that `baseUrl` as a readonly public
@@ -29,12 +33,21 @@ without repeating transport configuration.
 | `credentials` | `'include'` | fetch credentials mode |
 | `retry` | 2× GET, network errors only | transport retry policy |
 | `headers` | — | extra headers — an object, or a function re-run per request |
-| `authEndpoints` | `['auth/']` | paths that should **not** emit `unauthorized` on 401 |
+| `suppressUnauthorizedFor` | `[]` | exact contract-derived operation matchers whose expected 401 does not emit `unauthorized` |
 | `parseError` | built-in | map an error body to `{ code, message, details, hint }` |
 | `trace` | `false` | emit a W3C `traceparent` header on every request |
 
 `headers` as a function is the hook for runtime tokens — a bearer token or any
 short-lived credential — re-evaluated on every request.
+
+Expected 401 policy is explicit and contract-driven. Select individual
+operations with `contractEndpointMatchers(contract, ['login'])`, or omit the
+second argument to select every HTTP operation in that contract. Pass the same
+`ContractClientConfig` as the typed client when routes use a static or dynamic
+`pathPrefix`; dynamic matchers require `stripPrefixKeys`, so the helper can
+compile the prefix structure without a concrete tenant id. Matching is exact by
+path segments, including params and trailing wildcards — a shared prefix never
+suppresses a neighbouring protected endpoint.
 
 `trace: true` mints a fresh root trace per request. The stitchkit server
 [continues an inbound `traceparent`](./observability.md#trace-context), so the
@@ -61,12 +74,22 @@ await api.update({ id: '1', name: 'M' })  // PUT /users/1  body: { name }
 await api.delete({ id: '1' })      // DELETE /users/1
 ```
 
+An explicit contract `HEAD` operation is exposed like any other typed method.
+Because HEAD endpoints are `rawResponse`, it resolves to the untouched
+`Response`, giving the caller direct access to status and headers without JSON
+parsing:
+
+```ts
+const response = await assets.head({ name: 'clip.mp4' })
+console.log(response.headers.get('content-length'))
+```
+
 Each call takes one argument object. The client routes each field by the
 contract:
 
 - a **path param** (`:id`) is substituted into the URL,
-- a terminal wildcard (`/*`) consumes the `'*'` field and preserves its path
-  segments (`{ '*': 'a/b' }` → `/a/b`, not `/%2Fa%2Fb` or a query field),
+- a named terminal wildcard (`/*filePath`) consumes that field and preserves its
+  path segments (`{ filePath: 'a/b' }` → `/a/b`, not `/%2Fa%2Fb` or a query field),
 - for `GET` / `DELETE`, the remaining fields become the **query string**
   (arrays become repeated keys),
 - for `POST` / `PUT` / `PATCH`, they become the **JSON body**,
@@ -84,6 +107,32 @@ export const api = createClients({ users, posts, billing }, http)
 await api.users.list()
 await api.posts.create({ title: 'Hi' })
 ```
+
+When contracts use different path-prefix rules, route the same registry by the
+scope already declared in each contract. An array composes contracts with
+different scopes into one logical namespace:
+
+```ts
+const api = createScopedClients(
+  { auth: [publicAuth, authenticatedAuth], widgets },
+  http,
+  {
+    public: {},
+    user: {},
+    tenant: {
+      stripPrefixKeys: ['tenantId'],
+      pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
+    },
+  },
+)
+
+await api.auth.login()
+await api.auth.me()
+await api.widgets.list({ tenantId: 't1' })
+```
+
+Every scope present in the registry needs a config. Unknown/missing scopes and
+duplicate method names inside a composed namespace fail before a request runs.
 
 `createClients` builds one typed client per contract from a registry — list the
 contracts once, get the whole API typed. It accepts the same optional scoped
@@ -120,13 +169,20 @@ const src = mediaUrls.file({
   thumbnail: true,
 })
 
+// Body and multipart fields are intentionally absent: only the URL-bound
+// params are accepted by URL functions.
+const formAction = mediaUrls.replace({ tenantId: 't_123', fileId: 'f_456' })
+const beaconUrl = mediaUrls.track({ tenantId: 't_123' })
+
 const urls = createUrlBuilders({ media, exports }, http)
 ```
 
-Only HTTP-exposed, non-multipart `GET` endpoints appear on a URL builder. Raw
-response GET endpoints are included, so downloads and streams stay
-contract-driven. Path and scoped-prefix keys are consumed by the path; remaining
-GET input becomes the query string, including repeated keys for arrays.
+Every HTTP-exposed endpoint appears on a URL builder, including body, multipart
+and raw-response operations. Path and scoped-prefix keys are consumed by the
+path. `GET` and `DELETE` input becomes the query string, including repeated keys
+for arrays; body-method input and multipart files are not URL arguments and are
+never serialized into the URL. Passing such a field through an untyped boundary
+fails before a URL is returned.
 
 Building a URL is synchronous and performs no request, auth event, header
 resolution or output validation. A `ConfiguredHttpClient` created by
@@ -162,7 +218,7 @@ The HTTP client emits events your app can react to globally:
 
 ```ts
 const unsubscribe = http.subscribe((event) => {
-  if (event.type === 'unauthorized') redirectToLogin()  // a 401 outside authEndpoints
+  if (event.type === 'unauthorized') redirectToLogin()  // a non-suppressed 401
   if (event.type === 'network_error') showOfflineBanner()
 })
 

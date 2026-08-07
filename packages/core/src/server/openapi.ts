@@ -12,6 +12,7 @@
  */
 
 import { inputIsQuery } from '../internal/http-input';
+import { parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import { jsonSchemaFields, toJsonSchema } from '../tools/json-schema';
 import type { MethodDef, RawRoute, ServiceDef } from './types';
@@ -163,13 +164,13 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       );
 
       const parameters: Array<Record<string, unknown>> = [];
-      const trailingWildcard = fullPath.endsWith('/*');
+      const trailingWildcard = parseTrailingWildcard(fullPath);
       let wildcardSchema: Record<string, unknown> = { type: 'string' };
       for (const field of jsonSchemaFields(safeJson(method.paramsSchema, 'input'))) {
         // OpenAPI has no standard multi-segment path parameter. Advertising `*`
         // as a normal `in: path` value would produce an invalid path template;
         // preserve its schema in the explicit extension below instead.
-        if (trailingWildcard && field.name === '*') {
+        if (trailingWildcard && field.name === trailingWildcard.name) {
           wildcardSchema = field.schema;
           continue;
         }
@@ -202,14 +203,17 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         // A raw endpoint has no output schema, but "204 No content" would be a
         // lie — it answers with a body the handler owns. Document the declared
         // media type, falling back to the honest unknown. → ADR 0038.
-        responses['200'] = {
-          description: 'Success',
-          content: {
-            [method.contentType ?? 'application/octet-stream']: {
-              schema: { type: 'string', format: 'binary' },
-            },
-          },
-        };
+        responses['200'] =
+          method.method === 'HEAD'
+            ? { description: 'Headers only' }
+            : {
+                description: 'Success',
+                content: {
+                  [method.contentType ?? 'application/octet-stream']: {
+                    schema: { type: 'string', format: 'binary' },
+                  },
+                },
+              };
       } else if (method.outputSchema) {
         responses[String(method.responseMeta?.status ?? 200)] = {
           description: 'Success',
@@ -227,11 +231,10 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       };
       if (trailingWildcard) {
         operation['x-stitchkit-trailing-wildcard'] = {
-          parameter: '*',
+          parameter: trailingWildcard.name,
           required: true,
           schema: wildcardSchema,
-          description:
-            "Matches zero or more trailing path segments and exposes their '/'-joined remainder as params['*'].",
+          description: `Matches zero or more trailing path segments and exposes their '/'-joined remainder as params.${trailingWildcard.name}.`,
         };
       }
       if (!inputInQuery && (method.inputSchema || method.multipart)) {

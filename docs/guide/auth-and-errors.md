@@ -1,5 +1,18 @@
 # Auth & errors
 
+Client-side login/session operations may legitimately answer `401`. Declare
+that policy with contract-owned matchers instead of path strings:
+
+```ts
+const http = createHttpClient({
+  baseUrl,
+  suppressUnauthorizedFor: contractEndpointMatchers(publicAuth, ['login', 'verify']),
+})
+```
+
+Only the selected operations suppress the global `unauthorized` event; a 401
+from any neighbouring protected route still signals session expiry.
+
 stitchkit carries no domain model — it does not know what a user is. What it
 provides is the *control flow*: a scope on every endpoint, one hook that
 enforces it, and one error model shared by every transport. The identity and

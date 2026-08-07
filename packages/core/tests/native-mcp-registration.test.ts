@@ -99,11 +99,8 @@ describe('framework-owned native MCP registration', () => {
             },
             input: z.object({ prompt: z.string() }),
             output: z.object({ assetId: z.string() }),
-            handler: () => ({
-              content,
-              structuredContent: structured,
-              _meta: meta,
-            }),
+            handler: () => structured,
+            present: { mcp: () => ({ content, _meta: meta }) },
           });
         },
       },
@@ -232,10 +229,7 @@ describe('framework-owned native MCP registration', () => {
             identity: { serviceName: 'native', action: 'invalidOutput', method: 'POST' },
             input: z.object({}),
             output: z.object({ count: z.number().finite() }),
-            handler: () => ({
-              content: [{ type: 'text', text: 'invalid' }],
-              structuredContent: { count: Number.NaN },
-            }),
+            handler: () => ({ count: Number.NaN }),
           });
         },
       },
@@ -280,10 +274,7 @@ describe('framework-owned native MCP registration', () => {
               identity: { serviceName: 'native', action: 'read', method: 'GET' },
               input: z.object({ id: z.cuid2() }),
               output: z.object({ id: z.ulid() }),
-              handler: ({ input }) => ({
-                content: [{ type: 'text', text: input.id }],
-                structuredContent: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' },
-              }),
+              handler: () => ({ id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
             });
           },
         },

@@ -51,9 +51,9 @@ describe('Socket.IO wrappers', () => {
     server.stop(true);
   });
 
-  test('server handle exposes a ready /socket.io/* route', () => {
+  test('server handle exposes a ready named /socket.io/*socketPath route', () => {
     expect(sock.route.method).toBe('ALL');
-    expect(sock.route.path).toBe('/socket.io/*');
+    expect(sock.route.path).toBe('/socket.io/*socketPath');
   });
 
   test('route fails loud when mounted without a Bun server', () => {
