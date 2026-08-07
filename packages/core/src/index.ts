@@ -7,12 +7,14 @@ export {
   createClient,
   createClients,
   createScopedClients,
+  createScopedUrlBuilders,
   createUrlBuilder,
   createUrlBuilders,
   type PathPrefixArgs,
   type RegistryScope,
   type ScopeClientConfigs,
   type ScopedClientRegistry,
+  type ScopedUrlBuilderRegistry,
   type UrlBuilderConfig,
 } from './browser/client';
 export {

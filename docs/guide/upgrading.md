@@ -62,6 +62,32 @@ current one *up to* your target, and apply each snippet.
 
 ## Unreleased breaking migrations
 
+`createToolInvoker` now separates immutable registry preparation from per-call
+runtime state. Move source/context/lifecycle/hooks/output-strip reporting from
+the factory config to the third invocation argument. Use `invokeOrThrow` when a
+nested operation should preserve the normalized `AppError` instead of returning
+a model-facing failure envelope:
+
+```ts
+// before
+const invoker = createToolInvoker(services, {
+  transport: 'AGENT', context: { identity }, lifecycle, hooks,
+})
+const result = await invoker.invoke(name, args)
+
+// after
+const invoker = createToolInvoker(services, { transport: 'AGENT' })
+const result = await invoker.invoke(name, args, {
+  context: { identity }, lifecycle, hooks,
+})
+const data = await invoker.invokeOrThrow(name, args, {
+  context: { identity }, lifecycle, hooks,
+})
+```
+
+There is no static runtime-config overload: request identity must not be retained
+by a reusable compiled registry.
+
 Entity cache handlers now require the cached list shape and CRUD policies. Move
 `listKey` under `list`, make detail keys event-aware, and state the list-item
 identity/projection explicitly:

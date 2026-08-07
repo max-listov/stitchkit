@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { createClient } from '../src/browser/client';
+import { createClient, createScopedClients } from '../src/browser/client';
 import { createContractFactory } from '../src/contract';
 import { createServer, implement } from '../src/server';
 
@@ -17,6 +17,33 @@ const users = defineContract(
     list: { method: 'GET', path: '/', desc: 'List users', output: z.array(z.string()) },
   },
 );
+
+const admins = defineContract(
+  { prefix: 'admins', scope: 'admin' },
+  {
+    list: { method: 'GET', path: '/', desc: 'List admins', output: z.array(z.string()) },
+  },
+);
+
+const inferredUserScope: typeof users.meta.scope = 'user';
+const inferredAdminScope: typeof admins.meta.scope = 'admin';
+void inferredUserScope;
+void inferredAdminScope;
+
+function compileTimeFactoryChecks(): void {
+  // @ts-expect-error the concrete contract retains the 'user' literal
+  const wrongLiteral: typeof users.meta.scope = 'admin';
+  void wrongLiteral;
+
+  // @ts-expect-error scope remains required
+  defineContract({ prefix: 'missing' }, {});
+
+  // @ts-expect-error scope remains constrained to the factory vocabulary
+  defineContract({ prefix: 'unknown', scope: 'owner' }, {});
+
+  createScopedClients({ users, admins }, { baseUrl: '/api/' }, { user: {}, admin: {} });
+}
+void compileTimeFactoryChecks;
 
 describe('createContractFactory', () => {
   test('the scope reaches the contract meta', () => {

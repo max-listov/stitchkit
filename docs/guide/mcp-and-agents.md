@@ -76,26 +76,39 @@ import { createToolInvoker } from 'stitchkit/tools'
 
 const invoker = createToolInvoker(services, {
   transport: 'AGENT',       // required exposure policy
+})
+
+const result = await invoker.invoke('update_entity', args, {
   source: 'internal',       // default; audit names the real call source
   context: { identity },
   lifecycle,
   hooks,
 })
 
-const result = await invoker.invoke('update_entity', args)
-if (!result.ok) throw new AppError(result.code, 'Nested tool call failed')
+// Composition path: validated data or the exact normalized AppError.
+const data = await invoker.invokeOrThrow('update_entity', args, {
+  context: { identity },
+  lifecycle,
+  hooks,
+})
 ```
 
 `transport` is required and uses the exact existing `MCP`, `AGENT` or `CLI`
 exposure rules; there is no internal bypass mode. The immutable name lookup is
-compiled once. Every invocation—including parallel and recursive calls—gets a
-fresh tool-call context and runs the same extension resolution, input/output
+compiled once. Call-specific identity, context, lifecycle and hooks are passed
+to `invoke` / `invokeOrThrow`, so one registry can safely serve parallel and
+recursive calls without retaining request state. Every invocation gets a fresh
+tool-call context and runs the same extension resolution, input/output
 validation, lifecycle, hooks and output-strip reporter as mounted tools.
 
 `invoke` returns the canonical discriminated `ToolResult`, not an AI SDK or MCP
-presentation envelope. An unknown name throws `AppError('NOT_FOUND')` before
-the runner because there is no operation identity against which hooks could run.
-Duplicate and provider-invalid names fail when the invoker is created.
+presentation envelope. `invokeOrThrow` returns validated data and throws the
+runner's normalized `AppError` on failure, preserving an application error's
+code, status, message, details and hint without reconstructing it from the
+model-safe envelope. Unexpected throws remain scrubbed. An unknown name throws
+`AppError('NOT_FOUND')` before the runner because there is no operation identity
+against which hooks could run. Duplicate and provider-invalid names fail when
+the invoker is created.
 
 ## MCP — `createMcpHandler`
 

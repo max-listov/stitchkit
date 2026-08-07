@@ -354,11 +354,13 @@ the endpoint is public (fail-open). If every contract in your app must be scoped
 // app: one line, once
 export const { defineContract } = createContractFactory<'public' | 'user' | 'admin'>()
 
-// scope is now mandatory and checked against the union
+// scope is mandatory, checked against the union and retained as the 'user' literal
 export const users = defineContract({ prefix: 'users', scope: 'user' }, { … })
 ```
 
-The vocabulary is yours; the returned contracts are ordinary `ContractDef`s.
+The vocabulary is yours; each returned `ContractDef` retains its concrete scope
+literal, so scope-aware registries select the exact config without another
+wrapper.
 
 ## One source of truth
 

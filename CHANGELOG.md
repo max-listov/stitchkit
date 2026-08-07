@@ -15,6 +15,42 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-08-07
+
+### ⚠️ Breaking changes
+
+- **`createToolInvoker` runtime state is now per invocation.** The factory only
+  compiles exposure, extension and argument-presentation policy; move
+  `source`, `context`, `lifecycle`, `hooks` and `onOutputStrip` to the third
+  argument of `invoke`. This prevents a reusable registry from retaining one
+  request identity.
+
+  ```ts
+  // before
+  const invoker = createToolInvoker(services, {
+    transport: 'AGENT', context: { identity }, lifecycle, hooks,
+  })
+  await invoker.invoke(name, args)
+
+  // after
+  const invoker = createToolInvoker(services, { transport: 'AGENT' })
+  await invoker.invoke(name, args, { context: { identity }, lifecycle, hooks })
+  ```
+
+### Added
+
+- **Throwing in-process tool composition.** `invokeOrThrow` returns validated
+  data or throws the runner's exact normalized `AppError`, preserving custom
+  code/status/message/details/hint while unexpected errors remain scrubbed.
+- **Literal-preserving scoped contract factory.** `createContractFactory`
+  retains each contract's concrete scope literal while still constraining it to
+  the application's allowed scope union, so scope-aware registries infer the
+  exact config without a consumer wrapper.
+- **Scope-aware URL builder registry.** `createScopedUrlBuilders` selects
+  dynamic prefix configuration from each contract's literal scope and composes
+  multiple contracts into one typed URL namespace, mirroring
+  `createScopedClients` without duplicating the request planner.
+
 ## [0.39.0] — 2026-08-07
 
 ### ⚠️ Breaking changes
@@ -2184,7 +2220,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/max-listov/stitchkit/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/max-listov/stitchkit/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/max-listov/stitchkit/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/max-listov/stitchkit/compare/v0.36.1...v0.37.0

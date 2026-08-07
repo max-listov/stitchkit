@@ -187,10 +187,61 @@ type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) e
 type ScopedNamespace<R, Configs> = UnionToIntersection<
   ClientForContract<RegistryContract<R>, Configs>
 >;
+type UrlBuilderForContract<C, Configs> =
+  C extends ContractDef<infer E, infer S>
+    ? S extends keyof Configs
+      ? ScopedUrlBuilder<E, ScopedKeys<PrefixKeys<Configs[S]>>>
+      : never
+    : never;
+type ScopedUrlNamespace<R, Configs> = UnionToIntersection<
+  UrlBuilderForContract<RegistryContract<R>, Configs>
+>;
 
 export type ScopedClientRegistry<T extends Record<string, ClientRegistryValue>, Configs> = {
   [P in keyof T]: ScopedNamespace<T[P], Configs>;
 };
+
+export type ScopedUrlBuilderRegistry<
+  T extends Record<string, ClientRegistryValue>,
+  Configs,
+> = {
+  [P in keyof T]: ScopedUrlNamespace<T[P], Configs>;
+};
+
+function buildScopedRegistry<Output>(
+  contracts: Record<string, ClientRegistryValue>,
+  scopeConfigs: Record<string, ContractClientConfig<string>>,
+  surfaceName: string,
+  build: (contract: ClientContract, config: ContractClientConfig<string>) => object,
+): Output {
+  const registry: Record<string, object> = {};
+  for (const [namespace, value] of Object.entries(contracts)) {
+    const list: readonly ClientContract[] = Array.isArray(value) ? value : [value];
+    const surface: Record<PropertyKey, unknown> = {};
+    for (const contract of list) {
+      const scope = contract.meta.scope;
+      if (!scope) {
+        throw new Error(`Contract in ${surfaceName} namespace "${namespace}" has no scope`);
+      }
+      const scopeConfig = scopeConfigs[scope];
+      if (!scopeConfig) {
+        throw new Error(`Missing ${surfaceName} config for scope: ${scope}`);
+      }
+      for (const [methodName, method] of Object.entries(build(contract, scopeConfig))) {
+        if (Object.hasOwn(surface, methodName)) {
+          throw new Error(
+            `${surfaceName[0]?.toUpperCase()}${surfaceName.slice(1)} namespace "${namespace}" has duplicate method: ${methodName}`,
+          );
+        }
+        surface[methodName] = method;
+      }
+    }
+    registry[namespace] = surface;
+  }
+  // Typed registry construction is the loose→exact boundary; every method was
+  // produced by createClient/createUrlBuilder from the corresponding contract.
+  return registry as Output;
+}
 
 /** Build one client registry routed by contract scope; arrays compose a namespace. */
 export function createScopedClients<
@@ -201,34 +252,12 @@ export function createScopedClients<
   configOrClient: ClientConfig | HttpAdapter,
   scopeConfigs: Configs,
 ): ScopedClientRegistry<T, Configs> {
-  const registry: Record<string, object> = {};
-  for (const [namespace, value] of Object.entries(contracts)) {
-    const list: readonly ClientContract[] = Array.isArray(value) ? value : [value];
-    const client: Record<PropertyKey, unknown> = {};
-    for (const contract of list) {
-      const scope = contract.meta.scope;
-      if (!scope) {
-        throw new Error(`Contract in client namespace "${namespace}" has no scope`);
-      }
-      const scopeConfig = Object.entries(scopeConfigs).find(
-        ([configuredScope]) => configuredScope === scope,
-      )?.[1];
-      if (!scopeConfig) {
-        throw new Error(`Missing client config for scope: ${scope}`);
-      }
-      const scoped = createClient(contract, configOrClient, scopeConfig);
-      for (const [methodName, method] of Object.entries(scoped)) {
-        if (Object.hasOwn(client, methodName)) {
-          throw new Error(
-            `Client namespace "${namespace}" has duplicate method: ${methodName}`,
-          );
-        }
-        client[methodName] = method;
-      }
-    }
-    registry[namespace] = client;
-  }
-  return registry as ScopedClientRegistry<T, Configs>;
+  return buildScopedRegistry<ScopedClientRegistry<T, Configs>>(
+    contracts,
+    scopeConfigs,
+    'client',
+    (contract, config) => createClient(contract, configOrClient, config),
+  );
 }
 
 function isHttpAdapter(value: ClientConfig | HttpAdapter): value is HttpAdapter {
@@ -460,5 +489,22 @@ export function createUrlBuilders<
   };
   return mapObject<T, BatchBuilders>(contracts, (_key, contract) =>
     createUrlBuilder(contract, source, contractConfig),
+  );
+}
+
+/** Build one URL registry routed by contract scope; arrays compose a namespace. */
+export function createScopedUrlBuilders<
+  const T extends Record<string, ClientRegistryValue>,
+  const Configs extends ScopeClientConfigs<RegistryScope<T[keyof T]>>,
+>(
+  contracts: T,
+  source: UrlBuilderConfig,
+  scopeConfigs: Configs,
+): ScopedUrlBuilderRegistry<T, Configs> {
+  return buildScopedRegistry<ScopedUrlBuilderRegistry<T, Configs>>(
+    contracts,
+    scopeConfigs,
+    'URL builder',
+    (contract, config) => createUrlBuilder(contract, source, config),
   );
 }

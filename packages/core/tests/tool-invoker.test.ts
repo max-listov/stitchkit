@@ -11,7 +11,7 @@ import {
 } from '../src/observability';
 import { implement } from '../src/server';
 import { mountAgent } from '../src/tools/agent';
-import { createToolInvoker } from '../src/tools/invoker';
+import { createToolInvoker, type ToolInvocationOptions } from '../src/tools/invoker';
 import { mountMcp } from '../src/tools/mcp';
 
 const MathInput = z.object({ left: z.number(), right: z.number() });
@@ -72,7 +72,16 @@ const service = implement(operations, {
       internal: true,
     };
   },
-  explode: () => {
+  explode: ({ input }) => {
+    if (input.id === 'app') {
+      throw new AppError(
+        'ENTITY_LOCKED',
+        'Entity is locked',
+        423,
+        { entityId: 'app' },
+        'Wait',
+      );
+    }
     throw new Error('boom');
   },
   agentOnly: () => undefined,
@@ -123,15 +132,20 @@ describe('createToolInvoker', () => {
       code: 'VALIDATION_ERROR',
     });
 
-    const denied = createToolInvoker(service, {
-      transport: 'AGENT',
-      lifecycle: {
-        beforeHandle: () => {
-          throw new AppError('FORBIDDEN', 'denied', 403);
+    const denied = createToolInvoker(service, { transport: 'AGENT' });
+    expect(
+      await denied.invoke(
+        'math_add',
+        { left: 2, right: 3 },
+        {
+          lifecycle: {
+            beforeHandle: () => {
+              throw new AppError('FORBIDDEN', 'denied', 403);
+            },
+          },
         },
-      },
-    });
-    expect(await denied.invoke('math_add', { left: 2, right: 3 })).toMatchObject({
+      ),
+    ).toMatchObject({
       ok: false,
       code: 'FORBIDDEN',
     });
@@ -141,17 +155,74 @@ describe('createToolInvoker', () => {
       code: 'INTERNAL_SERVER_ERROR',
     });
 
-    const invalidOutput = createToolInvoker(service, {
-      transport: 'AGENT',
-      lifecycle: {
-        afterHandle: (_context, result, endpoint) =>
-          endpoint.key === 'add' ? { total: 'wrong' } : result,
-      },
-    });
-    expect(await invalidOutput.invoke('math_add', { left: 2, right: 3 })).toMatchObject({
+    const invalidOutput = createToolInvoker(service, { transport: 'AGENT' });
+    expect(
+      await invalidOutput.invoke(
+        'math_add',
+        { left: 2, right: 3 },
+        {
+          lifecycle: {
+            afterHandle: (_context, result, endpoint) =>
+              endpoint.key === 'add' ? { total: 'wrong' } : result,
+          },
+        },
+      ),
+    ).toMatchObject({
       ok: false,
       code: 'INTERNAL_SERVER_ERROR',
     });
+  });
+
+  test('throws the retained normalized AppError after one terminal hook event', async () => {
+    const terminal: boolean[] = [];
+    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const options: ToolInvocationOptions = {
+      hooks: {
+        afterToolCall: ({ result }) => {
+          terminal.push(result.ok);
+        },
+      },
+    };
+
+    expect(await invoker.invokeOrThrow('math_add', { left: 2, right: 3 }, options)).toEqual({
+      total: 5,
+    });
+    try {
+      await invoker.invokeOrThrow('explode_call', { id: 'app' }, options);
+      throw new Error('expected application failure');
+    } catch (error) {
+      expect(AppError.is(error)).toBe(true);
+      if (AppError.is(error)) {
+        expect({
+          code: error.code,
+          message: error.message,
+          status: error.status,
+          details: error.details,
+          hint: error.hint,
+        }).toEqual({
+          code: 'ENTITY_LOCKED',
+          message: 'Entity is locked',
+          status: 423,
+          details: { entityId: 'app' },
+          hint: 'Wait',
+        });
+      }
+    }
+    expect(terminal).toEqual([true, false]);
+  });
+
+  test('throws framework failures with their canonical status', async () => {
+    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    try {
+      await invoker.invokeOrThrow('math_add', { left: 'wrong', right: 3 });
+      throw new Error('expected validation failure');
+    } catch (error) {
+      expect(AppError.is(error)).toBe(true);
+      if (AppError.is(error)) {
+        expect(error.code).toBe('VALIDATION_ERROR');
+        expect(error.status).toBe(400);
+      }
+    }
   });
 
   test('runs extension resolution and one terminal hook event per call', async () => {
@@ -164,14 +235,21 @@ describe('createToolInvoker', () => {
         schema: { tenant: z.string() },
         resolve: ({ tenant }) => ({ tenantId: tenant }),
       },
-      hooks: {
-        afterToolCall: ({ toolName, result, endpoint, durationMs }) => {
-          terminal.push(`${toolName}:${endpoint.key}:${result.ok}:${durationMs >= 0}`);
-        },
-      },
-      onOutputStrip: (toolName, paths) => stripped.push({ toolName, paths }),
     });
-    expect(await invoker.invoke('inspect_call', { id: 'A', tenant: 'tenant-1' })).toEqual({
+    expect(
+      await invoker.invoke(
+        'inspect_call',
+        { id: 'A', tenant: 'tenant-1' },
+        {
+          hooks: {
+            afterToolCall: ({ toolName, result, endpoint, durationMs }) => {
+              terminal.push(`${toolName}:${endpoint.key}:${result.ok}:${durationMs >= 0}`);
+            },
+          },
+          onOutputStrip: (toolName, paths) => stripped.push({ toolName, paths }),
+        },
+      ),
+    ).toEqual({
       ok: true,
       data: { id: 'A', tenantId: 'tenant-1' },
     });
@@ -179,10 +257,33 @@ describe('createToolInvoker', () => {
     expect(stripped).toEqual([{ toolName: 'inspect_call', paths: ['internal'] }]);
   });
 
+  test('reuses one registry with isolated per-call identity context', async () => {
+    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const observed: string[] = [];
+    const call = (id: string, tenantId: string) =>
+      invoker.invoke(
+        'inspect_call',
+        { id },
+        {
+          context: { tenantId },
+          hooks: {
+            afterToolCall: ({ context }) => {
+              if (typeof context.tenantId === 'string') observed.push(context.tenantId);
+            },
+          },
+        },
+      );
+
+    const [alpha, beta] = await Promise.all([call('A', 'alpha'), call('B', 'beta')]);
+    expect(alpha).toEqual({ ok: true, data: { id: 'A', tenantId: 'alpha' } });
+    expect(beta).toEqual({ ok: true, data: { id: 'B', tenantId: 'beta' } });
+    expect(observed.sort()).toEqual(['alpha', 'beta']);
+  });
+
   test('parallel and nested calls isolate request-context writes', async () => {
     const observed: Array<{ id: string; dimension?: string }> = [];
-    const invoker = createToolInvoker(service, {
-      transport: 'AGENT',
+    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const options: ToolInvocationOptions = {
       lifecycle: {
         beforeHandle: (context, endpoint) => {
           if (endpoint.key !== 'inspect') return;
@@ -200,7 +301,7 @@ describe('createToolInvoker', () => {
           });
         },
       },
-    });
+    };
 
     await runWithRequestContext(
       {
@@ -212,10 +313,10 @@ describe('createToolInvoker', () => {
       },
       async () => {
         await Promise.all([
-          invoker.invoke('inspect_call', { id: 'A' }),
-          invoker.invoke('inspect_call', { id: 'B' }),
+          invoker.invoke('inspect_call', { id: 'A' }, options),
+          invoker.invoke('inspect_call', { id: 'B' }, options),
         ]);
-        await invoker.invoke('inspect_call', { id: 'nested' });
+        await invoker.invoke('inspect_call', { id: 'nested' }, options);
       },
     );
 
@@ -226,6 +327,23 @@ describe('createToolInvoker', () => {
 
   test('a handler can recursively invoke another compiled operation', async () => {
     let nestedInvoker: ReturnType<typeof createToolInvoker> | undefined;
+    const dimensions: Array<{ key: string; entityId?: string }> = [];
+    const options: ToolInvocationOptions = {
+      lifecycle: {
+        beforeHandle: (context, endpoint) => {
+          const input = IdInput.parse(context.input);
+          setRequestDimensions({ entityId: `${endpoint.key}:${input.id}` });
+        },
+      },
+      hooks: {
+        afterToolCall: ({ endpoint }) => {
+          dimensions.push({
+            key: endpoint.key,
+            entityId: getRequestContext()?.dimensions?.entityId,
+          });
+        },
+      },
+    };
     const nestedContract = defineContract(
       { prefix: 'nested' },
       {
@@ -251,29 +369,12 @@ describe('createToolInvoker', () => {
       inner: ({ input }) => ({ id: input.id }),
       outer: async ({ input }) => {
         if (!nestedInvoker) throw new Error('nested invoker is not initialized');
-        const result = await nestedInvoker.invoke('nested_inner', { id: input.id });
-        if (!result.ok) throw new AppError(result.code, 'nested call failed');
-        return IdOutput.parse(result.data);
+        return IdOutput.parse(
+          await nestedInvoker.invokeOrThrow('nested_inner', { id: input.id }, options),
+        );
       },
     });
-    const dimensions: Array<{ key: string; entityId?: string }> = [];
-    nestedInvoker = createToolInvoker(nestedService, {
-      transport: 'AGENT',
-      lifecycle: {
-        beforeHandle: (context, endpoint) => {
-          const input = IdInput.parse(context.input);
-          setRequestDimensions({ entityId: `${endpoint.key}:${input.id}` });
-        },
-      },
-      hooks: {
-        afterToolCall: ({ endpoint }) => {
-          dimensions.push({
-            key: endpoint.key,
-            entityId: getRequestContext()?.dimensions?.entityId,
-          });
-        },
-      },
-    });
+    nestedInvoker = createToolInvoker(nestedService, { transport: 'AGENT' });
 
     await runWithRequestContext(
       {
@@ -283,7 +384,7 @@ describe('createToolInvoker', () => {
         startedAt: 0n,
         trace: { traceId: 'c'.repeat(32), spanId: 'd'.repeat(16) },
       },
-      () => nestedInvoker?.invoke('nested_outer', { id: 'x' }) ?? Promise.resolve(),
+      () => nestedInvoker?.invoke('nested_outer', { id: 'x' }, options) ?? Promise.resolve(),
     );
 
     expect(dimensions).toEqual([

@@ -1,6 +1,12 @@
 import { AppError, type Transport, type TransportSource } from '../contract';
 import type { ServiceDef } from '../server/types';
-import type { ToolCallContext, ToolCallHooks, ToolLifecycle, ToolResult } from './execute';
+import {
+  type ToolCallContext,
+  type ToolCallHooks,
+  type ToolLifecycle,
+  type ToolResult,
+  toolErrorFromResult,
+} from './execute';
 import { collectTools, createToolRunner, type MountableTool, type ToolExtend } from './mount';
 import { assertUniqueToolName } from './names';
 
@@ -10,16 +16,20 @@ export type ToolInvokerTransport = Exclude<Transport, 'HTTP'>;
 export interface ToolInvokerConfig {
   /** Existing exposure policy to honour. Required: there is no bypass-all mode. */
   transport: ToolInvokerTransport;
-  /** Actual call source written to handler context and audit. Default: `internal`. */
-  source?: TransportSource;
-  context?: Omit<ToolCallContext, 'source'>;
-  hooks?: ToolCallHooks;
-  lifecycle?: ToolLifecycle;
   extend?: ToolExtend;
   /** Compiles the same presentation surface as the chosen mount. */
   flattenUnionInput?: boolean;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
+}
+
+/** Runtime state for one in-process invocation; never retained by the registry. */
+export interface ToolInvocationOptions {
+  /** Actual call source written to handler context and audit. Default: `internal`. */
+  source?: TransportSource;
+  context?: Omit<ToolCallContext, 'source'>;
+  hooks?: ToolCallHooks;
+  lifecycle?: ToolLifecycle;
   /** Report output keys removed by contract validation. */
   onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
@@ -27,7 +37,16 @@ export interface ToolInvokerConfig {
 /** A name-indexed dispatcher compiled once and executed by the shared tool runner. */
 export interface ToolInvoker {
   readonly names: readonly string[];
-  invoke(name: string, args: Record<string, unknown>): Promise<ToolResult>;
+  invoke(
+    name: string,
+    args: Record<string, unknown>,
+    options?: ToolInvocationOptions,
+  ): Promise<ToolResult>;
+  invokeOrThrow(
+    name: string,
+    args: Record<string, unknown>,
+    options?: ToolInvocationOptions,
+  ): Promise<unknown>;
 }
 
 /**
@@ -52,26 +71,48 @@ export function createToolInvoker(
   }
 
   const names = Object.freeze([...tools.keys()].sort());
-  const runTool = createToolRunner({
-    source: config.source ?? 'internal',
-    context: config.context,
-    hooks: config.hooks,
-    lifecycle: config.lifecycle,
-    extend: config.extend,
-    coerceJsonArgs: config.coerceJsonArgs,
-    onOutputStrip: config.onOutputStrip,
-  });
+  const operation = (name: string): MountableTool => {
+    const tool = tools.get(name);
+    if (tool) return tool;
+    throw new AppError('NOT_FOUND', `Unknown tool: ${name}`, 404, {
+      available: names,
+    });
+  };
+
+  const run = (
+    name: string,
+    args: Record<string, unknown>,
+    options: ToolInvocationOptions = {},
+  ): Promise<ToolResult> => {
+    const runTool = createToolRunner({
+      source: options.source ?? 'internal',
+      context: options.context,
+      hooks: options.hooks,
+      lifecycle: options.lifecycle,
+      extend: config.extend,
+      coerceJsonArgs: config.coerceJsonArgs,
+      onOutputStrip: options.onOutputStrip,
+    });
+    return runTool(operation(name), args);
+  };
 
   return Object.freeze({
     names,
-    invoke(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-      const tool = tools.get(name);
-      if (!tool) {
-        throw new AppError('NOT_FOUND', `Unknown tool: ${name}`, 404, {
-          available: names,
-        });
-      }
-      return runTool(tool, args);
+    invoke(
+      name: string,
+      args: Record<string, unknown>,
+      options?: ToolInvocationOptions,
+    ): Promise<ToolResult> {
+      return run(name, args, options);
+    },
+    async invokeOrThrow(
+      name: string,
+      args: Record<string, unknown>,
+      options?: ToolInvocationOptions,
+    ): Promise<unknown> {
+      const result = await run(name, args, options);
+      if (!result.ok) throw toolErrorFromResult(result);
+      return result.data;
     },
   });
 }

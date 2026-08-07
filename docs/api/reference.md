@@ -22,8 +22,10 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createClient` | function | build a typed client from a contract — [guide](../guide/client.md#createclient) |
 | `createClients` | function | build one exact typed client per contract from a registry; accepts the same scoped config and transports as `createClient` |
 | `createScopedClients` | function | build one registry routed by contract scope; arrays compose contracts into one namespace |
-| `ScopeClientConfigs` | _type_ | per-scope client routing configuration consumed by `createScopedClients` |
+| `createScopedUrlBuilders` | function | build one URL registry routed by contract scope; arrays compose contracts into one namespace |
+| `ScopeClientConfigs` | _type_ | per-scope routing configuration consumed by scoped clients and URL builders |
 | `ScopedClientRegistry` | _type_ | exact composed registry returned by `createScopedClients` |
+| `ScopedUrlBuilderRegistry` | _type_ | exact composed registry returned by `createScopedUrlBuilders` |
 | `ClientRegistryValue` | _type_ | one contract or a contract array composing one client namespace |
 | `ClientContract` | _type_ | HTTP-client-compatible contract value used by scoped registries |
 | `RegistryScope` | _type_ | contract-scope union inferred from a scoped client registry value |
@@ -84,7 +86,7 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
-| `createContractFactory` | function | a `defineContract` with a required, typed `scope` — [guide](../guide/contracts.md#scope) |
+| `createContractFactory` | function | a `defineContract` with a required allowed scope that retains each concrete literal — [guide](../guide/contracts.md#scope) |
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
@@ -393,8 +395,9 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `ToolErrorOptions` | _type_ | `{ toolName, error, context, endpoint }` for a thrown handler-path value |
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
-| `ToolInvoker` | _type_ | immutable compiled dispatcher (`names` + `invoke`) |
-| `ToolInvokerConfig` | _type_ | exposure policy, context, lifecycle, hooks and runner options |
+| `ToolInvoker` | _type_ | immutable compiled dispatcher (`names`, envelope `invoke`, throwing `invokeOrThrow`) |
+| `ToolInvokerConfig` | _type_ | compile-time exposure, extension and presentation options |
+| `ToolInvocationOptions` | _type_ | per-call source, context, lifecycle, hooks and output-strip reporter |
 | `ToolInvokerTransport` | _type_ | invoker exposure policy: `MCP \| AGENT \| CLI` |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
 | `ViewFileOptions` | _type_ | options for `mountViewFile` |

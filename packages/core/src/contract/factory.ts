@@ -26,11 +26,12 @@ import { defineContract } from './define';
 
 /** A `defineContract` whose `scope` is required and typed to `TScope`. */
 export type ScopedDefineContract<TScope extends string> = <
+  const TContractScope extends TScope,
   const T extends Record<string, EndpointDef>,
 >(
-  meta: { prefix: string; scope: TScope; meta?: Record<string, unknown> },
+  meta: { prefix: string; scope: TContractScope; meta?: Record<string, unknown> },
   endpoints: T,
-) => ContractDef<T, TScope>;
+) => ContractDef<T, TContractScope>;
 
 /**
  * Build a `defineContract` that requires a `scope` from the application's own

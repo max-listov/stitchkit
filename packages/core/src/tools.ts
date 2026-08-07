@@ -22,6 +22,7 @@ export {
 } from './tools/flatten';
 export {
   createToolInvoker,
+  type ToolInvocationOptions,
   type ToolInvoker,
   type ToolInvokerConfig,
   type ToolInvokerTransport,

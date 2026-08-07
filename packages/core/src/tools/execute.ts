@@ -1,7 +1,14 @@
 import type { ZodType, z } from 'zod';
-import type { RuntimeContext, TransportSource } from '../contract';
+import {
+  AppError,
+  isStitchErrorCode,
+  type RuntimeContext,
+  STITCH_ERROR_STATUS,
+  type TransportSource,
+} from '../contract';
 import { formatZodError, normalizeError, validateHandlerOutput } from '../internal/errors';
 import { isUnsafeKey } from '../internal/safe-json';
+import { isRecord } from '../internal/typed';
 import { getRequestContext, runWithRequestContext } from '../observability/context';
 import type { OperationIdentity } from '../server/types';
 import { coerceJsonArgs } from './coerce';
@@ -10,6 +17,16 @@ import { objectShapeKeys } from './schema';
 export type ToolResult =
   | { ok: true; data: unknown }
   | { ok: false; code: string; details?: unknown; hint?: string };
+
+type ToolFailure = Extract<ToolResult, { ok: false }>;
+
+/**
+ * The model-facing failure deliberately omits HTTP status and the raw cause.
+ * In-process composition still needs the exact normalized AppError, so retain
+ * it out-of-band for the lifetime of the result object. A WeakMap keeps the
+ * public envelope and its JSON representation unchanged.
+ */
+const normalizedToolErrors = new WeakMap<ToolFailure, AppError>();
 
 export interface ToolCallContext {
   source: TransportSource;
@@ -130,14 +147,27 @@ export interface ToolArgumentExtension {
  * `AppError` becomes a tool error. Shared by `executeToolMethod` and both
  * transport mounts so every tool error has one shape.
  */
-export function toolResultFromError(err: unknown): Extract<ToolResult, { ok: false }> {
+export function toolResultFromError(err: unknown): ToolFailure {
   const appErr = normalizeError(err);
-  return {
+  const result: ToolFailure = {
     ok: false,
     code: appErr.code,
     details: appErr.details ?? { message: appErr.message },
     ...(appErr.hint && { hint: appErr.hint }),
   };
+  normalizedToolErrors.set(result, appErr);
+  return result;
+}
+
+/** Recover the normalized AppError behind one canonical failed tool result. */
+export function toolErrorFromResult(result: ToolFailure): AppError {
+  const retained = normalizedToolErrors.get(result);
+  if (retained) return retained;
+
+  const details = isRecord(result.details) ? result.details : undefined;
+  const message = typeof details?.message === 'string' ? details.message : result.code;
+  const status = isStitchErrorCode(result.code) ? STITCH_ERROR_STATUS[result.code] : 500;
+  return new AppError(result.code, message, status, details, result.hint);
 }
 
 export async function executeToolMethod(

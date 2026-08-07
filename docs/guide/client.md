@@ -156,7 +156,7 @@ URL, not a fetched response. `createUrlBuilder` derives those URLs from the same
 contract path planner used by both typed-client transports:
 
 ```ts
-import { createUrlBuilder, createUrlBuilders } from 'stitchkit'
+import { createScopedUrlBuilders, createUrlBuilder, createUrlBuilders } from 'stitchkit'
 
 const mediaUrls = createUrlBuilder(media, http, {
   stripPrefixKeys: ['tenantId'],
@@ -176,6 +176,33 @@ const beaconUrl = mediaUrls.track({ tenantId: 't_123' })
 
 const urls = createUrlBuilders({ media, exports }, http)
 ```
+
+When contracts use different dynamic prefixes, route the registry by the same
+literal `contract.meta.scope` model as `createScopedClients`:
+
+```ts
+const urls = createScopedUrlBuilders(
+  {
+    assets: publicAssets,
+    media: [tenantFiles, tenantMetadata], // one composed namespace
+  },
+  http,
+  {
+    public: {},
+    tenant: {
+      stripPrefixKeys: ['tenantId'],
+      pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
+    },
+  },
+)
+
+urls.assets.logo()
+urls.media.file({ tenantId: 't1', fileId: 'f' })
+```
+
+Every reachable scope needs a config. A missing config or duplicate method in a
+composed namespace fails while the registry is built; URL generation itself
+continues to use the same request planner as `createClient`.
 
 Every HTTP-exposed endpoint appears on a URL builder, including body, multipart
 and raw-response operations. Path and scoped-prefix keys are consumed by the
