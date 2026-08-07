@@ -10,6 +10,8 @@ import {
   responseMetadataService,
 } from './response-metadata.fixture';
 
+const bodylessStatuses: (204 | 205)[] = [204, 205];
+
 describe('typed JSON response metadata — contract boundaries', () => {
   test('is forced HTTP-only in local and remote MethodDef producers', () => {
     expect(responseMetadataService.methods.data?.expose).toEqual(['HTTP']);
@@ -33,13 +35,15 @@ describe('typed JSON response metadata — contract boundaries', () => {
       'status must be a successful 2xx integer',
     );
 
-    const bodylessOutput = JSON.parse(
-      '{"bad":{"method":"POST","path":"/","desc":"Bad","responseMeta":{"status":204}}}',
-    );
-    bodylessOutput.bad.output = ResultSchema;
-    expect(() => defineContract({ prefix: 'bodyless-output' }, bodylessOutput)).toThrow(
-      'cannot combine output with bodyless status 204',
-    );
+    for (const status of bodylessStatuses) {
+      const bodylessOutput = JSON.parse(
+        `{"bad":{"method":"POST","path":"/","desc":"Bad","responseMeta":{"status":${status}}}}`,
+      );
+      bodylessOutput.bad.output = ResultSchema;
+      expect(() =>
+        defineContract({ prefix: `bodyless-output-${status}` }, bodylessOutput),
+      ).toThrow(`cannot combine output with bodyless status ${status}`);
+    }
 
     const raw = JSON.parse(
       '{"bad":{"method":"GET","path":"/","desc":"Bad","rawResponse":true,"responseMeta":{}}}',
@@ -63,7 +67,7 @@ describe('typed JSON response metadata — contract boundaries', () => {
     );
   });
 
-  test('rechecks bodyless output status on the runtime MethodDef boundary', async () => {
+  test('rechecks bodyless output statuses on the runtime MethodDef boundary', async () => {
     const runtimeContract = defineContract(
       { prefix: 'runtime-meta' },
       {
@@ -79,11 +83,13 @@ describe('typed JSON response metadata — contract boundaries', () => {
     const runtimeService = implement(runtimeContract, { data: () => ({ value: 'runtime' }) });
     const method = runtimeService.methods.data;
     if (!method) throw new Error('Expected data MethodDef');
-    method.responseMeta = { status: 204 };
-    const response = await createHandler({ services: [runtimeService] })(
-      new Request('http://localhost/runtime-meta'),
-    );
-    expect(response.status).toBe(500);
+    for (const status of bodylessStatuses) {
+      method.responseMeta = { status };
+      const response = await createHandler({ services: [runtimeService] })(
+        new Request('http://localhost/runtime-meta'),
+      );
+      expect(response.status).toBe(500);
+    }
   });
 });
 
@@ -98,6 +104,19 @@ function compileTimeContractChecks(): void {
         desc: 'Invalid',
         output: ResultSchema,
         responseMeta: { status: 204 },
+      },
+    },
+  );
+  defineContract(
+    // @ts-expect-error an output cannot use a reset-content response status
+    { prefix: 'compile-reset-content' },
+    {
+      bad: {
+        method: 'POST',
+        path: '/',
+        desc: 'Invalid',
+        output: ResultSchema,
+        responseMeta: { status: 205 },
       },
     },
   );

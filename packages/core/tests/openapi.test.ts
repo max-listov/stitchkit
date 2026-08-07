@@ -55,6 +55,17 @@ const contract = defineContract(
       output: z.object({ queued: z.boolean() }),
       responseMeta: { status: 202 },
     },
+    nullable: {
+      method: 'GET',
+      path: '/nullable',
+      desc: 'Return nullable typed data',
+      output: z.object({ value: z.string() }).nullable(),
+    },
+    empty: {
+      method: 'POST',
+      path: '/empty',
+      desc: 'Return the default empty response',
+    },
     reset: {
       method: 'POST',
       path: '/reset',
@@ -74,6 +85,8 @@ const service = implement(contract, {
     response.headers.set('x-queued', 'true');
     return { queued: true };
   },
+  nullable: () => null,
+  empty: () => undefined,
   reset: () => undefined,
 });
 
@@ -96,8 +109,10 @@ describe('generateOpenApiDocument', () => {
     expect(Object.keys(doc.paths).sort()).toEqual([
       '/api/accepted',
       '/api/apps/{slug}/*filePath',
+      '/api/empty',
       '/api/items',
       '/api/items/{id}',
+      '/api/nullable',
       '/api/reset',
     ]);
     expect(doc.paths['/api/tool']).toBeUndefined();
@@ -153,6 +168,15 @@ describe('generateOpenApiDocument', () => {
     expect(spec.paths['/api/reset'].post.responses['205']).toEqual({
       description: 'No content',
     });
+  });
+
+  test('derives default success responses from the output contract', () => {
+    const nullable = spec.paths['/api/nullable'].get.responses;
+    const empty = spec.paths['/api/empty'].post.responses;
+    expect(nullable['200'].content['application/json'].schema.anyOf).toBeDefined();
+    expect(nullable['204']).toBeUndefined();
+    expect(empty['204']).toEqual({ description: 'No content' });
+    expect(empty['200']).toBeUndefined();
   });
 });
 

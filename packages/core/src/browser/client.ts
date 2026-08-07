@@ -24,7 +24,11 @@ function withTimeout(
 ): RequestOptions | undefined {
   // A raw endpoint answers with bytes — parsing it as JSON is how the old
   // hand-rolled transports produced empty objects. → ADR 0038.
-  const responseType = endpoint.rawResponse ? ('response' as const) : undefined;
+  const responseType: RequestOptions['responseType'] = endpoint.rawResponse
+    ? 'response'
+    : endpoint.output
+      ? undefined
+      : 'void';
   if (endpoint.timeout === undefined && responseType === undefined) return options;
   return {
     ...options,
@@ -36,14 +40,23 @@ function withTimeout(
 /**
  * Validate a resolved response through the endpoint's `output` schema when it
  * declares one — the contract's documented guarantee ("the client parses the
- * response through it"). A `204` / empty-body result (`undefined`) passes
- * through unparsed, exactly as the bare-fetch path handles it. Applied on both
- * client paths so the guarantee cannot depend on which one a project wired.
+ * response through it"). The contract — not the server's runtime value — owns
+ * whether a response exists. Applied on both client paths so the guarantee
+ * cannot depend on which one a project wired.
  */
 function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<unknown> {
+  if (endpoint.rawResponse) return result;
   const schema = endpoint.output;
-  if (!schema) return result;
-  return result.then((value) => (value === undefined ? undefined : schema.parse(value)));
+  return result.then((value) => {
+    if (!schema) {
+      if (value === undefined || value === null) return undefined;
+      throw new Error('Server returned data for an endpoint with no output contract');
+    }
+    if (value === undefined) {
+      throw new Error('Server returned no body for an endpoint with an output contract');
+    }
+    return schema.parse(value);
+  });
 }
 
 /** Config for the built-in fetch client — used when no `HttpClient` is passed. */
@@ -389,10 +402,15 @@ function createFetchMethod<K extends string>(
       // while the ky path returned the `Response`. → ADR 0038.
       if (endpoint.rawResponse) return res;
 
-      if (res.status === 204) return undefined;
+      if (!endpoint.output) {
+        const text = await res.text();
+        if (text.length > 0) {
+          throw new Error('Server returned data for an endpoint with no output contract');
+        }
+        return undefined;
+      }
 
-      const json = await res.json();
-      return endpoint.output ? endpoint.output.parse(json) : json;
+      return endpoint.output.parse(await res.json());
     }
 
     const res = await fetch(url, {
@@ -415,10 +433,15 @@ function createFetchMethod<K extends string>(
     // legitimately empty-bodied response. → ADR 0038.
     if (endpoint.rawResponse) return res;
 
-    if (res.status === 204) return undefined;
+    if (!endpoint.output) {
+      const text = await res.text();
+      if (text.length > 0) {
+        throw new Error('Server returned data for an endpoint with no output contract');
+      }
+      return undefined;
+    }
 
-    const json = await res.json();
-    return endpoint.output ? endpoint.output.parse(json) : json;
+    return endpoint.output.parse(await res.json());
   };
 }
 

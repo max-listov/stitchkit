@@ -23,6 +23,7 @@ function makeMethod(
     serviceName: 'widgets',
     key: 'update',
     desc: 'Update a widget',
+    outputSchema: z.unknown(),
     handler: () => ({ ok: true }),
     ...overrides,
   };

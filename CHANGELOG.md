@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-08-07
+
+### ⚠️ Breaking changes
+
+- **Contract output presence now comes only from `output`.** A nullable output
+  returns JSON `null` with status `200`; `undefined` for a declared output and
+  non-null data without an output schema are handler contract violations on
+  HTTP and tool transports. Typed clients return `null` for nullable output and
+  `undefined` only for endpoints without output.
+
+  ```ts
+  // before: null was converted to 204 and then failed against the output
+  result: { output: ResultSchema.nullable(), handler: () => null }
+
+  // after: 200 application/json with body `null`
+  result: { output: ResultSchema.nullable(), handler: () => null }
+  ```
+
+  A handler that intentionally returns data must declare its schema; a handler
+  with no result must omit `output` and return `undefined` or `null`. Runtime
+  tools without `output` now type their handler as void; add an output schema
+  before returning neutral data.
+
 ## [0.40.0] — 2026-08-07
 
 ### ⚠️ Breaking changes
@@ -2220,7 +2243,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/max-listov/stitchkit/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/max-listov/stitchkit/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/max-listov/stitchkit/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/max-listov/stitchkit/compare/v0.37.0...v0.38.0

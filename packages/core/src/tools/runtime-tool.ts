@@ -31,7 +31,7 @@ export type RuntimeToolHandlerContext<TInput extends ZodObject> = RuntimeContext
 
 export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput extends ZodType
   ? z.output<TOutput>
-  : unknown;
+  : undefined;
 
 /** MCP-owned fields; validation and error state are always supplied by Stitchkit. */
 export type RuntimeMcpPresentation = Omit<CallToolResult, 'structuredContent' | 'isError'> & {
@@ -73,7 +73,7 @@ export interface RuntimeToolDefinitionWithOutput<
 export interface RuntimeToolDefinitionWithoutOutput<TInput extends ZodObject>
   extends RuntimeToolDefinitionBase<TInput> {
   output?: never;
-  handler: (context: RuntimeToolHandlerContext<TInput>) => unknown | Promise<unknown>;
+  handler: (context: RuntimeToolHandlerContext<TInput>) => void | Promise<void>;
   present?: never;
 }
 

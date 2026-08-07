@@ -94,7 +94,7 @@ export interface RequestOptions {
    * caller still gets `.blob()` / `.body`, plus the headers where
    * `Content-Disposition` (the download filename) lives.
    */
-  responseType?: 'json' | 'blob' | 'response';
+  responseType?: 'json' | 'blob' | 'response' | 'void';
 }
 
 /** The HTTP transport adapter `createClient` builds typed methods on. */
@@ -247,7 +247,17 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
         return (await client[method](url, kyOptions)) as T;
       }
       const response = await client[method](url, kyOptions);
-      if (response.status === 204 || response.headers.get('content-length') === '0') {
+      if (options.responseType === 'void') {
+        const text = await response.text();
+        if (text.length > 0) {
+          throw new Error('Server returned data for an endpoint with no output contract');
+        }
+      }
+      if (
+        options.responseType === 'void' ||
+        response.status === 204 ||
+        response.headers.get('content-length') === '0'
+      ) {
         return undefined as T;
       }
       return response.json<T>();

@@ -71,7 +71,7 @@ function registerTransportProbe({ registerTool }: NativeMcpRegistrar): void {
     description: 'Probe transport registration',
     identity: { serviceName: 'native', action: 'probe', method: 'GET' },
     input: z.object({}),
-    handler: () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    handler: () => undefined,
   });
 }
 
@@ -161,7 +161,6 @@ describe('framework-owned native MCP registration', () => {
             input: z.object({ id: z.string() }),
             handler: () => {
               order.push('handler');
-              return { content: [{ type: 'text', text: 'updated' }] };
             },
           });
         },
@@ -306,7 +305,6 @@ describe('framework-owned native MCP registration', () => {
             input: z.object({ count: z.number() }).strict(),
             handler: () => {
               handlerCalls += 1;
-              return { content: [{ type: 'text', text: 'ok' }] };
             },
           });
         },
@@ -350,7 +348,6 @@ describe('framework-owned native MCP registration', () => {
             input: z.object({}),
             handler: () => {
               handled = true;
-              return { content: [{ type: 'text', text: 'done' }] };
             },
           });
         },
@@ -442,7 +439,6 @@ describe('native call isolation and audit', () => {
             handler: async ({ input }) => {
               await new Promise((resolve) => setTimeout(resolve, input.fail ? 2 : 5));
               if (input.fail) throw new AppError('CONFLICT', `failed ${input.id}`, 409);
-              return { content: [{ type: 'text', text: input.id }] };
             },
           });
         },

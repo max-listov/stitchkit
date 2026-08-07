@@ -287,7 +287,6 @@ describe('framework runtime tools', () => {
       input: z.object({}),
       handler: () => {
         handlerCalls += 1;
-        return { ok: true };
       },
     });
     const tools = mountAgent([], {
@@ -321,7 +320,7 @@ describe('framework runtime tools', () => {
       identity: { serviceName: 'runtimeTools', action: 'mcpOnly', method: 'GET' },
       input: z.object({}),
       transports: ['MCP'],
-      handler: () => ({ ok: true }),
+      handler: () => undefined,
     });
     expect(Object.keys(mountAgent([], { runtimeTools: [mcpOnly] }))).toEqual([]);
 
@@ -345,7 +344,7 @@ describe('framework runtime tools', () => {
       description: 'Duplicate runtime name',
       identity: { serviceName: 'runtimeTools', action: 'duplicate', method: 'POST' },
       input: z.object({}),
-      handler: () => ({ ok: true }),
+      handler: () => undefined,
     });
 
     expect(() => mountAgent(service, { runtimeTools: [duplicate] })).toThrow(

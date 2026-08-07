@@ -6,7 +6,7 @@ import {
   STITCH_ERROR_STATUS,
   type TransportSource,
 } from '../contract';
-import { formatZodError, normalizeError, validateHandlerOutput } from '../internal/errors';
+import { formatZodError, normalizeError, validateDeclaredOutput } from '../internal/errors';
 import { isUnsafeKey } from '../internal/safe-json';
 import { isRecord } from '../internal/typed';
 import { getRequestContext, runWithRequestContext } from '../observability/context';
@@ -435,20 +435,17 @@ async function runToolMethod(
       if (transformed !== undefined) data = transformed;
     }
 
-    // Validate the handler's output against the contract, like the HTTP path.
-    // A mismatch is a server fault — `INTERNAL_SERVER_ERROR`, not the client
-    // `VALIDATION_ERROR` an invalid argument produces.
-    if (method.outputSchema) {
-      const checked = validateHandlerOutput(method.outputSchema, data, onOutputStrip);
-      if (!checked.ok) {
-        return finish({
-          ok: false,
-          code: 'INTERNAL_SERVER_ERROR',
-          details: { message: checked.message },
-        });
-      }
-      data = checked.data;
+    // Match the HTTP path: the contract decides whether an output exists.
+    // A mismatch is a server fault — never argument VALIDATION_ERROR.
+    const checked = validateDeclaredOutput(method.outputSchema, data, onOutputStrip);
+    if (!checked.ok) {
+      return finish({
+        ok: false,
+        code: 'INTERNAL_SERVER_ERROR',
+        details: { message: checked.message },
+      });
     }
+    data = checked.data;
 
     // A void handler reports `{ status: 'ok' }` — but only when the contract
     // declares no `output`. With an `outputSchema`, a validated `null` is the

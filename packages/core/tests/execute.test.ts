@@ -20,6 +20,7 @@ function makeMethod(
     serviceName: 'test',
     key: 'test',
     desc: 'test',
+    outputSchema: z.unknown(),
     handler: () => ({ ok: true }),
     ...overrides,
   };
@@ -35,11 +36,52 @@ describe('executeToolMethod', () => {
     if (result.ok) expect(result.data).toEqual({ users: ['Alice'] });
   });
 
-  test('null/undefined handler → { status: ok }', async () => {
-    const method = makeMethod({ handler: () => undefined });
-    const result = await executeToolMethod(method, 'test', {}, { source: 'agent' });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data).toEqual({ status: 'ok' });
+  test('null/undefined no-output handler → { status: ok }', async () => {
+    for (const value of [null, undefined]) {
+      const method = makeMethod({ outputSchema: undefined, handler: () => value });
+      const result = await executeToolMethod(method, 'test', {}, { source: 'agent' });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data).toEqual({ status: 'ok' });
+    }
+  });
+
+  test('rejects undeclared tool data and undefined declared output', async () => {
+    const undeclared = await executeToolMethod(
+      makeMethod({ outputSchema: undefined, handler: () => ({ leaked: true }) }),
+      'test',
+      {},
+      { source: 'agent' },
+    );
+    expect(undeclared).toEqual({
+      ok: false,
+      code: 'INTERNAL_SERVER_ERROR',
+      details: { message: 'Handler returned data but the contract declares no output' },
+    });
+
+    const missing = await executeToolMethod(
+      makeMethod({ outputSchema: z.unknown(), handler: () => undefined }),
+      'test',
+      {},
+      { source: 'mcp' },
+    );
+    expect(missing).toEqual({
+      ok: false,
+      code: 'INTERNAL_SERVER_ERROR',
+      details: { message: 'Handler returned undefined but the contract declares an output' },
+    });
+  });
+
+  test('preserves null when a tool output schema declares it', async () => {
+    const result = await executeToolMethod(
+      makeMethod({
+        outputSchema: z.object({ id: z.string() }).nullable(),
+        handler: () => null,
+      }),
+      'nullable',
+      {},
+      { source: 'mcp' },
+    );
+    expect(result).toEqual({ ok: true, data: null });
   });
 
   test('validates params', async () => {

@@ -154,3 +154,30 @@ export function validateHandlerOutput(
     message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,
   };
 }
+
+/**
+ * Enforce the presence or absence of a contract output before a transport
+ * presents it. `null` is JSON data when a schema accepts it; `undefined` never
+ * is. Without a schema, nullish returns mean "no result" and any other value is
+ * an undeclared response.
+ */
+export function validateDeclaredOutput(
+  schema: ZodType | undefined,
+  data: unknown,
+  onStripped?: (paths: string[]) => void,
+): { ok: true; data: unknown } | { ok: false; message: string } {
+  if (!schema) {
+    if (data === undefined || data === null) return { ok: true, data };
+    return {
+      ok: false,
+      message: 'Handler returned data but the contract declares no output',
+    };
+  }
+  if (data === undefined) {
+    return {
+      ok: false,
+      message: 'Handler returned undefined but the contract declares an output',
+    };
+  }
+  return validateHandlerOutput(schema, data, onStripped);
+}

@@ -91,7 +91,7 @@ from the root `stitchkit`.
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
-| `EndpointDef` | _type_ | a single endpoint definition |
+| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid) |
 | `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
 | `ResponseMetadata` | _type_ | per-request outbound collector exposed as `ctx.response` only for a `responseMeta` endpoint |
@@ -372,7 +372,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `RuntimeToolDefinition` | _type_ | transport-neutral pathless operation with identity, schemas, handler and optional presenters |
 | `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
 | `RuntimeToolDefinitionWithOutput` | _type_ | runtime definition whose handler and presenters share a validated output type |
-| `RuntimeToolDefinitionWithoutOutput` | _type_ | runtime definition without output validation or presentation callbacks |
+| `RuntimeToolDefinitionWithoutOutput` | _type_ | runtime definition with a void handler and no presentation callbacks |
 | `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for runtime lifecycle/audit |
 | `RuntimeToolHandlerContext` | _type_ | runtime context with the definition's parsed input |
 | `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |

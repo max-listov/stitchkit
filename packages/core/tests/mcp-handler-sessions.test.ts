@@ -184,9 +184,7 @@ describe('stateless is the default', () => {
           description: 'Return the current identity',
           identity: { serviceName: 'authTools', action: 'whoami', method: 'GET' },
           input: z.object({}),
-          handler: ({ userId }) => ({
-            content: [{ type: 'text', text: String(userId) }],
-          }),
+          handler: () => undefined,
         });
       },
     });

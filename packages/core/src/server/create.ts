@@ -7,7 +7,7 @@ import {
   errorCode,
   normalizeError,
   recordedErrorMessage,
-  validateHandlerOutput,
+  validateDeclaredOutput,
 } from '../internal/errors';
 import {
   getRequestContext,
@@ -422,31 +422,28 @@ export function createHandler<TServer = unknown>(
         );
       }
 
-      if (method.outputSchema) {
-        // A handler returning the wrong shape is a server fault, not a client
-        // one — `INTERNAL_SERVER_ERROR`, never the `VALIDATION_ERROR` a bad
-        // request produces. Same rule as the tool transport (ADR 0014).
-        const checked = validateHandlerOutput(
-          method.outputSchema,
-          result,
-          config.warnOnOutputStrip
-            ? (paths) => {
-                // The endpoint identity is in the message on purpose: a dot-path
-                // alone is not actionable without knowing which handler produced it.
-                warn(
-                  `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`,
-                );
-              }
-            : undefined,
-        );
-        if (!checked.ok) {
-          throw new AppError('INTERNAL_SERVER_ERROR', checked.message, 500);
-        }
-        result = checked.data;
+      // A handler returning the wrong shape — including data with no declared
+      // output, or undefined for a declared JSON output — is a server fault.
+      // The same invariant runs on tool transports below the HTTP framing.
+      const checked = validateDeclaredOutput(
+        method.outputSchema,
+        result,
+        config.warnOnOutputStrip && method.outputSchema
+          ? (paths) => {
+              // The endpoint identity is in the message on purpose: a dot-path
+              // alone is not actionable without knowing which handler produced it.
+              warn(
+                `[stitchkit] output strip ${method.serviceName}.${method.key}: ${paths.join(', ')}`,
+              );
+            }
+          : undefined,
+      );
+      if (!checked.ok) {
+        throw new AppError('INTERNAL_SERVER_ERROR', checked.message, 500);
       }
+      result = checked.data;
 
-      const responseStatus =
-        method.responseMeta?.status ?? (result === undefined || result === null ? 204 : 200);
+      const responseStatus = method.responseMeta?.status ?? (method.outputSchema ? 200 : 204);
       if (method.outputSchema && (responseStatus === 204 || responseStatus === 205)) {
         throw new AppError(
           'INTERNAL_SERVER_ERROR',
@@ -454,18 +451,6 @@ export function createHandler<TServer = unknown>(
           500,
         );
       }
-      if (
-        result !== undefined &&
-        result !== null &&
-        (responseStatus === 204 || responseStatus === 205)
-      ) {
-        throw new AppError(
-          'INTERNAL_SERVER_ERROR',
-          `${method.serviceName}.${method.key} produced data for bodyless status ${responseStatus}`,
-          500,
-        );
-      }
-
       const responseHeaders = new Headers(corsHeaders(cors, req));
       applyResponseMetadata(
         responseHeaders,
@@ -477,7 +462,7 @@ export function createHandler<TServer = unknown>(
       // data `Response.json` cannot serialise (a `BigInt`, a cycle), and that
       // throw belongs to the error path — logging `200` first would record a
       // success the caller never received.
-      if (result === undefined || result === null) {
+      if (!method.outputSchema) {
         const empty = new Response(null, { status: responseStatus, headers: responseHeaders });
         logDone(responseStatus);
         return empty;

@@ -74,6 +74,13 @@ await api.update({ id: '1', name: 'M' })  // PUT /users/1  body: { name }
 await api.delete({ id: '1' })      // DELETE /users/1
 ```
 
+The client follows response presence from the contract, not from the HTTP
+status or a truthy runtime value. An endpoint with nullable `output` resolves
+JSON `null` as `null`; an endpoint without `output` resolves `undefined`,
+including an explicitly declared empty `200` or `205`. A missing body for a
+declared output, or a body for an endpoint with no output, fails loudly instead
+of changing the typed result.
+
 An explicit contract `HEAD` operation is exposed like any other typed method.
 Because HEAD endpoints are `rawResponse`, it resolves to the untouched
 `Response`, giving the caller direct access to status and headers without JSON

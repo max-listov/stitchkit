@@ -57,7 +57,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `desc` | yes | human description — also the MCP / agent tool description |
 | `params` | no | Zod schema for **path params** (`:id`, …) |
 | `input` | no | Zod schema for the **request body** (or query, for GET/DELETE) |
-| `output` | no | Zod schema for the **response body** |
+| `output` | no | Zod schema for the **response body**; its presence declares a JSON result (`null` is data, `undefined` is not) |
 | `scope` | no | access scope for this endpoint — see [Auth & errors](./auth-and-errors.md) |
 | `expose` | no | which transports carry this endpoint — see [below](#transports) |
 | `toolName` | no | explicit MCP / agent tool name (default: a verb-aware derivation, see below — not a literal `prefix_key`) |
@@ -78,6 +78,13 @@ headers, while Stitchkit guarantees an empty wire body even if the returned
 `Response` accidentally contains one.
 
 ## `params` vs `input` vs `output`
+
+`output` owns response presence across HTTP and tool transports. With a schema,
+the handler must return a value that validates and can be represented as JSON;
+a nullable schema may return `null`, but `undefined` is always a contract
+violation. Without `output`, the handler is empty (`undefined`/`null`) and may
+not return undeclared data. On HTTP this means a default `200` JSON response
+with output and a default bodyless `204` without it.
 
 The three schemas are distinct on purpose:
 

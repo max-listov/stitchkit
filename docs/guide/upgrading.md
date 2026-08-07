@@ -62,6 +62,28 @@ current one *up to* your target, and apply each snippet.
 
 ## Unreleased breaking migrations
 
+Contract success bodies are now determined by the presence of `output`, not by
+the handler's runtime value. A nullable output returns JSON `null` with status
+`200`; `undefined` with a declared output and non-null data without an output
+schema are contract violations:
+
+```ts
+// nullable JSON data: 200 with body `null`
+session: {
+  method: 'GET', path: '/session', desc: 'Current session',
+  output: SessionSchema.nullable(),
+}
+
+// bodyless operation: 204 with no body
+logout: {
+  method: 'POST', path: '/logout', desc: 'End the session',
+}
+```
+
+Add an output schema to every handler that returns data. Omit `output` and
+return nothing for bodyless operations; runtime tools follow the same rule and
+type no-output handlers as `void`.
+
 `createToolInvoker` now separates immutable registry preparation from per-call
 runtime state. Move source/context/lifecycle/hooks/output-strip reporting from
 the factory config to the third invocation argument. Use `invokeOrThrow` when a

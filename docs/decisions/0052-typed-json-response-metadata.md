@@ -62,7 +62,15 @@ cookie.
 `responseMeta.status` is a static declared successful HTTP status. Known 2xx
 codes are supported. Data endpoints cannot declare bodyless `204` or `205`;
 empty endpoints may. Without an explicit status, existing behavior remains:
-`200` for data and `204` for `undefined`/`null`. OpenAPI publishes the same code.
+`200` whenever the endpoint declares `output`, and `204` when it does not.
+OpenAPI publishes the same code. A nullable output serializes `null` as a JSON
+body; runtime values never change the response kind declared by the contract.
+
+`undefined` is not a JSON value and therefore violates a declared output even
+when a broad schema would accept it. Conversely, a handler with no output may
+return only `undefined`/`null`; returning data that the contract does not publish
+is a server fault. This invariant is shared with tool execution, independently
+of HTTP status framing.
 
 The collector is a Web Fetch `Headers` bag. Repeated `Set-Cookie` values are
 copied individually. Framework-owned headers are protected:

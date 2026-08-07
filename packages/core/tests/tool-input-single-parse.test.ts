@@ -333,7 +333,6 @@ describe('one executable input parser per tool call', () => {
             }),
             handler: ({ input }) => {
               received.push(input.value);
-              return { content: [{ type: 'text', text: input.value }] };
             },
           });
         },

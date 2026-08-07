@@ -357,9 +357,13 @@ HTTP-only, but its typed client method still resolves to `AuthUser` — not
 declared `output` schema exactly once.
 
 `responseMeta.status` is static contract metadata and OpenAPI publishes the same
-2xx code. Without it, data keeps status `200` and no-data keeps `204`. Bodyless
-`204`/`205` cannot be combined with `output`. Redirects, streams, files and
-handler-owned status/body logic remain [`rawResponse: true`](#raw-response-endpoints).
+2xx code. Without it, an endpoint with `output` uses `200`; an endpoint without
+`output` uses `204`. A nullable output returns JSON `null` with status `200` —
+the runtime value never turns a declared response body into no content.
+`undefined` violates a declared output, while returning non-null data without an
+output schema is also a server fault. Bodyless `204`/`205` cannot be combined
+with `output`. Redirects, streams, files and handler-owned status/body logic
+remain [`rawResponse: true`](#raw-response-endpoints).
 
 Collected headers are merged only after the complete success pipeline. A
 handler, hook or output-validation failure discards them. `Content-Type`,
