@@ -91,14 +91,8 @@ test('uses one matching focus border for inputs and textareas', async ({ page })
 
   const input = page.getByLabel('Project name');
   const textarea = page.getByLabel('Description');
-  await input.focus();
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
-  );
   const inputFocus = await input.evaluate((element) => {
+    element.focus();
     const style = getComputedStyle(element);
     return {
       borderColor: style.borderColor,
@@ -106,14 +100,8 @@ test('uses one matching focus border for inputs and textareas', async ({ page })
       outlineStyle: style.outlineStyle,
     };
   });
-  await textarea.focus();
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
-  );
   const textareaFocus = await textarea.evaluate((element) => {
+    element.focus();
     const style = getComputedStyle(element);
     return {
       borderColor: style.borderColor,
