@@ -126,12 +126,44 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
     ).not.toThrow();
   });
 
-  test('a genuinely divergent collision is still reported, not hidden', () => {
-    // Kinds that really differ stay `unknown` by design — the guard is what makes
-    // that visible to the project instead of leaving it for a model to discover.
+  test('a divergent collision passes when every branch exposes a base kind', () => {
     const operations = z.discriminatedUnion('op', [
       z.object({ op: z.literal('a'), target: z.string() }),
       z.object({ op: z.literal('b'), target: z.number() }),
+    ]);
+    expect(() =>
+      validateMcpSchemas({
+        services: [service(operations)],
+        flattenUnionInput: true,
+        requireTypedProperties: true,
+      }),
+    ).not.toThrow();
+  });
+
+  test('a nested divergent collision passes when its union branches expose one base kind', () => {
+    const operations = z.discriminatedUnion('op', [
+      z.object({ op: z.literal('link'), target: z.string() }),
+      z.object({
+        op: z.literal('select'),
+        target: z.union([
+          z.object({ names: z.array(z.string()) }),
+          z.object({ pattern: z.string() }),
+        ]),
+      }),
+    ]);
+    expect(() =>
+      validateMcpSchemas({
+        services: [service(operations)],
+        flattenUnionInput: true,
+        requireTypedProperties: true,
+      }),
+    ).not.toThrow();
+  });
+
+  test('a collision with an unknowable branch remains visible', () => {
+    const operations = z.discriminatedUnion('op', [
+      z.object({ op: z.literal('known'), target: z.string() }),
+      z.object({ op: z.literal('unknown'), target: z.unknown() }),
     ]);
     expect(() =>
       validateMcpSchemas({

@@ -1,0 +1,29 @@
+{
+  "name": "@app/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/generated/client.ts",
+    "./enums": "./src/generated/enums.ts"
+  },
+  "scripts": {
+    "check": "bun x tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "db:generate": "bunx prisma generate",
+    "db:migrate": "bunx prisma migrate dev",
+    "db:deploy": "bunx prisma migrate deploy",
+    "db:studio": "bunx prisma studio"
+  },
+  "dependencies": {
+    "@app/config": "workspace:*",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.21.0",
+    "prisma": "^7.9.1",
+    "typescript": "^7.0.2"
+  }
+}

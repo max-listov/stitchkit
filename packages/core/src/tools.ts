@@ -101,6 +101,7 @@ export {
 } from './tools/portable-formats';
 export { type ImplementRemoteOptions, implementRemote } from './tools/remote';
 export {
+  createRuntimeToolFactory,
   defineRuntimeTool,
   type RuntimeAgentModelOutput,
   type RuntimeMcpPresentation,
@@ -108,6 +109,12 @@ export {
   type RuntimeToolDefinitionBase,
   type RuntimeToolDefinitionWithOutput,
   type RuntimeToolDefinitionWithoutOutput,
+  type RuntimeToolFactory,
+  type RuntimeToolFactoryConfig,
+  type RuntimeToolFactoryDefinitionWithOutput,
+  type RuntimeToolFactoryDefinitionWithoutOutput,
+  type RuntimeToolFactoryHandlerContext,
+  type RuntimeToolFactoryIdentityFields,
   type RuntimeToolHandlerContext,
   type RuntimeToolIdentity,
   type RuntimeToolOutput,

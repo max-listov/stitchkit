@@ -2,10 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import {
-  createAuditHook,
+  createObservability,
   type RequestEvent,
   setRequestDimensions,
-  wrapInRequestContext,
 } from '../src/observability';
 import { createHandler, implement } from '../src/server';
 
@@ -37,9 +36,12 @@ const service = implement(items, {
 /** A server fetch that audits every request and stamps a domain dimension from a
  *  header — in `beforeHandle` on success, in `onError` on a pre-handler failure. */
 function build(events: RequestEvent[]) {
-  const audit = createAuditHook({ write: (e) => void events.push(e) });
+  const audit = createObservability({
+    request: { write: (e) => void events.push(e) },
+  });
   const handler = createHandler({
     services: [service],
+    observability: audit.request,
     hooks: {
       beforeHandle: (ctx) => {
         const pid = ctx.req?.headers.get('x-project');
@@ -52,7 +54,7 @@ function build(events: RequestEvent[]) {
       },
     },
   });
-  return wrapInRequestContext(audit.http(handler));
+  return handler;
 }
 
 describe('audit — endpoint identity (A) + domain dimensions (B)', () => {

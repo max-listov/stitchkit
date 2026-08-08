@@ -41,12 +41,12 @@ describe('collided fields retain the common useful kind', () => {
     expect(advertised(union).mode?.enum).toBeUndefined();
   });
 
-  test('genuinely different kinds stay unconstrained', () => {
+  test('genuinely different known kinds retain their type union', () => {
     const union = z.discriminatedUnion('op', [
       z.object({ op: z.literal('a'), target: z.string() }),
       z.object({ op: z.literal('b'), target: z.number() }),
     ]);
-    expect(advertised(union).target?.type).toBeUndefined();
+    expect(advertised(union).target?.type).toEqual(['string', 'number']);
   });
 
   test('result is independent of variant order', () => {
@@ -59,5 +59,18 @@ describe('collided fields retain the common useful kind', () => {
       z.object({ op: z.literal('a'), n: z.number().min(0) }),
     ]);
     expect(advertised(first).n).toEqual(advertised(second).n);
+  });
+
+  test('a divergent type union is independent of variant order', () => {
+    const first = z.discriminatedUnion('op', [
+      z.object({ op: z.literal('one'), value: z.string() }),
+      z.object({ op: z.literal('many'), value: z.array(z.string()) }),
+    ]);
+    const second = z.discriminatedUnion('op', [
+      z.object({ op: z.literal('many'), value: z.array(z.string()) }),
+      z.object({ op: z.literal('one'), value: z.string() }),
+    ]);
+    expect(advertised(first).value).toEqual(advertised(second).value);
+    expect(advertised(first).value?.type).toEqual(['string', 'array']);
   });
 });

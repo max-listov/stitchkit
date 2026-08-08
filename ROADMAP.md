@@ -44,8 +44,9 @@ The 1.0 milestone is **API stability**, not new surface. Before it ships:
 
 - **Prove the API across more projects.** Every breaking change between now and
   1.0 must come from real usage, not speculation.
-- **More examples.** The bundled `packages/starter` is one app; the goal is a
-  small set covering already-shipped MCP, agents and auth flows end to end.
+- **Prove the official starter.** Keep the single packed `create-stitchkit`
+  application aligned with the already-shipped HTTP, MCP, CLI, realtime and
+  React surfaces.
 - **Documentation quality.** Keep the guide, API reference, upgrade path and
   generated LLM docs synchronized. A rendered documentation site remains a
   separately scoped idea in

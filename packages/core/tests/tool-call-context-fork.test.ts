@@ -15,17 +15,16 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import {
-  createAuditHook,
+  createObservability,
   getRequestContext,
   type RequestEvent,
   runWithRequestContext,
   setRequestDimensions,
   setRequestError,
   setRequestUser,
-  wrapInRequestContext,
 } from '../src/observability';
 import { childSpan } from '../src/observability/trace';
-import { implement } from '../src/server';
+import { createHandler, implement } from '../src/server';
 import type { ToolLifecycle } from '../src/tools';
 import { mountAgent } from '../src/tools/agent';
 
@@ -55,7 +54,8 @@ const service = implement(contract, {
 /** Mount the tool with an audit sink and whatever lifecycle a case needs. */
 function mount(lifecycle?: ToolLifecycle) {
   const events: RequestEvent[] = [];
-  const audit = createAuditHook({ write: (e) => void events.push(e) });
+  const write = (event: RequestEvent) => void events.push(event);
+  const audit = createObservability({ request: { write }, tools: { write } });
   const tools = mountAgent(service, { hooks: audit.toolCall, lifecycle });
   const execute = tools.widget_touch?.execute;
   if (!execute) throw new Error('test setup: no widget_touch tool');
@@ -66,17 +66,23 @@ function mount(lifecycle?: ToolLifecycle) {
 
 /** Drive calls inside one HTTP request, and settle the detached audit writes. */
 async function inRequest(
-  audit: ReturnType<typeof createAuditHook>,
+  audit: ReturnType<typeof createObservability>,
   body: () => Promise<void>,
 ) {
-  const handler = audit.http(async () => {
-    await body();
-    return new Response('ok');
+  const handler = createHandler({
+    observability: audit.request,
+    rawRoutes: [
+      {
+        method: 'POST',
+        path: '/mcp',
+        handler: async () => {
+          await body();
+          return new Response('ok');
+        },
+      },
+    ],
   });
-  await wrapInRequestContext(handler)(
-    new Request('http://localhost/mcp', { method: 'POST' }),
-    undefined,
-  );
+  await handler(new Request('http://localhost/mcp', { method: 'POST' }), undefined);
   await Bun.sleep(40);
 }
 
@@ -107,7 +113,8 @@ describe('concurrent calls do not write into each other', () => {
     // Placement matters and is easy to get wrong: `afterToolCall` — where the
     // audit row is built — must be inside the same fork as the hooks that wrote.
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const write = (event: RequestEvent) => void events.push(event);
+    const audit = createObservability({ request: { write }, tools: { write } });
     const tools = mountAgent(service, {
       hooks: {
         beforeToolCall: ({ args }) => {
@@ -280,13 +287,14 @@ describe('the shape the incident actually had', () => {
 
 describe('a failure stays inside the call that failed', () => {
   test('an error recorded before the call is not visible inside the call', async () => {
-    // Read the context, not the emitted row: `createAuditHook` derives a tool
+    // Read the context, not the emitted row: tool observability derives a tool
     // row's error fields from the `ToolResult` and never from `ctx.error`, so a
     // row assertion here would pass with the reset deleted — and did.
     let seenInHandler: unknown;
     let seenInHook: unknown;
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const write = (event: RequestEvent) => void events.push(event);
+    const audit = createObservability({ request: { write }, tools: { write } });
     const tools = mountAgent(service, {
       hooks: {
         afterToolCall: (options) => {
@@ -317,7 +325,8 @@ describe('a failure stays inside the call that failed', () => {
 
   test('a throwing tool records its own failure and leaves the request row alone', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const write = (event: RequestEvent) => void events.push(event);
+    const audit = createObservability({ request: { write }, tools: { write } });
     const boom = implement(contract, {
       touch: () => {
         throw new Error('handler exploded');
@@ -357,7 +366,8 @@ describe('the fork starts before the call does', () => {
     // runs before the executor. Left outside the fork it wrote into the shared
     // store and reproduced the original defect at one remove.
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const write = (event: RequestEvent) => void events.push(event);
+    const audit = createObservability({ request: { write }, tools: { write } });
     const tools = mountAgent(service, {
       hooks: audit.toolCall,
       extend: {

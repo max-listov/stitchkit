@@ -51,6 +51,17 @@ supported via `stitchkit/node`.
 
 ## Install
 
+Start a production-shaped Next.js, Stitchkit and PostgreSQL application:
+
+```bash
+bun create stitchkit my-app
+cd my-app
+# Point DATABASE_URL in .env at your PostgreSQL database.
+bun run dev
+```
+
+To add Stitchkit to an existing project instead:
+
 ```bash
 bun add stitchkit        # Bun
 npm install stitchkit    # Node
@@ -348,11 +359,17 @@ never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/00
 The framework stays focused and inspectable: explicit adapters, no generated
 application code and no framework build step in your app.
 
-## Example
+## Official starter
 
-A complete runnable app lives in [`packages/starter`](./packages/starter) — a
-notes CRUD with a contract, a typed client, `react-query-kit` hooks and a
-Socket.IO live-reload.
+`bun create stitchkit my-app` generates the canonical application: separate
+Next.js and Bun API processes, Prisma/PostgreSQL, shared Zod contracts, typed
+HTTP/React Query clients, Socket.IO cache updates, OpenAPI, MCP, CLI and a full
+UI catalogue. Its only source is
+[`packages/create-stitchkit/template`](./packages/create-stitchkit/template).
+The application owns its Prisma schema and migrations while PostgreSQL remains
+external infrastructure configured through `DATABASE_URL`.
+The template owns a committed Bun lockfile and an explicit Stitchkit catalog
+range, so framework and scaffolder releases advance independently.
 
 ## Documentation — two roads
 

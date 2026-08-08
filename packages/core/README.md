@@ -344,13 +344,18 @@ app code share a single instance. Bundled copies would double `zod`, split the
 `react` hook runtime and break `instanceof`. Optional peers mean an app that
 never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/0011-bun-only-one-package.md)
 
-The framework itself is small — ~8500 lines, no codegen, no build step in your app.
+The framework itself adds no code-generation or framework build step to a
+consuming application.
 
-## Example
+## Official starter
 
-A complete runnable app lives in [`packages/starter`](./packages/starter) — a
-notes CRUD with a contract, a typed client, `react-query-kit` hooks and a
-Socket.IO live-reload.
+Create the complete Next.js, Bun/Stitchkit, Prisma/PostgreSQL application with:
+
+```bash
+bun create stitchkit my-app
+```
+
+Its canonical source lives in [`packages/create-stitchkit/template`](../create-stitchkit/template).
 
 ## Documentation — two roads
 

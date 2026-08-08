@@ -61,7 +61,7 @@ the published package before release.
   speculative abstraction.
 - Keep the guide, API reference, generated agent-facing docs and migration notes
   aligned with the public surface.
-- Broaden end-to-end examples only where they clarify already-shipped
-  capabilities beyond the bundled `starter`.
+- Grow the packed official starter only where it clarifies already-shipped
+  capabilities without moving frontend infrastructure into the framework.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).

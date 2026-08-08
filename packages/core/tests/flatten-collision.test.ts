@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isRecord } from '../src/internal/typed';
 import { flattenToolJsonSchema } from '../src/tools/flatten';
 import { toJsonSchema } from '../src/tools/json-schema';
+import { findUntypedProperties } from '../src/tools/untyped-properties';
 
 function properties(schema: Record<string, unknown>): Record<string, unknown> {
   const value = schema.properties;
@@ -31,14 +32,96 @@ describe('conservative discriminated-union join', () => {
     expect(field(schema, 'n').maximum).toBeUndefined();
   });
 
-  test('widens object-vs-array collisions to an unconstrained field', () => {
+  test('keeps every known kind in an object-vs-array collision', () => {
     const schema = flatten(
       z.discriminatedUnion('kind', [
         z.object({ kind: z.literal('one'), media: z.object({ id: z.string() }) }),
         z.object({ kind: z.literal('many'), media: z.array(z.object({ id: z.string() })) }),
       ]),
     );
-    expect(field(schema, 'media').type).toBeUndefined();
+    expect(field(schema, 'media')).toEqual({ type: ['object', 'array'] });
+    expect(findUntypedProperties(schema)).toEqual([]);
+  });
+
+  test('recognises the base kind of a nested object union', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('link'), target: z.string() }),
+        z.object({
+          kind: z.literal('select'),
+          target: z.union([
+            z.object({ names: z.array(z.string()) }),
+            z.object({ pattern: z.string() }),
+          ]),
+        }),
+      ]),
+    );
+    expect(field(schema, 'target')).toEqual({ type: ['string', 'object'] });
+    expect(findUntypedProperties(schema)).toEqual([]);
+  });
+
+  test('projects different nested object unions to one loose object kind', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('first'),
+          value: z.union([z.object({ a: z.string() }), z.object({ b: z.number() })]),
+        }),
+        z.object({
+          kind: z.literal('second'),
+          value: z.union([z.object({ c: z.boolean() }), z.object({ d: z.array(z.string()) })]),
+        }),
+      ]),
+    );
+    expect(field(schema, 'value')).toEqual({ type: 'object', additionalProperties: {} });
+  });
+
+  test('retains null alongside every divergent non-null kind', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('one'), value: z.string().nullable() }),
+        z.object({ kind: z.literal('many'), value: z.array(z.string()).nullable() }),
+      ]),
+    );
+    expect(field(schema, 'value')).toEqual({ type: ['string', 'array', 'null'] });
+  });
+
+  test('derives divergent kinds from const and enum values', () => {
+    const schema = flattenToolJsonSchema({
+      oneOf: [
+        {
+          type: 'object',
+          properties: { kind: { const: 'number' }, value: { const: 1 } },
+          required: ['kind', 'value'],
+        },
+        {
+          type: 'object',
+          properties: { kind: { const: 'boolean' }, value: { enum: [true, false] } },
+          required: ['kind', 'value'],
+        },
+      ],
+    });
+    expect(field(schema, 'value')).toEqual({ type: ['number', 'boolean'] });
+  });
+
+  test('does not guess through an unresolved reference', () => {
+    const schema = flattenToolJsonSchema({
+      oneOf: [
+        {
+          type: 'object',
+          properties: { kind: { const: 'known' }, value: { type: 'string' } },
+          required: ['kind', 'value'],
+        },
+        {
+          type: 'object',
+          properties: { kind: { const: 'reference' }, value: { $ref: '#/$defs/value' } },
+          required: ['kind', 'value'],
+        },
+      ],
+      $defs: { value: { type: 'object' } },
+    });
+    expect(field(schema, 'value').type).toBeUndefined();
+    expect(findUntypedProperties(schema).map((finding) => finding.path)).toContain('value');
   });
 
   test('merges string literals into one enum', () => {

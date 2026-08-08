@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
-import { createAuditHook, type RequestEvent } from '../src/observability';
+import { createObservability, type RequestEvent } from '../src/observability';
 import { implement } from '../src/server';
 
 const broadcast = defineContract(
@@ -25,7 +25,7 @@ if (!endpoint) throw new Error('test setup: missing endpoint');
 describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
   test('a tool event carries the contract verb in httpMethod, alongside service/action', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',
@@ -47,7 +47,7 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
 
   test('a failed tool call carries structured errorDetail', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',
@@ -73,7 +73,7 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
 describe('audit — the tool row names the cause of an unexpected throw', () => {
   test('the scrubbed message is replaced by the real one', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',
@@ -100,7 +100,7 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
 
   test('a thrown string is taken as the message', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',
@@ -122,7 +122,7 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
 
   test('a truthful envelope is left alone — an AppError keeps its own message', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',
@@ -140,7 +140,7 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
 
   test('without a raw error the row is exactly what it was', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
 
     audit.toolCall.afterToolCall?.({
       toolName: 'broadcast_create',

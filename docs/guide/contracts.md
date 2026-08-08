@@ -162,6 +162,19 @@ tools. Narrow it with `expose`:
 - `expose: ['MCP', 'AGENT']` — a tool only; no HTTP route.
 - omit `expose` — all transports.
 
+For a curated or security-sensitive tool surface, opt into explicit tool
+exposure at the scoped factory:
+
+```ts
+const { defineContract } = createContractFactory<AppScope>({
+  toolExposure: 'explicit',
+})
+```
+
+With this policy, omitting `expose` materializes `['HTTP']` on the returned
+endpoint. MCP, Agent and CLI then require an explicit endpoint array. The plain
+factory and `defineContract` keep the default-on behaviour above.
+
 Tool transports (`MCP`, `AGENT`) skip three kinds of endpoint automatically:
 `multipart` (a file upload is not a tool call) and
 [`rawResponse`](./server.md#raw-response-endpoints) (its answer is bytes, which
@@ -365,9 +378,11 @@ export const { defineContract } = createContractFactory<'public' | 'user' | 'adm
 export const users = defineContract({ prefix: 'users', scope: 'user' }, { … })
 ```
 
-The vocabulary is yours; each returned `ContractDef` retains its concrete scope
-literal, so scope-aware registries select the exact config without another
-wrapper.
+The vocabulary is yours; each returned `ScopedContractDef` retains its concrete
+scope literal as a required `meta.scope` field, so scope-aware registries select
+the exact config without `NonNullable` or another wrapper. Plain `ContractDef`
+keeps optional scope because ordinary `defineContract` still supports its
+default-public overload.
 
 ## One source of truth
 

@@ -1,7 +1,7 @@
 /**
  * The HTTP audit row names the cause without the project wiring it by hand.
  *
- * Before this, `createAuditHook`'s HTTP row took its error fields from
+ * The HTTP RequestEvent takes its error fields from
  * `ctx.error` — which the framework never wrote. A project that wired the audit
  * and nothing else recorded *that* a request failed and never *why*, while the
  * tool row had learned to name its own cause. → ADR 0042.
@@ -9,12 +9,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError, defineContract } from '../src/contract';
-import {
-  createAuditHook,
-  type RequestEvent,
-  setRequestError,
-  wrapInRequestContext,
-} from '../src/observability';
+import { createObservability, type RequestEvent, setRequestError } from '../src/observability';
 import { createHandler, implement } from '../src/server';
 
 const widgets = defineContract(
@@ -40,21 +35,26 @@ const service = implement(widgets, {
   },
 });
 
-/** Drive one request through the audit wrapper and return what it recorded. */
+/** Drive one request through framework-owned observability and return its row. */
 async function callAndAudit(
   path: string,
   hooks?: Parameters<typeof createHandler>[0]['hooks'],
 ): Promise<{ res: Response; event: RequestEvent | undefined }> {
   const events: RequestEvent[] = [];
-  const audit = createAuditHook({ write: (e) => void events.push(e) });
-  const handler = createHandler({ services: [service], hooks });
-  const wrapped = wrapInRequestContext(audit.http(handler));
+  const audit = createObservability({
+    request: { write: (e) => void events.push(e) },
+  });
+  const handler = createHandler({
+    services: [service],
+    hooks,
+    observability: audit.request,
+  });
 
   const original = console.error;
   console.error = () => undefined;
   let res: Response;
   try {
-    res = await wrapped(new Request(`http://localhost${path}`), undefined);
+    res = await handler(new Request(`http://localhost${path}`), undefined);
   } finally {
     console.error = original;
   }
@@ -148,13 +148,13 @@ describe('recording the failure changes nothing the caller can see', () => {
     const original = console.error;
     console.error = (...args: unknown[]) => void logged.push(args[0]);
     try {
-      const audit = createAuditHook({ write: () => undefined });
+      const audit = createObservability({ request: { write: () => undefined } });
       const handler = createHandler({
         services: [service],
         hooks: { onError: () => new Response('handled', { status: 503 }) },
+        observability: audit.request,
       });
-      const wrapped = wrapInRequestContext(audit.http(handler));
-      await wrapped(new Request('http://localhost/widgets/boom'), undefined);
+      await handler(new Request('http://localhost/widgets/boom'), undefined);
     } finally {
       console.error = original;
     }

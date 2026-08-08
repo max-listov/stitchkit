@@ -9,10 +9,10 @@ stitchkit answers this at two levels.
 - **The raw hooks** — `LifecycleHooks` and `ToolCallHooks`. Every request and
   every tool call passes through a point you can observe. The lowest level;
   always available. [Jump ↓](#the-raw-hooks)
-- **`stitchkit/observability`** — the audit layer built on those hooks: W3C
-  trace context, an `AsyncLocalStorage` request context, payload sanitisation,
-  and `createAuditHook` to wire it all into one sink. Your logging becomes a
-  table plus a `write` function. [Start here ↓](#the-observability-module)
+- **`stitchkit/observability`** — framework-owned HTTP completion plus canonical
+  tool hooks: W3C trace context, an `AsyncLocalStorage` request context, payload
+  sanitisation and `createObservability` with independent request/tool sinks.
+  [Start here ↓](#the-observability-module)
 
 stitchkit still ships no logger and no audit store — those are the app's choice.
 What it ships is the machinery that turns a completed call into a clean,
@@ -21,52 +21,55 @@ normalised record.
 ## The observability module
 
 `stitchkit/observability` is server-only. It has three parts — a trace context,
-a request context, and the audit hook — and you usually touch only the last.
+a request context, and event projections — and you usually touch only the last.
 
-### createAuditHook
+### createObservability
 
-`createAuditHook` is the whole module in one call. You give it a `write` sink;
-it gives you back a wrapper for each surface. Every completed call — HTTP
-request, MCP tool call, agent tool call — is normalised into one `RequestEvent`
-and handed to `write`.
+`createObservability` configures request and tool projections independently.
+Every completed call is normalised into one `RequestEvent`; HTTP completion is
+owned directly by `createHandler`, while MCP/Agent completion uses the canonical
+`ToolCallHooks` runner. There is no nested HTTP audit wrapper.
 
 ```ts
-import { createAuditHook } from 'stitchkit/observability'
+import { createObservability } from 'stitchkit/observability'
 
-export const audit = createAuditHook({
-  // The only thing the app supplies — persist one row.
-  write: (event) => {
-    db.auditLog.create({ data: {
-      traceId:    event.traceId,
-      source:     event.source,      // 'http' | 'mcp' | 'agent'
-      method:     event.method,      // verb, or 'TOOL'
-      path:       event.path,
-      ok:         event.ok,
-      statusCode: event.statusCode,
-      durationMs: event.durationMs,
-      userId:     event.userId,
-      payload:    event.payload,     // already sanitised
-    }})
+const write = (event) => db.auditLog.create({ data: {
+  traceId: event.traceId,
+  source: event.source,
+  method: event.method,
+  path: event.path,
+  ok: event.ok,
+  statusCode: event.statusCode,
+  durationMs: event.durationMs,
+  userId: event.userId,
+  payload: event.payload,
+}})
+
+export const observability = createObservability({
+  request: {
+    write,
+    includePayload: false, // default: no Request.clone(), payload is null
+    filter: (event) => event.method !== 'GET',
   },
-  // Optional — keep only the events you care about.
-  filter: (event) => event.source !== 'http' || event.method !== 'GET',
+  tools: {
+    write,
+    filter: (event) => event.source === 'mcp' || event.source === 'agent',
+  },
 })
 ```
 
-It returns an [`AuditHook`](#audithook) — `{ http, toolCall }`:
+Wire each projection where its completion is owned:
 
 ```ts
-// HTTP — wrap the fetch handler, inside wrapInRequestContext.
-Bun.serve({ fetch: wrapInRequestContext(audit.http(handler)) })
+createServer({ services, observability: observability.request })
 
-// MCP & agents — pass as the tool-call hooks.
-createMcpHandler({ /* … */ hooks: audit.toolCall })
-mountAgent(service, { hooks: audit.toolCall })
+createMcpHandler({ /* … */ hooks: observability.toolCall })
+mountAgent(service, { hooks: observability.toolCall })
 ```
 
-One `createAuditHook`, one sink, every surface. The sink runs
-fire-and-forget and its errors are swallowed — a slow or failing audit write
-can never block or break the request it observes.
+Each sink runs fire-and-forget and fails independently: a slow or broken request
+sink cannot block the response, suppress operational logging or break the tool
+sink.
 
 ### RequestEvent
 
@@ -85,32 +88,26 @@ queryable across all three:
 | `ok` / `statusCode` | outcome — real HTTP status, or `200`/`400` for a tool |
 | `durationMs` / `startedAt` | timing |
 | `errorCode` / `errorMessage` / `errorDetail` | failures only — `errorDetail` carries the structure the message flattens (e.g. Zod issues) |
-| `payload` | the request body / tool arguments — sanitised |
+| `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled |
 | `resultSize` / `responseBytes` | result item count + serialised size |
 | `userId` / `ipAddress` / `userAgent` | identity |
 
 ### Request context
 
-`createAuditHook`'s `http` wrapper reads a request context — trace ids, timing,
-identity — from `AsyncLocalStorage`. `wrapInRequestContext` establishes it, and
-must be the **outermost** wrapper of your fetch handler:
+When request observability is configured, `createHandler` establishes the
+`AsyncLocalStorage` request context itself and uses the same completion snapshot
+for operational logging and `RequestEvent`. No `wrapFetch` composition is
+needed:
 
 ```ts
-import { getTraceId, wrapInRequestContext } from 'stitchkit/observability'
-
-Bun.serve({
-  fetch: wrapInRequestContext(audit.http(handler)),
-})
+createServer({ services, logging, observability: observability.request })
 ```
 
-`createServer` and `serveNode` build their own `fetch`, so compose through
-**`wrapFetch`** instead — same order, the context outermost:
+`wrapInRequestContext` remains available for a custom fetch pipeline that does
+not use `createHandler`; it is no longer part of built-in HTTP audit wiring:
 
 ```ts
-createServer({
-  services,
-  wrapFetch: (fetch) => wrapInRequestContext(audit.http(fetch)),
-})
+Bun.serve({ fetch: wrapInRequestContext(customFetch) })
 ```
 
 Some fields are filled in late. Set them from the hooks that know:
@@ -245,8 +242,8 @@ every tool call underneath it. With no inbound header a fresh root trace is
 minted. Each tool call opens a [`childSpan`](#trace-context) of the request it
 runs in.
 
-You rarely call the trace functions directly — `wrapInRequestContext` and
-`createAuditHook` use them for you. They are exported (`resolveTraceContext`,
+You rarely call the trace functions directly — `createHandler` request
+observability and `wrapInRequestContext` use them for you. They are exported (`resolveTraceContext`,
 `parseTraceparent`, `formatTraceparent`, `childSpan`) for when you need to
 propagate a `traceparent` onward to another service.
 
@@ -281,12 +278,19 @@ A payload goes into an audit row only after `sanitizePayload`:
   never the bytes;
 - the result is **capped** — anything over the byte limit becomes a preview.
 
-`createAuditHook` runs it on every event; tune it through `sanitize`:
+`createObservability` runs it on every emitted event; tune each sink separately:
 
 ```ts
-createAuditHook({
-  write,
-  sanitize: { maxBytes: 8_000, sensitiveKeys: /password|token|pin/i },
+createObservability({
+  request: {
+    write,
+    includePayload: true,
+    sanitize: { maxBytes: 8_000, sensitiveKeys: /password|token|pin/i },
+  },
+  tools: {
+    write,
+    sanitize: { maxBytes: 8_000, sensitiveKeys: /password|token|pin/i },
+  },
 })
 ```
 
@@ -295,7 +299,7 @@ need to sanitise something outside the audit path.
 
 ## The raw hooks
 
-`createAuditHook` is built on hooks you can also use directly — for a one-off
+Tool observability is built on hooks you can also use directly — for a one-off
 metric, a custom log line, anything that is not a full audit row.
 
 | Surface | Hook | Fires |
@@ -369,7 +373,7 @@ observe. (This is also why it lives on `ToolCallHooks` rather than being an
 object must stay assignable to `ToolLifecycle`.)
 
 **Do not reach for `setRequestError` here.** It writes to the *request* context,
-which `createAuditHook`'s **tool** row does not read: a tool event takes
+which the built-in **tool** row does not read: a tool event takes
 `errorCode` / `errorMessage` / `errorDetail` from the `ToolResult`, and only
 identity and `dimensions` from the context. Calling it in `onToolError` would
 leave the tool row exactly as scrubbed as before. It is right for the **HTTP**
@@ -395,7 +399,7 @@ validation failure or a `beforeToolCall` rejection leaves it `undefined`, becaus
 neither ever had a raw value to lose. Consumers destructure only the fields they
 use; future optional fields do not change callback arity.
 
-`createAuditHook` uses it already. Where the envelope was scrubbed to
+`createObservability({ tools })` uses it already. Where the envelope was scrubbed to
 `INTERNAL_SERVER_ERROR`, the row's `errorMessage` becomes the real message
 instead of the placeholder; a truthful envelope (a thrown `AppError`, a
 `ZodError`) is left alone, `errorCode` and `errorDetail` are untouched, and the
@@ -408,7 +412,7 @@ sink of your own (a tracker, a stack, an alert), `afterToolCall` for the record.
 
 ### Keying a row on (service, action)
 
-`createAuditHook` already keys every event by **service** and **action**
+Built-in observability keys every event by **service** and **action**
 (`event.serviceName` / `event.action`, → ADR 0029) — reach for the raw hook only
 when you also need the handler **output**, which the audit wrapper never sees. For
 that, read the endpoint identity off the `OperationIdentity` the tool hook
@@ -436,11 +440,11 @@ hooks: {
 }
 ```
 
-> **Why the HTTP audit is a wrapper, not a lifecycle hook.** `LifecycleHooks`
-> has a single `onError` — an audit built on it would compete with the app's own
-> error handler. `createAuditHook`'s `http` wrapper sees the final `Response`
-> instead, success and error alike, and never contends for a hook. The raw
-> lifecycle hooks remain yours for everything else.
+> **Why HTTP observability is framework-owned, not a lifecycle hook.**
+> `LifecycleHooks` has a single `onError`; an audit built on it would compete
+> with the app's error renderer and miss raw/unmatched exits. `createHandler`
+> sees the final response on every path and emits one completion without
+> consuming an application hook.
 
 Keep any sink **asynchronous and self-contained**: a slow or failing write must
 never block or break the request. Swallow the sink's own errors.

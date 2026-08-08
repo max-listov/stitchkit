@@ -140,7 +140,6 @@ function ipLabel(ip: string): string {
 
 export interface RequestLog {
   traceId: string;
-  startTime: number;
 }
 
 const SKIP_PREFIXES = ['/_bun/', '/_bundle', '/favicon'];
@@ -162,7 +161,7 @@ export function logIncoming(
   format: LogFormat,
   ipAddress?: string,
 ): RequestLog {
-  const log: RequestLog = { traceId, startTime: performance.now() };
+  const log: RequestLog = { traceId };
   if (format === 'pretty') {
     const mc = METHOD_COLOR[req.method] ?? c.dim;
     console.log(
@@ -216,7 +215,7 @@ export interface CompletedRequest {
 export function logOutgoing(entry: CompletedRequest): void {
   const { req, pathname, status, log, ipAddress, errorCode, durationMs, format, extra } =
     entry;
-  const ms = elapsedMs(log.startTime);
+  const ms = durationMs;
 
   if (format === 'json') {
     // The framework's own fields are one object so they can be re-emitted

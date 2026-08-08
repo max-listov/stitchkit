@@ -54,7 +54,15 @@ export {
   type ErrorFactoryArguments,
   type FrozenErrorDefinitions,
 } from './errors-factory';
-export { createContractFactory, type ScopedDefineContract } from './factory';
+export {
+  type ContractFactoryConfig,
+  type ContractFactoryToolExposure,
+  createContractFactory,
+  type ExplicitScopedDefineContract,
+  type ExplicitToolExposureEndpoints,
+  type ScopedContractDef,
+  type ScopedDefineContract,
+} from './factory';
 
 export {
   decodeCursor,

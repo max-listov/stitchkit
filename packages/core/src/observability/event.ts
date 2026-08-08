@@ -3,8 +3,8 @@ import type { JsonValue } from './sanitize';
 
 /**
  * A normalised audit event — one shape for a completed call on any surface
- * (an HTTP request, an MCP tool call, an agent tool call). `createAuditHook`
- * produces it and hands it to the project's `write` sink. The project maps it
+ * (an HTTP request, an MCP tool call, an agent tool call). `createObservability`
+ * produces it and hands it to the configured surface sink. The project maps it
  * onto its own audit table; stitchkit owns the normalisation.
  */
 export interface RequestEvent {

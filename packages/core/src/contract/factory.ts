@@ -21,8 +21,30 @@
  * and the tool mounts treat them exactly as before.
  */
 
-import type { ContractDef, EndpointDef } from './define';
+import { mapObjectTypeBoundary } from '../internal/typed';
+import type { ContractDef, ContractMeta, EndpointDef, Transport } from './define';
 import { defineContract } from './define';
+
+export type ContractFactoryToolExposure = 'explicit';
+
+export interface ContractFactoryConfig {
+  /** Missing endpoint `expose` becomes HTTP-only; every tool surface is opt-in. */
+  toolExposure: ContractFactoryToolExposure;
+}
+
+export type ExplicitToolExposureEndpoints<T extends Record<string, EndpointDef>> = {
+  [K in keyof T]: T[K] extends { expose: readonly Transport[] }
+    ? T[K]
+    : T[K] & { expose: readonly ['HTTP'] };
+};
+
+/** A factory-defined contract whose concrete scope remains required in metadata. */
+export interface ScopedContractDef<
+  T extends Record<string, EndpointDef> = Record<string, EndpointDef>,
+  TScope extends string = string,
+> extends ContractDef<T, TScope> {
+  meta: ContractMeta<TScope> & { scope: TScope };
+}
 
 /** A `defineContract` whose `scope` is required and typed to `TScope`. */
 export type ScopedDefineContract<TScope extends string> = <
@@ -31,7 +53,16 @@ export type ScopedDefineContract<TScope extends string> = <
 >(
   meta: { prefix: string; scope: TContractScope; meta?: Record<string, unknown> },
   endpoints: T,
-) => ContractDef<T, TContractScope>;
+) => ScopedContractDef<T, TContractScope>;
+
+/** Scoped contract authoring where every omitted exposure becomes HTTP-only. */
+export type ExplicitScopedDefineContract<TScope extends string> = <
+  const TContractScope extends TScope,
+  const T extends Record<string, EndpointDef>,
+>(
+  meta: { prefix: string; scope: TContractScope; meta?: Record<string, unknown> },
+  endpoints: T,
+) => ScopedContractDef<ExplicitToolExposureEndpoints<T>, TContractScope>;
 
 /**
  * Build a `defineContract` that requires a `scope` from the application's own
@@ -39,21 +70,43 @@ export type ScopedDefineContract<TScope extends string> = <
  */
 export function createContractFactory<TScope extends string>(): {
   defineContract: ScopedDefineContract<TScope>;
-} {
-  return {
-    defineContract: (meta, endpoints) => {
-      // Run the real `defineContract` for its validation (duplicate toolName,
-      // empty desc), then return with the app's scope typed — its overloads
-      // would otherwise resolve to the default `'public'` scope. No cast: the
-      // result is rebuilt from the validated endpoints + the given scope.
-      const validated = defineContract({ prefix: meta.prefix }, endpoints);
-      return {
-        endpoints: validated.endpoints,
-        // Every field of the given meta is forwarded — rebuilding it by hand
-        // silently dropped anything added to `ContractMeta` (a contract-level
-        // `meta` default would never reach an endpoint). → ADR 0036.
-        meta: { ...meta, prefix: meta.prefix, scope: meta.scope },
-      };
-    },
+};
+export function createContractFactory<TScope extends string>(
+  config: ContractFactoryConfig,
+): {
+  defineContract: ExplicitScopedDefineContract<TScope>;
+};
+export function createContractFactory<TScope extends string>(
+  config?: ContractFactoryConfig,
+):
+  | { defineContract: ScopedDefineContract<TScope> }
+  | { defineContract: ExplicitScopedDefineContract<TScope> } {
+  const scoped: ScopedDefineContract<TScope> = (meta, endpoints) => {
+    // Run the real `defineContract` for its validation (duplicate toolName,
+    // empty desc), then return with the app's scope typed — its overloads
+    // would otherwise resolve to the default `'public'` scope. No cast: the
+    // result is rebuilt from the validated endpoints + the given scope.
+    const validated = defineContract({ prefix: meta.prefix }, endpoints);
+    return {
+      endpoints: validated.endpoints,
+      // Every field of the given meta is forwarded — rebuilding it by hand
+      // silently dropped anything added to `ContractMeta` (a contract-level
+      // `meta` default would never reach an endpoint). → ADR 0036.
+      meta: { ...meta, prefix: meta.prefix, scope: meta.scope },
+    };
   };
+
+  if (config?.toolExposure !== 'explicit') return { defineContract: scoped };
+
+  const explicit: ExplicitScopedDefineContract<TScope> = (meta, endpoints) => {
+    const materialized = mapObjectTypeBoundary<
+      typeof endpoints,
+      ExplicitToolExposureEndpoints<typeof endpoints>
+    >(endpoints, (_key, endpoint) =>
+      endpoint.expose ? endpoint : { ...endpoint, expose: ['HTTP'] },
+    );
+    return scoped(meta, materialized);
+  };
+
+  return { defineContract: explicit };
 }

@@ -91,20 +91,101 @@ function stringValues(schema: ToolPresentationSchema): string[] | null {
   return values.length === schema.enum.length ? values : null;
 }
 
-function typeNames(schema: ToolPresentationSchema): string[] | null {
-  if (typeof schema.type === 'string') return [schema.type];
-  if (Array.isArray(schema.type)) {
-    const values = schema.type.filter((value): value is string => typeof value === 'string');
-    if (values.length === schema.type.length) return values;
+type JsonSchemaType =
+  | 'array'
+  | 'boolean'
+  | 'integer'
+  | 'null'
+  | 'number'
+  | 'object'
+  | 'string';
+
+const JSON_SCHEMA_TYPE_ORDER: JsonSchemaType[] = [
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'object',
+  'array',
+  'null',
+];
+
+function jsonSchemaType(value: unknown): JsonSchemaType | null {
+  switch (value) {
+    case 'array':
+    case 'boolean':
+    case 'integer':
+    case 'null':
+    case 'number':
+    case 'object':
+    case 'string':
+      return value;
+    default:
+      return null;
   }
-  const values = stringValues(schema);
-  if (values) return ['string'];
-  if (typeof schema.const === 'number') return ['number'];
-  if (typeof schema.const === 'boolean') return ['boolean'];
+}
+
+function valueType(value: unknown): JsonSchemaType | null {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (isRecord(value)) return 'object';
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'boolean') return 'boolean';
   return null;
 }
 
-function typeSchema(type: string, nullable: boolean): ToolPresentationSchema {
+function normalizeTypes(types: Iterable<JsonSchemaType>): JsonSchemaType[] {
+  const normalized = new Set(types);
+  if (normalized.has('number')) normalized.delete('integer');
+  return JSON_SCHEMA_TYPE_ORDER.filter((type) => normalized.has(type));
+}
+
+function combinedBranchTypes(schema: ToolPresentationSchema): JsonSchemaType[] | null {
+  for (const keyword of ['oneOf', 'anyOf']) {
+    const value = schema[keyword];
+    if (!Array.isArray(value) || value.length === 0) continue;
+    const collected: JsonSchemaType[] = [];
+    for (const branch of value) {
+      if (!isRecord(branch)) return null;
+      const types = typeNames(branch);
+      if (!types) return null;
+      collected.push(...types);
+    }
+    return normalizeTypes(collected);
+  }
+  return null;
+}
+
+function typeNames(schema: ToolPresentationSchema): JsonSchemaType[] | null {
+  const direct = jsonSchemaType(schema.type);
+  if (direct) return [direct];
+  if (Array.isArray(schema.type)) {
+    const values: JsonSchemaType[] = [];
+    for (const value of schema.type) {
+      const type = jsonSchemaType(value);
+      if (!type) return null;
+      values.push(type);
+    }
+    return values.length > 0 ? normalizeTypes(values) : null;
+  }
+  if (schema.const !== undefined) {
+    const type = valueType(schema.const);
+    return type ? [type] : null;
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const values: JsonSchemaType[] = [];
+    for (const value of schema.enum) {
+      const type = valueType(value);
+      if (!type) return null;
+      values.push(type);
+    }
+    return normalizeTypes(values);
+  }
+  return combinedBranchTypes(schema);
+}
+
+function typeSchema(type: JsonSchemaType, nullable: boolean): ToolPresentationSchema {
   const schema: ToolPresentationSchema = { type: nullable ? [type, 'null'] : type };
   if (type === 'array') schema.items = {};
   if (type === 'object') schema.additionalProperties = {};
@@ -115,7 +196,7 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
   const names = schemas.map(typeNames);
   if (names.some((value) => value === null)) return {};
   let nullable = false;
-  const bases = new Set<string>();
+  const bases = new Set<JsonSchemaType>();
   for (const branch of names) {
     if (!branch) return {};
     for (const name of branch) {
@@ -123,6 +204,7 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
       else bases.add(name);
     }
   }
+  if (bases.size === 0) return nullable ? { type: 'null' } : {};
   if (bases.size === 1) {
     const [only] = bases;
     return only ? typeSchema(only, nullable) : {};
@@ -130,7 +212,8 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
   if ([...bases].every((name) => name === 'integer' || name === 'number')) {
     return typeSchema('number', nullable);
   }
-  return {};
+  const types = normalizeTypes(nullable ? [...bases, 'null'] : bases);
+  return types.length > 0 ? { type: types } : {};
 }
 
 export function mergePropertySchemas(properties: VariantProperty[]): ToolPresentationSchema {

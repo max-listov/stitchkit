@@ -62,6 +62,32 @@ current one *up to* your target, and apply each snippet.
 
 ## Unreleased breaking migrations
 
+HTTP observability now completes inside the framework handler instead of a
+nested fetch wrapper. Configure request and tool sinks explicitly:
+
+```ts
+// before
+const audit = createAuditHook({ write })
+createServer({
+  services,
+  wrapFetch: (handler) => wrapInRequestContext(audit.http(handler)),
+})
+mountAgent(services, { hooks: audit.toolCall })
+
+// after
+const observability = createObservability({
+  request: { write, includePayload: true },
+  tools: { write },
+})
+createServer({ services, observability: observability.request })
+mountAgent(services, { hooks: observability.toolCall })
+```
+
+Body capture changed from always-on for body methods to opt-in. Set
+`includePayload: true` only when the request sink needs the sanitized JSON body.
+There is no `createAuditHook` or `audit.http` compatibility path;
+`wrapInRequestContext` remains only for custom fetch pipelines.
+
 Tool introspection now accepts one object-shaped contract/runtime surface. Stop
 calling the internal contract collector or merging a locally converted runtime
 manifest:

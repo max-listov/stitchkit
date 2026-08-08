@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { implement } from '../src/server/implement';
 import { flattenToolJsonSchema } from '../src/tools/flatten';
+import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools } from '../src/tools/mount';
 import { buildToolPresentationSchema } from '../src/tools/presentation';
 
@@ -30,6 +31,22 @@ const contract = defineContract(
 );
 const service = implement(contract, { create: () => undefined });
 
+const divergentContract = defineContract(
+  { prefix: 'divergent' },
+  {
+    create: {
+      method: 'POST',
+      path: '/',
+      desc: 'Create a divergent value',
+      input: z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('one'), value: z.string() }),
+        z.object({ kind: z.literal('many'), value: z.array(z.string()) }),
+      ]),
+    },
+  },
+);
+const divergentService = implement(divergentContract, { create: () => undefined });
+
 describe('presentation flattening walks the JSON Schema graph', () => {
   test('nested discriminated unions stay intact by default', () => {
     const [tool] = collectTools(service, 'AGENT');
@@ -52,6 +69,26 @@ describe('presentation flattening walks the JSON Schema graph', () => {
     if (!tool) throw new Error('expected tool');
     expect(JSON.stringify(z.toJSONSchema(part, { io: 'input' }))).toBe(before);
     expect(Object.isFrozen(tool.presentationSchema)).toBe(true);
+  });
+
+  test('MCP and AGENT receive the same flattened presentation document', () => {
+    const [mcp] = collectTools(divergentService, 'MCP', { flattenUnionInput: true });
+    const [agent] = collectTools(divergentService, 'AGENT', { flattenUnionInput: true });
+    if (!mcp || !agent) throw new Error('expected both tool transports');
+    expect(mcp.presentationSchema).toEqual(agent.presentationSchema);
+    expect(JSON.stringify(mcp.presentationSchema)).not.toContain('oneOf');
+    expect(JSON.stringify(mcp.presentationSchema)).not.toContain('anyOf');
+  });
+
+  test('the manifest reuses the same flattened presentation document', () => {
+    const [agent] = collectTools(divergentService, 'AGENT', { flattenUnionInput: true });
+    const [manifest] = buildToolManifest({
+      services: [divergentService],
+      transport: 'AGENT',
+      flattenUnionInput: true,
+    });
+    if (!agent || !manifest) throw new Error('expected tool and manifest entry');
+    expect(manifest.inputSchema).toEqual(agent.presentationSchema);
   });
 
   test('tuple items and definition nodes are traversed without resolving references', () => {

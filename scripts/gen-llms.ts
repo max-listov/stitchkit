@@ -73,6 +73,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'a /tenants/:id/… scenario end-to-end — scopePrefixes, scoped client, extend',
   ],
   [
+    'frontend-integrations.md',
+    'Frontend integrations',
+    'React Router resource routes and a separate Vite development proxy',
+  ],
+  [
     'upgrading.md',
     'Upgrading',
     'moving a project across stitchkit versions; how breaking changes are marked',

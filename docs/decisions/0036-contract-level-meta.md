@@ -88,8 +88,9 @@ which had silently dropped any field beyond `prefix` and `scope`.
   ergonomics are real but they are bought with a new silent-change vector, for a
   safety benefit that is roughly nil.
 - **A required-`expose` strict factory** (as `createContractFactory` does for
-  `scope`). Deferred: without threading a `TExpose` generic through `ContractDef`
-  (9 call sites) it is strictness with no compile-time consequence.
+  `scope`). Deferred here; later consumer evidence produced the type-visible,
+  materialized factory policy in [ADR 0062](0062-explicit-tool-exposure-is-a-factory-policy.md).
+  It does not introduce the contract-level inheritance rejected by this ADR.
 
 ## Consequences
 

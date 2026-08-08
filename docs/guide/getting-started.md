@@ -34,7 +34,7 @@ keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 | `stitchkit/node` | server (Node ≥ 22) | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
 | `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
 | `stitchkit/cli` | server | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
-| `stitchkit/observability` | server | the audit layer — `createAuditHook`, trace context, sanitisation |
+| `stitchkit/observability` | server | request/tool event projections — `createObservability`, trace context, sanitisation |
 | `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server
@@ -158,4 +158,6 @@ actionable error naming the package and the install command — not a bare
 - [Testing & deployment](./testing-and-deployment.md).
 - [API reference](../api/reference.md) — every export, by entrypoint.
 
-A complete runnable app is in [`packages/starter`](../../packages/starter).
+For a complete production-shaped app, run `bun create stitchkit my-app`. The
+canonical generated topology is maintained in
+[`packages/create-stitchkit/template`](../../packages/create-stitchkit/template).

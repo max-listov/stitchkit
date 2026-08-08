@@ -1,31 +1,33 @@
 # CI + Release — one workflow for everything.
 #
 # Jobs:
-#   ci          — lint, typecheck, test, build (every push/PR)
-#   node-smoke  — Node 22 import check (after ci)
-#   release     — npm publish + GitHub Release (only on v* tag)
+#   ci            — lint, typecheck, tests, builds and static packed starter
+#   starter-head  — compatibility probe against the packed local core
+#   node-smoke    — Node 22 import check (after ci)
+#   release-core  — publish stitchkit from v* tags
+#   release-create — publish create-stitchkit from create-stitchkit-v* tags
 #
 # npm auth: OIDC trusted publishing — no token stored.
 #
 # ONE-TIME npm-side setup (required before the first automated release):
 #   npmjs.com → package `stitchkit` → Settings → Trusted Publisher →
-#   add a GitHub Actions publisher:
+#   add the same GitHub Actions publisher for `stitchkit` and `create-stitchkit`:
 #     organization/user: max-listov
 #     repository:        stitchkit
 #     workflow filename: ci.yml
 #   Until this is configured the "Publish to npm" step fails.
 #
-# Release flow:
-#   1. bump `version` in packages/core/package.json
-#   2. move CHANGELOG `[Unreleased]` into a new version section
-#   3. commit, then: git tag vX.Y.Z && git push origin vX.Y.Z
+# Core and scaffolder release independently. Their versions never need to match.
+#   stitchkit:        bump packages/core + root CHANGELOG, tag vX.Y.Z
+#   create-stitchkit: bump packages/create-stitchkit + its CHANGELOG,
+#                     tag create-stitchkit-vX.Y.Z
 
 name: CI
 
 on:
   push:
     branches: [master, main]
-    tags: ['v*']
+    tags: ['v*', 'create-stitchkit-v*']
   pull_request:
 
 permissions:
@@ -35,6 +37,22 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v6
 
@@ -50,16 +68,19 @@ jobs:
         run: bun run lint
 
       - name: Typecheck
-        working-directory: packages/core
         run: bun run check
 
       - name: Test
-        working-directory: packages/core
-        run: bun test
+        run: bun run test
 
       - name: Build
-        working-directory: packages/core
         run: bun run build
+
+      - name: Install starter browsers
+        run: bunx playwright install --with-deps chromium webkit
+
+      - name: Packed starter lane
+        run: bun run starter-lane
 
   node-smoke:
     runs-on: ubuntu-latest
@@ -101,7 +122,43 @@ jobs:
         working-directory: packages/core
         run: bun run consumer-lane
 
-  release:
+  starter-head:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ !startsWith(github.ref, 'refs/tags/create-stitchkit-v') }}
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Install starter browsers
+        run: bunx playwright install --with-deps chromium webkit
+
+      - name: Packed starter against framework HEAD
+        run: bun run starter-head-lane
+
+  release-core:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: [ci, node-smoke]
@@ -126,21 +183,25 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      - name: Verify tag matches package version
-        working-directory: packages/core
+      - name: Verify tag matches stitchkit
         run: |
-          PKG="$(node -p "require('./package.json').version")"
+          CORE="$(node -p "require('./packages/core/package.json').version")"
           TAG="${GITHUB_REF_NAME#v}"
-          if [ "$PKG" != "$TAG" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG"
+          if [ "$CORE" != "$TAG" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match stitchkit $CORE"
             exit 1
           fi
 
-      # `npm publish` runs `prepublishOnly` (copies the README, builds dist/).
-      # OIDC auth is automatic — no NODE_AUTH_TOKEN.
-      - name: Publish to npm
+      - name: Publish stitchkit when missing
         working-directory: packages/core
-        run: npm publish --provenance --access public
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          npm view "stitchkit@$VERSION" version >/dev/null 2>&1 || npm publish --provenance --access public
+
+      - name: Verify published stitchkit
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          test "$(npm view "stitchkit@$VERSION" version)" = "$VERSION"
 
       - name: Extract changelog for this version
         run: |
@@ -154,4 +215,62 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME"
           --title "stitchkit $GITHUB_REF_NAME"
+          --notes-file /tmp/release-notes.md
+
+  release-create:
+    if: startsWith(github.ref, 'refs/tags/create-stitchkit-v')
+    runs-on: ubuntu-latest
+    needs: [ci, starter-head]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Update npm
+        run: npm install -g npm@11.5.0
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Verify tag matches create-stitchkit
+        run: |
+          CREATE="$(node -p "require('./packages/create-stitchkit/package.json').version")"
+          TAG="${GITHUB_REF_NAME#create-stitchkit-v}"
+          if [ "$CREATE" != "$TAG" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match create-stitchkit $CREATE"
+            exit 1
+          fi
+
+      - name: Publish create-stitchkit when missing
+        working-directory: packages/create-stitchkit
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          npm view "create-stitchkit@$VERSION" version >/dev/null 2>&1 || npm publish --provenance --access public
+
+      - name: Verify published create-stitchkit
+        run: |
+          VERSION="${GITHUB_REF_NAME#create-stitchkit-v}"
+          test "$(npm view "create-stitchkit@$VERSION" version)" = "$VERSION"
+
+      - name: Extract create-stitchkit changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#create-stitchkit-v}"
+          BODY=$(awk "/^## \[$VERSION\]/{found=1; next} /^## \[/{if(found) exit} found{print}" packages/create-stitchkit/CHANGELOG.md)
+          echo "$BODY" > /tmp/release-notes.md
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --title "create-stitchkit v${GITHUB_REF_NAME#create-stitchkit-v}"
           --notes-file /tmp/release-notes.md

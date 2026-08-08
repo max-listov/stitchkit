@@ -87,6 +87,11 @@ from the root `stitchkit`.
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
 | `createContractFactory` | function | a `defineContract` with a required allowed scope that retains each concrete literal — [guide](../guide/contracts.md#scope) |
+| `ContractFactoryConfig` | _type_ | optional scoped-factory policy, including explicit tool exposure |
+| `ContractFactoryToolExposure` | _type_ | `'explicit'` — omitted endpoint exposure materializes as HTTP-only |
+| `ExplicitScopedDefineContract` | _type_ | scoped factory authoring with explicit tool opt-in |
+| `ExplicitToolExposureEndpoints` | _type_ | endpoint map after missing exposure is materialized as `['HTTP']` |
+| `ScopedContractDef` | _type_ | a factory-defined contract whose `meta.scope` is the required concrete literal |
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
@@ -297,14 +302,18 @@ Server-only. The audit layer one level above the raw hooks — W3C trace context
 an `AsyncLocalStorage` request context, payload sanitisation and a normalised
 audit event. See the [Observability guide](../guide/observability.md).
 
-### Audit
+### Events
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAuditHook` | function | wire both surfaces into one sink — [guide](../guide/observability.md#createaudithook) |
+| `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink |
-| `AuditConfig` | _type_ | config for `createAuditHook` |
-| `AuditHook` | _type_ | the `{ http, toolCall }` the hook returns |
+| `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
+| `Observability` | _type_ | the `{ request?, toolCall }` wiring result |
+| `RequestEventSinkConfig` | _type_ | `write`, `filter` and sanitisation for one event surface |
+| `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture |
+| `HttpRequestCompletion` | _type_ | the single framework-owned HTTP outcome projected to logging and request events |
+| `HttpRequestObserver` | _type_ | server-facing projection consumed by `HandlerConfig.observability` |
 
 ### Request context
 
@@ -361,6 +370,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `defineRuntimeTool` | function | define one validated pathless operation for MCP, Agent or both — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
+| `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
@@ -387,6 +397,12 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
 | `RuntimeToolDefinitionWithOutput` | _type_ | runtime definition whose handler and presenters share a validated output type |
 | `RuntimeToolDefinitionWithoutOutput` | _type_ | runtime definition with a void handler and no presentation callbacks |
+| `RuntimeToolFactory` | _type_ | identity/context-bound runtime-tool definition factory |
+| `RuntimeToolFactoryConfig` | _type_ | factory service identity and context schema |
+| `RuntimeToolFactoryDefinitionWithOutput` | _type_ | factory-authored runtime tool with a validated output schema |
+| `RuntimeToolFactoryDefinitionWithoutOutput` | _type_ | factory-authored void runtime tool without presenters |
+| `RuntimeToolFactoryHandlerContext` | _type_ | parsed factory context plus parsed tool input |
+| `RuntimeToolFactoryIdentityFields` | _type_ | per-tool action, semantic method and optional identity metadata |
 | `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for runtime lifecycle/audit |
 | `RuntimeToolHandlerContext` | _type_ | runtime context with the definition's parsed input |
 | `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |
@@ -491,7 +507,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolSurfaceTransport` | _type_ | tool collector transport: `'MCP' \| 'AGENT' \| 'CLI'` |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
-| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions in a JSON Schema document into conservative object joins; never executes validation |
+| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; divergent fields retain every provable base kind in a deterministic `type` array, and the projection never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |

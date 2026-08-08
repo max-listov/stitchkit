@@ -74,6 +74,14 @@ These records were consolidated from the project's internal design notes on
 | [0057](0057-finite-prepared-mcp-surfaces.md) | Finite prepared MCP surfaces | Accepted — bounded descriptor preparation with fresh request state |
 | [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Accepted — immutable status/schema registry and typed constructors |
 | [0059](0059-unified-tool-surface-introspection.md) | Unified tool-surface introspection | Accepted — one mixed contract/runtime collector for mounts and diagnostics |
+| [0060](0060-official-starter-composes-next-and-stitchkit.md) | Official starter composes Next.js with a separate Stitchkit backend | Accepted — one production-shaped scaffold without framework-owned frontend infrastructure |
+| [0061](0061-independent-starter-release-line.md) | Official starter advances independently from framework HEAD | Accepted — explicit catalog target, lockfile and separate release tags |
+| [0062](0062-explicit-tool-exposure-is-a-factory-policy.md) | Explicit tool exposure is an opt-in factory policy | Accepted — refines 0036 without contract-level inheritance |
+| [0063](0063-one-http-completion-many-observability-projections.md) | One HTTP completion feeds every observability projection | Accepted — supersedes the HTTP wrapper in 0012; refines 0039 |
+| [0064](0064-runtime-tool-factories-validate-context-at-execution.md) | Runtime-tool factories validate context at execution | Accepted — extends 0055 without a parallel runner |
+| [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary |
+| [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — direct HMR source; generated copies are disposable validation fixtures |
+| [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

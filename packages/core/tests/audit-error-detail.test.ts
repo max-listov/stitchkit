@@ -1,30 +1,38 @@
 import { describe, expect, test } from 'bun:test';
 import type { RequestEvent } from '../src/observability';
-import { createAuditHook, setRequestError, wrapInRequestContext } from '../src/observability';
+import { createObservability, setRequestError } from '../src/observability';
+import { createHandler } from '../src/server';
 
 describe('audit — structured error detail', () => {
   test('setRequestError({ details }) flows onto RequestEvent.errorDetail', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
+    const audit = createObservability({
+      request: { write: (e) => void events.push(e) },
+    });
 
     // Innermost handler records a structured error, as a project's onError would.
-    const handler = async () => {
-      setRequestError({
-        code: 'VALIDATION_ERROR',
-        message: 'name: Required',
-        details: { issues: [{ path: 'name', message: 'Required' }] },
-      });
-      return new Response(JSON.stringify({ error: { code: 'VALIDATION_ERROR' } }), {
-        status: 400,
-        headers: { 'content-type': 'application/json' },
-      });
-    };
+    const handler = createHandler({
+      observability: audit.request,
+      rawRoutes: [
+        {
+          method: 'POST',
+          path: '/items',
+          handler: () => {
+            setRequestError({
+              code: 'VALIDATION_ERROR',
+              message: 'name: Required',
+              details: { issues: [{ path: 'name', message: 'Required' }] },
+            });
+            return new Response(JSON.stringify({ error: { code: 'VALIDATION_ERROR' } }), {
+              status: 400,
+              headers: { 'content-type': 'application/json' },
+            });
+          },
+        },
+      ],
+    });
 
-    const wrapped = wrapInRequestContext(audit.http(handler));
-    const res = await wrapped(
-      new Request('http://localhost/items', { method: 'POST' }),
-      undefined,
-    );
+    const res = await handler(new Request('http://localhost/items', { method: 'POST' }));
     expect(res.status).toBe(400);
 
     // The sink runs detached — yield until it has emitted.
@@ -39,11 +47,15 @@ describe('audit — structured error detail', () => {
 
   test('a success carries no errorDetail', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (e) => void events.push(e) });
-    const handler = async () => new Response('{}', { status: 200 });
+    const audit = createObservability({
+      request: { write: (e) => void events.push(e) },
+    });
+    const handler = createHandler({
+      observability: audit.request,
+      rawRoutes: [{ method: 'GET', path: '/items', handler: () => new Response('{}') }],
+    });
 
-    const wrapped = wrapInRequestContext(audit.http(handler));
-    await wrapped(new Request('http://localhost/items'), undefined);
+    await handler(new Request('http://localhost/items'));
     await Bun.sleep(10);
 
     expect(events[0]?.ok).toBe(true);

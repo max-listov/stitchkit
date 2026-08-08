@@ -139,13 +139,18 @@ return shape, changed default, stricter validation):
 
 ## Releasing
 
-Tag-driven — CI publishes on a `v*` tag (npm via OIDC trusted publishing + a
-GitHub Release). Full flow lives in the `.github/workflows/ci.yml` header:
+Tag-driven and independent (npm via OIDC trusted publishing + GitHub Releases).
+Full flow lives in the `.github/workflows/ci.yml` header:
 
-1. Bump `version` in `packages/core/package.json`.
-2. Roll `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] — <date>`; add a fresh empty
-   `[Unreleased]` and the footer compare links.
-3. `bun run verify` green, then commit `release: X.Y.Z`.
-4. `git push origin master`, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-   CI checks `tag == package version`, runs `npm publish --provenance`, and cuts
-   the GitHub Release from that changelog section.
+- **stitchkit:** bump only `packages/core/package.json`, roll the root
+  `CHANGELOG.md`, run `bun run verify`, then tag `vX.Y.Z`. CI checks the core
+  version, publishes only `stitchkit` and reads the root changelog.
+- **create-stitchkit:** update the template's single `catalog.stitchkit` target
+  and lockfile, pass both `starter-lane` and `starter-head-lane`, bump only
+  `packages/create-stitchkit/package.json`, roll its own `CHANGELOG.md`, then tag
+  `create-stitchkit-vX.Y.Z`. CI checks the scaffolder version and publishes only
+  `create-stitchkit`.
+
+The package versions never need to match. A framework release must not silently
+advance or publish the starter; a starter release must target a Stitchkit range
+that already exists on npm.

@@ -223,7 +223,7 @@ README. ESM-only (нет CJS-выхода) — оставить сознател
 
 ## ⟢ Обновление 2026-05-29 — статус + остаток «от и до»
 
-Триггер: `stitch-demo` (RR7 + stitchkit) под Node-dev упал —
+Триггер: consumer demo (RR7 + stitchkit) под Node-dev упал —
 `stitchkit/server` тянет Bun-движок сокетов на загрузке. Сверка плана выше с
 **текущим кодом** (часть зашипалась в 0.2.0, доку не обновляли).
 
@@ -285,7 +285,7 @@ socket.io владеет `upgrade`); закрыть тестом.
 - прод-уверенно = **+ Ф3–Ф4 + Ф5**.
 
 ### Демо тем временем
-`stitch-demo` на **Bun уже работает** (`/api/notes` отдаёт сид). Для Node-dev ждёт **Ф0**.
+Consumer demo на **Bun уже работает** (`/api/notes` отдаёт сид). Для Node-dev ждёт **Ф0**.
 
 ---
 
@@ -339,7 +339,7 @@ socket.io владеет `upgrade`); закрыть тестом.
 - stitchkit: `bun run verify` — lint чист · tsc 0 · **339 pass/0 fail** · build ok.
 - `bun run smoke:node` под Node — все entrypoints + serveNode HTTP + Socket.IO ✅.
 - потребитель: **8/8** typecheck (websocket non-optional → без гардов).
-- demo `stitch-demo` под **Node** (`react-router dev`) — SSR + `/api` + typed-client ✅.
+- consumer demo под **Node** (`react-router dev`) — SSR + `/api` + typed-client ✅.
 
 ### Остаток (некритично, не блокирует Node)
 - Ф3: generic `RawRouteContext<TServer>` (убрать Bun-type-leak из `.d.ts`).

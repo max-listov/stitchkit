@@ -15,6 +15,67 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-08-08
+
+### ⚠️ Breaking changes
+
+- **HTTP observability is framework-owned and wrapper-free.**
+  `createObservability` replaces `createAuditHook`; request and tool sinks are
+  configured independently. Pass the request projection directly to the server
+  and the tool projection to mounts. HTTP payload capture is now off by default
+  and explicit through `includePayload: true`.
+
+  ```ts
+  // before
+  const audit = createAuditHook({ write })
+  createServer({
+    services,
+    wrapFetch: (handler) => wrapInRequestContext(audit.http(handler)),
+  })
+  mountAgent(services, { hooks: audit.toolCall })
+
+  // after
+  const observability = createObservability({
+    request: { write, includePayload: true },
+    tools: { write },
+  })
+  createServer({ services, observability: observability.request })
+  mountAgent(services, { hooks: observability.toolCall })
+  ```
+
+  There is no `createAuditHook` alias or HTTP audit wrapper. Keep
+  `includePayload` false when the request row does not need a body.
+
+### Fixed
+
+- **Flattened divergent tool fields retain every known JSON kind.** When a
+  discriminated union reuses a property as different visible kinds, the flat
+  MCP/Agent presentation now emits a sound deterministic `type` array instead
+  of `{}`. Nested union branches contribute their base kind, nullability is
+  preserved, `integer | number` widens to `number`, and genuinely unknowable
+  branches remain visible to `requireTypedProperties`. Runtime Zod validation
+  and unflattened schemas are unchanged.
+
+- **`createContractFactory` now exposes its guaranteed scope as required.** A
+  factory-defined contract's `meta.scope` is the exact concrete literal rather
+  than `TScope | undefined`; plain `defineContract` keeps its optional/default
+  public model. The new `ScopedContractDef` type names the stronger shape.
+
+### Added
+
+- **Context-validated runtime-tool factories.**
+  `createRuntimeToolFactory({ serviceName, scope, context })` binds stable
+  identity once and parses the Zod context once per invocation, so each
+  definition's handler receives typed context plus parsed input without local
+  adapters. The result remains an ordinary `RuntimeToolDefinition` for every
+  mount, manifest and invoker.
+
+- **Opt-in explicit contract tool exposure.**
+  `createContractFactory<Scope>({ toolExposure: 'explicit' })` materializes a
+  missing endpoint `expose` as `['HTTP']`; MCP, Agent and CLI surfaces then
+  require an explicit declaration. Plain factories retain the default-on tool
+  policy.
+
 ## [0.42.0] — 2026-08-08
 
 ### ⚠️ Breaking changes
@@ -2331,7 +2392,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/max-listov/stitchkit/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/max-listov/stitchkit/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/max-listov/stitchkit/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/max-listov/stitchkit/compare/v0.39.0...v0.40.0

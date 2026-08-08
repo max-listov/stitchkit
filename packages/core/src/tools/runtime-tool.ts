@@ -33,6 +33,15 @@ export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput ext
   ? z.output<TOutput>
   : undefined;
 
+/** Parsed application context plus the canonical runtime-tool input fields. */
+export type RuntimeToolFactoryHandlerContext<
+  TContext extends ZodObject,
+  TInput extends ZodObject,
+> = Omit<z.output<TContext>, 'input' | 'params'> & {
+  params: undefined;
+  input: z.output<TInput>;
+};
+
 /** MCP-owned fields; validation and error state are always supplied by Stitchkit. */
 export type RuntimeMcpPresentation = Omit<CallToolResult, 'structuredContent' | 'isError'> & {
   structuredContent?: never;
@@ -81,6 +90,49 @@ export type RuntimeToolDefinition =
   | RuntimeToolDefinitionWithOutput<ZodObject, ZodType>
   | RuntimeToolDefinitionWithoutOutput<ZodObject>;
 
+export interface RuntimeToolFactoryConfig<TContext extends ZodObject> {
+  serviceName: string;
+  scope?: string;
+  context: TContext;
+  meta?: Record<string, unknown>;
+}
+
+export interface RuntimeToolFactoryIdentityFields {
+  action: string;
+  method: HttpMethod;
+  meta?: Record<string, unknown>;
+}
+
+export type RuntimeToolFactoryDefinitionWithOutput<
+  TContext extends ZodObject,
+  TInput extends ZodObject,
+  TOutput extends ZodType,
+> = Omit<RuntimeToolDefinitionWithOutput<TInput, TOutput>, 'handler' | 'identity'> &
+  RuntimeToolFactoryIdentityFields & {
+    handler: (
+      context: RuntimeToolFactoryHandlerContext<TContext, TInput>,
+    ) => z.output<TOutput> | Promise<z.output<TOutput>>;
+  };
+
+export type RuntimeToolFactoryDefinitionWithoutOutput<
+  TContext extends ZodObject,
+  TInput extends ZodObject,
+> = Omit<RuntimeToolDefinitionWithoutOutput<TInput>, 'handler' | 'identity'> &
+  RuntimeToolFactoryIdentityFields & {
+    handler: (
+      context: RuntimeToolFactoryHandlerContext<TContext, TInput>,
+    ) => void | Promise<void>;
+  };
+
+export interface RuntimeToolFactory<TContext extends ZodObject> {
+  define<TInput extends ZodObject, TOutput extends ZodType>(
+    definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput>,
+  ): RuntimeToolDefinitionWithOutput<TInput, TOutput>;
+  define<TInput extends ZodObject>(
+    definition: RuntimeToolFactoryDefinitionWithoutOutput<TContext, TInput>,
+  ): RuntimeToolDefinitionWithoutOutput<TInput>;
+}
+
 /** Typed identity helper; execution remains owned by the transport mounts. */
 export function defineRuntimeTool<TInput extends ZodObject, TOutput extends ZodType>(
   definition: RuntimeToolDefinitionWithOutput<TInput, TOutput>,
@@ -93,6 +145,65 @@ export function defineRuntimeTool(definition: RuntimeToolDefinition): RuntimeToo
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
   }
   return definition;
+}
+
+/**
+ * Bind shared runtime-tool identity and validate application context once per
+ * call while keeping execution in the canonical tool runner.
+ */
+export function createRuntimeToolFactory<TContext extends ZodObject>(
+  config: RuntimeToolFactoryConfig<TContext>,
+): RuntimeToolFactory<TContext> {
+  function parseContext<TInput extends ZodObject>(
+    context: RuntimeToolHandlerContext<TInput>,
+  ): RuntimeToolFactoryHandlerContext<TContext, TInput> {
+    const parsed = config.context.parse(context);
+    return { ...parsed, params: undefined, input: context.input };
+  }
+
+  function define<TInput extends ZodObject, TOutput extends ZodType>(
+    definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput>,
+  ): RuntimeToolDefinitionWithOutput<TInput, TOutput>;
+  function define<TInput extends ZodObject>(
+    definition: RuntimeToolFactoryDefinitionWithoutOutput<TContext, TInput>,
+  ): RuntimeToolDefinitionWithoutOutput<TInput>;
+  function define(
+    definition:
+      | RuntimeToolFactoryDefinitionWithOutput<TContext, ZodObject, ZodType>
+      | RuntimeToolFactoryDefinitionWithoutOutput<TContext, ZodObject>,
+  ): RuntimeToolDefinition {
+    if (definition.output !== undefined) {
+      const { action, method, meta, handler, ...tool } = definition;
+      const identity: RuntimeToolIdentity = {
+        serviceName: config.serviceName,
+        action,
+        method,
+        ...(config.scope !== undefined && { scope: config.scope }),
+        ...((meta ?? config.meta) !== undefined && { meta: meta ?? config.meta }),
+      };
+      return defineRuntimeTool({
+        ...tool,
+        identity,
+        handler: (context) => handler(parseContext(context)),
+      });
+    }
+
+    const { action, method, meta, handler, ...tool } = definition;
+    const identity: RuntimeToolIdentity = {
+      serviceName: config.serviceName,
+      action,
+      method,
+      ...(config.scope !== undefined && { scope: config.scope }),
+      ...((meta ?? config.meta) !== undefined && { meta: meta ?? config.meta }),
+    };
+    return defineRuntimeTool({
+      ...tool,
+      identity,
+      handler: (context) => handler(parseContext(context)),
+    });
+  }
+
+  return { define };
 }
 
 export function runtimeToolSupports(

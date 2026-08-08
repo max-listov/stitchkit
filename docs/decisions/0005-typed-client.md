@@ -17,7 +17,7 @@ One source project hand-wrote its frontend client — a fetch wrapper plus
 per-endpoint hooks in separate files. The contract was not used for client-side
 inference, so the client could silently drift from the server.
 
-Another prototype showed the alternative: a `TypedClient<C>` type that derives
+During design, an alternative emerged: a `TypedClient<C>` type that derives
 the entire client API from the contract, with one typed function per endpoint.
 
 ## Decision

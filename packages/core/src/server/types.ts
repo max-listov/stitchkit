@@ -10,6 +10,7 @@ import type {
   RuntimeContext,
   Transport,
 } from '../contract';
+import type { HttpRequestObserver } from '../observability/audit';
 import type { LogFormat } from './logger';
 import type { CorsConfig } from './middleware/cors';
 
@@ -278,8 +279,8 @@ export interface LoggingConfig {
    *   not (a cycle, a `BigInt`) costs the extra fields for that line; the
    *   framework's own are re-emitted alone rather than losing the record.
    * - It is synchronous and the request body is **already consumed** by the
-   *   time it runs. Anything body-derived belongs in `createAuditHook`, which
-   *   clones the request before the handler.
+   *   time it runs. Body-derived records belong in request observability with
+   *   `includePayload: true`, which clones before handler parsing.
    * - Its values reach the sink as given. A header echoed straight into a
    *   text-based logger can inject line breaks — sanitise anything
    *   caller-controlled, as the framework does for the request path.
@@ -337,6 +338,8 @@ export interface HandlerConfig<TServer = unknown> {
   cors?: CorsConfig;
   hooks?: LifecycleHooks;
   logging?: boolean | LoggingConfig;
+  /** Framework-owned HTTP RequestEvent projection from `createObservability`. */
+  observability?: HttpRequestObserver;
   /**
    * Report handler-output keys the contract schema removed, as dot-paths, through
    * the configured logger. **Off by default** — the strip itself is correct (the
@@ -370,17 +373,9 @@ export interface HandlerConfig<TServer = unknown> {
 /**
  * The composition seam shared by the servers that own their own `fetch`.
  *
- * `wrapInRequestContext` and `createAuditHook` must sit **outside** the
- * handler, which used to mean building the server by hand — `createServer` and
- * `serveNode` construct `fetch` internally, so neither could reach the
- * observability layer at all. `wrapFetch` is where those wrappers go.
- *
- * Order is the consumer's, and it matters: `wrapInRequestContext` outermost,
- * the audit wrapper inside it, because the audit hook reads that context.
- *
- * ```ts
- * createServer({ services, wrapFetch: (h) => wrapInRequestContext(audit.http(h)) })
- * ```
+ * Built-in request observability belongs in `HandlerConfig.observability` and
+ * needs no wrapper. `wrapFetch` remains the escape hatch for unrelated
+ * transport-level composition around the complete handler.
  */
 export interface FetchComposition<TServer = unknown> {
   wrapFetch?: (fetch: FetchHandler<TServer>) => FetchHandler<TServer>;

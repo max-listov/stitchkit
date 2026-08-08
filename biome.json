@@ -19,7 +19,8 @@
       "!**/next-env.d.ts",
       "!**/generated",
       "!**/_deprecated",
-      "!**/prisma-json.d.ts"
+      "!**/prisma-json.d.ts",
+      "!!packages/create-stitchkit/template"
     ]
   },
   "formatter": {

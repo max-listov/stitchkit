@@ -1,0 +1,46 @@
+# Changelog
+
+All notable changes to **create-stitchkit** are documented here. The scaffolder
+has its own version and release line; the Stitchkit range tested by its template
+is declared in the template root catalog.
+
+## [Unreleased]
+
+## [0.1.0] — 2026-08-08
+
+### Added
+
+- **Production-shaped official starter.** `bun create stitchkit my-app`
+  generates a Bun workspace with a separate Next.js frontend and Stitchkit API,
+  Prisma/PostgreSQL, shared contracts, typed HTTP and React Query clients,
+  Socket.IO cache updates, OpenAPI, MCP, CLI, a production-shaped reference app and a
+  complete `/ui` component catalogue.
+- **Complete starter SEO surface.** A typed locale-aware page registry now drives
+  unique page metadata, canonical and language alternatives, Open Graph and
+  Twitter cards, sitemap entries and visible catalogue headings.
+- **Direct PM2 entrypoints.** Development and production configs supervise Bun
+  and Next entrypoints without package-script wrappers.
+- **External PostgreSQL boundary.** Generated applications own Prisma schemas
+  and migrations but connect to environment-provided PostgreSQL exclusively
+  through `DATABASE_URL`; they do not package or start a database runtime.
+- **One runnable canonical template.** Starter development now runs directly
+  from `packages/create-stitchkit/template` with Bun/Next HMR; generated
+  consumers exist only as ephemeral release-lane fixtures.
+- **Fleet-shaped workspace layout.** Backend, frontend, config, database and
+  shared code live together under one `packages/*` namespace.
+- **Self-contained consumer gates.** A fresh scaffold generates its Prisma
+  client before typechecking, remains lint-clean after a Next build and excludes
+  runtime test artifacts from the published tarball.
+- **Canonical status palette.** Success and destructive states use the source
+  UI system hues in both themes with accessible foreground contrast.
+- **Compact reference surface.** The starter home now fits one desktop viewport
+  and demonstrates one PostgreSQL-backed repository query, one refresh mutation,
+  cache invalidation and realtime propagation without shipping a demo CRUD domain.
+- **Removable component catalogue.** Every catalogue-only screen and composition
+  lives under the `/ui` route directory, while reusable primitives stay in
+  `components/ui`; its desktop navigation is a compact floating palette.
+- **Generated Next.js declarations stay generated.** `next-env.d.ts` is ignored
+  and `next typegen` runs before standalone TypeScript checks, preventing dev/build churn.
+- **Independent compatibility target.** The committed template catalog and
+  lockfile keep generated projects on the last explicitly validated Stitchkit
+  range until a separate starter release advances it.

@@ -11,13 +11,14 @@ import {
 } from '../internal/errors';
 import {
   getRequestContext,
+  runWithRequestContext,
   setRequestEndpoint,
   setRequestError,
 } from '../observability/context';
+import { resolveTraceContext } from '../observability/trace';
 import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
 import {
   buildLogFields,
-  elapsedMs,
   levelForStatus,
   logIncoming,
   logOutgoing,
@@ -46,10 +47,12 @@ import {
 } from './router';
 import type { FetchHandler, HandlerConfig, MethodDef, StitchLogger } from './types';
 
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 export function createHandler<TServer = unknown>(
   config: HandlerConfig<TServer>,
 ): FetchHandler<TServer> {
-  const { cors, hooks, logging = false, trustProxy = false } = config;
+  const { cors, hooks, logging = false, observability, trustProxy = false } = config;
   if (cors) assertCorsConfig(cors);
   assertJsonBodyLimit(config.maxJsonBodyBytes, 'HandlerConfig.maxJsonBodyBytes');
 
@@ -82,10 +85,10 @@ export function createHandler<TServer = unknown>(
    */
   let traceResolverBroken = false;
   const warnedEnrichKeys = new Set<string>();
-  const resolveId = (req: Request): string => {
-    if (!customTraceId) return resolveTraceId(req);
+  const resolveId = (req: Request, fallback?: string): string => {
+    if (!customTraceId) return fallback ?? resolveTraceId(req);
     try {
-      return customTraceId(req) ?? resolveTraceId(req);
+      return customTraceId(req) ?? fallback ?? resolveTraceId(req);
     } catch (err) {
       if (!traceResolverBroken) {
         traceResolverBroken = true;
@@ -95,7 +98,7 @@ export function createHandler<TServer = unknown>(
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      return resolveTraceId(req);
+      return fallback ?? resolveTraceId(req);
     }
   };
 
@@ -122,12 +125,20 @@ export function createHandler<TServer = unknown>(
     traceId: string,
     server: TServer | undefined,
     clientIp: ClientIpOptions,
+    startedAt: bigint,
   ): Promise<Response> {
     const shouldLogRequest =
       logConfig !== null &&
       shouldLog(url.pathname, req.method) &&
       !shouldSkipLog(logConfig, req, url);
     const ipAddress = extractIp(req, clientIp) || undefined;
+    const payload =
+      observability?.includePayload && BODY_METHODS.has(req.method)
+        ? req
+            .clone()
+            .json()
+            .catch(() => undefined)
+        : undefined;
 
     // Resolved once per request, not at import and not at this package's build:
     // the environment that decides the format is the consumer's, at run time.
@@ -140,7 +151,7 @@ export function createHandler<TServer = unknown>(
     if (shouldLogRequest && customLogger) {
       // The timing window opens regardless: a breadcrumb that fails must cost
       // the breadcrumb, not the completion line — and never the request.
-      reqLog = { traceId, startTime: performance.now() };
+      reqLog = { traceId };
       try {
         customLogger.debug(`${req.method} ${url.pathname}`, {
           traceId,
@@ -158,66 +169,78 @@ export function createHandler<TServer = unknown>(
     // calls this once for a hook-supplied response and once for the framework
     // default, and a throw in the first call would be swallowed by the
     // `onError` catch only to be re-thrown — uncaught — by the second.
-    let logged = false;
-    const logDone = (status: number, errorCode?: string) => {
-      if (!reqLog || logged || !logConfig) return;
-      logged = true;
-      try {
-        const durationMs = Math.round(elapsedMs(reqLog.startTime));
-        const collected = collectExtraLogFields(logConfig, req, url, {
-          status,
-          durationMs,
-          errorCode,
-        });
-        const frameworkFields = buildLogFields(
-          req.method,
-          url.pathname,
-          status,
-          durationMs,
-          reqLog.traceId,
-          errorCode,
-        );
-        const ownedFields = { ...frameworkFields, ip: ipAddress };
-        for (const key of collected.enrichKeys) {
-          const ownedByActiveSink =
-            Object.hasOwn(ownedFields, key) ||
-            (useDefaultLog && (key === 'ts' || key === 'level' || key === 'msg'));
-          if (ownedByActiveSink && !warnedEnrichKeys.has(key)) {
-            warnedEnrichKeys.add(key);
-            warn(
-              `[stitchkit] logging.enrich field "${key}" was discarded because the framework owns it`,
+    let completed = false;
+    const complete = (status: number, errorCode?: string) => {
+      if (completed) return;
+      completed = true;
+      const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
+
+      if (reqLog && logConfig) {
+        try {
+          const collected = collectExtraLogFields(logConfig, req, url, {
+            status,
+            durationMs,
+            errorCode,
+          });
+          const frameworkFields = buildLogFields(
+            req.method,
+            url.pathname,
+            status,
+            durationMs,
+            reqLog.traceId,
+            errorCode,
+          );
+          const ownedFields = { ...frameworkFields, ip: ipAddress };
+          for (const key of collected.enrichKeys) {
+            const ownedByActiveSink =
+              Object.hasOwn(ownedFields, key) ||
+              (useDefaultLog && (key === 'ts' || key === 'level' || key === 'msg'));
+            if (ownedByActiveSink && !warnedEnrichKeys.has(key)) {
+              warnedEnrichKeys.add(key);
+              warn(
+                `[stitchkit] logging.enrich field "${key}" was discarded because the framework owns it`,
+              );
+            }
+          }
+          const extra = collected.fields;
+          if (useDefaultLog) {
+            logOutgoing({
+              req,
+              pathname: url.pathname,
+              status,
+              log: reqLog,
+              ipAddress,
+              errorCode,
+              durationMs,
+              format: logFormat,
+              extra,
+            });
+          }
+          if (customLogger) {
+            const level = levelForStatus(status);
+            customLogger[level](
+              `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
+              {
+                ...extra,
+                ...frameworkFields,
+                // Written last for the same reason as the rest, and present here
+                // as well as on the built-in line so both sinks carry one shape.
+                ip: ipAddress,
+              },
             );
           }
+        } catch {
+          // A logger must never break the request it observes.
         }
-        const extra = collected.fields;
-        if (useDefaultLog) {
-          logOutgoing({
-            req,
-            pathname: url.pathname,
-            status,
-            log: reqLog,
-            ipAddress,
-            errorCode,
-            durationMs,
-            format: logFormat,
-            extra,
-          });
+      }
+
+      const context = getRequestContext();
+      if (observability && context) {
+        try {
+          observability.complete({ context, statusCode: status, durationMs, payload });
+        } catch {
+          // An observability projection must never break the request it observes.
         }
-        if (customLogger) {
-          const level = levelForStatus(status);
-          customLogger[level](
-            `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
-            {
-              ...extra,
-              ...frameworkFields,
-              // Written last for the same reason as the rest, and present here
-              // as well as on the built-in line so both sinks carry one shape.
-              ip: ipAddress,
-            },
-          );
-        }
-      } catch {
-        // A logger must never break the request it observes.
       }
     };
 
@@ -263,7 +286,7 @@ export function createHandler<TServer = unknown>(
             // The hook owns the response, but the access log still wants the
             // error's code — derive it from the original error (no normalize /
             // no log), so `logging: true` shows it even with a custom `onError`.
-            logDone(withCors.status, errorCode(err));
+            complete(withCors.status, errorCode(err));
             return withCors;
           }
         } catch {
@@ -273,14 +296,16 @@ export function createHandler<TServer = unknown>(
       }
       const appErr = normalizeError(err);
       recordFailure(appErr);
-      logDone(appErr.status, appErr.code);
+      complete(appErr.status, appErr.code);
       return json(appErr.toJSON(), appErr.status, cors, req);
     };
 
     if (cors && req.method === 'OPTIONS') {
       // No completion line: `shouldLog` drops `OPTIONS` before the timing
       // window opens, so a preflight has nothing to close.
-      return corsPreflightResponse(cors, req);
+      const response = corsPreflightResponse(cors, req);
+      complete(response.status);
+      return response;
     }
 
     // `onRequest` is consumer code, so a throw takes the same path as any other
@@ -295,7 +320,7 @@ export function createHandler<TServer = unknown>(
           // carry `Access-Control-Allow-Origin`, or the response is unreadable
           // cross-origin.
           const withCors = applyCors(earlyResponse, cors, req);
-          logDone(withCors.status);
+          complete(withCors.status);
           return withCors;
         }
       }
@@ -317,7 +342,7 @@ export function createHandler<TServer = unknown>(
             ipAddress,
           });
           const withCors = applyCors(res, cors, req);
-          logDone(withCors.status);
+          complete(withCors.status);
           return withCors;
         } catch (err) {
           return respondError(err);
@@ -395,7 +420,7 @@ export function createHandler<TServer = unknown>(
               })
             : result;
         const rawRes = applyCors(response, cors, req);
-        logDone(rawRes.status);
+        complete(rawRes.status);
         return rawRes;
       }
 
@@ -464,12 +489,12 @@ export function createHandler<TServer = unknown>(
       // success the caller never received.
       if (!method.outputSchema) {
         const empty = new Response(null, { status: responseStatus, headers: responseHeaders });
-        logDone(responseStatus);
+        complete(responseStatus);
         return empty;
       }
 
       const body = Response.json(result, { status: responseStatus, headers: responseHeaders });
-      logDone(responseStatus);
+      complete(responseStatus);
       return body;
     } catch (err) {
       return respondError(err, ctx, method);
@@ -480,7 +505,7 @@ export function createHandler<TServer = unknown>(
     // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
-    const traceId = resolveId(req);
+    const requestStartedAt = process.hrtime.bigint();
     // Resolve the real socket peer once per request — the adapter (Bun server
     // / srvx) knows it; `extractIp` prefers `x-forwarded-for` over it only
     // when `trustProxy` is set.
@@ -488,17 +513,43 @@ export function createHandler<TServer = unknown>(
       trustProxy,
       socketIp: resolveSocketIp(req, server),
     };
-    const response = await dispatch(req, url, traceId, server, clientIp);
-    // Every response carries the framework-resolved trace id — always
-    // overwritten, never the value a raw route or `onError` may have echoed
-    // from the client. Immutable headers (a `Response.redirect()`) are
-    // tolerated: the id is best-effort there.
-    try {
-      response.headers.set('x-request-id', traceId);
-    } catch {
-      // headers are immutable — a redirect / opaque response; skip.
+    const run = async (traceId: string, startedAt: bigint): Promise<Response> => {
+      const response = await dispatch(req, url, traceId, server, clientIp, startedAt);
+      // Every response carries the framework-resolved trace id — always
+      // overwritten, never the value a raw route or `onError` may have echoed
+      // from the client. Immutable headers (a `Response.redirect()`) are
+      // tolerated: the id is best-effort there.
+      try {
+        response.headers.set('x-request-id', traceId);
+      } catch {
+        // headers are immutable — a redirect / opaque response; skip.
+      }
+      return response;
+    };
+
+    const activeContext = getRequestContext();
+    if (activeContext) {
+      return run(activeContext.trace.traceId, activeContext.startedAt);
     }
-    return response;
+
+    if (!observability) return run(resolveId(req), requestStartedAt);
+
+    const trace = resolveTraceContext(req);
+    const traceId = resolveId(req, trace.traceId);
+    const ipAddress = extractIp(req, clientIp) || undefined;
+    const userAgent = req.headers.get('user-agent') ?? undefined;
+    return runWithRequestContext(
+      {
+        source: 'http',
+        method: req.method,
+        path: url.pathname,
+        startedAt: requestStartedAt,
+        trace: { ...trace, traceId },
+        ...(ipAddress !== undefined && { ipAddress }),
+        ...(userAgent !== undefined && { userAgent }),
+      },
+      () => run(traceId, requestStartedAt),
+    );
   };
 }
 

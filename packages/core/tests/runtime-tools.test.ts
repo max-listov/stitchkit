@@ -5,7 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppError, defineContract } from '../src/contract';
 import {
-  createAuditHook,
+  createObservability,
   type RequestEvent,
   runWithRequestContext,
   setRequestDimensions,
@@ -107,7 +107,9 @@ describe('framework runtime tools', () => {
 
   test('parallel Agent calls keep audit dimensions and identities isolated', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (event) => void events.push(event) });
+    const audit = createObservability({
+      tools: { write: (event) => void events.push(event) },
+    });
     const runtimeTool = defineRuntimeTool({
       name: 'runtime_parallel',
       description: 'Run in parallel',

@@ -4,12 +4,15 @@ node_modules
 # output
 out
 dist
+.next
+next-env.d.ts
 .dev
 *.tgz
 
 # generated consumer-agent entry points (built from docs/ by gen:llms)
 packages/core/llms.txt
 packages/core/llms-full.txt
+packages/create-stitchkit/template/packages/db/src/generated/
 
 # code coverage
 coverage

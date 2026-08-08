@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AppError } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
 import {
-  createAuditHook,
+  createObservability,
   createTraceContext,
   type RequestEvent,
   runWithRequestContext,
@@ -411,7 +411,9 @@ describe('native registration transport parity', () => {
 describe('native call isolation and audit', () => {
   test('parallel calls keep dimensions, failures and parent trace isolated', async () => {
     const events: RequestEvent[] = [];
-    const audit = createAuditHook({ write: (event) => void events.push(event) });
+    const audit = createObservability({
+      tools: { write: (event) => void events.push(event) },
+    });
     const server = buildMcpServer(
       {
         serverInfo: { name: 'native', version: '1' },

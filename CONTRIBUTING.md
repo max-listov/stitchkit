@@ -23,17 +23,21 @@ bun install
 
 ## Workflow
 
-The framework lives in `packages/core`; `packages/starter` is a runnable
-example. Every command runs from the repo root:
+The framework lives in `packages/core`; the published application scaffolder
+and its canonical template live in `packages/create-stitchkit`. Every command
+runs from the repo root:
 
 ```bash
 bun run dev       # watch-rebuild packages/core/dist
-bun run lint      # Biome — strict, warnings fail
-bun run check     # tsc — typecheck src + tests
+bun run lint      # Biome — root and template configs, warnings fail
+bun run check     # tsc — framework, scaffolder and canonical template
 bun run test      # the test suite
 bun run build     # build dist/ (bun build + tsc declarations)
 bun run consumer-lane  # install the packed tarball into a fixture app and use it
-bun run verify    # lint + check + test + build + node smoke + consumer lane — the single gate
+bun run starter-lane   # pack the scaffolder and verify its published Stitchkit target
+bun run starter-head-lane  # probe the same scaffold against packed framework HEAD
+bun run starter:dev   # run the canonical starter directly under PM2 with HMR
+bun run verify    # all framework and packed-consumer gates
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
 
@@ -56,9 +60,48 @@ behaviour that only the **built** artifact can show. Two fixtures, split by what
 a consumer had to install: `minimal` (stitchkit + zod, no optional peer) and
 `full` (the peers the tool surface needs). About 8 seconds.
 
+`bun run starter-lane` packs `create-stitchkit`, executes its binary and verifies
+the generated app against the published Stitchkit range and lockfile declared by
+the template. `bun run starter-head-lane` runs the same external-consumer path
+after replacing only the generated catalog target with the packed local core;
+it is a compatibility probe, not the starter's release target. Both modes run
+the authored-source guard, typecheck, lint, unit tests, production builds and
+runtime/browser E2E. The canonical template is also the live development workspace.
+
+The canonical template is an autonomous nested Bun workspace. Root `bun install`
+installs its frozen lockfile and generates its ignored Prisma client so source is
+clean in editors, but it is not linked to framework HEAD. Advancing the starter
+means changing the one `catalog.stitchkit` range, refreshing the template lock,
+passing both lanes and releasing `create-stitchkit` separately.
+
+`bun run starter:dev` runs `packages/create-stitchkit/template` itself. The command
+creates the ignored local `.env` from `_env` on first use, applies migrations to
+the configured external PostgreSQL database, and launches the backend and frontend
+as direct PM2 processes.
+Bun watch mode and Next.js provide normal hot reload from the authored files; there
+is no generated preview tree or reconciliation process. Stable development ports
+are Web `3210` and API `3211`; `DATABASE_URL` owns the database location.
+
+The template is intentionally a neutral application named `stitchkit-starter`.
+Scaffolding copies it without hidden project-wide token rewriting; consumers can
+rename the application explicitly. The disposable `starter-lane` remains the
+authoritative test of the exact post-scaffold product and allocates isolated ports
+and a uniquely named database before deleting its temporary workspace.
+
 When it fails it keeps its work directory and prints the path — reproduce by
 hand there. Adding a public API? Name its types in a fixture; that is what keeps
 the export honest.
+
+### Independent releases
+
+- `vX.Y.Z` must match `packages/core/package.json`; it publishes only
+  `stitchkit` and reads release notes from the root `CHANGELOG.md`.
+- `create-stitchkit-vX.Y.Z` must match
+  `packages/create-stitchkit/package.json`; it publishes only the scaffolder and
+  reads `packages/create-stitchkit/CHANGELOG.md`.
+- The two versions never need to match. A scaffolder release advances its
+  Stitchkit target only after the target version already exists on npm and both
+  starter lanes are green.
 
 ### Git hooks
 

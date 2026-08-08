@@ -137,7 +137,8 @@ Notes for a Node host:
 stitchkit serves the API. A SPA front-end is built and hosted separately — a
 static host or CDN in production, its own dev server in development. The backend
 does not serve static files (`staticRoute` exists for the occasional asset, not
-a whole app). See [`packages/starter`](../../packages/starter) for the split.
+a whole app). `bun create stitchkit my-app` demonstrates the supported split:
+an independently built Next.js frontend and Bun/Stitchkit API.
 
 ### MCP
 

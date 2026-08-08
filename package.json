@@ -5,26 +5,31 @@
     "packages/*"
   ],
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks || true",
+    "prepare": "git config core.hooksPath .githooks || true && bun scripts/prepare-starter.ts",
     "dev": "bun --filter stitchkit dev",
-    "check": "bun --filter stitchkit check && bun run check:scripts",
+    "check": "bun --filter stitchkit check && bun --filter create-stitchkit check && bun run check:template && bun run check:scripts",
+    "check:template": "cd packages/create-stitchkit/template && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
-    "test": "bun --filter stitchkit test",
+    "test": "bun --filter stitchkit test && bun --filter create-stitchkit test",
     "gen:llms": "bun scripts/gen-llms.ts",
-    "build": "bun run gen:llms && bun --filter stitchkit build",
-    "lint": "biome check --error-on-warnings .",
-    "lint:fix": "biome check --write .",
+    "build": "bun run gen:llms && bun --filter stitchkit build && bun --filter create-stitchkit build",
+    "lint": "biome check --error-on-warnings . && bun run lint:template",
+    "lint:template": "cd packages/create-stitchkit/template && bun run lint",
+    "lint:fix": "biome check --write . && cd packages/create-stitchkit/template && bun run lint:fix",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "verify": "bun run lint && bun run check && bun run test && bun run build && bun run smoke:node && bun run consumer-lane",
+    "verify": "bun run lint && bun run check && bun run test && bun run build && bun run smoke:node && bun run consumer-lane && bun run starter-lane",
     "smoke:node": "bun --filter stitchkit smoke:node",
     "consumer-lane": "bun --filter stitchkit consumer-lane",
-    "sync:readme": "cp README.md packages/core/README.md",
-    "release": "bun run sync:readme && bun run verify && cd packages/core && bun publish"
+    "starter-lane": "bun scripts/starter-lane.ts",
+    "starter-head-lane": "bun scripts/starter-lane.ts --head",
+    "starter:dev": "cd packages/create-stitchkit/template && bun run dev",
+    "sync:readme": "cp README.md packages/core/README.md"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
     "@types/bun": "^1.3.14",
+    "dotenv": "^17.4.2",
     "typescript": "^7.0.2"
   }
 }

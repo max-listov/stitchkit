@@ -10,7 +10,7 @@
 
 import { QueryClient } from '@tanstack/react-query';
 import { defineContract, defineErrors } from 'stitchkit/contract';
-import { createAuditHook, type RequestEvent } from 'stitchkit/observability';
+import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
 import {
@@ -250,7 +250,9 @@ const seenByAfterToolCall: Array<{
 }> = [];
 const events: RequestEvent[] = [];
 
-const audit = createAuditHook({ write: (e: RequestEvent) => void events.push(e) });
+const audit = createObservability({
+  tools: { write: (e: RequestEvent) => void events.push(e) },
+});
 
 const hooks: ToolCallHooks = {
   onToolError: ({ error }) => {

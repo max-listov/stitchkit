@@ -1,0 +1,31 @@
+{
+  "name": "@app/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/tools.ts --outdir dist --target bun --packages external",
+    "start": "bun dist/index.js",
+    "check": "bun x tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "cli": "bun src/cli.ts",
+    "tools": "bun src/tools.ts"
+  },
+  "dependencies": {
+    "@app/config": "workspace:*",
+    "@app/db": "workspace:*",
+    "@app/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@socket.io/bun-engine": "^0.1.1",
+    "ai": "^7.0.58",
+    "socket.io": "^4.8.3",
+    "stitchkit": "catalog:",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  }
+}

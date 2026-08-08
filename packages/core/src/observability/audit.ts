@@ -1,19 +1,18 @@
 /**
- * `createAuditHook` — the batteries-included audit layer. It wires the raw
- * `afterToolCall` hook and an HTTP fetch wrapper into one place, normalises
- * every completed call into a `RequestEvent`, and hands it to the project's
- * sink. The project supplies only `write` — the table and how to persist a row.
+ * Framework-owned observability projections. HTTP completion is captured once
+ * by `createHandler`; tool completion comes from the canonical tool hooks.
+ * Both are normalised into `RequestEvent` without nested fetch wrappers.
  */
 import { recordedErrorMessage } from '../internal/errors';
 import { isRecord } from '../internal/typed';
 import type { ToolCallHooks, ToolResult } from '../tools/execute';
-import { getRequestContext } from './context';
+import { getRequestContext, type RequestContext } from './context';
 import type { RequestEvent } from './event';
 import { measureSize, type SanitizeOptions, sanitizePayload } from './sanitize';
 import { childSpan, createTraceContext } from './trace';
 
-/** Config for `createAuditHook`. */
-export interface AuditConfig {
+/** One isolated RequestEvent sink and its sanitisation policy. */
+export interface RequestEventSinkConfig {
   /**
    * The sink — persists one audit event. It runs fire-and-forget and its own
    * errors are swallowed, so a slow or failing write never blocks or breaks the
@@ -26,25 +25,35 @@ export interface AuditConfig {
   sanitize?: SanitizeOptions;
 }
 
-/** What `createAuditHook` returns — one wiring point per surface. */
-export interface AuditHook {
-  /**
-   * Wrap the HTTP fetch handler — audits every request from its final
-   * response (success and error alike). Compose it INSIDE `wrapInRequestContext`
-   * (it reads that context for trace ids, timing and identity).
-   */
-  http: <S>(
-    handler: (req: Request, server: S) => Promise<Response>,
-  ) => (req: Request, server: S) => Promise<Response>;
-  /**
-   * Tool-call hooks — audits every MCP / agent tool call. Pass as `hooks` to
-   * `createMcpHandler`, `createStdioMcpServer` or `mountAgent`.
-   */
-  toolCall: ToolCallHooks;
+export interface RequestObservabilityConfig extends RequestEventSinkConfig {
+  /** Clone and record JSON request bodies. Default false. */
+  includePayload?: boolean;
 }
 
-/** HTTP methods that carry a body worth recording. */
-const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+export interface ObservabilityConfig {
+  request?: RequestObservabilityConfig;
+  tools?: RequestEventSinkConfig;
+}
+
+/** The one HTTP completion snapshot produced by the handler. */
+export interface HttpRequestCompletion {
+  context: RequestContext;
+  statusCode: number;
+  durationMs: number;
+  payload?: Promise<unknown>;
+}
+
+/** Server-facing request projection returned by `createObservability`. */
+export interface HttpRequestObserver {
+  includePayload: boolean;
+  complete(completion: HttpRequestCompletion): void;
+}
+
+/** What `createObservability` returns — one wiring point per enabled surface. */
+export interface Observability {
+  request?: HttpRequestObserver;
+  toolCall: ToolCallHooks;
+}
 
 /** Pull a human-readable message out of a failed `ToolResult`. */
 function toolErrorMessage(result: Extract<ToolResult, { ok: false }>): string | undefined {
@@ -71,113 +80,121 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-export function createAuditHook(config: AuditConfig): AuditHook {
-  const { write, filter, sanitize } = config;
-
-  /** Filter, then hand the event to the sink — never throws, never blocks. */
-  const emit = async (event: RequestEvent): Promise<void> => {
+function createEmitter(config: RequestEventSinkConfig) {
+  return async (event: RequestEvent): Promise<void> => {
     try {
-      if (filter && !filter(event)) return;
-      await write(event);
+      if (config.filter && !config.filter(event)) return;
+      await config.write(event);
     } catch {
       // An audit sink must never break the call it observes.
     }
   };
+}
 
-  const http = <S>(handler: (req: Request, server: S) => Promise<Response>) => {
-    return async (req: Request, server: S): Promise<Response> => {
-      // Clone before the handler consumes the body.
-      const bodyClone = BODY_METHODS.has(req.method) ? req.clone() : null;
-      const res = await handler(req, server);
-
-      // Read the context synchronously, while still inside its ALS scope.
-      const ctx = getRequestContext();
-      if (ctx) {
-        const durationMs = Math.round(Number(process.hrtime.bigint() - ctx.startedAt) / 1e6);
-        // Detached — the response returns without waiting on the body read or sink.
-        void (async () => {
-          let body: unknown;
-          if (bodyClone) {
-            try {
-              body = await bodyClone.json();
-            } catch {
-              body = undefined;
+export function createObservability(config: ObservabilityConfig): Observability {
+  const request: HttpRequestObserver | undefined = config.request
+    ? {
+        includePayload: config.request.includePayload ?? false,
+        complete: ({ context, statusCode, durationMs, payload }) => {
+          const requestConfig = config.request;
+          if (!requestConfig) return;
+          const emit = createEmitter(requestConfig);
+          void (async () => {
+            let body: unknown;
+            if (payload) {
+              try {
+                body = await payload;
+              } catch {
+                body = undefined;
+              }
             }
-          }
-          await emit({
-            source: ctx.source,
-            method: ctx.method,
-            path: ctx.path,
-            ...(ctx.serviceName !== undefined && { serviceName: ctx.serviceName }),
-            ...(ctx.action !== undefined && { action: ctx.action }),
-            ...(ctx.dimensions !== undefined && { dimensions: ctx.dimensions }),
-            traceId: ctx.trace.traceId,
-            spanId: ctx.trace.spanId,
-            parentSpanId: ctx.trace.parentSpanId,
-            ok: res.status < 400,
-            statusCode: res.status,
-            durationMs,
-            errorCode: ctx.error?.code,
-            errorMessage: ctx.error?.message,
-            ...(ctx.error?.details !== undefined && {
-              errorDetail: sanitizePayload(ctx.error.details, sanitize),
+            await emit({
+              source: context.source,
+              method: context.method,
+              path: context.path,
+              ...(context.serviceName !== undefined && {
+                serviceName: context.serviceName,
+              }),
+              ...(context.action !== undefined && { action: context.action }),
+              ...(context.dimensions !== undefined && {
+                dimensions: context.dimensions,
+              }),
+              traceId: context.trace.traceId,
+              spanId: context.trace.spanId,
+              parentSpanId: context.trace.parentSpanId,
+              ok: statusCode < 400,
+              statusCode,
+              durationMs,
+              errorCode: context.error?.code,
+              errorMessage: context.error?.message,
+              ...(context.error?.details !== undefined && {
+                errorDetail: sanitizePayload(context.error.details, requestConfig.sanitize),
+              }),
+              payload: sanitizePayload(body, requestConfig.sanitize),
+              resultSize: null,
+              responseBytes: 0,
+              userId: context.userId,
+              ipAddress: context.ipAddress,
+              userAgent: context.userAgent,
+              startedAt: new Date(Date.now() - durationMs),
+            });
+          })();
+        },
+      }
+    : undefined;
+
+  const toolCall: ToolCallHooks | undefined = config.tools
+    ? {
+        afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
+          const toolConfig = config.tools;
+          if (!toolConfig) return;
+          const emit = createEmitter(toolConfig);
+          // Each tool call is a span. Under an HTTP request it is a child of that
+          // request's span; on its own (a stdio server) it opens a fresh trace.
+          const requestCtx = getRequestContext();
+          const span = requestCtx ? childSpan(requestCtx.trace) : createTraceContext();
+          const measure = result.ok
+            ? measureSize(result.data)
+            : { resultSize: null, responseBytes: 0 };
+          void emit({
+            source: context.source,
+            method: 'TOOL',
+            httpMethod: endpoint.method,
+            path: `/${context.source}/${toolName}`,
+            serviceName: endpoint.serviceName,
+            action: endpoint.key,
+            ...(requestCtx?.dimensions !== undefined && {
+              dimensions: requestCtx.dimensions,
             }),
-            payload: sanitizePayload(body, sanitize),
-            resultSize: null,
-            responseBytes: 0,
-            userId: ctx.userId,
-            ipAddress: ctx.ipAddress,
-            userAgent: ctx.userAgent,
+            toolName,
+            traceId: span.traceId,
+            spanId: span.spanId,
+            parentSpanId: span.parentSpanId,
+            ok: result.ok,
+            statusCode: result.ok ? 200 : 400,
+            durationMs,
+            errorCode: result.ok ? undefined : result.code,
+            errorMessage: result.ok ? undefined : auditErrorMessage(result, error),
+            ...(!result.ok &&
+              result.details !== undefined && {
+                errorDetail: sanitizePayload(result.details, toolConfig.sanitize),
+              }),
+            payload: sanitizePayload(args, toolConfig.sanitize),
+            resultSize: measure.resultSize,
+            responseBytes: measure.responseBytes,
+            userId: readString(context.userId),
+            authMethod: readString(context.authMethod),
+            clientId: readString(context.clientId),
+            ipAddress: readString(context.ipAddress),
+            userAgent: readString(context.userAgent),
             startedAt: new Date(Date.now() - durationMs),
           });
-        })();
+        },
       }
-      return res;
-    };
-  };
+    : undefined;
 
-  const toolCall: ToolCallHooks = {
-    afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
-      // Each tool call is a span. Under an HTTP request it is a child of that
-      // request's span; on its own (a stdio server) it opens a fresh trace.
-      const requestCtx = getRequestContext();
-      const span = requestCtx ? childSpan(requestCtx.trace) : createTraceContext();
-      const measure = result.ok
-        ? measureSize(result.data)
-        : { resultSize: null, responseBytes: 0 };
-      void emit({
-        source: context.source,
-        method: 'TOOL',
-        httpMethod: endpoint.method,
-        path: `/${context.source}/${toolName}`,
-        serviceName: endpoint.serviceName,
-        action: endpoint.key,
-        ...(requestCtx?.dimensions !== undefined && { dimensions: requestCtx.dimensions }),
-        toolName,
-        traceId: span.traceId,
-        spanId: span.spanId,
-        parentSpanId: span.parentSpanId,
-        ok: result.ok,
-        statusCode: result.ok ? 200 : 400,
-        durationMs,
-        errorCode: result.ok ? undefined : result.code,
-        errorMessage: result.ok ? undefined : auditErrorMessage(result, error),
-        ...(!result.ok &&
-          result.details !== undefined && {
-            errorDetail: sanitizePayload(result.details, sanitize),
-          }),
-        payload: sanitizePayload(args, sanitize),
-        resultSize: measure.resultSize,
-        responseBytes: measure.responseBytes,
-        userId: readString(context.userId),
-        authMethod: readString(context.authMethod),
-        clientId: readString(context.clientId),
-        ipAddress: readString(context.ipAddress),
-        userAgent: readString(context.userAgent),
-        startedAt: new Date(Date.now() - durationMs),
-      });
-    },
+  return {
+    ...(request && { request }),
+    toolCall: toolCall ?? {},
   };
-
-  return { http, toolCall };
 }

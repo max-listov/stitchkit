@@ -2,11 +2,19 @@
  * `stitchkit/observability` — the audit layer one level above the raw hooks.
  *
  * W3C trace context, an `AsyncLocalStorage` request context, payload
- * sanitisation, a normalised `RequestEvent`, and `createAuditHook` to wire it
- * all into one sink. A project's logging becomes a table plus a `write`
- * function — nothing else.
+ * sanitisation, a normalised `RequestEvent`, and `createObservability` to wire
+ * framework-owned HTTP completion plus canonical tool hooks into independent
+ * sinks.
  */
-export { type AuditConfig, type AuditHook, createAuditHook } from './audit';
+export {
+  createObservability,
+  type HttpRequestCompletion,
+  type HttpRequestObserver,
+  type Observability,
+  type ObservabilityConfig,
+  type RequestEventSinkConfig,
+  type RequestObservabilityConfig,
+} from './audit';
 export {
   getRequestContext,
   getTraceId,

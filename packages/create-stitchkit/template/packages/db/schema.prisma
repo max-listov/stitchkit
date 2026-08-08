@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RepositoryVisibility {
+  PUBLIC
+  PRIVATE
+  INTERNAL
+}
+
+model RepositorySnapshot {
+  fullName            String   @id
+  description         String?
+  htmlUrl             String
+  language            String?
+  visibility          RepositoryVisibility @default(PUBLIC)
+  stars               Int
+  forks               Int
+  openIssues          Int
+  commitCount         Int
+  latestCommitSha     String?
+  latestCommitMessage String?
+  latestCommittedAt   DateTime?
+  fetchedAt           DateTime
+  expiresAt           DateTime
+}

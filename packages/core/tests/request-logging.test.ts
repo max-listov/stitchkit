@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { serveNode } from '../src/node';
 import {
-  createAuditHook,
+  createObservability,
   getTraceId,
   setRequestDimensions,
   setRequestUser,
@@ -478,15 +478,17 @@ describe('the log path cannot break the request', () => {
 });
 
 describe('composition seam', () => {
-  test('wrapFetch lets a createServer app reach the observability layer', async () => {
+  test('createServer emits request observability without an outer wrapper', async () => {
     const events: Array<{ userAgent?: string; path: string }> = [];
-    const audit = createAuditHook({
-      write: (event) => void events.push({ userAgent: event.userAgent, path: event.path }),
+    const observability = createObservability({
+      request: {
+        write: (event) => void events.push({ userAgent: event.userAgent, path: event.path }),
+      },
     });
     const server = createServer({
       services: [itemsService()],
       port: 0,
-      wrapFetch: (fetch) => wrapInRequestContext(audit.http(fetch)),
+      observability: observability.request,
     });
     try {
       const res = await fetch(`http://localhost:${server.port}/items`, {
