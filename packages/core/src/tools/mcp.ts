@@ -22,13 +22,15 @@ import {
   type ToolExtend,
 } from './mount';
 import { assertUniqueToolName } from './names';
-import { createNativeMcpRegistrar, type NativeMcpRegistrar } from './native-mcp';
+import { mountPreparedRuntimeMcp } from './native-mcp';
 import { findNonPortableFormats } from './portable-formats';
 import {
   buildToolPresentationSchema,
   isObjectPresentationSchema,
   presentationMetadata,
 } from './presentation';
+import type { RuntimeToolDefinition } from './runtime-tool';
+import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
 import { findUntypedProperties } from './untyped-properties';
 
 /**
@@ -325,6 +327,70 @@ export function prepareMcpTools(
   return Object.freeze(prepared);
 }
 
+/** One immutable, framework-managed MCP surface selected as a unit. */
+export interface McpSurfaceDefinition extends ToolSurfaceDefinition {
+  services: ServiceDef[];
+}
+
+/** A finite set of surfaces known when the server/handler is constructed. */
+export type McpSurfaceRegistry = Record<string, McpSurfaceDefinition>;
+
+/** A runtime definition paired with its already validated MCP descriptor. */
+export interface PreparedRuntimeMcpTool {
+  definition: RuntimeToolDefinition;
+  descriptor: PreparedMcpTool;
+}
+
+/** Complete immutable tool descriptors for one fresh MCP server runtime. */
+export interface PreparedMcpServerSurface {
+  contractTools: PreparedMcpSurface;
+  runtimeTools: readonly PreparedRuntimeMcpTool[];
+}
+
+/**
+ * Prepare contracts and framework runtime tools as one collision-checked unit.
+ * No auth, request context, lifecycle, hooks, SDK server or transport is stored.
+ */
+export function prepareMcpServerSurface(
+  surface: McpSurfaceDefinition,
+  config: McpSurfacePreparationConfig = {},
+): PreparedMcpServerSurface {
+  const contractMountables: MountableTool[] = [];
+  const definitions: RuntimeToolDefinition[] = [];
+  const runtimeMountables: MountableTool[] = [];
+
+  for (const entry of collectToolSurface({
+    surface,
+    transport: 'MCP',
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+  })) {
+    if (entry.kind === 'contract') {
+      contractMountables.push(entry.mountable);
+    } else {
+      definitions.push(entry.definition);
+      runtimeMountables.push(entry.mountable);
+    }
+  }
+
+  const contractTools = prepareMcpTools(contractMountables, config);
+
+  const runtimeDescriptors = prepareMcpTools(runtimeMountables, {
+    schemaValidation: config.schemaValidation,
+    logger: config.logger,
+  });
+  const descriptorsByName = new Map(
+    runtimeDescriptors.map((descriptor) => [descriptor.mountable.name, descriptor]),
+  );
+  const runtimeTools: PreparedRuntimeMcpTool[] = [];
+  for (const definition of definitions) {
+    const descriptor = descriptorsByName.get(definition.name);
+    if (descriptor) runtimeTools.push(Object.freeze({ definition, descriptor }));
+  }
+
+  return Object.freeze({ contractTools, runtimeTools: Object.freeze(runtimeTools) });
+}
+
 export interface McpMountConfig {
   context?: Record<string, unknown>;
   /** Tool-call observability hooks. */
@@ -456,11 +522,9 @@ export function mountPreparedMcp(
  * resolved. `createMcpHandler` (HTTP) and `createStdioMcpServer` (stdio) each
  * add their own `auth` on top.
  */
-export interface McpServerBuildConfig<TAuth> {
+export interface McpServerSharedConfig<TAuth> {
   /** MCP server identity (name + version). */
   serverInfo: { name: string; version: string };
-  /** Contract services exposed as MCP tools — may depend on the identity. */
-  services: ServiceDef[] | ((auth: TAuth) => ServiceDef[]);
   /** Context merged into every contract handler (`mountMcp` context). */
   context?: (auth: TAuth) => Record<string, unknown>;
   /** Tool-call observability hooks — `afterToolCall` fires for every result
@@ -480,10 +544,9 @@ export interface McpServerBuildConfig<TAuth> {
   schemaValidation?: McpSchemaValidationConfig;
   /** Logger for schema-incompatibility warnings — defaults to `console`. */
   logger?: StitchLogger;
-  /** Register native multimodal MCP tools for the resolved identity. Use
-   *  `registerTool` for stitchkit lifecycle/hooks; `rawServer` is an explicit
-   *  unprotected SDK escape hatch. */
-  nativeTools?: (registrar: NativeMcpRegistrar, auth: TAuth) => void;
+  /** Explicit unprotected SDK escape hatch. Prefer `runtimeTools`; registrations
+   *  here do not receive stitchkit validation, lifecycle, context or hooks. */
+  rawTools?: (server: McpServer, auth: TAuth) => void;
   /** MCP Apps UI resources (`ui://…`) served for tools that declare `ui`. */
   resources?: McpResourceDef[];
   /** Server instructions — a short (≤2KB) hint to the host on when and how to
@@ -499,6 +562,36 @@ export interface McpServerBuildConfig<TAuth> {
   onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
+export interface DirectMcpSurfaceConfig<TAuth> {
+  /** Contract services exposed as MCP tools — may depend on the identity. */
+  services: ServiceDef[] | ((auth: TAuth) => ServiceDef[]);
+  /** Framework-managed runtime tools — may depend on the identity. */
+  runtimeTools?:
+    | readonly RuntimeToolDefinition[]
+    | ((auth: TAuth) => readonly RuntimeToolDefinition[]);
+  surfaces?: never;
+  selectSurface?: never;
+}
+
+export interface FiniteMcpSurfaceConfig<TAuth, TSurfaces extends McpSurfaceRegistry> {
+  /** Finite immutable surfaces, all prepared eagerly exactly once. */
+  surfaces: TSurfaces;
+  /** Select one declared surface for the resolved identity. */
+  selectSurface: (auth: TAuth) => Extract<keyof TSurfaces, string>;
+  services?: never;
+  runtimeTools?: never;
+}
+
+/**
+ * Transport-neutral MCP build config. Use direct services for a static or truly
+ * identity-dynamic surface; use `surfaces` for a bounded role/plan registry.
+ */
+export type McpServerBuildConfig<
+  TAuth,
+  TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
+> = McpServerSharedConfig<TAuth> &
+  (DirectMcpSurfaceConfig<TAuth> | FiniteMcpSurfaceConfig<TAuth, TSurfaces>);
+
 /**
  * Build an `McpServer` from contract services for a resolved identity.
  * Transport-agnostic — the shared core behind every MCP transport.
@@ -507,9 +600,25 @@ export function buildMcpServer<TAuth>(
   config: McpServerBuildConfig<TAuth>,
   auth: TAuth,
 ): McpServer {
-  const services =
-    typeof config.services === 'function' ? config.services(auth) : config.services;
-  const prepared = prepareMcpSurface(services, {
+  let surface: McpSurfaceDefinition;
+  if (config.surfaces) {
+    const key = config.selectSurface(auth);
+    if (!Object.hasOwn(config.surfaces, key)) {
+      throw new Error(`[stitchkit] Unknown MCP surface "${key}"`);
+    }
+    const selected = config.surfaces[key];
+    if (!selected) throw new Error(`[stitchkit] Unknown MCP surface "${key}"`);
+    surface = selected;
+  } else {
+    const services =
+      typeof config.services === 'function' ? config.services(auth) : config.services;
+    const runtimeTools =
+      typeof config.runtimeTools === 'function'
+        ? config.runtimeTools(auth)
+        : config.runtimeTools;
+    surface = { services, runtimeTools };
+  }
+  const prepared = prepareMcpServerSurface(surface, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     schemaValidation: config.schemaValidation,
@@ -522,14 +631,14 @@ export function buildMcpServer<TAuth>(
 export function buildMcpServerFromPrepared<TAuth>(
   config: McpServerBuildConfig<TAuth>,
   auth: TAuth,
-  prepared: PreparedMcpSurface,
+  prepared: PreparedMcpServerSurface,
 ): McpServer {
   const server = new McpServer(
     config.serverInfo,
     config.instructions ? { instructions: config.instructions } : undefined,
   );
   const context = config.context?.(auth);
-  mountPreparedMcp(server, prepared, {
+  mountPreparedMcp(server, prepared.contractTools, {
     context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,
@@ -541,25 +650,16 @@ export function buildMcpServerFromPrepared<TAuth>(
     errorHint: config.errorHint,
     onOutputStrip: config.onOutputStrip,
   });
-  if (config.nativeTools) {
-    const takenNames = new Set(prepared.map((tool) => tool.mountable.name));
-    const registrar = createNativeMcpRegistrar(server, {
-      context,
-      hooks: config.hooks,
-      lifecycle: config.lifecycle,
-      coerceJsonArgs: config.coerceJsonArgs,
-      onOutputStrip: config.onOutputStrip,
-      takenNames,
-      prepare: (tool) =>
-        prepareMcpTools([tool], {
-          schemaValidation: config.schemaValidation,
-          logger: config.logger,
-        }),
-      formatResult: (result, mode, toolName) =>
-        formatMcpResult(result, mode, toolName, config.errorHint),
-    });
-    config.nativeTools(registrar, auth);
-  }
+  mountPreparedRuntimeMcp(server, prepared.runtimeTools, {
+    context,
+    hooks: config.hooks,
+    lifecycle: config.lifecycle,
+    coerceJsonArgs: config.coerceJsonArgs,
+    onOutputStrip: config.onOutputStrip,
+    formatResult: (result, mode, toolName) =>
+      formatMcpResult(result, mode, toolName, config.errorHint),
+  });
+  config.rawTools?.(server, auth);
   for (const resource of config.resources ?? []) {
     mountMcpResource(server, resource);
   }

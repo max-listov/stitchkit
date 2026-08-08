@@ -77,20 +77,40 @@ const analyticsService = implement(analytics, {
 });
 
 describe('listToolNames', () => {
-  const entries = listToolNames([videoService, analyticsService]);
+  const entries = listToolNames({ services: [videoService, analyticsService] });
 
   test('resolves derived and overridden names with (service, method) identity', () => {
     expect(entries).toEqual([
-      { name: 'get_video', service: 'videos', method: 'get', transports: ['MCP', 'AGENT'] },
-      { name: 'list_videos', service: 'videos', method: 'list', transports: ['MCP', 'AGENT'] },
-      { name: 'mcp_only_video', service: 'videos', method: 'mcpOnly', transports: ['MCP'] },
       {
+        kind: 'contract',
+        name: 'get_video',
+        service: 'videos',
+        method: 'get',
+        transports: ['MCP', 'AGENT'],
+      },
+      {
+        kind: 'contract',
+        name: 'list_videos',
+        service: 'videos',
+        method: 'list',
+        transports: ['MCP', 'AGENT'],
+      },
+      {
+        kind: 'contract',
+        name: 'mcp_only_video',
+        service: 'videos',
+        method: 'mcpOnly',
+        transports: ['MCP'],
+      },
+      {
+        kind: 'contract',
         name: 'run_analytics',
         service: 'analytics',
         method: 'run',
         transports: ['MCP', 'AGENT'],
       },
       {
+        kind: 'contract',
         name: 'transcode_video_now',
         service: 'videos',
         method: 'transcode',

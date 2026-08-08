@@ -223,7 +223,7 @@ describe('framework runtime tools', () => {
         serverInfo: { name: 'runtime', version: '1' },
         services: [],
         hooks,
-        nativeTools: ({ registerTool }) => registerTool(definition),
+        runtimeTools: [definition],
       },
       undefined,
     );
@@ -355,7 +355,7 @@ describe('framework runtime tools', () => {
         {
           serverInfo: { name: 'runtime', version: '1' },
           services: [service],
-          nativeTools: ({ registerTool }) => registerTool(duplicate),
+          runtimeTools: [duplicate],
         },
         undefined,
       ),

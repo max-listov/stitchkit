@@ -4,15 +4,18 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
+import { isRecord } from '../src/internal/typed';
 import type { StitchLogger } from '../src/server';
 import { implement } from '../src/server';
 import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
+  prepareMcpServerSurface,
   prepareMcpSurface,
 } from '../src/tools/mcp';
 import { createMcpHandler } from '../src/tools/mcp-handler';
+import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 function serviceFor(toolName: string, idSchema: z.ZodType = z.string()) {
   return implement(
@@ -34,23 +37,65 @@ function serviceFor(toolName: string, idSchema: z.ZodType = z.string()) {
 }
 
 function initializeRequest(identity = 'static'): Request {
+  return rpcRequest('initialize', identity);
+}
+
+function rpcRequest(
+  method: string,
+  identity = 'static',
+  sessionId?: string,
+  params: Record<string, unknown> = {},
+): Request {
   return new Request('http://local/mcp', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       authorization: identity,
+      ...(sessionId && { 'mcp-session-id': sessionId }),
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'initialize',
+      method,
       params: {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: { name: 'cache-test', version: '1' },
+        ...(method === 'initialize'
+          ? {
+              protocolVersion: '2025-06-18',
+              capabilities: {},
+              clientInfo: { name: 'cache-test', version: '1' },
+            }
+          : params),
       },
     }),
+  });
+}
+
+async function rpcBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  const data = text
+    .split('\n')
+    .find((line) => line.startsWith('data: '))
+    ?.slice('data: '.length);
+  return JSON.parse(data ?? text);
+}
+
+function listedToolNames(body: unknown): string[] {
+  if (!isRecord(body) || !isRecord(body.result) || !Array.isArray(body.result.tools)) {
+    return [];
+  }
+  return body.result.tools.flatMap((tool) =>
+    isRecord(tool) && typeof tool.name === 'string' ? [tool.name] : [],
+  );
+}
+
+function runtimeToolFor(name: string) {
+  return defineRuntimeTool({
+    name,
+    description: `Run ${name}`,
+    identity: { serviceName: 'runtime', action: name, method: 'POST' },
+    input: z.object({}),
+    handler: () => undefined,
   });
 }
 
@@ -104,7 +149,7 @@ describe('immutable MCP surface preparation', () => {
       },
     };
     const directClient = await connect(buildMcpServer(config, undefined));
-    const prepared = prepareMcpSurface(services);
+    const prepared = prepareMcpServerSurface({ services });
     const preparedClient = await connect(
       buildMcpServerFromPrepared(config, undefined, prepared),
     );
@@ -139,7 +184,7 @@ describe('static handler preparation cache', () => {
         contexts += 1;
         return { requestNumber: contexts };
       },
-      nativeTools: () => {
+      rawTools: () => {
         servers += 1;
       },
     });
@@ -176,5 +221,168 @@ describe('identity-dependent surfaces', () => {
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('alpha_get');
     expect(warnings[1]).toContain('beta_get');
+  });
+});
+
+describe('finite prepared surface registry', () => {
+  test('eagerly prepares every declared contract and runtime surface once', async () => {
+    const warnings: string[] = [];
+    const portableWarningTool = defineRuntimeTool({
+      name: 'member_lookup',
+      description: 'Look up a member',
+      identity: { serviceName: 'members', action: 'lookup', method: 'GET' },
+      input: z.object({ id: z.ulid() }),
+      handler: () => undefined,
+    });
+    const adminSurface = { services: [serviceFor('admin_get', z.cuid2())] };
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: (request) => ({ role: request.headers.get('authorization') ?? 'member' }),
+      surfaces: {
+        admin: adminSurface,
+        administrator: adminSurface,
+        member: { services: [], runtimeTools: [portableWarningTool] },
+      },
+      selectSurface: (auth) => (auth.role === 'admin' ? 'admin' : 'member'),
+      schemaValidation: { policy: 'warn', requirePortableFormats: true },
+      logger: recordingLogger(warnings),
+    });
+
+    expect(warnings).toHaveLength(2);
+    await handler(initializeRequest('member'));
+    await handler(initializeRequest('admin'));
+    await handler(initializeRequest('member'));
+    expect(warnings).toHaveLength(2);
+  });
+
+  test('selects exact tool sets in stateless and stateful handlers', async () => {
+    const surfaces = {
+      admin: {
+        services: [serviceFor('admin_get')],
+        runtimeTools: [runtimeToolFor('admin_action')],
+      },
+      member: {
+        services: [serviceFor('member_get')],
+        runtimeTools: [runtimeToolFor('member_action')],
+      },
+    };
+    const directClient = await connect(
+      buildMcpServer(
+        {
+          serverInfo: { name: 'test', version: '1' },
+          surfaces,
+          selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
+        },
+        'admin',
+      ),
+    );
+    expect((await directClient.listTools()).tools.map((tool) => tool.name).sort()).toEqual([
+      'admin_action',
+      'admin_get',
+    ]);
+    await directClient.close();
+
+    const stateless = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: (request) => request.headers.get('authorization') ?? 'member',
+      surfaces,
+      selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
+    });
+    const adminNames = listedToolNames(
+      await rpcBody(await stateless(rpcRequest('tools/list', 'admin'))),
+    );
+    expect(adminNames.sort()).toEqual(['admin_action', 'admin_get']);
+
+    const stateful = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: (request) => request.headers.get('authorization') ?? 'member',
+      surfaces,
+      selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
+      sessionMode: 'stateful',
+    });
+    const initialized = await stateful(initializeRequest('member'));
+    const sessionId = initialized.headers.get('mcp-session-id');
+    if (!sessionId) throw new Error('expected stateful session id');
+    const memberNames = listedToolNames(
+      await rpcBody(await stateful(rpcRequest('tools/list', 'member', sessionId))),
+    );
+    expect(memberNames.sort()).toEqual(['member_action', 'member_get']);
+  });
+
+  test('shares descriptors while keeping parallel auth, context and hooks isolated', async () => {
+    const seen: string[] = [];
+    const whoami = defineRuntimeTool({
+      name: 'whoami',
+      description: 'Return the current identity',
+      identity: { serviceName: 'identity', action: 'read', method: 'GET' },
+      input: z.object({ delay: z.number() }),
+      output: z.object({ userId: z.string() }),
+      handler: async ({ input, userId }) => {
+        await new Promise((resolve) => setTimeout(resolve, input.delay));
+        return { userId: z.string().parse(userId) };
+      },
+    });
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: (request) => ({ userId: request.headers.get('authorization') ?? 'anonymous' }),
+      context: (auth) => auth,
+      surfaces: { shared: { services: [], runtimeTools: [whoami] } },
+      selectSurface: () => 'shared',
+      hooks: {
+        afterToolCall: ({ context }) => {
+          if (typeof context.userId === 'string') seen.push(context.userId);
+        },
+      },
+    });
+
+    const [alpha, beta] = await Promise.all([
+      rpcBody(
+        await handler(
+          rpcRequest('tools/call', 'alpha', undefined, {
+            name: 'whoami',
+            arguments: { delay: 5 },
+          }),
+        ),
+      ),
+      rpcBody(
+        await handler(
+          rpcRequest('tools/call', 'beta', undefined, {
+            name: 'whoami',
+            arguments: { delay: 1 },
+          }),
+        ),
+      ),
+    ]);
+
+    expect(JSON.stringify(alpha)).toContain('alpha');
+    expect(JSON.stringify(beta)).toContain('beta');
+    expect(seen.sort()).toEqual(['alpha', 'beta']);
+  });
+
+  test('fails first on unknown keys and contract/runtime collisions', async () => {
+    const unknown = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => ({ role: 'member' }),
+      surfaces: { member: { services: [] } },
+      // @ts-expect-error — intentional runtime guard coverage for untyped callers.
+      selectSurface: () => 'missing',
+    });
+    await expect(unknown(initializeRequest())).rejects.toThrow(
+      'Unknown MCP surface "missing"',
+    );
+
+    expect(() =>
+      createMcpHandler({
+        serverInfo: { name: 'test', version: '1' },
+        auth: () => undefined,
+        surfaces: {
+          broken: {
+            services: [serviceFor('duplicate_name')],
+            runtimeTools: [runtimeToolFor('duplicate_name')],
+          },
+        },
+        selectSurface: () => 'broken',
+      }),
+    ).toThrow('Duplicate MCP tool name "duplicate_name"');
   });
 });

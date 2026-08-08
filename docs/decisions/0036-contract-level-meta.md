@@ -67,10 +67,10 @@ which had silently dropped any field beyond `prefix` and `scope`.
    an AI tool **with no diff on the endpoint itself** — the "forgot a line while
    refactoring" scenario, made harder to see in review.
 3. **The real remedy already ships and needs no framework change.**
-   `listToolNames(services)` resolves every tool through the same resolver the
-   mounts use; pinned in a snapshot it fails the build the moment a forgotten
-   `expose` adds a tool, naming it with its service, method and transports. That
-   catches the both-levels case a cascade cannot.
+   `listToolNames({ services, runtimeTools })` resolves every tool through the
+   same mixed-surface resolver the mounts use; pinned in a snapshot it fails the
+   build the moment a forgotten `expose` adds a tool, naming its origin, service,
+   method and transports. That catches the both-levels case a cascade cannot.
 4. **It would need five more edit sites to not regress.** `browser/client.ts` and
    `tools/remote.ts` read `endpoint.expose` directly; `ExposesHttp` types the
    client off it; `defineContract`'s `toolName` validator reads `ep.expose`, so it

@@ -131,6 +131,6 @@ export function assertUniqueToolName(
   surface: ToolNameSurface,
 ): void {
   if (taken) {
-    throw new Error(`Duplicate ${surface} "${name}" across mounted services`);
+    throw new Error(`Duplicate ${surface} "${name}" across mounted operations`);
   }
 }

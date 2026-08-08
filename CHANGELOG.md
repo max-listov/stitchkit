@@ -15,6 +15,94 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-08-08
+
+### ⚠️ Breaking changes
+
+- **Tool introspection now takes one mixed surface object.**
+  `buildToolManifest`, `listToolNames` and `summarizeTransports` resolve contract
+  services plus pathless runtime definitions through the same canonical
+  collector as the mounts. `ToolNameEntry` adds its origin; transport summaries
+  expose explicit contract/runtime counts and a mixed `sources` breakdown.
+
+  ```ts
+  // before
+  buildToolManifest(services.flatMap((service) => collectTools(service, 'AGENT')))
+  listToolNames(services)
+  summarizeTransports(services)
+
+  // after
+  const surface = { services, runtimeTools }
+  buildToolManifest({ ...surface, transport: 'AGENT' })
+  listToolNames(surface)
+  summarizeTransports(surface)
+  ```
+
+- **Managed MCP runtime tools are declarative; `nativeTools` is removed.** A
+  protected `defineRuntimeTool` now belongs in the surface's `runtimeTools`
+  array, so its schemas and presentation metadata can be prepared once. The
+  deliberately unprotected SDK escape hatch is now the explicit `rawTools`
+  callback.
+
+  ```ts
+  // before — protected registrar
+  nativeTools: ({ registerTool }) => registerTool(preview)
+  // after — protected immutable definition
+  runtimeTools: [preview]
+
+  // before — raw SDK opt-out
+  nativeTools: ({ rawServer }, auth) => mountRaw(rawServer, auth)
+  // after — raw SDK opt-out
+  rawTools: (server, auth) => mountRaw(server, auth)
+  ```
+
+- **`defineErrors` now takes object definitions and returns constructors.**
+  Each code declares `{ status, details? }`; the optional details schema is the
+  runtime and TypeScript source of truth. Generated functions accept one named
+  options object and return a literal-code `AppError` for the caller to throw.
+  Positional throwers and numeric definitions are removed without aliases.
+
+  ```ts
+  // before
+  const { errors } = defineErrors({ QUOTA_EXCEEDED: 429 })
+  errors.QUOTA_EXCEEDED('Try later', { retryAfterSeconds: 30 }, 'Wait')
+
+  // after
+  const { errors } = defineErrors({
+    QUOTA_EXCEEDED: {
+      status: 429,
+      details: z.object({ retryAfterSeconds: z.number().positive() }),
+    },
+  })
+  throw errors.QUOTA_EXCEEDED({
+    message: 'Try later',
+    details: { retryAfterSeconds: 30 },
+    hint: 'Wait',
+  })
+  ```
+
+### Added
+
+- **Unified contract/runtime introspection.** Mixed manifests use the exact
+  immutable presentation schema advertised by MCP/Agent, honour transport
+  filters, preserve mount order and fail first on cross-origin name collisions;
+  name snapshots and boot summaries now include runtime identities too.
+
+- **Async, endpoint-aware `createErrorHook`.** Its observer and renderer may now
+  await identity/audit enrichment and receive the matched operation; failures
+  before route resolution receive `undefined`. The observer completes before
+  rendering, so the response can use the enriched request context.
+- **Finite prepared MCP surface registries.** Declare bounded
+  `{ services, runtimeTools }` entries under `surfaces` and select one with a
+  typed `selectSurface(auth)` key. Every entry is validated and compiled once;
+  each request/session still receives a fresh server, auth context, lifecycle
+  runner and isolated tool-call context. Direct identity factories remain
+  uncached for genuinely arbitrary surfaces.
+- **Typed domain error definitions.** `defineErrors` exposes its frozen
+  `definitions` registry, preserves literal codes and schema-parsed details on
+  constructed `AppError` instances, and derives `codes` / `isCode` from the
+  same source.
+
 ## [0.41.0] — 2026-08-07
 
 ### ⚠️ Breaking changes
@@ -2243,7 +2331,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/max-listov/stitchkit/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/max-listov/stitchkit/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/max-listov/stitchkit/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/max-listov/stitchkit/compare/v0.38.0...v0.39.0

@@ -5,7 +5,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError, type RuntimeContext, type StitchErrorCode } from '../src/contract';
-import { createErrorHook } from '../src/server';
+import { createErrorHook, createHandler } from '../src/server';
+import type { MethodDef } from '../src/server/types';
 
 const onError = createErrorHook({
   codeMap: {
@@ -24,6 +25,15 @@ const onError = createErrorHook({
 
 // The hook only reads `error`; a minimal valid context satisfies the signature.
 const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+const endpoint: MethodDef = {
+  key: 'probe',
+  serviceName: 'errors',
+  method: 'GET',
+  path: '/probe',
+  desc: 'Probe error handling',
+  handler: () => undefined,
+};
 
 describe('createErrorHook', () => {
   test('remaps a stitchkit code to the app wire code and keeps the status', async () => {
@@ -76,5 +86,119 @@ describe('createErrorHook', () => {
     expect(seen[0]?.raw).toBe(thrown);
     // No codeMap → the stitch code passes through unremapped.
     expect(seen[0]?.code).toBe('CONFLICT');
+  });
+
+  test('awaits async attribution before rendering and passes the matched endpoint', async () => {
+    const order: string[] = [];
+    let observedEndpoint: MethodDef | undefined;
+    let renderedEndpoint: MethodDef | undefined;
+    const enrichedContext: RuntimeContext = {
+      params: undefined,
+      input: undefined,
+      source: 'http',
+    };
+    const hook = createErrorHook({
+      onError: async (_error, _info, ctx, matched) => {
+        await Promise.resolve();
+        ctx.actorId = 'actor-1';
+        observedEndpoint = matched;
+        order.push('observe');
+      },
+      render: async (info, ctx, matched) => {
+        await Promise.resolve();
+        renderedEndpoint = matched;
+        order.push('render');
+        return { code: info.code, actorId: ctx.actorId };
+      },
+    });
+
+    const response = await hook(
+      enrichedContext,
+      new AppError('FORBIDDEN', 'no', 403),
+      endpoint,
+    );
+
+    expect(order).toEqual(['observe', 'render']);
+    expect(observedEndpoint).toBe(endpoint);
+    expect(renderedEndpoint).toBe(endpoint);
+    expect(await response?.json()).toEqual({ code: 'FORBIDDEN', actorId: 'actor-1' });
+  });
+
+  test('passes an absent endpoint for failures before route resolution', async () => {
+    let observed: MethodDef | undefined = endpoint;
+    let rendered: MethodDef | undefined = endpoint;
+    const hook = createErrorHook({
+      onError: (_error, _info, _ctx, matched) => {
+        observed = matched;
+      },
+      render: (info, _ctx, matched) => {
+        rendered = matched;
+        return { code: info.code };
+      },
+    });
+
+    await hook(ctx, new Error('unmatched'));
+
+    expect(observed).toBeUndefined();
+    expect(rendered).toBeUndefined();
+  });
+
+  test('an async observer failure falls back to the original normalized error', async () => {
+    const handler = createHandler({
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/boom',
+          handler: () => {
+            throw new AppError('NOT_FOUND', 'original', 404);
+          },
+        },
+      ],
+      hooks: {
+        onError: createErrorHook({
+          onError: async () => {
+            await Promise.resolve();
+            throw new Error('observer failed');
+          },
+          render: () => ({ shouldNotRender: true }),
+        }),
+      },
+    });
+
+    const response = await handler(new Request('http://local/boom'));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: { code: 'NOT_FOUND', message: 'original' },
+    });
+  });
+
+  test('an async renderer failure falls back to the original normalized error', async () => {
+    const handler = createHandler({
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/boom',
+          handler: () => {
+            throw new AppError('CONFLICT', 'original', 409);
+          },
+        },
+      ],
+      hooks: {
+        onError: createErrorHook({
+          render: async () => {
+            await Promise.resolve();
+            throw new Error('renderer failed');
+          },
+        }),
+      },
+    });
+
+    const response = await handler(new Request('http://local/boom'));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: { code: 'CONFLICT', message: 'original' },
+    });
   });
 });

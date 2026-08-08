@@ -1,67 +1,178 @@
 /**
- * Declare an application's domain error codes once — typed throwers for the
- * server, a typed code table for the client.
- *
- * Services throw `notFound()` / `badRequest()` (stitchkit codes) or a bare
- * `appError('X')` today, and the client can only match on the raw `message`
- * string (which burned a consumer: `[object Object]` where a string was
- * expected). `defineErrors` gives a project a small, typed vocabulary:
+ * Declare an application's domain errors once. Each definition owns its HTTP
+ * status and optional Zod schema for structured details; generated factories
+ * construct (but do not throw) branded `AppError` instances.
  *
  * ```ts
- * export const { errors, codes, isCode } = defineErrors({
- *   SESSION_NOT_FOUND: 404,
- *   QUOTA_EXCEEDED: 429,
- * });
+ * export const appErrors = defineErrors({
+ *   SESSION_NOT_FOUND: { status: 404 },
+ *   QUOTA_EXCEEDED: {
+ *     status: 429,
+ *     details: z.object({ retryAfterSeconds: z.number().int().positive() }),
+ *   },
+ * })
  *
- * // server: a typed thrower, correct HTTP status baked in
- * throw errors.SESSION_NOT_FOUND('no such session');
- *
- * // client: match the code with autocomplete, never a magic string
- * if (err instanceof ApiError && err.code === codes.SESSION_NOT_FOUND) { … }
+ * throw appErrors.errors.SESSION_NOT_FOUND({ message: 'No such session' })
+ * throw appErrors.errors.QUOTA_EXCEEDED({
+ *   details: { retryAfterSeconds: 30 },
+ *   hint: 'Wait for the current window to expire',
+ * })
  * ```
- *
- * The code rides through unchanged in both the HTTP envelope
- * (`{ error: { code, message } }`) and the MCP tool result (`{ error: <code> }`),
- * so one vocabulary covers every transport. The core stays domain-free — the
- * codes are the app's (ADR 0002).
  */
-import { mapObject } from '../internal/typed';
+import { z } from 'zod';
+import { mapObjectTypeBoundary } from '../internal/typed';
 import { AppError } from './errors';
 
-/** A typed thrower — throws an `AppError` with the declared code and status. */
-export type ErrorThrower = (
-  message?: string,
-  details?: Record<string, unknown>,
-  hint?: string,
-) => never;
+/** Supported structured-details schemas: a required or optional Zod object. */
+export type ErrorDetailsSchema = z.ZodObject | z.ZodOptional<z.ZodObject>;
 
-/** The handle `defineErrors` returns. `TDef` maps `CODE → HTTP status`. */
-export interface DefinedErrors<TDef extends Record<string, number>> {
-  /** One thrower per code — `errors.CODE(message?)` throws the matching `AppError`. */
-  errors: { [K in keyof TDef]: ErrorThrower };
-  /** The code literals — `codes.CODE === 'CODE'`, for client-side matching. */
-  codes: { readonly [K in keyof TDef]: K };
-  /** Type guard — is `code` one of this app's declared codes? */
-  isCode: (code: string) => code is keyof TDef & string;
+/** One domain error definition. Omitting `details` forbids structured details. */
+export type ErrorDefinition =
+  | { readonly status: number; readonly details?: never }
+  | { readonly status: number; readonly details: ErrorDetailsSchema };
+
+export type ErrorDefinitions = Record<string, ErrorDefinition>;
+
+/** Parsed details retained by the constructed `AppError`. */
+export type ErrorDetailsOutput<TDefinition extends ErrorDefinition> = TDefinition extends {
+  details: infer TSchema extends ErrorDetailsSchema;
+}
+  ? Extract<z.output<TSchema>, Record<string, unknown> | undefined>
+  : undefined;
+
+/** AppError instance with required details refined when its schema is required. */
+export type DefinedAppError<
+  TCode extends string,
+  TDefinition extends ErrorDefinition,
+> = AppError<TCode, ErrorDetailsOutput<TDefinition>> &
+  (TDefinition extends { details: infer TSchema extends ErrorDetailsSchema }
+    ? undefined extends z.output<TSchema>
+      ? object
+      : { readonly details: ErrorDetailsOutput<TDefinition> }
+    : object);
+
+/**
+ * Factory arguments inferred from the definition: details are forbidden,
+ * required or optional according to the declared schema.
+ */
+export type ErrorFactoryArguments<TDefinition extends ErrorDefinition> = TDefinition extends {
+  details: infer TSchema extends ErrorDetailsSchema;
+}
+  ? undefined extends z.input<TSchema>
+    ? [
+        options?: {
+          message?: string;
+          details?: Exclude<z.input<TSchema>, undefined>;
+          hint?: string;
+        },
+      ]
+    : [
+        options: {
+          message?: string;
+          details: z.input<TSchema>;
+          hint?: string;
+        },
+      ]
+  : [options?: { message?: string; details?: never; hint?: string }];
+
+/** Typed constructor for one declared domain error code. */
+export type ErrorFactory<TCode extends string, TDefinition extends ErrorDefinition> = (
+  ...args: ErrorFactoryArguments<TDefinition>
+) => DefinedAppError<TCode, TDefinition>;
+
+export type ErrorFactories<TDefinitions extends ErrorDefinitions> = {
+  readonly [TCode in keyof TDefinitions]: ErrorFactory<TCode & string, TDefinitions[TCode]>;
+};
+
+export type FrozenErrorDefinitions<TDefinitions extends ErrorDefinitions> = {
+  readonly [TCode in keyof TDefinitions]: Readonly<TDefinitions[TCode]>;
+};
+
+/** The immutable handle returned by `defineErrors`. */
+export interface DefinedErrors<TDefinitions extends ErrorDefinitions> {
+  /** One typed `AppError` constructor per code. The caller chooses when to throw. */
+  readonly errors: ErrorFactories<TDefinitions>;
+  /** Code literals for client-side matching without magic strings. */
+  readonly codes: { readonly [TCode in keyof TDefinitions]: TCode & string };
+  /** Read-only definitions; status and details schemas remain one source of truth. */
+  readonly definitions: FrozenErrorDefinitions<TDefinitions>;
+  /** Type guard — is `code` one of this application's declared codes? */
+  readonly isCode: (code: string) => code is Extract<keyof TDefinitions, string>;
 }
 
-/** Declare a set of domain error codes (`{ CODE: httpStatus }`). */
-export function defineErrors<const TDef extends Record<string, number>>(
-  defs: TDef,
-): DefinedErrors<TDef> {
-  const errors = mapObject<TDef, { [K in keyof TDef]: ErrorThrower }>(
-    defs,
-    (code, status) => (message, details, hint) => {
-      // `code` is a key of `TDef` (declared as string keys); `String` keeps
-      // `AppError`'s `code: string` happy under the generic `keyof` widening.
-      throw new AppError(String(code), message, status, details, hint);
-    },
+interface RuntimeErrorOptions {
+  message?: string;
+  details?: unknown;
+  hint?: string;
+}
+
+function isErrorDetailsSchema(value: unknown): value is ErrorDetailsSchema {
+  return (
+    value instanceof z.ZodObject ||
+    (value instanceof z.ZodOptional && value.unwrap() instanceof z.ZodObject)
   );
-  const codes = mapObject<TDef, { [K in keyof TDef]: K }>(defs, (code) => code);
-  const known = new Set(Object.keys(defs));
-  return {
+}
+
+function validateDefinition(code: string, definition: ErrorDefinition): void {
+  if (
+    !Number.isInteger(definition.status) ||
+    definition.status < 400 ||
+    definition.status > 599
+  ) {
+    throw new Error(
+      `[stitchkit] Error "${code}" must declare an integer HTTP status from 400 to 599`,
+    );
+  }
+  if (definition.details !== undefined && !isErrorDetailsSchema(definition.details)) {
+    throw new Error(
+      `[stitchkit] Error "${code}" details must be a Zod object or optional Zod object`,
+    );
+  }
+}
+
+/** Declare an immutable, Zod-first domain error vocabulary. */
+export function defineErrors<const TDefinitions extends ErrorDefinitions>(
+  source: TDefinitions,
+): DefinedErrors<TDefinitions> {
+  const definitions = mapObjectTypeBoundary<
+    TDefinitions,
+    FrozenErrorDefinitions<TDefinitions>
+  >(source, (code, definition) => {
+    const name = String(code);
+    validateDefinition(name, definition);
+    return Object.freeze({ ...definition });
+  });
+  Object.freeze(definitions);
+
+  const errors = mapObjectTypeBoundary<
+    FrozenErrorDefinitions<TDefinitions>,
+    ErrorFactories<TDefinitions>
+  >(definitions, (code, definition) => {
+    const name = String(code);
+    return (options: RuntimeErrorOptions = {}) => {
+      if (definition.details === undefined) {
+        if ('details' in options) {
+          throw new Error(`[stitchkit] Error "${name}" does not declare details`);
+        }
+        return new AppError(name, options.message, definition.status, undefined, options.hint);
+      }
+      const details = definition.details.parse(options.details);
+      return new AppError(name, options.message, definition.status, details, options.hint);
+    };
+  });
+  Object.freeze(errors);
+
+  const codes = mapObjectTypeBoundary<
+    FrozenErrorDefinitions<TDefinitions>,
+    { readonly [TCode in keyof TDefinitions]: TCode & string }
+  >(definitions, (code) => String(code));
+  Object.freeze(codes);
+
+  const known = new Set(Object.keys(definitions));
+  return Object.freeze({
     errors,
     codes,
-    isCode: (code: string): code is keyof TDef & string => known.has(code),
-  };
+    definitions,
+    isCode: (code: string): code is Extract<keyof TDefinitions, string> => known.has(code),
+  });
 }

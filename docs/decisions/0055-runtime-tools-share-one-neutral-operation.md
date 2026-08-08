@@ -44,7 +44,7 @@ Presentation requires an output schema, so its input is always the validated
 value. `transports` defaults to both surfaces. Duplicate and invalid names fail
 at mount, including collisions with contract tools.
 
-The MCP `rawServer` and direct AI SDK `tool()` remain explicit low-level
+MCP `rawTools` and direct AI SDK `tool()` remain explicit low-level
 boundaries. Calls defined there make no claim to Stitchkit lifecycle, hooks,
 validation or request-context guarantees.
 

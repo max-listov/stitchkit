@@ -146,6 +146,12 @@ context carries nothing yet, so your value always wins.
 `event.serviceName` / `event.action` are present on every event, including a
 pre-handler 400. Nothing to wire.
 
+When failure attribution itself is asynchronous, use `createErrorHook`'s
+`onError(error, info, ctx, endpoint)` observer. The framework awaits it before
+calling `render`, so identity or audit enrichment is visible to both the final
+error envelope and the request event. `endpoint` is the matched `MethodDef`, or
+`undefined` when routing failed before a method was selected.
+
 **Domain dimensions** — attach your own tenant / project / entity id with
 `setRequestDimensions`. It is an opaque `Record<string, string>` the core gives no
 meaning to (→ ADR 0021). Resolve it cheaply from `ctx.params` / headers in

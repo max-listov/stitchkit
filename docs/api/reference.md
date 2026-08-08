@@ -128,9 +128,17 @@ from the root `stitchkit`.
 | `conflict` | function | throw `409 CONFLICT` |
 | `rateLimited` | function | throw `429 RATE_LIMITED` |
 | `appError` | function | throw an `AppError` for any code |
-| `defineErrors` | function | declare domain error codes → typed throwers + a code table — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
-| `DefinedErrors` | _type_ | the `{ errors, codes, isCode }` handle `defineErrors` returns |
-| `ErrorThrower` | _type_ | one `defineErrors` thrower — `(message?, details?, hint?) => never` |
+| `defineErrors` | function | declare immutable domain error definitions → typed `AppError` constructors, codes and schemas — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
+| `DefinedErrors` | _type_ | the `{ errors, codes, definitions, isCode }` handle `defineErrors` returns |
+| `DefinedAppError` | _type_ | literal-code error instance with schema-refined details |
+| `ErrorDefinition` | _type_ | `{ status, details? }` definition for one domain code |
+| `ErrorDefinitions` | _type_ | string-keyed domain error definition registry |
+| `ErrorDetailsSchema` | _type_ | required or optional Zod object accepted for structured details |
+| `ErrorDetailsOutput` | _type_ | parsed details inferred from one definition |
+| `ErrorFactoryArguments` | _type_ | options tuple with forbidden/required/optional details inferred per code |
+| `ErrorFactory` | _type_ | one typed `AppError` constructor |
+| `ErrorFactories` | _type_ | mapped constructor registry derived from all definitions |
+| `FrozenErrorDefinitions` | _type_ | read-only definition registry returned to consumers |
 | `STITCH_ERROR_STATUS` | const | `code → HTTP status` map for stitchkit's own error codes — [guide](../guide/auth-and-errors.md#stitch-codes-vs-your-codes) |
 | `StitchErrorCode` | _type_ | a code stitchkit itself emits (`keyof STITCH_ERROR_STATUS`) |
 | `isStitchErrorCode` | function | type guard — is a code one of stitchkit's own? |
@@ -198,8 +206,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAuthHook` | function | a scope-enforcing `beforeHandle` hook — [guide](../guide/auth-and-errors.md#createauthhook) |
-| `createErrorHook` | function | an `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
-| `ErrorHookConfig` | _type_ | config for `createErrorHook` |
+| `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
+| `ErrorHookConfig` | _type_ | async observer/renderer config for `createErrorHook` |
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
 | `createBearerResolver` | function | a bearer-token identity resolver |
 | `signJwt` | function | sign an HS256 JWT |
@@ -348,7 +356,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 |--------|------|---------|
 | `createMcpHandler` | function | a complete Streamable-HTTP MCP server — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
 | `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
-| `buildMcpServer` | function | build an `McpServer` from contracts — the transport-neutral core |
+| `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces — the transport-neutral core |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
@@ -359,16 +367,22 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
 | `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
-| `listToolNames` | function | every mounted tool name with its `(service, method)` identity — for name-baseline snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
+| `listToolNames` | function | every contract/runtime tool name with origin, identity and transports — for stable snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
 | `McpHandlerConfig` | _type_ | config for `createMcpHandler` |
+| `McpHttpConfig` | _type_ | HTTP auth, protected-resource and session options composed into `McpHandlerConfig` |
 | `McpSessionMode` | _type_ | `'stateless' \| 'stateful'`; HTTP defaults to request-isolated stateless mode |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
+| `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
+| `DirectMcpSurfaceConfig` | _type_ | static or identity-dynamic `services` / `runtimeTools` source |
+| `FiniteMcpSurfaceConfig` | _type_ | bounded `surfaces` registry plus typed selector |
+| `McpSurfaceDefinition` | _type_ | one immutable `{ services, runtimeTools }` MCP surface |
+| `McpSurfaceRegistry` | _type_ | finite keyed surface registry for eager preparation |
+| `StdioAuthConfig` | _type_ | startup identity composed into `StdioMcpServerConfig` |
 | `ImplementRemoteOptions` | _type_ | options for `implementRemote` |
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
 | `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
-| `NativeMcpRegistrar` | _type_ | protected `registerTool` plus explicit unprotected `rawServer` access |
 | `RuntimeToolDefinition` | _type_ | transport-neutral pathless operation with identity, schemas, handler and optional presenters |
 | `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
 | `RuntimeToolDefinitionWithOutput` | _type_ | runtime definition whose handler and presenters share a validated output type |
@@ -408,7 +422,7 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `findNonPortableFormats` | function | deep finder for formats outside the portable MCP/AJV baseline |
 | `NonPortableFormat` | _type_ | one `{ path, format }` portability finding |
 | `PORTABLE_JSON_SCHEMA_FORMATS` | constant | portable-format baseline used by MCP validation |
-| `ToolNameEntry` | _type_ | one `listToolNames` row — `{ name, service, method, transports }` |
+| `ToolNameEntry` | _type_ | one `listToolNames` row — `{ kind, name, service, method, transports }` |
 | `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
 
@@ -467,12 +481,15 @@ Advanced building blocks — the shared machinery the mounts are built on.
 |--------|------|---------|
 | `collectTools` | function | resolve a service's methods to mountable tools (the shared resolver) |
 | `createToolLogger` | function | a ready `afterToolCall` that logs every tool call — [guide](../guide/mcp-and-agents.md#logging-tool-calls--createtoollogger) |
-| `summarizeTransports` | function | per-transport operation counts for a boot-time summary |
-| `buildToolManifest` | function | a searchable `{ name, description, inputSchema }` manifest for a `tool_search` tool |
+| `summarizeTransports` | function | mixed contract/runtime operation counts and per-source breakdown for a boot-time summary |
+| `buildToolManifest` | function | transport-aware searchable `{ name, description, inputSchema }` rows from a mixed surface |
 | `ToolLoggerConfig` | _type_ | config for `createToolLogger` |
 | `ToolCallRecord` | _type_ | the structured record `createToolLogger` passes to `onRecord` |
-| `TransportSummary` | _type_ | the result of `summarizeTransports` |
+| `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
+| `ToolSurfaceDefinition` | _type_ | shared object-shaped `{ services?, runtimeTools? }` introspection surface |
+| `ToolSurfaceTransport` | _type_ | tool collector transport: `'MCP' \| 'AGENT' \| 'CLI'` |
+| `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions in a JSON Schema document into conservative object joins; never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |

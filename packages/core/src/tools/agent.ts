@@ -8,13 +8,9 @@ import {
   type ToolLifecycle,
   toolResultFromError,
 } from './execute';
-import { collectTools, createToolRunner, formatToolError, type ToolExtend } from './mount';
-import { assertUniqueToolName } from './names';
-import {
-  type RuntimeToolDefinition,
-  runtimeToolMountable,
-  runtimeToolSupports,
-} from './runtime-tool';
+import { createToolRunner, formatToolError, type ToolExtend } from './mount';
+import type { RuntimeToolDefinition } from './runtime-tool';
+import { collectToolSurface } from './surface';
 
 export interface AgentContext {
   [key: string]: unknown;
@@ -60,51 +56,13 @@ export function mountAgent(
     onOutputStrip: config.onOutputStrip,
   });
 
-  for (const service of serviceList) {
-    for (const mountable of collectTools(service, 'AGENT', {
-      extend: config.extend,
-      flattenUnionInput: config.flattenUnionInput,
-    })) {
-      // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so a tool
-      // legitimately named `toString` / `valueOf` / `constructor` would be
-      // reported as a duplicate of nothing. MCP (a `Set`) and CLI (a `Map`) were
-      // always immune; this makes the guarantee actually uniform.
-      assertUniqueToolName(
-        mountable.name,
-        Object.hasOwn(tools, mountable.name),
-        'agent tool name',
-      );
-      tools[mountable.name] = tool({
-        description: mountable.method.desc,
-        inputSchema: jsonSchema(mountable.presentationSchema, {
-          validate: async (value) =>
-            isRecord(value)
-              ? { success: true, value }
-              : { success: false, error: new Error('Tool arguments must be an object') },
-        }),
-        execute: async (rawArgs) => {
-          const args = isRecord(rawArgs) ? rawArgs : {};
-          try {
-            const result = await runTool(mountable, args);
-            if (result.ok) return result.data;
-            return formatToolError(result, mountable.name, config.errorHint);
-          } catch (err) {
-            return formatToolError(toolResultFromError(err), mountable.name, config.errorHint);
-          }
-        },
-      });
-    }
-  }
-
-  for (const definition of config.runtimeTools ?? []) {
-    if (!runtimeToolSupports(definition, 'AGENT')) continue;
-    const mountable = runtimeToolMountable(definition);
-    assertUniqueToolName(
-      definition.name,
-      Object.hasOwn(tools, definition.name),
-      'agent tool name',
-    );
-
+  for (const entry of collectToolSurface({
+    surface: { services: serviceList, runtimeTools: config.runtimeTools },
+    transport: 'AGENT',
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+  })) {
+    const { mountable } = entry;
     const inputSchema = jsonSchema(mountable.presentationSchema, {
       validate: async (value) =>
         isRecord(value)
@@ -122,9 +80,15 @@ export function mountAgent(
       }
     };
 
-    if (definition.present?.agent) {
-      const presenter = definition.present.agent;
+    const presenter = entry.kind === 'runtime' ? entry.definition.present?.agent : undefined;
+    if (entry.kind === 'runtime' && presenter) {
+      const { definition } = entry;
       const output = definition.output;
+      if (!output) {
+        throw new Error(
+          `Runtime tool "${definition.name}" presenter requires an output schema`,
+        );
+      }
       tools[definition.name] = tool({
         description: definition.description,
         inputSchema,
@@ -139,10 +103,11 @@ export function mountAgent(
         },
       });
     } else {
-      tools[definition.name] = tool({
-        description: definition.description,
+      const output = entry.kind === 'runtime' ? entry.definition.output : undefined;
+      tools[mountable.name] = tool({
+        description: mountable.method.desc,
         inputSchema,
-        ...(definition.output && { outputSchema: definition.output }),
+        ...(output && { outputSchema: output }),
         execute,
       });
     }

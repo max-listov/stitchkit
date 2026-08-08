@@ -23,3 +23,21 @@ export function mapObject<
   }
   return result as TResult;
 }
+
+/**
+ * Dynamic key-wise factory bridge. Use when runtime construction preserves a
+ * mapped type's key/value relation but TypeScript cannot express the dependent
+ * callback return. The assertion is intentionally isolated at this boundary.
+ */
+export function mapObjectTypeBoundary<
+  TSource extends object,
+  TResult extends { [K in keyof TSource]?: unknown },
+>(
+  source: TSource,
+  mapper: (key: keyof TSource, value: TSource[keyof TSource]) => unknown,
+): TResult {
+  return mapObject<TSource, TResult>(
+    source,
+    (key, value) => mapper(key, value) as TResult[typeof key] | undefined,
+  );
+}

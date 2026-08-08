@@ -34,12 +34,15 @@ const APP_ERROR_BRAND = Symbol.for('stitchkit.AppError');
  * structured `details` and a `hint`. `toJSON()` renders the public error
  * envelope. Throw it directly, or via the typed helpers below.
  */
-export class AppError extends Error {
+export class AppError<
+  TCode extends string = string,
+  TDetails extends Record<string, unknown> | undefined = Record<string, unknown> | undefined,
+> extends Error {
   constructor(
-    public readonly code: string,
+    public readonly code: TCode,
     message?: string,
     public readonly status: number = 500,
-    public readonly details?: Record<string, unknown>,
+    public readonly details?: TDetails,
     public readonly hint?: string,
   ) {
     super(message ?? code);

@@ -178,15 +178,15 @@ describe('stateless is the default', () => {
           if (typeof context.userId === 'string') seen.push(context.userId);
         },
       },
-      nativeTools: ({ registerTool }) => {
-        registerTool({
+      runtimeTools: [
+        {
           name: 'whoami',
           description: 'Return the current identity',
           identity: { serviceName: 'authTools', action: 'whoami', method: 'GET' },
           input: z.object({}),
           handler: () => undefined,
-        });
-      },
+        },
+      ],
     });
 
     await Promise.all([

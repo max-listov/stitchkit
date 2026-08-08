@@ -30,21 +30,19 @@ import { createStdioMcpServer, type StdioMcpServerConfig } from './mcp-stdio';
 import type { ToolExtend } from './mount';
 
 /** Re-type a config's static `context` (and `extend`) to the toolkit's `TContext`. */
-type WithStaticContext<C, TContext extends Record<string, unknown>> = Omit<
-  C,
-  'context' | 'extend'
-> & {
-  context?: TContext;
-  extend?: ToolExtend<TContext>;
-};
+type WithStaticContext<C, TContext extends Record<string, unknown>> = C extends unknown
+  ? Omit<C, 'context' | 'extend'> & {
+      context?: TContext;
+      extend?: ToolExtend<TContext>;
+    }
+  : never;
 
 /** Re-type a config's `(auth) => context` factory to the toolkit's `TContext`. */
-type WithAuthContext<C, TAuth, TContext extends Record<string, unknown>> = Omit<
-  C,
-  'context'
-> & {
-  context?: (auth: TAuth) => TContext;
-};
+type WithAuthContext<C, TAuth, TContext extends Record<string, unknown>> = C extends unknown
+  ? Omit<C, 'context'> & {
+      context?: (auth: TAuth) => TContext;
+    }
+  : never;
 
 /** The context-pinned tool surface returned by `createToolkit`. */
 export interface Toolkit<TContext extends Record<string, unknown>> {

@@ -301,27 +301,46 @@ onError: (ctx, err) => {
 
 ## Domain errors — `defineErrors`
 
-Declaring your app's error codes once gives you typed throwers on the server and
-a code table the client matches with autocomplete — instead of reading the raw
-`message` string (which breaks the moment a code expects a string but gets an
-object):
+Declare each domain code, HTTP status and optional structured-details schema in
+one immutable registry. The generated functions construct typed branded
+`AppError` instances; ordinary `throw` remains explicit at the call site:
 
 ```ts
-export const { errors, codes, isCode } = defineErrors({
-  SESSION_NOT_FOUND: 404,
-  QUOTA_EXCEEDED: 429,
+import { z } from 'zod'
+
+export const { errors, codes, definitions, isCode } = defineErrors({
+  SESSION_NOT_FOUND: { status: 404 },
+  QUOTA_EXCEEDED: {
+    status: 429,
+    details: z.object({ retryAfterSeconds: z.number().int().positive() }),
+  },
 })
 
-// server — a typed thrower, the right HTTP status baked in
-throw errors.SESSION_NOT_FOUND('no such session')
+throw errors.SESSION_NOT_FOUND({ message: 'No such session' })
+throw errors.QUOTA_EXCEEDED({
+  message: 'Try later',
+  details: { retryAfterSeconds: 30 },
+  hint: 'Wait for the current window to expire',
+})
+
+// Construction without throwing is useful for composition or inspection.
+const error = errors.QUOTA_EXCEEDED({ details: { retryAfterSeconds: 30 } })
+definitions.QUOTA_EXCEEDED.status // 429 — same source, no copied status map
 
 // client — match the code, never a magic string
 if (err instanceof ApiError && err.code === codes.SESSION_NOT_FOUND) { … }
 ```
 
-The `code` rides through unchanged in both the HTTP envelope and the MCP tool
-result, so one vocabulary covers every transport. The codes are yours; the core
-stays domain-free.
+With no `details` schema, the options object forbids `details`. A required
+`z.object` makes `details` required; `z.object(...).optional()` makes it
+optional. Supplied details are parsed when the error is constructed, before any
+transport sees them. `code` remains literal and the parsed details type is
+retained on the returned `AppError`.
+
+HTTP renders the complete code/status/message/details/hint. Tool transports keep
+their established model-facing projection (code/details/hint, without HTTP
+status), while `invokeOrThrow` recovers the exact normalized `AppError`. The
+codes and schemas remain application-owned; Stitchkit stays domain-free.
 
 ## `createErrorHook`
 
@@ -352,6 +371,27 @@ createServer({ services, hooks: { onError } })
 
 Codes you threw yourself (not stitchkit's) pass through `codeMap` unchanged; the
 `satisfies Record<StitchErrorCode, …>` keeps the map exhaustive across upgrades.
+
+Both `onError` and `render` may be asynchronous and receive the matched endpoint
+as their final argument. The observer is awaited before rendering, so it can
+resolve identity or enrich the request context even for failures raised before
+`beforeHandle`:
+
+```ts
+const onError = createErrorHook({
+  onError: async (_error, _info, ctx, endpoint) => {
+    await attributeFailedRequest(ctx, endpoint)
+  },
+  render: (info, ctx) => ({
+    error: { code: info.code },
+    actorId: ctx.actorId,
+  }),
+})
+```
+
+`endpoint` is `undefined` when the failure happened before route resolution.
+Synchronous callbacks and renderers that declare fewer parameters continue to
+work normally.
 
 Invalid input (a `ZodError`) is classified as `VALIDATION_ERROR` 400 before it
 reaches `render` — a client fault is an honest 400, not a 500 — and the

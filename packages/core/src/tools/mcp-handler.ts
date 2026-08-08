@@ -11,7 +11,8 @@ import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
-  prepareMcpSurface,
+  type McpSurfaceRegistry,
+  prepareMcpServerSurface,
 } from './mcp';
 import { type ProtectedResourceConfig, wwwAuthenticateHeader } from './oauth-metadata';
 
@@ -82,7 +83,7 @@ class InMemoryEventStore implements EventStore {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-export interface McpHandlerConfig<TAuth> extends McpServerBuildConfig<TAuth> {
+export interface McpHttpConfig<TAuth> {
   /** Resolve an incoming request to an identity. Return `null` → 401. */
   auth: (req: Request) => TAuth | null | Promise<TAuth | null>;
   /**
@@ -96,6 +97,11 @@ export interface McpHandlerConfig<TAuth> extends McpServerBuildConfig<TAuth> {
    *  for cross-request progress, server push or resumable SSE sessions. */
   sessionMode?: McpSessionMode;
 }
+
+export type McpHandlerConfig<
+  TAuth,
+  TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
+> = McpServerBuildConfig<TAuth, TSurfaces> & McpHttpConfig<TAuth>;
 
 export type McpSessionMode = 'stateful' | 'stateless';
 
@@ -124,30 +130,61 @@ function jsonRpcError(
  * mode, the SSE event/session stores — so the consuming app never imports the
  * SDK itself. The app only declares WHAT to expose:
  * how to authenticate and which contract services. MCP tools come from
- * contracts; native multimodal tools attach via `nativeTools`.
+ * contracts; multimodal operations are declared as framework `runtimeTools`.
  *
  * The server itself is built by the transport-neutral `buildMcpServer` — the
  * same core used by `createStdioMcpServer`.
  *
  * Mount the returned handler in your server's fetch router (e.g. under `/mcp`).
  */
-export function createMcpHandler<TAuth>(
-  config: McpHandlerConfig<TAuth>,
-): (req: Request) => Promise<Response> {
+export function createMcpHandler<
+  TAuth,
+  const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
+>(config: McpHandlerConfig<TAuth, TSurfaces>): (req: Request) => Promise<Response> {
   let buildServer: (auth: TAuth) => McpServer;
-  if (Array.isArray(config.services)) {
-    // Static services are deterministic: prepare and validate once, then every
-    // session/request gets a fresh server and runtime over this immutable surface.
-    const prepared = prepareMcpSurface(config.services, {
-      logger: config.logger,
-      extend: config.extend,
-      flattenUnionInput: config.flattenUnionInput,
-      schemaValidation: config.schemaValidation,
-    });
+  const preparation = {
+    logger: config.logger,
+    extend: config.extend,
+    flattenUnionInput: config.flattenUnionInput,
+    schemaValidation: config.schemaValidation,
+  };
+  if (config.surfaces && config.selectSurface) {
+    const selectSurface = config.selectSurface;
+    const preparedByKey = new Map<string, ReturnType<typeof prepareMcpServerSurface>>();
+    const preparedBySurface = new WeakMap<
+      object,
+      ReturnType<typeof prepareMcpServerSurface>
+    >();
+    for (const key in config.surfaces) {
+      if (!Object.hasOwn(config.surfaces, key)) continue;
+      const surface = config.surfaces[key];
+      if (!surface) continue;
+      const existing = preparedBySurface.get(surface);
+      const prepared = existing ?? prepareMcpServerSurface(surface, preparation);
+      if (!existing) preparedBySurface.set(surface, prepared);
+      preparedByKey.set(key, prepared);
+    }
+    buildServer = (auth) => {
+      const key = selectSurface(auth);
+      const prepared = preparedByKey.get(key);
+      if (!prepared) throw new Error(`[stitchkit] Unknown MCP surface "${key}"`);
+      return buildMcpServerFromPrepared(config, auth, prepared);
+    };
+  } else if (
+    config.services &&
+    typeof config.services !== 'function' &&
+    typeof config.runtimeTools !== 'function'
+  ) {
+    // A deterministic direct surface is prepared once; every session/request
+    // still gets a fresh server and runtime over the immutable descriptors.
+    const prepared = prepareMcpServerSurface(
+      { services: config.services, runtimeTools: config.runtimeTools },
+      preparation,
+    );
     buildServer = (auth) => buildMcpServerFromPrepared(config, auth, prepared);
   } else {
-    // Identity-dependent service factories may expose a different surface, so
-    // each resolved server prepares only that identity's descriptors.
+    // Truly identity-dependent factories remain uncached by design: an
+    // arbitrary identity is not a bounded cache key.
     buildServer = (auth) => buildMcpServer(config, auth);
   }
 

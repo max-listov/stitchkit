@@ -28,13 +28,22 @@ export {
   type ToolInvokerTransport,
 } from './tools/invoker';
 export { listToolNames, type ToolNameEntry } from './tools/list-names';
-export { buildToolManifest, type ToolManifestEntry } from './tools/manifest';
+export {
+  buildToolManifest,
+  type ToolManifestConfig,
+  type ToolManifestEntry,
+} from './tools/manifest';
 export {
   buildMcpServer,
+  type DirectMcpSurfaceConfig,
+  type FiniteMcpSurfaceConfig,
   type IncompatibleSchemaPolicy,
   type McpMountConfig,
   type McpSchemaValidationConfig,
   type McpServerBuildConfig,
+  type McpServerSharedConfig,
+  type McpSurfaceDefinition,
+  type McpSurfaceRegistry,
   mountMcp,
   mountMcpResource,
   type ValidateMcpSchemasConfig,
@@ -51,9 +60,14 @@ export {
 export {
   createMcpHandler,
   type McpHandlerConfig,
+  type McpHttpConfig,
   type McpSessionMode,
 } from './tools/mcp-handler';
-export { createStdioMcpServer, type StdioMcpServerConfig } from './tools/mcp-stdio';
+export {
+  createStdioMcpServer,
+  type StdioAuthConfig,
+  type StdioMcpServerConfig,
+} from './tools/mcp-stdio';
 export {
   type CollectToolsConfig,
   collectTools,
@@ -63,7 +77,6 @@ export {
 export { type DownloadToolConfig, mountDownload } from './tools/mount-download';
 export { mountUpload, type UploadToolConfig } from './tools/mount-upload';
 export { mountWait, type WaitToolConfig } from './tools/mount-wait';
-export type { NativeMcpRegistrar } from './tools/native-mcp';
 export {
   oauthProtectedResourceRoute,
   PROTECTED_RESOURCE_PATH,
@@ -101,6 +114,10 @@ export {
   type RuntimeToolPresenters,
   type RuntimeToolTransport,
 } from './tools/runtime-tool';
+export type {
+  ToolSurfaceDefinition,
+  ToolSurfaceTransport,
+} from './tools/surface';
 export {
   createToolLogger,
   type ToolCallRecord,

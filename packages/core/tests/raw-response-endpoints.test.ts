@@ -246,7 +246,7 @@ describe('never a tool, on any surface', () => {
   test('listToolNames does not report it', () => {
     // The snapshot a consumer pins to catch accidental exposure — a raw endpoint
     // must never appear in it.
-    const entries = listToolNames([service]);
+    const entries = listToolNames({ services: [service] });
     expect(entries.some((e) => e.method === 'download')).toBe(false);
     // …while the sibling is still there, so the assertion is not vacuous.
     expect(entries.some((e) => e.method === 'info')).toBe(true);

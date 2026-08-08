@@ -62,6 +62,97 @@ current one *up to* your target, and apply each snippet.
 
 ## Unreleased breaking migrations
 
+Tool introspection now accepts one object-shaped contract/runtime surface. Stop
+calling the internal contract collector or merging a locally converted runtime
+manifest:
+
+```ts
+// before
+buildToolManifest(services.flatMap((service) => collectTools(service, 'AGENT')))
+listToolNames(services)
+summarizeTransports(services)
+
+// after
+const surface = { services, runtimeTools }
+buildToolManifest({ ...surface, transport: 'AGENT' })
+listToolNames(surface)
+summarizeTransports(surface)
+```
+
+`ToolNameEntry` adds `kind: 'contract' | 'runtime'`. `TransportSummary` is now
+`{ contractServices, runtimeTools, totals, sources }`; replace `services` and
+`perService` reads with the explicit counts and mixed-source breakdown. There
+is no positional overload and no `buildRuntimeToolManifest`: Stitchkit owns the
+combined order, transport filtering, canonical presentation schema and
+cross-origin collision checks.
+
+`defineErrors` now uses one Zod-first definition object and returns constructors
+instead of positional throwers. Add explicit `throw`, move message/details/hint
+into one options object, and declare a details schema when that code carries
+structured context:
+
+```ts
+// before
+const { errors } = defineErrors({ QUOTA_EXCEEDED: 429 })
+errors.QUOTA_EXCEEDED('Try later', { retryAfterSeconds: 30 }, 'Wait')
+
+// after
+const { errors, definitions } = defineErrors({
+  QUOTA_EXCEEDED: {
+    status: 429,
+    details: z.object({ retryAfterSeconds: z.number().positive() }),
+  },
+})
+throw errors.QUOTA_EXCEEDED({
+  message: 'Try later',
+  details: { retryAfterSeconds: 30 },
+  hint: 'Wait',
+})
+```
+
+There is no positional overload. A code without `details` forbids them; use an
+optional object schema when the details object itself is optional. Read status
+and schemas from the frozen `definitions` registry instead of maintaining a
+parallel map.
+
+Managed MCP runtime tools are now declared as immutable data. Move protected
+registrar calls to `runtimeTools`; rename deliberate raw SDK registration to
+`rawTools`. There is no registrar alias:
+
+```ts
+// before — protected
+createMcpHandler({
+  services,
+  nativeTools: ({ registerTool }) => registerTool(preview),
+})
+
+// after — protected and prepared with the rest of the surface
+createMcpHandler({ services, runtimeTools: [preview] })
+
+// before — deliberate raw SDK opt-out
+nativeTools: ({ rawServer }, auth) => mountRaw(rawServer, auth)
+
+// after — still a deliberate raw SDK opt-out
+rawTools: (server, auth) => mountRaw(server, auth)
+```
+
+When identity selects from a bounded set, replace a repeatedly prepared
+`services(auth)` factory with a finite registry:
+
+```ts
+createMcpHandler({
+  surfaces: {
+    admin: { services: allServices, runtimeTools: [preview] },
+    member: { services: memberServices, runtimeTools: [preview] },
+  },
+  selectSurface: (auth) => auth.isAdmin ? 'admin' : 'member',
+})
+```
+
+Keep direct `services(auth)` / `runtimeTools(auth)` only for genuinely
+unbounded definitions; Stitchkit intentionally does not cache arbitrary auth
+values.
+
 Contract success bodies are now determined by the presence of `output`, not by
 the handler's runtime value. A nullable output returns JSON `null` with status
 `200`; `undefined` with a declared output and non-null data without an output
@@ -165,7 +256,7 @@ const preview = defineRuntimeTool({
     }),
   },
 })
-nativeTools: ({ registerTool }) => registerTool(preview)
+runtimeTools: [preview]
 ```
 
 The removed `NativeMcp*` types have no aliases. Use `RuntimeToolDefinition`,
@@ -364,7 +455,7 @@ name derivation, diff them mechanically:
 
 ```ts
 import { listToolNames } from 'stitchkit/tools'
-console.log(JSON.stringify(listToolNames(services), null, 2))
+console.log(JSON.stringify(listToolNames({ services, runtimeTools }), null, 2))
 ```
 
 `listToolNames` never throws on an illegal name — that is deliberate, so it can

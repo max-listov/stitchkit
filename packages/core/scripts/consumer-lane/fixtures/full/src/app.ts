@@ -9,19 +9,22 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
-import { defineContract } from 'stitchkit/contract';
+import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createAuditHook, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
 import {
   buildMcpServer,
+  buildToolManifest,
   createMcpHandler,
   defineRuntimeTool,
   type ErrorHintFn,
   EXT_APPS_BUNDLE_PLACEHOLDER,
   flattenToolJsonSchema,
   inlineMcpAppBundle,
+  listToolNames,
   mountAgent,
+  summarizeTransports,
   type ToolCallContext,
   type ToolCallHooks,
   type ToolLifecycle,
@@ -39,6 +42,20 @@ function check(what: string, ok: boolean, detail?: unknown): void {
   failures += 1;
   console.error(`  ✗ ${what}`, detail === undefined ? '' : detail);
 }
+
+const packedErrors = defineErrors({
+  QUOTA_EXCEEDED: {
+    status: 429,
+    details: z.object({ retryAfterSeconds: z.number().positive() }),
+  },
+});
+const packedError = packedErrors.errors.QUOTA_EXCEEDED({
+  details: { retryAfterSeconds: 30 },
+});
+check(
+  'the packed domain error factory preserves status and typed details',
+  packedError.status === 429 && packedError.details.retryAfterSeconds === 30,
+);
 
 const presentation: ToolPresentationSchema = flattenToolJsonSchema(
   z.toJSONSchema(
@@ -123,23 +140,34 @@ const nativeDefinition = defineRuntimeTool({
   },
 });
 
-let nativeRegistered = false;
-buildMcpServer(
+const packedNativeServer = buildMcpServer(
   {
     serverInfo: { name: 'consumer', version: '1' },
     services: [],
-    nativeTools: ({ registerTool }) => {
-      registerTool(nativeDefinition);
-      nativeRegistered = true;
-    },
+    runtimeTools: [nativeDefinition],
   },
   undefined,
 );
-check('the packed native registrar accepts a typed definition', nativeRegistered);
+check('the packed MCP surface accepts a typed runtime definition', !!packedNativeServer);
 check(
   'the packed Agent mount accepts the same runtime definition',
   typeof mountAgent([], { runtimeTools: [nativeDefinition] }).native_update?.execute ===
     'function',
+);
+const packedSurface = { services: [service], runtimeTools: [nativeDefinition] };
+check(
+  'the packed manifest includes contract and runtime tools without a local schema walker',
+  buildToolManifest({ ...packedSurface, transport: 'AGENT' }).length === 2,
+);
+check(
+  'the packed name snapshot carries the runtime origin',
+  listToolNames(packedSurface).some(
+    (entry) => entry.kind === 'runtime' && entry.name === 'native_update',
+  ),
+);
+check(
+  'the packed transport summary counts the runtime definition',
+  summarizeTransports(packedSurface).runtimeTools === 1,
 );
 
 interface PackedEntity {

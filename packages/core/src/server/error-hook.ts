@@ -35,7 +35,7 @@
 import type { RuntimeContext } from '../contract';
 import { isStitchErrorCode, type StitchErrorCode } from '../contract';
 import { normalizeError } from '../internal/errors';
-import type { LifecycleHooks } from './types';
+import type { LifecycleHooks, MethodDef } from './types';
 
 /** The normalised error handed to `render` — code already remapped. */
 export interface ResolvedError {
@@ -66,16 +66,29 @@ export interface ErrorHookConfig<TWireCode extends string = string> {
    * in the envelope, which is the ordinary reason to have one. Declaring the
    * parameter is optional: a one-argument `render` stays assignable.
    */
-  render: (info: ResolvedError, ctx: RuntimeContext) => unknown;
-  /** Observe the raw thrown value before rendering — logging / metrics. */
-  onError?: (error: unknown, info: ResolvedError, ctx: RuntimeContext) => void;
+  render: (
+    info: ResolvedError,
+    ctx: RuntimeContext,
+    endpoint?: MethodDef,
+  ) => unknown | Promise<unknown>;
+  /**
+   * Observe the raw thrown value before rendering — logging, metrics or
+   * asynchronous request attribution. The matched endpoint is absent for
+   * failures that happen before the router resolves an operation.
+   */
+  onError?: (
+    error: unknown,
+    info: ResolvedError,
+    ctx: RuntimeContext,
+    endpoint?: MethodDef,
+  ) => unknown | Promise<unknown>;
 }
 
 /** Build an `onError` hook from a code map + envelope renderer. */
 export function createErrorHook<TWireCode extends string = string>(
   config: ErrorHookConfig<TWireCode>,
 ): NonNullable<LifecycleHooks['onError']> {
-  return (ctx, error) => {
+  return async (ctx, error, endpoint) => {
     // Normalise first — the same classification the framework default uses:
     // a `ZodError` (bad input) becomes `VALIDATION_ERROR` 400, an `AppError`
     // keeps its code / status / details, anything else becomes a generic 500
@@ -93,8 +106,9 @@ export function createErrorHook<TWireCode extends string = string>(
       details: appErr.details,
       hint: appErr.hint,
     };
-    config.onError?.(error, info, ctx);
-    return new Response(JSON.stringify(config.render(info, ctx)), {
+    await config.onError?.(error, info, ctx, endpoint);
+    const body = await config.render(info, ctx, endpoint);
+    return new Response(JSON.stringify(body), {
       status: info.status,
       headers: { 'content-type': 'application/json' },
     });

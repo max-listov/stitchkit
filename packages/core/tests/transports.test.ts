@@ -36,7 +36,7 @@ const service = implement(widgets, {
 });
 
 describe('summarizeTransports', () => {
-  const summary = summarizeTransports([service]);
+  const summary = summarizeTransports({ services: [service] });
 
   test('counts each transport correctly', () => {
     // HTTP: all 5 (incl. multipart + HTTP-only). MCP/AGENT: list/create/run = 3
@@ -45,9 +45,14 @@ describe('summarizeTransports', () => {
   });
 
   test('reports the service count and per-service breakdown', () => {
-    expect(summary.services).toBe(1);
-    expect(summary.perService).toEqual([
-      { service: 'widgets', counts: { HTTP: 5, MCP: 3, AGENT: 3, CLI: 1 } },
+    expect(summary.contractServices).toBe(1);
+    expect(summary.runtimeTools).toBe(0);
+    expect(summary.sources).toEqual([
+      {
+        kind: 'contract',
+        service: 'widgets',
+        counts: { HTTP: 5, MCP: 3, AGENT: 3, CLI: 1 },
+      },
     ]);
   });
 
@@ -59,8 +64,8 @@ describe('summarizeTransports', () => {
       ),
       { list: () => [] },
     );
-    const multi = summarizeTransports([service, other]);
-    expect(multi.services).toBe(2);
+    const multi = summarizeTransports({ services: [service, other] });
+    expect(multi.contractServices).toBe(2);
     expect(multi.totals).toEqual({ HTTP: 6, MCP: 4, AGENT: 4, CLI: 1 });
   });
 });

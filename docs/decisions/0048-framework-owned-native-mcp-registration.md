@@ -2,14 +2,15 @@
 title: "ADR 0048 — Framework-owned native MCP registration"
 description: Native multimodal MCP tools use a stitchkit registrar; raw SDK access remains an explicit unprotected escape hatch.
 type: decision
-status: accepted
+status: superseded
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-08
 ---
 
 # ADR 0048 — Framework-owned native MCP registration
 
-- **Status:** Accepted — extends the transport parity of
+- **Status:** Superseded by
+  [ADR 0057](0057-finite-prepared-mcp-surfaces.md). It extends the transport parity of
   [ADR 0014](0014-tool-http-parity.md), the stable operation identity of
   [ADR 0022](0022-endpoint-identity.md), and per-call isolation from
   [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)

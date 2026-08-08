@@ -15,7 +15,7 @@ import {
 } from '../src/observability';
 import { buildMcpServer } from '../src/tools/mcp';
 import { createMcpHandler } from '../src/tools/mcp-handler';
-import type { NativeMcpRegistrar } from '../src/tools/native-mcp';
+import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -65,15 +65,13 @@ function listedToolNames(body: unknown): string[] {
   );
 }
 
-function registerTransportProbe({ registerTool }: NativeMcpRegistrar): void {
-  registerTool({
-    name: 'transport_probe',
-    description: 'Probe transport registration',
-    identity: { serviceName: 'native', action: 'probe', method: 'GET' },
-    input: z.object({}),
-    handler: () => undefined,
-  });
-}
+const transportProbe = defineRuntimeTool({
+  name: 'transport_probe',
+  description: 'Probe transport registration',
+  identity: { serviceName: 'native', action: 'probe', method: 'GET' },
+  input: z.object({}),
+  handler: () => undefined,
+});
 
 describe('framework-owned native MCP registration', () => {
   test('preserves multimodal content and parses only structuredContent', async () => {
@@ -87,8 +85,8 @@ describe('framework-owned native MCP registration', () => {
       {
         serverInfo: { name: 'native', version: '1' },
         services: [],
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'render_preview',
             description: 'Render a preview',
             identity: {
@@ -101,8 +99,8 @@ describe('framework-owned native MCP registration', () => {
             output: z.object({ assetId: z.string() }),
             handler: () => structured,
             present: { mcp: () => ({ content, _meta: meta }) },
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -148,8 +146,8 @@ describe('framework-owned native MCP registration', () => {
             order.push('afterToolCall');
           },
         },
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'entity_update',
             description: 'Update an entity',
             identity: {
@@ -162,8 +160,8 @@ describe('framework-owned native MCP registration', () => {
             handler: () => {
               order.push('handler');
             },
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -211,8 +209,8 @@ describe('framework-owned native MCP registration', () => {
             if (endpoint.key === 'throw') failureOrder.push('beforeHandle');
           },
         },
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'throwing_tool',
             description: 'Throw',
             identity: { serviceName: 'native', action: 'throw', method: 'POST' },
@@ -221,16 +219,16 @@ describe('framework-owned native MCP registration', () => {
               failureOrder.push('handler');
               throw thrown;
             },
-          });
-          registerTool({
+          },
+          {
             name: 'invalid_output',
             description: 'Return invalid output',
             identity: { serviceName: 'native', action: 'invalidOutput', method: 'POST' },
             input: z.object({}),
             output: z.object({ count: z.number().finite() }),
             handler: () => ({ count: Number.NaN }),
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -266,16 +264,16 @@ describe('framework-owned native MCP registration', () => {
           serverInfo: { name: 'native', version: '1' },
           services: [],
           schemaValidation: { requirePortableFormats: true },
-          nativeTools: ({ registerTool }) => {
-            registerTool({
+          runtimeTools: [
+            {
               name: 'custom_id',
               description: 'Read a custom id',
               identity: { serviceName: 'native', action: 'read', method: 'GET' },
               input: z.object({ id: z.cuid2() }),
               output: z.object({ id: z.ulid() }),
               handler: () => ({ id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
-            });
-          },
+            },
+          ],
         },
         undefined,
       ),
@@ -297,8 +295,8 @@ describe('framework-owned native MCP registration', () => {
             hookCalls += 1;
           },
         },
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'typed_input',
             description: 'Typed input',
             identity: { serviceName: 'native', action: 'typed', method: 'POST' },
@@ -306,8 +304,8 @@ describe('framework-owned native MCP registration', () => {
             handler: () => {
               handlerCalls += 1;
             },
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -335,8 +333,8 @@ describe('framework-owned native MCP registration', () => {
             if (endpoint.scope === 'admin') throw new AppError('FORBIDDEN', 'denied', 403);
           },
         },
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'admin_action',
             description: 'Admin action',
             identity: {
@@ -349,8 +347,8 @@ describe('framework-owned native MCP registration', () => {
             handler: () => {
               handled = true;
             },
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -371,7 +369,7 @@ describe('native registration transport parity', () => {
         {
           serverInfo: { name: 'native', version: '1' },
           services: [],
-          nativeTools: registerTransportProbe,
+          runtimeTools: [transportProbe],
         },
         undefined,
       ),
@@ -382,7 +380,7 @@ describe('native registration transport parity', () => {
       serverInfo: { name: 'native', version: '1' },
       auth: () => ({ id: 'stateful' }),
       services: [],
-      nativeTools: registerTransportProbe,
+      runtimeTools: [transportProbe],
       sessionMode: 'stateful',
     });
     const initialized = await stateful(rpcRequest('initialize'));
@@ -396,7 +394,7 @@ describe('native registration transport parity', () => {
       serverInfo: { name: 'native', version: '1' },
       auth: () => ({ id: 'stateless' }),
       services: [],
-      nativeTools: registerTransportProbe,
+      runtimeTools: [transportProbe],
       sessionMode: 'stateless',
     });
     const statelessNames = listedToolNames(
@@ -425,8 +423,8 @@ describe('native call isolation and audit', () => {
             setRequestDimensions({ entityId: id });
           },
         },
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          {
             name: 'entity_action',
             description: 'Act on an entity',
             identity: {
@@ -440,8 +438,8 @@ describe('native call isolation and audit', () => {
               await new Promise((resolve) => setTimeout(resolve, input.fail ? 2 : 5));
               if (input.fail) throw new AppError('CONFLICT', `failed ${input.id}`, 409);
             },
-          });
-        },
+          },
+        ],
       },
       undefined,
     );
@@ -518,7 +516,7 @@ describe('raw native escape hatch', () => {
             protectedCalls += 1;
           },
         },
-        nativeTools: ({ rawServer }) => {
+        rawTools: (rawServer) => {
           rawServer.registerTool(
             'raw_ping',
             { description: 'Raw ping', inputSchema: {} },

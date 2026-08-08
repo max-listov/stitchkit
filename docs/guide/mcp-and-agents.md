@@ -39,16 +39,16 @@ call —
 ### Pinning tool names — `listToolNames`
 
 Derived tool names are part of your public surface — an MCP client config or an
-agent prompt refers to them by string. `listToolNames(services)` resolves every
-tool name your services expose (the exact resolver the mounts use), with its
-`(service, method)` identity and transports, sorted — a stable shape to
-snapshot:
+agent prompt refers to them by string. `listToolNames({ services, runtimeTools })`
+resolves the complete mixed surface (the exact resolver the mounts use), with
+its origin, `(service, method)` identity and transports, sorted — a stable shape
+to snapshot:
 
 ```ts
 import { listToolNames } from 'stitchkit/tools'
 
 test('tool names have not drifted', () => {
-  expect(listToolNames(services)).toMatchSnapshot()
+  expect(listToolNames({ services, runtimeTools })).toMatchSnapshot()
 })
 ```
 
@@ -142,13 +142,16 @@ createServer({
 | `serverInfo` | MCP server identity — `{ name, version }` |
 | `auth` | `(req) => identity \| null` — `null` rejects with 401 |
 | `services` | the services to expose — an array, or `(auth) => ServiceDef[]` |
+| `runtimeTools` | managed pathless operations — an array, or `(auth) => RuntimeToolDefinition[]` |
+| `surfaces` | finite `{ key: { services, runtimeTools } }` registry prepared eagerly |
+| `selectSurface` | `(auth) => declaredKey` — required with `surfaces` |
 | `context` | `(auth) => {…}` — values merged into every tool handler's `ctx` |
 | `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see below) |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | extra advertised arguments resolved into handler context |
 | `schemaValidation` | compatibility policy, typed-property guard and portable-format guard |
 | `logger` | a `StitchLogger` for the `'warn'` policy |
-| `nativeTools` | `({ registerTool, rawServer }, auth) => …` — protected native registration plus an explicit raw SDK escape hatch |
+| `rawTools` | `(server, auth) => …` — explicit SDK registration without framework guarantees |
 | `resources` | MCP Apps `ui://` resources mounted on every server |
 | `instructions` | a short host-facing usage hint, surfaced to MCP tool-search |
 | `coerceJsonArgs` | coerce JSON-stringified object/array arguments (default `true`) |
@@ -158,14 +161,37 @@ createServer({
 | `protectedResource` | RFC 9728 metadata used by HTTP `401` responses |
 | `sessionMode` | `'stateless'` (default) or explicit `'stateful'` session/SSE continuity |
 
-`services`, `context` and `nativeTools` all receive the resolved identity, so a
-tenant can be shown only its own tools and every handler can read `ctx.tenantId`.
+Direct `services` / `runtimeTools` factories, `context`, `selectSurface` and
+`rawTools` receive the resolved identity, so a tenant can be shown only its own
+tools and every handler can read `ctx.tenantId`.
+
+Use direct factories only when the definitions are genuinely arbitrary per
+identity. For a bounded role/plan set, declare a finite registry instead:
+
+```ts
+const handleMcp = createMcpHandler({
+  serverInfo,
+  auth,
+  surfaces: {
+    admin: { services: allServices, runtimeTools: [renderPreview] },
+    member: { services: memberServices, runtimeTools: [renderPreview] },
+  },
+  selectSurface: (identity) => identity.isAdmin ? 'admin' : 'member',
+  context: (identity) => ({ identity }),
+})
+```
+
+Every declared entry is schema-validated and prepared once when the handler is
+constructed. The selected immutable descriptors are shared; the SDK server,
+transport, auth-derived context, lifecycle runner and tool-call context are
+fresh for every stateless request (or every stateful session). Unknown keys
+fail before the server connects. The registry never retains auth values.
 
 ### Stateless by default; stateful only when required
 
 The default `sessionMode: 'stateless'` creates a fresh SDK server, transport,
-resolved auth/context and runner for each HTTP request. Static contract schemas
-are still prepared once when the handler is constructed. There is no session
+resolved auth/context and runner for each HTTP request. Static direct and finite
+registry schemas are still prepared once when the handler is constructed. There is no session
 map, event store, sweep timer or `Mcp-Session-Id`, so process replacement and
 load balancing cannot strand a client on an in-memory session.
 
@@ -342,8 +368,8 @@ than a per-request `(req) => …`. Keep all logging on **stderr**: stdout is the
 JSON-RPC channel.
 
 Both transports build the server through the shared `buildMcpServer` — same
-contract pipeline, same `services` / `context` / `hooks` / `nativeTools` /
-`instructions`.
+contract/runtime pipeline, same surface selection, context, hooks, raw escape
+hatch and instructions.
 
 ## OAuth 2.1 — a native remote connector
 
@@ -585,9 +611,9 @@ const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth,
   services: [service],
+  runtimeTools: [renderPreview],
   lifecycle: { beforeHandle: authHook },
   hooks: audit.toolCall,
-  nativeTools: ({ registerTool }) => registerTool(renderPreview),
 })
 
 const agentTools = mountAgent([service], {
@@ -617,7 +643,7 @@ use the same validation, lifecycle and hook path as contract tools.
 
 ### Explicit raw SDK registration
 
-`rawServer` is deliberately named as an escape hatch. A tool registered there
+`rawTools` is deliberately named as an escape hatch. A tool registered there
 does **not** receive stitchkit schema policy, lifecycle, per-call context or
 hooks. The built-in `mountViewFile` helper remains raw for callers that choose
 that boundary; it fetches media with SSRF and path-traversal defenses:
@@ -629,14 +655,51 @@ const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth,
   services: [service],
-  nativeTools: ({ rawServer }) =>
-    mountViewFile(rawServer, { baseDir: '/srv/uploads' }),
+  rawTools: (server) => mountViewFile(server, { baseDir: '/srv/uploads' }),
 })
 ```
 
 Use raw registration only when opting out is intentional. For a protected
-`view_file`, define it through `registerTool` and call the exported
-`resolveMedia` core from its handler.
+`view_file`, define it with `defineRuntimeTool`, include it in `runtimeTools`,
+and call the exported `resolveMedia` core from its handler.
+
+## Introspecting the complete tool surface
+
+Deferred tool search, name snapshots and boot diagnostics accept the same
+object-shaped surface as the mounts. Contract operations are followed by
+runtime definitions, matching mount order; exposure filters and collisions are
+resolved by Stitchkit rather than by consumer code:
+
+```ts
+import {
+  buildToolManifest,
+  listToolNames,
+  summarizeTransports,
+} from 'stitchkit/tools'
+
+const surface = { services, runtimeTools: [renderPreview] }
+
+const manifest = buildToolManifest({
+  ...surface,
+  transport: 'AGENT',
+  flattenUnionInput: true,
+})
+
+const names = listToolNames(surface)
+const summary = summarizeTransports(surface)
+```
+
+`buildToolManifest` returns the exact immutable presentation schema shown to
+the selected MCP or Agent transport. It does not execute validation effects and
+fails first on duplicate contract/runtime names. There is no runtime-only
+manifest helper or public mount adapter: the framework owns merging and schema
+projection.
+
+`listToolNames` remains diagnostic and reports `kind: 'contract' | 'runtime'`
+for every identity. `summarizeTransports` returns `contractServices`,
+`runtimeTools`, aggregate `totals`, and a `sources` breakdown. Runtime tools
+contribute only to MCP/Agent according to their `transports`; they never inflate
+HTTP or CLI counts.
 
 ## Logging tool calls — `createToolLogger`
 
@@ -656,9 +719,9 @@ Pass `log` to redirect the line, or `onRecord` to feed a metrics sink the
 structured `ToolCallRecord`. That record carries `traceId` whenever an
 observability context is active, so a tool call made inside an HTTP request
 joins that request's log line on one key — see
-[Observability](./observability.md). For a boot-time picture of what is exposed where,
-`summarizeTransports(services)` returns per-transport operation counts (HTTP /
-MCP / AGENT / CLI) for you to log.
+[Observability](./observability.md). For a boot-time picture of what is exposed
+where, `summarizeTransports({ services, runtimeTools })` returns the mixed
+per-transport counts for you to log.
 
 ## One handler, three callers
 

@@ -230,8 +230,7 @@ describe('buildToolManifest', () => {
   });
 
   test('returns manifest entries with name, description, inputSchema', () => {
-    const tools = collectTools(service, 'AGENT', {});
-    const manifest = buildToolManifest(tools);
+    const manifest = buildToolManifest({ services: [service], transport: 'AGENT' });
 
     expect(manifest).toHaveLength(2);
     const [first] = manifest;
@@ -243,15 +242,14 @@ describe('buildToolManifest', () => {
   });
 
   test('inputSchema is valid JSON Schema', () => {
-    const tools = collectTools(service, 'AGENT', {});
-    const manifest = buildToolManifest(tools);
+    const manifest = buildToolManifest({ services: [service], transport: 'AGENT' });
     const createEntry = manifest.find((e) => e.name.includes('create'));
     expect(createEntry).toBeDefined();
     if (createEntry) expect(createEntry.inputSchema.type).toBe('object');
   });
 
   test('empty tools → empty manifest', () => {
-    const manifest = buildToolManifest([]);
+    const manifest = buildToolManifest({ transport: 'AGENT' });
     expect(manifest).toEqual([]);
   });
 });

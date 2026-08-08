@@ -72,6 +72,16 @@ function uncachedHandlerFor(services: ReturnType<typeof makeService>[]) {
   });
 }
 
+function registryHandlerFor(services: ReturnType<typeof makeService>[]) {
+  return createMcpHandler({
+    serverInfo: { name: 'benchmark', version: '1' },
+    auth: () => ({ id: 'benchmark' }),
+    surfaces: { benchmark: { services } },
+    selectSurface: () => 'benchmark',
+    sessionMode: 'stateless',
+  });
+}
+
 async function timeRequests(
   handler: (request: Request) => Promise<Response>,
 ): Promise<number> {
@@ -92,6 +102,7 @@ async function benchmark(toolCount: number): Promise<void> {
   const constructionMs = performance.now() - constructionStart;
 
   const statelessInitializeMs = await timeRequests(handlerFor(services));
+  const registryStatelessInitializeMs = await timeRequests(registryHandlerFor(services));
   const uncachedStatelessInitializeMs = await timeRequests(uncachedHandlerFor(services));
 
   console.log(
@@ -100,6 +111,7 @@ async function benchmark(toolCount: number): Promise<void> {
       iterations: ITERATIONS,
       constructionMs,
       statelessInitializeMs,
+      registryStatelessInitializeMs,
       uncachedStatelessInitializeMs,
     }),
   );

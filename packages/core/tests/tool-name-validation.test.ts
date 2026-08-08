@@ -151,7 +151,7 @@ describe('read-only diagnostics never refuse', () => {
   test('summarizeTransports counts an illegal name instead of throwing', () => {
     // A boot summary that dies would hide the very diagnostic the upgrade guide
     // points at.
-    const totals = summarizeTransports([serviceWith('notes', 'bad/name')]);
+    const totals = summarizeTransports({ services: [serviceWith('notes', 'bad/name')] });
     expect(totals.totals.MCP).toBe(1);
   });
 
@@ -179,13 +179,13 @@ describe('listToolNames stays a diagnostic', () => {
   test('it reports an illegal name instead of throwing', () => {
     // The guide points a migrating consumer at this lister to find the offending
     // name. If it threw, the diagnostic would die on the very case it exists for.
-    const names = listToolNames([serviceWith('notes', 'bad/name')]);
+    const names = listToolNames({ services: [serviceWith('notes', 'bad/name')] });
     expect(names.map((n) => n.name)).toEqual(['bad/name']);
     expect(names[0]?.transports).toContain('MCP');
   });
 
   test('it still resolves normalised derived names', () => {
-    expect(listToolNames([serviceWith('admin/analytics')])[0]?.name).toBe(
+    expect(listToolNames({ services: [serviceWith('admin/analytics')] })[0]?.name).toBe(
       'get_admin_analytics',
     );
   });
@@ -199,10 +199,10 @@ describe('one duplicate guard, three surfaces', () => {
     const a = serviceWith('notes');
     const b = serviceWith('notes');
     expect(() => mountAgent([a, b])).toThrow(
-      'Duplicate agent tool name "get_note" across mounted services',
+      'Duplicate agent tool name "get_note" across mounted operations',
     );
     expect(() => validateMcpSchemas({ services: [a, b] })).toThrow(
-      'Duplicate MCP tool name "get_note" across mounted services',
+      'Duplicate MCP tool name "get_note" across mounted operations',
     );
     const cli = (prefix: string) =>
       implement(
@@ -222,7 +222,7 @@ describe('one duplicate guard, three surfaces', () => {
       );
     expect(() =>
       createCli({ name: 'x', version: '1', services: [cli('notes'), cli('notes')] }),
-    ).toThrow('Duplicate CLI command "get_note" across mounted services');
+    ).toThrow('Duplicate CLI command "get_note" across mounted operations');
   });
 });
 

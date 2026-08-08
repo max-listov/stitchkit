@@ -42,9 +42,17 @@ export {
   unauthorized,
 } from './errors';
 export {
+  type DefinedAppError,
   type DefinedErrors,
   defineErrors,
-  type ErrorThrower,
+  type ErrorDefinition,
+  type ErrorDefinitions,
+  type ErrorDetailsOutput,
+  type ErrorDetailsSchema,
+  type ErrorFactories,
+  type ErrorFactory,
+  type ErrorFactoryArguments,
+  type FrozenErrorDefinitions,
 } from './errors-factory';
 export { createContractFactory, type ScopedDefineContract } from './factory';
 

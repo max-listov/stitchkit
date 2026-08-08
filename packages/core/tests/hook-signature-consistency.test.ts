@@ -1,8 +1,8 @@
 /**
  * Two callbacks that could not see what the framework already held:
  * `createErrorHook` dropped the `RuntimeContext` (so a ready-made envelope could
- * not carry a trace id), and `nativeTools` was the only `McpServerBuildConfig`
- * callback of three not given the resolved identity.
+ * not carry a trace id), and the raw MCP escape hatch must receive the same
+ * resolved identity as the managed surface.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -19,7 +19,7 @@ function ctxWith(traceId: string): RuntimeContext {
   return { params: undefined, input: undefined, source: 'http', traceId };
 }
 
-describe('createErrorHook — ctx reaches render and onError', () => {
+describe('createErrorHook — ctx and endpoint reach render and onError', () => {
   test('the envelope can carry a trace id without hand-rolling onError', async () => {
     const hook = createErrorHook({
       render: (info, ctx) => ({ ok: false, code: info.code, traceId: ctx.traceId }),
@@ -52,7 +52,7 @@ describe('createErrorHook — ctx reaches render and onError', () => {
   });
 });
 
-describe('nativeTools receives the resolved auth', () => {
+describe('rawTools receives the resolved auth', () => {
   test('the same identity that services and context get', async () => {
     const seen: unknown[] = [];
     const server = buildMcpServer<{ tenantId: string }>(
@@ -66,7 +66,7 @@ describe('nativeTools receives the resolved auth', () => {
           seen.push(auth);
           return {};
         },
-        nativeTools: ({ rawServer }, auth) => {
+        rawTools: (rawServer, auth) => {
           seen.push(auth);
           rawServer.registerTool(
             'whoami',
@@ -90,13 +90,13 @@ describe('nativeTools receives the resolved auth', () => {
     await client.close();
   });
 
-  test('a one-parameter nativeTools still compiles and runs', () => {
+  test('a one-parameter rawTools still compiles and runs', () => {
     let called = false;
     buildMcpServer<{ tenantId: string }>(
       {
         serverInfo: { name: 't', version: '1' },
         services: [],
-        nativeTools: () => {
+        rawTools: () => {
           called = true;
         },
       },

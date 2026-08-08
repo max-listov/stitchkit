@@ -1,16 +1,21 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { buildMcpServer, type McpServerBuildConfig } from './mcp';
+import { buildMcpServer, type McpServerBuildConfig, type McpSurfaceRegistry } from './mcp';
 
 /**
  * Config for a stdio MCP server. Unlike the HTTP handler, a stdio server is a
  * single process serving one client — identity is resolved ONCE at startup
  * (from an env var / CLI arg), not per request.
  */
-export interface StdioMcpServerConfig<TAuth> extends McpServerBuildConfig<TAuth> {
+export interface StdioAuthConfig<TAuth> {
   /** Identity for the single stdio session — a value or a promise of one. */
   auth: TAuth | Promise<TAuth>;
 }
+
+export type StdioMcpServerConfig<
+  TAuth,
+  TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
+> = McpServerBuildConfig<TAuth, TSurfaces> & StdioAuthConfig<TAuth>;
 
 /**
  * Build an MCP server and connect it over stdio — the server runs as a

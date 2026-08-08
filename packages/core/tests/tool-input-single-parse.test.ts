@@ -10,6 +10,7 @@ import { implement } from '../src/server';
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp';
 import { collectTools, createToolRunner } from '../src/tools/mount';
+import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -320,8 +321,8 @@ describe('one executable input parser per tool call', () => {
       {
         serverInfo: { name: 'native', version: '1' },
         services: [],
-        nativeTools: ({ registerTool }) => {
-          registerTool({
+        runtimeTools: [
+          defineRuntimeTool({
             name: 'native_once',
             description: 'Native',
             identity: { serviceName: 'native', action: 'once', method: 'POST' },
@@ -334,8 +335,8 @@ describe('one executable input parser per tool call', () => {
             handler: ({ input }) => {
               received.push(input.value);
             },
-          });
-        },
+          }),
+        ],
       },
       undefined,
     );

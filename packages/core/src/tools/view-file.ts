@@ -187,9 +187,9 @@ export async function resolveMedia(
 
 /**
  * Register the raw native MCP `view_file` tool on an SDK server. From
- * `createMcpHandler`, pass `nativeTools: ({ rawServer }) =>
- * mountViewFile(rawServer, options)`. Raw registration intentionally bypasses
- * stitchkit lifecycle/hooks; use protected `registerTool` + `resolveMedia` when
+ * `createMcpHandler`, pass `rawTools: (server) =>
+ * mountViewFile(server, options)`. Raw registration intentionally bypasses
+ * stitchkit lifecycle/hooks; use a `defineRuntimeTool` + `resolveMedia` when
  * those guarantees are required. `options` controls the media security boundary.
  */
 export function mountViewFile(server: McpServer, options: ViewFileOptions = {}): void {

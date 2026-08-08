@@ -119,8 +119,17 @@ export function runtimeToolIdentity(definition: RuntimeToolDefinition): Operatio
   };
 }
 
-export function runtimeToolMountable(definition: RuntimeToolDefinition): MountableTool {
-  assertToolName(definition.name, definition.identity.serviceName, definition.identity.action);
+export function runtimeToolMountable(
+  definition: RuntimeToolDefinition,
+  assertName = true,
+): MountableTool {
+  if (assertName) {
+    assertToolName(
+      definition.name,
+      definition.identity.serviceName,
+      definition.identity.action,
+    );
+  }
   const method: ToolOperation = {
     ...runtimeToolIdentity(definition),
     inputSchema: definition.input,

@@ -62,7 +62,7 @@ These records were consolidated from the project's internal design notes on
 | [0045](0045-a-tool-call-runs-in-its-own-context.md) | A tool call runs in its own request context | Accepted — scopes 0012's context; makes 0029's dimensions hold under concurrency |
 | [0046](0046-tool-hooks-take-options-objects.md) | Tool hooks take one options object | Accepted — makes future hook fields additive; refines 0041/0042 |
 | [0047](0047-one-mcp-schema-validation-profile.md) | One MCP schema validation profile | Accepted — validation and the advertised surface cannot drift |
-| [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Accepted — protected registrar plus an explicit raw SDK escape hatch |
+| [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Superseded by 0057 |
 | [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Accepted — restart-safe request isolation; sessions are explicit |
 | [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 |
 | [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input |
@@ -71,6 +71,9 @@ These records were consolidated from the project's internal design notes on
 | [0054](0054-in-process-tool-invocation.md) | In-process tool calls use the canonical runner | Accepted — extends 0014 and 0045 |
 | [0055](0055-runtime-tools-share-one-neutral-operation.md) | Runtime tools share one neutral operation | Accepted — extends 0014, 0045 and 0048 |
 | [0056](0056-entity-cache-shapes-are-declared.md) | Entity cache shapes are declared | Accepted — keeps the cache bridge generic and explicit |
+| [0057](0057-finite-prepared-mcp-surfaces.md) | Finite prepared MCP surfaces | Accepted — bounded descriptor preparation with fresh request state |
+| [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Accepted — immutable status/schema registry and typed constructors |
+| [0059](0059-unified-tool-surface-introspection.md) | Unified tool-surface introspection | Accepted — one mixed contract/runtime collector for mounts and diagnostics |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.
