@@ -2,9 +2,10 @@
 title: Сквозная корреляция browser ApiError с backend request trace
 description: Сохранить x-request-id в ApiError для bare и Ky-backed HTTP-клиентов без изменения wire contract.
 type: task
-status: in-progress
+status: done
 created: 2026-08-09
 updated: 2026-08-09
+completed: 2026-08-09 16:46 +07:00
 ---
 
 # Сквозная корреляция browser ApiError с backend request trace
@@ -32,6 +33,8 @@ consumer вынужден сопоставлять frontend и backend ошиб�
       bare fetch errors оставить нативными, как сейчас.
 - [x] Не менять response body, error envelope, server transport или CORS policy.
 - [x] Обновить public API reference, client/error guide и release changelog.
+- [x] Устранить найденную на релизе гонку npm propagation общей bounded-проверкой
+      для обеих независимых package release-линий.
 
 ## Acceptance
 
@@ -45,7 +48,7 @@ consumer вынужден сопоставлять frontend и backend ошиб�
 - [x] Поле публично типизировано как `readonly string | undefined`.
 - [x] Существующие code/status/details/message/hint и event semantics не меняются.
 - [x] `bun run verify` проходит полностью.
-- [ ] Выпущен только `stitchkit@0.43.1`: core version/changelog/tag, CI, npm и
+- [x] Выпущен только `stitchkit@0.43.1`: core version/changelog/tag, CI, npm и
       GitHub Release подтверждены; `create-stitchkit` не меняется.
 
 ## Конвейер 2/2
@@ -76,3 +79,26 @@ consumer вынужден сопоставлять frontend и backend ошиб�
 - Public docs обновляются в API reference и client/error guide; ADR не нужен.
 - Изменение классифицировано как patch bugfix: выпускается только core 0.43.1,
   с проверкой tag-driven CI, npm package и GitHub Release.
+
+## Что сделано
+
+- [x] **Browser API:** `packages/core/src/browser/http.ts` расширяет публичный
+      `ApiError` readonly-полем `traceId`; `packages/core/src/browser/request-id.ts`
+      централизованно читает framework-owned `x-request-id`.
+- [x] **Bare и Ky clients:** `packages/core/src/browser/client.ts` и
+      `packages/core/src/browser/http.ts` сохраняют correlation id во всех четырёх
+      response-backed error branches и оставляют его пустым без HTTP response.
+- [x] **Regression coverage:** `packages/core/tests/api-error-trace.test.ts`
+      проверяет structured/fallback ветки обоих клиентов и network semantics;
+      packed consumer fixture подтверждает public readonly type surface.
+- [x] **Документация:** обновлены `docs/api/reference.md`, `docs/guide/client.md`,
+      `docs/guide/auth-and-errors.md`, `docs/guide/observability.md` и `CHANGELOG.md`.
+- [x] **Release reliability:** `.github/workflows/ci.yml` использует общий
+      `scripts/wait-for-npm-publication.ts` с exact manifest validation, bounded
+      retry и поддержкой transient HTTP/network failures для обоих пакетов.
+- [x] **Гейты:** `bun run verify` зелёный; два плановых и два реализационных
+      валидатора завершили аудит без оставшихся findings.
+- [x] **Релиз:** tag `v0.43.1`, npm `stitchkit@0.43.1` и GitHub Release подтверждены;
+      версия и release-линия `create-stitchkit` не изменялись.
+- [x] **Не делалось:** wire error envelope, server transport, CORS policy и
+      response body не менялись.

@@ -201,7 +201,7 @@ jobs:
       - name: Verify published stitchkit
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          test "$(npm view "stitchkit@$VERSION" version)" = "$VERSION"
+          bun scripts/wait-for-npm-publication.ts stitchkit "$VERSION"
 
       - name: Extract changelog for this version
         run: |
@@ -259,7 +259,7 @@ jobs:
       - name: Verify published create-stitchkit
         run: |
           VERSION="${GITHUB_REF_NAME#create-stitchkit-v}"
-          test "$(npm view "create-stitchkit@$VERSION" version)" = "$VERSION"
+          bun scripts/wait-for-npm-publication.ts create-stitchkit "$VERSION"
 
       - name: Extract create-stitchkit changelog
         run: |
