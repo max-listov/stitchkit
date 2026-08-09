@@ -240,9 +240,15 @@ try {
     err.message  // 'Note not found'
     err.details  // structured details, if any
     err.hint     // optional hint
+    err.traceId  // x-request-id — correlate this failure with backend logs
   }
 }
 ```
+
+`traceId` is present when the server returned `x-request-id`. A network error,
+timeout or abort without an HTTP response cannot carry one. Cross-origin
+browser code can read it through Stitchkit's default CORS expose list; a custom
+`cors.exposeHeaders` policy must keep `x-request-id` exposed.
 
 The error model is shared with the server — see [Auth & errors](./auth-and-errors.md).
 

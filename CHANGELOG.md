@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.43.1] — 2026-08-09
+
+### Fixed
+
+- **Browser `ApiError` preserves backend request correlation.** Both the bare
+  contract client and the Ky-backed HTTP client now expose a response's
+  `x-request-id` as readonly `error.traceId`, including their unstructured
+  non-2xx fallbacks. Network and abort errors without an HTTP response leave
+  the optional field undefined; the wire error envelope is unchanged.
+
 ## [0.43.0] — 2026-08-08
 
 ### ⚠️ Breaking changes

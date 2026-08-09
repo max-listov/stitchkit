@@ -208,7 +208,8 @@ locally; you do not need to change `NODE_ENV` or deploy.
 Every response the stitchkit handler produces carries the resolved id as
 **`x-request-id`**. With `cors` configured it is in the default
 `Access-Control-Expose-Headers`, so a browser client can read it and quote it in
-a bug report. Note the deliberate asymmetry: inbound the id may arrive as
+a bug report. Stitchkit browser clients retain it as `ApiError.traceId` on
+response-backed failures. Note the deliberate asymmetry: inbound the id may arrive as
 `X-Trace-Id` *or* `X-Request-Id`; outbound there is one name and no alias.
 
 Log the same id from nginx and the two logs join on one key. `log_format` and

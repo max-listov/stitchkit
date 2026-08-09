@@ -2,6 +2,7 @@ import ky, { isHTTPError, type KyInstance, type Options } from 'ky';
 import type { ErrorEnvelope } from '../contract';
 import { isRecord } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
+import { responseTraceId } from './request-id';
 
 export type ApiEvent =
   | { type: 'unauthorized' }
@@ -20,6 +21,7 @@ export class ApiError extends Error {
     public readonly details?: unknown,
     message?: string,
     public readonly hint?: string,
+    public readonly traceId?: string,
   ) {
     super(message ?? `API Error: ${code}`);
     this.name = 'ApiError';
@@ -196,6 +198,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
                   parsed.details,
                   parsed.message,
                   parsed.hint,
+                  responseTraceId(response),
                 );
               }
             }
@@ -267,9 +270,17 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       if (!isAbort) {
         emit({ type: 'network_error' });
       }
-      const status = isAbort ? 0 : isHTTPError(error) ? error.response.status : 0;
+      const response = !isAbort && isHTTPError(error) ? error.response : undefined;
+      const status = response?.status ?? 0;
       const msg = error instanceof Error ? error.message : undefined;
-      throw new ApiError('UNKNOWN_ERROR', status, msg ? { message: msg } : undefined);
+      throw new ApiError(
+        'UNKNOWN_ERROR',
+        status,
+        msg ? { message: msg } : undefined,
+        undefined,
+        undefined,
+        responseTraceId(response),
+      );
     }
   }
 

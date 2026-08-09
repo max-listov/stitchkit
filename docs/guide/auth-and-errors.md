@@ -268,8 +268,9 @@ Use the exported `zodIssues(error)` to build the same structured list from a
 ### On the client
 
 The client parses that envelope back into an `ApiError` with the same `code`,
-`status`, `details` and `hint` — see [Typed client → ApiError](./client.md#apierror).
-The error round-trips: one model, server to client.
+`status`, `details` and `hint`, plus the response `x-request-id` as optional
+readonly `traceId` — see [Typed client → ApiError](./client.md#apierror). The
+error round-trips without adding correlation data to the response body.
 
 ### Stitch codes vs your codes
 

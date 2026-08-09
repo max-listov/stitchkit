@@ -37,7 +37,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
 | `createHttpClient` | function | the Ky-based HTTP transport — [guide](../guide/client.md#createhttpclient) |
-| `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` |
+| `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient` |

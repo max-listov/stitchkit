@@ -9,6 +9,7 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
+import { ApiError } from 'stitchkit';
 import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
@@ -41,6 +42,23 @@ function check(what: string, ok: boolean, detail?: unknown): void {
   if (ok) return;
   failures += 1;
   console.error(`  ✗ ${what}`, detail === undefined ? '' : detail);
+}
+
+const packedApiError = new ApiError(
+  'CONFLICT',
+  409,
+  undefined,
+  undefined,
+  undefined,
+  'packed-trace-id',
+);
+check(
+  'the packed root ApiError exposes its response trace id',
+  packedApiError.traceId === 'packed-trace-id',
+);
+if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+  // @ts-expect-error ApiError response correlation is readonly for consumers.
+  packedApiError.traceId = 'replacement';
 }
 
 const packedErrors = defineErrors({

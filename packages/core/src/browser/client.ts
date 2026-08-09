@@ -16,6 +16,7 @@ import {
   type RequestOptions,
   type UnauthorizedMatcher,
 } from './http';
+import { responseTraceId } from './request-id';
 
 /** Merge an endpoint's timeout and response mode into request options. */
 function withTimeout(
@@ -455,9 +456,23 @@ async function throwForErrorResponse(
   config.onError?.(res.status, body);
   const parsed = parseApiErrorBody(body);
   if (parsed) {
-    throw new ApiError(parsed.code, res.status, parsed.details, parsed.message, parsed.hint);
+    throw new ApiError(
+      parsed.code,
+      res.status,
+      parsed.details,
+      parsed.message,
+      parsed.hint,
+      responseTraceId(res),
+    );
   }
-  throw new ApiError('HTTP_ERROR', res.status, { body });
+  throw new ApiError(
+    'HTTP_ERROR',
+    res.status,
+    { body },
+    undefined,
+    undefined,
+    responseTraceId(res),
+  );
 }
 
 /** Base URL source for synchronous contract URL builders. */
