@@ -6,6 +6,14 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-08-10
+
+### Changed
+
+- **Starter MCP uses Stitchkit 0.44 and the split MCP TypeScript SDK v2.** The
+  generated backend mounts the framework-owned HTTP route, closes its handler
+  during graceful shutdown and validates the modern protocol with the v2 client.
+
 ## [0.1.0] — 2026-08-08
 
 ### Added

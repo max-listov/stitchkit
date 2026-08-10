@@ -16,7 +16,7 @@
     "@app/config": "workspace:*",
     "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@socket.io/bun-engine": "^0.1.1",
     "ai": "^7.0.58",

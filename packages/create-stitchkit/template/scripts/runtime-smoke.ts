@@ -1,6 +1,5 @@
 import { RepositorySnapshotSchema } from '@app/shared';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { io } from 'socket.io-client';
 import { z } from 'zod';
 import { toolingEnv } from './tooling-env';
@@ -50,7 +49,10 @@ try {
   const cached = RepositorySnapshotSchema.parse(await json('/api/repository/'));
   if (cached.fullName !== refreshed.fullName) throw new Error('Repository cache read differs');
 
-  const client = new Client({ name: 'starter-lane', version: '1.0.0' });
+  const client = new Client(
+    { name: 'starter-lane', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+  );
   const transport = new StreamableHTTPClientTransport(new URL(`${apiOrigin}/mcp`));
   await client.connect(transport);
   const tools = await client.listTools();

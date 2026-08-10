@@ -1,7 +1,7 @@
 import { env } from '@app/config';
 import { wrapInRequestContext } from 'stitchkit/observability';
 import { createServer, generateOpenApiDocument, openApiRoute } from 'stitchkit/server';
-import { createMcpHandler } from 'stitchkit/tools';
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools';
 import { prisma } from './lib/db';
 import { createSurface } from './surface';
 import { onError } from './transport/errors';
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     rawRoutes: [
       socket.route,
       openApiRoute('/openapi.json', openApi),
-      { method: 'ALL', path: '/mcp', handler: (req) => mcp(req) },
+      createMcpHttpRoute({ path: '/mcp', handler: mcp }),
       {
         method: 'GET',
         path: '/health',
@@ -41,6 +41,7 @@ async function main(): Promise<void> {
 
   async function shutdown(): Promise<void> {
     server.stop();
+    await mcp.close();
     await socket.io.close();
     await prisma.$disconnect();
   }

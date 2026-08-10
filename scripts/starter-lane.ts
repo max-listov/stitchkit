@@ -52,71 +52,36 @@ async function packageVersion(packagePath: string): Promise<string> {
   return version;
 }
 
-async function rewriteJsonPackage(
-  packagePath: string,
-  mutate: (manifest: Record<string, unknown>) => void,
-): Promise<void> {
-  const manifest = JSON.parse(await readFile(packagePath, 'utf8'));
-  mutate(manifest);
-  await writeFile(packagePath, `${JSON.stringify(manifest, null, 2)}\n`);
-}
-
-async function prepareGeneratedStarterForHead(generatedRoot: string): Promise<void> {
-  await rewriteJsonPackage(join(generatedRoot, 'package.json'), (manifest) => {
-    const devDependencies = manifest.devDependencies;
-    if (!devDependencies || typeof devDependencies !== 'object') {
-      throw new Error('Generated starter root devDependencies are missing');
-    }
-    Reflect.deleteProperty(devDependencies, '@modelcontextprotocol/sdk');
-    Reflect.set(devDependencies, '@modelcontextprotocol/client', '^2.0.0');
-  });
-  await rewriteJsonPackage(
+async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promise<void> {
+  const rootManifest = await readFile(join(generatedRoot, 'package.json'), 'utf8');
+  const backendManifest = await readFile(
     join(generatedRoot, 'packages/backend/package.json'),
-    (manifest) => {
-      const dependencies = manifest.dependencies;
-      if (!dependencies || typeof dependencies !== 'object') {
-        throw new Error('Generated starter backend dependencies are missing');
-      }
-      Reflect.deleteProperty(dependencies, '@modelcontextprotocol/sdk');
-      Reflect.set(dependencies, '@modelcontextprotocol/server', '^2.0.0');
-    },
+    'utf8',
   );
+  const backend = await readFile(join(generatedRoot, 'packages/backend/src/index.ts'), 'utf8');
+  const smoke = await readFile(join(generatedRoot, 'scripts/runtime-smoke.ts'), 'utf8');
 
-  const backendPath = join(generatedRoot, 'packages/backend/src/index.ts');
-  const backend = await readFile(backendPath, 'utf8');
-  const updatedBackend = backend
-    .replace(
-      "import { createMcpHandler } from 'stitchkit/tools';",
-      "import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools';",
-    )
-    .replace(
-      "{ method: 'ALL', path: '/mcp', handler: (req) => mcp(req) },",
-      "createMcpHttpRoute({ path: '/mcp', handler: mcp }),",
-    )
-    .replace(
-      '    await socket.io.close();',
-      '    await mcp.close();\n    await socket.io.close();',
-    );
-  if (updatedBackend === backend || updatedBackend.includes('mcp(req)')) {
-    throw new Error('Generated starter MCP backend migration did not apply cleanly');
+  const requirements: [source: string, requirement: string][] = [
+    [rootManifest, '"@modelcontextprotocol/client": "^2.0.0"'],
+    [backendManifest, '"@modelcontextprotocol/server": "^2.0.0"'],
+    [backend, 'createMcpHttpRoute'],
+    [backend, 'await mcp.close()'],
+    [smoke, "from '@modelcontextprotocol/client'"],
+    [smoke, "pin: '2026-07-28'"],
+  ];
+  for (const [source, requirement] of requirements) {
+    if (!source.includes(requirement)) {
+      throw new Error(`Generated starter is missing its MCP v2 invariant: ${requirement}`);
+    }
   }
-  await writeFile(backendPath, updatedBackend);
-
-  const smokePath = join(generatedRoot, 'scripts/runtime-smoke.ts');
-  const smoke = await readFile(smokePath, 'utf8');
-  const updatedSmoke = smoke
-    .replace(
-      "import { Client } from '@modelcontextprotocol/sdk/client/index.js';\nimport { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';",
-      "import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';",
-    )
-    .replace(
-      "const client = new Client({ name: 'starter-lane', version: '1.0.0' });",
-      "const client = new Client(\n    { name: 'starter-lane', version: '1.0.0' },\n    { versionNegotiation: { mode: { pin: '2026-07-28' } } },\n  );",
-    );
-  if (updatedSmoke === smoke || updatedSmoke.includes('@modelcontextprotocol/sdk')) {
-    throw new Error('Generated starter MCP client migration did not apply cleanly');
+  if (
+    rootManifest.includes('@modelcontextprotocol/sdk') ||
+    backendManifest.includes('@modelcontextprotocol/sdk') ||
+    smoke.includes('@modelcontextprotocol/sdk') ||
+    backend.includes('mcp(req)')
+  ) {
+    throw new Error('Generated starter still contains an MCP v1 integration path');
   }
-  await writeFile(smokePath, updatedSmoke);
 }
 
 function freePort(): number {
@@ -222,7 +187,7 @@ if (mode === 'head') {
     join(repositoryRoot, 'packages/core'),
   );
   await writeStarterStitchkitTarget(generated, `file:${coreTarball}`);
-  await prepareGeneratedStarterForHead(generated);
+  await assertGeneratedStarterSupportsHead(generated);
 }
 
 const database = await createStarterLaneDatabase(mode);
