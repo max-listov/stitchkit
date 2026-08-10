@@ -1,8 +1,6 @@
 #!/bin/sh
-# Full verification before code reaches the remote — the exact suite CI runs
-# (lint, typecheck, tests, build). A broken push never turns CI red.
-#
-# Wired via `core.hooksPath`. Bypass once with `git push --no-verify`.
+# Classify every ref in this push once. Branch updates run the full repository
+# gate; release tags run only deterministic local metadata preflight. A mixed
+# push does both without repeating the expensive gate.
 set -e
-
-bun run verify
+exec bun scripts/release-plan.ts pre-push

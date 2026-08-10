@@ -1,19 +1,9 @@
 #!/bin/sh
-# Auto-format staged files, then block the commit on ANY remaining Biome
-# finding — error OR warning. The repo stays warning-free at every commit.
+# Check staged source paths without modifying either the index or working tree.
 #
 # Wired via `core.hooksPath` (root `prepare` script), or manually:
 #   git config core.hooksPath .githooks
 # Bypass once with `git commit --no-verify`.
 set -e
 
-staged=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '\.(ts|tsx|js|jsx|json|jsonc|css)$' || true)
-[ -z "$staged" ] && exit 0
-
-# 1. Auto-format + re-stage — a formatting slip never blocks a commit.
-echo "$staged" | xargs bunx biome check --write --no-errors-on-unmatched
-echo "$staged" | xargs git add
-
-# 2. Strict gate — any warning or error left aborts the commit.
-echo "$staged" | xargs bunx biome check --error-on-warnings --no-errors-on-unmatched
+git diff --cached --name-only -z --diff-filter=ACMR | bun scripts/check-staged.ts

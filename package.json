@@ -5,12 +5,12 @@
     "packages/*"
   ],
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks || true && bun scripts/prepare-starter.ts",
+    "prepare": "git config core.hooksPath .githooks && bun scripts/prepare-starter.ts",
     "dev": "bun --filter stitchkit dev",
     "check": "bun --filter stitchkit check && bun --filter create-stitchkit check && bun run check:template && bun run check:scripts",
     "check:template": "cd packages/create-stitchkit/template && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
-    "test": "bun --filter stitchkit test && bun --filter create-stitchkit test",
+    "test": "bun --filter stitchkit test && bun --filter create-stitchkit test && bun test scripts/*.test.ts",
     "gen:llms": "bun scripts/gen-llms.ts",
     "build": "bun run gen:llms && bun --filter stitchkit build && bun --filter create-stitchkit build",
     "lint": "biome check --error-on-warnings . && bun run lint:template",
@@ -24,7 +24,9 @@
     "starter-lane": "bun scripts/starter-lane.ts",
     "starter-head-lane": "bun scripts/starter-lane.ts --head",
     "starter:dev": "cd packages/create-stitchkit/template && bun run dev",
-    "sync:readme": "cp README.md packages/core/README.md"
+    "release:core": "bun scripts/release-plan.ts release core",
+    "release:starter": "bun scripts/release-plan.ts release create-stitchkit",
+    "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",

@@ -60,7 +60,7 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
   [
     'observability.md',
     'Observability',
-    'request and tool-call logging via hooks, W3C trace context, createAuditHook',
+    'request and tool-call observability, W3C trace context, createObservability',
   ],
   [
     'testing-and-deployment.md',

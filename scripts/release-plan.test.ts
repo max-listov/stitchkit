@@ -1,0 +1,128 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  assertTagOnReleaseHead,
+  classifyPrePush,
+  decidePublishAction,
+  extractReleaseNotes,
+  releasePlanForTag,
+  selectSuccessfulCiRun,
+} from './release-plan';
+
+const SHA = '1'.repeat(40);
+const ZERO = '0'.repeat(40);
+
+describe('release plan', () => {
+  test('classifies branch, tag, deletion and mixed pushes without duplicate gates', () => {
+    expect(classifyPrePush(`refs/heads/topic ${SHA} refs/heads/topic ${ZERO}\n`)).toEqual({
+      verify: true,
+      releaseTags: [],
+    });
+    expect(classifyPrePush(`refs/tags/v1.2.3 ${ZERO} refs/tags/v1.2.3 ${SHA}\n`)).toEqual({
+      verify: false,
+      releaseTags: [],
+    });
+    expect(
+      classifyPrePush(
+        `refs/heads/main ${SHA} refs/heads/main ${ZERO}\nrefs/tags/v1.2.3 ${SHA} refs/tags/v1.2.3 ${ZERO}\n`,
+      ),
+    ).toEqual({ verify: true, releaseTags: ['v1.2.3'] });
+  });
+
+  test('classifies by the REMOTE ref: HEAD:master and sha:refs/tags forms are covered', () => {
+    // Regression: the classifier read the LOCAL ref, so `git push origin
+    // HEAD:master` ran zero gates and `<sha>:refs/tags/v9` skipped preflight.
+    expect(classifyPrePush(`HEAD ${SHA} refs/heads/master ${ZERO}\n`)).toEqual({
+      verify: true,
+      releaseTags: [],
+    });
+    expect(classifyPrePush(`${SHA} ${SHA} refs/tags/v9.9.9 ${ZERO}\n`)).toEqual({
+      verify: false,
+      releaseTags: ['v9.9.9'],
+    });
+    expect(
+      classifyPrePush(
+        `HEAD ${SHA} refs/heads/master ${ZERO}\nHEAD ${SHA} refs/tags/create-stitchkit-v1.0.0 ${ZERO}\n`,
+      ),
+    ).toEqual({ verify: true, releaseTags: ['create-stitchkit-v1.0.0'] });
+  });
+
+  test('a stale tag SHA is refused before any publication step', () => {
+    expect(() => assertTagOnReleaseHead(SHA, SHA)).not.toThrow();
+    expect(() => assertTagOnReleaseHead(SHA, '2'.repeat(40))).toThrow(
+      /current origin\/master/,
+    );
+    expect(() => assertTagOnReleaseHead('', SHA)).toThrow(/current origin\/master/);
+  });
+
+  test('a missing or failed exact-SHA CI run is a loud refusal; success selects the run', () => {
+    const runs = [
+      { id: 1, head_sha: SHA, event: 'push', conclusion: 'failure' },
+      { id: 2, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
+      { id: 3, head_sha: '2'.repeat(40), event: 'push', conclusion: 'success' },
+    ];
+    expect(() => selectSuccessfulCiRun([], SHA)).toThrow(/no push CI run exists/);
+    expect(() => selectSuccessfulCiRun(runs, SHA)).toThrow(/no successful push CI run/);
+    expect(
+      selectSuccessfulCiRun(
+        [...runs, { id: 4, head_sha: SHA, event: 'push', conclusion: 'success' }],
+        SHA,
+      ),
+    ).toBe(4);
+  });
+
+  test('a repeated workflow is idempotent; a different published tarball is refused', () => {
+    expect(decidePublishAction('abc', null)).toBe('publish');
+    expect(decidePublishAction('abc', '')).toBe('publish');
+    expect(decidePublishAction('abc', 'abc')).toBe('skip');
+    expect(() => decidePublishAction('abc', 'def')).toThrow(/DIFFERENT tarball/);
+  });
+
+  test('maps both tag namespaces to one release model', () => {
+    expect(releasePlanForTag('v1.2.3')).toMatchObject({ target: 'core', version: '1.2.3' });
+    expect(releasePlanForTag('create-stitchkit-v2.0.0')).toMatchObject({
+      target: 'create-stitchkit',
+      version: '2.0.0',
+    });
+    expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');
+  });
+
+  test('extracts a non-empty exact-version changelog section', () => {
+    expect(
+      extractReleaseNotes(
+        '# Changelog\n\n## [1.2.3]\n\n### Added\n\n- one substantial release note\n\n## [1.2.2]\n- old',
+        '1.2.3',
+      ),
+    ).toContain('- one substantial release note');
+    expect(() => extractReleaseNotes('## [1.2.3]\n\n## [1.2.2]\n- old', '1.2.3')).toThrow(
+      /no (substantive|non-empty)/,
+    );
+  });
+
+  test('release notes must be SUBSTANTIVE — a lone heading, comment or dot does not pass', () => {
+    for (const body of ['### Added', '<!-- todo -->', '.', '### Added\n\n<!-- x -->\n\n.']) {
+      expect(() =>
+        extractReleaseNotes(`## [1.2.3]\n\n${body}\n\n## [1.2.2]\n- old`, '1.2.3'),
+      ).toThrow(/no (substantive|non-empty)/);
+    }
+  });
+
+  test('a version heading inside a code fence is example text, not a section boundary', () => {
+    const changelog = [
+      '## [1.2.3]',
+      '',
+      '- migration snippet below is real content',
+      '',
+      '```md',
+      '## [1.0.0]',
+      '```',
+      '',
+      '- and a second substantial note',
+      '',
+      '## [1.2.2]',
+      '- old',
+    ].join('\n');
+    const notes = extractReleaseNotes(changelog, '1.2.3');
+    expect(notes).toContain('and a second substantial note');
+    expect(notes).toContain('```md');
+  });
+});
