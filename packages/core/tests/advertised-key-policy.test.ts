@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import { McpServer } from '@modelcontextprotocol/server';
 import { asSchema } from 'ai';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';

@@ -117,27 +117,28 @@ the invoker is created.
 
 ## MCP — `createMcpHandler`
 
-`createMcpHandler` builds a complete Streamable-HTTP MCP server as a single
-`Request → Response` handler. It owns the SDK server and transport lifecycle, so
-your app never imports `@modelcontextprotocol/sdk` itself.
+`createMcpHandler` builds a complete stateless Streamable-HTTP MCP endpoint on
+the official TypeScript SDK v2 server package. It owns server creation,
+protocol-era negotiation and shutdown; application code does not import the SDK
+to mount a normal endpoint.
 
 ```ts
-import { createMcpHandler } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
+import { createServer } from 'stitchkit/server'
 
-const handleMcp = createMcpHandler({
+const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: (req) => resolveApiKey(req),   // → an identity, or null for 401
   services: [usersService, catalogService],
 })
-```
 
-Mount the returned handler on a raw route — typically `/mcp`:
-
-```ts
 createServer({
   services,
-  rawRoutes: [{ method: 'ALL', path: '/mcp', handler: (req) => handleMcp(req) }],
+  rawRoutes: [createMcpHttpRoute({ path: '/mcp', handler: mcp })],
 })
+
+// During graceful shutdown:
+await mcp.close()
 ```
 
 ### `McpHandlerConfig`
@@ -152,6 +153,7 @@ createServer({
 | `selectSurface` | `(auth) => declaredKey` — required with `surfaces` |
 | `context` | `(auth) => {…}` — values merged into every tool handler's `ctx` |
 | `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see below) |
+| `multiRound` | Typed MRTR state policy for guarded multi-round tool calls |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | extra advertised arguments resolved into handler context |
 | `schemaValidation` | compatibility policy, typed-property guard and portable-format guard |
@@ -164,7 +166,10 @@ createServer({
 | `errorHint` | add a project-owned hint to failed tool results |
 | `onOutputStrip` | observe output keys removed by contract validation |
 | `protectedResource` | RFC 9728 metadata used by HTTP `401` responses |
-| `sessionMode` | `'stateless'` (default) or explicit `'stateful'` session/SSE continuity |
+| `legacy` | `'serve'` (default) or `'reject'` for pre-2026 clients |
+| `security` | optional Host/Origin allowlists at the Fetch boundary |
+| `onTransportRejected` | observe HTTP/protocol rejections without entering lifecycle or tool hooks |
+| `cache` | explicit operation cache hints; omitted means zero/private |
 
 Direct `services` / `runtimeTools` factories, `context`, `selectSurface` and
 `rawTools` receive the resolved identity, so a tenant can be shown only its own
@@ -189,20 +194,106 @@ const handleMcp = createMcpHandler({
 Every declared entry is schema-validated and prepared once when the handler is
 constructed. The selected immutable descriptors are shared; the SDK server,
 transport, auth-derived context, lifecycle runner and tool-call context are
-fresh for every stateless request (or every stateful session). Unknown keys
+fresh for every request. Unknown keys
 fail before the server connects. The registry never retains auth values.
 
-### Stateless by default; stateful only when required
+### Stateless transport and protocol eras
 
-The default `sessionMode: 'stateless'` creates a fresh SDK server, transport,
-resolved auth/context and runner for each HTTP request. Static direct and finite
-registry schemas are still prepared once when the handler is constructed. There is no session
-map, event store, sweep timer or `Mcp-Session-Id`, so process replacement and
-load balancing cannot strand a client on an in-memory session.
+Every request gets a fresh SDK server, resolved auth/context and tool-call
+runner. Static direct and finite registry schemas are still prepared once when
+the handler is constructed. There is no session map, event store,
+`Mcp-Session-Id` or resumable cross-request SSE state. Process replacement and
+load balancing therefore cannot strand a client on an in-memory session.
 
-Opt into `sessionMode: 'stateful'` only when the client needs server-initiated
-messages, cross-request progress or resumable SSE. That mode issues a server
-session id and retains the bounded session/event stores until idle expiry.
+The default `legacy: 'serve'` lets the official SDK negotiate either modern
+`2026-07-28` or the supported legacy stateless opening on this same endpoint.
+Set `legacy: 'reject'` when every host is modern. Legacy support is protocol
+translation inside the SDK, not a second Stitchkit transport or compatibility
+API. Stateful MCP and subscriptions are intentionally outside this layer.
+
+`createMcpHttpRoute` is the framework-owned raw-route adapter. It registers
+`ALL` because Streamable HTTP uses multiple HTTP methods, delegates only to
+`handler.fetch`, and leaves lifecycle ownership with the returned handler.
+
+By default, a present `Host` header must match the request URL and a present
+browser `Origin` must be same-origin. Non-browser hosts may omit `Origin`. Behind
+a trusted reverse proxy, reconstruct the public request URL before calling the
+handler or configure exact `security.allowedHosts` / `allowedOrigins`; never
+copy arbitrary forwarded headers into the trusted URL. If a browser calls MCP
+cross-origin, its HTTP server or gateway must also answer CORS preflight and
+expose the protocol headers. `onTransportRejected` is the audit boundary for
+HTTP/security rejections; it is deliberately separate from tool lifecycle and
+must not be used as authorization input.
+
+### Modern discovery, routing and cache hints
+
+Stitchkit forwards the negotiated protocol era and validated MCP request data
+to `RequestEvent.mcp`; untrusted routing headers never become application
+identity. The SDK validates `MCP-Protocol-Version`, JSON-RPC shape and routing
+metadata before lifecycle or tool handlers run. Framework-owned tool and
+resource registration preserves declaration order across HTTP and stdio. Tool
+manifests preserve mount order; `listToolNames` is a sorted diagnostics view.
+Consumer-owned raw SDK registrations are outside this guarantee.
+
+Caching is opt-in. `cache.operations` maps directly to SDK v2 operation cache
+hints, while each `McpResourceDef` may declare its own `cacheHint`. Omission
+means zero/private: neither a prepared surface nor a deterministic response is
+silently treated as public. Unbounded auth-selected surface factories are
+always forced to zero/private even when an operation policy is present; use a
+finite `surfaces` registry when identities share a provably immutable surface.
+Stitchkit never advertises list-change or subscription capabilities
+without an implementation.
+
+### Multi-round tool input (`input_required`)
+
+An MCP-only operation can require typed user input before its final side effect:
+
+```ts
+const DeleteConfirmationSchema = z.object({ confirmed: z.boolean() })
+
+deleteProject: {
+  method: 'DELETE',
+  path: '/projects/:id',
+  expose: ['MCP'],
+  input: DeleteProjectSchema,
+  output: DeleteProjectResultSchema,
+  mcp: {
+    inputRequired: [
+      {
+        key: 'confirmation',
+        schema: DeleteConfirmationSchema,
+        message: 'Confirm permanent deletion',
+      },
+      {
+        key: 'reason',
+        schema: z.object({ value: z.string().min(3) }),
+        message: 'Record the reason',
+      },
+    ],
+  },
+}
+```
+
+Each continuation accepts exactly the currently requested item. Only after the
+ordered sequence completes does the handler receive the exact aggregate as
+`ctx.mcpInput.confirmation` and `ctx.mcpInput.reason`; before then the framework
+returns `input_required` without calling it. Set
+`multiRound.serving.maxRounds` to the maximum declaration size you accept
+(default `10`); empty sequences, duplicate keys and overflow fail first. State
+is bound to principal, full operation identity, current round, accepted
+aggregate and canonical original-argument digest and is
+expiry-checked. Tampered, expired, cross-user or cross-tool state fails before
+the side effect. Output validation applies only to the final result.
+
+Every attempt re-runs auth/lifecycle and emits its own tool hooks; audit metadata
+contains the attempt's `mcp.outcome` and `mcp.round`. Stitchkit does not merge
+separate HTTP attempts into one logical trace. Parallel
+rounds have isolated context. HTTP/stdio modern hosts and the supported legacy
+stdio bridge may use this declaration; Agent, CLI and ordinary HTTP invocation
+remain single-round and unchanged. Hosts without the capability receive an
+ordinary unsupported result rather than a falsely advertised round. Signed
+state is tamper-resistant, not an exactly-once replay store; destructive
+handlers must still be idempotent where retries matter.
 
 ### Guarding tools — `lifecycle`
 
@@ -261,9 +352,9 @@ cannot become a tool. `schemaValidation.policy` decides what happens:
 startup assertion or a test.
 
 For a static `services` array, collection, schema conversion and every enabled
-validation guard run once when the handler is created. Each HTTP request or
-stateful session still receives a fresh `McpServer`, runner, context and native
-registration over that immutable prepared surface. A `services(auth)` factory
+validation guard run once when the handler is created. Each HTTP request still
+receives a fresh `McpServer`, runner, context and native registration over that
+immutable prepared surface. A `services(auth)` factory
 is deliberately prepared after resolving each identity because its tool set may
 change by tenant.
 
@@ -370,17 +461,25 @@ it can reach the local filesystem.
 ```ts
 import { createStdioMcpServer } from 'stitchkit/tools'
 
-await createStdioMcpServer({
+const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: resolveIdentity(),          // resolved once at startup, not per request
   services: [usersService],
 })
+
+// During graceful shutdown:
+await stdio.close()
 ```
 
 A stdio server is a single process serving one client, so `auth` is a value (or
 a promise of one) resolved once at startup — typically from an env var — rather
 than a per-request `(req) => …`. Keep all logging on **stderr**: stdout is the
 JSON-RPC channel.
+
+The default `legacy: 'serve'` negotiates the modern or supported legacy opening
+through the official stdio adapter. Use `legacy: 'reject'` for a modern-only
+binary. Each invocation builds a fresh server; the returned handle owns
+transport shutdown.
 
 Both transports build the server through the shared `buildMcpServer` — same
 contract/runtime pipeline, same surface selection, context, hooks, raw escape
@@ -390,41 +489,45 @@ hatch and instructions.
 
 A remote MCP server is connectable from Claude (Desktop / web "custom
 connector") only through the MCP authorization spec: OAuth 2.1 with PKCE, plus
-the discovery documents (RFC 9728 / 8414), Dynamic Client Registration
-(RFC 7591) and resource indicators (RFC 8707). A Bearer-only server returns a
+the discovery documents (RFC 9728 / 8414), Client ID Metadata Documents (CIMD)
+and resource indicators (RFC 8707). A Bearer-only server returns a
 bare `401` and the connector never establishes.
 
 stitchkit ships the OAuth **protocol mechanics**; the app supplies only
 **identity and storage**. Three pieces wire it together:
 
 ```ts
-import { createMcpHandler, mountOAuthProvider, oauthProtectedResourceRoute } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute, mountOAuthProvider, oauthProtectedResourceRoute } from 'stitchkit/tools'
 import { createServer } from 'stitchkit/server'
 
 const resource = 'https://api.example.com/mcp'
 const issuer = 'https://api.example.com'
 
 // 1. Resource server — the 401 now points at the metadata.
-const handleMcp = createMcpHandler({
+const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: resolveOAuthToken,        // validate the Bearer JWT (verifyJwt + audience)
   services,
   protectedResource: { resource, authorizationServers: [issuer] },
 })
 
-// 2. Authorization server — DCR, /authorize (PKCE), /token.
+// 2. Authorization server — CIMD, /authorize (PKCE), /token.
 const oauthRoutes = mountOAuthProvider({
   issuer,
   resource,
   signingSecret: env.OAUTH_SECRET,
-  clients, codes, refreshTokens,  // your stores (DB or in-memory)
-  authorizeUser,                  // your login + consent → { userId } | Response
+  clientRegistration: {
+    preRegistered: { get: getFirstPartyClient },
+    // CIMD is enabled with secure defaults; DCR remains disabled.
+  },
+  codes, refreshTokens,           // your stores (DB or in-memory)
+  authorizeUser,                  // → { userId, approvedScopes } | Response
 })
 
 createServer({
   services,
   rawRoutes: [
-    { method: 'ALL', path: '/mcp', handler: (req) => handleMcp(req) },
+    createMcpHttpRoute({ path: '/mcp', handler: mcp }),
     oauthProtectedResourceRoute({ resource, authorizationServers: [issuer] }),
     ...oauthRoutes,
   ],
@@ -435,10 +538,26 @@ Access tokens are signed HS256 JWTs (`signJwt`) whose `aud` is the resource and
 whose `iss` is the issuer — validate both in `auth` with
 `verifyJwt(token, secret, { audience: resource, issuer })`. `authorizeUser` is
 where the app authenticates the user (reuse an existing session) and records
-consent; return `{ userId }` to issue a code, or a `Response` to redirect the
-browser to a login page first. The AS and resource server can co-locate or live
+consent; return `{ userId, approvedScopes }`, where approved scopes are a subset
+of the requested/supported values, or a `Response` to redirect the browser to a
+login page first. The AS and resource server can co-locate or live
 on separate origins. See
 [ADR 0015](../decisions/0015-oauth-resource-server.md).
+
+Client resolution is deterministic: exact pre-registered client, then an HTTPS
+URL client id resolved as CIMD, then explicitly enabled DCR. CIMD is on by
+default; DCR is off unless `clientRegistration.dcr` supplies both `register` and
+`get`. A CIMD-only deployment therefore exposes neither `/register` nor a
+`registration_endpoint`. The metadata document must declare a `client_id` that
+exactly equals its URL, explicit redirect URIs and
+`token_endpoint_auth_method: 'none'`.
+
+The production fetcher rejects credentials, fragments, non-HTTPS URLs and
+private/reserved targets. Every redirect is DNS-resolved and IP-pinned again;
+timeouts, redirect count and body size are bounded. Its bounded cache respects
+`Cache-Control` (including `no-store`/`no-cache`), `Age`, `Expires`, `ETag` and
+`Last-Modified`, coalesces concurrent misses and reports sanitized cache events;
+invalid or unavailable identity receives only a short fail-closed cache entry.
 
 ### Authorization hardening (MCP 2026-07-28)
 
@@ -457,9 +576,9 @@ on separate origins. See
   behaves exactly as before (loopback allowed); an unknown value is rejected
   rather than silently defaulted.
 
-> Dynamic Client Registration is **deprecated** in the 2026-07-28 spec in favour
-> of Client ID Metadata Documents (CIMD), with a ≥12-month window. DCR keeps
-> working and stays supported here; CIMD support is tracked separately.
+> Dynamic Client Registration is an explicit interoperability mode, not the
+> default. Enabling it changes public discovery and adds `/register`; keep it off
+> unless a client that cannot publish CIMD requires it.
 
 ## Proxying a remote API — `implementRemote`
 
@@ -476,11 +595,14 @@ const http = createHttpClient({
   headers: () => ({ Authorization: `Bearer ${apiKey}` }),
 })
 
-await createStdioMcpServer({
+const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: null,
   services: contracts.map((c) => implementRemote(c, http)),
 })
+
+// During graceful shutdown:
+await stdio.close()
 ```
 
 This is how you ship a thin **local** MCP server for an API that already runs in
@@ -494,9 +616,16 @@ no duplicated business logic.
 
 ## Structured output
 
-When a contract endpoint declares an object `output`, its MCP tool registers
-that as the tool `outputSchema` and the result carries `structuredContent`
-alongside the text block — the structured payload an MCP App UI consumes.
+When a contract endpoint or runtime tool declares `output`, its MCP tool
+registers that exact schema as `outputSchema` and returns the validated value as
+`structuredContent` alongside a JSON text block. Every JSON root type is kept
+unchanged: object, array, string, number, boolean and `null`. Stitchkit does not
+wrap non-object values in `{ result }`; protocol-era adaptation belongs to the
+official SDK.
+
+A tool without an output contract advertises no `outputSchema` and returns no
+invented structured value. Its successful MCP result has an empty `content`
+list.
 
 ## AI agents — `mountAgent`
 

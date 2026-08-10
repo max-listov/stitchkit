@@ -1,4 +1,4 @@
-export type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+export type { McpServer } from '@modelcontextprotocol/server';
 export type { OperationIdentity } from './server/types';
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
 export { type CliConfig, createCli } from './tools/cli';
@@ -59,12 +59,16 @@ export {
 } from './tools/mcp-app';
 export {
   createMcpHandler,
+  createMcpHttpRoute,
   type McpHandlerConfig,
   type McpHttpConfig,
-  type McpSessionMode,
+  type McpHttpHandler,
+  type McpHttpSecurityConfig,
+  type McpLegacyPolicy,
 } from './tools/mcp-handler';
 export {
   createStdioMcpServer,
+  type McpStdioHandle,
   type StdioAuthConfig,
   type StdioMcpServerConfig,
 } from './tools/mcp-stdio';
@@ -88,8 +92,16 @@ export {
   type ApplicationType,
   type AuthCodeData,
   type AuthRequest,
+  type CimdCacheEvent,
+  type CimdCachePolicy,
+  type CimdClientMetadata,
+  type CimdClientMetadataFetcher,
+  type CimdFetchPolicy,
+  type CimdFetchResponse,
   type ClientMetadata,
+  createSecureClientMetadataFetcher,
   mountOAuthProvider,
+  type OAuthClientRegistrationConfig,
   type OAuthProviderConfig,
   type RefreshData,
   type RegisteredClient,
@@ -104,6 +116,7 @@ export {
   createRuntimeToolFactory,
   defineRuntimeTool,
   type RuntimeAgentModelOutput,
+  type RuntimeMcpInput,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinition,
   type RuntimeToolDefinitionBase,

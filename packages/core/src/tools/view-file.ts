@@ -15,7 +15,7 @@
 
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isWithinDir } from '../internal/within-dir';

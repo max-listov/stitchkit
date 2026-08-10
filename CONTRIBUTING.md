@@ -174,7 +174,7 @@ built output.
 - Public API additions need a short note in `CHANGELOG.md` under `[Unreleased]`.
 - The repo-root `README.md` is canonical; `packages/core/README.md` (the npm
   landing page) is a synced copy. Edit the root file, then run
-  `bun run sync:readme` — `bun run release` does this automatically.
+  `bun run sync:readme` before the release gate.
 - User-facing docs live in `docs/guide/` and `docs/api/`; design rationale in
   `docs/decisions/` (ADRs). See [`docs/README.md`](./docs/README.md).
 

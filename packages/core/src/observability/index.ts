@@ -43,6 +43,7 @@ export {
   createTraceContext,
   formatTraceparent,
   parseTraceparent,
+  resolvePropagationContext,
   resolveTraceContext,
   type TraceContext,
 } from './trace';

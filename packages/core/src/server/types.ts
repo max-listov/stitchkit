@@ -1,6 +1,7 @@
 import type { ZodType } from 'zod';
 import type {
   EndpointDef,
+  EndpointMcpPolicy,
   EndpointResponseMeta,
   EndpointToolAnnotations,
   EndpointUiMeta,
@@ -18,6 +19,18 @@ type Prop<T, K extends string> = K extends keyof T ? T[K] : undefined;
 type InferParams<E> = Prop<E, 'params'> extends ZodType<infer P> ? P : undefined;
 type InferInput<E> = Prop<E, 'input'> extends ZodType<infer I> ? I : undefined;
 type InferOutput<E> = Prop<E, 'output'> extends ZodType<infer O> ? O : never;
+type InferMcpInput<E> =
+  Prop<E, 'mcp'> extends {
+    inputRequired: infer R extends readonly { key: string; schema: ZodType }[];
+  }
+    ? {
+        mcpInput?: {
+          [Request in R[number] as Request['key']]: Request['schema'] extends ZodType<infer I>
+            ? I
+            : never;
+        };
+      }
+    : unknown;
 
 /**
  * What an endpoint's handler must return: the `Response` itself for a `raw`
@@ -56,7 +69,8 @@ export type Handlers<
         C[K]
       > &
       RetainedRawBody<C[K]> &
-      RequiredResponseMetadata<C[K]>,
+      RequiredResponseMetadata<C[K]> &
+      InferMcpInput<C[K]>,
   ) => HandlerReturn<C[K]>;
 };
 
@@ -86,6 +100,8 @@ export interface OperationIdentity {
   ui?: EndpointUiMeta;
   /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
   annotations?: EndpointToolAnnotations;
+  /** MCP-only multi-round input gate carried with operation identity. */
+  mcp?: EndpointMcpPolicy;
   /**
    * Opaque app-defined metadata from `EndpointDef.meta` — the core gives it no
    * meaning. Read it in lifecycle hooks (`endpoint.meta?.X`) or on tool mounts;

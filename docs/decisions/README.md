@@ -29,7 +29,7 @@ These records were consolidated from the project's internal design notes on
 | [0012](0012-observability-module.md) | A built-in observability module | Accepted |
 | [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011 |
 | [0014](0014-tool-http-parity.md) | The tool surface carries the same contract guarantees as HTTP | Accepted — refines 0007 |
-| [0015](0015-oauth-resource-server.md) | OAuth 2.1 resource-server toolkit for MCP | Accepted |
+| [0015](0015-oauth-resource-server.md) | OAuth 2.1 resource-server toolkit for MCP | Superseded by 0068 |
 | [0016](0016-cli-transport.md) | CLI as the fourth transport | Accepted — extends 0007 |
 | [0017](0017-typed-tool-context.md) | Typed tool-path context via `createToolkit` | Accepted — extends 0003 |
 | [0018](0018-openapi-generation.md) | OpenAPI generated from the contract | Accepted |
@@ -63,7 +63,7 @@ These records were consolidated from the project's internal design notes on
 | [0046](0046-tool-hooks-take-options-objects.md) | Tool hooks take one options object | Accepted — makes future hook fields additive; refines 0041/0042 |
 | [0047](0047-one-mcp-schema-validation-profile.md) | One MCP schema validation profile | Accepted — validation and the advertised surface cannot drift |
 | [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Superseded by 0057 |
-| [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Accepted — restart-safe request isolation; sessions are explicit |
+| [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Superseded by 0068 |
 | [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 |
 | [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input |
 | [0052](0052-typed-json-response-metadata.md) | Typed JSON response metadata | Accepted — HTTP-only dynamic headers plus a declared success status without transferring `Response` ownership |
@@ -82,6 +82,7 @@ These records were consolidated from the project's internal design notes on
 | [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary |
 | [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — direct HMR source; generated copies are disposable validation fixtures |
 | [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications |
+| [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

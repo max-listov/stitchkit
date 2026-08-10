@@ -6,6 +6,8 @@ export {
   defineContract,
   type EndpointDef,
   type EndpointFn,
+  type EndpointMcpInputRequired,
+  type EndpointMcpPolicy,
   type EndpointResponseMeta,
   type EndpointToolAnnotations,
   type EndpointUiMeta,

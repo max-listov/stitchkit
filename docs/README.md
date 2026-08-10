@@ -43,6 +43,7 @@ How stitchkit is built and why.
 - [`AGENTS.md`](../AGENTS.md) — the development guide: rules, architecture,
   breaking-change and release flow (read by Cursor / Codex / Claude too).
 - [`VISION.md`](./VISION.md) — what stitchkit is, its principles, its direction.
+- [`architecture/`](./architecture/) — current subsystem design and runtime boundaries.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
   One file per ADR. Index: [`decisions/README.md`](./decisions/README.md).
 - [`backlog/`](./backlog/) — task tracking — the **what**.
@@ -54,6 +55,7 @@ How stitchkit is built and why.
 docs/
 ├── guide/         the user guide — how to build with stitchkit
 ├── api/           the API reference
+├── architecture/  current subsystem design — the how
 ├── VISION.md      what stitchkit is, its principles, its direction
 ├── decisions/     architecture decision records — one file per ADR
 └── backlog/       task tracking — the "what"

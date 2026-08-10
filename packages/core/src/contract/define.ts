@@ -125,6 +125,27 @@ export interface EndpointToolAnnotations {
   openWorldHint?: boolean;
 }
 
+/** One typed form elicitation required before an MCP tool handler may execute. */
+export interface EndpointMcpInputRequired<
+  TKey extends string = string,
+  TSchema extends z.ZodObject = z.ZodObject,
+> {
+  /** Stable response key carried across MRTR rounds. */
+  key: TKey;
+  /** Human-facing prompt shown by the MCP host. */
+  message: string;
+  /** Flat primitive object schema accepted from the host. */
+  schema: TSchema;
+}
+
+/** MCP-only execution policy attached to a contract or runtime tool. */
+export interface EndpointMcpPolicy<
+  TRequests extends readonly EndpointMcpInputRequired[] = readonly EndpointMcpInputRequired[],
+> {
+  /** Ordered elicitation rounds. Every key must be unique. */
+  inputRequired: TRequests;
+}
+
 interface HttpOnlyEndpointDef extends EndpointDefBase {
   expose: readonly ['HTTP'];
   toolName?: never;
@@ -140,6 +161,8 @@ interface ToolEndpointDef extends EndpointDefBase {
   ui?: EndpointUiMeta;
   /** MCP behavioural hints (read-only / destructive / title) for hosts. */
   annotations?: EndpointToolAnnotations;
+  /** Opt-in multi-round input gate; ignored by HTTP, Agent and CLI. */
+  mcp?: EndpointMcpPolicy;
   rawResponse?: never;
   rawBody?: never;
   responseMeta?: never;
@@ -530,6 +553,8 @@ export interface RuntimeContext {
   spanId?: string;
   ipAddress?: string;
   userAgent?: string;
+  /** Transport cancellation for the active call (MCP and future cancellable lanes). */
+  signal?: AbortSignal;
   [key: string]: unknown;
 }
 

@@ -15,6 +15,95 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-08-10
+
+### ⚠️ Breaking changes
+
+- **MCP uses the split TypeScript SDK v2 packages and a closeable stateless
+  handler.** Replace `@modelcontextprotocol/sdk` with
+  `@modelcontextprotocol/server@^2` for server surfaces and
+  `@modelcontextprotocol/client@^2` only for hosts/tests. `createMcpHandler`
+  now returns `{ fetch, close }`; mount it through `createMcpHttpRoute` and
+  close it during graceful shutdown. HTTP session modes, event stores and
+  `Mcp-Session-Id` continuity are removed.
+
+  ```ts
+  // before
+  const handleMcp = createMcpHandler({ ...config, sessionMode: 'stateless' })
+  rawRoutes: [{ method: 'ALL', path: '/mcp', handler: handleMcp }]
+
+  // after
+  const mcp = createMcpHandler({ ...config, legacy: 'serve' })
+  rawRoutes: [createMcpHttpRoute({ path: '/mcp', handler: mcp })]
+  await mcp.close()
+  ```
+
+- **Stdio servers return an owned transport handle.** Keep and close the result;
+  `legacy: 'serve' | 'reject'` controls official protocol-era negotiation.
+
+  ```ts
+  // before
+  await createStdioMcpServer(config)
+
+  // after
+  const stdio = await createStdioMcpServer({ ...config, legacy: 'serve' })
+  await stdio.close()
+  ```
+
+- **OAuth client registration is one explicit policy object with CIMD as the
+  default.** Move application-owned clients under `clientRegistration`.
+  Dynamic Client Registration is disabled unless `dcr` is supplied, and only
+  then appears in discovery or mounts `/register`.
+
+  ```ts
+  // before
+  mountOAuthProvider({ ...config, clients })
+
+  // after
+  mountOAuthProvider({
+    ...config,
+    clientRegistration: {
+      preRegistered: { get: clients.get },
+      // optional: dcr: { register: clients.register, get: clients.get }
+    },
+  })
+  ```
+
+- **MCP non-object outputs keep their declared JSON shape.** Modern MCP permits
+  any JSON root value, so Stitchkit no longer adds an artificial `result`
+  property. The official SDK remains responsible for adapting older protocol
+  eras.
+
+  ```ts
+  // before: structuredContent === { result: ['a', 'b'] }
+  // after:  structuredContent === ['a', 'b']
+  ```
+
+### Added
+
+- **MCP `2026-07-28` transport semantics.** HTTP and stdio use official v2
+  factories, support deterministic modern discovery, explicit cache hints,
+  strict Host/Origin and protocol-header validation, cancellation and one
+  optional legacy stateless boundary without a parallel framework transport.
+- **Typed multi-round `input_required`.** Contract and runtime tools can declare
+  a Zod input gate. Signed continuation state is bound to principal, operation
+  and original arguments; accepted content reaches `ctx.mcpInput`, while every
+  attempt retains isolated context, lifecycle and tool hooks.
+- **Client ID Metadata Documents.** OAuth resolves pre-registered clients, then
+  SSRF-safe HTTPS CIMD, then explicitly enabled DCR. Metadata fetching is
+  DNS/IP-pinned, size/time/redirect bounded and backed by a bounded HTTP-aware
+  cache.
+- **Exact MCP JSON output schemas.** Object, array, string, number, boolean and
+  nullable contract/runtime outputs are advertised and returned unchanged;
+  tools without an output contract emit neither `outputSchema` nor
+  `structuredContent`.
+- **MCP OpenTelemetry propagation.** Framework-owned contract and runtime tools
+  continue SDK v2 request `_meta.traceparent`, retain bounded `tracestate` and
+  `baggage` in the isolated request context, and expose one consistent trace to
+  handlers, hooks and audit on HTTP and stdio. MCP metadata wins over an
+  ambient HTTP trace when present; malformed values start a fresh local trace
+  without becoming authentication input.
+
 ## [0.43.1] — 2026-08-09
 
 ### Fixed
@@ -2402,7 +2491,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/max-listov/stitchkit/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/max-listov/stitchkit/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/max-listov/stitchkit/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/max-listov/stitchkit/compare/v0.40.0...v0.41.0

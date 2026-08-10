@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.43.1",
+  "version": "0.44.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -96,7 +96,7 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@types/bun": "^1.3.14",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
@@ -116,7 +116,7 @@
     "@types/bun": {
       "optional": true
     },
-    "@modelcontextprotocol/sdk": {
+    "@modelcontextprotocol/server": {
       "optional": true
     },
     "@socket.io/bun-engine": {
@@ -152,7 +152,8 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.5",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": "5.101.4",

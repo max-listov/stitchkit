@@ -1,101 +1,46 @@
-import { randomUUID } from 'node:crypto';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  type EventId,
-  type EventStore,
-  type StreamId,
-  WebStandardStreamableHTTPServerTransport,
-} from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+  type AuthInfo,
+  createMcpHandler as createSdkMcpHandler,
+  hostHeaderValidationResponse,
+  type McpServer,
+  originValidationResponse,
+} from '@modelcontextprotocol/server';
+import type { RawRoute } from '../server/types';
 import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
   type McpSurfaceRegistry,
+  type PreparedMcpServerSurface,
   prepareMcpServerSurface,
 } from './mcp';
 import { type ProtectedResourceConfig, wwwAuthenticateHeader } from './oauth-metadata';
 
-// ─── In-memory event store (SSE resumability) ───────────────────────────────
+/** Compatibility posture for protocol revisions predating 2026-07-28. */
+export type McpLegacyPolicy = 'serve' | 'reject';
 
-const EVENT_TTL_MS = 10 * 60 * 1000;
-const SESSION_TTL_MS = 30 * 60 * 1000;
-const SWEEP_INTERVAL_MS = 60 * 1000;
-
-/** Hard caps — a burst between sweeps must not grow memory without bound. */
-const MAX_EVENTS = 10_000;
-const MAX_SESSIONS = 1_000;
-
-interface StoredEvent {
-  streamId: string;
-  message: JSONRPCMessage;
-  timestamp: number;
+/** DNS-rebinding policy applied before authentication and SDK dispatch. */
+export interface McpHttpSecurityConfig {
+  /** Allowed `Host` header hostnames. By default the header must match the request URL. */
+  allowedHosts?: readonly string[];
+  /** Allowed browser `Origin` hostnames. By default an Origin must be same-origin. */
+  allowedOrigins?: readonly string[];
 }
-
-/**
- * Event store for Streamable-HTTP SSE resumability — if a client loses its
- * SSE stream it reconnects with `Last-Event-ID` and the SDK replays. Capped at
- * `MAX_EVENTS` (oldest-first eviction) on top of the TTL sweep.
- */
-class InMemoryEventStore implements EventStore {
-  private events = new Map<string, StoredEvent>();
-  private counter = 0;
-
-  async storeEvent(streamId: StreamId, message: JSONRPCMessage): Promise<EventId> {
-    const eventId = String(++this.counter);
-    this.events.set(eventId, { streamId, message, timestamp: Date.now() });
-    // Evict the oldest event once the cap is hit — the Map keeps insertion
-    // order, so the first key is the oldest.
-    if (this.events.size > MAX_EVENTS) {
-      const oldest = this.events.keys().next().value;
-      if (oldest !== undefined) this.events.delete(oldest);
-    }
-    return eventId;
-  }
-
-  async getStreamIdForEventId(eventId: EventId): Promise<StreamId | undefined> {
-    return this.events.get(eventId)?.streamId;
-  }
-
-  async replayEventsAfter(
-    lastEventId: EventId,
-    { send }: { send: (eventId: EventId, message: JSONRPCMessage) => Promise<void> },
-  ): Promise<StreamId> {
-    // Replay only the stream the client is resuming — never another session's.
-    const anchor = this.events.get(lastEventId);
-    if (!anchor) return '';
-    const lastIdNum = Number(lastEventId);
-    for (const [eventId, event] of this.events) {
-      if (event.streamId === anchor.streamId && Number(eventId) > lastIdNum) {
-        await send(eventId, event.message);
-      }
-    }
-    return anchor.streamId;
-  }
-
-  cleanup(): void {
-    const cutoff = Date.now() - EVENT_TTL_MS;
-    for (const [eventId, event] of this.events) {
-      if (event.timestamp < cutoff) this.events.delete(eventId);
-    }
-  }
-}
-
-// ─── Public API ─────────────────────────────────────────────────────────────
 
 export interface McpHttpConfig<TAuth> {
   /** Resolve an incoming request to an identity. Return `null` → 401. */
   auth: (req: Request) => TAuth | null | Promise<TAuth | null>;
-  /**
-   * OAuth 2.0 Protected Resource metadata (RFC 9728). When set, a `401` carries
-   * a `WWW-Authenticate: Bearer resource_metadata="…"` header so an MCP client
-   * can discover the authorization server. Serve the matching metadata document
-   * with `oauthProtectedResourceRoute(protectedResource)`.
-   */
+  /** OAuth 2.0 Protected Resource metadata used by the 401 challenge. */
   protectedResource?: ProtectedResourceConfig;
-  /** HTTP transport state. Default `'stateless'`; opt into `'stateful'` only
-   *  for cross-request progress, server push or resumable SSE sessions. */
-  sessionMode?: McpSessionMode;
+  /** Serve legacy stateless requests or reject them. Default: `serve`. */
+  legacy?: McpLegacyPolicy;
+  /** Optional Fetch-boundary Host and Origin policy. */
+  security?: McpHttpSecurityConfig;
+  /** Observe a protocol/security rejection without entering lifecycle or tool hooks. */
+  onTransportRejected?: (event: {
+    request: Request;
+    response: Response;
+  }) => void | Promise<void>;
 }
 
 export type McpHandlerConfig<
@@ -103,12 +48,10 @@ export type McpHandlerConfig<
   TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
 > = McpServerBuildConfig<TAuth, TSurfaces> & McpHttpConfig<TAuth>;
 
-export type McpSessionMode = 'stateful' | 'stateless';
-
-interface SessionData {
-  transport: WebStandardStreamableHTTPServerTransport;
-  server: McpServer;
-  lastSeen: number;
+/** Framework-owned Fetch face for one stateless dual-era MCP endpoint. */
+export interface McpHttpHandler {
+  fetch(request: Request): Promise<Response>;
+  close(): Promise<void>;
 }
 
 function jsonRpcError(
@@ -123,38 +66,36 @@ function jsonRpcError(
   );
 }
 
-/**
- * Build a Streamable-HTTP MCP request handler (`Request → Response`).
- *
- * Owns the MCP server/transport lifecycle — and, only in explicit stateful
- * mode, the SSE event/session stores — so the consuming app never imports the
- * SDK itself. The app only declares WHAT to expose:
- * how to authenticate and which contract services. MCP tools come from
- * contracts; multimodal operations are declared as framework `runtimeTools`.
- *
- * The server itself is built by the transport-neutral `buildMcpServer` — the
- * same core used by `createStdioMcpServer`.
- *
- * Mount the returned handler in your server's fetch router (e.g. under `/mcp`).
- */
-export function createMcpHandler<
-  TAuth,
-  const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
->(config: McpHandlerConfig<TAuth, TSurfaces>): (req: Request) => Promise<Response> {
-  let buildServer: (auth: TAuth) => McpServer;
+function defaultHostRejection(request: Request): Response | undefined {
+  const host = request.headers.get('host');
+  if (!host || host === new URL(request.url).host) return undefined;
+  return jsonRpcError(-32000, 'Invalid Host header', 403);
+}
+
+function defaultOriginRejection(request: Request): Response | undefined {
+  const origin = request.headers.get('origin');
+  if (!origin) return undefined;
+  try {
+    if (new URL(origin).origin === new URL(request.url).origin) return undefined;
+  } catch {
+    // A malformed Origin is never a valid browser boundary.
+  }
+  return jsonRpcError(-32000, 'Invalid Origin header', 403);
+}
+
+function prepareStaticSurface<TAuth>(
+  config: McpHandlerConfig<TAuth>,
+): ((auth: TAuth) => McpServer) | null {
   const preparation = {
     logger: config.logger,
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     schemaValidation: config.schemaValidation,
   };
+
   if (config.surfaces && config.selectSurface) {
-    const selectSurface = config.selectSurface;
-    const preparedByKey = new Map<string, ReturnType<typeof prepareMcpServerSurface>>();
-    const preparedBySurface = new WeakMap<
-      object,
-      ReturnType<typeof prepareMcpServerSurface>
-    >();
+    const preparedByKey = new Map<string, PreparedMcpServerSurface>();
+    const preparedBySurface = new WeakMap<object, PreparedMcpServerSurface>();
     for (const key in config.surfaces) {
       if (!Object.hasOwn(config.surfaces, key)) continue;
       const surface = config.surfaces[key];
@@ -164,31 +105,61 @@ export function createMcpHandler<
       if (!existing) preparedBySurface.set(surface, prepared);
       preparedByKey.set(key, prepared);
     }
-    buildServer = (auth) => {
-      const key = selectSurface(auth);
+    return (auth) => {
+      const key = config.selectSurface(auth);
       const prepared = preparedByKey.get(key);
       if (!prepared) throw new Error(`[stitchkit] Unknown MCP surface "${key}"`);
       return buildMcpServerFromPrepared(config, auth, prepared);
     };
-  } else if (
+  }
+
+  if (
     config.services &&
     typeof config.services !== 'function' &&
     typeof config.runtimeTools !== 'function'
   ) {
-    // A deterministic direct surface is prepared once; every session/request
-    // still gets a fresh server and runtime over the immutable descriptors.
     const prepared = prepareMcpServerSurface(
       { services: config.services, runtimeTools: config.runtimeTools },
       preparation,
     );
-    buildServer = (auth) => buildMcpServerFromPrepared(config, auth, prepared);
-  } else {
-    // Truly identity-dependent factories remain uncached by design: an
-    // arbitrary identity is not a bounded cache key.
-    buildServer = (auth) => buildMcpServer(config, auth);
+    return (auth) => buildMcpServerFromPrepared(config, auth, prepared);
   }
 
-  /** RFC 9728 §5.1 401 — points the client at the OAuth resource metadata. */
+  return null;
+}
+
+/**
+ * Build a stateless MCP HTTP handler on the official SDK v2 request factory.
+ * Every request gets a fresh SDK server and a fresh Stitchkit tool context;
+ * no protocol session, event store or `Mcp-Session-Id` exists in this layer.
+ */
+export function createMcpHandler<
+  TAuth,
+  const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
+>(config: McpHandlerConfig<TAuth, TSurfaces>): McpHttpHandler {
+  const buildPrepared = prepareStaticSurface(config);
+  const authByCarrier = new WeakMap<AuthInfo, { value: TAuth }>();
+  let closed = false;
+  let resolveClosed: (() => void) | undefined;
+  const closedSignal = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const sdkHandler = createSdkMcpHandler(
+    ({ authInfo }) => {
+      const resolved = authInfo ? authByCarrier.get(authInfo) : undefined;
+      if (!resolved) {
+        throw new Error('[stitchkit] MCP request reached the SDK without resolved auth');
+      }
+      const auth = resolved.value;
+      return buildPrepared ? buildPrepared(auth) : buildMcpServer(config, auth);
+    },
+    {
+      legacy: config.legacy === 'reject' ? 'reject' : 'stateless',
+      maxSubscriptions: 0,
+    },
+  );
+
   const unauthorized = (): Response => {
     const headers = config.protectedResource
       ? { 'WWW-Authenticate': wwwAuthenticateHeader(config.protectedResource.resource) }
@@ -196,101 +167,69 @@ export function createMcpHandler<
     return jsonRpcError(-32001, 'Authorization required', 401, headers);
   };
 
-  // ── Stateless mode ─────────────────────────────────────────────────────────
-  // A fresh transport + server per request, no session store. A restart never
-  // invalidates a client (no `404 Session not found`). The SDK requires a new
-  // transport per request in stateless mode — reuse collides message ids.
-  if ((config.sessionMode ?? 'stateless') === 'stateless') {
-    return async (req: Request): Promise<Response> => {
-      const auth = await config.auth(req);
-      if (!auth) return unauthorized();
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        // A complete JSON response (not a held-open SSE stream) — the request is
-        // self-contained, so the transport can be discarded once it returns.
-        enableJsonResponse: true,
-      });
-      const server = buildServer(auth);
-      await server.connect(transport);
-      return transport.handleRequest(req);
-    };
-  }
-
-  // ── Stateful mode (session store + SSE event store) ─────────────────────────
-  const eventStore = new InMemoryEventStore();
-  const sessions = new Map<string, SessionData>();
-
-  const closeTransport = (transport: WebStandardStreamableHTTPServerTransport): void => {
-    transport.close().catch((err) => {
-      console.error('[stitchkit] MCP transport close failed:', err);
-    });
+  const observeRejection = (request: Request, response: Response): Response => {
+    if (response.status < 400 || !config.onTransportRejected) return response;
+    void Promise.resolve(
+      config.onTransportRejected({ request, response: response.clone() }),
+    ).catch(() => undefined);
+    return response;
   };
 
-  // Periodic sweep — expire SSE events and idle sessions. Must not by itself
-  // keep the process alive.
-  setInterval(() => {
-    eventStore.cleanup();
-    const cutoff = Date.now() - SESSION_TTL_MS;
-    for (const [id, session] of sessions) {
-      if (session.lastSeen < cutoff) {
-        sessions.delete(id);
-        closeTransport(session.transport);
+  return {
+    fetch: async (request) => {
+      if (closed) {
+        return observeRejection(request, jsonRpcError(-32000, 'MCP handler is closed', 503));
       }
-    }
-  }, SWEEP_INTERVAL_MS).unref();
+      const hostRejection = config.security?.allowedHosts
+        ? hostHeaderValidationResponse(request, [...config.security.allowedHosts])
+        : defaultHostRejection(request);
+      if (hostRejection) return observeRejection(request, hostRejection);
 
-  return async (req: Request): Promise<Response> => {
-    const auth = await config.auth(req);
-    if (!auth) return unauthorized();
+      const originRejection = config.security?.allowedOrigins
+        ? originValidationResponse(request, [...config.security.allowedOrigins])
+        : defaultOriginRejection(request);
+      if (originRejection) return observeRejection(request, originRejection);
 
-    const sessionId = req.headers.get('mcp-session-id');
-    if (sessionId) {
-      const existing = sessions.get(sessionId);
-      // A session id the server does not know is expired or forged — never
-      // mint a server for a client-supplied id.
-      if (!existing) {
-        return jsonRpcError(-32001, 'Session not found', 404);
+      const auth = await Promise.race([
+        Promise.resolve(config.auth(request)),
+        closedSignal.then(() => null),
+      ]);
+      if (closed) {
+        return observeRejection(request, jsonRpcError(-32000, 'MCP handler is closed', 503));
       }
-      existing.lastSeen = Date.now();
-      // SSE reconnect: the SDK allows one standalone SSE per session.
-      if (req.method === 'GET') {
-        existing.transport.closeStandaloneSSEStream();
+      if (auth === null) return observeRejection(request, unauthorized());
+      const authCarrier: AuthInfo = {
+        token: '',
+        clientId: config.multiRound?.state.principal(auth) ?? 'stitchkit',
+        scopes: [],
+      };
+      authByCarrier.set(authCarrier, { value: auth });
+      try {
+        return observeRejection(
+          request,
+          await sdkHandler.fetch(request, { authInfo: authCarrier }),
+        );
+      } finally {
+        authByCarrier.delete(authCarrier);
       }
-      return existing.transport.handleRequest(req);
-    }
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      resolveClosed?.();
+      await sdkHandler.close();
+    },
+  };
+}
 
-    // No session id → a fresh session; the id is always server-generated.
-    // Cap concurrent sessions — evict the least-recently-seen one on overflow
-    // so a session-minting flood cannot exhaust memory.
-    if (sessions.size >= MAX_SESSIONS) {
-      let oldestId: string | undefined;
-      let oldestSeen = Number.POSITIVE_INFINITY;
-      for (const [id, session] of sessions) {
-        if (session.lastSeen < oldestSeen) {
-          oldestSeen = session.lastSeen;
-          oldestId = id;
-        }
-      }
-      if (oldestId !== undefined) {
-        const evicted = sessions.get(oldestId);
-        sessions.delete(oldestId);
-        if (evicted) closeTransport(evicted.transport);
-      }
-    }
-
-    const newSessionId = randomUUID();
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => newSessionId,
-      eventStore,
-    });
-    const server = buildServer(auth);
-
-    sessions.set(newSessionId, { transport, server, lastSeen: Date.now() });
-    transport.onclose = () => {
-      sessions.delete(newSessionId);
-    };
-
-    await server.connect(transport);
-    return transport.handleRequest(req);
+/** Mount an MCP handler as an ordinary framework-owned raw HTTP route. */
+export function createMcpHttpRoute(config: {
+  path: string;
+  handler: McpHttpHandler;
+}): RawRoute {
+  return {
+    method: 'ALL',
+    path: config.path,
+    handler: (request) => config.handler.fetch(request),
   };
 }

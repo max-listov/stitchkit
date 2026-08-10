@@ -1,5 +1,10 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  type CallToolResult,
+  createRequestStateCodec,
+  McpServer,
+  type RequestStateCodec,
+  type ServerOptions,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { EndpointToolAnnotations } from '../contract';
 import { isRecord } from '../internal/typed';
@@ -14,6 +19,8 @@ import {
 import type { ToolPresentationSchema } from './flatten';
 import { type JsonSchemaIo, toJsonSchema } from './json-schema';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './mcp-app';
+import { type McpRoundRuntime, type McpRoundState, resolveMcpRound } from './mcp-round';
+import { runInMcpRequestContext } from './mcp-trace';
 import {
   collectTools,
   createToolRunner,
@@ -72,13 +79,13 @@ function textBlock(text: string): Array<{ type: 'text'; text: string }> {
 }
 
 /** How a tool's result maps to MCP `structuredContent`. */
-type StructuredMode = 'none' | 'direct' | 'wrapped';
+type StructuredMode = 'none' | 'direct';
 
 /**
  * Shape a `ToolResult` into an MCP tool response. Always emits a text `content`
- * block (the model reads it). Emits `structuredContent` when the tool declared
- * an `outputSchema` — directly for an object output, wrapped in `{ result }`
- * for a non-object output (an MCP App UI consumes the structured payload).
+ * block for declared output (the model reads it). Emits `structuredContent`
+ * in the exact validated JSON shape whenever the tool declared an
+ * `outputSchema`. The official SDK owns any protocol-era wire adaptation.
  */
 function formatMcpResult(
   result: ToolResult,
@@ -87,14 +94,14 @@ function formatMcpResult(
   errorHint?: ErrorHintFn,
 ): CallToolResult {
   if (result.ok) {
-    const content = textBlock(JSON.stringify(result.data, null, 2));
-    if (mode === 'wrapped') {
-      return { content, structuredContent: { result: result.data } };
+    if (mode === 'none') return { content: [] };
+    const serialized = JSON.stringify(result.data, null, 2);
+    if (serialized === undefined) {
+      throw new Error(
+        `[stitchkit] MCP tool "${toolName ?? 'unknown'}" produced a non-JSON output`,
+      );
     }
-    if (mode === 'direct' && isRecord(result.data)) {
-      return { content, structuredContent: result.data };
-    }
-    return { content };
+    return { content: textBlock(serialized), structuredContent: result.data };
   }
   return {
     content: textBlock(JSON.stringify(formatToolError(result, toolName, errorHint), null, 2)),
@@ -113,19 +120,14 @@ function probeSchema(schema: z.ZodType, io: JsonSchemaIo): string | null {
 }
 
 /**
- * Resolve a method's `output` to what MCP advertises as the tool `outputSchema`.
- * An object output is used directly; a non-object output (an array, a primitive)
- * is wrapped in `{ result: <output> }` so the result can still carry a valid
- * `structuredContent` object.
+ * Resolve a method's `output` to the exact schema MCP advertises. Modern MCP
+ * accepts every JSON root type; the official SDK adapts older wire eras.
  */
 function resolveOutputSchema(
   outputSchema: z.ZodType | undefined,
 ): { schema: z.ZodType; mode: Exclude<StructuredMode, 'none'> } | null {
   if (!outputSchema) return null;
-  if (outputSchema instanceof z.ZodObject) {
-    return { schema: outputSchema, mode: 'direct' };
-  }
-  return { schema: z.object({ result: outputSchema }), mode: 'wrapped' };
+  return { schema: outputSchema, mode: 'direct' };
 }
 
 /** Apply the incompatible-schema policy to one failure. */
@@ -247,10 +249,8 @@ function prepareMcpTool(
     }
   }
 
-  // An object `output` becomes the tool's `outputSchema` directly; a non-object
-  // `output` is wrapped in `{ result }`. Either way a successful result carries
-  // `structuredContent`. An incompatible output is reported but the tool still
-  // registers, text-only.
+  // Every JSON `output` becomes the tool's `outputSchema` directly. An
+  // incompatible output is reported but the tool still registers, text-only.
   const resolved = resolveOutputSchema(mountable.method.outputSchema);
   if (!resolved) return { mountable, inputSchema: inputJsonSchema, outputMode: 'none' };
 
@@ -417,6 +417,10 @@ export interface McpMountConfig {
   onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
+interface PreparedMcpMountConfig extends McpMountConfig {
+  multiRoundRuntime?: McpRoundRuntime;
+}
+
 /**
  * Validate that every contract tool in `services` can be advertised on the MCP
  * surface — object-shaped, JSON Schema-compatible input / output, no tool-name
@@ -451,7 +455,7 @@ export function mountMcp(
 export function mountPreparedMcp(
   mcpServer: McpServer,
   prepared: PreparedMcpSurface,
-  config: McpMountConfig = {},
+  config: PreparedMcpMountConfig = {},
 ): void {
   const runTool = createToolRunner({
     source: 'mcp',
@@ -494,25 +498,38 @@ export function mountPreparedMcp(
       };
     }
 
-    mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs) => {
-      const args = isRecord(rawArgs) ? rawArgs : {};
-      try {
-        const result = await runTool(mountable, args);
-        return formatMcpResult(
-          result,
-          descriptor.outputMode,
-          mountable.name,
-          config.errorHint,
-        );
-      } catch (err) {
-        return formatMcpResult(
-          toolResultFromError(err),
-          'none',
-          mountable.name,
-          config.errorHint,
-        );
-      }
-    });
+    mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs, mcpContext) =>
+      runInMcpRequestContext(mcpContext, mountable.name, async () => {
+        const args = isRecord(rawArgs) ? rawArgs : {};
+        try {
+          const round = await resolveMcpRound({
+            tool: mountable,
+            rawArgs: args,
+            context: mcpContext,
+            policy: mountable.method.mcp,
+            runtime: config.multiRoundRuntime,
+            runTool,
+            formatFailure: (result) =>
+              formatMcpResult(result, 'none', mountable.name, config.errorHint),
+          });
+          if (round.kind === 'response') return round.response;
+          const result = await runTool(mountable, args, round.context);
+          return formatMcpResult(
+            result,
+            descriptor.outputMode,
+            mountable.name,
+            config.errorHint,
+          );
+        } catch (err) {
+          return formatMcpResult(
+            toolResultFromError(err),
+            'none',
+            mountable.name,
+            config.errorHint,
+          );
+        }
+      }),
+    );
   }
 }
 
@@ -552,6 +569,23 @@ export interface McpServerSharedConfig<TAuth> {
   /** Server instructions — a short (≤2KB) hint to the host on when and how to
    *  use these tools. Surfaced to MCP tool-search. */
   instructions?: string;
+  /** Explicit modern MCP cache policy. Omitted operations stay zero/private. */
+  cache?: {
+    operations?: NonNullable<ServerOptions['cacheHints']>;
+  };
+  /** Signed multi-round continuation policy for tools declaring `mcp.inputRequired`. */
+  multiRound?: {
+    state: {
+      /** Shared HMAC key, at least 32 bytes. */
+      key: Uint8Array | string;
+      /** Continuation lifetime. Default 10 minutes. */
+      ttlSeconds?: number;
+      /** Stable authenticated principal bound into every continuation. */
+      principal: (auth: TAuth) => string;
+    };
+    /** Legacy stdio shim and round limits owned by the official SDK. */
+    serving?: NonNullable<ServerOptions['inputRequired']>;
+  };
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /** Flatten discriminated union inputs into a single object. Default: false. */
@@ -633,10 +667,32 @@ export function buildMcpServerFromPrepared<TAuth>(
   auth: TAuth,
   prepared: PreparedMcpServerSurface,
 ): McpServer {
-  const server = new McpServer(
-    config.serverInfo,
-    config.instructions ? { instructions: config.instructions } : undefined,
-  );
+  let roundCodec: RequestStateCodec<McpRoundState> | undefined;
+  if (config.multiRound) {
+    const principal = config.multiRound.state.principal(auth);
+    roundCodec = createRequestStateCodec({
+      key: config.multiRound.state.key,
+      ttlSeconds: config.multiRound.state.ttlSeconds,
+      bind: (mcpContext) => `${mcpContext.mcpReq.method}\0${principal}`,
+    });
+  }
+  const dynamicSurface =
+    !config.surfaces &&
+    (typeof config.services === 'function' || typeof config.runtimeTools === 'function');
+  const serverOptions: ServerOptions = {
+    ...(config.instructions !== undefined && { instructions: config.instructions }),
+    ...(!dynamicSurface &&
+      config.cache?.operations !== undefined && {
+        cacheHints: config.cache.operations,
+      }),
+    ...(config.multiRound?.serving !== undefined && {
+      inputRequired: config.multiRound.serving,
+    }),
+    ...(roundCodec !== undefined && {
+      requestState: { verify: roundCodec.verify },
+    }),
+  };
+  const server = new McpServer(config.serverInfo, serverOptions);
   const context = config.context?.(auth);
   mountPreparedMcp(server, prepared.contractTools, {
     context,
@@ -649,6 +705,12 @@ export function buildMcpServerFromPrepared<TAuth>(
     flattenUnionInput: config.flattenUnionInput,
     errorHint: config.errorHint,
     onOutputStrip: config.onOutputStrip,
+    ...(roundCodec !== undefined && {
+      multiRoundRuntime: {
+        codec: roundCodec,
+        maxRounds: config.multiRound?.serving?.maxRounds ?? 10,
+      },
+    }),
   });
   mountPreparedRuntimeMcp(server, prepared.runtimeTools, {
     context,
@@ -658,6 +720,12 @@ export function buildMcpServerFromPrepared<TAuth>(
     onOutputStrip: config.onOutputStrip,
     formatResult: (result, mode, toolName) =>
       formatMcpResult(result, mode, toolName, config.errorHint),
+    ...(roundCodec !== undefined && {
+      multiRoundRuntime: {
+        codec: roundCodec,
+        maxRounds: config.multiRound?.serving?.maxRounds ?? 10,
+      },
+    }),
   });
   config.rawTools?.(server, auth);
   for (const resource of config.resources ?? []) {
@@ -675,7 +743,10 @@ export function mountMcpResource(server: McpServer, resource: McpResourceDef): v
   server.registerResource(
     resource.name,
     resource.uri,
-    { mimeType: resource.mimeType ?? RESOURCE_MIME_TYPE },
+    {
+      mimeType: resource.mimeType ?? RESOURCE_MIME_TYPE,
+      ...(resource.cacheHint !== undefined && { cacheHint: resource.cacheHint }),
+    },
     async () => ({
       contents: [
         {

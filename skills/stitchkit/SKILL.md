@@ -78,7 +78,9 @@ Work in this order; each step links a contract field to a transport.
 |---------|---------|
 | validation (always) | `zod` |
 | `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
-| MCP tools | `@modelcontextprotocol/sdk` |
+| MCP server/tools | `@modelcontextprotocol/server` |
+| MCP host/client tests | `@modelcontextprotocol/client` |
+| MCP Apps | `@modelcontextprotocol/ext-apps` |
 | agent tools | `ai` |
 | React data layer | `@tanstack/react-query` `react-query-kit` |
 | Socket.IO server on Bun | `socket.io` `@socket.io/bun-engine` |

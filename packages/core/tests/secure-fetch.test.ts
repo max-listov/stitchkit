@@ -9,6 +9,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import {
   assertPublicUrl,
   fetchGuarded,
+  fetchPinnedDocument,
   isPrivateIp,
   readCapped,
 } from '../src/internal/secure-fetch';
@@ -23,9 +24,19 @@ describe('isPrivateIp', () => {
       '172.16.0.1',
       '100.64.0.1',
       '0.0.0.0',
+      '192.0.2.1',
+      '198.18.0.1',
+      '198.51.100.1',
+      '203.0.113.1',
+      '224.0.0.1',
+      '255.255.255.255',
       '::1',
       'fd00::1',
       'fe80::1',
+      'ff02::1',
+      '2001:db8::1',
+      '2002::1',
+      '3fff::1',
       '::ffff:127.0.0.1',
       '::ffff:7f00:1',
       '::ffff:a00:1',
@@ -48,6 +59,37 @@ describe('isPrivateIp', () => {
     ]) {
       expect(isPrivateIp(ip)).toBe(false);
     }
+  });
+});
+
+describe('fetchPinnedDocument policy boundary', () => {
+  test('rejects invalid limits before opening a socket', async () => {
+    await expect(
+      fetchPinnedDocument(new URL('https://1.1.1.1/'), { maxBytes: 0, timeoutMs: 1 }),
+    ).rejects.toThrow(/maxBytes/);
+    await expect(
+      fetchPinnedDocument(new URL('https://1.1.1.1/'), { maxBytes: 1, timeoutMs: 0 }),
+    ).rejects.toThrow(/timeoutMs/);
+    await expect(
+      fetchPinnedDocument(new URL('https://1.1.1.1/'), {
+        maxBytes: 1,
+        timeoutMs: 1,
+        maxRedirects: -1,
+      }),
+    ).rejects.toThrow(/maxRedirects/);
+  });
+
+  test('enforces TLS, credential and private-address policy before network I/O', async () => {
+    const options = { maxBytes: 1024, timeoutMs: 100, requireHttps: true };
+    await expect(fetchPinnedDocument(new URL('http://1.1.1.1/'), options)).rejects.toThrow(
+      /https/,
+    );
+    await expect(
+      fetchPinnedDocument(new URL('https://user:pass@1.1.1.1/'), options),
+    ).rejects.toThrow(/credentials/);
+    await expect(fetchPinnedDocument(new URL('https://127.0.0.1/'), options)).rejects.toThrow(
+      /private/,
+    );
   });
 });
 

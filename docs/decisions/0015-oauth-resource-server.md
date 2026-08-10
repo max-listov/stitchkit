@@ -1,14 +1,14 @@
 ---
 title: "ADR 0015 — OAuth 2.1 resource-server toolkit for MCP"
 type: decision
-status: accepted
+status: superseded
 created: 2026-05-29
 updated: 2026-05-29
 ---
 
 # ADR 0015 — OAuth 2.1 resource-server toolkit for MCP
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR 0068
 - **Date:** 2026-05-29
 
 ## Context
@@ -65,3 +65,7 @@ and rotated single-use (OAuth 2.1 §4.3.1 for public clients).
 - No new runtime dependency — everything is built on `crypto.subtle`.
 - The AS and RS may co-locate (one server) or split; the toolkit supports both
   via the `authorizationServers` list.
+
+ADR 0068 replaces the mandatory-DCR posture with deterministic
+pre-registered → CIMD → explicit-DCR client resolution. The OAuth protocol
+mechanics and resource-server boundary above remain the foundation.

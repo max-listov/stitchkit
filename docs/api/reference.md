@@ -72,7 +72,7 @@ can emit / propagate a `traceparent` (see `HttpClientConfig.trace`).
 | `formatTraceparent` | function | render a `traceparent` header value |
 | `parseTraceparent` | function | parse a `traceparent` header |
 | `childSpan` | function | a child span of a parent trace |
-| `TraceContext` | _type_ | `{ traceId, spanId, parentSpanId? }` |
+| `TraceContext` | _type_ | `{ traceId, spanId, parentSpanId?, tracestate?, baggage? }` |
 
 ---
 
@@ -119,6 +119,8 @@ from the root `stitchkit`.
 | `FileDescriptor` | _type_ | a React Native / Expo file — `{ uri, name, type }` |
 | `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`) |
 | `EndpointUiMeta` | _type_ | MCP Apps widget metadata on an endpoint |
+| `EndpointMcpInputRequired` | _type_ | typed MCP multi-round input request (`key`, message and Zod object schema) |
+| `EndpointMcpPolicy` | _type_ | MCP-only endpoint policy containing `inputRequired` |
 
 ### Errors
 
@@ -336,11 +338,12 @@ audit event. See the [Observability guide](../guide/observability.md).
 | Export | Kind | Summary |
 |--------|------|---------|
 | `resolveTraceContext` | function | the trace for a request — `traceparent` continued or fresh |
+| `resolvePropagationContext` | function | continue bounded MCP/W3C propagation metadata with optional ambient fallback |
 | `parseTraceparent` | function | parse a `traceparent` header |
 | `formatTraceparent` | function | render a `traceparent` header value |
 | `createTraceContext` | function | a fresh root trace |
 | `childSpan` | function | a child span of a parent trace |
-| `TraceContext` | _type_ | `{ traceId, spanId, parentSpanId? }` |
+| `TraceContext` | _type_ | `{ traceId, spanId, parentSpanId?, tracestate?, baggage? }` |
 
 ### Sanitisation
 
@@ -358,12 +361,19 @@ audit event. See the [Observability guide](../guide/observability.md).
 
 ## `stitchkit/tools`
 
-Server-only. Turns contracts into MCP and AI-agent tools. Needs the
-`@modelcontextprotocol/sdk` peer (for MCP) and the `ai` peer (for agents).
+Server-only. Turns contracts into MCP and AI-agent tools. MCP server surfaces
+need the `@modelcontextprotocol/server` v2 peer; MCP hosts/tests use the separate
+`@modelcontextprotocol/client` package. Agent surfaces need the `ai` peer.
+
+Framework-owned MCP tools advertise the exact declared output schema and return
+the validated value unchanged as `structuredContent`, including arrays, scalars
+and `null`. Tools without an output contract advertise and return no structured
+payload.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createMcpHandler` | function | a complete Streamable-HTTP MCP server — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
+| `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
+| `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
 | `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
 | `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces — the transport-neutral core |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
@@ -378,9 +388,12 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `resolveMedia` | function | resolve a media reference for a tool result |
 | `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
 | `listToolNames` | function | every contract/runtime tool name with origin, identity and transports — for stable snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
-| `McpHandlerConfig` | _type_ | config for `createMcpHandler` |
-| `McpHttpConfig` | _type_ | HTTP auth, protected-resource and session options composed into `McpHandlerConfig` |
-| `McpSessionMode` | _type_ | `'stateless' \| 'stateful'`; HTTP defaults to request-isolated stateless mode |
+| `McpHandlerConfig` | _type_ | server surface plus stateless HTTP transport config |
+| `McpHttpConfig` | _type_ | HTTP auth, protected-resource, legacy-era and security options |
+| `McpHttpHandler` | _type_ | framework-owned `{ fetch(request), close() }` lifecycle |
+| `McpHttpSecurityConfig` | _type_ | Fetch-boundary Host and Origin allowlists |
+| `McpLegacyPolicy` | _type_ | `'serve' \| 'reject'` protocol-era compatibility policy |
+| `McpStdioHandle` | _type_ | closeable official stdio transport handle |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
 | `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
@@ -408,6 +421,15 @@ Server-only. Turns contracts into MCP and AI-agent tools. Needs the
 | `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |
 | `RuntimeToolPresenters` | _type_ | optional MCP and AI SDK `toModelOutput` presentation callbacks |
 | `RuntimeMcpPresentation` | _type_ | MCP content/metadata result without framework-owned `structuredContent` or `isError` |
+| `RuntimeMcpInput` | _type_ | typed accepted multi-round input for an opted-in runtime tool |
+| `OAuthClientRegistrationConfig` | _type_ | deterministic pre-registered → CIMD → explicit-DCR client resolution |
+| `CimdClientMetadata` | _type_ | validated Client ID Metadata Document |
+| `CimdClientMetadataFetcher` | _type_ | injectable secure network boundary for metadata loading |
+| `CimdFetchResponse` | _type_ | bounded metadata fetch result passed across the injectable network boundary |
+| `CimdFetchPolicy` | _type_ | CIMD timeout, redirect and size limits |
+| `CimdCachePolicy` | _type_ | bounded HTTP-aware positive/negative cache policy |
+| `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
+| `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
 | `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT'` |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |

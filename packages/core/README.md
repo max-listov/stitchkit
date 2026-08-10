@@ -26,7 +26,8 @@
 - **One contract, five surfaces.** Define your API once — get HTTP routes, MCP tools (for Claude/Cursor), AI SDK tools (for agents), a [CLI](./docs/guide/cli.md) (for scripts & Skills), and a typed client.
 - **Zero HTTP framework deps.** Built on `Bun.serve()` (Bun) or `srvx` (Node). No Hono, no Elysia, no Express.
 - **Fullstack type safety.** Server handlers, client calls, MCP tools — all typed from the same contract.
-- **Small.** ~8500 lines of source. No magic, no codegen, no build step.
+- **Inspectable.** A focused core with explicit adapters. No generated
+  application code or framework build step in your app.
 - **Thin over what you already use.** WebSocket = Socket.IO (`createSocketIOClient` / `createSocketIOServer`). React data layer = `react-query-kit` (`createCursorQuery`). stitchkit owns the contract and the transport — not its own competing WebSocket or hook engine.
 
 ### The problem it solves
@@ -49,6 +50,17 @@ change between minor versions until 1.0. Bun is first-class; Node ≥ 22 is
 supported via `stitchkit/node`.
 
 ## Install
+
+Start a production-shaped Next.js, Stitchkit and PostgreSQL application:
+
+```bash
+bun create stitchkit my-app
+cd my-app
+# Point DATABASE_URL in .env at your PostgreSQL database.
+bun run dev
+```
+
+To add Stitchkit to an existing project instead:
 
 ```bash
 bun add stitchkit        # Bun
@@ -161,14 +173,20 @@ size is the server's call — the contract's `limit` default — never the clien
 ### 5. MCP tools (for Claude, Cursor, etc.)
 
 ```ts
-import { createMcpHandler } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
 
-const handleMcp = createMcpHandler({
+const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: (req) => resolveApiKey(req),     // → identity, or null for 401
   services: [service],                   // contract endpoints with expose: ['MCP']
 })
-// mount `handleMcp` under /mcp — no @modelcontextprotocol/sdk import in your app
+
+createServer({
+  services: [service],
+  rawRoutes: [createMcpHttpRoute({ path: '/mcp', handler: mcp })],
+})
+
+// On shutdown: await mcp.close()
 ```
 
 ### 6. AI Agent tools
@@ -199,7 +217,7 @@ socket.io.on('connection', (s) => { /* rooms, handshake auth — your domain log
 createServer({
   services: [service],
   websocket: socket.websocket,    // → Bun.serve
-  rawRoutes: [socket.route],      // ready /socket.io/* route
+  rawRoutes: [socket.route],      // ready /socket.io/*socketPath route
 })
 ```
 
@@ -334,7 +352,9 @@ peer — an install pulls in only what the project actually uses.
 |------------|------|--------------|
 | `ky` | bundled, runtime | The HTTP client behind the typed client — ~13 KB, `fetch`-based, with retry, hooks and timeouts built in. The only thing stitchkit installs for you. |
 | `zod` | peer, **required** | Schemas are the single source of truth. A peer so your app and stitchkit share **one** `zod` instance — `z.infer` types and `instanceof` checks break across two copies. |
-| `@modelcontextprotocol/sdk` | peer, optional | Only `stitchkit/tools` — the MCP server. |
+| `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools`; SDK v2, protocol `2026-07-28`. |
+| `@modelcontextprotocol/client` | development dependency, optional | Only consumers that run MCP client integration tests or build an MCP host. |
+| `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
 | `ai` | peer, optional | Only `stitchkit/tools` — agent tools (Vercel AI SDK). |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |
@@ -344,18 +364,20 @@ app code share a single instance. Bundled copies would double `zod`, split the
 `react` hook runtime and break `instanceof`. Optional peers mean an app that
 never touches MCP never installs the MCP SDK. → [ADR 0011](./docs/decisions/0011-bun-only-one-package.md)
 
-The framework itself adds no code-generation or framework build step to a
-consuming application.
+The framework stays focused and inspectable: explicit adapters, no generated
+application code and no framework build step in your app.
 
 ## Official starter
 
-Create the complete Next.js, Bun/Stitchkit, Prisma/PostgreSQL application with:
-
-```bash
-bun create stitchkit my-app
-```
-
-Its canonical source lives in [`packages/create-stitchkit/template`](../create-stitchkit/template).
+`bun create stitchkit my-app` generates the canonical application: separate
+Next.js and Bun API processes, Prisma/PostgreSQL, shared Zod contracts, typed
+HTTP/React Query clients, Socket.IO cache updates, OpenAPI, MCP, CLI and a full
+UI catalogue. Its only source is
+[`packages/create-stitchkit/template`](./packages/create-stitchkit/template).
+The application owns its Prisma schema and migrations while PostgreSQL remains
+external infrastructure configured through `DATABASE_URL`.
+The template owns a committed Bun lockfile and an explicit Stitchkit catalog
+range, so framework and scaffolder releases advance independently.
 
 ## Documentation — two roads
 

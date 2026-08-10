@@ -62,6 +62,174 @@ current one *up to* your target, and apply each snippet.
 
 ## Unreleased breaking migrations
 
+### MCP TypeScript SDK v2 and protocol `2026-07-28`
+
+This is a hard cut: there is one Stitchkit API and no v1 aliases. Applications
+that expose MCP install the split server package; applications that implement an
+MCP host or run client E2E install the split client package.
+
+```bash
+bun remove @modelcontextprotocol/sdk
+bun add @modelcontextprotocol/server@^2 ai@^7
+# MCP hosts and client-side E2E only:
+bun add -d @modelcontextprotocol/client@^2
+```
+
+Direct SDK imports move to the split packages too:
+
+```ts
+// before
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+
+// after
+import { McpServer } from '@modelcontextprotocol/server'
+```
+
+MCP Apps additionally install `@modelcontextprotocol/ext-apps`. That adapter may
+carry its own isolated v1-era transitive/peer relationship while the ecosystem
+finishes its cutover; it does not permit application code to import the removed
+monolithic SDK. Application-owned MCP server and client code uses the v2 split
+packages exclusively.
+
+```ts
+// before
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { createMcpHandler } from 'stitchkit/tools'
+
+const handleMcp = createMcpHandler({
+  serverInfo,
+  auth,
+  services,
+  sessionMode: 'stateless',
+})
+rawRoutes: [{ method: 'ALL', path: '/mcp', handler: handleMcp }]
+
+// after
+import { Client } from '@modelcontextprotocol/client'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
+
+const mcp = createMcpHandler({
+  serverInfo,
+  auth,
+  services,
+  legacy: 'serve',
+})
+rawRoutes: [createMcpHttpRoute({ path: '/mcp', handler: mcp })]
+// graceful shutdown: await mcp.close()
+```
+
+Keep the owned handle and close it from the same shutdown path as the HTTP
+server. A minimal runtime smoke should list tools before shutdown and prove the
+closed handler no longer serves requests:
+
+```ts
+const mcp = createMcpHandler(config)
+const route = createMcpHttpRoute({ path: '/mcp', handler: mcp })
+
+const beforeClose = await route.handler(listToolsRequest)
+if (!beforeClose.ok) throw new Error('MCP list-tools smoke failed')
+
+await mcp.close()
+```
+
+Remove `@modelcontextprotocol/sdk`, `sessionMode`, `McpSessionMode`, session
+stores and all `Mcp-Session-Id` handling. HTTP is always request-isolated and
+stateless. `legacy: 'serve'` (default) lets the official SDK negotiate supported
+pre-2026 stateless clients on the same endpoint; `legacy: 'reject'` makes it
+modern-only. This is not a stateful compatibility transport.
+
+The stdio helper now returns an owned lifecycle handle:
+
+```ts
+// before
+await createStdioMcpServer(config)
+
+// after
+const stdio = await createStdioMcpServer({ ...config, legacy: 'serve' })
+await stdio.close()
+```
+
+OAuth client registration is now one explicit policy object. CIMD is secure and
+enabled by default; DCR is disabled unless supplied:
+
+```ts
+// before
+mountOAuthProvider({ ...oauth, clients, codes, refreshTokens })
+
+// after
+mountOAuthProvider({
+  ...oauth,
+  clientRegistration: {
+    preRegistered: { get: clients.get },
+    // optional: dcr: { register: clients.register, get: clients.get }
+  },
+  codes,
+  refreshTokens,
+})
+```
+
+A URL client id must be HTTPS and serve a document whose `client_id` exactly
+matches that URL, with explicit `redirect_uris` and
+`token_endpoint_auth_method: 'none'`. Do not keep a consumer-side metadata
+fetcher or DCR fallback; Stitchkit owns SSRF-safe resolution and caching.
+
+Multi-round input is opt-in on the operation and does not change Agent, CLI or
+ordinary HTTP handlers:
+
+```ts
+const ConfirmationSchema = z.object({ confirmed: z.boolean() })
+
+mcp: {
+  inputRequired: [{
+    key: 'confirmation',
+    message: 'Confirm this action',
+    schema: ConfirmationSchema,
+  }],
+}
+```
+
+Configure `multiRound.state` on the MCP server with a key of at least 32 bytes
+and a stable authenticated `principal`. Read accepted typed content from
+`ctx.mcpInput.confirmation`. Multiple declarations run in array order, the
+aggregate remains exactly typed by key, keys must be unique, and declarations
+must fit `multiRound.serving.maxRounds` (default `10`). Do not execute a
+destructive side effect before the complete aggregate is accepted. A modern
+request missing the declared elicitation capability receives JSON-RPC error
+code `-32021`. The official per-request legacy HTTP bridge cannot issue
+server-to-client elicitation, so it returns a deterministic failed tool result;
+multi-round input is never silently treated as complete.
+
+#### Compatibility matrix
+
+| Host / transport | Tools and Apps | Multi-round input | Continuity |
+|---|---|---|---|
+| `2026-07-28` HTTP | yes | yes | request-isolated |
+| supported legacy stateless HTTP | yes | unsupported result | request-isolated |
+| `2026-07-28` stdio | yes | yes | one process connection |
+| supported legacy stdio | yes | official SDK bridge | one process connection |
+| Agent / CLI / ordinary HTTP | unchanged | not exposed | unchanged |
+
+Subscriptions, cross-request progress and resumable stateful SSE are not
+implemented or advertised.
+
+#### Consumer checklist
+
+1. Replace the monolithic SDK with `@modelcontextprotocol/server@^2` and, only
+   for hosts/tests, `@modelcontextprotocol/client@^2`.
+2. Replace raw MCP route wiring with `createMcpHttpRoute`; retain and close the
+   returned handler/stdio handle during shutdown.
+3. Delete all session mode, event-store and session-id code.
+4. Move OAuth client policy under `clientRegistration`; publish CIMD or enable
+   DCR explicitly.
+5. Snapshot `listToolNames`, run one contract tool, one runtime tool, any raw
+   multimodal tool and every MCP App resource you use.
+6. Exercise modern HTTP and stdio with protocol `2026-07-28`; exercise legacy
+   only if `legacy: 'serve'` is part of your support policy.
+7. Run the consumer's typecheck and runtime gates. A browser/HTTP-only consumer
+   must continue to work without either MCP package.
+
+## Historical breaking migrations through 0.43.1
+
 HTTP observability now completes inside the framework handler instead of a
 nested fetch wrapper. Configure request and tool sinks explicitly:
 
@@ -408,23 +576,6 @@ nativeTools: ({ rawServer }, auth) => rawServer.registerTool(name, config, handl
 If a tool hook annotated `endpoint` as `MethodDef`, remove that annotation or
 use `OperationIdentity`: native operations have service/action/scope/method but
 no HTTP path.
-
-### MCP HTTP sessions
-
-Finally, replace the MCP HTTP session boolean. Omission changed meaning:
-
-```ts
-// before → after
-stateless: true  // → sessionMode: 'stateless'
-stateless: false // → sessionMode: 'stateful'
-
-// before: omission was stateful
-// after:  omission is stateless
-```
-
-If the client relies on `Mcp-Session-Id`, server push, progress across requests
-or resumable SSE, set `sessionMode: 'stateful'` explicitly. Synchronous tool
-servers should omit it and use the new restart-safe default.
 
 ### Node-facing server types
 

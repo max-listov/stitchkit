@@ -173,14 +173,20 @@ size is the server's call — the contract's `limit` default — never the clien
 ### 5. MCP tools (for Claude, Cursor, etc.)
 
 ```ts
-import { createMcpHandler } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
 
-const handleMcp = createMcpHandler({
+const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: (req) => resolveApiKey(req),     // → identity, or null for 401
   services: [service],                   // contract endpoints with expose: ['MCP']
 })
-// mount `handleMcp` under /mcp — no @modelcontextprotocol/sdk import in your app
+
+createServer({
+  services: [service],
+  rawRoutes: [createMcpHttpRoute({ path: '/mcp', handler: mcp })],
+})
+
+// On shutdown: await mcp.close()
 ```
 
 ### 6. AI Agent tools
@@ -346,7 +352,9 @@ peer — an install pulls in only what the project actually uses.
 |------------|------|--------------|
 | `ky` | bundled, runtime | The HTTP client behind the typed client — ~13 KB, `fetch`-based, with retry, hooks and timeouts built in. The only thing stitchkit installs for you. |
 | `zod` | peer, **required** | Schemas are the single source of truth. A peer so your app and stitchkit share **one** `zod` instance — `z.infer` types and `instanceof` checks break across two copies. |
-| `@modelcontextprotocol/sdk` | peer, optional | Only `stitchkit/tools` — the MCP server. |
+| `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools`; SDK v2, protocol `2026-07-28`. |
+| `@modelcontextprotocol/client` | development dependency, optional | Only consumers that run MCP client integration tests or build an MCP host. |
+| `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
 | `ai` | peer, optional | Only `stitchkit/tools` — agent tools (Vercel AI SDK). |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |

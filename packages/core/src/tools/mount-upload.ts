@@ -3,7 +3,7 @@
  * injects how to read + send the file (`upload`); the tool wiring lives here.
  * → ADR 0019.
  */
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { isRecord } from '../internal/typed';
 import { assertToolName } from './names';

@@ -187,7 +187,11 @@ export interface ToolRunnerConfig {
  */
 export function createToolRunner(
   config: ToolRunnerConfig,
-): (tool: MountableTool, rawArgs: Record<string, unknown>) => Promise<ToolResult> {
+): (
+  tool: MountableTool,
+  rawArgs: Record<string, unknown>,
+  context?: Record<string, unknown>,
+) => Promise<ToolResult> {
   const extension: ToolArgumentExtension | undefined = config.extend
     ? {
         schema: z.object(config.extend.schema),
@@ -197,12 +201,13 @@ export function createToolRunner(
   return async function runOneToolCall(
     tool: MountableTool,
     rawArgs: Record<string, unknown>,
+    context?: Record<string, unknown>,
   ): Promise<ToolResult> {
     return executeToolMethod(
       tool.method,
       tool.name,
       rawArgs,
-      { ...config.context, source: config.source },
+      { ...config.context, ...context, source: config.source },
       config.hooks,
       config.lifecycle,
       config.coerceJsonArgs ?? true,

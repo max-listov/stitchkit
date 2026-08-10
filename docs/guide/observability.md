@@ -259,8 +259,25 @@ cross-origin `trace: true` client works out of the box. If you set a custom
 `cors.headers`, extend `DEFAULT_CORS_ALLOW_HEADERS` rather than replacing it, or
 the preflight will reject the trace header.
 
+MCP tools use the same context. On a modern HTTP or stdio `tools/call`, the
+official SDK exposes W3C propagation values from request `_meta`; Stitchkit
+continues a valid `_meta.traceparent` before validation, lifecycle and hooks.
+If MCP metadata omits `traceparent`, an HTTP call keeps its ambient HTTP trace
+and a stdio call starts a new root. If the key is present but malformed or
+all-zero, the call still runs under a fresh local trace instead of trusting the
+ambient one. This makes explicit MCP propagation authoritative without allowing
+invalid input to break the tool.
+
+Bounded `tracestate` and `baggage` are available through
+`getRequestContext()?.trace` for outbound propagation. Their contents are not
+copied into the standard `RequestEvent`; never use them for auth, RBAC, tenant
+selection or rate-limit identity. Every MRTR attempt reads its current request
+metadata, so callers that want one trace across rounds must propagate it on
+each request.
+
 > **Span ids live in the request context, not on `ctx`.** The handler `ctx`
-> carries a single `traceId`; the full `{ traceId, spanId, parentSpanId }` is on
+> carries a single `traceId`; the full
+> `{ traceId, spanId, parentSpanId, tracestate?, baggage? }` is on
 > the observability request context. To stamp `spanId` / `parentSpanId` into an
 > audit row read `getRequestContext()?.trace`, not `ctx.spanId`:
 >

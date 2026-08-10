@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
@@ -114,6 +112,56 @@ describe('framework-owned native MCP registration', () => {
     expect(result.content).toEqual(content);
     expect(result.structuredContent).toEqual({ assetId: 'asset-1' });
     expect(result._meta).toEqual(meta);
+    await client.close();
+  });
+
+  test('normalises presenter failures before the canonical hooks record completion', async () => {
+    const presenterError = new Error('renderer unavailable');
+    const observedErrors: unknown[] = [];
+    const completed: boolean[] = [];
+    const server = buildMcpServer(
+      {
+        serverInfo: { name: 'native', version: '1' },
+        services: [],
+        hooks: {
+          onToolError: ({ error }) => {
+            observedErrors.push(error);
+          },
+          afterToolCall: ({ result }) => {
+            completed.push(result.ok);
+          },
+        },
+        runtimeTools: [
+          {
+            name: 'broken_preview',
+            description: 'Presenter failure fixture',
+            identity: { serviceName: 'renderer', action: 'preview', method: 'POST' },
+            input: z.object({}),
+            output: z.object({ assetId: z.string() }),
+            handler: () => ({ assetId: 'asset-1' }),
+            present: {
+              mcp: () => {
+                throw presenterError;
+              },
+            },
+          },
+        ],
+      },
+      undefined,
+    );
+    const client = await connect(server);
+    const originalError = console.error;
+    console.error = () => undefined;
+    let response: Awaited<ReturnType<typeof client.callTool>>;
+    try {
+      response = await client.callTool({ name: 'broken_preview', arguments: {} });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(response.isError).toBe(true);
+    expect(observedErrors).toEqual([presenterError]);
+    expect(completed).toEqual([false]);
     await client.close();
   });
 
@@ -363,7 +411,7 @@ describe('framework-owned native MCP registration', () => {
 });
 
 describe('native registration transport parity', () => {
-  test('transport-neutral, stateful HTTP and stateless HTTP advertise the same tool', async () => {
+  test('transport-neutral and stateless HTTP advertise the same tool', async () => {
     const directClient = await connect(
       buildMcpServer(
         {
@@ -376,33 +424,17 @@ describe('native registration transport parity', () => {
     );
     const directNames = (await directClient.listTools()).tools.map((tool) => tool.name);
 
-    const stateful = createMcpHandler({
-      serverInfo: { name: 'native', version: '1' },
-      auth: () => ({ id: 'stateful' }),
-      services: [],
-      runtimeTools: [transportProbe],
-      sessionMode: 'stateful',
-    });
-    const initialized = await stateful(rpcRequest('initialize'));
-    const sessionId = initialized.headers.get('mcp-session-id');
-    if (!sessionId) throw new Error('expected stateful session id');
-    const statefulNames = listedToolNames(
-      await rpcBody(await stateful(rpcRequest('tools/list', sessionId))),
-    );
-
     const stateless = createMcpHandler({
       serverInfo: { name: 'native', version: '1' },
       auth: () => ({ id: 'stateless' }),
       services: [],
       runtimeTools: [transportProbe],
-      sessionMode: 'stateless',
     });
     const statelessNames = listedToolNames(
-      await rpcBody(await stateless(rpcRequest('tools/list'))),
+      await rpcBody(await stateless.fetch(rpcRequest('tools/list'))),
     );
 
     expect(directNames).toEqual(['transport_probe']);
-    expect(statefulNames).toEqual(directNames);
     expect(statelessNames).toEqual(directNames);
     await directClient.close();
   });
@@ -522,7 +554,9 @@ describe('raw native escape hatch', () => {
           rawServer.registerTool(
             'raw_ping',
             { description: 'Raw ping', inputSchema: {} },
-            async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+            async (): Promise<CallToolResult> => ({
+              content: [{ type: 'text', text: 'pong' }],
+            }),
           );
         },
       },

@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError, defineContract } from '../src/contract';
 import { implement } from '../src/server';
@@ -245,7 +244,7 @@ describe('MCP round-trip (in-memory transport)', () => {
     return client;
   }
 
-  test('a non-object output is delivered as structuredContent wrapped in { result }', async () => {
+  test('the official legacy codec adapts a non-object output to { result }', async () => {
     const server = new McpServer({ name: 't', version: '1' });
     mountMcp(server, notesService);
     const client = await connect(server);

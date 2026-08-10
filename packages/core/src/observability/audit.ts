@@ -80,6 +80,50 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+function readMcpContext(value: unknown): RequestEvent['mcp'] | undefined {
+  if (!isRecord(value)) return undefined;
+  const era = value.era;
+  const method = value.method;
+  const toolName = value.toolName;
+  if (
+    (era !== 'modern' && era !== 'legacy') ||
+    typeof method !== 'string' ||
+    typeof toolName !== 'string'
+  ) {
+    return undefined;
+  }
+  const protocolVersion = readString(value.protocolVersion);
+  const clientInfoValue = value.clientInfo;
+  const clientInfo =
+    isRecord(clientInfoValue) &&
+    typeof clientInfoValue.name === 'string' &&
+    typeof clientInfoValue.version === 'string'
+      ? { name: clientInfoValue.name, version: clientInfoValue.version }
+      : undefined;
+  const outcomeValue = value.outcome;
+  const outcome =
+    outcomeValue === 'input_required' ||
+    outcomeValue === 'declined' ||
+    outcomeValue === 'cancelled' ||
+    outcomeValue === 'invalid' ||
+    outcomeValue === 'complete'
+      ? outcomeValue
+      : undefined;
+  const round =
+    typeof value.round === 'number' && Number.isInteger(value.round) && value.round >= 0
+      ? value.round
+      : undefined;
+  return {
+    era,
+    method,
+    toolName,
+    ...(protocolVersion !== undefined && { protocolVersion }),
+    ...(clientInfo !== undefined && { clientInfo }),
+    ...(outcome !== undefined && { outcome }),
+    ...(round !== undefined && { round }),
+  };
+}
+
 function createEmitter(config: RequestEventSinkConfig) {
   return async (event: RequestEvent): Promise<void> => {
     try {
@@ -156,6 +200,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
           const measure = result.ok
             ? measureSize(result.data)
             : { resultSize: null, responseBytes: 0 };
+          const mcp = context.source === 'mcp' ? readMcpContext(context.mcp) : undefined;
           void emit({
             source: context.source,
             method: 'TOOL',
@@ -167,6 +212,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
               dimensions: requestCtx.dimensions,
             }),
             toolName,
+            ...(mcp !== undefined && { mcp }),
             traceId: span.traceId,
             spanId: span.spanId,
             parentSpanId: span.parentSpanId,

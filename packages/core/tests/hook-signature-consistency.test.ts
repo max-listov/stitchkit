@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError, type RuntimeContext } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
@@ -71,7 +71,9 @@ describe('rawTools receives the resolved auth', () => {
           rawServer.registerTool(
             'whoami',
             { description: 'Who am I', inputSchema: {} },
-            async () => ({ content: [{ type: 'text', text: auth.tenantId }] }),
+            async (): Promise<CallToolResult> => ({
+              content: [{ type: 'text', text: auth.tenantId }],
+            }),
           );
         },
       },
@@ -86,7 +88,7 @@ describe('rawTools receives the resolved auth', () => {
     await Promise.all([server.connect(st), client.connect(ct)]);
     const res = await client.callTool({ name: 'whoami', arguments: {} });
     const block = isRecord(res) && Array.isArray(res.content) ? res.content[0] : undefined;
-    expect(isRecord(block) ? block.text : undefined).toBe('acme');
+    expect(isRecord(block) && 'text' in block ? block.text : undefined).toBe('acme');
     await client.close();
   });
 

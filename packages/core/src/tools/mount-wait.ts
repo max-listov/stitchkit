@@ -2,10 +2,10 @@
  * `mountWait` — a generic native MCP tool that blocks until an async job
  * reaches a terminal state. The poll loop is the shared `pollUntil`; the app
  * injects only the domain bits (what to poll, when it's done). Owns the MCP
- * wiring so the consumer never imports `@modelcontextprotocol/sdk`. → ADR 0019.
+ * wiring so the consumer never imports the MCP server package directly. → ADR 0019.
  */
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { isRecord } from '../internal/typed';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
@@ -42,7 +42,7 @@ export function mountWait(server: McpServer, config: WaitToolConfig): void {
   assertToolName(name, '<native>', 'wait');
   server.registerTool(
     name,
-    { description: config.description, inputSchema: config.inputSchema },
+    { description: config.description, inputSchema: z.object(config.inputSchema) },
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
       try {

@@ -142,6 +142,8 @@ an independently built Next.js frontend and Bun/Stitchkit API.
 
 ### MCP
 
-If the app exposes MCP tools, `createMcpHandler` is mounted as a raw route
-(`/mcp`). It needs the `@modelcontextprotocol/sdk` peer installed in production —
-it is optional only for apps that do not use MCP.
+If the app exposes MCP tools, mount `createMcpHandler` with
+`createMcpHttpRoute({ path: '/mcp', handler })` and close the handler during
+graceful shutdown. Production needs the `@modelcontextprotocol/server` v2 peer;
+apps without MCP do not. Only an MCP host or integration-test package needs
+`@modelcontextprotocol/client`.

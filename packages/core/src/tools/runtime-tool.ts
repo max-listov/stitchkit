@@ -1,7 +1,8 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
 import type {
+  EndpointMcpPolicy,
   EndpointToolAnnotations,
   EndpointUiMeta,
   HttpMethod,
@@ -24,10 +25,22 @@ export interface RuntimeToolIdentity {
   meta?: Record<string, unknown>;
 }
 
-export type RuntimeToolHandlerContext<TInput extends ZodObject> = RuntimeContext & {
+export type RuntimeMcpInput<TMcp extends EndpointMcpPolicy | undefined> =
+  TMcp extends EndpointMcpPolicy<infer TRequests>
+    ? {
+        mcpInput?: {
+          [Request in TRequests[number] as Request['key']]: z.output<Request['schema']>;
+        };
+      }
+    : unknown;
+
+export type RuntimeToolHandlerContext<
+  TInput extends ZodObject,
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> = RuntimeContext & {
   params: undefined;
   input: z.output<TInput>;
-};
+} & RuntimeMcpInput<TMcp>;
 
 export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput extends ZodType
   ? z.output<TOutput>
@@ -37,10 +50,11 @@ export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput ext
 export type RuntimeToolFactoryHandlerContext<
   TContext extends ZodObject,
   TInput extends ZodObject,
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
 > = Omit<z.output<TContext>, 'input' | 'params'> & {
   params: undefined;
   input: z.output<TInput>;
-};
+} & RuntimeMcpInput<TMcp>;
 
 /** MCP-owned fields; validation and error state are always supplied by Stitchkit. */
 export type RuntimeMcpPresentation = Omit<CallToolResult, 'structuredContent' | 'isError'> & {
@@ -57,7 +71,10 @@ export interface RuntimeToolPresenters<TOutput> {
   agent?: (output: TOutput) => RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
 }
 
-export interface RuntimeToolDefinitionBase<TInput extends ZodObject> {
+export interface RuntimeToolDefinitionBase<
+  TInput extends ZodObject,
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> {
   name: string;
   description: string;
   identity: RuntimeToolIdentity;
@@ -66,29 +83,34 @@ export interface RuntimeToolDefinitionBase<TInput extends ZodObject> {
   transports?: readonly RuntimeToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
+  /** Opt-in multi-round input gate on the MCP transport only. */
+  mcp?: TMcp;
 }
 
 export interface RuntimeToolDefinitionWithOutput<
   TInput extends ZodObject,
   TOutput extends ZodType,
-> extends RuntimeToolDefinitionBase<TInput> {
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> extends RuntimeToolDefinitionBase<TInput, TMcp> {
   output: TOutput;
   handler: (
-    context: RuntimeToolHandlerContext<TInput>,
+    context: RuntimeToolHandlerContext<TInput, TMcp>,
   ) => z.output<TOutput> | Promise<z.output<TOutput>>;
   present?: RuntimeToolPresenters<z.output<TOutput>>;
 }
 
-export interface RuntimeToolDefinitionWithoutOutput<TInput extends ZodObject>
-  extends RuntimeToolDefinitionBase<TInput> {
+export interface RuntimeToolDefinitionWithoutOutput<
+  TInput extends ZodObject,
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> extends RuntimeToolDefinitionBase<TInput, TMcp> {
   output?: never;
-  handler: (context: RuntimeToolHandlerContext<TInput>) => void | Promise<void>;
+  handler: (context: RuntimeToolHandlerContext<TInput, TMcp>) => void | Promise<void>;
   present?: never;
 }
 
 export type RuntimeToolDefinition =
-  | RuntimeToolDefinitionWithOutput<ZodObject, ZodType>
-  | RuntimeToolDefinitionWithoutOutput<ZodObject>;
+  | RuntimeToolDefinitionWithOutput<ZodObject, ZodType, EndpointMcpPolicy | undefined>
+  | RuntimeToolDefinitionWithoutOutput<ZodObject, EndpointMcpPolicy | undefined>;
 
 export interface RuntimeToolFactoryConfig<TContext extends ZodObject> {
   serviceName: string;
@@ -107,39 +129,55 @@ export type RuntimeToolFactoryDefinitionWithOutput<
   TContext extends ZodObject,
   TInput extends ZodObject,
   TOutput extends ZodType,
-> = Omit<RuntimeToolDefinitionWithOutput<TInput, TOutput>, 'handler' | 'identity'> &
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> = Omit<RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>, 'handler' | 'identity'> &
   RuntimeToolFactoryIdentityFields & {
     handler: (
-      context: RuntimeToolFactoryHandlerContext<TContext, TInput>,
+      context: RuntimeToolFactoryHandlerContext<TContext, TInput, TMcp>,
     ) => z.output<TOutput> | Promise<z.output<TOutput>>;
   };
 
 export type RuntimeToolFactoryDefinitionWithoutOutput<
   TContext extends ZodObject,
   TInput extends ZodObject,
-> = Omit<RuntimeToolDefinitionWithoutOutput<TInput>, 'handler' | 'identity'> &
+  TMcp extends EndpointMcpPolicy | undefined = undefined,
+> = Omit<RuntimeToolDefinitionWithoutOutput<TInput, TMcp>, 'handler' | 'identity'> &
   RuntimeToolFactoryIdentityFields & {
     handler: (
-      context: RuntimeToolFactoryHandlerContext<TContext, TInput>,
+      context: RuntimeToolFactoryHandlerContext<TContext, TInput, TMcp>,
     ) => void | Promise<void>;
   };
 
 export interface RuntimeToolFactory<TContext extends ZodObject> {
-  define<TInput extends ZodObject, TOutput extends ZodType>(
-    definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput>,
-  ): RuntimeToolDefinitionWithOutput<TInput, TOutput>;
-  define<TInput extends ZodObject>(
-    definition: RuntimeToolFactoryDefinitionWithoutOutput<TContext, TInput>,
-  ): RuntimeToolDefinitionWithoutOutput<TInput>;
+  define<
+    TInput extends ZodObject,
+    TOutput extends ZodType,
+    const TMcp extends EndpointMcpPolicy | undefined = undefined,
+  >(
+    definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput, TMcp>,
+  ): RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>;
+  define<
+    TInput extends ZodObject,
+    const TMcp extends EndpointMcpPolicy | undefined = undefined,
+  >(
+    definition: RuntimeToolFactoryDefinitionWithoutOutput<TContext, TInput, TMcp>,
+  ): RuntimeToolDefinitionWithoutOutput<TInput, TMcp>;
 }
 
 /** Typed identity helper; execution remains owned by the transport mounts. */
-export function defineRuntimeTool<TInput extends ZodObject, TOutput extends ZodType>(
-  definition: RuntimeToolDefinitionWithOutput<TInput, TOutput>,
-): RuntimeToolDefinitionWithOutput<TInput, TOutput>;
-export function defineRuntimeTool<TInput extends ZodObject>(
-  definition: RuntimeToolDefinitionWithoutOutput<TInput>,
-): RuntimeToolDefinitionWithoutOutput<TInput>;
+export function defineRuntimeTool<
+  TInput extends ZodObject,
+  TOutput extends ZodType,
+  const TMcp extends EndpointMcpPolicy | undefined = undefined,
+>(
+  definition: RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>,
+): RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>;
+export function defineRuntimeTool<
+  TInput extends ZodObject,
+  const TMcp extends EndpointMcpPolicy | undefined = undefined,
+>(
+  definition: RuntimeToolDefinitionWithoutOutput<TInput, TMcp>,
+): RuntimeToolDefinitionWithoutOutput<TInput, TMcp>;
 export function defineRuntimeTool(definition: RuntimeToolDefinition): RuntimeToolDefinition {
   if (definition.transports?.length === 0) {
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
@@ -154,11 +192,19 @@ export function defineRuntimeTool(definition: RuntimeToolDefinition): RuntimeToo
 export function createRuntimeToolFactory<TContext extends ZodObject>(
   config: RuntimeToolFactoryConfig<TContext>,
 ): RuntimeToolFactory<TContext> {
-  function parseContext<TInput extends ZodObject>(
-    context: RuntimeToolHandlerContext<TInput>,
-  ): RuntimeToolFactoryHandlerContext<TContext, TInput> {
+  function parseContext<
+    TInput extends ZodObject,
+    TMcp extends EndpointMcpPolicy | undefined = undefined,
+  >(
+    context: RuntimeToolHandlerContext<TInput, TMcp>,
+  ): RuntimeToolFactoryHandlerContext<TContext, TInput, TMcp> {
     const parsed = config.context.parse(context);
-    return { ...parsed, params: undefined, input: context.input };
+    return {
+      ...context,
+      ...parsed,
+      params: undefined,
+      input: context.input,
+    };
   }
 
   function define<TInput extends ZodObject, TOutput extends ZodType>(
@@ -227,6 +273,7 @@ export function runtimeToolIdentity(definition: RuntimeToolDefinition): Operatio
     meta: definition.identity.meta,
     annotations: definition.annotations,
     ui: definition.ui,
+    mcp: definition.mcp,
   };
 }
 

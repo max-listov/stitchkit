@@ -17,7 +17,7 @@ bun add stitchkit zod
 
 `zod` is a required peer — schemas are the source of truth everywhere. Other
 peers are optional and pulled in only when you use the matching feature
-(`@modelcontextprotocol/sdk` for MCP, `ai` for agents, `socket.io*` for
+(`@modelcontextprotocol/server` for MCP servers, `ai` for agents, `socket.io*` for
 realtime, `@tanstack/react-query` + `react-query-kit` for React). See
 [deps](#dependencies) below.
 
@@ -131,9 +131,9 @@ map — feature → packages:
 | anything (validation) | `zod` |
 | `createServer` (Bun) | — (uses `Bun.serve`) |
 | `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
-| MCP tools (`stitchkit/tools`) | `@modelcontextprotocol/sdk` |
+| MCP / agent tools (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
+| MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
-| agent tools (`stitchkit/tools`) | `ai` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
@@ -143,9 +143,22 @@ map — feature → packages:
 bun add socket.io @socket.io/bun-engine    # e.g. the Socket.IO server on Bun
 ```
 
-If an optional peer is missing, the feature that needs it fails with an
-actionable error naming the package and the install command — not a bare
-`Cannot find module`.
+Dynamic optional-peer adapters fail with an actionable error naming the package
+and install command. Static entrypoints such as `stitchkit/tools` fail during
+ESM resolution by naming the exact missing package; the feature-to-peer matrix
+below is the canonical install command.
+
+The combined tools entry owns MCP and AI-agent adapters, so install both runtime
+peers before importing `stitchkit/tools`:
+
+```bash
+bun add @modelcontextprotocol/server@^2 ai@^7
+```
+
+Browser, HTTP-client and React entrypoints remain usable without either MCP
+package. MCP hosts and client E2E additionally install
+`@modelcontextprotocol/client@^2`; Apps additionally install
+`@modelcontextprotocol/ext-apps`.
 
 ## Next
 

@@ -1,231 +1,224 @@
-/**
- * `createMcpHandler`'s session lifecycle — the only stateful code in the
- * framework, with both the default request-isolated path and explicit sessions.
- *
- * What matters here is not the happy path (that is exercised by every other MCP
- * test through `mountMcp`) but the guarantees the handler makes on its own:
- * identity is resolved before anything else, a session id is **never** minted from
- * a client-supplied value, and the default stateless mode keeps no session at all.
- */
-
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { isRecord } from '../src/internal/typed';
-import { implement } from '../src/server';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { defineContract, type RuntimeContext } from '../src/contract';
+import { createImplement } from '../src/server/implement';
+import { createMcpHandler, createMcpHttpRoute } from '../src/tools/mcp-handler';
 
-const notes = implement(
-  defineContract(
-    { prefix: 'notes' },
-    { list: { method: 'GET', path: '/', desc: 'List notes', output: z.array(z.string()) } },
-  ),
-  { list: () => ['a'] },
+const contract = defineContract(
+  { prefix: 'notes', scope: 'public' },
+  {
+    list: {
+      method: 'GET',
+      path: '/',
+      desc: 'List notes',
+      expose: ['MCP'],
+      output: z.object({ owner: z.string() }),
+    },
+  },
 );
 
-/** The MCP `initialize` call — what a client sends to open a session. */
-function initRequest(headers: Record<string, string> = {}): Request {
-  return new Request('http://x/mcp', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-      ...headers,
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: { name: 'c', version: '1' },
-      },
-    }),
-  });
+interface TestContext extends RuntimeContext {
+  owner: string;
 }
 
-function toolCallRequest(name: string, headers: Record<string, string> = {}): Request {
-  return new Request('http://x/mcp', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-      ...headers,
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name, arguments: {} },
-    }),
-  });
-}
-
-function handlerWith(config: {
-  sessionMode?: 'stateful' | 'stateless';
-  auth?: (req: Request) => unknown;
-}) {
-  return createMcpHandler({
-    serverInfo: { name: 't', version: '1' },
-    auth: config.auth ?? (() => ({ userId: 'u1' })),
-    services: [notes],
-    ...(config.sessionMode !== undefined && { sessionMode: config.sessionMode }),
-  });
-}
-
-describe('identity is resolved before anything else', () => {
-  test('a null identity is 401, and no session is created', async () => {
-    const handler = handlerWith({ auth: () => null });
-    const res = await handler(initRequest());
-    expect(res.status).toBe(401);
-  });
-
-  test('auth runs even for a request carrying a session id', async () => {
-    // Otherwise a stolen/guessed id would skip the gate entirely.
-    const handler = handlerWith({ auth: () => null });
-    const res = await handler(initRequest({ 'mcp-session-id': 'anything' }));
-    expect(res.status).toBe(401);
-  });
+const implement = createImplement<TestContext>();
+const service = implement(contract, {
+  list: async (context) => ({ owner: context.owner }),
 });
 
-describe('a session id is never minted from a client-supplied value', () => {
-  test('an unknown session id is rejected 404, not adopted', async () => {
-    // The guarantee: a forged or expired id must not cause the server to build a
-    // session around it. This is what makes the id unguessable in practice.
-    const handler = handlerWith({ sessionMode: 'stateful' });
-    const res = await handler(initRequest({ 'mcp-session-id': 'forged-by-client' }));
-    expect(res.status).toBe(404);
-    const body: unknown = await res.json();
-    expect(isRecord(body) && isRecord(body.error) ? body.error.code : undefined).toBe(-32001);
-    expect(JSON.stringify(body)).toContain('Session not found');
+function legacyRequest(method: string, params?: unknown): Request {
+  return new Request('http://localhost/mcp', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+      host: 'localhost',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
+}
 
-  test('the server issues its own id on a fresh initialize', async () => {
-    const handler = handlerWith({ sessionMode: 'stateful' });
-    const res = await handler(initRequest());
-    expect(res.status).toBe(200);
-    const issued = res.headers.get('mcp-session-id');
-    expect(issued).toBeTruthy();
-    // A UUID, not anything the caller influenced.
-    expect(issued).toMatch(/^[0-9a-f-]{36}$/);
-  });
-
-  test('the issued id is accepted on the next request', async () => {
-    const handler = handlerWith({ sessionMode: 'stateful' });
-    const issued = (await handler(initRequest())).headers.get('mcp-session-id');
-    if (!issued) throw new Error('expected a session id');
-    const second = await handler(
-      new Request('http://x/mcp', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-          'mcp-session-id': issued,
-        },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
-      }),
-    );
-    expect(second.status).toBe(200);
-  });
-});
-
-describe('stateless is the default', () => {
-  test('no session id is issued, and an unknown one is not a 404', async () => {
-    // With no session store there is nothing to "not find" — the whole 404 branch
-    // is bypassed, which is the point: a restarted server never invalidates a
-    // client.
-    const handler = handlerWith({});
-    const first = await handler(initRequest());
-    expect(first.status).toBe(200);
-    expect(first.headers.get('mcp-session-id')).toBeNull();
-
-    const withId = await handler(initRequest({ 'mcp-session-id': 'whatever' }));
-    expect(withId.status).toBe(200);
-  });
-
-  test('each request stands alone — a tool call needs no retained handshake', async () => {
-    const handler = handlerWith({});
-    expect((await handler(initRequest())).status).toBe(200);
-    expect((await handler(toolCallRequest('list_notes'))).status).toBe(200);
-  });
-
-  test('auth is resolved independently for every request', async () => {
-    const identities: string[] = [];
-    const handler = handlerWith({
-      auth: (request) => {
-        const identity = request.headers.get('authorization') ?? 'anonymous';
-        identities.push(identity);
-        return { identity };
-      },
-    });
-
-    await handler(initRequest({ authorization: 'alpha' }));
-    await handler(initRequest({ authorization: 'beta' }));
-
-    expect(identities).toEqual(['alpha', 'beta']);
-  });
-
-  test('parallel requests isolate resolved auth, context and hooks', async () => {
-    const seen: string[] = [];
+describe('createMcpHandler v2 stateless transport', () => {
+  test('serves legacy-stateless traffic without protocol sessions', async () => {
     const handler = createMcpHandler({
-      serverInfo: { name: 't', version: '1' },
-      auth: (request) => ({ userId: request.headers.get('authorization') ?? 'anonymous' }),
-      services: [],
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => ({ owner: 'alpha' }),
       context: (auth) => auth,
-      hooks: {
-        afterToolCall: ({ context }) => {
-          if (typeof context.userId === 'string') seen.push(context.userId);
-        },
-      },
-      runtimeTools: [
-        {
-          name: 'whoami',
-          description: 'Return the current identity',
-          identity: { serviceName: 'authTools', action: 'whoami', method: 'GET' },
-          input: z.object({}),
-          handler: () => undefined,
-        },
-      ],
+      services: [service],
     });
 
-    await Promise.all([
-      handler(toolCallRequest('whoami', { authorization: 'alpha' })),
-      handler(toolCallRequest('whoami', { authorization: 'beta' })),
-    ]);
-
-    expect(seen.sort()).toEqual(['alpha', 'beta']);
-  });
-
-  test('separate handler instances need no shared restart/session state', async () => {
-    const firstInstance = handlerWith({});
-    const replacementInstance = handlerWith({});
-
-    expect((await firstInstance(initRequest())).headers.get('mcp-session-id')).toBeNull();
-    expect((await replacementInstance(toolCallRequest('list_notes'))).status).toBe(200);
-  });
-});
-
-describe("sessionMode: 'stateful' preserves session continuity", () => {
-  test('unknown session ids fail and server-issued ids remain reusable', async () => {
-    const handler = handlerWith({ sessionMode: 'stateful' });
-    const unknown = await handler(initRequest({ 'mcp-session-id': 'unknown' }));
-    expect(unknown.status).toBe(404);
-
-    const first = await handler(initRequest());
-    const issued = first.headers.get('mcp-session-id');
-    if (!issued) throw new Error('expected a session id');
-    const next = await handler(
-      new Request('http://x/mcp', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-          'mcp-session-id': issued,
-        },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+    const initialized = await handler.fetch(
+      legacyRequest('initialize', {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'test', version: '1' },
       }),
     );
-    expect(next.status).toBe(200);
+    expect(initialized.status).toBe(200);
+    expect(initialized.headers.has('mcp-session-id')).toBe(false);
+
+    const listed = await handler.fetch(legacyRequest('tools/list', {}));
+    expect(listed.status).toBe(200);
+    expect(await listed.text()).toContain('list_notes');
+    await handler.close();
+  });
+
+  test('resolves auth independently for parallel requests', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: (request) => ({ owner: request.headers.get('authorization') ?? 'none' }),
+      context: (auth) => auth,
+      services: [service],
+    });
+
+    const call = (owner: string) => {
+      const request = legacyRequest('tools/call', { name: 'list_notes', arguments: {} });
+      request.headers.set('authorization', owner);
+      return handler.fetch(request);
+    };
+    const [alpha, beta] = await Promise.all([call('alpha'), call('beta')]);
+    expect(await alpha.text()).toContain('alpha');
+    expect(await beta.text()).toContain('beta');
+    await handler.close();
+  });
+
+  test('applies Host and Origin validation before auth', async () => {
+    let authCalls = 0;
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => {
+        authCalls += 1;
+        return {};
+      },
+      services: [],
+      security: { allowedHosts: ['localhost'], allowedOrigins: ['example.com'] },
+    });
+    const hostile = legacyRequest('tools/list', {});
+    hostile.headers.set('origin', 'https://evil.example');
+    expect((await handler.fetch(hostile)).status).toBe(403);
+    expect(authCalls).toBe(0);
+
+    const hostileHost = legacyRequest('tools/list', {});
+    hostileHost.headers.set('host', 'evil.example');
+    expect((await handler.fetch(hostileHost)).status).toBe(403);
+    expect(authCalls).toBe(0);
+  });
+
+  test('enforces same URL/Host/Origin boundaries without explicit allowlists', async () => {
+    let authCalls = 0;
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => {
+        authCalls += 1;
+        return {};
+      },
+      services: [],
+    });
+    const hostileHost = legacyRequest('tools/list', {});
+    hostileHost.headers.set('host', 'evil.example');
+    expect((await handler.fetch(hostileHost)).status).toBe(403);
+
+    const hostileOrigin = legacyRequest('tools/list', {});
+    hostileOrigin.headers.set('origin', 'https://evil.example');
+    expect((await handler.fetch(hostileOrigin)).status).toBe(403);
+
+    const sameOrigin = legacyRequest('tools/list', {});
+    sameOrigin.headers.set('origin', 'http://localhost');
+    expect((await handler.fetch(sameOrigin)).status).toBe(200);
+    expect(authCalls).toBe(1);
+    await handler.close();
+  });
+
+  test('accepts falsy identities because only null means unauthorized', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => 0,
+      services: [],
+    });
+    expect((await handler.fetch(legacyRequest('tools/list', {}))).status).toBe(200);
+    await handler.close();
+  });
+
+  test('rejects legacy traffic when the endpoint is modern-only', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => ({}),
+      services: [],
+      legacy: 'reject',
+    });
+    const response = await handler.fetch(legacyRequest('tools/list', {}));
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('Unsupported protocol version');
+    await handler.close();
+  });
+
+  test('close wins a request waiting in async auth without entering the SDK', async () => {
+    let resolveAuth: ((auth: object) => void) | undefined;
+    const auth = new Promise<object>((resolve) => {
+      resolveAuth = resolve;
+    });
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => auth,
+      services: [],
+    });
+    const pending = handler.fetch(legacyRequest('tools/list', {}));
+    await handler.close();
+    resolveAuth?.({});
+    const response = await pending;
+    expect(response.status).toBe(503);
+  });
+
+  test('rejects malformed content and unsupported protocol versions at the wire boundary', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => ({}),
+      services: [],
+    });
+
+    const wrongContentType = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { accept: 'application/json, text/event-stream', 'content-type': 'text/plain' },
+      body: '{}',
+    });
+    expect((await handler.fetch(wrongContentType)).status).toBe(415);
+
+    const malformed = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: '{not-json',
+    });
+    expect((await handler.fetch(malformed)).status).toBe(400);
+
+    const unsupported = new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+        'mcp-method': 'tools/list',
+        'mcp-protocol-version': '1900-01-01',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+    });
+    const unsupportedResponse = await handler.fetch(unsupported);
+    expect(unsupportedResponse.status).toBe(400);
+    expect(await unsupportedResponse.text()).toContain('Unsupported protocol version');
+    await handler.close();
+  });
+
+  test('route adapter delegates to the handler fetch face', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => null,
+      services: [],
+    });
+    const route = createMcpHttpRoute({ path: '/mcp', handler });
+    expect(route.method).toBe('ALL');
+    expect((await route.handler(legacyRequest('tools/list'), { params: {} })).status).toBe(
+      401,
+    );
   });
 });

@@ -37,5 +37,5 @@ Please include:
 stitchkit handles security-relevant surfaces directly — JWT verification, CORS,
 auth scopes, multipart limits, SSRF defenses in `mountViewFile`. Issues in any
 of these are in scope. Issues in a consuming application's own handlers, or in a
-peer dependency (`zod`, `socket.io`, `@modelcontextprotocol/sdk`, …), should be
+peer dependency (`zod`, `socket.io`, `@modelcontextprotocol/server`, …), should be
 reported to that project.

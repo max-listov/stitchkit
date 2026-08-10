@@ -57,6 +57,7 @@ export function implement<
       idempotent: endpoint.idempotent,
       ui: 'ui' in endpoint ? endpoint.ui : undefined,
       annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
+      mcp: 'mcp' in endpoint ? endpoint.mcp : undefined,
       // Opaque app metadata — the contract-wide default shallow-merged with the
       // endpoint's, endpoint keys winning. Undefined on both sides stays
       // undefined: readers test `method.meta?.x`. → ADR 0021 / 0036.

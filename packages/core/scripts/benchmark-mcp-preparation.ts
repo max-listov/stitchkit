@@ -59,7 +59,6 @@ function handlerFor(services: ReturnType<typeof makeService>[]) {
     serverInfo: { name: 'benchmark', version: '1' },
     auth: () => ({ id: 'benchmark' }),
     services,
-    sessionMode: 'stateless',
   });
 }
 
@@ -68,7 +67,6 @@ function uncachedHandlerFor(services: ReturnType<typeof makeService>[]) {
     serverInfo: { name: 'benchmark', version: '1' },
     auth: () => ({ id: 'benchmark' }),
     services: () => services,
-    sessionMode: 'stateless',
   });
 }
 
@@ -78,17 +76,16 @@ function registryHandlerFor(services: ReturnType<typeof makeService>[]) {
     auth: () => ({ id: 'benchmark' }),
     surfaces: { benchmark: { services } },
     selectSurface: () => 'benchmark',
-    sessionMode: 'stateless',
   });
 }
 
-async function timeRequests(
-  handler: (request: Request) => Promise<Response>,
-): Promise<number> {
-  await (await handler(request())).text();
+async function timeRequests(handler: {
+  fetch(request: Request): Promise<Response>;
+}): Promise<number> {
+  await (await handler.fetch(request())).text();
   const start = performance.now();
   for (let index = 0; index < ITERATIONS; index += 1) {
-    await (await handler(request())).text();
+    await (await handler.fetch(request())).text();
   }
   return performance.now() - start;
 }

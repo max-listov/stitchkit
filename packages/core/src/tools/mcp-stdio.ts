@@ -1,15 +1,12 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { buildMcpServer, type McpServerBuildConfig, type McpSurfaceRegistry } from './mcp';
+import type { McpLegacyPolicy } from './mcp-handler';
 
-/**
- * Config for a stdio MCP server. Unlike the HTTP handler, a stdio server is a
- * single process serving one client — identity is resolved ONCE at startup
- * (from an env var / CLI arg), not per request.
- */
 export interface StdioAuthConfig<TAuth> {
-  /** Identity for the single stdio session — a value or a promise of one. */
+  /** Identity for the single stdio connection. */
   auth: TAuth | Promise<TAuth>;
+  /** Serve a legacy opening handshake or require the modern protocol. Default: `serve`. */
+  legacy?: McpLegacyPolicy;
 }
 
 export type StdioMcpServerConfig<
@@ -17,23 +14,21 @@ export type StdioMcpServerConfig<
   TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
 > = McpServerBuildConfig<TAuth, TSurfaces> & StdioAuthConfig<TAuth>;
 
+/** Framework-owned lifecycle handle for one stdio MCP connection. */
+export interface McpStdioHandle {
+  close(): Promise<void>;
+}
+
 /**
- * Build an MCP server and connect it over stdio — the server runs as a
- * subprocess of the MCP client, on the client's machine, so it can reach the
- * client's local filesystem.
- *
- * Same contract pipeline as `createMcpHandler` (`buildMcpServer`); only the
- * transport differs. For a local CLI: resolve the identity from `process.env`
- * and pass it as `auth`.
- *
- * Note: stdout is reserved for the JSON-RPC stream — the caller MUST keep all
- * logging on stderr (`console.error`), never `console.log`.
+ * Serve one dual-era MCP connection over process stdio. The official SDK owns
+ * opening-era negotiation and transport shutdown; Stitchkit owns the surface.
  */
 export async function createStdioMcpServer<TAuth>(
   config: StdioMcpServerConfig<TAuth>,
-): Promise<McpServer> {
+): Promise<McpStdioHandle> {
   const auth = await config.auth;
-  const server = buildMcpServer(config, auth);
-  await server.connect(new StdioServerTransport());
-  return server;
+  return serveStdio(() => buildMcpServer(config, auth), {
+    legacy: config.legacy ?? 'serve',
+    maxSubscriptions: 0,
+  });
 }

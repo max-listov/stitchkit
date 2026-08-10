@@ -13,7 +13,7 @@
  * `check-browser-clean` and `check-env-live` are the same instinct, one scar at
  * a time. This is the net for the next one nobody has thought of.
  *
- * Two fixtures, split by the axis that actually matters — **what a consumer had
+ * Three fixtures, split by the axes that actually matter — **what a consumer had
  * to install**. Every peer except `zod` is optional, so `minimal` (stitchkit +
  * zod) proves the core path needs nothing else, and `full` adds the peers the
  * tool surface requires. Splitting by entrypoint would prove less: one app can
@@ -64,6 +64,18 @@ function step(label, fn) {
 
 function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+function runExpectFailure(cmd, args, cwd) {
+  try {
+    run(cmd, args, cwd);
+    return { failed: false, output: '' };
+  } catch (error) {
+    return {
+      failed: true,
+      output: `${error.stdout ?? ''}${error.stderr ?? ''}`,
+    };
+  }
 }
 
 /** tsc exits non-zero on errors, so its output arrives via the thrown error. */
@@ -160,7 +172,9 @@ try {
 
     const output = step(`${name}: run`, () => {
       try {
-        return run('bun', ['src/app.ts'], dir);
+        return name === 'node'
+          ? run('node', ['src/runtime.mjs'], dir)
+          : run('bun', ['src/app.ts'], dir);
       } catch (err) {
         failed = true;
         console.error(
@@ -170,6 +184,39 @@ try {
       }
     });
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
+
+    if (name === 'minimal') {
+      const missingToolsPeer = step('minimal: missing tools peer', () =>
+        runExpectFailure('node', ['src/missing-mcp-peer.mjs'], dir),
+      );
+      if (
+        !missingToolsPeer.failed ||
+        !missingToolsPeer.output.includes("Cannot find package 'ai'")
+      ) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: the opted-in tools entry must name its first missing peer',
+          missingToolsPeer.output,
+        );
+      }
+
+      step('minimal: install agent peer for MCP diagnostic', () =>
+        run('bun', ['add', '--no-save', 'ai@^7.0.0'], dir),
+      );
+      const missingMcpPeer = step('minimal: missing MCP peer', () =>
+        runExpectFailure('node', ['src/missing-mcp-peer.mjs'], dir),
+      );
+      if (
+        !missingMcpPeer.failed ||
+        !missingMcpPeer.output.includes('@modelcontextprotocol/server')
+      ) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: stitchkit/tools must name the missing @modelcontextprotocol/server peer',
+          missingMcpPeer.output,
+        );
+      }
+    }
   }
 
   const unexpected = [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));

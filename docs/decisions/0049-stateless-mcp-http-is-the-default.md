@@ -2,7 +2,7 @@
 title: "ADR 0049 — Stateless MCP HTTP is the default"
 description: Synchronous MCP HTTP handlers are request-isolated by default; session continuity is explicit.
 type: decision
-status: accepted
+status: superseded
 created: 2026-08-07
 updated: 2026-08-07
 ---

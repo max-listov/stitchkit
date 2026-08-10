@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
@@ -177,7 +176,6 @@ describe('static handler preparation cache', () => {
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({ id: 'static' }),
       services: [serviceFor('entity_get', z.cuid2())],
-      sessionMode: 'stateless',
       schemaValidation: { policy: 'warn', requirePortableFormats: true },
       logger: recordingLogger(warnings),
       context: () => {
@@ -190,8 +188,8 @@ describe('static handler preparation cache', () => {
     });
 
     expect(warnings).toHaveLength(1);
-    expect((await handler(initializeRequest())).status).toBe(200);
-    expect((await handler(initializeRequest())).status).toBe(200);
+    expect((await handler.fetch(initializeRequest())).status).toBe(200);
+    expect((await handler.fetch(initializeRequest())).status).toBe(200);
     expect(warnings).toHaveLength(1);
     expect(contexts).toBe(2);
     expect(servers).toBe(2);
@@ -209,14 +207,13 @@ describe('identity-dependent surfaces', () => {
         identities.push(identity);
         return [serviceFor(`${identity}_get`, z.cuid2())];
       },
-      sessionMode: 'stateless',
       schemaValidation: { policy: 'warn', requirePortableFormats: true },
       logger: recordingLogger(warnings),
     });
 
     expect(warnings).toEqual([]);
-    expect((await handler(initializeRequest('alpha'))).status).toBe(200);
-    expect((await handler(initializeRequest('beta'))).status).toBe(200);
+    expect((await handler.fetch(initializeRequest('alpha'))).status).toBe(200);
+    expect((await handler.fetch(initializeRequest('beta'))).status).toBe(200);
     expect(identities).toEqual(['alpha', 'beta']);
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('alpha_get');
@@ -249,13 +246,13 @@ describe('finite prepared surface registry', () => {
     });
 
     expect(warnings).toHaveLength(2);
-    await handler(initializeRequest('member'));
-    await handler(initializeRequest('admin'));
-    await handler(initializeRequest('member'));
+    await handler.fetch(initializeRequest('member'));
+    await handler.fetch(initializeRequest('admin'));
+    await handler.fetch(initializeRequest('member'));
     expect(warnings).toHaveLength(2);
   });
 
-  test('selects exact tool sets in stateless and stateful handlers', async () => {
+  test('selects exact tool sets from prepared finite surfaces', async () => {
     const surfaces = {
       admin: {
         services: [serviceFor('admin_get')],
@@ -289,22 +286,12 @@ describe('finite prepared surface registry', () => {
       selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
     });
     const adminNames = listedToolNames(
-      await rpcBody(await stateless(rpcRequest('tools/list', 'admin'))),
+      await rpcBody(await stateless.fetch(rpcRequest('tools/list', 'admin'))),
     );
     expect(adminNames.sort()).toEqual(['admin_action', 'admin_get']);
 
-    const stateful = createMcpHandler({
-      serverInfo: { name: 'test', version: '1' },
-      auth: (request) => request.headers.get('authorization') ?? 'member',
-      surfaces,
-      selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
-      sessionMode: 'stateful',
-    });
-    const initialized = await stateful(initializeRequest('member'));
-    const sessionId = initialized.headers.get('mcp-session-id');
-    if (!sessionId) throw new Error('expected stateful session id');
     const memberNames = listedToolNames(
-      await rpcBody(await stateful(rpcRequest('tools/list', 'member', sessionId))),
+      await rpcBody(await stateless.fetch(rpcRequest('tools/list', 'member'))),
     );
     expect(memberNames.sort()).toEqual(['member_action', 'member_get']);
   });
@@ -337,7 +324,7 @@ describe('finite prepared surface registry', () => {
 
     const [alpha, beta] = await Promise.all([
       rpcBody(
-        await handler(
+        await handler.fetch(
           rpcRequest('tools/call', 'alpha', undefined, {
             name: 'whoami',
             arguments: { delay: 5 },
@@ -345,7 +332,7 @@ describe('finite prepared surface registry', () => {
         ),
       ),
       rpcBody(
-        await handler(
+        await handler.fetch(
           rpcRequest('tools/call', 'beta', undefined, {
             name: 'whoami',
             arguments: { delay: 1 },
@@ -367,9 +354,8 @@ describe('finite prepared surface registry', () => {
       // @ts-expect-error — intentional runtime guard coverage for untyped callers.
       selectSurface: () => 'missing',
     });
-    await expect(unknown(initializeRequest())).rejects.toThrow(
-      'Unknown MCP surface "missing"',
-    );
+    const unknownResponse = await unknown.fetch(initializeRequest());
+    expect(unknownResponse.status).toBe(500);
 
     expect(() =>
       createMcpHandler({

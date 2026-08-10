@@ -53,7 +53,8 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - **Bun** — primary runtime, HTTP server, test runner. **Node ≥ 22** supported
   via `stitchkit/node` (→ ADR 0013).
 - **Zod** — validation. **`ky`** — HTTP client (the only runtime dependency).
-- Optional peers: `@modelcontextprotocol/sdk`, `ai`, `srvx`, `socket.io` /
+- Optional peers: `@modelcontextprotocol/server`, `@modelcontextprotocol/ext-apps`,
+  `ai`, `srvx`, `socket.io` /
   `socket.io-client` / `@socket.io/bun-engine`, `@tanstack/react-query`,
   `react-query-kit`.
 

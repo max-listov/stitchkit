@@ -15,6 +15,7 @@ import {
 } from '../src/tools/oauth-metadata';
 import {
   type AuthCodeData,
+  type CimdClientMetadataFetcher,
   mountOAuthProvider,
   type OAuthProviderConfig,
   type RefreshData,
@@ -118,7 +119,7 @@ describe('protected resource metadata (RFC 9728)', () => {
       services: [],
       protectedResource: { resource: RESOURCE, authorizationServers: [ISSUER] },
     });
-    const res = await handler(new Request(RESOURCE, { method: 'POST' }));
+    const res = await handler.fetch(new Request(RESOURCE, { method: 'POST' }));
     expect(res.status).toBe(401);
     expect(res.headers.get('WWW-Authenticate')).toBe(wwwAuthenticateHeader(RESOURCE));
   });
@@ -129,7 +130,7 @@ describe('protected resource metadata (RFC 9728)', () => {
       auth: () => null,
       services: [],
     });
-    const res = await handler(new Request(RESOURCE, { method: 'POST' }));
+    const res = await handler.fetch(new Request(RESOURCE, { method: 'POST' }));
     expect(res.status).toBe(401);
     expect(res.headers.get('WWW-Authenticate')).toBeNull();
   });
@@ -181,18 +182,21 @@ function buildProvider(overrides?: Partial<OAuthProviderConfig>): Routes {
     signingSecret: SECRET,
     resource: RESOURCE,
     scopesSupported: ['mcp'],
-    clients: {
-      register: async (meta) => {
-        const client: RegisteredClient = {
-          clientId: `client-${++clientSeq}`,
-          redirectUris: meta.redirectUris,
-          clientName: meta.clientName,
-          applicationType: meta.applicationType,
-        };
-        clientStore.set(client.clientId, client);
-        return client;
+    clientRegistration: {
+      cimd: false,
+      dcr: {
+        register: async (meta) => {
+          const client: RegisteredClient = {
+            clientId: `client-${++clientSeq}`,
+            redirectUris: meta.redirectUris,
+            clientName: meta.clientName,
+            applicationType: meta.applicationType,
+          };
+          clientStore.set(client.clientId, client);
+          return client;
+        },
+        get: async (id) => clientStore.get(id) ?? null,
       },
-      get: async (id) => clientStore.get(id) ?? null,
     },
     codes: {
       save: async (code, data) => {
@@ -214,7 +218,10 @@ function buildProvider(overrides?: Partial<OAuthProviderConfig>): Routes {
         return data;
       },
     },
-    authorizeUser: async () => ({ userId: 'user-42' }),
+    authorizeUser: async (_request, authRequest) => ({
+      userId: 'user-42',
+      approvedScopes: authRequest.scope?.split(' ') ?? [],
+    }),
     ...overrides,
   };
 
@@ -270,6 +277,7 @@ describe('authorization-code flow with PKCE', () => {
     expect(meta.authorization_endpoint).toBe(`${ISSUER}/oauth/authorize`);
     expect(meta.token_endpoint).toBe(`${ISSUER}/oauth/token`);
     expect(meta.registration_endpoint).toBe(`${ISSUER}/oauth/register`);
+    expect(meta.client_id_metadata_document_supported).toBeUndefined();
     expect(meta.code_challenge_methods_supported).toEqual(['S256']);
   });
 
@@ -585,6 +593,368 @@ describe('authorization-code flow with PKCE', () => {
     expect(res.status).toBe(302);
     expect(header(res, 'Location')).toBe('https://app/login');
   });
+
+  test('consent may narrow requested scopes and the approved snapshot reaches the token', async () => {
+    const routes = buildProvider({
+      scopesSupported: ['read', 'write'],
+      authorizeUser: async () => ({ userId: 'user-42', approvedScopes: ['read'] }),
+    });
+    const clientId = await registerClient(routes);
+    const verifier = 's'.repeat(64);
+    const authResponse = await authorize(routes, {
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      code_challenge: await deriveCodeChallenge(verifier),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+      scope: 'read write',
+    });
+    const tokenResponse = await token(routes, {
+      grant_type: 'authorization_code',
+      code: param(header(authResponse, 'Location'), 'code'),
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+      client_id: clientId,
+    });
+    const payload = await verifyJwt((await tokenResponse.json()).access_token, SECRET, {
+      audience: RESOURCE,
+    });
+    expect(payload.scope).toBe('read');
+  });
+
+  test('rejects unsupported requested scopes and consent escalation', async () => {
+    const unsupportedRoutes = buildProvider({ scopesSupported: ['read'] });
+    const clientId = await registerClient(unsupportedRoutes);
+    const base = {
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      code_challenge: await deriveCodeChallenge('u'.repeat(64)),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    };
+    const unsupported = await authorize(unsupportedRoutes, { ...base, scope: 'write' });
+    expect(param(header(unsupported, 'Location'), 'error')).toBe('invalid_scope');
+
+    const escalatedRoutes = buildProvider({
+      scopesSupported: ['read', 'write'],
+      authorizeUser: async () => ({ userId: 'user-42', approvedScopes: ['admin'] }),
+    });
+    const escalatedClient = await registerClient(escalatedRoutes);
+    await expect(
+      authorize(escalatedRoutes, {
+        ...base,
+        client_id: escalatedClient,
+        scope: 'read',
+      }),
+    ).rejects.toThrow(/subset of requested scopes/);
+  });
+});
+
+describe('Client ID Metadata Documents', () => {
+  const CLIENT_ID = 'https://client.example.com/oauth-metadata.json';
+  const CLIENT_REDIRECT = 'https://client.example.com/callback';
+
+  function metadataResponse(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = { 'content-type': 'application/json' },
+  ) {
+    return {
+      status,
+      headers: new Headers(headers),
+      body: new TextEncoder().encode(JSON.stringify(body)),
+      url: new URL(CLIENT_ID),
+    };
+  }
+
+  function cimdFetcher(fetch: CimdClientMetadataFetcher['fetch']): CimdClientMetadataFetcher {
+    return { fetch };
+  }
+
+  test('CIMD is the default discovery mode and DCR is absent', async () => {
+    const routes = buildProvider({ clientRegistration: undefined });
+    expect(routes['/oauth/register']).toBeUndefined();
+    const response = await callRoute(
+      routes,
+      '/.well-known/oauth-authorization-server',
+      new Request(`${ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    const metadata = await response.json();
+    expect(metadata.client_id_metadata_document_supported).toBe(true);
+    expect(metadata.registration_endpoint).toBeUndefined();
+  });
+
+  test('validated HTTPS metadata drives a complete authorize and token flow', async () => {
+    let fetches = 0;
+    const routes = buildProvider({
+      clientRegistration: {
+        cimd: {
+          fetcher: cimdFetcher(async (url) => {
+            fetches += 1;
+            expect(url.toString()).toBe(CLIENT_ID);
+            return metadataResponse(200, {
+              client_id: CLIENT_ID,
+              client_name: 'Example client',
+              redirect_uris: [CLIENT_REDIRECT],
+              token_endpoint_auth_method: 'none',
+              application_type: 'web',
+            });
+          }),
+        },
+      },
+    });
+    const verifier = 'c'.repeat(64);
+    const authorization = await authorize(routes, {
+      client_id: CLIENT_ID,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: await deriveCodeChallenge(verifier),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    expect(authorization.status).toBe(302);
+    const code = param(header(authorization, 'Location'), 'code');
+    const tokenResponse = await token(routes, {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: verifier,
+      redirect_uri: CLIENT_REDIRECT,
+      client_id: CLIENT_ID,
+    });
+    expect(tokenResponse.status).toBe(200);
+    expect(fetches).toBe(1);
+  });
+
+  test('cache revalidates with HTTP validators and keeps the exact client identity', async () => {
+    const observedHeaders: Record<string, string>[] = [];
+    const fetcher = cimdFetcher(async (_url, headers) => {
+      observedHeaders.push(headers);
+      if (observedHeaders.length === 2) {
+        return metadataResponse(304, null, { etag: '"v1"', 'cache-control': 'max-age=60' });
+      }
+      return metadataResponse(
+        200,
+        {
+          client_id: CLIENT_ID,
+          client_name: 'Cached client',
+          redirect_uris: [CLIENT_REDIRECT],
+          token_endpoint_auth_method: 'none',
+        },
+        {
+          'content-type': 'application/problem+json',
+          etag: '"v1"',
+          'cache-control': 'max-age=0',
+        },
+      );
+    });
+    const routes = buildProvider({ clientRegistration: { cimd: { fetcher } } });
+    const request = {
+      client_id: CLIENT_ID,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: await deriveCodeChallenge('r'.repeat(64)),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    };
+    expect((await authorize(routes, request)).status).toBe(302);
+    expect((await authorize(routes, request)).status).toBe(302);
+    expect(observedHeaders).toHaveLength(2);
+    expect(observedHeaders[1]?.['if-none-match']).toBe('"v1"');
+  });
+
+  test('coalesces concurrent cache misses and reports cache outcomes without metadata', async () => {
+    let fetches = 0;
+    const events: Array<{ status: string; clientId: string }> = [];
+    const routes = buildProvider({
+      clientRegistration: {
+        cimd: {
+          fetcher: cimdFetcher(async () => {
+            fetches += 1;
+            await Promise.resolve();
+            return metadataResponse(
+              200,
+              {
+                client_id: CLIENT_ID,
+                client_name: 'Concurrent client',
+                redirect_uris: [CLIENT_REDIRECT],
+                token_endpoint_auth_method: 'none',
+              },
+              { 'content-type': 'application/json', 'cache-control': 'max-age=60' },
+            );
+          }),
+          onCacheEvent: (event) => events.push(event),
+        },
+      },
+    });
+    const request = {
+      client_id: CLIENT_ID,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: await deriveCodeChallenge('q'.repeat(64)),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    };
+    const responses = await Promise.all([
+      authorize(routes, request),
+      authorize(routes, request),
+      authorize(routes, request),
+    ]);
+    expect(responses.every((response) => response.status === 302)).toBe(true);
+    expect(fetches).toBe(1);
+    expect(events).toEqual([{ status: 'miss', clientId: CLIENT_ID }]);
+    expect(Object.keys(events[0] ?? {}).sort()).toEqual(['clientId', 'status']);
+  });
+
+  test('honours no-store and no-cache instead of serving a silently stale identity', async () => {
+    for (const directive of ['no-store', 'no-cache']) {
+      let fetches = 0;
+      const routes = buildProvider({
+        clientRegistration: {
+          cimd: {
+            fetcher: cimdFetcher(async () => {
+              fetches += 1;
+              return metadataResponse(
+                200,
+                {
+                  client_id: CLIENT_ID,
+                  client_name: directive,
+                  redirect_uris: [CLIENT_REDIRECT],
+                  token_endpoint_auth_method: 'none',
+                },
+                { 'content-type': 'application/json', 'cache-control': directive },
+              );
+            }),
+          },
+        },
+      });
+      const request = {
+        client_id: CLIENT_ID,
+        redirect_uri: CLIENT_REDIRECT,
+        response_type: 'code',
+        code_challenge: await deriveCodeChallenge('n'.repeat(64)),
+        code_challenge_method: 'S256',
+        resource: RESOURCE,
+      };
+      expect((await authorize(routes, request)).status).toBe(302);
+      expect((await authorize(routes, request)).status).toBe(302);
+      expect(fetches).toBe(2);
+    }
+  });
+
+  test('never falls through an invalid absolute URL client id to DCR', async () => {
+    let dcrLookups = 0;
+    const routes = buildProvider({
+      clientRegistration: {
+        cimd: {},
+        dcr: {
+          register: async () => {
+            throw new Error('not used');
+          },
+          get: async () => {
+            dcrLookups += 1;
+            return null;
+          },
+        },
+      },
+    });
+    const response = await authorize(routes, {
+      client_id: 'http://client.example.com/metadata.json',
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: 'challenge',
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    expect(response.status).toBe(401);
+    expect(dcrLookups).toBe(0);
+  });
+
+  test('rejects mismatched identities returned by pre-registration and DCR stores', async () => {
+    const mismatched: RegisteredClient = {
+      clientId: 'different-client',
+      redirectUris: [CLIENT_REDIRECT],
+    };
+    const configurations: OAuthProviderConfig['clientRegistration'][] = [
+      { cimd: false, preRegistered: { get: async () => mismatched } },
+      {
+        cimd: false,
+        dcr: {
+          register: async () => mismatched,
+          get: async () => mismatched,
+        },
+      },
+    ];
+    for (const clientRegistration of configurations) {
+      const routes = buildProvider({ clientRegistration });
+      const response = await authorize(routes, {
+        client_id: 'requested-client',
+        redirect_uri: CLIENT_REDIRECT,
+        response_type: 'code',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        resource: RESOURCE,
+      });
+      expect(response.status).toBe(401);
+    }
+  });
+
+  test('pre-registered-only mode advertises neither CIMD nor DCR', async () => {
+    const routes = buildProvider({
+      clientRegistration: {
+        cimd: false,
+        preRegistered: { get: async () => null },
+      },
+    });
+    expect(routes['/oauth/register']).toBeUndefined();
+    const response = await callRoute(
+      routes,
+      '/.well-known/oauth-authorization-server',
+      new Request(`${ISSUER}/.well-known/oauth-authorization-server`),
+    );
+    const metadata = await response.json();
+    expect(metadata.client_id_metadata_document_supported).toBeUndefined();
+    expect(metadata.registration_endpoint).toBeUndefined();
+  });
+
+  test('rejects metadata identity mismatch, missing name and redirect mismatch', async () => {
+    const documents = [
+      {
+        client_id: 'https://other.example.com/client.json',
+        client_name: 'Wrong identity',
+        redirect_uris: [CLIENT_REDIRECT],
+        token_endpoint_auth_method: 'none',
+      },
+      {
+        client_id: CLIENT_ID,
+        redirect_uris: [CLIENT_REDIRECT],
+        token_endpoint_auth_method: 'none',
+      },
+      {
+        client_id: CLIENT_ID,
+        client_name: 'Wrong redirect',
+        redirect_uris: ['https://client.example.com/other'],
+        token_endpoint_auth_method: 'none',
+      },
+    ];
+    for (const document of documents) {
+      const routes = buildProvider({
+        clientRegistration: {
+          cimd: { fetcher: cimdFetcher(async () => metadataResponse(200, document)) },
+        },
+      });
+      const response = await authorize(routes, {
+        client_id: CLIENT_ID,
+        redirect_uri: CLIENT_REDIRECT,
+        response_type: 'code',
+        code_challenge: 'challenge',
+        code_challenge_method: 'S256',
+        resource: RESOURCE,
+      });
+      expect(response.status).toBe(document === documents[2] ? 400 : 401);
+    }
+  });
 });
 
 // ─── MCP 2026-07-28 authorization hardening ──────────────────────────────────
@@ -700,6 +1070,18 @@ describe('application_type in DCR (SEP-837)', () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('invalid_redirect_uri');
+  });
+
+  test('redirect URIs with credentials or fragments are rejected', async () => {
+    const routes = buildProvider();
+    for (const redirectUri of [
+      'https://user:pass@client.example.com/callback',
+      'https://client.example.com/callback#fragment',
+    ]) {
+      const response = await registerWith(routes, { redirect_uris: [redirectUri] });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid_redirect_uri');
+    }
   });
 
   test('a web client registers an https redirect fine', async () => {

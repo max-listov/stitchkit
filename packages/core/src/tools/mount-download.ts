@@ -4,8 +4,8 @@
  * args; the fetch / extension / write mechanics live here. → ADR 0019.
  */
 import { basename, extname, join } from 'node:path';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
 import { writeDownload } from '../internal/write-download';
@@ -83,7 +83,7 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
   assertToolName(name, '<native>', 'download');
   server.registerTool(
     name,
-    { description: config.description, inputSchema: config.inputSchema },
+    { description: config.description, inputSchema: z.object(config.inputSchema) },
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
       // One boundary for every failure mode — resolveUrl, fetch rejection,

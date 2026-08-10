@@ -14,7 +14,7 @@
  * function, which still accepts the loose form for callers that do not opt in
  * (ADR 0002 keeps the core context loose by default).
  */
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { ToolSet } from 'ai';
 import type { ServiceDef } from '../server/types';
 import { type AgentMountConfig, mountAgent } from './agent';
@@ -25,8 +25,12 @@ import {
   type McpServerBuildConfig,
   mountMcp,
 } from './mcp';
-import { createMcpHandler, type McpHandlerConfig } from './mcp-handler';
-import { createStdioMcpServer, type StdioMcpServerConfig } from './mcp-stdio';
+import { createMcpHandler, type McpHandlerConfig, type McpHttpHandler } from './mcp-handler';
+import {
+  createStdioMcpServer,
+  type McpStdioHandle,
+  type StdioMcpServerConfig,
+} from './mcp-stdio';
 import type { ToolExtend } from './mount';
 
 /** Re-type a config's static `context` (and `extend`) to the toolkit's `TContext`. */
@@ -61,10 +65,10 @@ export interface Toolkit<TContext extends Record<string, unknown>> {
   ): McpServer;
   createMcpHandler<TAuth>(
     config: WithAuthContext<McpHandlerConfig<TAuth>, TAuth, TContext>,
-  ): (req: Request) => Promise<Response>;
+  ): McpHttpHandler;
   createStdioMcpServer<TAuth>(
     config: WithAuthContext<StdioMcpServerConfig<TAuth>, TAuth, TContext>,
-  ): Promise<McpServer>;
+  ): Promise<McpStdioHandle>;
   createCli<TAuth = unknown>(config: CliConfig<TAuth, TContext>): Promise<void>;
 }
 

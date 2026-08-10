@@ -8,6 +8,8 @@
  * through a real mount, from an installed package, with the peer present.
  */
 
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { QueryClient } from '@tanstack/react-query';
 import { ApiError } from 'stitchkit';
 import { defineContract, defineErrors } from 'stitchkit/contract';
@@ -17,7 +19,10 @@ import { implement } from 'stitchkit/server';
 import {
   buildMcpServer,
   buildToolManifest,
+  createCli,
   createMcpHandler,
+  createMcpHttpRoute,
+  createToolInvoker,
   defineRuntimeTool,
   type ErrorHintFn,
   EXT_APPS_BUNDLE_PLACEHOLDER,
@@ -25,6 +30,7 @@ import {
   inlineMcpAppBundle,
   listToolNames,
   mountAgent,
+  RESOURCE_MIME_TYPE,
   summarizeTransports,
   type ToolCallContext,
   type ToolCallHooks,
@@ -35,7 +41,11 @@ import {
 } from 'stitchkit/tools';
 import { z } from 'zod';
 
-declare const process: { env: Record<string, string | undefined>; exit(code: number): never };
+declare const process: {
+  env: Record<string, string | undefined>;
+  execPath: string;
+  exit(code: number): never;
+};
 
 let failures = 0;
 function check(what: string, ok: boolean, detail?: unknown): void {
@@ -99,7 +109,7 @@ const widgets = defineContract(
       params: z.object({ id: z.string() }),
       input: z.object({ name: z.string() }),
       output: z.object({ id: z.string() }),
-      expose: ['AGENT'],
+      expose: ['AGENT', 'CLI'],
       toolName: 'update_widget',
     },
   },
@@ -136,8 +146,42 @@ implement(signedWebhook, {
   },
 });
 
+const packedMultiRound = defineContract(
+  { prefix: 'approval', scope: 'admin' },
+  {
+    approve: {
+      method: 'POST',
+      path: '/',
+      desc: 'Approve with ordered typed input',
+      expose: ['MCP'],
+      output: z.object({ approved: z.boolean(), reason: z.string() }),
+      mcp: {
+        inputRequired: [
+          {
+            key: 'confirmation',
+            message: 'Approve?',
+            schema: z.object({ approved: z.boolean() }),
+          },
+          {
+            key: 'reason',
+            message: 'Reason?',
+            schema: z.object({ value: z.string() }),
+          },
+        ],
+      },
+    },
+  },
+);
+implement(packedMultiRound, {
+  approve: ({ mcpInput }) => ({
+    approved: mcpInput?.confirmation.approved ?? false,
+    reason: mcpInput?.reason.value ?? '',
+  }),
+});
+
 const NativeInputSchema = z.object({ id: z.string() });
 const NativeOutputSchema = z.object({ updated: z.boolean() });
+const packedResourceUri = 'ui://consumer/native-update.html';
 const nativeDefinition = defineRuntimeTool({
   name: 'native_update',
   description: 'Update through native MCP content',
@@ -149,6 +193,7 @@ const nativeDefinition = defineRuntimeTool({
   },
   input: NativeInputSchema,
   output: NativeOutputSchema,
+  ui: { resourceUri: packedResourceUri },
   handler: ({ input }) => ({ updated: input.id.length > 0 }),
   present: {
     mcp: (output) => ({
@@ -167,12 +212,43 @@ const packedNativeServer = buildMcpServer(
   undefined,
 );
 check('the packed MCP surface accepts a typed runtime definition', !!packedNativeServer);
+let rawMounted = false;
+buildMcpServer(
+  {
+    serverInfo: { name: 'consumer-raw', version: '1' },
+    services: [],
+    rawTools: () => {
+      rawMounted = true;
+    },
+  },
+  undefined,
+);
+check('the packed rawTools escape hatch remains explicit', rawMounted);
 check(
   'the packed Agent mount accepts the same runtime definition',
   typeof mountAgent([], { runtimeTools: [nativeDefinition] }).native_update?.execute ===
     'function',
 );
 const packedSurface = { services: [service], runtimeTools: [nativeDefinition] };
+const packedInvoker = createToolInvoker(service, { transport: 'AGENT' });
+check(
+  'the packed in-process invoker runs the canonical contract tool',
+  JSON.stringify(
+    await packedInvoker.invokeOrThrow('update_widget', { id: 'invoked', name: 'x' }),
+  ) === JSON.stringify({ id: 'invoked' }),
+);
+let cliVersion = '';
+await createCli({
+  name: 'packed-cli',
+  version: '1',
+  services: [service],
+  argv: ['--version'],
+  stdout: (text) => {
+    cliVersion += text;
+  },
+  exit: () => undefined,
+});
+check('the packed CLI entrypoint executes', cliVersion === 'packed-cli 1\n');
 check(
   'the packed manifest includes contract and runtime tools without a local schema walker',
   buildToolManifest({ ...packedSurface, transport: 'AGENT' }).length === 2,
@@ -234,18 +310,93 @@ const defaultMcpHandler = createMcpHandler({
   serverInfo: { name: 'consumer', version: '1' },
   auth: () => ({ id: 'consumer' }),
   services: [],
+  runtimeTools: [nativeDefinition],
+  resources: [
+    {
+      uri: packedResourceUri,
+      name: 'Packed native update',
+      ui: { prefersBorder: true },
+      read: () => '<!doctype html><main>Packed MCP App</main>',
+    },
+  ],
 });
 check(
   'the packed handler accepts the default stateless config',
-  typeof defaultMcpHandler === 'function',
+  typeof defaultMcpHandler.fetch === 'function' &&
+    typeof defaultMcpHandler.close === 'function',
 );
+const packedRoute = createMcpHttpRoute({ path: '/mcp', handler: defaultMcpHandler });
+check(
+  'the packed framework-owned MCP route owns method/path/wrapper wiring',
+  packedRoute.method === 'ALL' && packedRoute.path === '/mcp',
+);
+
+const httpTransport = new StreamableHTTPClientTransport(new URL('http://consumer.test/mcp'), {
+  fetch: (input, init) => defaultMcpHandler.fetch(new Request(input, init)),
+});
+const httpClient = new Client(
+  { name: 'packed-bun-http', version: '1' },
+  { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+);
+await httpClient.connect(httpTransport);
+check(
+  'the packed Bun consumer completes a modern HTTP tool call',
+  JSON.stringify(
+    (
+      await httpClient.callTool({
+        name: 'native_update',
+        arguments: { id: 'packed-http' },
+      })
+    ).structuredContent,
+  ) === JSON.stringify({ updated: true }),
+);
+const packedResources = await httpClient.listResources();
+check(
+  'the packed MCP App resource is discoverable with the apps MIME type',
+  packedResources.resources.some(
+    (resource) =>
+      resource.uri === packedResourceUri && resource.mimeType === RESOURCE_MIME_TYPE,
+  ),
+  packedResources.resources,
+);
+const packedResource = await httpClient.readResource({ uri: packedResourceUri });
+check(
+  'the packed MCP App resource preserves HTML and UI metadata',
+  JSON.stringify(packedResource).includes('Packed MCP App') &&
+    JSON.stringify(packedResource).includes('prefersBorder'),
+  packedResource,
+);
+await httpClient.close();
+await defaultMcpHandler.close();
+
+const stdioTransport = new StdioClientTransport({
+  command: process.execPath,
+  args: [new URL('./mcp-stdio-server.ts', import.meta.url).pathname],
+  stderr: 'pipe',
+});
+const stdioClient = new Client(
+  { name: 'packed-bun-stdio', version: '1' },
+  { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+);
+await stdioClient.connect(stdioTransport);
+const stdioResult = await stdioClient.callTool({
+  name: 'echo_packed',
+  arguments: { text: 'packed Bun stdio' },
+});
+check(
+  'the packed Bun consumer completes a modern stdio tool call',
+  JSON.stringify(stdioResult.structuredContent) ===
+    JSON.stringify({ text: 'packed Bun stdio' }),
+  stdioResult.structuredContent,
+);
+await stdioClient.close();
 if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
   createMcpHandler({
     serverInfo: { name: 'consumer', version: '1' },
     auth: () => ({ id: 'consumer' }),
     services: [],
-    // @ts-expect-error 0.37 removed the boolean; sessionMode is the only shape.
-    stateless: true,
+    // @ts-expect-error MCP v2 HTTP is stateless-only; session modes were removed.
+    sessionMode: 'stateful',
   });
 }
 
@@ -358,18 +509,14 @@ check(
   },
 );
 
-// This fixture installs the tool peers but deliberately omits ext-apps. The
-// tools entrypoint remains usable; only requesting its browser bundle fails.
-let missingExtAppsMessage = '';
-try {
-  inlineMcpAppBundle(`<script>${EXT_APPS_BUNDLE_PLACEHOLDER}</script>`);
-} catch (error) {
-  missingExtAppsMessage = error instanceof Error ? error.message : String(error);
-}
+const inlinedApp = inlineMcpAppBundle(
+  `<script type="module">${EXT_APPS_BUNDLE_PLACEHOLDER}</script>`,
+);
 check(
-  'missing ext-apps fails only when bundle inlining is requested',
-  missingExtAppsMessage.includes('@modelcontextprotocol/ext-apps'),
-  missingExtAppsMessage,
+  'the packed MCP Apps peer inlines its browser runtime',
+  !inlinedApp.includes(EXT_APPS_BUNDLE_PLACEHOLDER) &&
+    inlinedApp.includes('globalThis.ExtApps'),
+  inlinedApp.slice(-200),
 );
 
 if (failures > 0) {

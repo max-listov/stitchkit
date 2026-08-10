@@ -9,6 +9,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { CacheHint } from '@modelcontextprotocol/server';
 
 /**
  * MIME type a host uses to recognise an MCP Apps UI resource — it renders the
@@ -56,6 +57,8 @@ export interface McpResourceDef {
   name: string;
   /** MIME type — defaults to `RESOURCE_MIME_TYPE`. */
   mimeType?: string;
+  /** Modern MCP freshness for this resource; absent means zero/private. */
+  cacheHint?: CacheHint;
   /** Optional UI metadata (CSP, border, domain) applied to the content. */
   ui?: McpAppResourceMeta;
   /** Return the resource body — the widget HTML for an apps resource. */

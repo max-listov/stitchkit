@@ -17,6 +17,10 @@ export interface TraceContext {
   spanId: string;
   /** 16-hex id of the span that caused this one, when there is one. */
   parentSpanId?: string;
+  /** Valid bounded W3C vendor trace state, retained for propagation. */
+  tracestate?: string;
+  /** Valid bounded W3C baggage, retained for propagation only. */
+  baggage?: string;
 }
 
 const TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/i;
@@ -75,5 +79,54 @@ export function childSpan(parent: TraceContext): TraceContext {
     traceId: parent.traceId,
     spanId: randomHex(8),
     parentSpanId: parent.spanId,
+    ...(parent.tracestate !== undefined && { tracestate: parent.tracestate }),
+    ...(parent.baggage !== undefined && { baggage: parent.baggage }),
+  };
+}
+
+const encoder = new TextEncoder();
+
+function boundedPropagationValue(
+  value: unknown,
+  maxBytes: number,
+  maxMembers: number,
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || encoder.encode(trimmed).byteLength > maxBytes) return undefined;
+  for (const character of trimmed) {
+    const code = character.charCodeAt(0);
+    if (code <= 31 || code === 127) return undefined;
+  }
+  const members = trimmed.split(',');
+  if (members.length > maxMembers || members.some((member) => !member.trim())) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/**
+ * Continue an MCP/W3C propagation envelope. A present but invalid
+ * `traceparent` starts a fresh local trace; an absent one reuses `fallback`
+ * (the enclosing HTTP request) or opens a root for transport-native calls.
+ */
+export function resolvePropagationContext(
+  metadata: Record<string, unknown> | undefined,
+  fallback?: TraceContext,
+): TraceContext {
+  const traceparent = metadata?.traceparent;
+  const parsed = typeof traceparent === 'string' ? parseTraceparent(traceparent) : null;
+  const trace =
+    traceparent === undefined
+      ? (fallback ?? createTraceContext())
+      : (parsed ?? createTraceContext());
+  const tracestate = parsed
+    ? boundedPropagationValue(metadata?.tracestate, 512, 32)
+    : undefined;
+  const baggage = boundedPropagationValue(metadata?.baggage, 8192, 180);
+  return {
+    ...trace,
+    ...(tracestate !== undefined && { tracestate }),
+    ...(baggage !== undefined && { baggage }),
   };
 }

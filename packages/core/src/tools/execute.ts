@@ -180,6 +180,7 @@ export async function executeToolMethod(
   coerceJson = false,
   onOutputStrip?: (paths: string[]) => void,
   extension?: ToolArgumentExtension,
+  finalizeOutput?: (data: unknown) => unknown | Promise<unknown>,
 ): Promise<ToolResult> {
   // Each call gets its own request context, forked from the ambient one.
   //
@@ -203,6 +204,7 @@ export async function executeToolMethod(
       coerceJson,
       onOutputStrip,
       extension,
+      finalizeOutput,
     ),
   );
 }
@@ -260,6 +262,7 @@ async function runToolMethod(
   coerceJson: boolean,
   onOutputStrip: ((paths: string[]) => void) | undefined,
   extension: ToolArgumentExtension | undefined,
+  finalizeOutput: ((data: unknown) => unknown | Promise<unknown>) | undefined,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
   let hookContext = context;
@@ -446,6 +449,11 @@ async function runToolMethod(
       });
     }
     data = checked.data;
+
+    // Transport-specific presentation still belongs to the canonical attempt:
+    // presenter throws and invalid results must reach onToolError/afterToolCall
+    // before the executor records success.
+    if (finalizeOutput) data = await finalizeOutput(data);
 
     // A void handler reports `{ status: 'ok' }` — but only when the contract
     // declares no `output`. With an `outputSchema`, a validated `null` is the
