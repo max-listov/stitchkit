@@ -15,7 +15,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
-> Pre-1.0 breaking changes → the next release bumps the **minor** version.
+## [0.46.0] — 2026-08-10
 
 ### ⚠️ Breaking changes
 
