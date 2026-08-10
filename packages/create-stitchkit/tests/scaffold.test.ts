@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { isTemplateSourcePathIncluded, scaffoldProject } from '../src/scaffold';
 
 const created: string[] = [];
@@ -28,6 +29,7 @@ describe('scaffoldProject', () => {
     expect(JSON.parse(rootManifest)).toMatchObject({
       name: 'stitchkit-starter',
       workspaces: ['packages/*'],
+      devDependencies: { stitchkit: 'catalog:' },
     });
     expect(backendManifest).toContain('"name": "@app/backend"');
     expect(frontendManifest).toContain('"name": "@app/frontend"');
@@ -54,14 +56,15 @@ describe('scaffoldProject', () => {
     expect(await readFile(join(destination, 'packages/db/schema.prisma'), 'utf8')).toContain(
       'model RepositorySnapshot',
     );
-    const environment = await readFile(join(destination, '.env'), 'utf8');
-    expect(environment).toContain('CORS_ORIGIN=*');
-    expect(environment).toContain('GITHUB_REPOSITORY=max-listov/stitchkit');
+    // No `.env` ships — the example appends land in `.env.example`, the
+    // single source `env:ensure` renders from.
+    const environmentExample = await readFile(join(destination, '.env.example'), 'utf8');
+    expect(environmentExample).toContain('CORS_ORIGIN=http://127.0.0.1:3210');
+    expect(environmentExample).toContain('GITHUB_REPOSITORY=max-listov/stitchkit');
     const serverConfig = await readFile(
       join(destination, 'packages/config/src/server.ts'),
       'utf8',
     );
-    expect(serverConfig).toContain('DEV_HTTPS_CERT');
     expect(serverConfig).toContain('featureServerSchema');
     expect(await readFile(join(destination, 'scripts/runtime-smoke.ts'), 'utf8')).toContain(
       'runSurfaceConformance',
@@ -193,11 +196,73 @@ describe('scaffoldProject', () => {
     expect(developmentConfig.match(/autorestart: true/g)).toHaveLength(2);
   });
 
+  test('every executable template TypeScript file is covered by its package tsconfig', async () => {
+    // The compile gate is only as wide as the tsconfig `include` globs — a
+    // config file outside them (the way `next.config.ts` once was) ships type
+    // errors green. This walks the REAL template and proves total coverage.
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const globToRegex = (glob: string): RegExp => {
+      // A bare directory include (`"src"`) covers everything under it.
+      if (!glob.includes('*')) {
+        return new RegExp(`^${glob.replaceAll('.', '\\.')}(/.*)?$`);
+      }
+      return new RegExp(
+        `^${glob
+          .replaceAll('.', '\\.')
+          .replaceAll('**/', ' ')
+          .replaceAll('*', '[^/]*')
+          .replaceAll(' ', '(?:.*/)?')}$`,
+      );
+    };
+    const readIncludes = async (dir: string): Promise<RegExp[]> => {
+      const parsed = z
+        .object({ include: z.array(z.string()) })
+        .parse(JSON.parse(await readFile(join(dir, 'tsconfig.json'), 'utf8')));
+      return parsed.include.flatMap((pattern) => {
+        const patterns = [globToRegex(pattern)];
+        // `src/**/*.ts` in tsconfig also matches `.tsx` only when listed —
+        // keep the translation literal, no generosity.
+        return patterns;
+      });
+    };
+    const skip = new Set(['node_modules', 'dist', '.next', 'generated', 'migrations']);
+    const listFiles = async (dir: string, relative: string): Promise<string[]> => {
+      const entries = await readdir(join(dir, relative), { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const entryPath = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          if (skip.has(entry.name) || entry.name === 'packages') continue;
+          files.push(...(await listFiles(dir, entryPath)));
+        } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith('.d.ts')) {
+          files.push(entryPath);
+        }
+      }
+      return files;
+    };
+    const roots = [
+      templateRoot,
+      ...(await readdir(join(templateRoot, 'packages'))).map((name) =>
+        join(templateRoot, 'packages', name),
+      ),
+    ];
+    const uncovered: string[] = [];
+    for (const root of roots) {
+      const includes = await readIncludes(root);
+      for (const file of await listFiles(root, '')) {
+        if (!includes.some((pattern) => pattern.test(file))) {
+          uncovered.push(`${root.slice(templateRoot.length + 1) || '.'}/${file}`);
+        }
+      }
+    }
+    expect(uncovered).toEqual([]);
+  });
+
   test('uses an external PostgreSQL connection without shipping database containers', async () => {
     const templateRoot = join(import.meta.dir, '..', 'template');
     const rootManifest = await readFile(join(templateRoot, 'package.json'), 'utf8');
     const developmentScript = await readFile(join(templateRoot, 'scripts/dev.ts'), 'utf8');
-    const environment = await readFile(join(templateRoot, '_env'), 'utf8');
+    const environment = await readFile(join(templateRoot, '_env.example'), 'utf8');
 
     expect(rootManifest).toContain('"db:setup": "bun run db:generate && bun run db:deploy"');
     expect(developmentScript).toContain("await run(['bun', 'run', 'db:setup']");
@@ -231,8 +296,29 @@ describe('scaffoldProject', () => {
 
     const manifest = await readFile(join(destination, 'package.json'), 'utf8');
     expect(manifest).toContain('"name": "app"');
-    expect(await readFile(join(destination, 'bun.lock'), 'utf8')).toContain('"name": "app"');
+    expect(await readFile(join(destination, 'bun.lock'), 'utf8')).toContain(
+      '"name":"stitchkit-starter"',
+    );
     expect(await readFile(join(destination, '.gitignore'), 'utf8')).toBe('node_modules\n');
+  });
+
+  test('creates a project-specific local environment from the neutral example', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'talk-control');
+    created.push(parent);
+
+    await scaffoldProject(templateRoot, destination);
+    // The scaffolder ships NO `.env` at all — `env:ensure` renders it from
+    // `.env.example` with the destination identity on first run.
+    expect(await Bun.file(join(destination, '.env')).exists()).toBe(false);
+    const process = Bun.spawn(['bun', 'run', 'env:ensure'], {
+      cwd: destination,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(await process.exited).toBe(0);
+    expect(await readFile(join(destination, '.env'), 'utf8')).toContain('/talk_control');
   });
 
   test('excludes local build and dependency artifacts from the generated project', async () => {

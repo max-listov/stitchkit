@@ -2,14 +2,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as dotenvConfig } from 'dotenv';
 import { z } from 'zod';
+import { ensureLocalEnvironment } from './local-env';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-dotenvConfig({ path: path.resolve(scriptDirectory, '..', '.env'), quiet: true });
-
 const ToolingEnvSchema = z.object({
   NEXT_PUBLIC_API_URL: z.url(),
   NEXT_PUBLIC_WEB_URL: z.url(),
   PLAYWRIGHT_BASE_URL: z.url().optional(),
 });
 
-export const toolingEnv = ToolingEnvSchema.parse(process.env);
+export function loadToolingEnv(root = path.resolve(scriptDirectory, '..')) {
+  // Self-heal FIRST — a fresh clone has no `.env`, and validation must not
+  // fire before the environment can be created (the second-developer path:
+  // `runtime:smoke` and `e2e` both start here).
+  ensureLocalEnvironment(root);
+  dotenvConfig({ path: path.resolve(root, '.env'), quiet: true });
+  return ToolingEnvSchema.parse(process.env);
+}
+
+/** Process inheritance is isolated to this tooling environment boundary. */
+export function inheritToolingEnvironment(
+  overrides: Record<string, string>,
+): Record<string, string | undefined> {
+  return { ...process.env, ...overrides };
+}

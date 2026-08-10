@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, parse, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, parse, relative, resolve, sep } from 'node:path';
+import { z } from 'zod';
 import { createApplicationIdentity } from './identity';
 
 const TEXT_EXTENSIONS = new Set([
@@ -23,12 +24,15 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 const TEMPLATE_RENAMES = new Map([
-  ['_env', '.env'],
-  ['_env.append', '.env'],
+  // `.env` itself is never shipped — `scripts/local-env.ts` renders it from
+  // `.env.example` with the application identity on first run, so a clone and
+  // a rename both produce the same database name.
   ['_env.example', '.env.example'],
   ['_env.example.append', '.env.example'],
   ['_gitignore', '.gitignore'],
 ]);
+
+const RootManifestSchema = z.looseObject({ name: z.string().min(1) });
 
 const IGNORED_DIRECTORIES = new Set([
   '.next',
@@ -130,10 +134,10 @@ async function collectMaterialisedFiles(
     const outputRelativePath = targetName
       ? join(dirname(sourceRelativePath), targetName)
       : sourceRelativePath;
-    const extension = targetName?.includes('.')
-      ? targetName.slice(targetName.indexOf('.'))
-      : '';
-    const fileExtension = extension || sourcePath.slice(sourcePath.lastIndexOf('.'));
+    const materialisedName = outputRelativePath.endsWith('.append')
+      ? outputRelativePath.slice(0, -'.append'.length)
+      : outputRelativePath;
+    const fileExtension = extname(materialisedName);
     const content =
       TEXT_EXTENSIONS.has(fileExtension) || targetName
         ? await readFile(sourcePath, 'utf8')
@@ -201,23 +205,13 @@ export async function scaffoldProject(
       `${JSON.stringify(identity, undefined, 2)}\n`,
     );
     const manifestPath = join(resolvedDestination, 'package.json');
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    manifest.name = identity.slug;
-    await writeFile(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`);
-    const lockPath = join(resolvedDestination, 'bun.lock');
-    const lock = await readFile(lockPath, 'utf8');
-    await writeFile(
-      lockPath,
-      lock.replace(/"name"\s*:\s*"stitchkit-starter"/, `"name": "${identity.slug}"`),
+    const manifest = RootManifestSchema.parse(
+      JSON.parse(await readFile(manifestPath, 'utf8')),
     );
-    for (const environmentPath of ['.env', '.env.example']) {
-      const fullPath = join(resolvedDestination, environmentPath);
-      const environment = await readFile(fullPath, 'utf8');
-      await writeFile(
-        fullPath,
-        environment.replaceAll('stitchkit_starter', identity.slug.replaceAll('-', '_')),
-      );
-    }
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({ ...manifest, name: identity.slug }, undefined, 2)}\n`,
+    );
   } catch (error) {
     if (!destinationExisted) {
       await rm(resolvedDestination, { recursive: true, force: true });

@@ -1,6 +1,11 @@
 import { appIdentity } from '@app/config/identity';
+import { systemContract } from '@app/shared';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { createClient, createHttpClient } from 'stitchkit';
+import { loadToolingEnv } from '../scripts/tooling-env';
+
+const toolingEnv = loadToolingEnv();
 
 test('renders the hydrated starter application and catalogue', async ({ page }) => {
   await page.goto('/en');
@@ -10,6 +15,18 @@ test('renders the hydrated starter application and catalogue', async ({ page }) 
   await page.getByRole('link', { name: /UI system/ }).click();
   await expect(page).toHaveURL(/\/en\/ui\/components$/);
   await expect(page.getByRole('heading', { level: 1 })).toContainText('UI components');
+});
+
+test('calls the live backend through the typed contract client', async () => {
+  const client = createClient(
+    systemContract,
+    createHttpClient({
+      baseUrl: `${toolingEnv.NEXT_PUBLIC_API_URL}/api`,
+      credentials: 'omit',
+    }),
+  );
+
+  await expect(client.status()).resolves.toEqual({ status: 'ok' });
 });
 
 test('publishes complete page metadata and a reachable Open Graph card', async ({

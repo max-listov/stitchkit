@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
-import { toolingEnv } from './scripts/tooling-env';
+import { loadToolingEnv } from './scripts/tooling-env';
 
+const toolingEnv = loadToolingEnv();
 const baseURL = toolingEnv.PLAYWRIGHT_BASE_URL ?? toolingEnv.NEXT_PUBLIC_WEB_URL;
 
 export default defineConfig({

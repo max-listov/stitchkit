@@ -1,8 +1,20 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { findNeutralIdentity } from './neutral-identity';
 import { createStarterLaneDatabase } from './starter-database';
 import { readStarterStitchkitTarget, writeStarterStitchkitTarget } from './starter-manifest';
+
+function parseIdentityAllowlist(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('identity allowlist must be an object with a paths array');
+  }
+  const paths = Reflect.get(value, 'paths');
+  if (!Array.isArray(paths) || !paths.every((path) => typeof path === 'string')) {
+    throw new Error('identity allowlist paths must be strings');
+  }
+  return paths;
+}
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = join(repositoryRoot, 'packages/create-stitchkit/template');
@@ -104,8 +116,21 @@ function freePort(): number {
   return port;
 }
 
-async function waitFor(url: string): Promise<void> {
+async function waitFor(
+  url: string,
+  processName: string,
+  process: ReturnType<typeof Bun.spawn>,
+): Promise<void> {
   for (let attempt = 0; attempt < 80; attempt++) {
+    const processState = await Promise.race([
+      process.exited.then((exitCode) => ({ exitCode })),
+      Bun.sleep(0).then(() => undefined),
+    ]);
+    if (processState) {
+      throw new Error(
+        `${processName} exited with code ${processState.exitCode} before ${url} became ready`,
+      );
+    }
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -196,6 +221,25 @@ try {
         `Generated ${variant} target drifted: template=${templateTarget}, generated=${generatedTarget}`,
       );
     }
+
+    // Total identity sweep: no file of the generated tree may carry the
+    // template's neutral identity outside the committed allowlist — this is
+    // what catches a missed rendering projection, which no fixed list of
+    // known substitutions can.
+    const allowlist = parseIdentityAllowlist(
+      JSON.parse(
+        await readFile(
+          join(import.meta.dir, '../packages/create-stitchkit/tests/identity-allowlist.json'),
+          'utf8',
+        ),
+      ),
+    );
+    const neutralOffenders = await findNeutralIdentity(generated, allowlist);
+    if (neutralOffenders.length > 0) {
+      throw new Error(
+        `Generated ${variant} tree carries the neutral template identity:\n${neutralOffenders.join('\n')}`,
+      );
+    }
     for (const packagePath of [
       'packages/backend/package.json',
       'packages/frontend/package.json',
@@ -227,6 +271,7 @@ try {
         `NEXT_PUBLIC_API_URL=${apiOrigin}`,
         `INTERNAL_API_URL=${apiOrigin}`,
         `NEXT_PUBLIC_WEB_URL=${webOrigin}`,
+        `CORS_ORIGIN=${webOrigin}`,
         'LOG_FORMAT=json',
       ];
       if (example === 'repository') {
@@ -247,6 +292,7 @@ try {
         NEXT_PUBLIC_API_URL: apiOrigin,
         INTERNAL_API_URL: apiOrigin,
         NEXT_PUBLIC_WEB_URL: webOrigin,
+        CORS_ORIGIN: webOrigin,
         PLAYWRIGHT_BASE_URL: webOrigin,
         LOG_FORMAT: 'json',
         ...(example === 'repository' && {
@@ -288,6 +334,33 @@ try {
       await run(['bun', 'run', 'build'], generated, { env });
       await run(['bun', 'run', 'lint'], generated, { env });
 
+      // Second-developer scenario: a fresh clone carries no `.env`. Both the
+      // plain `env:ensure` path and the tooling entry (`runtime:smoke` / `e2e`
+      // validate through loadToolingEnv) must self-heal it with the RENDERED
+      // application identity before validating anything.
+      await rm(join(generated, '.env'), { force: true });
+      await run(['bun', 'run', 'env:ensure'], generated);
+      const healed = await readFile(join(generated, '.env'), 'utf8');
+      if (healed.includes('stitchkit_starter')) {
+        throw new Error(
+          'env:ensure rendered the neutral identity instead of the application identity',
+        );
+      }
+      await rm(join(generated, '.env'), { force: true });
+      await run(
+        [
+          'bun',
+          '-e',
+          "import { loadToolingEnv } from './scripts/tooling-env.ts'; loadToolingEnv();",
+        ],
+        generated,
+      );
+      const healedByTooling = await readFile(join(generated, '.env'), 'utf8');
+      if (healedByTooling !== healed) {
+        throw new Error('the tooling entry healed a different environment than env:ensure');
+      }
+      await writeFile(join(generated, '.env'), environmentLines.join('\n'));
+
       let api: ReturnType<typeof Bun.spawn> | undefined;
       let web: ReturnType<typeof Bun.spawn> | undefined;
       try {
@@ -304,7 +377,10 @@ try {
           stdout: 'inherit',
           stderr: 'inherit',
         });
-        await Promise.all([waitFor(`${apiOrigin}/health`), waitFor(`${webOrigin}/en`)]);
+        await Promise.all([
+          waitFor(`${apiOrigin}/health`, 'starter API', api),
+          waitFor(`${webOrigin}/en`, 'starter web', web),
+        ]);
         await run(['bun', 'run', 'runtime:smoke'], generated, { env });
 
         const tools = JSON.parse(await capture(['bun', 'run', 'tools'], generated, env));

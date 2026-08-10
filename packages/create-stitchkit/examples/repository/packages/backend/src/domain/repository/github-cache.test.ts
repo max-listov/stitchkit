@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { RepositoryVisibility } from '@app/db';
+import { RepositoryVisibilitySchema } from '@app/shared';
 import {
   GitHubRepositoryCache,
   type RepositorySnapshotStore,
@@ -39,6 +41,12 @@ function commitsResponse(): Response {
 }
 
 describe('GitHubRepositoryCache', () => {
+  test('keeps the shared wire enum aligned with the database enum', () => {
+    expect([...RepositoryVisibilitySchema.options].sort()).toEqual(
+      Object.values(RepositoryVisibility).sort(),
+    );
+  });
+
   test('deduplicates refreshes and persists an exact repository snapshot', async () => {
     const requests: URL[] = [];
     const fetcher = async (url: URL) => {

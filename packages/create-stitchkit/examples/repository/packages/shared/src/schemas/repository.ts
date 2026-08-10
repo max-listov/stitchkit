@@ -1,12 +1,14 @@
-import { RepositoryVisibility } from '@app/db/enums';
 import { z } from 'zod';
+
+export const RepositoryVisibilitySchema = z.enum(['PUBLIC', 'PRIVATE', 'INTERNAL']);
+export type RepositoryVisibility = z.infer<typeof RepositoryVisibilitySchema>;
 
 export const RepositorySnapshotSchema = z.object({
   fullName: z.string().min(1),
   description: z.string().nullable(),
   htmlUrl: z.url(),
   language: z.string().nullable(),
-  visibility: z.enum(RepositoryVisibility),
+  visibility: RepositoryVisibilitySchema,
   stars: z.number().int().nonnegative(),
   forks: z.number().int().nonnegative(),
   openIssues: z.number().int().nonnegative(),

@@ -5,9 +5,11 @@
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
+    "types": ["bun", "node"],
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true
-  }
+  },
+  "include": ["scripts/**/*.ts", "e2e/**/*.ts", "playwright.config.ts"]
 }

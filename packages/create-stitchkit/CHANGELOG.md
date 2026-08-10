@@ -6,6 +6,45 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- **Starter-owned LAN HTTPS is removed.** Generated applications no longer ship
+  `dev:lan`, certificate generation, onboarding routes or `DEV_HTTPS_*` settings.
+  Applications that need a trusted device-testing origin should own certificate
+  creation and pass TLS files through Stitchkit's documented `bun.tls` boundary.
+
+### Changed
+
+- **Scaffold identity is rendered from one config.** The generated
+  `app.config.json` drives runtime identity and database naming; only the root
+  package manifest is structurally projected, with no global text search or
+  inert lockfile rewrite.
+- **Development is explicit and portable.** `bun run dev` validates PM2 and
+  external PostgreSQL requirements before side effects. The removed LAN HTTPS
+  mode is documented as application-owned framework configuration instead of a
+  starter subsystem.
+
+### Fixed
+
+- **Fresh clones bootstrap in the right order.** The starter materializes its
+  local environment before Prisma/type gates and reports a missing or placeholder
+  `DATABASE_URL` directly.
+- **Every executable source is checked.** Root TypeScript coverage includes
+  scripts and browser E2E; the authored-source guard scans CJS and reports the
+  real offending line.
+- **Runtime and browser gates prove the backend.** Surface conformance compares
+  HTTP/OpenAPI, MCP, Agent and CLI identities and schemas; browser E2E performs
+  a contract call and realtime cache update.
+- **Repository example uses the canonical realtime contract.** Shared Zod event
+  definitions drive backend emission, browser subscriptions and cache bridging
+  without handwritten event maps.
+
+### Removed
+
+- **Starter-owned LAN HTTPS.** `dev:lan`, certificate generation, onboarding
+  transport and `DEV_HTTPS_*` settings are gone; trusted local TLS remains an
+  application-owned adapter choice documented by Stitchkit.
+
 ## [0.2.0] — 2026-08-10
 
 ### ⚠️ Breaking changes

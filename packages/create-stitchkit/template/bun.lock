@@ -15,8 +15,10 @@
         "@modelcontextprotocol/client": "^2.0.0",
         "@playwright/test": "^1.55.0",
         "@types/bun": "^1.3.14",
+        "@types/node": "^26.2.0",
         "oxc-parser": "^0.143.0",
         "socket.io-client": "^4.8.3",
+        "stitchkit": "catalog:",
         "typescript": "^7.0.2",
         "zod": "^4.4.3",
       },
@@ -74,7 +76,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@app/config": "workspace:*",
-        "@app/db": "workspace:*",
         "@app/shared": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-avatar": "^1.2.6",
@@ -127,7 +128,6 @@
       "name": "@app/shared",
       "version": "0.1.0",
       "dependencies": {
-        "@app/db": "workspace:*",
         "stitchkit": "catalog:",
         "zod": "^4.4.3",
       },

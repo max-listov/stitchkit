@@ -2,7 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { parseSync, Visitor } from 'oxc-parser';
 
-const roots = ['packages', 'scripts'];
+const roots = ['packages', 'scripts', 'e2e'];
+const rootFiles = ['playwright.config.ts', 'ecosystem.config.cjs', 'ecosystem.dev.config.cjs'];
 const processEnvMarker = ['process', 'env'].join('.');
 const replacedThemePackage = ['next', 'themes'].join('-');
 const generatedDirectories = new Set(['.git', '.next', 'dist', 'node_modules']);
@@ -10,20 +11,26 @@ const processEnvBoundaries = new Set([
   'packages/frontend/src/env.ts',
   'packages/config/src/server.ts',
   'scripts/tooling-env.ts',
+  'ecosystem.config.cjs',
+  'ecosystem.dev.config.cjs',
 ]);
+
+function lineAt(source: string, offset: number): number {
+  return source.slice(0, offset).split('\n').length;
+}
 
 function inspect(path: string, source: string): string[] {
   const result = parseSync(path, source);
   const failures = result.errors.map((error) => `${path}: parse error: ${error.message}`);
   const visitor = new Visitor({
     TSAsExpression(node) {
-      failures.push(`${path}:${node.loc?.start.line ?? 1}: type assertion`);
+      failures.push(`${path}:${lineAt(source, node.start)}: type assertion`);
     },
     TSTypeAssertion(node) {
-      failures.push(`${path}:${node.loc?.start.line ?? 1}: type assertion`);
+      failures.push(`${path}:${lineAt(source, node.start)}: type assertion`);
     },
     TSAnyKeyword(node) {
-      failures.push(`${path}:${node.loc?.start.line ?? 1}: explicit any`);
+      failures.push(`${path}:${lineAt(source, node.start)}: explicit any`);
     },
   });
   visitor.visit(result.program);
@@ -62,13 +69,20 @@ async function visitDirectory(directory: string): Promise<string[]> {
       failures.push(...(await visitDirectory(path)));
       continue;
     }
-    if (!['.ts', '.tsx'].includes(extname(path))) continue;
+    if (!['.cjs', '.ts', '.tsx'].includes(extname(path))) continue;
     failures.push(...inspect(path, await readFile(path, 'utf8')));
   }
   return failures;
 }
 
-const failures = (await Promise.all(roots.map(visitDirectory))).flat();
+const failures = [
+  ...(await Promise.all(roots.map(visitDirectory))).flat(),
+  ...(
+    await Promise.all(
+      rootFiles.map(async (path) => inspect(path, await readFile(path, 'utf8'))),
+    )
+  ).flat(),
+];
 const webPackage = await readFile('packages/frontend/package.json', 'utf8');
 if (webPackage.includes(replacedThemePackage)) {
   failures.push(

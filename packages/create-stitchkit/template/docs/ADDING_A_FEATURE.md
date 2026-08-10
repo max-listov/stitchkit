@@ -1,8 +1,9 @@
 # Adding a vertical feature
 
 This guide uses a small `status` resource to show the canonical path. The blank
-scaffold starts with no application surface. In `--example repository` mode,
-keep the repository slice and add the same files beside it.
+scaffold starts with only its HTTP readiness endpoint and no application or tool
+surface. In `--example repository` mode, keep the repository slice and add the
+same files beside it.
 
 ## 1. Define the wire data
 

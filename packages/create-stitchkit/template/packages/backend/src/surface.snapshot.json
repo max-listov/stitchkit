@@ -1,0 +1,18 @@
+[
+  {
+    "service": "system",
+    "action": "status",
+    "scope": "public",
+    "hasInput": false,
+    "hasOutput": true,
+    "inputShape": null,
+    "outputShape": "58b078ade3ee6167",
+    "http": [
+      {
+        "method": "GET",
+        "path": "/api/system/status"
+      }
+    ],
+    "tools": {}
+  }
+]

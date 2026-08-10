@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@app/config": "workspace:*",
-    "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.23",
     "@radix-ui/react-avatar": "^1.2.6",

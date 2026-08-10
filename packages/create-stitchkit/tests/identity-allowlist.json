@@ -1,0 +1,4 @@
+{
+  "comment": "Generated-tree paths allowed to carry the neutral template identity. bun.lock keeps an inert root name (Bun never validates it — ADR 0070); .env.example is the substitution SOURCE local-env.ts renders from; local-env.ts carries the marker literal it substitutes.",
+  "paths": ["bun.lock", ".env.example", "scripts/local-env.ts", "scripts/local-env.test.ts"]
+}

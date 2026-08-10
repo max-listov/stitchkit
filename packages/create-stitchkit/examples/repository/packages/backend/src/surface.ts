@@ -1,14 +1,16 @@
 import { env } from '@app/config';
-import type { ClientToServerEvents, ServerToClientEvents } from '@app/shared';
-import { createSocketIOServer } from 'stitchkit/server';
+import { repositoryRealtimeContract } from '@app/shared';
+import { bindRealtimeServer, createSocketIOServer } from 'stitchkit/server';
 import { createRepositoryService } from './transport/repository-service';
+import { createSystemService } from './transport/system-service';
 
 export async function createSurface() {
-  const socket = await createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
+  const socket = await createSocketIOServer({
     cors: { origin: env.CORS_ORIGIN },
   });
+  const realtime = bindRealtimeServer(repositoryRealtimeContract, socket);
   const repositoryService = createRepositoryService((snapshot) =>
-    socket.io.emit('repository:refreshed', snapshot),
+    realtime.emit('repository:refreshed', snapshot),
   );
-  return { socket, services: [repositoryService] };
+  return { socket, services: [createSystemService(), repositoryService] };
 }

@@ -1,0 +1,58 @@
+[
+  {
+    "service": "repository",
+    "action": "read",
+    "scope": "public",
+    "hasInput": false,
+    "hasOutput": true,
+    "inputShape": null,
+    "outputShape": "49c1f81a53ca82ad",
+    "http": [
+      {
+        "method": "GET",
+        "path": "/api/repository"
+      }
+    ],
+    "tools": {
+      "MCP": "repository_read",
+      "AGENT": "repository_read",
+      "CLI": "repository_read"
+    }
+  },
+  {
+    "service": "repository",
+    "action": "refresh",
+    "scope": "public",
+    "hasInput": false,
+    "hasOutput": true,
+    "inputShape": null,
+    "outputShape": "49c1f81a53ca82ad",
+    "http": [
+      {
+        "method": "POST",
+        "path": "/api/repository/refresh"
+      }
+    ],
+    "tools": {
+      "MCP": "repository_refresh",
+      "AGENT": "repository_refresh",
+      "CLI": "repository_refresh"
+    }
+  },
+  {
+    "service": "system",
+    "action": "status",
+    "scope": "public",
+    "hasInput": false,
+    "hasOutput": true,
+    "inputShape": null,
+    "outputShape": "58b078ade3ee6167",
+    "http": [
+      {
+        "method": "GET",
+        "path": "/api/system/status"
+      }
+    ],
+    "tools": {}
+  }
+]

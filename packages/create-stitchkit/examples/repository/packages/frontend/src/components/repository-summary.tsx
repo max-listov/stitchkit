@@ -52,7 +52,11 @@ export function RepositorySummary() {
     : '—';
 
   return (
-    <div className='mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-xl border border-border bg-card/80 px-4 py-4 text-left backdrop-blur sm:flex-row sm:items-center sm:px-5'>
+    <div
+      className='mx-auto flex w-full max-w-4xl flex-col gap-4 rounded-xl border border-border bg-card/80 px-4 py-4 text-left backdrop-blur sm:flex-row sm:items-center sm:px-5'
+      data-fetched-at={snapshot.cache.fetchedAt}
+      data-testid='repository-summary'
+    >
       <a
         className='group flex min-w-0 flex-1 items-center gap-3'
         href={snapshot.htmlUrl}

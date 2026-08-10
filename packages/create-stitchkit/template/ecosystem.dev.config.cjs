@@ -5,18 +5,6 @@ const identity = require('./app.config.json');
 config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const frontendArgs = ['dev', '--port', process.env.WEB_PORT, '--hostname', '0.0.0.0'];
-if (process.env.DEV_HTTPS_CERT && process.env.DEV_HTTPS_KEY) {
-  frontendArgs.push(
-    '--experimental-https',
-    '--experimental-https-key',
-    process.env.DEV_HTTPS_KEY,
-    '--experimental-https-cert',
-    process.env.DEV_HTTPS_CERT,
-  );
-  if (process.env.DEV_HTTPS_CA) {
-    frontendArgs.push('--experimental-https-ca', process.env.DEV_HTTPS_CA);
-  }
-}
 
 module.exports = {
   apps: [

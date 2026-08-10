@@ -1,8 +1,10 @@
+import { systemContract } from '@app/shared';
+import { createClient, createHttpClient } from 'stitchkit';
 import { z } from 'zod';
 import { runSurfaceConformance } from './surface-conformance';
-import { toolingEnv } from './tooling-env';
+import { loadToolingEnv } from './tooling-env';
 
-const apiOrigin = toolingEnv.NEXT_PUBLIC_API_URL;
+const apiOrigin = loadToolingEnv().NEXT_PUBLIC_API_URL;
 
 async function json(path: string): Promise<unknown> {
   const response = await fetch(`${apiOrigin}${path}`);
@@ -11,13 +13,18 @@ async function json(path: string): Promise<unknown> {
 }
 
 z.object({ status: z.literal('ok') }).parse(await json('/health'));
+const system = createClient(
+  systemContract,
+  createHttpClient({ baseUrl: `${apiOrigin}/api`, credentials: 'omit' }),
+);
+z.object({ status: z.literal('ok') }).parse(await system.status());
 const openApi = z
   .object({ paths: z.record(z.string(), z.unknown()) })
   .parse(await json('/openapi.json'));
-if (Object.keys(openApi.paths).some((path) => path.startsWith('/api/'))) {
-  throw new Error('Blank starter unexpectedly publishes application contracts');
+if (!Object.keys(openApi.paths).includes('/api/system/status')) {
+  throw new Error('System status contract is missing from OpenAPI');
 }
 
 await runSurfaceConformance({ apiOrigin });
 
-console.log('Blank runtime HTTP, OpenAPI and MCP smoke passed');
+console.log('Runtime HTTP, typed client, OpenAPI and MCP smoke passed');
