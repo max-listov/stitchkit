@@ -1,5 +1,6 @@
 'use client';
 
+import { appIdentity } from '@app/config/identity';
 import { IconArrowRight, IconBraces, IconDatabase, IconWorld } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { BrandMark } from '@/components/brand-mark';
@@ -36,7 +37,7 @@ export function LandingHeader({ actions }: { actions?: ReactNode }) {
     <header className='flex items-center justify-between border-b border-border py-4'>
       <div className='flex items-center gap-2 font-medium'>
         <BrandMark priority />
-        Stitchkit Starter
+        {appIdentity.name}
       </div>
       <div className='flex items-center gap-2'>{actions}</div>
     </header>
@@ -152,7 +153,7 @@ export function PricingSection() {
 export function LandingFooter() {
   return (
     <footer className='flex flex-col gap-3 border-t border-border py-8 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between'>
-      <span>Stitchkit Starter · Built with Stitchkit</span>
+      <span>{appIdentity.name} · Built with Stitchkit</span>
       <span>Contracts · UI · Realtime · Tools</span>
     </footer>
   );

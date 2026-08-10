@@ -15,7 +15,13 @@ export async function run(args: string[]): Promise<number> {
 
     const destination = resolve(options.destination);
     const templateDirectory = resolve(import.meta.dir, '../template');
-    await scaffoldProject(templateDirectory, destination);
+    const overlayDirectory = options.example
+      ? resolve(import.meta.dir, `../examples/${options.example}`)
+      : undefined;
+    await scaffoldProject(templateDirectory, destination, {
+      ...(overlayDirectory && { overlayDirectory }),
+      ...(options.displayName && { displayName: options.displayName }),
+    });
 
     if (options.install) {
       const install = spawn(['bun', 'install'], {
@@ -28,7 +34,10 @@ export async function run(args: string[]): Promise<number> {
       if (exitCode !== 0) throw new Error(`bun install failed with exit code ${exitCode}`);
     }
 
-    process.stdout.write(`\nCreated Stitchkit Starter in ${basename(destination)}\n\n`);
+    const mode = options.example ? ` with the ${options.example} example` : '';
+    process.stdout.write(
+      `\nCreated ${options.displayName ?? basename(destination)}${mode}\n\n`,
+    );
     process.stdout.write(`  cd ${options.destination}\n`);
     process.stdout.write('  bun run dev\n\n');
     process.stdout.write('Web: http://localhost:3210\n');

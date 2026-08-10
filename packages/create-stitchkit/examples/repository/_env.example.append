@@ -1,0 +1,4 @@
+GITHUB_REPOSITORY=max-listov/stitchkit
+GITHUB_CACHE_TTL_SECONDS=900
+# Optional. Authenticated conditional requests have a higher GitHub rate limit.
+# GITHUB_TOKEN=github_pat_...

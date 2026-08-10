@@ -11,6 +11,7 @@
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",
+    "dev:lan": "bun scripts/dev-lan.ts",
     "check": "bun run db:generate && bun run check:authored && bun run --filter '*' check",
     "check:authored": "bun scripts/check-authored.ts",
     "test": "bun run --filter '*' test",
@@ -36,6 +37,7 @@
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
+    "@app/config": "workspace:*",
     "@app/shared": "workspace:*",
     "@axe-core/playwright": "^4.11.0",
     "@biomejs/biome": "^2.5.7",

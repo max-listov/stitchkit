@@ -1,20 +1,22 @@
 import { env } from '@app/config';
+import { appIdentity } from '@app/config/identity';
 import { wrapInRequestContext } from 'stitchkit/observability';
 import { createServer, generateOpenApiDocument, openApiRoute } from 'stitchkit/server';
 import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools';
 import { prisma } from './lib/db';
 import { createSurface } from './surface';
 import { onError } from './transport/errors';
+import { createLanOnboardingRoutes } from './transport/lan-onboarding';
 
 async function main(): Promise<void> {
   const { services, socket } = await createSurface();
   const mcp = createMcpHandler({
-    serverInfo: { name: 'stitchkit-starter', version: '0.1.0' },
+    serverInfo: { name: appIdentity.slug, version: appIdentity.version },
     auth: () => ({ scope: 'public' }),
     services,
   });
   const openApi = generateOpenApiDocument({
-    info: { title: 'Stitchkit Starter API', version: '0.1.0' },
+    info: { title: `${appIdentity.name} API`, version: appIdentity.version },
     groups: [{ pathPrefix: '/api', services }],
   });
 
@@ -22,7 +24,7 @@ async function main(): Promise<void> {
     groups: [{ pathPrefix: '/api', services }],
     port: env.API_PORT,
     hostname: '0.0.0.0',
-    cors: { origin: '*' },
+    cors: { origin: env.CORS_ORIGIN },
     hooks: { onError },
     logging: { format: env.LOG_FORMAT },
     websocket: socket.websocket,
@@ -30,6 +32,7 @@ async function main(): Promise<void> {
       socket.route,
       openApiRoute('/openapi.json', openApi),
       createMcpHttpRoute({ path: '/mcp', handler: mcp }),
+      ...createLanOnboardingRoutes(),
       {
         method: 'GET',
         path: '/health',
@@ -37,6 +40,16 @@ async function main(): Promise<void> {
       },
     ],
     wrapFetch: (fetch) => wrapInRequestContext(fetch),
+    bun:
+      env.DEV_HTTPS_CERT && env.DEV_HTTPS_KEY
+        ? {
+            tls: {
+              cert: Bun.file(env.DEV_HTTPS_CERT),
+              key: Bun.file(env.DEV_HTTPS_KEY),
+              ...(env.DEV_HTTPS_CA && { ca: Bun.file(env.DEV_HTTPS_CA) }),
+            },
+          }
+        : undefined,
   });
 
   async function shutdown(): Promise<void> {
@@ -48,7 +61,9 @@ async function main(): Promise<void> {
 
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
-  console.log(`API listening on http://127.0.0.1:${env.API_PORT}`);
+  console.log(
+    `API listening on ${env.DEV_HTTPS_CERT ? 'https' : 'http'}://127.0.0.1:${env.API_PORT}`,
+  );
 }
 
 main().catch((error: unknown) => {

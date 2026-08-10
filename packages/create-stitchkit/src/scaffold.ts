@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, parse, relative, resolve, sep } from 'node:path';
+import { createApplicationIdentity } from './identity';
 
 const TEXT_EXTENSIONS = new Set([
   '.cjs',
@@ -23,7 +24,9 @@ const TEXT_EXTENSIONS = new Set([
 
 const TEMPLATE_RENAMES = new Map([
   ['_env', '.env'],
+  ['_env.append', '.env'],
   ['_env.example', '.env.example'],
+  ['_env.example.append', '.env.example'],
   ['_gitignore', '.gitignore'],
 ]);
 
@@ -69,6 +72,7 @@ export interface MaterialisedTemplateFile {
   sourcePath: string;
   outputPath: string;
   content: string | Uint8Array;
+  append: boolean;
 }
 
 function isUnsafeDestination(destination: string): boolean {
@@ -139,6 +143,7 @@ async function collectMaterialisedFiles(
       sourcePath: portablePath(sourceRelativePath),
       outputPath: portablePath(outputRelativePath),
       content,
+      append: entry.name.endsWith('.append'),
     });
   }
 }
@@ -158,15 +163,25 @@ async function writeMaterialisedFiles(
   for (const file of files) {
     const targetPath = join(destination, file.outputPath);
     await mkdir(dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, file.content);
+    if (file.append) {
+      if (typeof file.content !== 'string') {
+        throw new Error(`Append template entries must contain text: ${file.sourcePath}`);
+      }
+      const existing = await readFile(targetPath, 'utf8');
+      await writeFile(targetPath, `${existing.trimEnd()}\n${file.content.trimStart()}`);
+    } else {
+      await writeFile(targetPath, file.content);
+    }
   }
 }
 
 export async function scaffoldProject(
   templateDirectory: string,
   destination: string,
+  options: { overlayDirectory?: string; displayName?: string } = {},
 ): Promise<void> {
   const resolvedDestination = resolve(destination);
+  const identity = createApplicationIdentity(resolvedDestination, options.displayName);
   const destinationExisted = await assertDestinationAvailable(resolvedDestination);
   await mkdir(resolvedDestination, { recursive: true });
 
@@ -175,6 +190,34 @@ export async function scaffoldProject(
       resolvedDestination,
       await materialiseTemplateFiles(templateDirectory),
     );
+    if (options.overlayDirectory) {
+      await writeMaterialisedFiles(
+        resolvedDestination,
+        await materialiseTemplateFiles(options.overlayDirectory),
+      );
+    }
+    await writeFile(
+      join(resolvedDestination, 'app.config.json'),
+      `${JSON.stringify(identity, undefined, 2)}\n`,
+    );
+    const manifestPath = join(resolvedDestination, 'package.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.name = identity.slug;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`);
+    const lockPath = join(resolvedDestination, 'bun.lock');
+    const lock = await readFile(lockPath, 'utf8');
+    await writeFile(
+      lockPath,
+      lock.replace(/"name"\s*:\s*"stitchkit-starter"/, `"name": "${identity.slug}"`),
+    );
+    for (const environmentPath of ['.env', '.env.example']) {
+      const fullPath = join(resolvedDestination, environmentPath);
+      const environment = await readFile(fullPath, 'utf8');
+      await writeFile(
+        fullPath,
+        environment.replaceAll('stitchkit_starter', identity.slug.replaceAll('-', '_')),
+      );
+    }
   } catch (error) {
     if (!destinationExisted) {
       await rm(resolvedDestination, { recursive: true, force: true });

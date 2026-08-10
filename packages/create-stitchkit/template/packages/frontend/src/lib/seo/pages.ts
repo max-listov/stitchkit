@@ -1,7 +1,8 @@
+import { appIdentity } from '@app/config/identity';
 import { z } from 'zod';
 import type { AppLocale } from '@/i18n/locales';
 
-export const SITE_NAME = 'Stitchkit Starter';
+export const SITE_NAME = appIdentity.name;
 export const StoryIdSchema = z.enum(['components', 'themes', 'blocks']);
 export type StoryId = z.infer<typeof StoryIdSchema>;
 
@@ -42,14 +43,12 @@ const seoPages: Record<SeoPageId, SeoPageDefinition> = {
     copy: {
       en: {
         title: 'UI components',
-        description:
-          'Explore accessible actions, forms, feedback, overlays, data displays and motion components included in the Stitchkit starter.',
+        description: `Explore accessible actions, forms, feedback, overlays, data displays and motion components included in ${SITE_NAME}.`,
         eyebrow: 'UI system',
       },
       ru: {
         title: 'UI-компоненты',
-        description:
-          'Изучите доступные действия, формы, обратную связь, оверлеи, представление данных и анимации в Stitchkit Starter.',
+        description: `Изучите доступные действия, формы, обратную связь, оверлеи, представление данных и анимации в ${SITE_NAME}.`,
         eyebrow: 'UI-система',
       },
     },

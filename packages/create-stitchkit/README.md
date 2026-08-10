@@ -14,11 +14,18 @@ API, Prisma/PostgreSQL, typed shared contracts, Socket.IO, MCP, CLI tools and a
 complete production UI system.
 
 It uses one conventional `packages/*` namespace: `backend`, `frontend`,
-`config`, `db` and `shared`. The copied application keeps the neutral
-`stitchkit-starter` identity until its owner explicitly renames it.
+`config`, `db` and `shared`. The destination name becomes the generated slug;
+`--display-name` sets the human title. Both are recorded once in
+`app.config.json` and drive package, process, transport, UI and SEO identity.
 
-Its runnable example is the Stitchkit Starter: one configurable GitHub repository
-is persisted through a server-side PostgreSQL cache, including a Prisma-backed
+The default scaffold is domain-free. To add the runnable repository example:
+
+```bash
+bun create stitchkit my-app --example repository
+```
+
+The optional example uses one configurable GitHub repository persisted through a
+server-side PostgreSQL cache, including a Prisma-backed
 visibility enum that flows through the shared schema and typed client. `/en/ui`
 presents every reusable primitive and composition. Every public page ships with
 localized metadata, canonical and language alternatives, sitemap coverage and a

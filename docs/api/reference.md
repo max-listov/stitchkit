@@ -51,12 +51,16 @@ The browser-and-server entrypoint. Re-exports everything from
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createSocketIOClient` | function | the typed Socket.IO client — [guide](../guide/realtime.md#client--createsocketioclient) |
+| `createSocketIOClient` | function | low-level typed Socket.IO transport primitive — [guide](../guide/realtime.md#low-level-transport) |
+| `defineRealtimeContract` | function | Zod-first shared Socket.IO event contract — [guide](../guide/realtime.md#zod-first-event-contract) |
+| `createRealtimeClient` | function | inferred, runtime-validated Socket.IO client — [guide](../guide/realtime.md#client--createrealtimeclient) |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `SocketIOClient` | _type_ | the client handle |
 | `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
+| `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
+| `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
@@ -251,6 +255,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createSocketIOServer` | function | the typed Socket.IO server — [guide](../guide/realtime.md#server--createsocketioserver) |
+| `bindRealtimeServer` | function | inferred, runtime-validated connection and broadcast boundary |
+| `RealtimeServer` | _type_ | validated broadcast and connection API inferred from a realtime contract |
+| `RealtimeServerConnection` | _type_ | one validated connection with raw socket access for auth and rooms |
+| `RealtimeServerHandle` | _type_ | minimal Socket.IO server handle accepted by `bindRealtimeServer` |
 | `SocketIOServerConfig` | _type_ | config for `createSocketIOServer` |
 | `SocketIOServerHandle` | _type_ | the `{ io, websocket, route }` handle |
 | `composeWebSocketHandlers` | function | compose one Bun `websocket` from N lanes — a raw binary lane beside Socket.IO ([guide](../guide/realtime.md#raw-binary-lane-bun)) |

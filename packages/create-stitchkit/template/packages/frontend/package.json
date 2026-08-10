@@ -11,6 +11,7 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
+    "@app/config": "workspace:*",
     "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.23",

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/server.ts"
+    ".": "./src/server.ts",
+    "./identity": "./src/identity.ts"
   },
   "scripts": {
     "check": "bun x tsc --noEmit",

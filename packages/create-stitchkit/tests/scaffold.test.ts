@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe('scaffoldProject', () => {
-  test('ships one neutral packages-only application', async () => {
+  test('ships one neutral domain-free packages-only application', async () => {
     const templateRoot = join(import.meta.dir, '..', 'template');
     const rootManifest = await readFile(join(templateRoot, 'package.json'), 'utf8');
     const backendManifest = await readFile(
@@ -32,6 +32,105 @@ describe('scaffoldProject', () => {
     expect(backendManifest).toContain('"name": "@app/backend"');
     expect(frontendManifest).toContain('"name": "@app/frontend"');
     expect(`${rootManifest}${backendManifest}${frontendManifest}`).not.toContain('__PROJECT_');
+    const sharedIndex = await readFile(
+      join(templateRoot, 'packages/shared/src/index.ts'),
+      'utf8',
+    );
+    expect(sharedIndex).not.toContain('repository');
+  });
+
+  test('composes the repository example over the domain-free base', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const overlayRoot = join(import.meta.dir, '..', 'examples/repository');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'app');
+    created.push(parent);
+
+    await scaffoldProject(templateRoot, destination, { overlayDirectory: overlayRoot });
+
+    expect(
+      await readFile(join(destination, 'packages/shared/src/index.ts'), 'utf8'),
+    ).toContain('./contracts/repository');
+    expect(await readFile(join(destination, 'packages/db/schema.prisma'), 'utf8')).toContain(
+      'model RepositorySnapshot',
+    );
+    const environment = await readFile(join(destination, '.env'), 'utf8');
+    expect(environment).toContain('CORS_ORIGIN=*');
+    expect(environment).toContain('GITHUB_REPOSITORY=max-listov/stitchkit');
+    const serverConfig = await readFile(
+      join(destination, 'packages/config/src/server.ts'),
+      'utf8',
+    );
+    expect(serverConfig).toContain('DEV_HTTPS_CERT');
+    expect(serverConfig).toContain('featureServerSchema');
+    expect(await readFile(join(destination, 'scripts/runtime-smoke.ts'), 'utf8')).toContain(
+      'runSurfaceConformance',
+    );
+  });
+
+  test('materialises one validated application identity from the destination', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'talk-control');
+    created.push(parent);
+
+    await scaffoldProject(templateRoot, destination, { displayName: 'Talk Control Console' });
+
+    expect(JSON.parse(await readFile(join(destination, 'app.config.json'), 'utf8'))).toEqual({
+      slug: 'talk-control',
+      name: 'Talk Control Console',
+      version: '0.1.0',
+      description: {
+        en: 'Talk Control Console is a production application built with Stitchkit.',
+        ru: 'Talk Control Console — production-приложение на Stitchkit.',
+      },
+    });
+    expect(JSON.parse(await readFile(join(destination, 'package.json'), 'utf8')).name).toBe(
+      'talk-control',
+    );
+    expect(await readFile(join(destination, 'ecosystem.config.cjs'), 'utf8')).toContain(
+      'identity.slug',
+    );
+    expect(await readFile(join(destination, 'AGENTS.md'), 'utf8')).toContain(
+      'Application agent guide',
+    );
+    expect(await readFile(join(destination, 'docs/ADDING_A_FEATURE.md'), 'utf8')).toContain(
+      'Adding a vertical feature',
+    );
+  });
+
+  test('ships application-local agent guidance without private or maintainer context', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const overlayRoot = join(import.meta.dir, '..', 'examples/repository');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    created.push(parent);
+
+    for (const [name, overlayDirectory] of [
+      ['blank-app', undefined],
+      ['example-app', overlayRoot],
+    ] satisfies [string, string | undefined][]) {
+      const destination = join(parent, name);
+      await scaffoldProject(templateRoot, destination, { overlayDirectory });
+      const guidance = `${await readFile(join(destination, 'AGENTS.md'), 'utf8')}\n${await readFile(join(destination, 'docs/ADDING_A_FEATURE.md'), 'utf8')}`;
+
+      expect(guidance).toContain('packages/shared/src/schemas/status.ts');
+      expect(guidance).toContain('defineSurfaceProbe');
+      expect(guidance).not.toMatch(/Capetown|Gecko|ML Stack|\/home\/|\/Users\//i);
+      expect(guidance).not.toContain('npm publish');
+      expect(guidance).not.toContain('git tag');
+    }
+  });
+
+  test('rejects an invalid destination identity before creating files', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'Talk Control');
+    created.push(parent);
+
+    await expect(scaffoldProject(templateRoot, destination)).rejects.toThrow(
+      'Use lowercase letters, numbers and single hyphens',
+    );
+    await expect(readFile(join(destination, 'package.json'), 'utf8')).rejects.toThrow();
   });
 
   test('ships one server-first theme implementation', async () => {
@@ -87,7 +186,10 @@ describe('scaffoldProject', () => {
     expect(developmentConfig).toContain("script: 'src/index.ts'");
     expect(developmentConfig).toContain("interpreter_args: '--watch'");
     expect(developmentConfig).toContain("script: 'node_modules/.bin/next'");
-    expect(developmentConfig).toContain("args: ['dev', '--port', process.env.WEB_PORT");
+    expect(developmentConfig).toContain(
+      "const frontendArgs = ['dev', '--port', process.env.WEB_PORT",
+    );
+    expect(developmentConfig).toContain('args: frontendArgs');
     expect(developmentConfig.match(/autorestart: true/g)).toHaveLength(2);
   });
 
@@ -98,7 +200,7 @@ describe('scaffoldProject', () => {
     const environment = await readFile(join(templateRoot, '_env'), 'utf8');
 
     expect(rootManifest).toContain('"db:setup": "bun run db:generate && bun run db:deploy"');
-    expect(developmentScript).toContain("await run(['bun', 'run', 'db:setup'])");
+    expect(developmentScript).toContain("await run(['bun', 'run', 'db:setup']");
     expect(`${rootManifest}${developmentScript}${environment}`).not.toContain('docker');
     expect(environment).toContain('DATABASE_URL=postgresql://');
     expect(environment).not.toContain('COMPOSE_PROJECT_NAME');
@@ -115,15 +217,21 @@ describe('scaffoldProject', () => {
     created.push(template, destination);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
     await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
+    await writeFile(
+      join(template, '_env'),
+      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+    );
+    await writeFile(
+      join(template, '_env.example'),
+      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+    );
     await writeFile(join(template, '_gitignore'), 'node_modules\n');
 
     await scaffoldProject(template, destination);
 
     const manifest = await readFile(join(destination, 'package.json'), 'utf8');
-    expect(manifest).toContain('"stitchkit-starter"');
-    expect(await readFile(join(destination, 'bun.lock'), 'utf8')).toContain(
-      '"stitchkit-starter"',
-    );
+    expect(manifest).toContain('"name": "app"');
+    expect(await readFile(join(destination, 'bun.lock'), 'utf8')).toContain('"name": "app"');
     expect(await readFile(join(destination, '.gitignore'), 'utf8')).toBe('node_modules\n');
   });
 
@@ -132,6 +240,15 @@ describe('scaffoldProject', () => {
     const destination = join(await mkdtemp(join(tmpdir(), 'stitchkit-target-')), 'app');
     created.push(template, destination);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
+    await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
+    await writeFile(
+      join(template, '_env'),
+      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+    );
+    await writeFile(
+      join(template, '_env.example'),
+      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+    );
     await mkdir(join(template, 'node_modules/react'), { recursive: true });
     await writeFile(
       join(template, 'node_modules/react/index.js'),
@@ -165,8 +282,10 @@ describe('scaffoldProject', () => {
 
   test('rejects a non-empty destination', async () => {
     const template = await mkdtemp(join(tmpdir(), 'stitchkit-template-'));
-    const destination = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
-    created.push(template, destination);
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'occupied');
+    await mkdir(destination);
+    created.push(template, parent);
     await writeFile(join(destination, 'existing.txt'), 'occupied');
 
     await expect(scaffoldProject(template, destination)).rejects.toThrow(

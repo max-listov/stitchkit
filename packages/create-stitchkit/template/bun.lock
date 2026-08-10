@@ -8,6 +8,7 @@
         "dotenv": "^17.4.2",
       },
       "devDependencies": {
+        "@app/config": "workspace:*",
         "@app/shared": "workspace:*",
         "@axe-core/playwright": "^4.11.0",
         "@biomejs/biome": "^2.5.7",
@@ -72,6 +73,7 @@
       "name": "@app/frontend",
       "version": "0.1.0",
       "dependencies": {
+        "@app/config": "workspace:*",
         "@app/db": "workspace:*",
         "@app/shared": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1.1.23",

@@ -1,3 +1,4 @@
+import { appIdentity } from '@app/config/identity';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
@@ -6,7 +7,6 @@ test('renders the hydrated starter application and catalogue', async ({ page }) 
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
     'Build the product, not the plumbing',
   );
-  await expect(page.getByText('max-listov/stitchkit')).toBeVisible();
   await page.getByRole('link', { name: /UI system/ }).click();
   await expect(page).toHaveURL(/\/en\/ui\/components$/);
   await expect(page.getByRole('heading', { level: 1 })).toContainText('UI components');
@@ -17,7 +17,7 @@ test('publishes complete page metadata and a reachable Open Graph card', async (
   request,
 }) => {
   await page.goto('/en/ui/themes');
-  await expect(page).toHaveTitle('Theme system · Stitchkit Starter');
+  await expect(page).toHaveTitle(`Theme system · ${appIdentity.name}`);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
     /\/en\/ui\/themes$/,
@@ -37,23 +37,6 @@ test('publishes complete page metadata and a reachable Open Graph card', async (
   const sitemapResponse = await request.get('/sitemap.xml');
   expect(sitemapResponse.status()).toBe(200);
   expect(await sitemapResponse.text()).toContain('/ru/ui/themes');
-});
-
-test('spins the refresh icon in place while its action is pending', async ({ page }) => {
-  await page.route('**/api/repository/refresh', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    await route.continue();
-  });
-  await page.goto('/en');
-
-  const refresh = page.getByRole('button', { name: 'Refresh repository data' });
-  await expect(refresh).toHaveCSS('height', '32px');
-  await expect(refresh).toHaveCSS('width', '32px');
-  await expect(refresh.locator('.tabler-icon-refresh')).toHaveCount(1);
-  await refresh.click();
-  await expect(refresh).toHaveAttribute('aria-busy', 'true');
-  await expect(refresh.locator('svg')).toHaveCount(1);
-  await expect(refresh.locator('.tabler-icon-refresh')).toHaveClass(/animate-spin/);
 });
 
 test('switches catalogue sections and component tabs', async ({ page }) => {
@@ -176,7 +159,11 @@ test('keeps long localized navigation labels inside the mobile drawer', async ({
   expect(overflow.page).toBeLessThanOrEqual(1);
 });
 
-test('provides a server-first synchronized theme system', async ({ context, page }) => {
+test('provides a server-first synchronized theme system', async ({
+  browserName,
+  context,
+  page,
+}) => {
   const consoleProblems: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning') {
@@ -210,13 +197,19 @@ test('provides a server-first synchronized theme system', async ({ context, page
   const secondPage = await context.newPage();
   await secondPage.goto('/en/ui/themes');
   await expect(secondPage.locator('html')).toHaveClass(/dark/);
+  await expect(secondPage.getByTestId('theme-state-selected')).not.toContainText('hydrating');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.getByRole('button', { name: 'Light', exact: true }).click();
+  if (browserName === 'webkit') {
+    // Playwright WebKit shares localStorage but does not dispatch cross-page storage events.
+    await secondPage.reload();
+  }
   await expect(secondPage.locator('html')).toHaveClass(/light/);
 
   await page.getByRole('button', { name: 'System', exact: true }).click();
   await expect(page.getByTestId('theme-state-selected')).toContainText('system');
   const themeCookie = (await context.cookies()).find(
-    (cookie) => cookie.name === 'stitchkit-starter-theme',
+    (cookie) => cookie.name === `${appIdentity.slug}-theme`,
   );
   expect(themeCookie?.value).toBe('system');
   await page.reload();

@@ -19,6 +19,12 @@ export { createImplement, implement } from './server/implement';
 export type { LogFormat } from './server/logger';
 export { type NodeServerConfig, type NodeServerHandle, serveNode } from './server/node';
 export {
+  bindRealtimeServer,
+  type RealtimeServer,
+  type RealtimeServerConnection,
+  type RealtimeServerHandle,
+} from './server/realtime';
+export {
   createNodeSocketIOServer as createSocketIOServer,
   type NodeSocketIOServerHandle as SocketIOServerHandle,
   type SocketIOServerConfig,

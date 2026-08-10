@@ -30,11 +30,13 @@ export {
   type UnauthorizedMatcher,
 } from './browser/http';
 export type {
+  RealtimeClient,
+  RealtimeClientOptions,
   SocketEventMap,
   SocketIOClient,
   SocketIOClientConfig,
 } from './browser/socket-io';
-export { createSocketIOClient } from './browser/socket-io';
+export { createRealtimeClient, createSocketIOClient } from './browser/socket-io';
 export { type ParseSSEOptions, parseSSE } from './browser/stream';
 export * from './contract';
 // W3C trace helpers — browser-safe (Web Crypto only), shared with the server's
@@ -46,4 +48,5 @@ export {
   parseTraceparent,
   type TraceContext,
 } from './observability/trace';
+export * from './realtime';
 export { createRetainedTopics, type RetainedTopics } from './retained';

@@ -1,7 +1,6 @@
 import { IconArrowUpRight } from '@tabler/icons-react';
 import Image from 'next/image';
 import { BrandMark } from '@/components/brand-mark';
-import { RepositorySummary } from '@/components/repository-summary';
 import { LanguageSwitcher, ThemeToggle } from '@/components/system-controls';
 import { buttonVariants } from '@/components/ui';
 import type { AppLocale } from '@/i18n/locales';
@@ -140,9 +139,9 @@ export function StarterPage({
               </div>
             </div>
 
-            <div className='mt-5 w-full'>
-              <RepositorySummary />
-            </div>
+            <p className='mt-5 text-sm text-muted-foreground'>
+              Add your first vertical feature from schema to transport and UI.
+            </p>
           </section>
         </div>
       </div>

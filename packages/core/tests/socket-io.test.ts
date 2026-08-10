@@ -1,7 +1,14 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
-import { createSocketIOClient, type SocketIOClientConfig } from '../src/browser/socket-io';
+import { z } from 'zod';
+import {
+  createRealtimeClient,
+  createSocketIOClient,
+  type SocketIOClientConfig,
+} from '../src/browser/socket-io';
+import { defineRealtimeContract } from '../src/realtime';
 import { type BunServer, createServer } from '../src/server/bun';
+import { bindRealtimeServer } from '../src/server/realtime';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
 import type { RawRoute } from '../src/server/types';
 import { composeWebSocketHandlers, webSocketLane } from '../src/server/websocket';
@@ -37,6 +44,15 @@ function whenConnected(client: {
       }
     });
   });
+}
+
+async function within<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    Bun.sleep(1_000).then(() => {
+      throw new Error(`${label} timed out`);
+    }),
+  ]);
 }
 
 function makeClient() {
@@ -100,6 +116,138 @@ describe('Socket.IO wrappers', () => {
     const client = makeClient();
     expect(() => client.emit('ping', { n: 0 })).not.toThrow();
     expect(client.connected).toBe(false);
+  });
+});
+
+const realtimeContract = defineRealtimeContract({
+  serverToClient: {
+    pong: { args: z.tuple([z.object({ n: z.number() })]) },
+    blob: { args: z.tuple([z.instanceof(Uint8Array)]) },
+  },
+  clientToServer: {
+    ping: {
+      args: z.tuple([z.object({ n: z.number() })]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
+    ready: { args: z.tuple([]) },
+  },
+});
+
+const rejectedRealtimeEvents: string[] = [];
+const readyRealtimeEvents: boolean[] = [];
+let handledRealtimePings = 0;
+const realtimeHandle = await createSocketIOServer({ cors: { origin: '*' } });
+const realtime = bindRealtimeServer(realtimeContract, realtimeHandle, {
+  onRejected: ({ event, phase }) => {
+    rejectedRealtimeEvents.push(`${event}:${phase}`);
+  },
+});
+realtime.onConnection(({ events }) => {
+  events.on('ping', ({ n }, acknowledge) => {
+    handledRealtimePings += 1;
+    acknowledge({ accepted: true });
+    events.emit('pong', { n: n + 1 });
+    events.emit('blob', Buffer.from([1, 2, 3]));
+  });
+  events.on('ready', () => {
+    readyRealtimeEvents.push(true);
+  });
+});
+const realtimeServer = createServer({
+  port: 0,
+  websocket: realtimeHandle.websocket,
+  rawRoutes: [realtimeHandle.route],
+});
+const REALTIME_URL = `http://localhost:${realtimeServer.port}`;
+
+describe('Zod-first realtime contracts', () => {
+  afterAll(() => {
+    realtimeServer.stop(true);
+  });
+
+  test('validates tuples, acknowledgements, no-payload and binary events', async () => {
+    const clientRejection = Promise.withResolvers<string>();
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onRejected: ({ event, phase }) => clientRejection.resolve(`${event}:${phase}`),
+    });
+    const pong = new Promise<{ n: number }>((resolve) => client.on('pong', resolve));
+    const binary = new Promise<Uint8Array>((resolve) => client.on('blob', resolve));
+    const acknowledgement = Promise.withResolvers<{ accepted: boolean }>();
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    client.emit('ping', { n: 4 }, acknowledgement.resolve);
+    client.emit('ready');
+
+    expect(await within(acknowledgement.promise, 'acknowledgement')).toEqual({
+      accepted: true,
+    });
+    expect(await within(pong, 'pong')).toEqual({ n: 5 });
+    const binaryOrRejection = await within(
+      Promise.race([
+        binary.then((value) => ({ value })),
+        clientRejection.promise.then((rejection) => ({ rejection })),
+      ]),
+      'binary',
+    );
+    expect(binaryOrRejection).toEqual({ value: new Uint8Array([1, 2, 3]) });
+    await Bun.sleep(20);
+    expect(readyRealtimeEvents).toContain(true);
+    client.disconnect();
+  });
+
+  test('rejects malformed inbound arguments before the application handler', async () => {
+    const raw = createSocketIOClient<ServerEvents, { ping: (value: unknown) => void }>({
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    raw.connect();
+    await whenConnected(raw);
+    raw.emit('ping', { n: 'wrong' });
+    await Bun.sleep(20);
+    expect(rejectedRealtimeEvents).toContain('ping:arguments');
+    raw.disconnect();
+  });
+
+  test('requires a declared acknowledgement before the application handler', async () => {
+    const raw = createSocketIOClient<ServerEvents, { ping: (value: unknown) => void }>({
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    const handledBefore = handledRealtimePings;
+    raw.connect();
+    await whenConnected(raw);
+    raw.emit('ping', { n: 7 });
+    await Bun.sleep(20);
+    expect(rejectedRealtimeEvents).toContain('ping:acknowledgement');
+    expect(handledRealtimePings).toBe(handledBefore);
+    raw.disconnect();
+  });
+
+  test('rejects malformed server events before a client handler', async () => {
+    let handled = false;
+    const rejection = Promise.withResolvers<string>();
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onRejected: ({ event, phase }) => rejection.resolve(`${event}:${phase}`),
+    });
+    client.on('pong', () => {
+      handled = true;
+    });
+    client.connect();
+    await whenConnected(client);
+    realtimeHandle.io.emit('pong', { n: 'wrong' });
+    expect(await within(rejection.promise, 'client rejection')).toBe('pong:arguments');
+    expect(handled).toBeFalse();
+    client.disconnect();
+  });
+
+  test('fails synchronously before publishing malformed outbound values', () => {
+    const client = createRealtimeClient(realtimeContract, { url: REALTIME_URL });
+    expect(() => Reflect.apply(client.emit, client, ['ready', 'unexpected'])).toThrow();
   });
 });
 

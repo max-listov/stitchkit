@@ -6,35 +6,61 @@ WebSocket engine; it ships thin, typed wrappers over Socket.IO and a bridge that
 syncs socket events into the TanStack Query cache. See
 [ADR 0008](../decisions/0008-thin-wrappers.md).
 
-## Typed events
+## Zod-first event contract
 
-Declare the event maps once, in the shared module — both sides import them:
+Declare wire events once in the shared module. Each `args` schema is a tuple, so
+Socket.IO's no-payload and variadic forms stay intact; `ack` describes the value
+returned through an acknowledgement callback.
 
 ```ts
 // shared/contracts.ts
-export interface ServerToClientEvents {
-  'note:created': (note: Note) => void
-  'note:deleted': (id: string) => void
-}
-export interface ClientToServerEvents {
-  'room:join': (room: string) => void
-}
+import { defineRealtimeContract } from 'stitchkit'
+import { z } from 'zod'
+
+export const realtimeContract = defineRealtimeContract({
+  serverToClient: {
+    'note:created': { args: z.tuple([NoteSchema]) },
+    'note:deleted': { args: z.tuple([z.string()]) },
+  },
+  clientToServer: {
+    'room:join': {
+      args: z.tuple([z.string()]),
+      ack: z.object({ joined: z.boolean() }),
+    },
+    ready: { args: z.tuple([]) },
+  },
+})
 ```
 
-Every `emit` and `on` on both the server and client wrapper is typed against
-these maps.
+The contract derives every event handler type and validates both directions at
+runtime. A malformed inbound tuple never reaches the application handler;
+invalid outbound data throws before Socket.IO publishes it. Rejections call the
+optional `onRejected` hook with event, direction, phase and the Zod error.
 
 ## Server — `createSocketIOServer`
 
 ```ts
-import { createServer, createSocketIOServer } from 'stitchkit/server'
+import {
+  bindRealtimeServer,
+  createServer,
+  createSocketIOServer,
+} from 'stitchkit/server'
+import { realtimeContract } from '@app/shared'
 
-const socket = await createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
+const socket = await createSocketIOServer({
   cors: { origin: 'https://app.example.com' },
 })
 
-socket.io.on('connection', (s) => {
-  s.on('room:join', (room) => s.join(room))   // rooms, handshake auth — your logic
+const realtime = bindRealtimeServer(realtimeContract, socket, {
+  onRejected: (event) => audit.realtimeRejected(event),
+})
+
+realtime.onConnection(({ raw, events, to }) => {
+  events.on('room:join', (room, acknowledge) => {
+    raw.join(room) // authorization and room membership remain application policy
+    acknowledge({ joined: true })
+    to(room).emit('note:created', note)
+  })
 })
 ```
 
@@ -47,13 +73,13 @@ createServer({
   rawRoutes: [socket.route],     // ready-made /socket.io/*socketPath route
 })
 
-// elsewhere — broadcast:
-socket.io.emit('note:created', note)
+// elsewhere — validated broadcast:
+realtime.emit('note:created', note)
 ```
 
 | Handle field | Purpose |
 |--------------|---------|
-| `io` | the typed Socket.IO server — attach `connection` handlers, broadcast |
+| `io` | raw Socket.IO server for middleware, handshake auth and transport ownership |
 | `websocket` | Bun WebSocket handlers — pass to `createServer({ websocket })` |
 | `route` | the `/socket.io/*socketPath` raw route — pass to `createServer({ rawRoutes })` |
 
@@ -75,19 +101,28 @@ precedence over the same keys in `serverOptions`. On Bun the engine-level option
 `@socket.io/bun-engine` too — so a configured `maxHttpBufferSize` actually applies
 instead of silently truncating at 1 MB.
 
-## Client — `createSocketIOClient`
+## Client — `createRealtimeClient`
 
 ```ts
-import { createSocketIOClient } from 'stitchkit'
+import { createRealtimeClient } from 'stitchkit'
+import { realtimeContract } from '@app/shared'
 
-const socket = createSocketIOClient<ServerToClientEvents, ClientToServerEvents>({
+const socket = createRealtimeClient(realtimeContract, {
   url: 'https://api.example.com',
+  retain: ['note:created'],
+  onRejected: (event) => reportClientError(event),
 })
 
 socket.connect()
 socket.on('note:created', (note) => { /* typed note */ })
-socket.emit('room:join', 'general')   // typed
+socket.emit('room:join', 'general', ({ joined }) => { /* typed + validated */ })
 ```
+
+## Low-level transport
+
+`createSocketIOClient` remains the low-level Socket.IO transport wrapper for
+schema-agnostic infrastructure. Application wire events should use
+`createRealtimeClient`; it adds the shared contract without replacing Socket.IO.
 
 ### Durable subscriptions
 
@@ -108,7 +143,7 @@ subscribes (and on the next subscribe after a re-render). It is the pub/sub
 analogue of an MQTT *retained* message or an RxJS `BehaviorSubject`.
 
 ```ts
-const client = createSocketIOClient<ServerEvents, ClientEvents>({
+const client = createRealtimeClient(realtimeContract, {
   url,
   retain: ['presence:changed', 'job:state'],   // events to keep the last value of
 })
@@ -145,7 +180,7 @@ handshake with **`auth`** instead — the token reaches the server as
 // client — a function is re-read on every (re)connect, so a rotated token is
 // picked up automatically; no need to recreate the client (or lose durable
 // subscriptions). It may be async.
-const socket = createSocketIOClient<ServerToClientEvents, ClientToServerEvents>({
+const socket = createRealtimeClient(realtimeContract, {
   url: 'https://api.example.com',
   auth: () => ({ token: getAccessToken() }),
 })

@@ -1,6 +1,5 @@
 {
   "App": {
-    "title": "Stitchkit Starter",
     "description": "A compact production base with one typed contract across HTTP, MCP, agents and the browser — ready for your product, not a demo domain.",
     "heroTitle": "Build the product, not the plumbing.",
     "ui": "UI system"

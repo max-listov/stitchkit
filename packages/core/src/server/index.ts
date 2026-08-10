@@ -99,6 +99,12 @@ export {
 export { createRateLimiter, type RateLimitConfig } from './rate-limit';
 export { errorResponse, parseBody, respondJson } from './raw';
 export {
+  bindRealtimeServer,
+  type RealtimeServer,
+  type RealtimeServerConnection,
+  type RealtimeServerHandle,
+} from './realtime';
+export {
   type ClientIpOptions,
   extractIp,
   generateTraceId,

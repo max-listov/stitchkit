@@ -1,0 +1,3 @@
+GITHUB_REPOSITORY=max-listov/stitchkit
+GITHUB_CACHE_TTL_SECONDS=900
+# GITHUB_TOKEN=github_pat_...

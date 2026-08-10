@@ -6,6 +6,29 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-10
+
+### ⚠️ Breaking changes
+
+- **The default scaffold is now domain-free.** The repository example is explicit
+  so a new product does not need to dismantle demo code.
+  `bun create stitchkit my-app` now creates the blank base; use
+  `bun create stitchkit my-app --example repository` for the previous runnable example.
+
+### Added
+
+- **One generated application identity.** A validated `app.config.json` now drives
+  package, PM2, MCP, OpenAPI, CLI, SEO and theme identity from one edit point.
+- **Contract-derived surface conformance.** Generated runtime smoke compares the
+  registered HTTP and tool manifest with live OpenAPI and MCP discovery, while
+  explicit typed probes remain application-owned.
+- **Optional trusted LAN HTTPS.** `bun run dev:lan` uses mkcert, exact-origin CORS
+  and a development-only onboarding route for secure-context testing on physical
+  devices without changing ordinary development or production behavior.
+- **Agent-first extension guide.** Generated applications include an application-
+  scoped `AGENTS.md` and a complete schema-to-runtime feature workflow in
+  `docs/ADDING_A_FEATURE.md`.
+
 ## [0.1.1] — 2026-08-10
 
 ### Changed

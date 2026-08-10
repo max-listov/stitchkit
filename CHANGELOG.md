@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-08-10
+
+### Added
+
+- **Zod-first realtime contracts over Socket.IO.** `defineRealtimeContract`
+  describes variadic event tuples and acknowledgements once;
+  `bindRealtimeServer` and `createRealtimeClient` infer both event maps and
+  validate inbound arguments, outbound payloads and acknowledgement values.
+  Handshake auth, rooms and delivery policy remain application-owned, while
+  durable subscriptions, retained events and the cache bridge keep their
+  existing Socket.IO behavior.
+
 ## [0.44.1] — 2026-08-10
 
 ### Documentation

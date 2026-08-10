@@ -21,6 +21,15 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 import type { EventsMap } from '@socket.io/component-emitter';
+import type {
+  RealtimeContract,
+  RealtimeEventRegistry,
+  RealtimeRejectedEventHook,
+} from '../realtime/contract';
+import {
+  createValidatedRealtimeSocket,
+  type ValidatedRealtimeSocket,
+} from '../realtime/socket';
 import { createRetainedTopics } from '../retained';
 
 // `socket.io-client` is loaded lazily (see `loadIo`) so it stays OUT of the
@@ -179,6 +188,63 @@ export interface SocketIOClient<
    * `(connected: boolean) => void` listener keeps working unchanged.
    */
   onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
+}
+
+export interface RealtimeClient<
+  TServerToClient extends RealtimeEventRegistry,
+  TClientToServer extends RealtimeEventRegistry,
+> extends ValidatedRealtimeSocket<TServerToClient, TClientToServer> {
+  connect(): void;
+  disconnect(): void;
+  readonly connected: boolean;
+  onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
+}
+
+export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegistry>
+  extends SocketIOClientConfig<{
+    [TEvent in keyof TServerToClient]: (...args: unknown[]) => void;
+  }> {
+  onRejected?: RealtimeRejectedEventHook;
+}
+
+export function createRealtimeClient<
+  const TServerToClient extends RealtimeEventRegistry,
+  const TClientToServer extends RealtimeEventRegistry,
+>(
+  contract: RealtimeContract<TServerToClient, TClientToServer>,
+  { onRejected, ...config }: RealtimeClientOptions<TServerToClient>,
+): RealtimeClient<TServerToClient, TClientToServer> {
+  const transport = createSocketIOClient<SocketEventMap, SocketEventMap>(config);
+  const events = createValidatedRealtimeSocket({
+    target: transport,
+    inbound: contract.serverToClient,
+    outbound: contract.clientToServer,
+    inboundDirection: 'client-inbound',
+    outboundDirection: 'client-outbound',
+    onRejected,
+    subscribe: (event, handler) => {
+      const subscribe = Reflect.get(transport, 'on');
+      if (typeof subscribe !== 'function') {
+        throw new Error('Socket.IO client does not implement on()');
+      }
+      const unsubscribe = Reflect.apply(subscribe, transport, [event, handler]);
+      if (typeof unsubscribe !== 'function') {
+        throw new Error('Socket.IO client on() did not return an unsubscribe function');
+      }
+      return () => {
+        Reflect.apply(unsubscribe, undefined, []);
+      };
+    },
+  });
+  return {
+    ...events,
+    connect: transport.connect,
+    disconnect: transport.disconnect,
+    get connected() {
+      return transport.connected;
+    },
+    onConnectionChange: transport.onConnectionChange,
+  };
 }
 
 export function createSocketIOClient<

@@ -28,8 +28,10 @@ for (const name of entrypoints) {
   console.log(`import ${name}: OK`);
 }
 
-const { defineContract } = await import('stitchkit');
-const { createSocketIOServer, implement, serveNode } = await import('stitchkit/node');
+const { defineContract, defineRealtimeContract } = await import('stitchkit');
+const { bindRealtimeServer, createSocketIOServer, implement, serveNode } = await import(
+  'stitchkit/node'
+);
 const { z } = await import('zod');
 
 // 2 — serveNode HTTP round-trip.
@@ -78,24 +80,54 @@ await http.close();
 // 3 — serveNode + Socket.IO round-trip (WebSocket).
 const { io: ioClient } = await import('socket.io-client');
 const socket = await createSocketIOServer({ cors: { origin: '*' } });
-socket.io.on('connection', (s) => s.on('ping', (n) => s.emit('pong', n + 1)));
+const realtimeContract = defineRealtimeContract({
+  serverToClient: { pong: { args: z.tuple([z.number()]) } },
+  clientToServer: {
+    ping: {
+      args: z.tuple([z.number()]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
+  },
+});
+bindRealtimeServer(realtimeContract, socket).onConnection(({ events }) => {
+  events.on('ping', (n, acknowledge) => {
+    acknowledge({ accepted: true });
+    events.emit('pong', n + 1);
+  });
+});
 const realtime = await serveNode({ socket, port: 0 });
 
 const client = ioClient(realtime.url, { transports: ['websocket'] });
-const pong = await new Promise((resolve, reject) => {
+const roundTrip = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('socket round-trip timed out')), 8000);
-  client.on('connect', () => client.emit('ping', 41));
-  client.on('pong', (n) => {
+  let acknowledgement;
+  let pong;
+  const finish = () => {
+    if (!acknowledgement || pong === undefined) return;
     clearTimeout(timer);
-    resolve(n);
+    resolve({ acknowledgement, pong });
+  };
+  client.on('connect', () =>
+    client.emit('ping', 41, (value) => {
+      acknowledgement = value;
+      finish();
+    }),
+  );
+  client.on('pong', (n) => {
+    pong = n;
+    finish();
   });
   client.on('connect_error', (e) => {
     clearTimeout(timer);
     reject(e);
   });
 });
-assert.equal(pong, 42, 'Socket.IO round-trip should pong 42');
-console.log('serveNode Socket.IO round-trip: OK');
+assert.deepEqual(
+  roundTrip,
+  { acknowledgement: { accepted: true }, pong: 42 },
+  'Socket.IO round-trip should validate its acknowledgement and pong 42',
+);
+console.log('serveNode Socket.IO acknowledgement round-trip: OK');
 client.close();
 await realtime.close();
 

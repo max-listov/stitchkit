@@ -1,9 +1,10 @@
+import { appIdentity } from '@app/config/identity';
 import type { ThemeProviderProps } from '@wrksz/themes/next';
 
 export type AppTheme = 'light' | 'dark';
 
 export const appThemes: readonly [AppTheme, AppTheme] = ['light', 'dark'];
-export const themeStorageKey = 'stitchkit-starter-theme';
+export const themeStorageKey = `${appIdentity.slug}-theme`;
 
 export const themeProviderConfig = {
   themes: appThemes,
