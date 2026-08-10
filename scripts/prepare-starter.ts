@@ -5,9 +5,11 @@ import { ensureLocalEnvironment } from '../packages/create-stitchkit/template/sc
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = resolve(repositoryRoot, 'packages/create-stitchkit/template');
-const environment = parse(await readFile(resolve(templateRoot, '_env'), 'utf8'));
 
-await ensureLocalEnvironment(templateRoot);
+// Self-heal first — the template ships no `.env`; a fresh checkout gets one
+// rendered from `.env.example`, and a developer's existing file is kept.
+ensureLocalEnvironment(templateRoot);
+const environment = parse(await readFile(resolve(templateRoot, '.env'), 'utf8'));
 
 async function run(command: string[], env = Bun.env): Promise<void> {
   const child = Bun.spawn(command, {
