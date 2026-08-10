@@ -81,7 +81,9 @@ jobs:
           PUBLISHED_SHA="$(npm view "$PACKAGE@$VERSION" dist.shasum 2>/dev/null || true)"
           ACTION="$(bun scripts/release-plan.ts publish-action "$EXPECTED_SHA" "$PUBLISHED_SHA")"
           if [ "$ACTION" = "publish" ]; then
-            npm publish "$TARBALL" --provenance --access public
+            # The explicit ./ prefix keeps npm from parsing the relative path
+            # as a GitHub owner/repo shorthand.
+            npm publish "./$TARBALL" --provenance --access public
           fi
           bun scripts/wait-for-npm-publication.ts "$PACKAGE" "$VERSION"
 
