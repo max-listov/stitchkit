@@ -213,7 +213,9 @@ test('provides a server-first synchronized theme system', async ({
   );
   expect(themeCookie?.value).toBe('system');
   await page.reload();
-  await expect(page.getByTestId('theme-state-server-cookie')).toContainText('system');
+  const serverCookieState = page.getByTestId('theme-state-server-cookie');
+  await expect(serverCookieState).toHaveCount(1);
+  await expect(serverCookieState).toContainText('system');
   expect(
     consoleProblems.filter((message) =>
       /hydration|useServerInsertedHTML|inline script/i.test(message),

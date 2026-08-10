@@ -25,17 +25,35 @@ await runSurfaceConformance({
       output: RepositorySnapshotSchema,
       run: async ({ path }) => {
         const socket = io(apiOrigin, { transports: ['websocket'] });
-        const refreshedEvent = new Promise<string>((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error('Socket.IO repository refresh event timed out')),
-            5_000,
-          );
-          socket.once('repository:refreshed', (snapshot) => {
-            clearTimeout(timeout);
-            resolve(snapshot.fullName);
-          });
-        });
         try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error('Socket.IO connection timed out')),
+              5_000,
+            );
+            const onConnect = () => {
+              clearTimeout(timeout);
+              socket.off('connect_error', onConnectError);
+              resolve();
+            };
+            const onConnectError = (error: Error) => {
+              clearTimeout(timeout);
+              socket.off('connect', onConnect);
+              reject(error);
+            };
+            socket.once('connect', onConnect);
+            socket.once('connect_error', onConnectError);
+          });
+          const refreshedEvent = new Promise<string>((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error('Socket.IO repository refresh event timed out')),
+              5_000,
+            );
+            socket.once('repository:refreshed', (snapshot) => {
+              clearTimeout(timeout);
+              resolve(snapshot.fullName);
+            });
+          });
           const refreshed = RepositorySnapshotSchema.parse(
             await json(path, { method: 'POST' }),
           );
