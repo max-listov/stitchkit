@@ -6,7 +6,18 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-10
+
 ### ⚠️ Breaking changes
+
+- **Generated projects ship no `.env`.** The single environment source is
+  `.env.example`; `bun run env:ensure` (and every tooling entry point,
+  self-healing before validation) renders `.env` with the application-derived
+  database name. A clone and a post-generation rename now produce the same
+  database, and the second-developer path (`runtime:smoke`, `e2e`) works
+  unaided.
+  `// before: scaffold writes .env with a neutral database name` →
+  `// after:  .env is rendered on first run from .env.example`
 
 - **Starter-owned LAN HTTPS is removed.** Generated applications no longer ship
   `dev:lan`, certificate generation, onboarding routes or `DEV_HTTPS_*` settings.
@@ -15,6 +26,16 @@ is declared in the template root catalog.
 
 ### Changed
 
+- **Surface conformance is anchored and total.** The declared surface is
+  compared against a committed `surface.snapshot.json` (with schema-shape
+  digests, regenerated deliberately via `bun run surface:snapshot`), the CLI is
+  observed by spawning the real process, missing `x-stitchkit-*` metadata is an
+  error unless a standard-document mode is declared explicitly, and the starter
+  lane sweeps generated trees for neutral-identity leaks against a committed
+  allowlist.
+- **The template targets Stitchkit 0.46.** The error-code map covers
+  `REALTIME_CONTRACT_VIOLATION` and conformance validates the operation
+  metadata 0.46 emits.
 - **Scaffold identity is rendered from one config.** The generated
   `app.config.json` drives runtime identity and database naming; only the root
   package manifest is structurally projected, with no global text search or

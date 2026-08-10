@@ -125,10 +125,6 @@ export async function runSurfaceConformance({
       // snapshot above; CLI is observed by spawning the real CLI.
       agentToolNames: Object.keys(mountAgent(services)),
       cliToolNames: await discoverCliCommands(),
-      // stitchkit 0.45 emits no x-stitchkit-* operation metadata — the skip is
-      // DECLARED here, not silent. Flip to the default 'require' when the
-      // installed stitchkit starts emitting it.
-      metadata: 'ignore',
     });
     for (const probe of probes) {
       try {

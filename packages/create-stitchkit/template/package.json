@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.45.0"
+    "stitchkit": "^0.46.0"
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",

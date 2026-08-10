@@ -1,10 +1,7 @@
 import type { StitchErrorCode } from 'stitchkit';
 import { createErrorHook } from 'stitchkit/server';
 
-// The union keeps this map exhaustive on BOTH the released framework and the
-// upcoming one, which adds `REALTIME_CONTRACT_VIOLATION` to `StitchErrorCode`.
-// Collapse it back to `Record<StitchErrorCode, string>` after upgrading.
-const codeMap: Record<StitchErrorCode | 'REALTIME_CONTRACT_VIOLATION', string> = {
+const codeMap: Record<StitchErrorCode, string> = {
   BAD_REQUEST: 'bad_request',
   VALIDATION_ERROR: 'validation_error',
   UNAUTHORIZED: 'unauthorized',

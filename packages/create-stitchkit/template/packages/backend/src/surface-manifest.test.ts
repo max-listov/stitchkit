@@ -63,8 +63,6 @@ describe('surface conformance', () => {
         mcpToolNames: ['read_note'],
         agentToolNames: ['read_note'],
         cliToolNames: ['read_note'],
-        // stitchkit 0.45 emits no x-stitchkit-* metadata yet — declared, not silent.
-        metadata: 'ignore',
       }),
     ).not.toThrow();
   });
@@ -133,7 +131,6 @@ describe('surface conformance', () => {
         mcpToolNames: ['read_note'],
         agentToolNames: [],
         cliToolNames: ['read_note'],
-        metadata: 'ignore',
       }),
     ).toThrow('AGENT mount surface mismatch');
     expect(() =>
@@ -143,7 +140,6 @@ describe('surface conformance', () => {
         mcpToolNames: ['read_note'],
         agentToolNames: ['read_note'],
         cliToolNames: [],
-        metadata: 'ignore',
       }),
     ).toThrow('CLI manifest surface mismatch');
   });
