@@ -138,6 +138,40 @@ stateless. `legacy: 'serve'` (default) lets the official SDK negotiate supported
 pre-2026 stateless clients on the same endpoint; `legacy: 'reject'` makes it
 modern-only. This is not a stateful compatibility transport.
 
+#### Output shape depends on the negotiated protocol era
+
+Stitchkit always validates the handler result against the declared output
+schema. The negotiated MCP era determines only its wire representation:
+
+| Negotiated era | Non-object `structuredContent` |
+|---|---|
+| MCP `2026-07-28` | the exact schema-valid JSON root: array, scalar or `null` |
+| supported legacy era | the official SDK codec adapts it to `{ result: value }` |
+
+Object roots keep their object shape in both eras. Do not change every consumer
+expectation to the modern shape while `legacy: 'serve'` remains enabled. Pin
+both protocol versions in the consumer's transport E2E and assert the boundary
+explicitly:
+
+```ts
+await expectToolOutputForProtocol('2026-07-28', ['a', 'b'])
+await expectToolOutputForProtocol('2025-11-25', { result: ['a', 'b'] })
+
+async function expectToolOutputForProtocol(
+  protocolVersion: '2026-07-28' | '2025-11-25',
+  expected: unknown,
+) {
+  const client = await connectConsumerMcpClient({ protocolVersion })
+  const result = await client.callTool({ name: 'list_notes', arguments: {} })
+  expect(result.structuredContent).toEqual(expected)
+  await client.close()
+}
+```
+
+`connectConsumerMcpClient` represents the consumer's real HTTP or stdio setup;
+configure its official client with `versionNegotiation.mode.pin` so the test
+cannot silently negotiate a different era.
+
 The stdio helper now returns an owned lifecycle handle:
 
 ```ts

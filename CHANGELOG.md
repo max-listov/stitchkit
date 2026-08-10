@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.44.1] — 2026-08-10
+
+### Documentation
+
+- **Clarified dual-era MCP output semantics.** The migration guide and 0.44.0
+  release notes now distinguish exact JSON roots on protocol `2026-07-28` from
+  the official legacy codec's `{ result: value }` adaptation, with a pinned
+  consumer E2E example for both eras.
+
 ## [0.44.0] — 2026-08-10
 
 ### ⚠️ Breaking changes
@@ -69,14 +78,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   })
   ```
 
-- **MCP non-object outputs keep their declared JSON shape.** Modern MCP permits
-  any JSON root value, so Stitchkit no longer adds an artificial `result`
-  property. The official SDK remains responsible for adapting older protocol
-  eras.
+- **MCP non-object outputs keep their declared JSON shape in the modern
+  protocol.** MCP `2026-07-28` permits any JSON root value, so Stitchkit no
+  longer adds an artificial `result` property on that wire path. When
+  `legacy: 'serve'` negotiates a supported older era, the official SDK codec
+  still adapts a non-object value to `{ result: value }`.
 
   ```ts
   // before: structuredContent === { result: ['a', 'b'] }
-  // after:  structuredContent === ['a', 'b']
+  // modern 2026-07-28: structuredContent === ['a', 'b']
+  // supported legacy:  structuredContent === { result: ['a', 'b'] }
   ```
 
 ### Added
