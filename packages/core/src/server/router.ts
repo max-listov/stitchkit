@@ -2,11 +2,7 @@
  * Route matching — contract route table (build / match / validate) and the
  * raw-route matcher. The handler pipeline lives in `create.ts`.
  */
-import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { parseTrailingWildcard } from '../internal/route-pattern';
-import { isWithinDir } from '../internal/within-dir';
-import { mimeForPath } from './mime';
 import type { LifecycleHooks, MethodDef, RawRoute, ServiceDef } from './types';
 
 /** A service mounted under a path prefix, carrying optional group hooks. */
@@ -281,47 +277,4 @@ export function matchRawRoute<TServer>(
 /** Validate raw route parameter and named-wildcard structure once at startup. */
 export function validateRawRoutes<TServer>(rawRoutes: RawRoute<TServer>[] | undefined): void {
   for (const route of rawRoutes ?? []) parseTrailingWildcard(route.path);
-}
-
-/**
- * Build a `RawRoute` that serves files from `dir` under `prefix`. Basic by
- * design — no Range, no conditional requests, reads the whole file into memory;
- * for media seeking / caching use `serveFile`, or put a CDN in front. Rejects
- * path traversal (including the percent-encoded form); 404 for a missing file.
- * Uses `node:fs`, so it runs on both Bun and Node.
- */
-export function staticRoute(prefix: string, dir: string): RawRoute {
-  const cleanPrefix = prefix.replace(/\/+$/, '');
-  const root = resolve(dir.replace(/\/+$/, ''));
-  return {
-    method: 'GET',
-    path: `${cleanPrefix}/*filePath`,
-    handler: async (req: Request): Promise<Response> => {
-      const pathname = new URL(req.url).pathname;
-      // Decode the path before resolving — so a percent-encoded `..` becomes a
-      // real `..` and is caught by the containment check, never slips through.
-      let rel: string;
-      try {
-        rel = decodeURIComponent(pathname.slice(cleanPrefix.length)).replace(/^\/+/, '');
-      } catch {
-        return new Response('Bad request', { status: 400 });
-      }
-      const target = resolve(root, rel);
-      if (!isWithinDir(root, target)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-      const info = await stat(target).catch(() => null);
-      if (!info?.isFile()) {
-        return new Response('Not found', { status: 404 });
-      }
-      const body = await readFile(target);
-      return new Response(body, {
-        headers: {
-          'Content-Type': mimeForPath(target),
-          // Never let a browser sniff a served file into an executable type.
-          'X-Content-Type-Options': 'nosniff',
-        },
-      });
-    },
-  };
 }

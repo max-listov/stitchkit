@@ -5,6 +5,8 @@ fallback, heartbeats, acks, a mature client. stitchkit does not ship its own
 WebSocket engine; it ships thin, typed wrappers over Socket.IO and a bridge that
 syncs socket events into the TanStack Query cache. See
 [ADR 0008](../decisions/0008-thin-wrappers.md).
+The separate contract shape and rejection ownership are recorded in
+[ADR 0069](../decisions/0069-realtime-contracts-validate-without-owning-delivery.md).
 
 ## Zod-first event contract
 
@@ -75,6 +77,16 @@ createServer({
 
 // elsewhere — validated broadcast:
 realtime.emit('note:created', note)
+```
+
+The canonical room-broadcast example below is executed by the test suite. Its
+body is kept byte-identical to `packages/core/examples/realtime-room.ts`.
+
+```ts canonical-realtime-room
+export function publishExampleNote(realtime: ExampleRealtimePublisher): void {
+  const note = { id: 'note-1', text: 'Ready' };
+  realtime.to('general').emit('note:created', note);
+}
 ```
 
 | Handle field | Purpose |
@@ -334,11 +346,9 @@ policies; this helper only applies declared CRUD semantics.
 
 ## Raw binary lane (Bun)
 
-Socket.IO carries binary fine — for most streams a binary event (`pcm(frame)`)
-is enough. But a *truly* high-throughput binary channel (video, large
-transfers) may want a raw WebSocket with no Socket.IO framing, on the **same**
-port. On Bun that is awkward: `Bun.serve` has a single `websocket` handler, and
-`createSocketIOServer().websocket` claims it.
+For a high-throughput raw binary channel beside Socket.IO, use the orthogonal
+composition boundary from
+[ADR 0020](../decisions/0020-raw-websocket-lane.md).
 
 `composeWebSocketHandlers` composes that one handler from several lanes. A raw
 lane stamps its own marker onto `ws.data` at upgrade and is matched positively;

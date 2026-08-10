@@ -43,6 +43,55 @@ describe('redact — secret masking', () => {
     expect(out).toEqual({ user: { profile: { secret: '[redacted]', name: 'ok' } } });
   });
 
+  test('keeps audit identifiers whose names merely contain a sensitive word', () => {
+    expect(redact({ authorId: 'u-1', sessionCount: 3, tokenizer: 'bpe' })).toEqual({
+      authorId: 'u-1',
+      sessionCount: 3,
+      tokenizer: 'bpe',
+    });
+  });
+
+  test('masks compound key names carrying a secret word (regression: anchored matching)', () => {
+    const compound = {
+      sessionToken: 's',
+      clientSecret: 's',
+      dbPassword: 's',
+      apiToken: 's',
+      authorizationHeader: 's',
+      cookieHeader: 's',
+      passwordHash: 's',
+      'X-Api-Key': 's',
+      accessToken: 's',
+      refresh_token: 's',
+      authHeader: 's',
+      userCredentials: 's',
+    };
+    const out = redact(compound);
+    for (const key of Object.keys(compound)) {
+      expect(out).toHaveProperty(key, '[redacted]');
+    }
+  });
+
+  test('word-boundary matching survives benign compounds around secret-looking words', () => {
+    expect(
+      redact({ author: 'max', authorized: true, tokenizer: 'bpe', keyboard: 'qwerty' }),
+    ).toEqual({ author: 'max', authorized: true, tokenizer: 'bpe', keyboard: 'qwerty' });
+  });
+
+  test('serialises Map, Set and Error into useful JSON-safe shapes', () => {
+    const error = new Error('failed');
+    const out = redact({
+      map: new Map([['key', 'value']]),
+      set: new Set(['one']),
+      error,
+    });
+    expect(out).toMatchObject({
+      map: { _type: 'map', entries: [['key', 'value']] },
+      set: { _type: 'set', values: ['one'] },
+      error: { _type: 'error', name: 'Error', message: 'failed' },
+    });
+  });
+
   test('a custom sensitiveKeys pattern overrides the default', () => {
     const out = redact({ password: 'kept', ssn: '123' }, { sensitiveKeys: /ssn/i });
     expect(out).toEqual({ password: 'kept', ssn: '[redacted]' });
@@ -89,6 +138,38 @@ describe('truncatePreview', () => {
     if (typeof out === 'object' && out !== null && '_originalBytes' in out) {
       expect(out._originalBytes).toBeGreaterThan(100);
     }
+  });
+
+  test('uses a byte budget without splitting Unicode code points', () => {
+    const out = truncatePreview({ value: '🌍'.repeat(100) }, 80);
+    expect(JSON.stringify(out).length).toBeGreaterThan(0);
+    if (
+      typeof out === 'object' &&
+      out !== null &&
+      'preview' in out &&
+      typeof out.preview === 'string'
+    ) {
+      expect(out.preview.isWellFormed()).toBe(true);
+      expect(new TextEncoder().encode(out.preview).byteLength).toBeLessThanOrEqual(83);
+    }
+  });
+
+  test('truncating a large payload does not starve the event loop (regression: quadratic re-encode)', async () => {
+    // Count interval ticks over a fixed window that OVERLAPS the synchronous
+    // truncation. If truncation blocks for the whole window, the deadline
+    // timer fires the moment the loop is free again and almost no ticks have
+    // accrued; a linear implementation leaves the window essentially idle.
+    const big = { blob: 'э'.repeat(256 * 1024) };
+    let ticks = 0;
+    const interval = setInterval(() => {
+      ticks += 1;
+    }, 5);
+    const window = new Promise((resolve) => setTimeout(resolve, 60));
+    const out = truncatePreview(big);
+    await window;
+    clearInterval(interval);
+    expect(out).toMatchObject({ _truncated: true });
+    expect(ticks).toBeGreaterThanOrEqual(5);
   });
 });
 

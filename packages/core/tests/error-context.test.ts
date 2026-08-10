@@ -24,6 +24,56 @@ const service = implement(items, {
   update: (ctx) => ({ id: ctx.params.id, name: ctx.input.name }),
 });
 
+describe('a realtime violation thrown inside an HTTP handler', () => {
+  let server: ReturnType<typeof createServer> | undefined;
+  afterEach(() => server?.stop());
+
+  test('the HTTP response does not expose the event name or field paths', async () => {
+    const { realtimeContractViolation } = await import('../src/realtime/rejection');
+    const throwing = defineContract(
+      { prefix: 'orders' },
+      {
+        create: {
+          method: 'POST',
+          path: '/',
+          desc: 'Create an order, then emit',
+          input: z.object({ name: z.string() }),
+          output: z.object({ id: z.string() }),
+        },
+      },
+    );
+    const throwingService = implement(throwing, {
+      create: () => {
+        // The shape `emit()` produces when its outgoing payload fails the
+        // realtime contract — thrown mid-handler, after side effects.
+        const parsed = z.object({ roomId: z.string() }).safeParse({ roomId: 42 });
+        if (parsed.success) throw new Error('fixture must fail validation');
+        throw realtimeContractViolation({
+          event: 'order:updated',
+          direction: 'server-outbound',
+          phase: 'arguments',
+          reason: 'invalid-arguments',
+          fault: 'local',
+          cause: parsed.error,
+        }).error;
+      },
+    });
+    server = createServer({ services: [throwingService], port: 0 });
+    const res = await fetch(`http://localhost:${server.port}/orders/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'x' }),
+    });
+    const body = await res.text();
+    expect(res.status).toBe(500);
+    // Server fault, honestly classified — but the internal shape stays inside.
+    expect(body).not.toContain('order:updated');
+    expect(body).not.toContain('roomId');
+    expect(body).not.toContain('fault');
+    expect(body).toContain('REALTIME_CONTRACT_VIOLATION');
+  });
+});
+
 describe('error context on a pre-handler (validation) failure', () => {
   let server: ReturnType<typeof createServer> | undefined;
   afterEach(() => server?.stop());

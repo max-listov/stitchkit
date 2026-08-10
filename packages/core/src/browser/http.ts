@@ -1,6 +1,6 @@
 import ky, { isHTTPError, type KyInstance, type Options } from 'ky';
 import type { ErrorEnvelope } from '../contract';
-import { isRecord } from '../internal/typed';
+import { isRecord, transportResult } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
 import { responseTraceId } from './request-id';
 
@@ -241,13 +241,13 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
 
     try {
       if (options.responseType === 'blob') {
-        return client[method](url, kyOptions).blob() as Promise<T>;
+        return transportResult<T>(await client[method](url, kyOptions).blob());
       }
       if (options.responseType === 'response') {
         // No parsing, no 204 special-case — the caller owns the body. Errors
         // still surface as `ApiError` through the catch below, so a failed
         // download does not masquerade as a zero-byte file.
-        return (await client[method](url, kyOptions)) as T;
+        return transportResult<T>(await client[method](url, kyOptions));
       }
       const response = await client[method](url, kyOptions);
       if (options.responseType === 'void') {
@@ -261,9 +261,11 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
         response.status === 204 ||
         response.headers.get('content-length') === '0'
       ) {
-        return undefined as T;
+        return transportResult<T>(undefined);
       }
-      return response.json<T>();
+      // Awaited INSIDE the try — a malformed body must reach the same catch
+      // that normalises every other transport failure into an ApiError.
+      return await response.json<T>();
     } catch (error) {
       if (ApiError.is(error)) throw error;
       const isAbort = error instanceof Error && error.name === 'AbortError';

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isUnsafeKey, safeJsonParse } from '../src/internal/safe-json';
 import { isWithinDir } from '../src/internal/within-dir';
+import { staticRoute } from '../src/server/file';
 import { parseCookies } from '../src/server/middleware/cookies';
 import { assertCorsConfig, corsHeaders } from '../src/server/middleware/cors';
 import { parseQueryParams } from '../src/server/request';
@@ -142,6 +143,42 @@ describe('isWithinDir — path containment', () => {
   });
 });
 
+describe('staticRoute — real path containment', () => {
+  let base = '';
+  let root = '';
+
+  beforeAll(async () => {
+    base = await mkdtemp(join(tmpdir(), 'sk-static-'));
+    root = join(base, 'public');
+    await mkdir(root);
+    await writeFile(join(root, 'inside.txt'), 'public');
+    await writeFile(join(base, 'secret.txt'), 'private');
+    await symlink(join(base, 'secret.txt'), join(root, 'escape.txt'));
+  });
+
+  afterAll(async () => {
+    if (base) await rm(base, { recursive: true, force: true });
+  });
+
+  test('serves an ordinary in-root file', async () => {
+    const route = staticRoute('/assets', root);
+    const response = await route.handler(new Request('http://localhost/assets/inside.txt'), {
+      params: { filePath: 'inside.txt' },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('public');
+  });
+
+  test('does not follow an in-root symlink outside the root', async () => {
+    const route = staticRoute('/assets', root);
+    const response = await route.handler(new Request('http://localhost/assets/escape.txt'), {
+      params: { filePath: 'escape.txt' },
+    });
+    expect(response.status).not.toBe(200);
+    expect(await response.text()).not.toContain('private');
+  });
+});
+
 describe('resolveMedia — local-file sandbox', () => {
   let base = '';
   let root = '';
@@ -180,5 +217,37 @@ describe('resolveMedia — local-file sandbox', () => {
 
   test('local file access is disabled without a baseDir', async () => {
     await expect(resolveMedia('pic.png')).rejects.toThrow(/disabled/);
+  });
+});
+
+describe('resolveMedia — video bodies are never downloaded', () => {
+  test('a video/* Content-Type returns a link without consuming the body', async () => {
+    // The body drips forever — if the implementation read it before deciding
+    // "video is a link, not an inline block", this would hang / buffer 20 MiB.
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(1024));
+              // …never closes: only a cancelled body lets the test finish fast.
+            },
+          }),
+          { headers: { 'content-type': 'video/mp4' } },
+        ),
+    });
+    try {
+      const startedAt = performance.now();
+      const content = await resolveMedia(`http://127.0.0.1:${server.port}/clip`, {
+        allowPrivateHosts: true,
+      });
+      expect(performance.now() - startedAt).toBeLessThan(2_000);
+      expect(content).toEqual([
+        { type: 'text', text: `[video] video/mp4 — http://127.0.0.1:${server.port}/clip` },
+      ]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

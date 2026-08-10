@@ -117,6 +117,7 @@ describe('protected resource metadata (RFC 9728)', () => {
       serverInfo: { name: 't', version: '1' },
       auth: () => null,
       services: [],
+      security: { allowedHosts: ['api.example.com'] },
       protectedResource: { resource: RESOURCE, authorizationServers: [ISSUER] },
     });
     const res = await handler.fetch(new Request(RESOURCE, { method: 'POST' }));
@@ -129,6 +130,7 @@ describe('protected resource metadata (RFC 9728)', () => {
       serverInfo: { name: 't', version: '1' },
       auth: () => null,
       services: [],
+      security: { allowedHosts: ['api.example.com'] },
     });
     const res = await handler.fetch(new Request(RESOURCE, { method: 'POST' }));
     expect(res.status).toBe(401);
@@ -623,6 +625,25 @@ describe('authorization-code flow with PKCE', () => {
     expect(payload.scope).toBe('read');
   });
 
+  test('a JavaScript authorizeUser without approvedScopes fails loudly', async () => {
+    const routes = buildProvider({
+      // @ts-expect-error — simulates an untyped JavaScript consumer on the removed return shape.
+      authorizeUser: async () => ({ userId: 'user-42' }),
+    });
+    const clientId = await registerClient(routes);
+    await expect(
+      authorize(routes, {
+        client_id: clientId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        code_challenge: await deriveCodeChallenge('m'.repeat(64)),
+        code_challenge_method: 'S256',
+        resource: RESOURCE,
+        scope: 'mcp',
+      }),
+    ).rejects.toThrow(/approvedScopes as an array of strings/);
+  });
+
   test('rejects unsupported requested scopes and consent escalation', async () => {
     const unsupportedRoutes = buildProvider({ scopesSupported: ['read'] });
     const clientId = await registerClient(unsupportedRoutes);
@@ -762,6 +783,190 @@ describe('Client ID Metadata Documents', () => {
     expect((await authorize(routes, request)).status).toBe(302);
     expect(observedHeaders).toHaveLength(2);
     expect(observedHeaders[1]?.['if-none-match']).toBe('"v1"');
+  });
+
+  test('freshness header abuse: fetch COUNTS match the header semantics, case by case', async () => {
+    const document = {
+      client_id: CLIENT_ID,
+      client_name: 'Counted client',
+      redirect_uris: [CLIENT_REDIRECT],
+      token_endpoint_auth_method: 'none',
+    };
+    const request = {
+      client_id: CLIENT_ID,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    };
+    const countFetches = async (
+      headers: Record<string, string>,
+      body: unknown = document,
+      status = 200,
+    ): Promise<number> => {
+      let fetches = 0;
+      const routes = buildProvider({
+        clientRegistration: {
+          cimd: {
+            fetcher: cimdFetcher(async () => {
+              fetches += 1;
+              return metadataResponse(status, body, {
+                'content-type': 'application/json',
+                ...headers,
+              });
+            }),
+          },
+        },
+      });
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await authorize(routes, request);
+      }
+      return fetches;
+    };
+
+    // A junk / list / negative Age must cost exactly what NO Age costs.
+    const baseline = await countFetches({ 'cache-control': 'max-age=60' });
+    expect(await countFetches({ 'cache-control': 'max-age=60', age: 'junk' })).toBe(baseline);
+    expect(await countFetches({ 'cache-control': 'max-age=60', age: '10, 20' })).toBe(
+      baseline,
+    );
+    expect(await countFetches({ 'cache-control': 'max-age=60', age: '-1000000' })).toBe(
+      baseline,
+    );
+    // Unparseable freshness = already expired (RFC 9111), never a default TTL.
+    expect(await countFetches({ 'cache-control': 'max-age=abc' })).toBe(5);
+    expect(await countFetches({ expires: 'not-a-date' })).toBe(5);
+    // no-store on a VALID document refetches every time…
+    expect(await countFetches({ 'cache-control': 'no-store' })).toBe(5);
+    // …while an INVALID document under no-store still lands in the negative
+    // cache — failure caching is not governed by the origin's store policy.
+    expect(
+      await countFetches({ 'cache-control': 'no-store' }, { error: 'not found' }, 404),
+    ).toBe(1);
+  });
+
+  test('Age list arithmetic: the FIRST proxy value counts, not zero and not the sum', async () => {
+    const { responseFreshness } = await import('../src/tools/oauth-provider');
+    const base = { 'content-type': 'application/json', 'cache-control': 'max-age=1800' };
+    const plain = responseFreshness(new Headers(base), {}, 0);
+    const single = responseFreshness(new Headers({ ...base, age: '600' }), {}, 0);
+    const list = responseFreshness(new Headers({ ...base, age: '600, 5' }), {}, 0);
+    const junk = responseFreshness(new Headers({ ...base, age: 'junk' }), {}, 0);
+    expect(plain.freshnessMs).toBe(1_800_000);
+    expect(single.freshnessMs).toBe(1_200_000);
+    // The list form must cost the same staleness as its first value — the old
+    // parser read it as "no Age" and granted an extra 10 minutes of freshness.
+    expect(list.freshnessMs).toBe(1_200_000);
+    expect(junk.freshnessMs).toBe(1_800_000);
+  });
+
+  test('a flood of alien client_ids does not evict or re-fetch a warmed client', async () => {
+    const fetchesByUrl = new Map<string, number>();
+    const fetcher = cimdFetcher(async (url) => {
+      const key = url.toString();
+      fetchesByUrl.set(key, (fetchesByUrl.get(key) ?? 0) + 1);
+      if (key !== CLIENT_ID) return metadataResponse(404, { error: 'not found' });
+      return metadataResponse(200, {
+        client_id: CLIENT_ID,
+        client_name: 'Warm client',
+        redirect_uris: [CLIENT_REDIRECT],
+        token_endpoint_auth_method: 'none',
+      });
+    });
+    const routes = buildProvider({
+      clientRegistration: { cimd: { fetcher, cache: { maxEntries: 4 } } },
+    });
+    const request = (clientId: string) => ({
+      client_id: clientId,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    // Warm the victim, then flood with 20 unresolvable aliens — negative
+    // entries live in their own pool and must not push the victim out.
+    expect((await authorize(routes, request(CLIENT_ID))).status).toBe(302);
+    for (let index = 0; index < 20; index += 1) {
+      await authorize(routes, request(`https://alien-${index}.example.com/meta.json`));
+    }
+    expect((await authorize(routes, request(CLIENT_ID))).status).toBe(302);
+    expect(fetchesByUrl.get(CLIENT_ID)).toBe(1);
+  });
+
+  test('one client exhausting its per-client budget does not lock out a fresh client', async () => {
+    const greedyId = 'https://greedy.example.com/meta.json';
+    const freshId = 'https://fresh.example.com/meta.json';
+    const fetcher = cimdFetcher(async (url) => {
+      const clientId = url.toString();
+      return metadataResponse(
+        200,
+        {
+          client_id: clientId,
+          client_name: 'Client',
+          redirect_uris: [CLIENT_REDIRECT],
+          token_endpoint_auth_method: 'none',
+        },
+        // `no-store` — every authorize costs a fresh resolution.
+        { 'content-type': 'application/json', 'cache-control': 'no-store' },
+      );
+    });
+    const routes = buildProvider({
+      clientRegistration: {
+        cimd: { fetcher, cache: { maxResolutionsPerClient: 2 } },
+      },
+    });
+    const request = (clientId: string) => ({
+      client_id: clientId,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    expect((await authorize(routes, request(greedyId))).status).toBe(302);
+    expect((await authorize(routes, request(greedyId))).status).toBe(302);
+    // The greedy client burnt ITS budget…
+    expect((await authorize(routes, request(greedyId))).status).not.toBe(302);
+    // …and a brand-new legitimate client still resolves in the same window.
+    expect((await authorize(routes, request(freshId))).status).toBe(302);
+  });
+
+  test('a burst of successful resolutions does not reset a failing client backoff', async () => {
+    const failingId = 'https://failing.example.com/meta.json';
+    const fetchesByUrl = new Map<string, number>();
+    const fetcher = cimdFetcher(async (url) => {
+      const clientId = url.toString();
+      fetchesByUrl.set(clientId, (fetchesByUrl.get(clientId) ?? 0) + 1);
+      if (clientId === failingId) return metadataResponse(500, { error: 'down' });
+      return metadataResponse(200, {
+        client_id: clientId,
+        client_name: 'Client',
+        redirect_uris: [CLIENT_REDIRECT],
+        token_endpoint_auth_method: 'none',
+      });
+    });
+    const routes = buildProvider({
+      clientRegistration: { cimd: { fetcher, cache: { maxEntries: 2 } } },
+    });
+    const request = (clientId: string) => ({
+      client_id: clientId,
+      redirect_uri: CLIENT_REDIRECT,
+      response_type: 'code',
+      code_challenge: 'a'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE,
+    });
+    expect((await authorize(routes, request(failingId))).status).not.toBe(302);
+    // Positive entries churn their own pool past maxEntries…
+    for (let index = 0; index < 3; index += 1) {
+      await authorize(routes, request(`https://ok-${index}.example.com/meta.json`));
+    }
+    // …while the failing client's negative entry (its backoff) survives: the
+    // repeat attempt is answered from the cache, not by a second fetch.
+    expect((await authorize(routes, request(failingId))).status).not.toBe(302);
+    expect(fetchesByUrl.get(failingId)).toBe(1);
   });
 
   test('coalesces concurrent cache misses and reports cache outcomes without metadata', async () => {

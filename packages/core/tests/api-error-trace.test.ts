@@ -138,6 +138,65 @@ describe('ApiError response trace correlation', () => {
     expect(events).toEqual(['network_error']);
   });
 
+  test('all response decoders normalize an unreachable host identically', async () => {
+    const responseTypes: Array<'json' | 'blob' | 'response'> = ['json', 'blob', 'response'];
+
+    for (const responseType of responseTypes) {
+      const http = createHttpClient({
+        baseUrl: 'http://127.0.0.1:1',
+        retry: { limit: 0 },
+        timeout: 100,
+      });
+      const events: string[] = [];
+      http.subscribe((event) => events.push(event.type));
+
+      const error = await captureApiError(http.get('/unreachable', { responseType }));
+
+      expect(error.code).toBe('UNKNOWN_ERROR');
+      expect(error.status).toBe(0);
+      expect(events).toEqual(['network_error']);
+    }
+  });
+
+  test('a malformed JSON body on the DEFAULT path is normalized like every other failure', async () => {
+    // Regression: `return response.json()` without `await` inside the try —
+    // a broken body resolved outside the catch and bypassed ApiError entirely.
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response('{"broken": tru', {
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    try {
+      const http = createHttpClient({
+        baseUrl: `http://127.0.0.1:${server.port}`,
+        retry: { limit: 0 },
+      });
+      const events: string[] = [];
+      http.subscribe((event) => events.push(event.type));
+      const error = await captureApiError(http.get('/malformed'));
+      expect(ApiError.is(error)).toBe(true);
+      expect(error.code).toBe('UNKNOWN_ERROR');
+      expect(events).toEqual(['network_error']);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('the blob decoder preserves a structured server ApiError', async () => {
+    const http = createHttpClient({ baseUrl, retry: { limit: 0 } });
+    const events: string[] = [];
+    http.subscribe((event) => events.push(event.type));
+
+    const error = await captureApiError(
+      http.get('/trace-errors/structured', { responseType: 'blob' }),
+    );
+
+    expectStructuredError(error);
+    expect(events).toEqual([]);
+  });
+
   test('traceId is an optional public field', () => {
     const withoutTrace = new ApiError('UNKNOWN_ERROR');
     const withTrace = new ApiError('CONFLICT', 409, undefined, undefined, undefined, TRACE_ID);

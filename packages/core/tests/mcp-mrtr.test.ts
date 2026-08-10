@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract, type RuntimeContext } from '../src/contract';
+import { createObservability } from '../src/observability';
 import { getTraceId } from '../src/observability/context';
 import { createImplement } from '../src/server/implement';
 import { createMcpHandler } from '../src/tools/mcp-handler';
@@ -148,6 +149,56 @@ describe('framework-owned MCP multi-round input', () => {
     );
 
     expect(traceIds).toEqual([firstTrace, retryTrace]);
+    await handler.close();
+  });
+
+  test('audit rows mark every input round and the completion, distinguishable without context.mcp', async () => {
+    const events: Array<{ toolPhase?: string; ok: boolean }> = [];
+    const observability = createObservability({
+      tools: {
+        write: (event) => {
+          events.push({ toolPhase: event.toolPhase, ok: event.ok });
+        },
+      },
+    });
+    const service = createImplement<DeleteContext>()(deleteContract, {
+      remove: (context) => ({
+        deleted: context.params.id,
+        confirmedBy: String(context.mcpInput?.confirmation.confirmed),
+      }),
+    });
+    const handler = createMcpHandler({
+      serverInfo: { name: 'mrtr-test', version: '1' },
+      auth: () => ({ identity: 'alpha' }),
+      context: (auth) => auth,
+      services: [service],
+      hooks: observability.toolCall,
+      multiRound: { state: { key: KEY, principal: (auth) => auth.identity } },
+    });
+    const state = required(
+      await result(await handler.fetch(modernCall('remove_project', { id: 'audited' }))),
+    );
+    const completed = await result(
+      await handler.fetch(
+        modernCall(
+          'remove_project',
+          { id: 'audited' },
+          {
+            requestState: state,
+            inputResponses: {
+              confirmation: { action: 'accept', content: { confirmed: true } },
+            },
+          },
+        ),
+      ),
+    );
+    expect(completed.resultType).toBe('complete');
+    // The write sink is fire-and-forget — let the queued emits settle.
+    await Bun.sleep(0);
+    // One marked intermediate round, one completion — the audit STREAM tells
+    // them apart via `toolPhase`, no `context.mcp` parsing required.
+    expect(events.map((event) => event.toolPhase)).toEqual(['input-round', 'operation']);
+    expect(events.every((event) => event.ok)).toBe(true);
     await handler.close();
   });
 
@@ -590,19 +641,12 @@ describe('framework-owned MCP multi-round input', () => {
         },
       });
     };
-    const duplicate = makePolicy(['same', 'same'], 2);
-    const overflow = makePolicy(['one', 'two'], 1);
-    expect(
-      await duplicate
-        .fetch(modernCall('policy_same_same', {}))
-        .then((response) => response.text()),
-    ).toContain('duplicate input key');
-    expect(
-      await overflow
-        .fetch(modernCall('policy_one_two', {}))
-        .then((response) => response.text()),
-    ).toContain('exceeding maxRounds');
-    await Promise.all([duplicate.close(), overflow.close()]);
+    expect(() => makePolicy(['same', 'same'], 2)).toThrow(
+      'MCP tool "policy_same_same" declares duplicate input key "same"',
+    );
+    expect(() => makePolicy(['one', 'two'], 1)).toThrow(
+      'MCP tool "policy_one_two" declares 2 input rounds, exceeding maxRounds 1',
+    );
   });
 
   test('parallel runtime-tool flows keep typed input and identities isolated', async () => {

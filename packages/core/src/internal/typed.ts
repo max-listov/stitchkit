@@ -9,6 +9,22 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Invoke a runtime-discovered handler after a fail-first function check. */
+export function callRuntimeHandler(handler: unknown, context: unknown): unknown {
+  if (typeof handler !== 'function') {
+    throw new TypeError('Runtime handler must be a function');
+  }
+  return Reflect.apply(handler, undefined, [context]);
+}
+
+/**
+ * Isolated loose-to-typed adapter boundary for transports whose decoder is
+ * selected at runtime while the contract fixes the generic result type.
+ */
+export function transportResult<T>(value: unknown): T {
+  return value as T;
+}
+
 export function mapObject<
   TSource extends object,
   TResult extends { [K in keyof TSource]?: unknown },

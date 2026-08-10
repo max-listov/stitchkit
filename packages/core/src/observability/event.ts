@@ -37,6 +37,8 @@ export interface RequestEvent {
   dimensions?: Record<string, string>;
   /** Tool name — tool calls only. */
   toolName?: string;
+  /** Distinguishes a completed operation from an MRTR input-gating round. */
+  toolPhase?: 'operation' | 'input-round';
   /** Validated MCP transport attribution, available only on MCP tool calls. */
   mcp?: {
     era: 'modern' | 'legacy';
@@ -79,6 +81,11 @@ export interface RequestEvent {
   resultSize: number | null;
   /** Serialised byte length of the result. */
   responseBytes: number;
+  /**
+   * Set when the result could not be serialised at all (bigint, a cycle) —
+   * distinguishes `responseBytes: 0` "nothing returned" from "unmeasurable".
+   */
+  resultUnserializable?: boolean;
   /** Resolved user id, when authenticated. */
   userId?: string;
   /** How the caller authenticated, when the app records it on the context. */

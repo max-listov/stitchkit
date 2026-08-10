@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { AppError } from '../contract/errors';
 
 export interface RealtimeEventDefinition<
   TArgs extends z.ZodType<unknown[]> = z.ZodType<unknown[]>,
@@ -57,7 +58,13 @@ export interface RealtimeRejectedEvent {
   event: string;
   direction: RealtimeRejectDirection;
   phase: 'arguments' | 'acknowledgement';
-  error: z.ZodError;
+  reason:
+    | 'unknown-event'
+    | 'invalid-arguments'
+    | 'invalid-acknowledgement-value'
+    | 'missing-acknowledgement';
+  fault: 'peer' | 'local';
+  error: AppError<'REALTIME_CONTRACT_VIOLATION'>;
 }
 
 export type RealtimeRejectedEventHook = (

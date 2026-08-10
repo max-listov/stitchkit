@@ -8,7 +8,7 @@ import {
 } from '../src/browser/socket-io';
 import { defineRealtimeContract } from '../src/realtime';
 import { type BunServer, createServer } from '../src/server/bun';
-import { bindRealtimeServer } from '../src/server/realtime';
+import { bindRealtimeServer, type RealtimeServerConnection } from '../src/server/realtime';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
 import type { RawRoute } from '../src/server/types';
 import { composeWebSocketHandlers, webSocketLane } from '../src/server/websocket';
@@ -136,13 +136,23 @@ const realtimeContract = defineRealtimeContract({
 const rejectedRealtimeEvents: string[] = [];
 const readyRealtimeEvents: boolean[] = [];
 let handledRealtimePings = 0;
+const realtimeConnection =
+  Promise.withResolvers<
+    RealtimeServerConnection<
+      typeof realtimeContract.serverToClient,
+      typeof realtimeContract.clientToServer
+    >
+  >();
 const realtimeHandle = await createSocketIOServer({ cors: { origin: '*' } });
 const realtime = bindRealtimeServer(realtimeContract, realtimeHandle, {
   onRejected: ({ event, phase }) => {
     rejectedRealtimeEvents.push(`${event}:${phase}`);
   },
 });
-realtime.onConnection(({ events }) => {
+realtime.onConnection((connection) => {
+  const { events, raw } = connection;
+  raw.join('test-room');
+  realtimeConnection.resolve(connection);
   events.on('ping', ({ n }, acknowledge) => {
     handledRealtimePings += 1;
     acknowledge({ accepted: true });
@@ -195,6 +205,32 @@ describe('Zod-first realtime contracts', () => {
     expect(binaryOrRejection).toEqual({ value: new Uint8Array([1, 2, 3]) });
     await Bun.sleep(20);
     expect(readyRealtimeEvents).toContain(true);
+    client.disconnect();
+  });
+
+  test('emits validated events through server and connection room targets', async () => {
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    const values: number[] = [];
+    const received = Promise.withResolvers<void>();
+    client.on('pong', ({ n }) => {
+      values.push(n);
+      if (values.length === 2) received.resolve();
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    const connection = await realtimeConnection.promise;
+    realtime.to('test-room').emit('pong', { n: 1 });
+    connection.to('test-room').emit('pong', { n: 2 });
+    await within(received.promise, 'room events');
+    expect(values).toEqual([1, 2]);
+    expect(() =>
+      // @ts-expect-error — the runtime guard is the behavior under test.
+      realtime.to('test-room').emit('pong', { n: 'bad' }),
+    ).toThrow();
     client.disconnect();
   });
 

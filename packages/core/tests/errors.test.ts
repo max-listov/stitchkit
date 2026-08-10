@@ -15,6 +15,23 @@ describe('stitch error registry', () => {
     expect(isStitchErrorCode('NOT_FOUND')).toBe(true);
     expect(isStitchErrorCode('METHOD_NOT_ALLOWED')).toBe(true);
     expect(isStitchErrorCode('BOT_NOT_FOUND')).toBe(false);
+    for (const code of ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty']) {
+      expect(isStitchErrorCode(code)).toBe(false);
+    }
+  });
+
+  test('prototype keys remain application errors with a valid 500 status', () => {
+    for (const code of ['toString', 'constructor', 'valueOf', '__proto__']) {
+      let error: unknown;
+      try {
+        appError(code);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(AppError.is(error) && error.status).toBe(500);
+      if (!AppError.is(error)) throw new Error('Expected AppError');
+      expect(() => Response.json(error.toJSON(), { status: error.status })).not.toThrow();
+    }
   });
 
   test('appError maps a stitch code to its status, an app code to 500', () => {
@@ -90,6 +107,28 @@ describe('normalizeError', () => {
     ]);
     // And the details survive the envelope.
     expect(appErr.toJSON().error.details).toBeDefined();
+  });
+
+  test('a realtime contract violation is scrubbed before it reaches the caller', async () => {
+    const { realtimeContractViolation } = await import('../src/realtime/rejection');
+    const parsed = z.object({ roomId: z.string() }).safeParse({ roomId: 42 });
+    if (parsed.success) throw new Error('fixture must fail validation');
+    const { error } = realtimeContractViolation({
+      event: 'order:updated',
+      direction: 'server-outbound',
+      phase: 'arguments',
+      reason: 'invalid-arguments',
+      fault: 'local',
+      cause: parsed.error,
+    });
+    const scrubbed = normalizeError(error);
+    // The code and status survive (a server fault), but the event name, field
+    // paths and fault attribution are internal shape and must not cross out.
+    expect(scrubbed.code).toBe('REALTIME_CONTRACT_VIOLATION');
+    expect(scrubbed.status).toBe(500);
+    expect(scrubbed.message).toBe('Realtime contract violation');
+    expect(scrubbed.message).not.toContain('order:updated');
+    expect(scrubbed.details).toBeUndefined();
   });
 
   test('generic Error → INTERNAL_SERVER_ERROR with a generic message', () => {

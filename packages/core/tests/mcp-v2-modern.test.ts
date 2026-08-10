@@ -276,6 +276,58 @@ describe('MCP 2026-07-28 wire semantics', () => {
     await handler.close();
   });
 
+  test('a successful call with unserialisable output is NOT reported as isError', async () => {
+    // The handler ran and applied its side effects — a cyclic value in the
+    // output must not flip the call into a tool error (regression:
+    // formatMcpResult threw on JSON.stringify and the mount converted the
+    // throw to isError). A bigint SCHEMA is already rejected while building
+    // the surface, so the runtime-only cycle is the shape that reaches here.
+    const cycleContract = defineContract(
+      { prefix: 'cyc', scope: 'public' },
+      {
+        graph: {
+          method: 'GET',
+          path: '/graph',
+          desc: 'Return a self-referencing graph',
+          expose: ['MCP'],
+          output: z.unknown(),
+        },
+      },
+    );
+    const cycleService = implement(cycleContract, {
+      graph: () => {
+        const node: Record<string, unknown> = { name: 'root' };
+        node.self = node;
+        return node;
+      },
+    });
+    const handler = createMcpHandler({
+      serverInfo: { name: 'modern-test', version: '1' },
+      auth: () => ({}),
+      services: [cycleService],
+    });
+    const body = await json(
+      await handler.fetch(
+        modernRequest(
+          'tools/call',
+          { name: 'graph_cyc', arguments: {} },
+          { 'mcp-name': 'graph_cyc' },
+        ),
+      ),
+    );
+    const result = z
+      .object({
+        content: z.array(z.object({ type: z.string(), text: z.string() })),
+        isError: z.boolean().optional(),
+        structuredContent: z.unknown().optional(),
+      })
+      .parse(body.result);
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual({ name: 'root', self: '[circular]' });
+    expect(result.content[0]?.text).toContain('[circular]');
+    await handler.close();
+  });
+
   test('serves MCP Apps metadata and HTML resources over modern HTTP', async () => {
     const resourceUri = 'ui://modern/widget.html';
     const appContract = defineContract(

@@ -25,4 +25,52 @@ describe('backlog hygiene', () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  test('every Регрессия attestation names a real file and a real test case (no prose claims)', () => {
+    // A coverage claim in `done/` must be mechanically checkable: the required
+    // form is `path/to/file.test.ts::exact test name` (several separated by
+    // `;`). The named file must exist and the named case must be found in it —
+    // a claim naming a test that does not exist is exactly the false
+    // attestation this batch shipped eight of.
+    const root = `${import.meta.dir}/../../..`;
+    const glob = new Glob('**/*.md');
+    const offenders: string[] = [];
+    for (const file of glob.scanSync({ cwd: DONE_DIR, absolute: true })) {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      for (const [index, line] of lines.entries()) {
+        // Only checkbox ATTESTATIONS are held to the form — a narrative that
+        // quotes a bad claim is not itself a claim.
+        const match = line.match(/^\s*- \[x\] Регрессия:\s*(.+)$/);
+        if (!match?.[1]) continue;
+        const at = `${file}:${index + 1}`;
+        const claim = match[1].trim();
+        // An explicit "no test applies" is honest and allowed — it must carry
+        // its reason, not just trail off.
+        if (/^не требуется — .{10,}/.test(claim)) continue;
+        const references = [...claim.matchAll(/([\w./-]+\.(?:test|spec)\.\w+)::([^;]+)/g)];
+        if (references.length === 0) {
+          offenders.push(
+            `${at} — a Регрессия claim must be "file::test name", got prose: ${claim}`,
+          );
+          continue;
+        }
+        for (const reference of references) {
+          const [, path, rawName] = reference;
+          if (!path || !rawName) continue;
+          const testName = rawName.trim().replace(/\.$/, '');
+          let source: string;
+          try {
+            source = readFileSync(`${root}/${path}`, 'utf8');
+          } catch {
+            offenders.push(`${at} — named test file does not exist: ${path}`);
+            continue;
+          }
+          if (!source.includes(testName)) {
+            offenders.push(`${at} — case "${testName}" not found in ${path}`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });

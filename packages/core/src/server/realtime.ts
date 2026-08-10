@@ -1,5 +1,6 @@
 import type { Socket, Server as SocketIOServer } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
+import type { StitchLogger } from '../logger';
 import type {
   RealtimeContract,
   RealtimeEventRegistry,
@@ -47,7 +48,7 @@ export function bindRealtimeServer<
 >(
   contract: RealtimeContract<TServerToClient, TClientToServer>,
   handle: RealtimeServerHandle,
-  options: { onRejected?: RealtimeRejectedEventHook } = {},
+  options: { onRejected?: RealtimeRejectedEventHook; logger?: StitchLogger } = {},
 ): RealtimeServer<TServerToClient, TClientToServer> {
   const outbound = (target: object) =>
     createValidatedRealtimeSocket({
@@ -57,6 +58,7 @@ export function bindRealtimeServer<
       inboundDirection: 'server-inbound',
       outboundDirection: 'server-outbound',
       onRejected: options.onRejected,
+      logger: options.logger,
     });
   const broadcast = outbound(handle.io);
   return {
@@ -69,6 +71,7 @@ export function bindRealtimeServer<
           inboundDirection: 'server-inbound',
           outboundDirection: 'server-outbound',
           onRejected: options.onRejected,
+          logger: options.logger,
         });
         void handler({
           raw,

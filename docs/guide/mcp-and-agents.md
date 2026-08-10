@@ -559,6 +559,15 @@ timeouts, redirect count and body size are bounded. Its bounded cache respects
 `Last-Modified`, coalesces concurrent misses and reports sanitized cache events;
 invalid or unavailable identity receives only a short fail-closed cache entry.
 
+Resolution itself is rate-limited on two levels (`CimdCachePolicy`):
+`maxResolutionsPerClient` (default 10) bounds ONE `client_id` per
+`resolutionWindowMs` window (default 60 s) — a client whose document disables
+caching burns its own budget, not the server's — while `maxResolutions`
+(default 120) caps the server-wide outbound rate as the flood backstop.
+Positive and negative cache entries keep separate pools of `maxEntries` each,
+so a flood of unresolvable ids cannot evict warmed clients and a burst of
+successes cannot reset a failing client's backoff.
+
 ### Authorization hardening (MCP 2026-07-28)
 
 - **`iss` on every authorization response (RFC 9207, SEP-2468).** Success *and*
@@ -885,6 +894,11 @@ mountMcp(server, services, { hooks: createToolLogger() })
 // [tool] ok list_widgets (widgets.list) 12ms
 // [tool] warn get_widget (widgets.get) NOT_FOUND 4ms
 ```
+
+By default the line goes to `console.error` — **stderr, never stdout**. That is
+deliberate: in a stdio-MCP server stdout is the JSON-RPC protocol channel, and a
+log line written there corrupts the stream. If you pass your own `log`, keep it
+off stdout for any stdio deployment.
 
 Pass `log` to redirect the line, or `onRecord` to feed a metrics sink the
 structured `ToolCallRecord`. That record carries `traceId` whenever an

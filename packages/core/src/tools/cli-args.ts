@@ -63,8 +63,16 @@ interface FieldInfo {
   elementKind?: FieldKind;
 }
 
+/** A `-`-leading token that still reads as a value: a negative number. */
+const NUMERIC_VALUE = /^-(\d+\.?\d*|\.\d+)$/;
+
 const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help']);
 const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir']);
+export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);
+
+export class CliArgumentError extends Error {
+  override name = 'CliArgumentError';
+}
 
 /** Strip `.optional()` / `.nullable()` / `.default()` wrappers to the base type. */
 function unwrap(field: z.core.$ZodType): z.core.$ZodType {
@@ -91,36 +99,82 @@ function classify(field: z.core.$ZodType): FieldKind {
 }
 
 /**
+ * Merge one field into the map. On a kind conflict between members, presence
+ * semantics win: a field that is boolean in ANY member must stay usable as a
+ * bare `--flag`; any other mismatch degrades to `other` (raw string, the
+ * schema validates it).
+ */
+function mergeField(fields: Map<string, FieldInfo>, name: string, info: FieldInfo): void {
+  const existing = fields.get(name);
+  if (!existing) {
+    fields.set(name, info);
+    return;
+  }
+  if (existing.kind === info.kind) return;
+  if (existing.kind === 'boolean' || info.kind === 'boolean') {
+    fields.set(name, { kind: 'boolean' });
+    return;
+  }
+  fields.set(name, { kind: 'other' });
+}
+
+function collectSchemaFields(schema: z.core.$ZodType, fields: Map<string, FieldInfo>): void {
+  const base = unwrap(schema);
+  if (base instanceof z.ZodObject) {
+    for (const [name, raw] of Object.entries(base.shape)) {
+      const fieldBase = unwrap(raw);
+      const kind = classify(fieldBase);
+      if (kind === 'array' && fieldBase instanceof z.ZodArray) {
+        mergeField(fields, name, { kind, elementKind: classify(unwrap(fieldBase.element)) });
+      } else {
+        mergeField(fields, name, { kind });
+      }
+    }
+    return;
+  }
+  if (base instanceof z.ZodUnion) {
+    for (const option of base.def.options) collectSchemaFields(option, fields);
+    return;
+  }
+  if (base instanceof z.ZodIntersection) {
+    collectSchemaFields(base.def.left, fields);
+    collectSchemaFields(base.def.right, fields);
+    return;
+  }
+}
+
+/**
  * Map a merged tool schema to per-field kind info — what each `--flag` should
- * coerce to. A non-object schema (a union) yields an empty map: every value is
- * left as a string and the schema validates it.
+ * coerce to. Object members of unions and intersections contribute their
+ * fields too, so a boolean member of a union stays reachable as a bare flag; a
+ * scalar schema yields an empty map and every value is left as a string.
  */
 export function describeSchemaFields(schema: z.ZodType | undefined): Map<string, FieldInfo> {
   const fields = new Map<string, FieldInfo>();
-  if (!(schema instanceof z.ZodObject)) return fields;
-  for (const [name, raw] of Object.entries(schema.shape)) {
-    const base = unwrap(raw);
-    const kind = classify(base);
-    if (kind === 'array' && base instanceof z.ZodArray) {
-      fields.set(name, { kind, elementKind: classify(unwrap(base.element)) });
-    } else {
-      fields.set(name, { kind });
-    }
-  }
+  if (schema) collectSchemaFields(schema, fields);
   return fields;
 }
 
-function parseBool(value: string): boolean {
+const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
+const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
+
+/** Strict boolean for a RESERVED option — an unrecognised value is a usage error, never a silent `true`. */
+function parseReservedBool(name: string, value: string): boolean {
   const v = value.toLowerCase();
-  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
-  return true;
+  if (TRUE_WORDS.has(v)) return true;
+  if (FALSE_WORDS.has(v)) return false;
+  throw new CliArgumentError(`--${name} expects a boolean (true/false), got "${value}"`);
 }
 
 /** Coerce one string to a scalar field kind — never throws; an un-coercible value is left raw for Zod to reject with a clear message. */
 function coerceScalar(kind: FieldKind, value: string): unknown {
   switch (kind) {
-    case 'boolean':
-      return parseBool(value);
+    case 'boolean': {
+      const v = value.toLowerCase();
+      if (TRUE_WORDS.has(v)) return true;
+      if (FALSE_WORDS.has(v)) return false;
+      return value; // not a recognisable boolean — Zod rejects it loudly.
+    }
     case 'number': {
       const n = Number(value);
       return value.trim() !== '' && !Number.isNaN(n) ? n : value;
@@ -170,10 +224,12 @@ function coerceField(info: FieldInfo | undefined, values: string[]): unknown {
 }
 
 function setNested(target: Record<string, unknown>, path: string[], value: unknown): void {
-  // A dotted flag is client input — reject `--a.__proto__.x` before any write
-  // walks the chain, the same `isUnsafeKey` guard every other ingestion
-  // boundary applies (the one boundary that previously lacked it).
-  if (path.some(isUnsafeKey)) return;
+  // A dotted flag is client input — reject `--a.__proto__.x` LOUDLY before any
+  // write walks the chain; a silently dropped argument reads as data loss.
+  const unsafe = path.find(isUnsafeKey);
+  if (unsafe !== undefined) {
+    throw new CliArgumentError(`Unsafe option path segment "${unsafe}"`);
+  }
   let node = target;
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i];
@@ -201,7 +257,11 @@ function setNested(target: Record<string, unknown>, path: string[], value: unkno
  *  - `--a.b=c` dotted path → nested object (loose-coerced leaf)
  *  - positional args fill non-boolean fields in schema-declaration order
  */
-export function parseCliArgs(argv: string[], schema: z.ZodType | undefined): ParsedCliArgs {
+export function parseCliArgs(
+  argv: string[],
+  schema: z.ZodType | undefined,
+  config: { allowUnknown?: boolean; knownFields?: readonly string[] } = {},
+): ParsedCliArgs {
   const options: CliRunOptions = {
     json: false,
     wait: false,
@@ -210,46 +270,10 @@ export function parseCliArgs(argv: string[], schema: z.ZodType | undefined): Par
     help: false,
   };
 
-  // ── Pass 1: lift the reserved CLI options out of argv ──
-  const rest: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const tok = argv[i];
-    if (tok === undefined) continue;
-    if (tok === '-h') {
-      options.help = true;
-      continue;
-    }
-    if (tok.startsWith('--')) {
-      const eq = tok.indexOf('=');
-      const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
-      const inline = eq >= 0 ? tok.slice(eq + 1) : undefined;
-      if (BOOL_OPTIONS.has(name)) {
-        const on = inline === undefined ? true : parseBool(inline);
-        if (name === 'dry-run') options.dryRun = on;
-        else if (name === 'json') options.json = on;
-        else if (name === 'wait') options.wait = on;
-        else if (name === 'quiet') options.quiet = on;
-        else if (name === 'help') options.help = on;
-        continue;
-      }
-      if (VALUE_OPTIONS.has(name)) {
-        const value = inline ?? argv[++i];
-        if (value !== undefined) {
-          if (name === 'wait-timeout') {
-            const n = Number(value);
-            if (!Number.isNaN(n)) options.waitTimeout = n;
-          } else if (name === 'output-dir') {
-            options.outputDir = value;
-          }
-        }
-        continue;
-      }
-    }
-    rest.push(tok);
-  }
-
-  // ── Pass 2: split the remainder into flags + positionals ──
   const fields = describeSchemaFields(schema);
+  for (const name of config.knownFields ?? []) {
+    if (!fields.has(name)) fields.set(name, { kind: 'other' });
+  }
   const flags = new Map<string, string[]>();
   const boolFlags = new Map<string, boolean>();
   const positionals: string[] = [];
@@ -260,16 +284,57 @@ export function parseCliArgs(argv: string[], schema: z.ZodType | undefined): Par
     else flags.set(name, [value]);
   };
 
-  for (let i = 0; i < rest.length; i++) {
-    const tok = rest[i];
+  let optionsEnded = false;
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
     if (tok === undefined) continue;
-    if (!tok.startsWith('--')) {
+    if (!optionsEnded && tok === '--') {
+      optionsEnded = true;
+      continue;
+    }
+    if (optionsEnded || !tok.startsWith('-') || tok === '-') {
       positionals.push(tok);
       continue;
+    }
+    if (tok === '-h') {
+      options.help = true;
+      continue;
+    }
+    if (!tok.startsWith('--')) {
+      throw new CliArgumentError(`Unknown option "${tok}"`);
     }
     const eq = tok.indexOf('=');
     const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
     let value: string | undefined = eq >= 0 ? tok.slice(eq + 1) : undefined;
+    if (name.length === 0) throw new CliArgumentError('Invalid empty option name');
+
+    if (BOOL_OPTIONS.has(name)) {
+      const enabled = value === undefined ? true : parseReservedBool(name, value);
+      if (name === 'dry-run') options.dryRun = enabled;
+      else if (name === 'json') options.json = enabled;
+      else if (name === 'wait') options.wait = enabled;
+      else if (name === 'quiet') options.quiet = enabled;
+      else options.help = enabled;
+      continue;
+    }
+    if (VALUE_OPTIONS.has(name)) {
+      const next = argv[i + 1];
+      value = value ?? next;
+      if (value === undefined || (value.startsWith('-') && !NUMERIC_VALUE.test(value))) {
+        throw new CliArgumentError(`--${name} requires a value`);
+      }
+      if (eq < 0) i++;
+      if (name === 'wait-timeout') {
+        const timeout = Number(value);
+        if (!Number.isFinite(timeout) || timeout <= 0) {
+          throw new CliArgumentError('--wait-timeout must be a positive number');
+        }
+        options.waitTimeout = timeout;
+      } else {
+        options.outputDir = value;
+      }
+      continue;
+    }
 
     if (
       value === undefined &&
@@ -280,21 +345,30 @@ export function parseCliArgs(argv: string[], schema: z.ZodType | undefined): Par
       continue;
     }
 
+    // Client-controlled names — refuse a prototype-polluting segment loudly
+    // instead of silently dropping the argument.
+    const unsafeSegment = name.split('.').find(isUnsafeKey);
+    if (unsafeSegment !== undefined) {
+      throw new CliArgumentError(`Unsafe option name "--${name}"`);
+    }
     const info = fields.get(name);
+    const rootName = name.split('.')[0] ?? name;
+    if (!fields.has(rootName) && !config.allowUnknown) {
+      throw new CliArgumentError(`Unknown option "--${name}"`);
+    }
     if (value === undefined) {
       if (info?.kind === 'boolean') {
         boolFlags.set(name, true);
         continue;
       }
-      const next = rest[i + 1];
-      if (next !== undefined && !next.startsWith('--')) {
+      // A next token starting with `-` is a value only when it reads as a
+      // number (`--count -5`); anything else is a misplaced option.
+      const next = argv[i + 1];
+      if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
         value = next;
         i++;
       } else {
-        // A valueless non-boolean flag — record presence; Zod reports the
-        // missing value if the field needed one.
-        boolFlags.set(name, true);
-        continue;
+        throw new CliArgumentError(`--${name} requires a value`);
       }
     }
     pushFlag(name, value);
@@ -315,19 +389,50 @@ export function parseCliArgs(argv: string[], schema: z.ZodType | undefined): Par
     const value = positionals[pi++];
     if (value !== undefined) toolArgs[key] = coerceField(fields.get(key), [value]);
   }
+  if (pi < positionals.length) {
+    throw new CliArgumentError(`Unexpected positional argument "${positionals[pi]}"`);
+  }
 
   for (const [key, value] of boolFlags) {
-    if (isUnsafeKey(key)) continue; // `--__proto__` is a client-controlled key
     toolArgs[key] = value;
+  }
+
+  // A plain `--meta {json}` and a dotted `--meta.a` fight over the same root:
+  // whichever ran last would silently destroy the other, making the RESULT
+  // depend on argument order. Refuse the combination outright.
+  const dottedRoots = new Map<string, string>();
+  for (const key of flags.keys()) {
+    const dot = key.indexOf('.');
+    if (dot > 0) dottedRoots.set(key.slice(0, dot), key);
+  }
+  for (const [root, dotted] of dottedRoots) {
+    if (flags.has(root)) {
+      throw new CliArgumentError(
+        `--${root} conflicts with --${dotted} — pass one form, not both`,
+      );
+    }
   }
 
   for (const [key, values] of flags) {
     if (key.includes('.')) {
-      setNested(toolArgs, key.split('.'), looseCoerce(values[values.length - 1] ?? ''));
+      if (values.length > 1) {
+        throw new CliArgumentError(`--${key} was passed ${values.length} times`);
+      }
+      setNested(toolArgs, key.split('.'), looseCoerce(values[0] ?? ''));
       continue;
     }
-    if (isUnsafeKey(key)) continue; // guard the top-level flag write too, not just dotted
-    toolArgs[key] = coerceField(fields.get(key), values);
+    const info = fields.get(key);
+    // Only an array field legitimately repeats (`--tag a --tag b`); a repeated
+    // scalar silently taking the last value would hide a caller mistake.
+    if (
+      values.length > 1 &&
+      info !== undefined &&
+      info.kind !== 'array' &&
+      info.kind !== 'other'
+    ) {
+      throw new CliArgumentError(`--${key} was passed ${values.length} times`);
+    }
+    toolArgs[key] = coerceField(info, values);
   }
 
   return { toolArgs, options };

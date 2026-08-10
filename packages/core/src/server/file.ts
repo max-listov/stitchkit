@@ -9,7 +9,45 @@
  * streams without reading the whole file into memory (unlike `staticRoute`). A
  * Node variant (`node:fs.createReadStream`) is a separate follow-up. → ADR 0023.
  */
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { isWithinDir, realPathWithinDir } from '../internal/within-dir';
 import { mimeForPath } from './mime';
+import type { RawRoute } from './types';
+
+/**
+ * Build a basic static-file route. URL-derived paths pass both lexical and
+ * realpath containment checks, so an in-root symlink cannot escape `dir`.
+ */
+export function staticRoute(prefix: string, dir: string): RawRoute {
+  const cleanPrefix = prefix.replace(/\/+$/, '');
+  const root = resolve(dir.replace(/\/+$/, ''));
+  return {
+    method: 'GET',
+    path: `${cleanPrefix}/*filePath`,
+    handler: async (req: Request): Promise<Response> => {
+      const pathname = new URL(req.url).pathname;
+      let rel: string;
+      try {
+        rel = decodeURIComponent(pathname.slice(cleanPrefix.length)).replace(/^\/+/, '');
+      } catch {
+        return new Response('Bad request', { status: 400 });
+      }
+      const target = resolve(root, rel);
+      if (!isWithinDir(root, target)) return new Response('Forbidden', { status: 403 });
+      const realTarget = await realPathWithinDir(root, target);
+      if (realTarget === null) return new Response('Not found', { status: 404 });
+      const info = await stat(realTarget).catch(() => null);
+      if (!info?.isFile()) return new Response('Not found', { status: 404 });
+      return new Response(await readFile(realTarget), {
+        headers: {
+          'Content-Type': mimeForPath(realTarget),
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    },
+  };
+}
 
 /** An inclusive byte range `[start, end]`. */
 export interface ByteRange {

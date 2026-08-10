@@ -208,7 +208,7 @@ a mature client. The wrappers cover the boilerplate.
 // Server
 import { createServer, createSocketIOServer } from 'stitchkit/server'
 
-const socket = createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
+const socket = await createSocketIOServer<ServerToClientEvents, ClientToServerEvents>({
   cors: { origin: 'https://app.example.com' },
 })
 

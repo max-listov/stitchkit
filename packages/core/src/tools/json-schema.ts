@@ -62,7 +62,33 @@ function isObjectNode(value: unknown): value is Record<string, unknown> {
  */
 export function jsonSchemaFields(jsonSchema: Record<string, unknown>): JsonSchemaField[] {
   const properties = jsonSchema.properties;
-  if (!isObjectNode(properties)) return [];
+  if (!isObjectNode(properties)) {
+    // `allOf` (an intersection): every member applies, so a field required by
+    // ANY member stays required. `oneOf`/`anyOf` (alternatives): a field is
+    // required only when EVERY alternative requires it.
+    const conjunctive = Array.isArray(jsonSchema.allOf);
+    const members = conjunctive
+      ? jsonSchema.allOf
+      : Array.isArray(jsonSchema.oneOf)
+        ? jsonSchema.oneOf
+        : Array.isArray(jsonSchema.anyOf)
+          ? jsonSchema.anyOf
+          : [];
+    const byName = new Map<string, JsonSchemaField>();
+    for (const member of Array.isArray(members) ? members : []) {
+      if (!isObjectNode(member)) continue;
+      for (const field of jsonSchemaFields(member)) {
+        const existing = byName.get(field.name);
+        const required = existing
+          ? conjunctive
+            ? existing.required || field.required
+            : existing.required && field.required
+          : field.required;
+        byName.set(field.name, existing ? { ...field, required } : field);
+      }
+    }
+    return [...byName.values()];
+  }
   const required = new Set(
     Array.isArray(jsonSchema.required)
       ? jsonSchema.required.filter((k): k is string => typeof k === 'string')

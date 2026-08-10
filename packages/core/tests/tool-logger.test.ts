@@ -2,7 +2,7 @@
  * `createToolLogger` — a ready `afterToolCall` that logs each tool call and
  * feeds an optional metrics sink, keyed by the endpoint's identity.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { wrapInRequestContext } from '../src/observability';
 import type { MethodDef } from '../src/server';
 import { createToolLogger, type ToolCallRecord } from '../src/tools';
@@ -32,6 +32,32 @@ describe('createToolLogger', () => {
     });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toBe('[tool] ok list_widgets (widgets.list) 12ms');
+  });
+
+  test('the DEFAULT sink writes to stderr, never stdout (stdio JSON-RPC channel)', async () => {
+    // `createStdioMcpServer({ hooks: createToolLogger() })` is a valid setup —
+    // a default line on stdout would corrupt the protocol stream.
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    const infoSpy = spyOn(console, 'info').mockImplementation(() => undefined);
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const hooks = createToolLogger();
+      await hooks.afterToolCall?.({
+        toolName: 'list_widgets',
+        args: {},
+        result: { ok: true, data: [] },
+        durationMs: 1,
+        context: ctx,
+        endpoint,
+      });
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      infoSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 
   test('logs a failed call with the error code', async () => {

@@ -21,6 +21,7 @@
  *     NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
  *     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
  *     INTERNAL_SERVER_ERROR: 'internal',
+ *     REALTIME_CONTRACT_VIOLATION: 'internal',
  *   } satisfies Record<StitchErrorCode, string>,
  *   render: (info, ctx) => ({
  *     ok: false,

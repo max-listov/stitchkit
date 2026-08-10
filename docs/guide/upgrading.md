@@ -60,7 +60,7 @@ current one *up to* your target, and apply each snippet.
    (`STITCH_ERROR_STATUS`, `serveFile`, `scopePrefixes`, `afterToolCall`'s
    `MethodDef`, `maxUploadBytes`) are available to adopt, not required.
 
-## Unreleased breaking migrations
+## Released migration: 0.44.0
 
 ### MCP TypeScript SDK v2 and protocol `2026-07-28`
 
@@ -255,14 +255,29 @@ implemented or advertised.
 3. Delete all session mode, event-store and session-id code.
 4. Move OAuth client policy under `clientRegistration`; publish CIMD or enable
    DCR explicitly.
-5. Snapshot `listToolNames`, run one contract tool, one runtime tool, any raw
+5. Make `authorizeUser` return the exact consented scope subset. The framework
+   validates that it is a subset of the request before saving the authorization
+   code:
+
+   ```ts
+   // before
+   authorizeUser: async () => ({ userId })
+
+   // after
+   authorizeUser: async (_req, request) => ({
+     userId,
+     approvedScopes: request.scope?.split(' ') ?? [],
+   })
+   ```
+
+6. Snapshot `listToolNames`, run one contract tool, one runtime tool, any raw
    multimodal tool and every MCP App resource you use.
-6. Exercise modern HTTP and stdio with protocol `2026-07-28`; exercise legacy
+7. Exercise modern HTTP and stdio with protocol `2026-07-28`; exercise legacy
    only if `legacy: 'serve'` is part of your support policy.
-7. Run the consumer's typecheck and runtime gates. A browser/HTTP-only consumer
+8. Run the consumer's typecheck and runtime gates. A browser/HTTP-only consumer
    must continue to work without either MCP package.
 
-## Historical breaking migrations through 0.43.1
+## Historical breaking migrations through 0.44.0
 
 HTTP observability now completes inside the framework handler instead of a
 nested fetch wrapper. Configure request and tool sinks explicitly:

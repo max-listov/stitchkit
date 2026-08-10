@@ -11,6 +11,7 @@ import type {
   RuntimeContext,
   Transport,
 } from '../contract';
+import type { StitchLogger } from '../logger';
 import type { HttpRequestObserver } from '../observability/audit';
 import type { LogFormat } from './logger';
 import type { CorsConfig } from './middleware/cors';
@@ -217,12 +218,7 @@ export interface RawRoute<TServer = unknown> {
   handler: (req: Request, ctx: RawRouteContext<TServer>) => Response | Promise<Response>;
 }
 
-export interface StitchLogger {
-  info(msg: string, data?: Record<string, unknown>): void;
-  warn(msg: string, data?: Record<string, unknown>): void;
-  error(msg: string, data?: Record<string, unknown>): void;
-  debug(msg: string, data?: Record<string, unknown>): void;
-}
+export type { StitchLogger } from '../logger';
 
 /** How a request finished — what `LoggingConfig.enrich` gets to react to. */
 export interface LogOutcome {

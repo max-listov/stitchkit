@@ -15,6 +15,101 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+> Pre-1.0 breaking changes → the next release bumps the **minor** version.
+
+### ⚠️ Breaking changes
+
+- **`STITCH_ERROR_STATUS` gained `REALTIME_CONTRACT_VIOLATION`** — realtime
+  contract failures use the framework error model instead of a bare `ZodError`.
+  An exhaustive `satisfies Record<StitchErrorCode, …>` code map no longer
+  compiles until the new code is added.
+  `// before: { …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>` →
+  `// after:  { …, INTERNAL_SERVER_ERROR: 'internal', REALTIME_CONTRACT_VIOLATION: 'internal' } satisfies Record<StitchErrorCode, string>`
+- **`RealtimeRejectedEvent.error` is an `AppError`, not a `z.ZodError`** — the
+  rejection envelope carries `reason` and `fault`, and the original `ZodError`
+  (when one exists) moves to `error.cause`.
+  `// before: onRejected: ({ error }) => error.issues` →
+  `// after:  onRejected: ({ error }) => error.details?.issues (cause: error.cause)`
+- **CLI construction is strict about reserved names.** A contract field or tool
+  named `json`, `wait`, `quiet`, `dry-run`, `help`, `version`, `wait-timeout` or
+  `output-dir` now **throws while building the CLI** instead of being silently
+  shadowed; unknown flags, repeated scalar flags, a plain flag combined with a
+  dotted flag over the same root, and `--json=<junk>` all exit non-zero instead
+  of corrupting arguments.
+  `// before: app schedule_job --wait 2h  → {"path":"2h"}, exit 0` →
+  `// after:  building a CLI over a contract with a "wait" field throws`
+- **`createToolLogger` writes to `console.error` by default** (stderr). stdout
+  is the JSON-RPC channel of a stdio MCP server, and the old `console.info`
+  default corrupted it. Pass `log` to redirect.
+  `// before: createToolLogger() → stdout` → `// after: createToolLogger() → stderr`
+- **An origin-less `cors` config is a construction error, not a wildcard.**
+  `createServer({ cors: {} })` and `cors: { origin: undefined }` used to emit
+  `Access-Control-Allow-Origin: *`; a missing security setting no longer picks
+  the most permissive behaviour. Allowing every origin stays available as an
+  explicit opt-in.
+  `// before: cors: {}  → Access-Control-Allow-Origin: *` →
+  `// after:  cors: { origin: '*' }  (explicit), cors: {} throws`
+- **JSON coercion skips unions with any string member.** A tool argument
+  declared `z.union([z.string()…, T])` (including constrained strings: `uuid`,
+  `email`, `min`) receives the raw string; a double-serialized value is only
+  repaired when NO union member accepts a string. Identifiers such as `"123"`
+  or `"null"` can no longer silently change type.
+  `// before: union[uuid, number] + "123" → 123` →
+  `// after:  union[uuid, number] + "123" → validation error on the string`
+- **Default audit masking matches whole words.** `sanitizePayload`/`redact`
+  mask a key when one of its words is a secret term (`sessionToken`,
+  `X-Api-Key`), and keep identifiers that merely contain one (`authorId`,
+  `sessionCount`, `tokenizer`) — previously matching was substring-based and
+  destroyed audit identifiers. Pass `sensitiveKeys` to restore any custom
+  policy.
+  `// before: authorId → "[redacted]"` → `// after: authorId survives, sessionToken → "[redacted]"`
+
+### Added
+
+- **Bounded in-memory state.** `createCache({ maxEntries })` and
+  `createCacheBridge({ maxFreshKeys })` use deterministic oldest-first eviction;
+  cache bridges expose `clearFresh()` and expire markers at the end of their
+  freshness window.
+- **Directly testable MCP preparation.** Immutable MCP descriptors are prepared
+  by a dedicated module while the public `stitchkit/tools` surface remains
+  unchanged.
+- **Structured realtime contract failures.** Rejections identify event,
+  direction, phase and local/peer fault through the registered
+  `REALTIME_CONTRACT_VIOLATION` error code and `StitchLogger`.
+
+### Fixed
+
+- **Realtime rooms and reconnect recovery.** Server, connected-socket and
+  emit-only room targets now resolve only the capabilities they use; manual
+  `connect()` recovers after Socket.IO exhausts its automatic retry budget.
+- **Fail-closed endpoint ownership.** MCP Host/Origin checks, implementation
+  lookup, auth middleware and object registries reject prototype-chain and
+  missing-handler fallthroughs.
+- **Model-controlled I/O is bounded.** Guarded fetches enforce one header
+  deadline across DNS and every redirect hop plus a separate body deadline
+  (`ViewFileOptions.timeoutMs`, `DownloadToolConfig.timeoutMs`,
+  `CliConfig.downloadTimeoutMs`); `view_file` caps the number of requested
+  targets, charges its byte budget by what was actually read and never
+  downloads a `video/*` body.
+- **Observability cannot break observed work.** Audit projection, sanitization,
+  size measurement and async sinks tolerate bigint, cycles, unreadable getters
+  and sink failures; trace sampling flags are preserved exactly.
+- **Browser response parity.** Blob failures follow the same `ApiError` and
+  `network_error` normalization path as JSON and raw-response requests.
+- **CLI parsing is strict.** Reserved-name collisions, misplaced positional
+  arguments, unknown flags and unsupported options fail with direct diagnostics;
+  stdio defaults never write logs into the JSON-RPC channel.
+- **MCP/OAuth policy validation.** MRTR policy is validated while building the
+  surface, audit rows carry round/outcome metadata, and CIMD resolution has
+  strict HTTP caching plus two-level rate limits
+  (`CimdCachePolicy.maxResolutionsPerClient` / `maxResolutions` per
+  `resolutionWindowMs`) with separate positive/negative cache pools, so a flood
+  cannot evict warmed clients and one client cannot lock out the rest.
+- **Contract presentation correctness.** JSON coercion no longer corrupts
+  string unions, query dehydration retains successful prefetched data, SSE
+  cancellation is quiet while generator failures remain visible, and static
+  routes reject symlinks escaping their declared root.
+
 ## [0.45.0] — 2026-08-10
 
 ### Added
@@ -87,6 +182,22 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
       preRegistered: { get: clients.get },
       // optional: dcr: { register: clients.register, get: clients.get }
     },
+  })
+  ```
+
+- **OAuth consent returns the scopes it actually approved.** `authorizeUser`
+  must return `approvedScopes`; token issuance no longer assumes that every
+  requested scope was approved. Missing or malformed values fail loudly at the
+  boundary.
+
+  ```ts
+  // before
+  authorizeUser: async () => ({ userId })
+
+  // after
+  authorizeUser: async (_req, request) => ({
+    userId,
+    approvedScopes: request.scope?.split(' ') ?? [],
   })
   ```
 

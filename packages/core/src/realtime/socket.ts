@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { StitchLogger } from '../logger';
 import type {
   RealtimeEmitArguments,
   RealtimeEventDefinition,
@@ -8,6 +8,7 @@ import type {
   RealtimeRejectedEvent,
   RealtimeRejectedEventHook,
 } from './contract';
+import { realtimeContractViolation } from './rejection';
 
 interface ValidatedRealtimeSocketOptions<
   TInbound extends RealtimeEventRegistry,
@@ -19,8 +20,19 @@ interface ValidatedRealtimeSocketOptions<
   inboundDirection: RealtimeRejectDirection;
   outboundDirection: RealtimeRejectDirection;
   onRejected?: RealtimeRejectedEventHook;
+  logger?: StitchLogger;
   subscribe?: (event: string, handler: (...args: unknown[]) => void) => () => void;
 }
+
+/** Runtime target forms supported by the realtime adapter and their required capabilities. */
+export const REALTIME_TARGET_FORMS = [
+  { name: 'Server', capabilities: ['on', 'off', 'emit'] },
+  { name: 'Socket', capabilities: ['on', 'off', 'emit'] },
+  { name: 'BroadcastOperator', capabilities: ['emit'] },
+] satisfies ReadonlyArray<{
+  name: 'Server' | 'Socket' | 'BroadcastOperator';
+  capabilities: ReadonlyArray<'on' | 'off' | 'emit'>;
+}>;
 
 export interface ValidatedRealtimeSocket<
   TInbound extends RealtimeEventRegistry,
@@ -35,8 +47,6 @@ export interface ValidatedRealtimeSocket<
     ...args: RealtimeEmitArguments<TOutbound[TEvent]>
   ): void;
 }
-
-const AcknowledgementCallbackSchema = z.function();
 
 function method(target: object, name: 'on' | 'off' | 'emit'): (...args: unknown[]) => unknown {
   const value = Reflect.get(target, name);
@@ -63,18 +73,32 @@ function splitWireArguments(
 function eventDefinition(
   registry: RealtimeEventRegistry,
   event: string,
+  direction: RealtimeRejectDirection,
 ): RealtimeEventDefinition {
   const definition = registry[event];
-  if (!definition) throw new Error(`Unknown realtime event "${event}"`);
+  if (!definition) {
+    throw realtimeContractViolation({
+      event,
+      direction,
+      phase: 'arguments',
+      reason: 'unknown-event',
+      fault: 'local',
+    }).error;
+  }
   return definition;
 }
 
 function reportRejected(
   rejected: RealtimeRejectedEvent,
   hook: RealtimeRejectedEventHook | undefined,
+  logger: StitchLogger | undefined,
 ): void {
   if (!hook) {
-    console.error(
+    if (logger) {
+      logger.warn(rejected.error.message, rejected.error.details);
+      return;
+    }
+    console.warn(
       `[stitchkit] rejected realtime ${rejected.direction} event "${rejected.event}" (${rejected.phase})`,
       rejected.error,
     );
@@ -95,46 +119,47 @@ export function createValidatedRealtimeSocket<
   inboundDirection,
   outboundDirection,
   onRejected,
+  logger,
   subscribe,
 }: ValidatedRealtimeSocketOptions<TInbound, TOutbound>): ValidatedRealtimeSocket<
   TInbound,
   TOutbound
 > {
-  const onTarget = method(target, 'on');
-  const offTarget = subscribe ? undefined : method(target, 'off');
   const emitTarget = method(target, 'emit');
 
   return {
     on: (event, handler) => {
-      const definition = eventDefinition(inbound, event);
+      const definition = eventDefinition(inbound, event, inboundDirection);
       const wrapped = (...wireArgs: unknown[]) => {
         const { values, acknowledgement } = splitWireArguments(definition, wireArgs);
         const parsed = definition.args.safeParse(values);
         if (!parsed.success) {
           reportRejected(
-            {
+            realtimeContractViolation({
               event,
               direction: inboundDirection,
               phase: 'arguments',
-              error: parsed.error,
-            },
+              reason: 'invalid-arguments',
+              fault: 'peer',
+              cause: parsed.error,
+            }),
             onRejected,
+            logger,
           );
           return;
         }
         if (definition.ack && !acknowledgement) {
-          const callback = AcknowledgementCallbackSchema.safeParse(undefined);
-          if (!callback.success) {
-            reportRejected(
-              {
-                event,
-                direction: inboundDirection,
-                phase: 'acknowledgement',
-                error: callback.error,
-              },
-              onRejected,
-            );
-          }
+          reportRejected(
+            realtimeContractViolation({
+              event,
+              direction: inboundDirection,
+              phase: 'acknowledgement',
+              reason: 'missing-acknowledgement',
+              fault: 'peer',
+            }),
+            onRejected,
+            logger,
+          );
           return;
         }
         const applicationArgs: unknown[] = [...parsed.data];
@@ -144,13 +169,16 @@ export function createValidatedRealtimeSocket<
             if (!ack?.success) {
               if (ack) {
                 reportRejected(
-                  {
+                  realtimeContractViolation({
                     event,
                     direction: outboundDirection,
                     phase: 'acknowledgement',
-                    error: ack.error,
-                  },
+                    reason: 'invalid-acknowledgement-value',
+                    fault: 'local',
+                    cause: ack.error,
+                  }),
                   onRejected,
+                  logger,
                 );
               }
               return;
@@ -161,32 +189,53 @@ export function createValidatedRealtimeSocket<
         Reflect.apply(handler, undefined, applicationArgs);
       };
       if (subscribe) return subscribe(event, wrapped);
+      const onTarget = method(target, 'on');
+      const offTarget = method(target, 'off');
       onTarget(event, wrapped);
       return () => {
-        offTarget?.(event, wrapped);
+        offTarget(event, wrapped);
       };
     },
     emit: (event, ...args) => {
-      const definition = eventDefinition(outbound, event);
+      const definition = eventDefinition(outbound, event, outboundDirection);
       const { values, acknowledgement } = splitWireArguments(definition, args);
-      const parsed = definition.args.parse(values);
-      if (definition.ack && !acknowledgement) {
-        AcknowledgementCallbackSchema.parse(undefined);
+      const parsed = definition.args.safeParse(values);
+      if (!parsed.success) {
+        throw realtimeContractViolation({
+          event,
+          direction: outboundDirection,
+          phase: 'arguments',
+          reason: 'invalid-arguments',
+          fault: 'local',
+          cause: parsed.error,
+        }).error;
       }
-      const wireArgs: unknown[] = [...parsed];
+      if (definition.ack && !acknowledgement) {
+        throw realtimeContractViolation({
+          event,
+          direction: outboundDirection,
+          phase: 'acknowledgement',
+          reason: 'missing-acknowledgement',
+          fault: 'local',
+        }).error;
+      }
+      const wireArgs: unknown[] = [...parsed.data];
       if (definition.ack && acknowledgement) {
         wireArgs.push((value: unknown) => {
           const ack = definition.ack?.safeParse(value);
           if (!ack?.success) {
             if (ack) {
               reportRejected(
-                {
+                realtimeContractViolation({
                   event,
                   direction: inboundDirection,
                   phase: 'acknowledgement',
-                  error: ack.error,
-                },
+                  reason: 'invalid-acknowledgement-value',
+                  fault: 'peer',
+                  cause: ack.error,
+                }),
                 onRejected,
+                logger,
               );
             }
             return;

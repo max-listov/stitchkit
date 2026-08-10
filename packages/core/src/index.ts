@@ -39,6 +39,7 @@ export type {
 export { createRealtimeClient, createSocketIOClient } from './browser/socket-io';
 export { type ParseSSEOptions, parseSSE } from './browser/stream';
 export * from './contract';
+export type { StitchLogger } from './logger';
 // W3C trace helpers — browser-safe (Web Crypto only), shared with the server's
 // `stitchkit/observability` entry so client and server speak one format.
 export {

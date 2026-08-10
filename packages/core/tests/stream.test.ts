@@ -31,6 +31,38 @@ describe('SSE streaming', () => {
     expect(text).not.toContain('Stream failed');
   });
 
+  test('client cancellation closes the generator without emitting an error event', async () => {
+    let released = false;
+    let calls = 0;
+    const generator: AsyncGenerator<unknown> = {
+      next: async () => {
+        calls += 1;
+        if (calls === 1) return { done: false, value: { chunk: 1 } };
+        return new Promise(() => undefined);
+      },
+      return: async () => {
+        released = true;
+        return { done: true, value: undefined };
+      },
+      throw: async (error?: unknown) => {
+        throw error;
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      [Symbol.asyncDispose]: async () => undefined,
+    };
+
+    const response = streamSSE(generator);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('SSE response must expose a body');
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain('"chunk":1');
+    await reader.cancel('consumer disconnected');
+
+    expect(released).toBe(true);
+  });
+
   test('parseSSE reads SSE stream back into objects', async () => {
     async function* gen() {
       yield { id: 1, text: 'first' };

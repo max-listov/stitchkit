@@ -139,6 +139,16 @@ describe('createMcpHandler v2 stateless transport', () => {
     await handler.close();
   });
 
+  test('treats undefined auth as unauthorized', async () => {
+    const handler = createMcpHandler({
+      serverInfo: { name: 'test', version: '1' },
+      auth: () => undefined,
+      services: [],
+    });
+    expect((await handler.fetch(legacyRequest('tools/list', {}))).status).toBe(401);
+    await handler.close();
+  });
+
   test('rejects legacy traffic when the endpoint is modern-only', async () => {
     const handler = createMcpHandler({
       serverInfo: { name: 'test', version: '1' },

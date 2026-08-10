@@ -182,7 +182,9 @@ export function createObservability(config: ObservabilityConfig): Observability 
               userAgent: context.userAgent,
               startedAt: new Date(Date.now() - durationMs),
             });
-          })();
+          })().catch(() => {
+            // Fire-and-forget observability must never create an unhandled rejection.
+          });
         },
       }
     : undefined;
@@ -190,51 +192,61 @@ export function createObservability(config: ObservabilityConfig): Observability 
   const toolCall: ToolCallHooks | undefined = config.tools
     ? {
         afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
-          const toolConfig = config.tools;
-          if (!toolConfig) return;
-          const emit = createEmitter(toolConfig);
-          // Each tool call is a span. Under an HTTP request it is a child of that
-          // request's span; on its own (a stdio server) it opens a fresh trace.
-          const requestCtx = getRequestContext();
-          const span = requestCtx ? childSpan(requestCtx.trace) : createTraceContext();
-          const measure = result.ok
-            ? measureSize(result.data)
-            : { resultSize: null, responseBytes: 0 };
-          const mcp = context.source === 'mcp' ? readMcpContext(context.mcp) : undefined;
-          void emit({
-            source: context.source,
-            method: 'TOOL',
-            httpMethod: endpoint.method,
-            path: `/${context.source}/${toolName}`,
-            serviceName: endpoint.serviceName,
-            action: endpoint.key,
-            ...(requestCtx?.dimensions !== undefined && {
-              dimensions: requestCtx.dimensions,
-            }),
-            toolName,
-            ...(mcp !== undefined && { mcp }),
-            traceId: span.traceId,
-            spanId: span.spanId,
-            parentSpanId: span.parentSpanId,
-            ok: result.ok,
-            statusCode: result.ok ? 200 : 400,
-            durationMs,
-            errorCode: result.ok ? undefined : result.code,
-            errorMessage: result.ok ? undefined : auditErrorMessage(result, error),
-            ...(!result.ok &&
-              result.details !== undefined && {
-                errorDetail: sanitizePayload(result.details, toolConfig.sanitize),
+          try {
+            // EVERYTHING lives inside the try — even reading the config: a
+            // throwing config getter must not reach the observed call.
+            const toolConfig = config.tools;
+            if (!toolConfig) return;
+            const emit = createEmitter(toolConfig);
+            // Each tool call is a span. Under an HTTP request it is a child of that
+            // request's span; on its own (a stdio server) it opens a fresh trace.
+            const requestCtx = getRequestContext();
+            const span = requestCtx ? childSpan(requestCtx.trace) : createTraceContext();
+            const measure = result.ok
+              ? measureSize(result.data)
+              : { resultSize: null, responseBytes: 0 };
+            const mcp = context.source === 'mcp' ? readMcpContext(context.mcp) : undefined;
+            const toolPhase = mcp?.outcome === 'input_required' ? 'input-round' : 'operation';
+            void emit({
+              source: context.source,
+              method: 'TOOL',
+              httpMethod: endpoint.method,
+              path: `/${context.source}/${toolName}`,
+              serviceName: endpoint.serviceName,
+              action: endpoint.key,
+              ...(requestCtx?.dimensions !== undefined && {
+                dimensions: requestCtx.dimensions,
               }),
-            payload: sanitizePayload(args, toolConfig.sanitize),
-            resultSize: measure.resultSize,
-            responseBytes: measure.responseBytes,
-            userId: readString(context.userId),
-            authMethod: readString(context.authMethod),
-            clientId: readString(context.clientId),
-            ipAddress: readString(context.ipAddress),
-            userAgent: readString(context.userAgent),
-            startedAt: new Date(Date.now() - durationMs),
-          });
+              toolName,
+              toolPhase,
+              ...(mcp !== undefined && { mcp }),
+              traceId: span.traceId,
+              spanId: span.spanId,
+              parentSpanId: span.parentSpanId,
+              ok: result.ok,
+              statusCode: result.ok ? 200 : 400,
+              durationMs,
+              errorCode: result.ok ? undefined : result.code,
+              errorMessage: result.ok ? undefined : auditErrorMessage(result, error),
+              ...(!result.ok &&
+                result.details !== undefined && {
+                  errorDetail: sanitizePayload(result.details, toolConfig.sanitize),
+                }),
+              payload: sanitizePayload(args, toolConfig.sanitize),
+              resultSize: measure.resultSize,
+              responseBytes: measure.responseBytes,
+              ...('unserializable' in measure &&
+                measure.unserializable && { resultUnserializable: true }),
+              userId: readString(context.userId),
+              authMethod: readString(context.authMethod),
+              clientId: readString(context.clientId),
+              ipAddress: readString(context.ipAddress),
+              userAgent: readString(context.userAgent),
+              startedAt: new Date(Date.now() - durationMs),
+            });
+          } catch {
+            // Projection failures are observational only and cannot affect the tool.
+          }
         },
       }
     : undefined;

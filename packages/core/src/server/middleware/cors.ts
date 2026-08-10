@@ -60,6 +60,19 @@ export function assertCorsConfig(config: CorsConfig): void {
         'Set `origin` to an explicit string or list.',
     );
   }
+  // A security-affecting setting must never pick the MOST permissive behaviour
+  // because a value went missing — an env var marked optional would silently
+  // open the API to every origin. "Allow all" is an explicit '*', not a hole.
+  if (config.origin === undefined) {
+    throw new Error(
+      "[stitchkit] cors: `origin` is required. Pass an explicit origin (or list), or '*' to deliberately allow every origin — omit `cors` entirely to emit no CORS headers.",
+    );
+  }
+  if (Array.isArray(config.origin) && config.origin.length === 0) {
+    throw new Error(
+      "[stitchkit] cors: `origin` cannot be an empty list. Pass explicit origins, or '*' to deliberately allow every origin.",
+    );
+  }
 }
 
 /** Resolve the allowed origin for a request — `undefined` means emit no header. */
@@ -67,7 +80,11 @@ function resolveOrigin(
   config: CorsConfig,
   requestOrigin: string | null | undefined,
 ): string | undefined {
-  if (config.origin === undefined || config.origin === '*') {
+  // A missing origin emits NO header — `assertCorsConfig` rejects it up
+  // front, and any path that skips the assertion must still fail safe rather
+  // than fall open to a wildcard.
+  if (config.origin === undefined) return undefined;
+  if (config.origin === '*') {
     // Credentials + wildcard is rejected by `assertCorsConfig`, so a wildcard
     // here is always credential-free and safe to emit verbatim.
     return '*';

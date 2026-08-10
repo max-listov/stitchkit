@@ -3,7 +3,7 @@
  * local filesystem. The app injects how to resolve the URL from the call's
  * args; the fetch / extension / write mechanics live here. → ADR 0019.
  */
-import { basename, extname, join } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
@@ -69,6 +69,11 @@ export interface DownloadToolConfig {
   allowPrivateHosts?: boolean;
   /** Max bytes to read before aborting (memory cap). Default 100 MB. */
   maxBytes?: number;
+  /**
+   * Deadline for producing response headers (DNS, connects and redirects share
+   * it). Default 15 seconds.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -95,7 +100,9 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
 
         // SSRF guard: the URL is model-derived, so route it through the same
         // per-redirect-hop private-host / scheme check `view_file` uses.
-        const res = await fetchGuarded(new URL(url), config.allowPrivateHosts ?? false);
+        const res = await fetchGuarded(new URL(url), config.allowPrivateHosts ?? false, {
+          timeoutMs: config.timeoutMs,
+        });
         if (!res.ok) return textResult(`Download failed: HTTP ${res.status}`, true);
 
         const mimeType =
@@ -114,8 +121,8 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
         if (!buffer)
           return textResult(`Download failed: file exceeds the ${max}-byte cap`, true);
 
-        const dir = config.dirFromArgs?.(args) ?? config.defaultDir;
-        const filePath = join(dir, `${baseNameFor(url)}${extensionFor(url, mimeType)}`);
+        const dir = resolve(config.dirFromArgs?.(args) ?? config.defaultDir);
+        const filePath = resolve(dir, `${baseNameFor(url)}${extensionFor(url, mimeType)}`);
         await writeDownload(dir, filePath, buffer);
 
         return textResult(

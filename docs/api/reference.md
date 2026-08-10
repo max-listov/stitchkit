@@ -61,6 +61,17 @@ The browser-and-server entrypoint. Re-exports everything from
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
 | `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
+| `RealtimeContract` | _type_ | shared server-to-client and client-to-server event registries |
+| `RealtimeEventRegistry` | _type_ | string-keyed registry of event definitions |
+| `RealtimeEventDefinition` | _type_ | one tuple-shaped event and optional acknowledgement schema |
+| `RealtimeEventArguments` | _type_ | tuple inferred from an event definition |
+| `RealtimeEmitArguments` | _type_ | emit arguments including an inferred acknowledgement callback |
+| `RealtimeEventHandler` | _type_ | handler inferred from an event definition |
+| `InferRealtimeEventMap` | _type_ | inferred Socket.IO-compatible event map |
+| `RealtimeRejectDirection` | _type_ | server/client inbound/outbound rejection direction |
+| `RealtimeRejectedEvent` | _type_ | structured rejected event with event, direction, phase, reason and fault |
+| `RealtimeRejectedEventHook` | _type_ | sync/async observer for structured realtime rejections |
+| `ValidatedRealtimeSocket` | _type_ | runtime-validating `on`/`emit` surface inferred from registries |
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
@@ -278,6 +289,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `parseMultipart` | function | parse a `multipart/form-data` request — [guide](../guide/server.md#multipart) |
 | `createRateLimiter` | function | token-bucket rate limiting — [guide](../guide/server.md#rate-limiting) |
 | `createCache` | function | an in-memory TTL cache |
+| `CacheOptions` | _type_ | bounded-cache options, including the maximum retained entry count |
 | `cacheHeaders` | function | build a `Cache-Control` header |
 | `EventBusOptions` | _type_ | options for `createEventBus` |
 | `EventHandler` | _type_ | one event-bus subscriber |
@@ -405,6 +417,7 @@ payload.
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
 | `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
+| `McpServer` | _type_ | official split-SDK server instance accepted by raw extension points |
 | `DirectMcpSurfaceConfig` | _type_ | static or identity-dynamic `services` / `runtimeTools` source |
 | `FiniteMcpSurfaceConfig` | _type_ | bounded `surfaces` registry plus typed selector |
 | `McpSurfaceDefinition` | _type_ | one immutable `{ services, runtimeTools }` MCP surface |
@@ -435,7 +448,7 @@ payload.
 | `CimdClientMetadataFetcher` | _type_ | injectable secure network boundary for metadata loading |
 | `CimdFetchResponse` | _type_ | bounded metadata fetch result passed across the injectable network boundary |
 | `CimdFetchPolicy` | _type_ | CIMD timeout, redirect and size limits |
-| `CimdCachePolicy` | _type_ | bounded HTTP-aware positive/negative cache policy |
+| `CimdCachePolicy` | _type_ | bounded HTTP-aware cache policy: separate positive/negative pools (`maxEntries`), per-client and server-wide resolution rate limits (`maxResolutionsPerClient` / `maxResolutions` per `resolutionWindowMs`) |
 | `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
 | `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
@@ -548,7 +561,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 
 Server-only, for Node ≥ 22 (Bun uses `stitchkit/server`). The runtime-agnostic
 core plus a Node HTTP adapter — [ADR 0013](../decisions/0013-runtime-agnostic-core.md),
-[deployment guide](../guide/testing-and-deployment.md#node). Re-exports the
+[deployment guide](../guide/testing-and-deployment.md#deploy-on-node). Re-exports the
 runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 
 | Export | Kind | Summary |

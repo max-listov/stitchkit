@@ -21,6 +21,7 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 import type { EventsMap } from '@socket.io/component-emitter';
+import type { StitchLogger } from '../logger';
 import type {
   RealtimeContract,
   RealtimeEventRegistry,
@@ -205,6 +206,7 @@ export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegi
     [TEvent in keyof TServerToClient]: (...args: unknown[]) => void;
   }> {
   onRejected?: RealtimeRejectedEventHook;
+  logger?: StitchLogger;
 }
 
 export function createRealtimeClient<
@@ -212,7 +214,7 @@ export function createRealtimeClient<
   const TClientToServer extends RealtimeEventRegistry,
 >(
   contract: RealtimeContract<TServerToClient, TClientToServer>,
-  { onRejected, ...config }: RealtimeClientOptions<TServerToClient>,
+  { onRejected, logger, ...config }: RealtimeClientOptions<TServerToClient>,
 ): RealtimeClient<TServerToClient, TClientToServer> {
   const transport = createSocketIOClient<SocketEventMap, SocketEventMap>(config);
   const events = createValidatedRealtimeSocket({
@@ -222,6 +224,7 @@ export function createRealtimeClient<
     inboundDirection: 'client-inbound',
     outboundDirection: 'client-outbound',
     onRejected,
+    logger,
     subscribe: (event, handler) => {
       const subscribe = Reflect.get(transport, 'on');
       if (typeof subscribe !== 'function') {
@@ -323,6 +326,9 @@ export function createSocketIOClient<
         }, serverDisconnectDelay);
       }
     });
+    socket.io.on('reconnect_failed', () => {
+      desiredConnected = false;
+    });
     // Record retained events' latest payload, independent of any user handler,
     // so the value is available to a subscriber that connects later. Attached
     // before connect so a handshake-time emission is captured too.
@@ -345,8 +351,12 @@ export function createSocketIOClient<
 
     connect() {
       // Idempotent: already connected, or a peer load is already in flight.
-      if (socket || desiredConnected) return;
+      if (socket?.connected || desiredConnected) return;
       desiredConnected = true;
+      if (socket) {
+        socket.connect();
+        return;
+      }
       // `socket.io-client` loads lazily — the socket appears a tick later. Every
       // method already tolerates a null socket (durable subscriptions attach on
       // build, `emit` no-ops while disconnected), so callers see no difference

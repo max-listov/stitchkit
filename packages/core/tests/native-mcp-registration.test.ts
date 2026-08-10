@@ -23,9 +23,10 @@ async function connect(server: McpServer): Promise<Client> {
 }
 
 function rpcRequest(method: string, sessionId?: string): Request {
-  return new Request('http://local/mcp', {
+  return new Request('http://localhost/mcp', {
     method: 'POST',
     headers: {
+      host: 'localhost',
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       ...(sessionId && { 'mcp-session-id': sessionId }),

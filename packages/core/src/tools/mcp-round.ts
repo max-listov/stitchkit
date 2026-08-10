@@ -168,11 +168,17 @@ async function runRoundFailure(
   );
 }
 
-function validatePolicy(
+export function validateMcpRoundPolicy(
   tool: MountableTool,
   policy: EndpointMcpPolicy,
-  maxRounds: number,
+  runtime?: { stateConfigured: boolean; maxRounds: number },
 ): void {
+  if (!runtime?.stateConfigured) {
+    throw new Error(
+      `[stitchkit] MCP tool "${tool.name}" declares inputRequired but no multiRound.state key is configured`,
+    );
+  }
+  const { maxRounds } = runtime;
   if (!Number.isInteger(maxRounds) || maxRounds < 1) {
     throw new Error('[stitchkit] multiRound.serving.maxRounds must be a positive integer');
   }
@@ -240,7 +246,10 @@ export async function resolveMcpRound(options: {
     );
   }
 
-  validatePolicy(options.tool, policy, options.runtime.maxRounds);
+  validateMcpRoundPolicy(options.tool, policy, {
+    stateConfigured: true,
+    maxRounds: options.runtime.maxRounds,
+  });
   const requests = policy.inputRequired;
   const state = options.context.mcpReq.requestState<McpRoundState>();
   const digest = await argumentsDigest(options.rawArgs);

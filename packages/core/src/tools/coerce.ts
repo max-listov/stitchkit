@@ -23,6 +23,33 @@ function needsJsonCoercion(schema: z.core.$ZodType): boolean {
   return false;
 }
 
+/**
+ * True when the schema takes a raw string as-is — every `ZodString` (including
+ * constrained formats: `uuid`, `email`, `min`, `regex`…), a string literal, a
+ * string enum, a template literal, and any wrapper/union over one of those.
+ */
+function acceptsRawString(schema: z.core.$ZodType): boolean {
+  const type = schema._zod.def.type;
+  if (type === 'string' || type === 'template_literal') return true;
+  if (schema instanceof z.ZodLiteral) {
+    return schema.def.values.some((value) => typeof value === 'string');
+  }
+  if (schema instanceof z.ZodEnum) {
+    return schema.options.some((value) => typeof value === 'string');
+  }
+  if (
+    schema instanceof z.ZodOptional ||
+    schema instanceof z.ZodNullable ||
+    schema instanceof z.ZodDefault
+  ) {
+    return acceptsRawString(schema.unwrap());
+  }
+  if (schema instanceof z.ZodUnion) {
+    return schema.def.options.some((option) => acceptsRawString(option));
+  }
+  return false;
+}
+
 /** The variant of a discriminated union whose discriminator matches `value`. */
 function matchingVariant(
   union: z.ZodDiscriminatedUnion,
@@ -56,7 +83,15 @@ function coerceValue(value: unknown, schema: z.core.$ZodType | undefined): unkno
   // A string where the schema wants a structure → JSON-parse, then recurse into
   // the parsed shape (so nested double-serialization is repaired too).
   let current = value;
+  // A union with ANY string-typed member owns its string semantics — the rule
+  // is decided by the MEMBER, not by whether this particular value validates.
+  // Parsing JSON first would silently change identifiers such as `"123"` or
+  // `"null"` into another union branch; a constrained member (`uuid`, `email`,
+  // `min`) must not weaken the rule. The trade-off is deliberate: in
+  // `union([string, array])` a double-serialized `'["a"]'` stays a string and
+  // fails loudly downstream instead of a real identifier being corrupted.
   if (typeof current === 'string' && needsJsonCoercion(schema)) {
+    if (acceptsRawString(schema)) return current;
     try {
       current = safeJsonParse(current);
     } catch {

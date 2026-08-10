@@ -35,7 +35,7 @@ export {
   createServer,
   type ServerPassthrough,
 } from './bun';
-export { cacheHeaders, createCache } from './cache';
+export { type CacheOptions, cacheHeaders, createCache } from './cache';
 export { createHandler } from './create';
 export {
   createErrorHook,
@@ -54,6 +54,7 @@ export {
   parseByteRange,
   type ServeFileOptions,
   serveFile,
+  staticRoute,
   weakETag,
 } from './file';
 export { createImplement, implement } from './implement';
@@ -112,7 +113,6 @@ export {
   resolveSocketIp,
   resolveTraceId,
 } from './request';
-export { staticRoute } from './router';
 export type { SocketIOServerConfig, SocketIOServerHandle } from './socket-io';
 export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';

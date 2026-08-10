@@ -84,7 +84,12 @@ export interface CimdFetchPolicy {
 }
 
 export interface CimdCachePolicy {
-  /** Maximum positive and negative cache entries. Default 256. */
+  /**
+   * Maximum cache entries — positive and negative entries each get their OWN
+   * pool of this size, so a flood of failing lookups cannot evict warmed
+   * clients and warmed clients cannot reset a failing client's backoff.
+   * Default 256.
+   */
   maxEntries?: number;
   /** Freshness when the response carries no cache directives. Default 5 minutes. */
   defaultTtlMs?: number;
@@ -92,6 +97,16 @@ export interface CimdCachePolicy {
   maxTtlMs?: number;
   /** Short fail-closed cache for invalid/unavailable documents. Default 10 seconds. */
   negativeTtlMs?: number;
+  /** Maximum uncached metadata resolutions per window, server-wide. Default 120. */
+  maxResolutions?: number;
+  /**
+   * Maximum uncached resolutions per window for ONE `client_id` — a single
+   * client whose document disables caching burns its own budget, not the
+   * server's. Default 10.
+   */
+  maxResolutionsPerClient?: number;
+  /** Resolution-rate window in milliseconds. Default 60 seconds. */
+  resolutionWindowMs?: number;
 }
 
 /** Injectable CIMD network boundary. Production uses the pinned-IP implementation. */
@@ -286,7 +301,19 @@ function assertCimdClientId(clientId: string): URL {
   return url;
 }
 
-function responseFreshness(
+/**
+ * Parse `Age` per RFC 9111: a list (two proxies each appending) takes its
+ * FIRST value; anything non-numeric or negative reads as absent — never NaN,
+ * never extra staleness.
+ */
+function parseAgeSeconds(headers: Headers): number {
+  const raw = headers.get('age');
+  if (raw === null) return 0;
+  const first = raw.split(',')[0]?.trim() ?? '';
+  return /^\d+$/.test(first) ? Number(first) : 0;
+}
+
+export function responseFreshness(
   headers: Headers,
   policy: CimdCachePolicy,
   now: number,
@@ -299,26 +326,30 @@ function responseFreshness(
   if (/(?:^|,)\s*no-cache\s*(?:,|$)/i.test(cacheControl)) {
     return { freshnessMs: 0, store: true };
   }
-  const maxAge = cacheControl.match(/(?:^|,)\s*max-age=(\d+)/i)?.[1];
+  const maxAge = cacheControl.match(/(?:^|,)\s*max-age=([^,\s]*)/i)?.[1];
   if (maxAge !== undefined) {
-    const age = Number(headers.get('age') ?? 0);
+    // RFC 9111 §5.2: an unparseable freshness directive means ALREADY
+    // EXPIRED — falling back to a default TTL would cache what the origin
+    // explicitly failed to authorise.
+    if (!/^\d+$/.test(maxAge)) return { freshnessMs: 0, store: true };
+    const age = parseAgeSeconds(headers);
     return {
       freshnessMs: Math.max(0, Math.min(maxTtl, (Number(maxAge) - age) * 1_000)),
       store: true,
     };
   }
   const expires = headers.get('expires');
-  if (expires) {
+  if (expires !== null) {
     const expiresAt = Date.parse(expires);
-    if (Number.isFinite(expiresAt)) {
-      const dateAt = Date.parse(headers.get('date') ?? '');
-      const ageMs = Number(headers.get('age') ?? 0) * 1_000;
-      const lifetime = Number.isFinite(dateAt) ? expiresAt - dateAt : expiresAt - now;
-      return {
-        freshnessMs: Math.max(0, Math.min(maxTtl, lifetime - ageMs)),
-        store: true,
-      };
-    }
+    // RFC 9111 §5.3: an unparseable Expires is treated as already expired.
+    if (!Number.isFinite(expiresAt)) return { freshnessMs: 0, store: true };
+    const dateAt = Date.parse(headers.get('date') ?? '');
+    const ageMs = parseAgeSeconds(headers) * 1_000;
+    const lifetime = Number.isFinite(dateAt) ? expiresAt - dateAt : expiresAt - now;
+    return {
+      freshnessMs: Math.max(0, Math.min(maxTtl, lifetime - ageMs)),
+      store: true,
+    };
   }
   return { freshnessMs: Math.min(maxTtl, policy.defaultTtlMs ?? 300_000), store: true };
 }
@@ -358,10 +389,26 @@ function createCimdResolver(options: {
 }) {
   const policy = options.cache ?? {};
   const now = options.now ?? Date.now;
-  const cache = new Map<string, CimdCacheEntry>();
+  // Positive and negative entries live in SEPARATE pools with separate
+  // budgets: a flood of unresolvable client_ids evicts only other negatives
+  // (warmed clients stay warm), and a burst of successful resolutions cannot
+  // reset a failing client's negative backoff.
+  const positives = new Map<string, CimdCacheEntry & { ok: true }>();
+  const negatives = new Map<string, CimdCacheEntry & { ok: false }>();
   const inflight = new Map<string, Promise<RegisteredClient>>();
   const maxEntries = policy.maxEntries ?? 256;
+  const maxResolutions = policy.maxResolutions ?? 120;
+  const maxResolutionsPerClient = policy.maxResolutionsPerClient ?? 10;
+  const resolutionWindowMs = policy.resolutionWindowMs ?? 60_000;
+  let resolutionWindowStartedAt = now();
+  let resolutionsInWindow = 0;
+  // Per-client windows, bounded so the tracker itself cannot be flooded.
+  const clientWindows = new Map<string, { startedAt: number; count: number }>();
+  const CLIENT_WINDOW_CAP = 4096;
   assertPositiveInteger('cimd.cache.maxEntries', maxEntries);
+  assertPositiveInteger('cimd.cache.maxResolutions', maxResolutions);
+  assertPositiveInteger('cimd.cache.maxResolutionsPerClient', maxResolutionsPerClient);
+  assertPositiveInteger('cimd.cache.resolutionWindowMs', resolutionWindowMs);
   assertNonNegativeInteger('cimd.cache.defaultTtlMs', policy.defaultTtlMs ?? 300_000);
   assertNonNegativeInteger('cimd.cache.maxTtlMs', policy.maxTtlMs ?? 3_600_000);
   assertNonNegativeInteger('cimd.cache.negativeTtlMs', policy.negativeTtlMs ?? 10_000);
@@ -372,19 +419,36 @@ function createCimdResolver(options: {
       // Cache telemetry must not alter authorization semantics.
     }
   };
-  const touch = (key: string, value: CimdCacheEntry): void => {
-    cache.delete(key);
-    cache.set(key, value);
-    while (cache.size > maxEntries) {
-      const oldest = cache.keys().next().value;
+  const readCache = (key: string): CimdCacheEntry | undefined =>
+    positives.get(key) ?? negatives.get(key);
+  const trimOldest = (pool: Map<string, unknown>): void => {
+    while (pool.size > maxEntries) {
+      const oldest = pool.keys().next().value;
       if (oldest === undefined) break;
-      cache.delete(oldest);
+      pool.delete(oldest);
     }
+  };
+  const touch = (key: string, value: CimdCacheEntry): void => {
+    if (value.ok) {
+      negatives.delete(key);
+      positives.delete(key);
+      positives.set(key, value);
+      trimOldest(positives);
+    } else {
+      positives.delete(key);
+      negatives.delete(key);
+      negatives.set(key, value);
+      trimOldest(negatives);
+    }
+  };
+  const dropCache = (key: string): void => {
+    positives.delete(key);
+    negatives.delete(key);
   };
 
   const resolveOne = async (clientId: string): Promise<RegisteredClient> => {
     const url = assertCimdClientId(clientId);
-    const cached = cache.get(clientId);
+    const cached = readCache(clientId);
     if (cached && cached.expiresAt > now()) {
       touch(clientId, cached);
       if (cached.ok) {
@@ -395,6 +459,34 @@ function createCimdResolver(options: {
       throw new Error(cached.message);
     }
     emit({ clientId, status: 'miss' });
+    const currentTime = now();
+    if (currentTime - resolutionWindowStartedAt >= resolutionWindowMs) {
+      resolutionWindowStartedAt = currentTime;
+      resolutionsInWindow = 0;
+    }
+    // The per-client budget is checked FIRST and neither counter moves on a
+    // rejection — one greedy client (a `no-cache` document, a retry loop)
+    // exhausts its own allowance, not the server-wide one, so a fresh
+    // legitimate client still resolves inside the same window.
+    let clientWindow = clientWindows.get(clientId);
+    if (!clientWindow || currentTime - clientWindow.startedAt >= resolutionWindowMs) {
+      clientWindow = { startedAt: currentTime, count: 0 };
+      clientWindows.delete(clientId);
+      clientWindows.set(clientId, clientWindow);
+      while (clientWindows.size > CLIENT_WINDOW_CAP) {
+        const oldest = clientWindows.keys().next().value;
+        if (oldest === undefined) break;
+        clientWindows.delete(oldest);
+      }
+    }
+    if (clientWindow.count >= maxResolutionsPerClient) {
+      throw new Error('CIMD metadata resolution rate limit exceeded for this client_id');
+    }
+    if (resolutionsInWindow >= maxResolutions) {
+      throw new Error('CIMD metadata resolution rate limit exceeded');
+    }
+    clientWindow.count += 1;
+    resolutionsInWindow += 1;
 
     const conditionalHeaders: Record<string, string> = {};
     if (cached?.ok && cached.etag) conditionalHeaders['if-none-match'] = cached.etag;
@@ -402,18 +494,16 @@ function createCimdResolver(options: {
       conditionalHeaders['if-modified-since'] = cached.lastModified;
     }
 
-    let cacheFailure = true;
     try {
       const response = await options.fetcher.fetch(url, conditionalHeaders);
       const freshness = responseFreshness(response.headers, policy, now());
-      cacheFailure = freshness.store;
       if (response.status === 304 && cached?.ok) {
         const refreshed: CimdCacheEntry = {
           ...cached,
           expiresAt: now() + freshness.freshnessMs,
         };
         if (freshness.store) touch(clientId, refreshed);
-        else cache.delete(clientId);
+        else dropCache(clientId);
         emit({ clientId, status: 'revalidated', freshnessMs: freshness.freshnessMs });
         return refreshed.client;
       }
@@ -439,7 +529,7 @@ function createCimdResolver(options: {
         );
       }
       const client = toRegisteredClient(metadata);
-      if (freshness.store) {
+      if (freshness.store && Number.isFinite(freshness.freshnessMs)) {
         touch(clientId, {
           ok: true,
           client,
@@ -452,19 +542,17 @@ function createCimdResolver(options: {
           }),
         });
       } else {
-        cache.delete(clientId);
+        dropCache(clientId);
       }
       return client;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'CIMD metadata resolution failed';
-      if (cacheFailure) {
-        touch(clientId, {
-          ok: false,
-          message,
-          expiresAt: now() + (policy.negativeTtlMs ?? 10_000),
-        });
-      }
+      touch(clientId, {
+        ok: false,
+        message,
+        expiresAt: now() + (policy.negativeTtlMs ?? 10_000),
+      });
       throw error;
     }
   };
@@ -799,6 +887,13 @@ export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
       };
       const result = await config.authorizeUser(req, authRequest);
       if (result instanceof Response) return result;
+
+      if (
+        !Array.isArray(result.approvedScopes) ||
+        !result.approvedScopes.every((scope) => typeof scope === 'string')
+      ) {
+        throw new Error('authorizeUser must return approvedScopes as an array of strings');
+      }
 
       const approvedScopes = [...new Set(result.approvedScopes)];
       if (

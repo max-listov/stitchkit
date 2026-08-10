@@ -128,6 +128,85 @@ describe('executeToolMethod', () => {
     expect(result.ok).toBe(true);
   });
 
+  test('a union with a CONSTRAINED string member is never silently JSON-parsed (MCP path)', async () => {
+    // The coercion rule is decided by the union MEMBER, not by whether this
+    // value happens to validate. Each value below WOULD validate if parsed
+    // (number / object branch) — so a passing call would prove corruption; the
+    // only correct outcome is a loud validation failure on the raw string.
+    const cases: Array<{ member: z.ZodType; value: string }> = [
+      { member: z.uuid(), value: '123' },
+      { member: z.email(), value: '123' },
+      { member: z.string().min(4), value: '123' },
+      { member: z.cuid2(), value: '{"a":"b"}' },
+    ];
+    for (const { member, value } of cases) {
+      const method = makeMethod({
+        inputSchema: z.object({
+          target: z.union([member, z.number(), z.object({ a: z.string() })]),
+        }),
+        handler: (ctx) => ctx.input,
+      });
+      const result = await executeToolMethod(
+        method,
+        'test',
+        { target: value },
+        { source: 'mcp' },
+        undefined,
+        undefined,
+        true,
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  test('a string valid for the string member arrives as the string, not a parsed number', async () => {
+    let received: unknown;
+    const method = makeMethod({
+      inputSchema: z.object({ target: z.union([z.string().min(2), z.number()]) }),
+      outputSchema: z.unknown(),
+      handler: (ctx) => {
+        received = (ctx.input as { target: unknown }).target;
+        return { ok: true };
+      },
+    });
+    const result = await executeToolMethod(
+      method,
+      'test',
+      { target: '123' },
+      { source: 'mcp' },
+      undefined,
+      undefined,
+      true,
+    );
+    expect(result.ok).toBe(true);
+    expect(received).toBe('123');
+  });
+
+  test('a union WITHOUT a string member still repairs a double-serialized value (MCP path)', async () => {
+    let received: unknown;
+    const method = makeMethod({
+      inputSchema: z.object({
+        target: z.union([z.array(z.string()), z.object({ a: z.string() })]),
+      }),
+      outputSchema: z.unknown(),
+      handler: (ctx) => {
+        received = (ctx.input as { target: unknown }).target;
+        return { ok: true };
+      },
+    });
+    const result = await executeToolMethod(
+      method,
+      'test',
+      { target: '["a","b"]' },
+      { source: 'mcp' },
+      undefined,
+      undefined,
+      true,
+    );
+    expect(result.ok).toBe(true);
+    expect(received).toEqual(['a', 'b']);
+  });
+
   test('handler AppError → structured error', async () => {
     const method = makeMethod({
       handler: () => {

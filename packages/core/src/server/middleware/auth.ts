@@ -235,7 +235,7 @@ export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): Au
     const scope = endpoint.scope ?? config.defaultScope;
     if (!scope) return;
 
-    const rule = config.rules[scope];
+    const rule = Object.hasOwn(config.rules, scope) ? config.rules[scope] : undefined;
     // An endpoint that declares a scope with no matching rule is a config
     // mistake — fail closed, never silently pass an unguarded endpoint.
     if (!rule) {

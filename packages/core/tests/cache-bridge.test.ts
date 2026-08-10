@@ -103,4 +103,57 @@ describe('createCacheBridge', () => {
     fake.emit({ id: '3', text: 'b' });
     expect(calls).toBe(1);
   });
+
+  test('freshness expires, can be cleared, and is bounded by oldest-first eviction', async () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeSocket();
+    let context:
+      | Parameters<
+          NonNullable<
+            Parameters<typeof createCacheBridge<NoteEvents>>[0]['handlers']['noteUpdated']
+          >
+        >[1]
+      | undefined;
+    const bridge = createCacheBridge<NoteEvents>({
+      socket: fake.socket,
+      queryClient,
+      freshWindow: 20,
+      maxFreshKeys: 2,
+      handlers: {
+        noteUpdated: (_data, ctx) => {
+          context = ctx;
+        },
+      },
+    });
+    bridge.connect();
+    fake.emit({ id: 'seed', text: 'seed' });
+    if (!context) throw new Error('test setup: bridge context missing');
+
+    bridge.markFresh(['note', '1']);
+    bridge.markFresh(['note', '2']);
+    bridge.markFresh(['note', '3']);
+    expect(context.isFresh(['note', '1'])).toBe(false);
+    expect(context.isFresh(['note', '2'])).toBe(true);
+    expect(context.isFresh(['note', '3'])).toBe(true);
+
+    bridge.clearFresh();
+    expect(context.isFresh(['note', '2'])).toBe(false);
+    bridge.markFresh(['note', '4']);
+    await Bun.sleep(30);
+    expect(context.isFresh(['note', '4'])).toBe(false);
+    bridge.disconnect();
+  });
+
+  test('rejects invalid freshness bounds', () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeSocket();
+    expect(() =>
+      createCacheBridge<NoteEvents>({
+        socket: fake.socket,
+        queryClient,
+        maxFreshKeys: 0,
+        handlers: {},
+      }),
+    ).toThrow(/maxFreshKeys/);
+  });
 });

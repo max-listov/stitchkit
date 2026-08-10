@@ -290,8 +290,10 @@ each request.
 
 A payload goes into an audit row only after `sanitizePayload`:
 
-- **secret-named keys are masked** — `password`, `token`, `apiKey`, `secret`,
-  `authorization`, `cookie`, … (value → `[redacted]`);
+- **secret-named keys are masked** — a key whose words include a secret term is
+  redacted (`password`, `sessionToken`, `X-Api-Key`, `authorization`, `cookie`,
+  …), while identifiers that merely contain one (`authorId`, `sessionCount`,
+  `tokenizer`) survive;
 - **binary blobs** (`Uint8Array`, `Blob`, `FormData`) collapse to metadata —
   never the bytes;
 - the result is **capped** — anything over the byte limit becomes a preview.

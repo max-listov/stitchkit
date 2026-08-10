@@ -26,7 +26,7 @@ import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
 import { writeDownload } from '../internal/write-download';
 import type { ServiceDef, StitchLogger } from '../server/types';
-import { parseCliArgs } from './cli-args';
+import { CliArgumentError, parseCliArgs, RESERVED_CLI_OPTIONS } from './cli-args';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
@@ -97,6 +97,11 @@ export interface CliConfig<
   allowPrivateDownloadHosts?: boolean;
   /** Max bytes per `--output-dir` download before aborting. Default 100 MB. */
   maxDownloadBytes?: number;
+  /**
+   * Deadline for producing response headers per `--output-dir` download (DNS,
+   * connects and redirects share it). Default 15 seconds.
+   */
+  downloadTimeoutMs?: number;
   /** argv to parse — default `process.argv.slice(2)`; injectable for tests. */
   argv?: string[];
   /** stdout sink — default `process.stdout`; injectable for tests. */
@@ -236,12 +241,7 @@ function renderTopHelp(
 
 function renderCommandHelp(name: string, command: string, tool: MountableTool): string {
   const lines = [tool.method.desc, '', `Usage: ${name} ${command} [args] [--flags]`, ''];
-  let fields: ReturnType<typeof jsonSchemaFields> = [];
-  try {
-    fields = jsonSchemaFields(tool.presentationSchema);
-  } catch {
-    lines.push('(arguments: pass a JSON object — this command has a complex schema)', '');
-  }
+  const fields = jsonSchemaFields(tool.presentationSchema);
   if (fields.length > 0) {
     lines.push('Arguments:');
     const width = Math.max(...fields.map((f) => f.name.length));
@@ -266,14 +266,16 @@ async function downloadResults(
   quiet: boolean,
   allowPrivate: boolean,
   maxBytes: number,
-): Promise<void> {
+  timeoutMs: number | undefined,
+): Promise<boolean> {
   const root = resolve(dir);
+  let succeeded = true;
   for (const file of files) {
     try {
       // `file.url` is handler/remote-derived → SSRF-guard it (private hosts,
       // non-http(s) schemes, per-redirect-hop) and cap the body so a hostile or
       // huge resource cannot OOM the CLI.
-      const res = await fetchGuarded(new URL(file.url), allowPrivate);
+      const res = await fetchGuarded(new URL(file.url), allowPrivate, { timeoutMs });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buffer = await readCapped(res, maxBytes);
       if (!buffer) throw new Error(`file exceeds the ${maxBytes}-byte cap`);
@@ -283,11 +285,13 @@ async function downloadResults(
       await writeDownload(root, target, buffer);
       if (!quiet) stderr(`saved ${target} (${(buffer.length / 1024).toFixed(0)}KB)\n`);
     } catch (err) {
+      succeeded = false;
       stderr(
         `failed to download ${file.url}: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
+  return succeeded;
 }
 
 /**
@@ -314,6 +318,17 @@ export async function createCli<
   for (const service of services) {
     for (const mountable of collectTools(service, 'CLI')) {
       assertUniqueToolName(mountable.name, tools.has(mountable.name), 'CLI command');
+      if (mountable.name === 'help' || mountable.name === 'version') {
+        throw new Error(`[stitchkit] CLI command "${mountable.name}" is reserved`);
+      }
+      const conflicting = jsonSchemaFields(mountable.presentationSchema)
+        .map((field) => field.name)
+        .filter((name) => RESERVED_CLI_OPTIONS.has(name));
+      if (conflicting.length > 0) {
+        throw new Error(
+          `[stitchkit] CLI command "${mountable.name}" declares reserved option field(s): ${conflicting.join(', ')}`,
+        );
+      }
       tools.set(mountable.name, mountable);
     }
   }
@@ -351,7 +366,42 @@ export async function createCli<
     return exit(1);
   }
 
-  const { toolArgs, options } = parseCliArgs(commandArgv, tool.argumentSchema);
+  // `--help` wins over every option validator — a user must be able to ask a
+  // command about its flags even when the rest of the invocation is mistyped.
+  const beforeSeparator =
+    commandArgv.indexOf('--') === -1
+      ? commandArgv
+      : commandArgv.slice(0, commandArgv.indexOf('--'));
+  if (beforeSeparator.includes('--help') || beforeSeparator.includes('-h')) {
+    stdout(renderCommandHelp(config.name, command, tool));
+    return exit(0);
+  }
+
+  let parsed: ReturnType<typeof parseCliArgs>;
+  try {
+    parsed = parseCliArgs(commandArgv, tool.argumentSchema, {
+      allowUnknown: config.passthrough?.[command] !== undefined,
+      knownFields: jsonSchemaFields(tool.presentationSchema).map((field) => field.name),
+    });
+  } catch (error) {
+    if (!(error instanceof CliArgumentError)) throw error;
+    stderr(`${error.message}\n`);
+    return exit(2);
+  }
+  const { toolArgs, options } = parsed;
+
+  if (options.wait && !config.wait?.[command]) {
+    stderr(`--wait is not configured for command "${command}"\n`);
+    return exit(2);
+  }
+  if (options.waitTimeout !== undefined && !options.wait) {
+    stderr('--wait-timeout requires --wait\n');
+    return exit(2);
+  }
+  if (options.outputDir !== undefined && !config.download) {
+    stderr('--output-dir is not configured for this CLI\n');
+    return exit(2);
+  }
 
   if (options.help) {
     stdout(renderCommandHelp(config.name, command, tool));
@@ -404,14 +454,16 @@ export async function createCli<
     });
   }
 
+  let downloadsOk = true;
   if (options.outputDir && result.ok && config.download) {
-    await downloadResults(
+    downloadsOk = await downloadResults(
       config.download(result.data),
       options.outputDir,
       stderr,
       options.quiet,
       config.allowPrivateDownloadHosts ?? false,
       config.maxDownloadBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
+      config.downloadTimeoutMs,
     );
   }
 
@@ -425,7 +477,7 @@ export async function createCli<
       exitCodes: { ...DEFAULT_EXIT_CODES, ...config.exitCodes },
     },
   );
-  return exit(exitCode);
+  return exit(downloadsOk ? exitCode : 1);
 }
 
 /** A tool's input JSON Schema, or `{}` when it cannot be represented. */

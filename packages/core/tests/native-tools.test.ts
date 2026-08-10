@@ -10,7 +10,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -189,6 +189,36 @@ describe('mountDownload', () => {
         expect(parsed.size).toBe(3);
         expect(typeof parsed.path === 'string' && parsed.path.endsWith('img.png')).toBe(true);
       }
+      await client.close();
+    } finally {
+      spy.mockRestore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a RELATIVE defaultDir works (regression: unresolved dir always failed containment)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sk-dl-rel-'));
+    // The documented `mountDownload({ defaultDir: './downloads' })` shape — a
+    // relative directory must resolve before the containment check, not fail
+    // as a bogus security error naming the user's file.
+    const relativeDir = relative(process.cwd(), dir);
+    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
+    );
+    try {
+      const client = await connectWith((s) =>
+        mountDownload(s, {
+          description: 'download',
+          inputSchema: { url: z.string() },
+          resolveUrl: (args) => (typeof args.url === 'string' ? args.url : null),
+          defaultDir: relativeDir,
+        }),
+      );
+      const result = await client.callTool({
+        name: 'download',
+        arguments: { url: 'https://93.184.216.34/img.png' },
+      });
+      expect(isErr(result)).toBe(false);
       await client.close();
     } finally {
       spy.mockRestore();

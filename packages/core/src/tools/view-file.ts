@@ -13,15 +13,16 @@
  * sandboxed to a `baseDir`, and downloads are capped before they reach memory.
  */
 
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
-import { isWithinDir } from '../internal/within-dir';
+import { isWithinDir, realPathWithinDir } from '../internal/within-dir';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
+const MAX_VIEW_FILES = 20;
 
 /** File extension → MIME. Fallback when a URL carries no `content-type`. */
 const EXT_MIME: Record<string, string> = {
@@ -68,34 +69,52 @@ export interface ViewFileOptions {
    * network where the model is allowed to reach internal hosts.
    */
   allowPrivateHosts?: boolean;
+  /**
+   * Deadline for producing response headers on a URL fetch (DNS, connects and
+   * redirects share it). Default 15 seconds.
+   */
+  timeoutMs?: number;
 }
 
 type FetchedSource =
-  | { buffer: Buffer; mimeType: string }
-  | { tooLarge: true; mimeType: string };
+  | { buffer: Buffer; mimeType: string; bytesRead: number }
+  | { tooLarge: true; mimeType: string; bytesRead: number }
+  | { video: true; mimeType: string; bytesRead: number };
 
 async function fetchSource(
   pathOrUrl: string,
   options: ViewFileOptions,
+  maxBytes: number,
 ): Promise<FetchedSource> {
   const extMime = EXT_MIME[extname(pathOrUrl).toLowerCase()];
 
   if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
     const url = new URL(pathOrUrl);
-    const res = await fetchGuarded(url, options.allowPrivateHosts ?? false);
+    const res = await fetchGuarded(url, options.allowPrivateHosts ?? false, {
+      timeoutMs: options.timeoutMs,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const headerMime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
     const mimeType = headerMime || extMime || 'application/octet-stream';
 
+    // A video body is never inlined (MCP has no video block) — do not download
+    // it at all: the header already told us everything the caller can use.
+    if (mimeType.startsWith('video/')) {
+      await res.body?.cancel();
+      return { video: true, mimeType, bytesRead: 0 };
+    }
     // Reject by declared size before downloading anything.
     const declared = Number(res.headers.get('content-length') ?? 0);
-    if (declared > MAX_INLINE_BYTES) {
+    if (declared > maxBytes) {
       await res.body?.cancel();
-      return { tooLarge: true, mimeType };
+      return { tooLarge: true, mimeType, bytesRead: 0 };
     }
-    // No / understated Content-Length is still capped while streaming.
-    const buffer = await readCapped(res, MAX_INLINE_BYTES);
-    return buffer ? { buffer, mimeType } : { tooLarge: true, mimeType };
+    // No / understated Content-Length is still capped while streaming. An
+    // overflow consumed up to the cap before aborting — charge the budget.
+    const buffer = await readCapped(res, maxBytes);
+    return buffer
+      ? { buffer, mimeType, bytesRead: buffer.length }
+      : { tooLarge: true, mimeType, bytesRead: maxBytes };
   }
 
   // Local file access is opt-in and sandboxed to `baseDir`.
@@ -116,16 +135,97 @@ async function fetchSource(
   // Re-check the real, symlink-resolved paths so a symlink inside the sandbox
   // cannot point out of it (and so a sandbox reached through a symlink still
   // matches). `realpath` of a missing file rejects → treated as not found.
-  const realTarget = await realpath(target).catch(() => null);
-  if (realTarget === null) throw new Error('file not found');
-  const realRoot = await realpath(root).catch(() => root);
-  if (!isWithinDir(realRoot, realTarget)) {
+  const realTarget = await realPathWithinDir(root, target);
+  if (realTarget === null) {
     throw new Error('path escapes the allowed directory');
   }
   const info = await stat(realTarget).catch(() => null);
   if (!info?.isFile()) throw new Error('file not found');
-  if (info.size > MAX_INLINE_BYTES) return { tooLarge: true, mimeType: extMime };
-  return { buffer: await readFile(realTarget), mimeType: extMime };
+  if (info.size > maxBytes) return { tooLarge: true, mimeType: extMime, bytesRead: 0 };
+  const buffer = await readFile(realTarget);
+  return { buffer, mimeType: extMime, bytesRead: buffer.length };
+}
+
+type ResolvedMedia = {
+  content: McpMediaContent[];
+  bytes: number;
+};
+
+async function resolveMediaWithinBudget(
+  pathOrUrl: string,
+  options: ViewFileOptions,
+  maxBytes: number,
+): Promise<ResolvedMedia> {
+  if (maxBytes <= 0) {
+    return {
+      content: [
+        { type: 'text', text: `[media] total inline budget exhausted — ${pathOrUrl}` },
+      ],
+      bytes: 0,
+    };
+  }
+
+  const extMime = EXT_MIME[extname(pathOrUrl).toLowerCase()];
+  if (extMime?.startsWith('video/')) {
+    return {
+      content: [{ type: 'text', text: `[video] ${extMime} — ${pathOrUrl}` }],
+      bytes: 0,
+    };
+  }
+
+  const result = await fetchSource(pathOrUrl, options, maxBytes);
+  // `bytes` always reports what was actually READ, whatever branch produced it
+  // — the caller's budget must shrink by real traffic, not by what was inlined.
+  if ('video' in result) {
+    return {
+      content: [{ type: 'text', text: `[video] ${result.mimeType} — ${pathOrUrl}` }],
+      bytes: result.bytesRead,
+    };
+  }
+  if ('tooLarge' in result) {
+    return {
+      content: [
+        { type: 'text', text: `[${result.mimeType}] too large to inline — ${pathOrUrl}` },
+      ],
+      bytes: result.bytesRead,
+    };
+  }
+
+  const { buffer, mimeType } = result;
+  const sizeKb = (buffer.length / 1024).toFixed(0);
+
+  if (mimeType.startsWith('image/')) {
+    return {
+      content: [
+        {
+          type: 'image',
+          data: buffer.toString('base64'),
+          mimeType,
+          annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+        },
+        { type: 'text', text: `[image] ${mimeType}, ${sizeKb}KB` },
+      ],
+      bytes: buffer.length,
+    };
+  }
+  if (mimeType.startsWith('audio/')) {
+    return {
+      content: [
+        {
+          type: 'audio',
+          data: buffer.toString('base64'),
+          mimeType,
+          annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+        },
+        { type: 'text', text: `[audio] ${mimeType}, ${sizeKb}KB` },
+      ],
+      bytes: buffer.length,
+    };
+  }
+  return {
+    content: [{ type: 'text', text: `[${mimeType}] ${sizeKb}KB — ${pathOrUrl}` }],
+    bytes: buffer.length,
+  };
 }
 
 /**
@@ -140,50 +240,14 @@ export async function resolveMedia(
   pathOrUrl: string,
   options: ViewFileOptions = {},
 ): Promise<McpMediaContent[]> {
-  // Never download video — detect by extension and return a link immediately.
-  const extMime = EXT_MIME[extname(pathOrUrl).toLowerCase()];
-  if (extMime?.startsWith('video/')) {
-    return [{ type: 'text', text: `[video] ${extMime} — ${pathOrUrl}` }];
-  }
-
-  const result = await fetchSource(pathOrUrl, options);
-  if ('tooLarge' in result) {
-    return [{ type: 'text', text: `[${result.mimeType}] too large to inline — ${pathOrUrl}` }];
-  }
-
-  const { buffer, mimeType } = result;
-  const sizeKb = (buffer.length / 1024).toFixed(0);
-
-  if (mimeType.startsWith('video/')) {
-    return [{ type: 'text', text: `[video] ${mimeType}, ${sizeKb}KB — ${pathOrUrl}` }];
-  }
-  if (mimeType.startsWith('image/')) {
-    return [
-      {
-        type: 'image',
-        data: buffer.toString('base64'),
-        mimeType,
-        // Both audiences — the user sees it inline in the chat AND the model
-        // keeps it in context to verify the result. `['user']` alone would hide
-        // it from the model; the default (none) hides it from the user.
-        annotations: { audience: ['user', 'assistant'], priority: 0.9 },
-      },
-      { type: 'text', text: `[image] ${mimeType}, ${sizeKb}KB` },
-    ];
-  }
-  if (mimeType.startsWith('audio/')) {
-    return [
-      {
-        type: 'audio',
-        data: buffer.toString('base64'),
-        mimeType,
-        annotations: { audience: ['user', 'assistant'], priority: 0.9 },
-      },
-      { type: 'text', text: `[audio] ${mimeType}, ${sizeKb}KB` },
-    ];
-  }
-  return [{ type: 'text', text: `[${mimeType}] ${sizeKb}KB — ${pathOrUrl}` }];
+  return (await resolveMediaWithinBudget(pathOrUrl, options, MAX_INLINE_BYTES)).content;
 }
+
+export const ViewFileInputSchema = z.object({
+  paths: z
+    .union([z.string(), z.array(z.string()).max(MAX_VIEW_FILES)])
+    .describe('Media URL(s) or file path(s) to view'),
+});
 
 /**
  * Register the raw native MCP `view_file` tool on an SDK server. From
@@ -198,11 +262,7 @@ export function mountViewFile(server: McpServer, options: ViewFileOptions = {}):
     {
       description:
         'View media (image, audio, video) by URL or local path — returns it as content you can SEE / HEAR. Pass several paths to view multiple files at once. Use it on a generation `output` url to inspect the result.',
-      inputSchema: {
-        paths: z
-          .union([z.string(), z.array(z.string())])
-          .describe('Media URL(s) or file path(s) to view'),
-      },
+      inputSchema: ViewFileInputSchema.shape,
       // Read-only: fetches and returns media, mutates nothing. A title + hints so
       // hosts group it with the other read-only tools and show a friendly label.
       annotations: { title: 'View Media', readOnlyHint: true, idempotentHint: true },
@@ -210,9 +270,12 @@ export function mountViewFile(server: McpServer, options: ViewFileOptions = {}):
     async (args: { paths: string | string[] }) => {
       const list = Array.isArray(args.paths) ? args.paths : [args.paths];
       const content: McpMediaContent[] = [];
+      let remainingBytes = MAX_INLINE_BYTES;
       for (const pathOrUrl of list) {
         try {
-          content.push(...(await resolveMedia(pathOrUrl, options)));
+          const resolved = await resolveMediaWithinBudget(pathOrUrl, options, remainingBytes);
+          remainingBytes -= resolved.bytes;
+          content.push(...resolved.content);
         } catch (err) {
           content.push({
             type: 'text',

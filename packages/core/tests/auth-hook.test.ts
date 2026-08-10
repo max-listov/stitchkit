@@ -60,6 +60,14 @@ describe('createAuthHook — HTTP surface', () => {
   test('admin scope passes for an admin identity', async () => {
     expect(await rejected(hook(httpCtx(), endpoint('admin')))).toBe(false);
   });
+
+  for (const scope of ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty']) {
+    test(`prototype key ${scope} is not treated as an auth rule`, async () => {
+      await expect(hook(httpCtx(), endpoint(scope))).rejects.toThrow(
+        `[stitchkit] auth: no rule for scope "${scope}"`,
+      );
+    });
+  }
 });
 
 describe('createAuthHook — tool surface', () => {

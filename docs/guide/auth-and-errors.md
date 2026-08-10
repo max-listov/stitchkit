@@ -157,9 +157,11 @@ pick the scheme), and checks `exp` and `nbf`.
 
 ```ts
 import { verifyJwt, extractToken } from 'stitchkit/server'
+import { env } from './env'
 
 const token = extractToken(req)           // from Authorization, or a cookie name
-const payload = await verifyJwt(token, process.env.JWT_SECRET!)
+if (!token) throw unauthorized('Bearer token is required')
+const payload = await verifyJwt(token, env.JWT_SECRET)
 ```
 
 `extractToken(req, cookieName?)` reads a bearer token from the `Authorization`
@@ -357,6 +359,7 @@ const onError = createErrorHook({
     NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
     INTERNAL_SERVER_ERROR: 'internal',
+    REALTIME_CONTRACT_VIOLATION: 'internal',
   } satisfies Record<StitchErrorCode, string>,
   // `ctx` is the request's RuntimeContext — read `ctx.traceId` for a
   // correlation id in the envelope. Declaring it is optional.

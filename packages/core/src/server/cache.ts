@@ -5,12 +5,21 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+export interface CacheOptions {
+  /** Maximum retained entries. Oldest entries are evicted first. Default 1,000. */
+  maxEntries?: number;
+}
+
 /**
  * In-memory key/value cache with a per-entry TTL. Expired entries are swept on
  * a 30-second timer; `destroy()` stops it. For response `Cache-Control`
  * headers use `cacheHeaders()` instead.
  */
-export function createCache() {
+export function createCache(options: CacheOptions = {}) {
+  const maxEntries = options.maxEntries ?? 1_000;
+  if (!Number.isInteger(maxEntries) || maxEntries < 1) {
+    throw new Error('cache.maxEntries must be a positive integer');
+  }
   const { store, destroy } = createSweptMap<CacheEntry>({
     intervalMs: 30_000,
     isExpired: (entry, now) => entry.expiresAt < now,
@@ -29,7 +38,16 @@ export function createCache() {
     },
 
     set(key: string, data: unknown, maxAgeSeconds: number) {
+      if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds < 0) {
+        throw new Error('cache maxAgeSeconds must be a non-negative finite number');
+      }
+      store.delete(key);
       store.set(key, { data, expiresAt: Date.now() + maxAgeSeconds * 1000 });
+      while (store.size > maxEntries) {
+        const oldest = store.keys().next().value;
+        if (oldest === undefined) break;
+        store.delete(oldest);
+      }
     },
 
     invalidate(prefix: string) {

@@ -9,21 +9,29 @@ import { normalizeError } from '../internal/errors';
  */
 export function streamSSE(generator: AsyncGenerator<unknown>): Response {
   const encoder = new TextEncoder();
+  let cancelled = false;
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
         for await (const chunk of generator) {
+          if (cancelled) return;
           const data = JSON.stringify(chunk);
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
         }
+        if (cancelled) return;
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       } catch (err) {
+        if (cancelled) return;
         const envelope = normalizeError(err).toJSON();
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(envelope)}\n\n`));
         controller.close();
       }
+    },
+    async cancel() {
+      cancelled = true;
+      await generator.return(undefined);
     },
   });
 

@@ -14,7 +14,7 @@ import { defineContract, notFound } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
 import { implement } from '../src/server';
 import { type CliConfig, createCli } from '../src/tools/cli';
-import { parseCliArgs } from '../src/tools/cli-args';
+import { CliArgumentError, parseCliArgs } from '../src/tools/cli-args';
 import { collectTools } from '../src/tools/mount';
 import { createToolkit } from '../src/tools/toolkit';
 
@@ -339,6 +339,7 @@ describe('parseCliArgs — unit', () => {
     active: z.boolean(),
     tags: z.array(z.string()),
     nested: z.object({ a: z.string() }),
+    cfg: z.record(z.string(), z.unknown()).optional(),
   });
 
   test('lifts reserved options out of tool args', () => {
@@ -377,15 +378,18 @@ describe('parseCliArgs — unit', () => {
     expect(toolArgs.nested).toBe('{"a":"b"}');
   });
 
-  test('a dotted __proto__ path does not pollute Object.prototype', () => {
+  test('a dotted __proto__ path is refused LOUDLY and does not pollute Object.prototype', () => {
     try {
-      const { toolArgs } = parseCliArgs(['--cfg.__proto__.polluted=yes'], schema);
-      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-      expect(toolArgs.cfg).toBeUndefined();
+      // A silently dropped argument reads as data loss — the unsafe path is a
+      // usage error, not a no-op.
+      expect(() => parseCliArgs(['--cfg.__proto__.polluted=yes'], schema)).toThrow(
+        CliArgumentError,
+      );
+      expect(Reflect.get(Object.prototype, 'polluted')).toBeUndefined();
     } finally {
       // A pre-fix run would have left this on the prototype — scrub it so a
       // failure here cannot leak into the rest of the suite.
-      delete (Object.prototype as Record<string, unknown>).polluted;
+      Reflect.deleteProperty(Object.prototype, 'polluted');
     }
   });
 
@@ -394,6 +398,111 @@ describe('parseCliArgs — unit', () => {
     const { toolArgs } = parseCliArgs(['--cfg.constructor.x=1'], schema);
     expect(isRecord(toolArgs.cfg)).toBe(true);
     if (isRecord(toolArgs.cfg)) expect(isRecord(toolArgs.cfg.constructor)).toBe(true);
+  });
+
+  test('a top-level --__proto__ flag is a loud usage error, not a silent drop', () => {
+    expect(() => parseCliArgs(['--__proto__', 'x'], schema)).toThrow(/Unsafe option/);
+  });
+
+  test('a reserved boolean rejects an unrecognised value instead of enabling silently', () => {
+    expect(() => parseCliArgs(['--json=banana'], schema)).toThrow(/expects a boolean/);
+    expect(parseCliArgs(['--json=false'], schema).options.json).toBe(false);
+  });
+
+  test('a repeated scalar flag is an error, not a silent last-wins', () => {
+    expect(() => parseCliArgs(['--name', 'a', '--name', 'b'], schema)).toThrow(
+      /passed 2 times/,
+    );
+    expect(() => parseCliArgs(['--nested.a', '1', '--nested.a', '2'], schema)).toThrow(
+      /passed 2 times/,
+    );
+  });
+
+  test('a plain flag and a dotted flag over the same root conflict in BOTH orders', () => {
+    // Regression: whichever ran last silently destroyed the other, so the
+    // result depended on argument order at exit code 0.
+    for (const argv of [
+      ['--nested', '{"keep":1}', '--nested.a', '2'],
+      ['--nested.a', '2', '--nested', '{"keep":1}'],
+    ]) {
+      expect(() => parseCliArgs(argv, schema)).toThrow(/conflicts with/);
+    }
+  });
+
+  test('a negative number is accepted as a space-form value', () => {
+    const { toolArgs } = parseCliArgs(['--count', '-5'], schema);
+    expect(toolArgs.count).toBe(-5);
+  });
+
+  test('an unrecognisable boolean field value is left raw for Zod, not coerced to true', () => {
+    const { toolArgs } = parseCliArgs(['--active=banana'], schema);
+    expect(toolArgs.active).toBe('banana');
+  });
+
+  test('a union schema exposes the boolean member as a flag and keeps positionals in place', () => {
+    const unionSchema = z.union([
+      z.object({ verbose: z.boolean() }),
+      z.object({ q: z.string() }),
+    ]);
+    const { toolArgs } = parseCliArgs(['--verbose', 'hello'], unionSchema);
+    expect(toolArgs.verbose).toBe(true);
+    // `hello` fills the non-boolean member field instead of being shifted/lost.
+    expect(toolArgs.q).toBe('hello');
+  });
+});
+
+describe('createCli — reserved names on intersection schemas', () => {
+  test('a params+scalar-input command (allOf schema) still trips the reserved-name guard', async () => {
+    // `params` + a non-object `input` publish as `allOf: [...]` — the guard
+    // must see through the intersection, not go blind on it.
+    const jobs = defineContract(
+      { prefix: 'jobs', scope: 'public' },
+      {
+        schedule: {
+          method: 'POST',
+          path: '/:wait',
+          desc: 'Schedule a job',
+          toolName: 'schedule_job',
+          expose: ['CLI'],
+          params: z.strictObject({ wait: z.string() }),
+          input: z.string(),
+        },
+      },
+    );
+    const jobsService = implement(jobs, { schedule: () => undefined });
+    await expect(run(['schedule_job', '--help'], { services: [jobsService] })).rejects.toThrow(
+      /reserved option field/,
+    );
+  });
+
+  test('an intersection command shows a real Arguments section in --help', async () => {
+    const jobs = defineContract(
+      { prefix: 'jobs', scope: 'public' },
+      {
+        schedule: {
+          method: 'POST',
+          path: '/:slot',
+          desc: 'Schedule a job',
+          toolName: 'schedule_job',
+          expose: ['CLI'],
+          params: z.strictObject({ slot: z.string() }),
+          input: z.string(),
+        },
+      },
+    );
+    const jobsService = implement(jobs, { schedule: () => undefined });
+    const { out, code } = await run(['schedule_job', '--help'], { services: [jobsService] });
+    expect(code).toBe(0);
+    expect(out).toContain('--slot');
+  });
+});
+
+describe('createCli — --help beats option validators', () => {
+  test('a mistyped flag next to --help still prints the flag table', async () => {
+    const { out, code } = await run(['create_widget', '--tyop', 'x', '--help']);
+    expect(code).toBe(0);
+    expect(out).toContain('--name');
+    expect(out).toContain('--count');
   });
 });
 

@@ -309,6 +309,7 @@ check(
 const defaultMcpHandler = createMcpHandler({
   serverInfo: { name: 'consumer', version: '1' },
   auth: () => ({ id: 'consumer' }),
+  security: { allowedHosts: ['consumer.test'] },
   services: [],
   runtimeTools: [nativeDefinition],
   resources: [

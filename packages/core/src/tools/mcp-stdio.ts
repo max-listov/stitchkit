@@ -1,6 +1,7 @@
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { buildMcpServer, type McpServerBuildConfig, type McpSurfaceRegistry } from './mcp';
+import { buildMcpServer, type McpServerBuildConfig } from './mcp';
 import type { McpLegacyPolicy } from './mcp-handler';
+import type { McpSurfaceRegistry } from './mcp-prepare';
 
 export interface StdioAuthConfig<TAuth> {
   /** Identity for the single stdio connection. */

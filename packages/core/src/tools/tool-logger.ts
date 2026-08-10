@@ -45,7 +45,7 @@ export interface ToolCallRecord {
 
 /** Config for `createToolLogger`. */
 export interface ToolLoggerConfig {
-  /** Where a formatted line goes. Default `console.info`. */
+  /** Where a formatted line goes. Default `console.error` (stdio-safe). */
   log?: (line: string) => void;
   /** Called with the structured record for every call — feed a metrics sink. */
   onRecord?: (record: ToolCallRecord) => void;
@@ -56,7 +56,7 @@ export interface ToolLoggerConfig {
  * `hooks` (or spread alongside your own `beforeToolCall`).
  */
 export function createToolLogger(config: ToolLoggerConfig = {}): ToolCallHooks {
-  const log = config.log ?? ((line: string) => console.info(line));
+  const log = config.log ?? ((line: string) => console.error(line));
   return {
     afterToolCall: ({ toolName, result, durationMs, context, endpoint }) => {
       const record: ToolCallRecord = {

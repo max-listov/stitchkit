@@ -73,7 +73,13 @@ export function recordedErrorMessage(
   envelopeMessage: string | undefined,
   thrown: unknown,
 ): string | undefined {
-  if (code === 'INTERNAL_SERVER_ERROR' && thrown !== undefined) {
+  // Both codes scrub the caller-facing envelope, so the record must take the
+  // raw message instead — for a realtime violation that is the line naming the
+  // event, direction and phase.
+  if (
+    (code === 'INTERNAL_SERVER_ERROR' || code === 'REALTIME_CONTRACT_VIOLATION') &&
+    thrown !== undefined
+  ) {
     if (thrown instanceof Error) return thrown.message;
     if (typeof thrown === 'string') return thrown;
   }
@@ -81,7 +87,16 @@ export function recordedErrorMessage(
 }
 
 export function normalizeError(err: unknown): AppError {
-  if (AppError.is(err)) return err;
+  if (AppError.is(err)) {
+    // A realtime contract violation is a SERVER bug whose details — event
+    // name, direction, field paths — are internal shape. Scrub them before
+    // they cross to the caller; the full message still reaches observability
+    // through `recordedErrorMessage`, which receives the raw thrown error.
+    if (err.code === 'REALTIME_CONTRACT_VIOLATION') {
+      return new AppError('REALTIME_CONTRACT_VIOLATION', 'Realtime contract violation', 500);
+    }
+    return err;
+  }
 
   if (err instanceof z.ZodError) {
     // Carry structured field issues in `details` alongside the text `message`,

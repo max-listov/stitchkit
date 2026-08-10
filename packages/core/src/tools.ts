@@ -37,16 +37,11 @@ export {
   buildMcpServer,
   type DirectMcpSurfaceConfig,
   type FiniteMcpSurfaceConfig,
-  type IncompatibleSchemaPolicy,
   type McpMountConfig,
-  type McpSchemaValidationConfig,
   type McpServerBuildConfig,
   type McpServerSharedConfig,
-  type McpSurfaceDefinition,
-  type McpSurfaceRegistry,
   mountMcp,
   mountMcpResource,
-  type ValidateMcpSchemasConfig,
   validateMcpSchemas,
 } from './tools/mcp';
 export {
@@ -66,6 +61,13 @@ export {
   type McpHttpSecurityConfig,
   type McpLegacyPolicy,
 } from './tools/mcp-handler';
+export type {
+  IncompatibleSchemaPolicy,
+  McpSchemaValidationConfig,
+  McpSurfaceDefinition,
+  McpSurfaceRegistry,
+  ValidateMcpSchemasConfig,
+} from './tools/mcp-prepare';
 export {
   createStdioMcpServer,
   type McpStdioHandle,

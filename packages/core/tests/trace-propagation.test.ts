@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { createTraceContext, resolvePropagationContext } from '../src/observability/trace';
+import {
+  createTraceContext,
+  formatTraceparent,
+  parseTraceparent,
+  resolvePropagationContext,
+} from '../src/observability/trace';
 
 const TRACE_ID = '0123456789abcdef0123456789abcdef';
 const PARENT_SPAN_ID = '0123456789abcdef';
@@ -20,6 +25,27 @@ describe('MCP trace propagation values', () => {
       baggage: 'tenant=opaque,region=eu',
     });
     expect(trace.spanId).toHaveLength(16);
+  });
+
+  test('preserves an unsampled trace flag when forwarding the trace', () => {
+    const trace = parseTraceparent(`00-${TRACE_ID}-${PARENT_SPAN_ID}-00`);
+    if (!trace) throw new Error('valid unsampled traceparent was rejected');
+
+    expect(trace.traceFlags).toBe('00');
+    expect(formatTraceparent(trace)).toEndWith('-00');
+  });
+
+  test('accepts a forward-compatible version with well-formed extension data', () => {
+    const trace = parseTraceparent(`01-${TRACE_ID}-${PARENT_SPAN_ID}-03-abcd`);
+    if (!trace) throw new Error('valid future traceparent was rejected');
+
+    expect(trace.traceFlags).toBe('03');
+  });
+
+  test('rejects forbidden versions and malformed future-version suffixes', () => {
+    expect(parseTraceparent(`ff-${TRACE_ID}-${PARENT_SPAN_ID}-01`)).toBeNull();
+    expect(parseTraceparent(`01-${TRACE_ID}-${PARENT_SPAN_ID}-01-b`)).toBeNull();
+    expect(parseTraceparent(`00-${TRACE_ID}-${PARENT_SPAN_ID}-01-extra`)).toBeNull();
   });
 
   test('uses ambient trace only when traceparent is absent', () => {

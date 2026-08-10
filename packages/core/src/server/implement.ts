@@ -1,6 +1,6 @@
 import type { ContractDef, EndpointDef, RuntimeContext } from '../contract';
 import { mergeMeta } from '../contract/define';
-import { typedEntries } from '../internal/typed';
+import { callRuntimeHandler, typedEntries } from '../internal/typed';
 import type { Handlers, MethodDef, ServiceDef } from './types';
 
 /** Frozen so the same array cannot be mutated through one method and seen by another. */
@@ -25,6 +25,11 @@ export function implement<
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     const typedHandler = handlers[key];
+    if (typeof typedHandler !== 'function') {
+      throw new Error(
+        `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
+      );
+    }
 
     methods[String(key)] = {
       method: endpoint.method,
@@ -68,8 +73,7 @@ export function implement<
       rawBody: endpoint.rawBody,
       responseMeta: endpoint.responseMeta,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
-      handler: (ctx: RuntimeContext) =>
-        (typedHandler as (ctx: RuntimeContext) => unknown)(ctx),
+      handler: (ctx: RuntimeContext) => callRuntimeHandler(typedHandler, ctx),
     };
   }
 

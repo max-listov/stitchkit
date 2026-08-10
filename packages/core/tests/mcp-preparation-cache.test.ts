@@ -10,10 +10,9 @@ import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
-  prepareMcpServerSurface,
-  prepareMcpSurface,
 } from '../src/tools/mcp';
 import { createMcpHandler } from '../src/tools/mcp-handler';
+import { prepareMcpServerSurface, prepareMcpSurface } from '../src/tools/mcp-prepare';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 function serviceFor(toolName: string, idSchema: z.ZodType = z.string()) {
@@ -45,9 +44,10 @@ function rpcRequest(
   sessionId?: string,
   params: Record<string, unknown> = {},
 ): Request {
-  return new Request('http://local/mcp', {
+  return new Request('http://localhost/mcp', {
     method: 'POST',
     headers: {
+      host: 'localhost',
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
       authorization: identity,

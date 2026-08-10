@@ -18,6 +18,7 @@ const onError = createErrorHook({
     METHOD_NOT_ALLOWED: 'not_found',
     CONFLICT: 'conflict',
     RATE_LIMITED: 'rate_limited',
+    REALTIME_CONTRACT_VIOLATION: 'internal',
     INTERNAL_SERVER_ERROR: 'internal',
   } satisfies Record<StitchErrorCode, string>,
   render: (info) => ({ ok: false, error: { code: info.code, message: info.message } }),

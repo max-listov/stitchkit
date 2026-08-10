@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import { sep } from 'node:path';
 
 /**
@@ -13,4 +14,18 @@ export function isWithinDir(root: string, target: string): boolean {
   // to `'/'` (base `''`), every absolute path is correctly within it.
   const base = root.endsWith(sep) ? root.slice(0, -sep.length) : root;
   return target === root || target === base || target.startsWith(base + sep);
+}
+
+/**
+ * Resolve both paths through the filesystem and return the real target only
+ * when it remains inside the real root. The lexical check must run first at a
+ * URL boundary; this second check closes symlink escapes.
+ */
+export async function realPathWithinDir(root: string, target: string): Promise<string | null> {
+  const [realRoot, realTarget] = await Promise.all([
+    realpath(root).catch(() => null),
+    realpath(target).catch(() => null),
+  ]);
+  if (realRoot === null || realTarget === null) return null;
+  return isWithinDir(realRoot, realTarget) ? realTarget : null;
 }

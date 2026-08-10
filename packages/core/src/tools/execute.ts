@@ -275,15 +275,23 @@ async function runToolMethod(
   // threw and this is why" from "the call failed a check" — the latter never had
   // a raw value to lose.
   const finish = async (result: ToolResult, thrown?: unknown): Promise<ToolResult> => {
-    await hooks?.afterToolCall?.({
-      toolName,
-      args: rawArgs,
-      result,
-      durationMs: Date.now() - startedAt,
-      context: hookContext,
-      endpoint: method,
-      ...(thrown !== undefined && { error: thrown }),
-    });
+    try {
+      await hooks?.afterToolCall?.({
+        toolName,
+        args: rawArgs,
+        result,
+        durationMs: Date.now() - startedAt,
+        context: hookContext,
+        endpoint: method,
+        ...(thrown !== undefined && { error: thrown }),
+      });
+    } catch (hookError) {
+      try {
+        console.error('[stitchkit] afterToolCall hook failed:', hookError);
+      } catch {
+        // Even a throwing console must not reach the observed call.
+      }
+    }
     return result;
   };
 
@@ -316,7 +324,11 @@ async function runToolMethod(
           endpoint: method,
         });
       } catch (hookErr) {
-        console.error('[stitchkit] onToolError hook failed:', hookErr);
+        try {
+          console.error('[stitchkit] onToolError hook failed:', hookErr);
+        } catch {
+          // Even a throwing console must not reach the observed call.
+        }
       }
     }
     return finish(toolResultFromError(err), err);

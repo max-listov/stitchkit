@@ -2,18 +2,18 @@ import {
   type AuthInfo,
   createMcpHandler as createSdkMcpHandler,
   hostHeaderValidationResponse,
+  localhostAllowedHostnames,
+  localhostAllowedOrigins,
   type McpServer,
   originValidationResponse,
 } from '@modelcontextprotocol/server';
 import type { RawRoute } from '../server/types';
+import { buildMcpServer, buildMcpServerFromPrepared, type McpServerBuildConfig } from './mcp';
 import {
-  buildMcpServer,
-  buildMcpServerFromPrepared,
-  type McpServerBuildConfig,
   type McpSurfaceRegistry,
   type PreparedMcpServerSurface,
   prepareMcpServerSurface,
-} from './mcp';
+} from './mcp-prepare';
 import { type ProtectedResourceConfig, wwwAuthenticateHeader } from './oauth-metadata';
 
 /** Compatibility posture for protocol revisions predating 2026-07-28. */
@@ -21,9 +21,9 @@ export type McpLegacyPolicy = 'serve' | 'reject';
 
 /** DNS-rebinding policy applied before authentication and SDK dispatch. */
 export interface McpHttpSecurityConfig {
-  /** Allowed `Host` header hostnames. By default the header must match the request URL. */
+  /** Allowed `Host` header hostnames. Defaults to loopback hostnames only. */
   allowedHosts?: readonly string[];
-  /** Allowed browser `Origin` hostnames. By default an Origin must be same-origin. */
+  /** Allowed browser `Origin` hostnames. Defaults to loopback hostnames only. */
   allowedOrigins?: readonly string[];
 }
 
@@ -66,21 +66,21 @@ function jsonRpcError(
   );
 }
 
-function defaultHostRejection(request: Request): Response | undefined {
-  const host = request.headers.get('host');
-  if (!host || host === new URL(request.url).host) return undefined;
-  return jsonRpcError(-32000, 'Invalid Host header', 403);
-}
-
-function defaultOriginRejection(request: Request): Response | undefined {
-  const origin = request.headers.get('origin');
-  if (!origin) return undefined;
-  try {
-    if (new URL(origin).origin === new URL(request.url).origin) return undefined;
-  } catch {
-    // A malformed Origin is never a valid browser boundary.
+function hostValidationResponse(
+  request: Request,
+  allowedHosts: readonly string[],
+): Response | undefined {
+  if (request.headers.has('host')) {
+    return hostHeaderValidationResponse(request, [...allowedHosts]);
   }
-  return jsonRpcError(-32000, 'Invalid Origin header', 403);
+
+  // Fetch API callers construct a Request without a Host header. The real
+  // Bun/Node adapters always provide one, but the transport-neutral handler is
+  // also a public Fetch face, so validate its URL hostname against the same
+  // configured source of truth instead of rejecting an otherwise valid call.
+  const hostname = new URL(request.url).hostname;
+  if (allowedHosts.includes(hostname)) return undefined;
+  return jsonRpcError(-32000, 'Invalid Host header', 403);
 }
 
 function prepareStaticSurface<TAuth>(
@@ -91,6 +91,10 @@ function prepareStaticSurface<TAuth>(
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     schemaValidation: config.schemaValidation,
+    multiRound: {
+      stateConfigured: config.multiRound !== undefined,
+      maxRounds: config.multiRound?.serving?.maxRounds ?? 10,
+    },
   };
 
   if (config.surfaces && config.selectSurface) {
@@ -180,14 +184,12 @@ export function createMcpHandler<
       if (closed) {
         return observeRejection(request, jsonRpcError(-32000, 'MCP handler is closed', 503));
       }
-      const hostRejection = config.security?.allowedHosts
-        ? hostHeaderValidationResponse(request, [...config.security.allowedHosts])
-        : defaultHostRejection(request);
+      const allowedHosts = config.security?.allowedHosts ?? localhostAllowedHostnames();
+      const hostRejection = hostValidationResponse(request, allowedHosts);
       if (hostRejection) return observeRejection(request, hostRejection);
 
-      const originRejection = config.security?.allowedOrigins
-        ? originValidationResponse(request, [...config.security.allowedOrigins])
-        : defaultOriginRejection(request);
+      const allowedOrigins = config.security?.allowedOrigins ?? localhostAllowedOrigins();
+      const originRejection = originValidationResponse(request, [...allowedOrigins]);
       if (originRejection) return observeRejection(request, originRejection);
 
       const auth = await Promise.race([
@@ -197,7 +199,7 @@ export function createMcpHandler<
       if (closed) {
         return observeRejection(request, jsonRpcError(-32000, 'MCP handler is closed', 503));
       }
-      if (auth === null) return observeRejection(request, unauthorized());
+      if (auth == null) return observeRejection(request, unauthorized());
       const authCarrier: AuthInfo = {
         token: '',
         clientId: config.multiRound?.state.principal(auth) ?? 'stitchkit',

@@ -21,9 +21,11 @@ export interface TraceContext {
   tracestate?: string;
   /** Valid bounded W3C baggage, retained for propagation only. */
   baggage?: string;
+  /** W3C trace flags byte, preserved end to end (for example `00` or `01`). */
+  traceFlags?: string;
 }
 
-const TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/i;
+const TRACEPARENT_RE = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(.*)$/i;
 
 /** `bytes` cryptographically-random bytes as a lowercase hex string. */
 function randomHex(bytes: number): string {
@@ -48,17 +50,27 @@ export function createTraceContext(): TraceContext {
 export function parseTraceparent(header: string | null | undefined): TraceContext | null {
   if (!header) return null;
   const match = TRACEPARENT_RE.exec(header.trim());
-  if (!match?.[1] || !match[2]) return null;
-  const traceId = match[1].toLowerCase();
-  const parentSpanId = match[2].toLowerCase();
+  if (!match?.[1] || !match[2] || !match[3] || !match[4] || match[5] === undefined)
+    return null;
+  const version = match[1].toLowerCase();
+  if (version === 'ff') return null;
+  const suffix = match[5];
+  if (
+    version === '00' ? suffix !== '' : suffix !== '' && !/^(?:-[0-9a-f]{2,})+$/i.test(suffix)
+  ) {
+    return null;
+  }
+  const traceId = match[2].toLowerCase();
+  const parentSpanId = match[3].toLowerCase();
+  const traceFlags = match[4].toLowerCase();
   // The W3C spec mandates rejecting the all-zero trace / span id as invalid.
   if (/^0+$/.test(traceId) || /^0+$/.test(parentSpanId)) return null;
-  return { traceId, spanId: randomHex(8), parentSpanId };
+  return { traceId, spanId: randomHex(8), parentSpanId, traceFlags };
 }
 
-/** Render a `TraceContext` as a `traceparent` header value (sampled flag `01`). */
+/** Render a `TraceContext` with its actual W3C trace-flags byte. */
 export function formatTraceparent(ctx: TraceContext): string {
-  return `00-${ctx.traceId}-${ctx.spanId}-01`;
+  return `00-${ctx.traceId}-${ctx.spanId}-${ctx.traceFlags ?? '01'}`;
 }
 
 /**
@@ -81,6 +93,7 @@ export function childSpan(parent: TraceContext): TraceContext {
     parentSpanId: parent.spanId,
     ...(parent.tracestate !== undefined && { tracestate: parent.tracestate }),
     ...(parent.baggage !== undefined && { baggage: parent.baggage }),
+    ...(parent.traceFlags !== undefined && { traceFlags: parent.traceFlags }),
   };
 }
 
@@ -123,6 +136,8 @@ export function resolvePropagationContext(
   const tracestate = parsed
     ? boundedPropagationValue(metadata?.tracestate, 512, 32)
     : undefined;
+  // W3C Baggage is independent of Trace Context and may propagate even when a
+  // malformed traceparent starts a fresh trace. Tracestate is traceparent-bound.
   const baggage = boundedPropagationValue(metadata?.baggage, 8192, 180);
   return {
     ...trace,

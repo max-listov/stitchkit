@@ -47,6 +47,8 @@ export interface CacheBridgeConfig<TEvents> {
   handlers: CacheBridgeHandlers<TEvents>;
   /** Window (ms) after `markFresh()` during which `isFresh()` returns true. Default 500. */
   freshWindow?: number;
+  /** Maximum remembered freshness keys. Oldest entries are evicted first. Default 1,000. */
+  maxFreshKeys?: number;
 }
 
 export interface CacheBridge {
@@ -55,16 +57,36 @@ export interface CacheBridge {
   /** Mark a query key as just-mutated. Call from a mutation's onSuccess so
    *  handlers can skip a stale socket echo via `ctx.isFresh()`. */
   markFresh(key: QueryKey): void;
+  /** Forget every freshness marker without changing socket subscriptions. */
+  clearFresh(): void;
 }
 
 export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): CacheBridge {
   const freshWindow = config.freshWindow ?? 500;
+  const maxFreshKeys = config.maxFreshKeys ?? 1_000;
+  if (!Number.isFinite(freshWindow) || freshWindow < 0) {
+    throw new Error('cacheBridge.freshWindow must be a non-negative finite number');
+  }
+  if (!Number.isInteger(maxFreshKeys) || maxFreshKeys < 1) {
+    throw new Error('cacheBridge.maxFreshKeys must be a positive integer');
+  }
   const freshAt = new Map<string, number>();
+  const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let unsubscribers: Array<() => void> = [];
 
   const isFresh = (key: QueryKey): boolean => {
-    const ts = freshAt.get(JSON.stringify(key));
-    return ts !== undefined && Date.now() - ts < freshWindow;
+    const serialised = JSON.stringify(key);
+    const ts = freshAt.get(serialised);
+    if (ts === undefined) return false;
+    if (Date.now() - ts < freshWindow) return true;
+    freshAt.delete(serialised);
+    return false;
+  };
+
+  const clearFresh = (): void => {
+    for (const timer of expiryTimers.values()) clearTimeout(timer);
+    expiryTimers.clear();
+    freshAt.clear();
   };
 
   return {
@@ -97,10 +119,32 @@ export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): 
     disconnect() {
       for (const off of unsubscribers) off();
       unsubscribers = [];
+      clearFresh();
     },
 
     markFresh(key: QueryKey) {
-      freshAt.set(JSON.stringify(key), Date.now());
+      const serialised = JSON.stringify(key);
+      const existingTimer = expiryTimers.get(serialised);
+      if (existingTimer) clearTimeout(existingTimer);
+      freshAt.delete(serialised);
+      freshAt.set(serialised, Date.now());
+      expiryTimers.set(
+        serialised,
+        setTimeout(() => {
+          freshAt.delete(serialised);
+          expiryTimers.delete(serialised);
+        }, freshWindow),
+      );
+      while (freshAt.size > maxFreshKeys) {
+        const oldest = freshAt.keys().next().value;
+        if (oldest === undefined) break;
+        freshAt.delete(oldest);
+        const timer = expiryTimers.get(oldest);
+        if (timer) clearTimeout(timer);
+        expiryTimers.delete(oldest);
+      }
     },
+
+    clearFresh,
   };
 }

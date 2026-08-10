@@ -13,6 +13,7 @@ import {
   isPrivateIp,
   readCapped,
 } from '../src/internal/secure-fetch';
+import { ViewFileInputSchema } from '../src/tools/view-file';
 
 describe('isPrivateIp', () => {
   test('flags loopback / private / link-local / CGNAT / ULA', () => {
@@ -128,9 +129,117 @@ describe('assertPublicUrl — SSRF guard', () => {
   test('allows a public IP literal (no DNS lookup needed)', async () => {
     await expect(assertPublicUrl(new URL('http://1.1.1.1/'))).resolves.toBeUndefined();
   });
+
+  test('the DNS lookup honours an aborted signal (a slow resolver cannot outlive the deadline)', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('deadline'));
+    // A hostname (not an IP literal) forces the lookup path; the pre-aborted
+    // signal must short-circuit it instead of waiting on the resolver.
+    const startedAt = performance.now();
+    await expect(
+      assertPublicUrl(new URL('https://example.com/'), controller.signal),
+    ).rejects.toThrow(/deadline/);
+    expect(performance.now() - startedAt).toBeLessThan(200);
+  });
 });
 
 describe('fetchGuarded — per-redirect-hop re-validation', () => {
+  test('aborts a non-responsive fetch at the configured timeout', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Promise<Response>(() => undefined),
+    });
+    try {
+      const startedAt = performance.now();
+      await expect(
+        fetchGuarded(new URL(`http://127.0.0.1:${server.port}/`), true, { timeoutMs: 20 }),
+      ).rejects.toThrow();
+      expect(performance.now() - startedAt).toBeLessThan(500);
+    } finally {
+      server.stop(true);
+    }
+  });
+  test('a redirect chain shares ONE header deadline (regression: per-hop reset)', async () => {
+    // Each hop stalls ~80 ms before redirecting to the next; with a 150 ms
+    // budget a per-hop timer would happily walk all six hops (~480 ms+), while
+    // a single shared deadline must abort near 150 ms.
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const hop = Number(new URL(req.url).searchParams.get('hop') ?? 0);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return new Response(null, {
+          status: 302,
+          headers: { location: `/?hop=${hop + 1}` },
+        });
+      },
+    });
+    try {
+      const startedAt = performance.now();
+      await expect(
+        fetchGuarded(new URL(`http://127.0.0.1:${server.port}/?hop=0`), true, {
+          timeoutMs: 150,
+        }),
+      ).rejects.toThrow(/response headers within/);
+      expect(performance.now() - startedAt).toBeLessThan(400);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('a body slower than the header deadline still completes (separate body budget)', async () => {
+    // Headers arrive instantly, the body drips past the 100 ms header deadline
+    // — the download must NOT be killed by the connection budget.
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode('part1-'));
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              controller.enqueue(new TextEncoder().encode('part2'));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    try {
+      const res = await fetchGuarded(new URL(`http://127.0.0.1:${server.port}/`), true, {
+        timeoutMs: 100,
+      });
+      await expect(res.text()).resolves.toBe('part1-part2');
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('a drip-feed body is still bounded by the body deadline', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('x'));
+              // …and never close or enqueue again.
+            },
+          }),
+        ),
+    });
+    try {
+      const res = await fetchGuarded(new URL(`http://127.0.0.1:${server.port}/`), true, {
+        timeoutMs: 1000,
+        bodyTimeoutMs: 100,
+      });
+      const startedAt = performance.now();
+      await expect(res.text()).rejects.toThrow();
+      expect(performance.now() - startedAt).toBeLessThan(1000);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test('rejects a redirect to an internal address', async () => {
     const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } }),
@@ -202,6 +311,16 @@ describe('fetchGuarded — per-redirect-hop re-validation', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('view_file input boundary', () => {
+  test('rejects more than twenty targets before the handler runs', () => {
+    const result = ViewFileInputSchema.safeParse({
+      paths: Array.from({ length: 21 }, (_, index) => `https://example.com/${index}.png`),
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 

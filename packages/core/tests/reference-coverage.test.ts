@@ -10,9 +10,13 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import ts from '@typescript/typescript6';
+import { z } from 'zod';
 
 const SRC = `${import.meta.dir}/../src`;
 const REFERENCE = `${import.meta.dir}/../../../docs/api/reference.md`;
+const SURFACE_SNAPSHOT = `${import.meta.dir}/fixtures/public-surface.json`;
 
 /** The public entrypoints, mapped to their source module. */
 const ENTRYPOINTS: Record<string, string> = {
@@ -26,24 +30,22 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/observability': 'observability/index.ts',
 };
 
-/** Export names declared by an entry module — `export { … }` / `export type { … }`. */
+const entryFiles = Object.values(ENTRYPOINTS).map((file) => join(SRC, file));
+const program = ts.createProgram(entryFiles, {
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  skipLibCheck: true,
+  noEmit: true,
+});
+const checker = program.getTypeChecker();
+
+/** Every name reachable from an entrypoint, including transitive `export *` declarations. */
 function exportsOf(file: string): string[] {
-  const txt = readFileSync(`${SRC}/${file}`, 'utf8');
-  const names = new Set<string>();
-  for (const match of txt.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)) {
-    for (const raw of (match[1] ?? '').split(',')) {
-      const name = raw
-        .trim()
-        .replace(/^type\s+/, '')
-        .split(/\s+as\s+/)
-        .pop()
-        ?.trim();
-      if (name) names.add(name);
-    }
-  }
-  // `export * from './x'` re-exports — index.ts pulls all of contract this way.
-  // Those names are covered by their own module's entry, so skip star lines.
-  return [...names];
+  const source = program.getSourceFile(join(SRC, file));
+  const moduleSymbol = source && checker.getSymbolAtLocation(source);
+  if (!moduleSymbol) throw new Error(`cannot resolve public entrypoint ${file}`);
+  return checker.getExportsOfModule(moduleSymbol).map((symbol) => symbol.getName());
 }
 
 /** Every backticked identifier in the reference — the "documented" set. */
@@ -58,11 +60,20 @@ function documentedNames(): Set<string> {
 
 describe('reference.md coverage', () => {
   const documented = documentedNames();
+  const expectedSurface = z
+    .record(z.string(), z.array(z.string()))
+    .parse(JSON.parse(readFileSync(SURFACE_SNAPSHOT, 'utf8')));
 
   for (const [entry, file] of Object.entries(ENTRYPOINTS)) {
     test(`every export of ${entry} is documented`, () => {
       const missing = exportsOf(file).filter((name) => !documented.has(name));
       expect(missing).toEqual([]);
+    });
+
+    test(`public surface of ${entry} matches its exact snapshot`, () => {
+      const expected = expectedSurface[entry];
+      if (!expected) throw new Error(`missing public-surface snapshot for ${entry}`);
+      expect(exportsOf(file).sort()).toEqual(expected);
     });
   }
 });

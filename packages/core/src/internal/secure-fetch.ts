@@ -129,37 +129,43 @@ export function isPrivateIp(ip: string): boolean {
 }
 
 /**
+ * Race a promise against an abort signal, cleaning the listener up on either
+ * outcome — DNS lookups have no native cancellation, so a deadline must be
+ * enforced from the outside.
+ */
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => undefined);
+    return Promise.reject(signal.reason ?? new Error('aborted'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Refuse a URL that is not `http(s)`, has no host, or whose host is — or
  * resolves to — a private/internal address. Called on the initial URL and on
  * every redirect hop, so a public host cannot `302` to an internal address or
- * to a `file:` / `gopher:` / `data:` scheme.
+ * to a `file:` / `gopher:` / `data:` scheme. The DNS lookup honours `signal`,
+ * so a slow resolver cannot outlive the caller's deadline.
+ *
+ * This is the single host-validation implementation — `fetchGuarded` and
+ * `fetchPinnedDocument` both go through `resolvePublicAddress`.
  */
-export async function assertPublicUrl(url: URL): Promise<void> {
-  // Scheme allowlist first — a redirect `Location: file:///etc/passwd` adopts a
-  // new protocol, and an empty-host `file:` URL would otherwise slip the
-  // host checks (an empty DNS lookup resolves to nothing, not a private IP).
-  assertHttpUrl(url);
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (!host) throw new Error('refusing to fetch a URL with no host');
-  if (isIP(host)) {
-    if (isPrivateIp(host)) throw new Error('refusing to fetch a private address');
-    return;
-  }
-  // A digits-only / `0x…` host is a numeric IP in a non-canonical form
-  // (`http://2130706433/` is `127.0.0.1`); `isIP` rejects it but `fetch`
-  // would still resolve it. A real hostname always carries a non-numeric char.
-  if (NUMERIC_HOST.test(host)) {
-    throw new Error('refusing to fetch a non-canonical numeric host');
-  }
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
-    throw new Error('refusing to fetch an internal host');
-  }
-  const records = await lookup(host, { all: true });
-  for (const record of records) {
-    if (isPrivateIp(record.address)) {
-      throw new Error('refusing to fetch a host that resolves to a private address');
-    }
-  }
+export async function assertPublicUrl(url: URL, signal?: AbortSignal): Promise<void> {
+  await resolvePublicAddress(url, signal);
 }
 
 /**
@@ -172,19 +178,76 @@ export async function assertPublicUrl(url: URL): Promise<void> {
  * per-hop re-check is the larger and fully-closed hole; a static private DNS
  * record is rejected outright.
  */
-export async function fetchGuarded(start: URL, allowPrivate: boolean): Promise<Response> {
-  let url = start;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    if (allowPrivate) assertHttpUrl(url);
-    else await assertPublicUrl(url);
-    const res = await fetch(url, { redirect: 'manual' });
-    if (res.status < 300 || res.status >= 400) return res;
-    const location = res.headers.get('location');
-    if (!location) return res;
-    await res.body?.cancel();
-    url = new URL(location, url);
+export interface GuardedFetchOptions {
+  /**
+   * Deadline for producing the FINAL response headers — DNS, connects and every
+   * redirect hop share this single budget, so a redirect chain cannot multiply
+   * it. Default 15 seconds.
+   */
+  timeoutMs?: number;
+  /**
+   * Separate deadline for consuming the body once headers have arrived — a slow
+   * LARGE download must not be killed by the connection budget, but a drip-feed
+   * body must still end. Default 120 seconds.
+   */
+  bodyTimeoutMs?: number;
+  /** Optional caller cancellation, combined with both deadlines. */
+  signal?: AbortSignal;
+}
+
+export async function fetchGuarded(
+  start: URL,
+  allowPrivate: boolean,
+  options: GuardedFetchOptions = {},
+): Promise<Response> {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const bodyTimeoutMs = options.bodyTimeoutMs ?? 120_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('timeoutMs must be positive');
   }
-  throw new Error('too many redirects');
+  if (!Number.isFinite(bodyTimeoutMs) || bodyTimeoutMs <= 0) {
+    throw new Error('bodyTimeoutMs must be positive');
+  }
+  // One controller drives the whole call; the header deadline is swapped for
+  // the body deadline the moment the final headers arrive.
+  const controller = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  const headerTimer = setTimeout(() => {
+    controller.abort(
+      new Error(`fetch did not produce response headers within ${timeoutMs}ms`),
+    );
+  }, timeoutMs);
+  headerTimer.unref?.();
+  let settled = false;
+  try {
+    let url = start;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (allowPrivate) assertHttpUrl(url);
+      else await assertPublicUrl(url, signal);
+      // This API returns a streaming Fetch Response. Node's fetch does not
+      // expose a pinned-address hook, so the documented DNS check/use window
+      // remains; deadline and per-hop validation still apply uniformly.
+      const res = await fetch(url, { redirect: 'manual', signal });
+      const location =
+        res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (location === null) {
+        settled = true;
+        clearTimeout(headerTimer);
+        const bodyTimer = setTimeout(() => {
+          controller.abort(new Error(`fetch body was not consumed within ${bodyTimeoutMs}ms`));
+        }, bodyTimeoutMs);
+        bodyTimer.unref?.();
+        return res;
+      }
+      await res.body?.cancel();
+      url = new URL(location, url);
+    }
+    throw new Error('too many redirects');
+  } finally {
+    if (!settled) clearTimeout(headerTimer);
+  }
 }
 
 export interface PinnedDocumentFetchOptions {
@@ -205,8 +268,11 @@ export interface PinnedDocumentResponse {
 
 async function resolvePublicAddress(
   url: URL,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<{ address: string; family: 4 | 6 }> {
+  // Scheme allowlist first — a redirect `Location: file:///etc/passwd` adopts a
+  // new protocol, and an empty-host `file:` URL would otherwise slip the
+  // host checks (an empty DNS lookup resolves to nothing, not a private IP).
   assertHttpUrl(url);
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (!host) throw new Error('refusing to fetch a URL with no host');
@@ -215,18 +281,17 @@ async function resolvePublicAddress(
     if (isPrivateIp(host)) throw new Error('refusing to fetch a private address');
     return { address: host, family: ipFamily === 6 ? 6 : 4 };
   }
+  // A digits-only / `0x…` host is a numeric IP in a non-canonical form
+  // (`http://2130706433/` is `127.0.0.1`); `isIP` rejects it but `fetch`
+  // would still resolve it. A real hostname always carries a non-numeric char.
   if (NUMERIC_HOST.test(host)) {
     throw new Error('refusing to fetch a non-canonical numeric host');
   }
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
     throw new Error('refusing to fetch an internal host');
   }
-  const records = await Promise.race([
-    lookup(host, { all: true }),
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-    }),
-  ]);
+  const pending = lookup(host, { all: true });
+  const records = signal ? await raceWithAbort(pending, signal) : await pending;
   for (const record of records) {
     if (isPrivateIp(record.address)) {
       throw new Error('refusing to fetch a host that resolves to a private address');
@@ -257,8 +322,10 @@ export async function fetchPinnedDocument(
   if (!Number.isInteger(maxRedirects) || maxRedirects < 0) {
     throw new Error('maxRedirects must be a non-negative integer');
   }
+  // One deadline for the WHOLE document fetch — redirect hops share it, so a
+  // chain cannot multiply the budget.
+  const signal = AbortSignal.timeout(options.timeoutMs);
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const signal = AbortSignal.timeout(options.timeoutMs);
     if (options.requireHttps && url.protocol !== 'https:') {
       throw new Error('document URL and every redirect must use https');
     }

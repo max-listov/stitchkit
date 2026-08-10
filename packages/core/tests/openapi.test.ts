@@ -105,6 +105,14 @@ describe('generateOpenApiDocument', () => {
     expect(doc.info.title).toBe('API');
   });
 
+  test('exposes contract metadata used by surface conformance', () => {
+    expect(spec.paths['/api/items'].get).toMatchObject({
+      'x-stitchkit-scope': 'authed',
+      'x-stitchkit-has-input': true,
+      'x-stitchkit-has-output': true,
+    });
+  });
+
   test('builds paths for HTTP methods and skips tool-only ones', () => {
     expect(Object.keys(doc.paths).sort()).toEqual([
       '/api/accepted',

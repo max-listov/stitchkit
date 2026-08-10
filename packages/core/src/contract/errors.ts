@@ -118,6 +118,7 @@ export const STITCH_ERROR_STATUS = {
   CONFLICT: 409,
   RATE_LIMITED: 429,
   VALIDATION_ERROR: 400,
+  REALTIME_CONTRACT_VIOLATION: 500,
   INTERNAL_SERVER_ERROR: 500,
 } satisfies Record<string, number>;
 
@@ -126,7 +127,7 @@ export type StitchErrorCode = keyof typeof STITCH_ERROR_STATUS;
 
 /** Type guard — is `code` one of stitchkit's own error codes? */
 export function isStitchErrorCode(code: string): code is StitchErrorCode {
-  return code in STITCH_ERROR_STATUS;
+  return Object.hasOwn(STITCH_ERROR_STATUS, code);
 }
 
 /** Throw an `AppError` for any `code`, mapping a stitch code to its HTTP status (else 500). */

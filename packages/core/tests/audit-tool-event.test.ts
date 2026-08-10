@@ -159,3 +159,81 @@ describe('audit — the tool row names the cause of an unexpected throw', () => 
     expect(events[0]?.errorMessage).toBe('Internal server error');
   });
 });
+
+describe('audit — observation cannot change a tool result', () => {
+  test('bigint and circular results still produce a successful audit row', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({
+      tools: { write: (event) => void events.push(event) },
+    });
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+
+    expect(() =>
+      audit.toolCall.afterToolCall?.({
+        toolName: 'broadcast_create',
+        args: { total: 10n },
+        result: { ok: true, data: { total: 10n, circular } },
+        durationMs: 1,
+        context: { source: 'agent' },
+        endpoint,
+      }),
+    ).not.toThrow();
+    await Bun.sleep(5);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.ok).toBe(true);
+    expect(events[0]?.responseBytes).toBe(0);
+    expect(events[0]?.payload).toEqual({ total: '10' });
+  });
+
+  test('an unreadable argument is marked without breaking or dropping the row', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({
+      tools: { write: (event) => void events.push(event) },
+    });
+    const args = Object.create(null);
+    Object.defineProperty(args, 'value', {
+      enumerable: true,
+      get() {
+        throw new Error('nope');
+      },
+    });
+
+    expect(() =>
+      audit.toolCall.afterToolCall?.({
+        toolName: 'broadcast_create',
+        args,
+        result: { ok: true, data: { id: 'x' } },
+        durationMs: 1,
+        context: { source: 'agent' },
+        endpoint,
+      }),
+    ).not.toThrow();
+    await Bun.sleep(5);
+
+    expect(events[0]?.payload).toEqual({ value: '[unreadable]' });
+  });
+
+  test('a throwing sink is swallowed', async () => {
+    const audit = createObservability({
+      tools: {
+        write: () => {
+          throw new Error('sink down');
+        },
+      },
+    });
+
+    expect(() =>
+      audit.toolCall.afterToolCall?.({
+        toolName: 'broadcast_create',
+        args: {},
+        result: { ok: true, data: { id: 'x' } },
+        durationMs: 1,
+        context: { source: 'agent' },
+        endpoint,
+      }),
+    ).not.toThrow();
+    await Bun.sleep(5);
+  });
+});

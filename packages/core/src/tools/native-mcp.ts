@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AppError, type EndpointToolAnnotations } from '../contract';
 import { isRecord } from '../internal/typed';
 import { executeToolMethod, type ToolCallHooks, type ToolLifecycle } from './execute';
-import type { PreparedRuntimeMcpTool } from './mcp';
+import type { PreparedRuntimeMcpTool } from './mcp-prepare';
 import type { McpRoundRuntime } from './mcp-round';
 import { resolveMcpRound } from './mcp-round';
 import { runInMcpRequestContext } from './mcp-trace';

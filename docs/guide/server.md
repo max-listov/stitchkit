@@ -87,13 +87,41 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `maxUploadBytes` | default multipart upload cap (bytes); per-route `EndpointDef.maxUploadBytes` overrides |
 | `maxJsonBodyBytes` | optional JSON body cap (bytes); per-route value overrides; unset preserves existing behaviour |
 | `port` / `hostname` | listen address — port defaults to `3000` |
-| `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }` |
+| `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }`. `origin` is **required** when `cors` is present: pass an explicit origin (or list), or `'*'` to deliberately allow every origin — an origin-less config is a construction error, never a silent wildcard. Omit `cors` entirely to emit no CORS headers. |
 | `hooks` | lifecycle hooks (see below) |
 | `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
 | `traceId` | override per-request trace-id resolution — may return `undefined` to fall back |
 | `wrapFetch` | compose wrappers around the finished handler (request context, audit) |
 | `websocket` | Bun WebSocket handlers — e.g. from `createSocketIOServer` |
 | `routes` / `development` / `bun` | passthrough to `Bun.serve` |
+
+### Trusted HTTPS in development
+
+Stitchkit does not own local certificate generation or a frontend development
+server. When a device or browser feature requires a secure context, generate a
+trusted certificate outside the application (for example with `mkcert`) and pass
+its files through the Bun server boundary:
+
+```ts
+import { readFileSync } from 'node:fs'
+import { createServer } from 'stitchkit/server'
+
+createServer({
+  services,
+  hostname: '0.0.0.0',
+  bun: {
+    tls: {
+      cert: readFileSync('./certs/dev.pem'),
+      key: readFileSync('./certs/dev-key.pem'),
+    },
+  },
+})
+```
+
+Trust the certificate authority on each test device and configure the frontend's
+HTTPS mode in that frontend project. Certificate renewal, interface discovery
+and device onboarding remain application infrastructure rather than framework
+or starter behavior.
 
 ### Request logging
 
@@ -617,7 +645,7 @@ The client side is [`parseSSE`](./client.md#sse).
 ```ts
 import { parseMultipart } from 'stitchkit/server'
 
-const { file, fields } = await parseMultipart(req, { maxBytes: 10_000_000 })
+const { file, fields } = await parseMultipart(req, 'file', undefined, 10_000_000)
 ```
 
 When an endpoint declares `multipart`, the framework parses the upload for you
@@ -642,8 +670,11 @@ createServer({ services, maxUploadBytes: 50 * 1024 * 1024 })
 ```ts
 import { createRateLimiter } from 'stitchkit/server'
 
-const limiter = createRateLimiter({ capacity: 60, refillPerSecond: 1 })
-// in onRequest: if (!limiter.take(ip)) return new Response('Too many', { status: 429 })
+const limiter = createRateLimiter()
+// in onRequest:
+if (!limiter.check(ip, { window: 60_000, max: 60 })) {
+  return new Response('Too many', { status: 429 })
+}
 ```
 
 ### Event bus

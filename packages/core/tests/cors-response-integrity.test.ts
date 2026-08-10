@@ -132,3 +132,21 @@ describe('immutable headers keep the rebuild fallback', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
   });
 });
+
+describe('cors config never falls open to a wildcard', () => {
+  test('an empty or origin-less cors config is a construction error, not `*`', () => {
+    // Regression: `cors: {}` and `cors: { origin: undefined }` used to emit
+    // `Access-Control-Allow-Origin: *` — a security setting must never pick
+    // the most permissive behaviour because a value went missing.
+    expect(() => createServer({ port: 0, cors: {} })).toThrow(/`origin` is required/);
+    expect(() => createServer({ port: 0, cors: { origin: undefined } })).toThrow(
+      /`origin` is required/,
+    );
+    expect(() => createServer({ port: 0, cors: { origin: [] } })).toThrow(/empty list/);
+  });
+
+  test('allowing every origin stays available — as an EXPLICIT opt-in', () => {
+    const open = createServer({ port: 0, cors: { origin: '*' } });
+    open.stop();
+  });
+});

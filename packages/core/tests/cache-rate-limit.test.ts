@@ -47,6 +47,24 @@ describe('cache', () => {
     expect(cache.get('b')).toBeNull();
   });
 
+  test('evicts the oldest entry when maxEntries is reached', () => {
+    const cache = createCache({ maxEntries: 2 });
+    cache.set('a', 1, 60);
+    cache.set('b', 2, 60);
+    cache.set('c', 3, 60);
+
+    expect(cache.get('a')).toBeNull();
+    expect(cache.get('b')).toBe(2);
+    expect(cache.get('c')).toBe(3);
+  });
+
+  test('rejects invalid capacity and TTL values', () => {
+    expect(() => createCache({ maxEntries: 0 })).toThrow(/maxEntries/);
+    const cache = createCache();
+    expect(() => cache.set('bad', 1, Number.NaN)).toThrow(/maxAgeSeconds/);
+    cache.destroy();
+  });
+
   test('cacheHeaders formats correctly', () => {
     expect(cacheHeaders(300)).toEqual({ 'Cache-Control': 'public, max-age=300' });
     expect(cacheHeaders(60, 'private')).toEqual({ 'Cache-Control': 'private, max-age=60' });

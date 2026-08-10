@@ -226,6 +226,9 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       const operation: Record<string, unknown> = {
         summary: method.desc,
         operationId: `${service.name}_${key}`,
+        'x-stitchkit-scope': method.scope,
+        'x-stitchkit-has-input': Boolean(method.inputSchema),
+        'x-stitchkit-has-output': Boolean(method.outputSchema),
         ...(parameters.length > 0 && { parameters }),
         responses,
       };

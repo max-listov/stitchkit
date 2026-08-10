@@ -24,6 +24,7 @@ const service = implement(contract, { echo: ({ input }) => input });
 const handler = createMcpHandler({
   serverInfo: { name: 'packed-node-http', version: '1' },
   auth: () => ({}),
+  security: { allowedHosts: ['consumer.test'] },
   services: [service],
 });
 const httpTransport = new StreamableHTTPClientTransport(new URL('http://consumer.test/mcp'), {
