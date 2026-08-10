@@ -45,6 +45,8 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - A new architectural decision → a new ADR in `docs/decisions/` **and a row in
   `docs/decisions/README.md`** (keep the index in sync). A new idea → a file in
   `docs/backlog/inbox/`. See `docs/README.md`.
+- A completed backlog item may claim test coverage only by naming the exact
+  test file and test case in its `Что сделано` section.
 - **ALWAYS** run `bun run verify` before pushing — lint, typecheck, tests,
   build and the Node smoke test must all be green.
 

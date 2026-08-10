@@ -9,6 +9,16 @@ updated: 2026-08-09
 
 # 0068 — MCP SDK v2 is one stateless hard cut
 
+## Context
+
+The MCP TypeScript SDK v2 split its server and client packages, made stateless
+HTTP the stable application boundary and introduced protocol `2026-07-28`.
+Stitchkit's previous surface still carried a monolithic SDK dependency,
+stateful/session options and framework-owned compatibility choices. Keeping both
+eras as parallel framework APIs would duplicate lifecycle, OAuth, schema and
+tool execution paths. The official SDK already owns the supported legacy wire
+codec, so the framework needs one API and one explicit negotiation policy.
+
 ## Decision
 
 Stitchkit uses the split TypeScript SDK v2 packages and protocol `2026-07-28`.

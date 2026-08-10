@@ -11,7 +11,8 @@ updated: 2026-08-08
 
 ## Status
 
-Accepted. Complements ADR 0060 and ADR 0061.
+Accepted. Complements ADR 0060 and ADR 0061. The identity paragraph is
+superseded by ADR 0070; the live-workspace decision remains active.
 
 ## Context
 

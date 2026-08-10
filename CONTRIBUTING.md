@@ -83,10 +83,11 @@ is no generated preview tree or reconciliation process. Stable development ports
 are Web `3210` and API `3211`; `DATABASE_URL` owns the database location.
 
 The template is intentionally a neutral application named `stitchkit-starter`.
-Scaffolding copies it without hidden project-wide token rewriting; consumers can
-rename the application explicitly. The disposable `starter-lane` remains the
-authoritative test of the exact post-scaffold product and allocates isolated ports
-and a uniquely named database before deleting its temporary workspace.
+Scaffolding writes one validated `app.config.json` and structurally updates only
+the root package manifest; runtime-visible identity derives from that config.
+The disposable `starter-lane` remains the authoritative test of the exact
+post-scaffold product and allocates isolated ports and a uniquely named database
+before deleting its temporary workspace.
 
 When it fails it keeps its work directory and prints the path — reproduce by
 hand there. Adding a public API? Name its types in a fixture; that is what keeps
@@ -103,19 +104,34 @@ the export honest.
   Stitchkit target only after the target version already exists on npm and both
   starter lanes are green.
 
+Prepare versions and changelogs in an ordinary commit and wait for the exact-SHA
+branch CI to pass. Then run `bun run release:core` or
+`bun run release:starter`. The runner proves a clean current `master`/`main`,
+validates the package version and changelog, and pushes only the matching tag.
+The tag workflow downloads the already-validated tarball; it does not rebuild or
+rerun the expensive gates.
+
 ### Git hooks
 
 `bun install` wires two hooks (`.githooks/`, via `core.hooksPath` set by the
 root `prepare` script):
 
-- **`pre-commit`** — auto-formats staged files with Biome, then blocks the
-  commit on any remaining finding, **warnings included** (`--error-on-warnings`).
-  The repo stays warning-free at every commit.
-- **`pre-push`** — runs the full CI suite locally (lint, typecheck, tests,
-  build), so a broken push never reaches the remote or turns CI red.
+- **`pre-commit`** — checks exactly the staged paths, including names containing
+  spaces, without rewriting files or changing the index.
+- **`pre-push`** — runs `verify` once for a code/branch push. A tag-only release
+  runs only the release metadata preflight; deletion-only pushes run no build.
 
 Wire them manually with `git config core.hooksPath .githooks`. Bypass once with
-`git commit --no-verify` / `git push --no-verify`.
+Git's own `--no-verify` only for exceptional local diagnosis; it is not part of
+the release path.
+
+## Architecture decision format
+
+New ADRs follow the canonical shape demonstrated by
+[`0065`](docs/decisions/0065-flat-collisions-preserve-every-known-kind.md):
+`# ADR NNNN — …`, status/date bullets, then `Context`, `Decision`, rejected
+alternatives and `Consequences`. Historical ADRs keep their original formatting;
+substantive omissions are corrected without mass-reformatting the archive.
 
 ## Local development against a consuming app
 

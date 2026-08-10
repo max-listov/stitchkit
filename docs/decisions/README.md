@@ -80,9 +80,11 @@ These records were consolidated from the project's internal design notes on
 | [0063](0063-one-http-completion-many-observability-projections.md) | One HTTP completion feeds every observability projection | Accepted — supersedes the HTTP wrapper in 0012; refines 0039 |
 | [0064](0064-runtime-tool-factories-validate-context-at-execution.md) | Runtime-tool factories validate context at execution | Accepted — extends 0055 without a parallel runner |
 | [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary |
-| [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — direct HMR source; generated copies are disposable validation fixtures |
+| [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — identity clause superseded by 0070 |
 | [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications |
 | [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies |
+| [0069](0069-realtime-contracts-validate-without-owning-delivery.md) | Realtime contracts validate without owning delivery | Accepted — extends 0008; 0020 remains orthogonal |
+| [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.
