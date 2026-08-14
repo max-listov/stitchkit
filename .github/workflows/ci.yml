@@ -1,5 +1,9 @@
 # Branch and pull-request validation. Release tags are handled by release.yml
 # only after this workflow has completed successfully for the exact commit SHA.
+#
+# The release-critical path is deliberately flat: framework checks, the packed
+# Node consumer and every starter mode/variant are independent jobs. The tiny
+# final `ci` job is the single fail-closed aggregate result.
 name: CI
 
 on:
@@ -10,25 +14,17 @@ on:
 permissions:
   contents: read
 
+# A newer branch/PR SHA supersedes the older result. Tag publication has its
+# own non-cancellable concurrency boundary in release.yml.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  ci:
+  core:
+    name: Core and publication artifacts
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_DB: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
-    env:
-      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -39,8 +35,6 @@ jobs:
       - run: bun run check
       - run: bun run test
       - run: bun run build
-      - run: bunx playwright install --with-deps chromium webkit
-      - run: bun run starter-lane
       - name: Pack the exact validated publication inputs
         run: |
           mkdir -p release-artifacts
@@ -63,8 +57,9 @@ jobs:
           retention-days: 30
 
   node-smoke:
+    name: Packed Node consumer
     runs-on: ubuntu-latest
-    needs: ci
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -81,9 +76,15 @@ jobs:
       - run: bun run consumer-lane
         working-directory: packages/core
 
-  starter-head:
+  starter:
+    name: Starter ${{ matrix.mode }} / ${{ matrix.variant }}
     runs-on: ubuntu-latest
-    needs: ci
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [target, head]
+        variant: [blank, repository]
     services:
       postgres:
         image: postgres:18-alpine
@@ -100,6 +101,8 @@ jobs:
           --health-retries 20
     env:
       STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      STARTER_LANE_MODE: ${{ matrix.mode }}
+      STARTER_LANE_VARIANT: ${{ matrix.variant }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -107,5 +110,22 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium webkit
-      - run: bun run starter-head-lane
+      - name: Run one isolated starter surface
+        run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT"
 
+  ci:
+    name: ci
+    if: ${{ always() }}
+    needs: [core, node-smoke, starter]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every release gate
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+          NODE_RESULT: ${{ needs.node-smoke.result }}
+          STARTER_RESULT: ${{ needs.starter.result }}
+        run: |
+          test "$CORE_RESULT" = success
+          test "$NODE_RESULT" = success
+          test "$STARTER_RESULT" = success

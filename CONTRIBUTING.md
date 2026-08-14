@@ -34,8 +34,8 @@ bun run check     # tsc — framework, scaffolder and canonical template
 bun run test      # the test suite
 bun run build     # build dist/ (bun build + tsc declarations)
 bun run consumer-lane  # install the packed tarball into a fixture app and use it
-bun run starter-lane   # pack the scaffolder and verify its published Stitchkit target
-bun run starter-head-lane  # probe the same scaffold against packed framework HEAD
+bun run starter-lane       # both scaffold variants against the published Stitchkit target
+bun run starter-head-lane  # both scaffold variants against packed framework HEAD
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
 bun run verify    # all framework and packed-consumer gates
 bun run lint:fix  # auto-fix formatting / safe lint
@@ -61,12 +61,18 @@ a consumer had to install: `minimal` (stitchkit + zod, no optional peer) and
 `full` (the peers the tool surface needs). About 8 seconds.
 
 `bun run starter-lane` packs `create-stitchkit`, executes its binary and verifies
-the generated app against the published Stitchkit range and lockfile declared by
-the template. `bun run starter-head-lane` runs the same external-consumer path
+both generated app variants against the published Stitchkit range and lockfile
+declared by the template. `bun run starter-head-lane` runs the same external-consumer path
 after replacing only the generated catalog target with the packed local core;
 it is a compatibility probe, not the starter's release target. Both modes run
 the authored-source guard, typecheck, lint, unit tests, production builds and
 runtime/browser E2E. The canonical template is also the live development workspace.
+
+GitHub CI runs the four mode/variant combinations independently so none waits
+for another generated application. The core package checks and packed Node
+consumer start in parallel with them; a final fail-closed aggregate requires
+every result. See [`docs/architecture/ci-release.md`](docs/architecture/ci-release.md)
+for the graph, exact-SHA publication boundary and performance budget.
 
 The canonical template is an autonomous nested Bun workspace. Root `bun install`
 installs its frozen lockfile and generates its ignored Prisma client so source is

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { findNeutralIdentity } from './neutral-identity';
 import { createStarterLaneDatabase } from './starter-database';
+import { parseStarterLaneOptions } from './starter-lane-options';
 import { readStarterStitchkitTarget, writeStarterStitchkitTarget } from './starter-manifest';
 
 function parseIdentityAllowlist(value: unknown): string[] {
@@ -18,7 +19,7 @@ function parseIdentityAllowlist(value: unknown): string[] {
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = join(repositoryRoot, 'packages/create-stitchkit/template');
-const mode = Bun.argv.includes('--head') ? 'head' : 'target';
+const { mode, variant: selectedVariant } = parseStarterLaneOptions(Bun.argv.slice(2));
 
 interface CommandOptions {
   env?: Record<string, string | undefined>;
@@ -470,8 +471,8 @@ try {
     }
   }
 
-  await runVariant();
-  await runVariant('repository');
+  if (selectedVariant === 'blank') await runVariant();
+  else await runVariant('repository');
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
