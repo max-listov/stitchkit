@@ -2,9 +2,10 @@
 title: "CI release critical path under three minutes"
 description: Preserve the complete release gate while removing serial starter work from the exact-SHA publication path.
 type: task
-status: in-progress
+status: done
 created: 2026-08-14
 updated: 2026-08-14
+completed: 2026-08-14 23:24 +07:00
 ---
 
 # CI release critical path under three minutes
@@ -65,6 +66,12 @@ variant, packed-package or exact-SHA guarantee.
   scripts invoked the standard sibling command `bunx`. The bootstrap now exposes
   both official command names from the same integrity-checked binary and verifies
   both versions before any repository install.
+- Run [`31819016716`](https://github.com/max-listov/stitchkit/actions/runs/31819016716)
+  is the complete successful proof: `2:14` wall time from workflow creation to
+  conclusion. Core completed in `0:48`, the packed Node consumer in `0:27`, and
+  the eight isolated starter cells in `1:48–2:04`. All ten jobs became eligible
+  within one second; the longest required surface was target/repository/Chromium
+  at `2:04`, leaving 56 seconds of the three-minute budget.
 - The final graph splits each mode/variant by browser group. Chromium and mobile
   Chromium remain separate from WebKit. Every cell now uses the immutable
   official image matching the lockfile Playwright version, with browsers and OS
@@ -86,44 +93,82 @@ variant, packed-package or exact-SHA guarantee.
 
 ## План
 
-- [ ] Give the starter lane one explicit `blank | repository` variant per
+- [x] Give the starter lane one explicit `blank | repository` variant per
   invocation while preserving `target | head` as the independent mode.
-- [ ] Make local full-lane scripts compose both explicit variants so the local
+- [x] Make local full-lane scripts compose both explicit variants so the local
   `verify` contract remains complete.
-- [ ] Split GitHub CI into a fast core artifact job, an independent Node packed
+- [x] Split GitHub CI into a fast core artifact job, an independent Node packed
   consumer job and eight starter matrix entries (`target/head × blank/repository
   × chromium/webkit`).
-- [ ] Remove every `needs` edge and use the native workflow conclusion as the
+- [x] Remove every `needs` edge and use the native workflow conclusion as the
   fail-closed aggregate selected by the exact-SHA publisher.
-- [ ] Run every isolated starter job in the immutable official image matching
+- [x] Run every isolated starter job in the immutable official image matching
   the lockfile Playwright version; perform no live OS/browser provisioning and
   never share mutable generated applications or databases between entries.
-- [ ] Keep exact-SHA tarball selection and OIDC publish permissions unchanged.
-- [ ] Add branch/PR concurrency cancellation so superseded SHA checks stop
+- [x] Keep exact-SHA tarball selection and OIDC publish permissions unchanged.
+- [x] Add branch/PR concurrency cancellation so superseded SHA checks stop
   consuming runners; tag publication remains non-cancellable.
-- [ ] Extend executable workflow tests to pin the parallel graph, complete matrix,
+- [x] Extend executable workflow tests to pin the parallel graph, complete matrix,
   native fail-closed conclusion, action SHA pins and publish trust boundary.
-- [ ] Add focused tests for starter lane argument parsing and fail-first invalid
+- [x] Add focused tests for starter lane argument parsing and fail-first invalid
   combinations.
-- [ ] Document the new CI/release graph and its performance budget in contributor
+- [x] Document the new CI/release graph and its performance budget in contributor
   and release reference documentation.
-- [ ] Push measured iterations without publishing a package until a successful
+- [x] Push measured iterations without publishing a package until a successful
   branch CI run is below `3:00`.
 
 ## Acceptance
 
-- [ ] The complete CI still executes 33 blank and 42 repository browser cases in
+- [x] The complete CI still executes 33 blank and 42 repository browser cases in
   both target and HEAD modes (150 total) and all eight matrix entries are required.
-- [ ] `core`, `node-smoke` and all starter matrix entries have no dependency on
+- [x] `core`, `node-smoke` and all starter matrix entries have no dependency on
   one another and are eligible to start at workflow time zero.
-- [ ] A failed matrix entry makes the workflow conclusion and exact-SHA release
+- [x] A failed matrix entry makes the workflow conclusion and exact-SHA release
   selection fail closed without a serial summary runner.
-- [ ] `stitchkit` and `create-stitchkit` tarballs are packed once from the exact
+- [x] `stitchkit` and `create-stitchkit` tarballs are packed once from the exact
   commit and are not rebuilt inside the publisher.
-- [ ] Workflow-level permissions remain `contents: read`; `id-token: write`
+- [x] Workflow-level permissions remain `contents: read`; `id-token: write`
   remains confined to the protected release job.
-- [ ] `bun run verify` passes locally.
-- [ ] A real successful GitHub Actions run completes below `3:00`; the measured
+- [x] `bun run verify` passes locally.
+- [x] A real successful GitHub Actions run completes below `3:00`; the measured
   job and step timeline is recorded in `Что сделано`.
-- [ ] No package version, changelog release section, git tag or npm publication is
+- [x] No package version, changelog release section, git tag or npm publication is
   produced by this task.
+
+## Что сделано
+
+- [x] **CI graph:** [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml)
+  runs core, packed Node and the complete eight-cell starter matrix independently;
+  each starter cell owns its container, generated workspace and PostgreSQL service.
+- [x] **Deterministic runtime:** the same workflow uses the immutable lockfile-matched
+  Playwright image and an integrity-checked Bun platform tarball exposing both `bun`
+  and `bunx`; no cell installs browser or OS dependencies from a live mirror.
+- [x] **Starter composition:** [`scripts/starter-lane.ts`](../../../scripts/starter-lane.ts)
+  and [`scripts/starter-lane-options.ts`](../../../scripts/starter-lane-options.ts)
+  accept one explicit mode/variant/browser surface, while the package scripts still
+  compose both variants for the complete local gate.
+- [x] **Executable graph checks:**
+  [`scripts/workflow-permissions.test.ts`](../../../scripts/workflow-permissions.test.ts)
+  covers `cancels superseded branch and pull-request runs`, `core, Node and starter
+  gates have no heavy-job dependency`, `the starter matrix contains every mode,
+  variant and browser surface`, `starter cells use one immutable lockfile-matched
+  browser image`, `the workflow conclusion is the fail-closed aggregate used by
+  publication`, and `publication inputs are packed and uploaded only by the core job`.
+- [x] **Argument checks:**
+  [`scripts/starter-lane-options.test.ts`](../../../scripts/starter-lane-options.test.ts)
+  covers `parses explicit mode, variant and browser combinations` and `fails first
+  on missing, duplicate, empty and unknown arguments`.
+- [x] **Repository browser proof:**
+  [`packages/create-stitchkit/examples/repository/e2e/repository.spec.ts`](../../../packages/create-stitchkit/examples/repository/e2e/repository.spec.ts)
+  retains `prefetched data hydrates without a loading flash or a client refetch` and
+  `renders and refreshes the repository example`; the refreshed value is scoped to
+  the required summary surface without weakening strict locator semantics.
+- [x] **Documentation:** [`docs/architecture/ci-release.md`](../../architecture/ci-release.md)
+  is the current release-graph reference, and [`CONTRIBUTING.md`](../../../CONTRIBUTING.md)
+  points contributors to the focused and complete local equivalents.
+- [x] **Measured result:** successful run
+  [`31819016716`](https://github.com/max-listov/stitchkit/actions/runs/31819016716)
+  completed in `2:14` with all ten required jobs green and all 150 browser cases
+  release-blocking, versus the measured `8:40` baseline.
+- [x] **Release purity:** package versions, release changelog sections, git tags and
+  npm publications were not changed or created by this task.
