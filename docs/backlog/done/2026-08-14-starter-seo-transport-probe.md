@@ -2,9 +2,10 @@
 title: "Deterministic starter SEO transport probe"
 description: Separate browser metadata assertions from the single transport-level OG and sitemap reachability proof.
 type: task
-status: in-progress
+status: done
 created: 2026-08-14
 updated: 2026-08-14
+completed: 2026-08-14 23:43 +07:00
 related: docs/backlog/done/2026-08-14-ci-release-critical-path.md
 ---
 
@@ -41,7 +42,9 @@ metadata rendered for their browser surface.
 - [x] Add a scaffold-level guard that both runtime compositions call the shared
   probe and the browser test no longer fetches the image.
 - [x] Run the complete local verification gate — `bun run verify` passed.
-- [ ] Push and require a full green final-SHA CI below three minutes.
+- [x] Push and require a full green final-SHA CI below three minutes — run
+  [`31820477967`](https://github.com/max-listov/stitchkit/actions/runs/31820477967)
+  passed in `2:20` for exact SHA `bf63c508601ab47521a5adf4024d9c6ac5537802`.
 
 ## Acceptance
 
@@ -54,5 +57,32 @@ metadata rendered for their browser surface.
 - [x] No retry, sleep, timeout increase or reduced test matrix is introduced.
 - [x] The complete CI remains 33 blank plus 42 repository cases in both target
   and HEAD modes: 150 release-blocking browser cases.
-- [ ] The final exact-SHA GitHub run is green below `3:00`.
+- [x] The final exact-SHA GitHub run is green below `3:00` — `2:20` wall-clock.
 - [x] Package versions, release notes, tags and npm publications remain unchanged.
+
+## Что сделано
+
+- [x] **Shared starter smoke:**
+  `packages/create-stitchkit/template/scripts/web-surface-smoke.ts` проверяет
+  реальными HTTP-запросами `200`, `image/png`, непустой OG body и локализованный
+  URL в sitemap без retry, sleep или расширения timeout.
+- [x] **Blank composition:**
+  `packages/create-stitchkit/template/scripts/runtime-smoke.ts` выполняет общий
+  web-surface probe до Playwright.
+- [x] **Repository composition:**
+  `packages/create-stitchkit/examples/repository/scripts/runtime-smoke.ts`
+  выполняет тот же общий web-surface probe до Playwright.
+- [x] **Browser surface:** test `publishes complete page metadata` в
+  `packages/create-stitchkit/template/e2e/starter.spec.ts` сохраняет проверки
+  title, canonical, description и точного OG URL для Chromium, mobile Chromium
+  и WebKit, не дублируя transport fetch между workers.
+- [x] **Scaffold regression:** test
+  `probes SEO transport once before browser-specific metadata checks` в
+  `packages/create-stitchkit/tests/scaffold.test.ts` фиксирует обе runtime
+  compositions, общий probe и отсутствие browser-owned `request.get`.
+- [x] **Verification:** `bun --filter create-stitchkit test`, точный
+  `head/repository/chromium` lane и полный `bun run verify` прошли локально;
+  GitHub run `31820477967` прошёл целиком за `2:20`, сохранив все 150
+  release-blocking browser cases.
+- [x] **Что не делалось:** package versions, changelogs, release tags, npm
+  publications и release workflow не изменялись.
