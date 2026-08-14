@@ -34,6 +34,20 @@ variant, packed-package or exact-SHA guarantee.
 - Target and HEAD each execute 33 blank plus 42 repository browser tests: 150
   browser cases remain mandatory across the complete workflow.
 
+## Измеренные итерации
+
+- Run `31814466950` flattened core, Node and four mode/variant starter cells. It
+  was green in `3:12`; the longest cell spent `1:05` installing every browser's
+  host dependencies before running all three browser projects.
+- Run `31815275260` removed host provisioning and reached the browser gates in
+  roughly two minutes, but correctly failed: the hosted image runs Chromium but
+  lacks WebKit's GTK/GStreamer/Flite stack. This rejected experiment proves the
+  dependency boundary instead of assuming it from runner documentation.
+- The final graph splits each mode/variant by browser group. Chromium and mobile
+  Chromium use the hosted image directly; only WebKit cells install WebKit host
+  dependencies. All 150 cases remain release-blocking while dependency setup
+  and the Chromium test workload no longer add on one critical path.
+
 ## Результат
 
 - A successful exact-SHA CI run completes in less than three minutes on the
@@ -54,17 +68,18 @@ variant, packed-package or exact-SHA guarantee.
 - [ ] Make local full-lane scripts compose both explicit variants so the local
   `verify` contract remains complete.
 - [ ] Split GitHub CI into a fast core artifact job, an independent Node packed
-  consumer job and four starter matrix entries (`target/head × blank/repository`).
-- [ ] Remove every heavy-job `needs` edge; add one tiny final required aggregator
-  that fails unless all matrix entries and both framework jobs succeeded.
-- [ ] Install the lockfile-pinned Playwright browser revisions once per isolated
-  starter job, reuse the GitHub runner's existing system libraries and never
-  share mutable generated applications or databases between matrix entries.
+  consumer job and eight starter matrix entries (`target/head × blank/repository
+  × chromium/webkit`).
+- [ ] Remove every `needs` edge and use the native workflow conclusion as the
+  fail-closed aggregate selected by the exact-SHA publisher.
+- [ ] Install only the selected lockfile-pinned browser in each isolated starter
+  job. Provision host libraries only for WebKit; never share mutable generated
+  applications or databases between matrix entries.
 - [ ] Keep exact-SHA tarball selection and OIDC publish permissions unchanged.
 - [ ] Add branch/PR concurrency cancellation so superseded SHA checks stop
   consuming runners; tag publication remains non-cancellable.
 - [ ] Extend executable workflow tests to pin the parallel graph, complete matrix,
-  required aggregator, action SHA pins and publish trust boundary.
+  native fail-closed conclusion, action SHA pins and publish trust boundary.
 - [ ] Add focused tests for starter lane argument parsing and fail-first invalid
   combinations.
 - [ ] Document the new CI/release graph and its performance budget in contributor
@@ -75,11 +90,11 @@ variant, packed-package or exact-SHA guarantee.
 ## Acceptance
 
 - [ ] The complete CI still executes 33 blank and 42 repository browser cases in
-  both target and HEAD modes (150 total) and all four matrix entries are required.
+  both target and HEAD modes (150 total) and all eight matrix entries are required.
 - [ ] `core`, `node-smoke` and all starter matrix entries have no dependency on
   one another and are eligible to start at workflow time zero.
-- [ ] A failed matrix entry makes the aggregate workflow and exact-SHA release
-  selection fail closed.
+- [ ] A failed matrix entry makes the workflow conclusion and exact-SHA release
+  selection fail closed without a serial summary runner.
 - [ ] `stitchkit` and `create-stitchkit` tarballs are packed once from the exact
   commit and are not rebuilt inside the publisher.
 - [ ] Workflow-level permissions remain `contents: read`; `id-token: write`

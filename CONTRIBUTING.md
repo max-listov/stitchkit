@@ -68,11 +68,12 @@ it is a compatibility probe, not the starter's release target. Both modes run
 the authored-source guard, typecheck, lint, unit tests, production builds and
 runtime/browser E2E. The canonical template is also the live development workspace.
 
-GitHub CI runs the four mode/variant combinations independently so none waits
-for another generated application. The core package checks and packed Node
-consumer start in parallel with them; a final fail-closed aggregate requires
-every result. See [`docs/architecture/ci-release.md`](docs/architecture/ci-release.md)
-for the graph, exact-SHA publication boundary and performance budget.
+GitHub CI runs every mode/variant/browser group independently so none waits for
+another generated application or an unrelated browser runtime. The core package
+checks and packed Node consumer start in parallel with them; the workflow
+conclusion fails closed if any result fails. See
+[`docs/architecture/ci-release.md`](docs/architecture/ci-release.md) for the
+graph, exact-SHA publication boundary and performance budget.
 
 The canonical template is an autonomous nested Bun workspace. Root `bun install`
 installs its frozen lockfile and generates its ignored Prisma client so source is

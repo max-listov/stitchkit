@@ -60,36 +60,37 @@ describe('CI release-critical graph', () => {
   test('core, Node and starter gates have no heavy-job dependency', () => {
     const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  node-smoke:'));
     const nodeSection = ci.slice(ci.indexOf('  node-smoke:'), ci.indexOf('  starter:'));
-    const starterSection = ci.slice(ci.indexOf('  starter:'), ci.indexOf('  ci:'));
+    const starterSection = ci.slice(ci.indexOf('  starter:'));
     for (const section of [coreSection, nodeSection, starterSection]) {
       expect(section).not.toMatch(/^\s+needs:/m);
     }
   });
 
-  test('the starter matrix contains every target/head and blank/repository surface', () => {
-    const starterSection = ci.slice(ci.indexOf('  starter:'), ci.indexOf('  ci:'));
+  test('the starter matrix contains every mode, variant and browser surface', () => {
+    const starterSection = ci.slice(ci.indexOf('  starter:'));
     expect(starterSection).toContain('mode: [target, head]');
     expect(starterSection).toContain('variant: [blank, repository]');
+    expect(starterSection).toContain('browser: [chromium, webkit]');
     expect(starterSection).toContain('fail-fast: false');
     expect(starterSection).toContain(
-      'bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT"',
+      'bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"',
     );
   });
 
-  test('starter cells install pinned browsers without repeated system provisioning', () => {
-    const starterSection = ci.slice(ci.indexOf('  starter:'), ci.indexOf('  ci:'));
-    expect(starterSection).toContain('bunx playwright install chromium webkit');
-    expect(starterSection).not.toContain('playwright install --with-deps');
+  test('only WebKit cells provision the system media stack', () => {
+    const starterSection = ci.slice(ci.indexOf('  starter:'));
+    expect(starterSection).toContain('if [ "$STARTER_LANE_BROWSER" = webkit ]');
+    expect(starterSection).toContain('bunx playwright install --with-deps webkit');
+    expect(starterSection).toContain('bunx playwright install chromium');
+    expect(starterSection).not.toContain('playwright install --with-deps chromium');
   });
 
-  test('one fail-closed aggregate requires every independent gate', () => {
-    const aggregate = ci.slice(ci.indexOf('  ci:'));
-    expect(aggregate).toContain(`if: ${actionExpression('always()')}`);
-    expect(aggregate).toContain('needs: [core, node-smoke, starter]');
-    expect(aggregate).toContain(`CORE_RESULT: ${actionExpression('needs.core.result')}`);
-    expect(aggregate).toContain(`NODE_RESULT: ${actionExpression('needs.node-smoke.result')}`);
-    expect(aggregate).toContain(`STARTER_RESULT: ${actionExpression('needs.starter.result')}`);
-    expect(aggregate.match(/test "\$[A-Z_]+" = success/g)).toHaveLength(3);
+  test('the workflow conclusion is the fail-closed aggregate used by publication', () => {
+    expect(ci).not.toContain('\n  ci:');
+    expect(release).toContain(
+      'actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed',
+    );
+    expect(release).toContain('select-ci-run "$GITHUB_SHA"');
   });
 
   test('publication inputs are packed and uploaded only by the core job', () => {

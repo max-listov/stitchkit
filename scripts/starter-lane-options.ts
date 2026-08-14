@@ -1,9 +1,11 @@
 export type StarterLaneMode = 'target' | 'head';
 export type StarterLaneVariant = 'blank' | 'repository';
+export type StarterLaneBrowser = 'all' | 'chromium' | 'webkit';
 
 export interface StarterLaneOptions {
   mode: StarterLaneMode;
   variant: StarterLaneVariant;
+  browser: StarterLaneBrowser;
 }
 
 function readNamedArgument(args: string[], name: string): string {
@@ -19,7 +21,10 @@ function readNamedArgument(args: string[], name: string): string {
 
 export function parseStarterLaneOptions(args: string[]): StarterLaneOptions {
   const unknown = args.filter(
-    (argument) => !argument.startsWith('--mode=') && !argument.startsWith('--variant='),
+    (argument) =>
+      !argument.startsWith('--mode=') &&
+      !argument.startsWith('--variant=') &&
+      !argument.startsWith('--browser='),
   );
   if (unknown.length > 0) {
     throw new Error(`Unknown starter lane arguments: ${unknown.join(', ')}`);
@@ -27,11 +32,15 @@ export function parseStarterLaneOptions(args: string[]): StarterLaneOptions {
 
   const mode = readNamedArgument(args, 'mode');
   const variant = readNamedArgument(args, 'variant');
+  const browser = readNamedArgument(args, 'browser');
   if (mode !== 'target' && mode !== 'head') {
     throw new Error(`Unknown starter lane mode: ${mode}`);
   }
   if (variant !== 'blank' && variant !== 'repository') {
     throw new Error(`Unknown starter lane variant: ${variant}`);
   }
-  return { mode, variant };
+  if (browser !== 'all' && browser !== 'chromium' && browser !== 'webkit') {
+    throw new Error(`Unknown starter lane browser: ${browser}`);
+  }
+  return { mode, variant, browser };
 }

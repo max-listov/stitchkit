@@ -19,7 +19,7 @@ function parseIdentityAllowlist(value: unknown): string[] {
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = join(repositoryRoot, 'packages/create-stitchkit/template');
-const { mode, variant: selectedVariant } = parseStarterLaneOptions(Bun.argv.slice(2));
+const { mode, variant: selectedVariant, browser } = parseStarterLaneOptions(Bun.argv.slice(2));
 
 interface CommandOptions {
   env?: Record<string, string | undefined>;
@@ -454,8 +454,15 @@ try {
           );
         }
 
-        await run(['bunx', 'playwright', 'install', 'chromium', 'webkit'], generated, { env });
-        await run(['bun', 'run', 'e2e'], generated, { env });
+        const browserNames = browser === 'all' ? ['chromium', 'webkit'] : [browser];
+        await run(['bunx', 'playwright', 'install', ...browserNames], generated, { env });
+        const browserProjects =
+          browser === 'chromium'
+            ? ['--project=chromium', '--project=mobile-chromium']
+            : browser === 'webkit'
+              ? ['--project=webkit']
+              : [];
+        await run(['bun', 'run', 'e2e', ...browserProjects], generated, { env });
       } finally {
         api?.kill('SIGTERM');
         web?.kill('SIGTERM');
@@ -463,7 +470,7 @@ try {
       }
 
       console.log(
-        `Packed ${variant} starter ${mode} lane passed with stitchkit ${installedVersion} (${mode === 'target' ? templateTarget : 'local HEAD'}) across DB, HTTP, OpenAPI, Socket.IO, MCP, CLI, Chromium and WebKit`,
+        `Packed ${variant} starter ${mode}/${browser} lane passed with stitchkit ${installedVersion} (${mode === 'target' ? templateTarget : 'local HEAD'}) across DB, HTTP, OpenAPI, Socket.IO, MCP, CLI and its selected browser surface`,
       );
     } finally {
       await githubFixture?.stop(true);

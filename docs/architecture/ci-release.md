@@ -22,26 +22,32 @@ Every expensive gate is eligible to start at workflow time zero:
 |---|---|
 | `core` | lint, TypeScript, unit/integration tests, package build, packed docs and the two immutable release tarballs |
 | `node-smoke` | Node 22 imports, runtime smoke and packed external-consumer lane |
-| `starter / target / blank` | blank scaffold against the starter's published Stitchkit target |
-| `starter / target / repository` | repository example against the published target |
-| `starter / head / blank` | blank scaffold against the packed framework at the current commit |
-| `starter / head / repository` | repository example against packed framework HEAD |
+| `starter / target / blank / chromium` | blank published-target scaffold in desktop and mobile Chromium |
+| `starter / target / blank / webkit` | blank published-target scaffold in WebKit |
+| `starter / target / repository / chromium` | repository published-target example in desktop and mobile Chromium |
+| `starter / target / repository / webkit` | repository published-target example in WebKit |
+| `starter / head / blank / chromium` | blank packed-HEAD scaffold in desktop and mobile Chromium |
+| `starter / head / blank / webkit` | blank packed-HEAD scaffold in WebKit |
+| `starter / head / repository / chromium` | repository packed-HEAD example in desktop and mobile Chromium |
+| `starter / head / repository / webkit` | repository packed-HEAD example in WebKit |
 
 Each starter cell owns its generated workspace and PostgreSQL database. The
 matrix keeps `fail-fast: false`, so one failure does not hide results from the
-other three surfaces. Across the matrix the existing 33 blank and 42 repository
+other seven surfaces. Across the matrix the existing 33 blank and 42 repository
 browser cases run in both modes: 150 browser cases, including Chromium, WebKit
 and the mobile project.
 
-Browser revisions come from the frozen lockfile and are installed explicitly in
-each isolated cell. GitHub's `ubuntu-latest` image already provides their system
-libraries, so CI does not repeat Playwright's `--with-deps` apt provisioning in
-all four cells. The browsers remain exact while duplicated host setup stays off
-the critical path.
+Browser revisions come from the frozen lockfile and each cell installs only its
+selected browser. GitHub's `ubuntu-latest` image already runs Chromium, including
+the mobile-emulation project. WebKit additionally needs GTK, GStreamer, Flite and
+media libraries, so only the WebKit half of the matrix invokes Playwright's
+`--with-deps` provisioning. The browser revisions and complete coverage remain
+exact while WebKit setup and Chromium execution proceed on separate runners.
 
-The final `ci` job contains no build. It runs after `core`, `node-smoke` and the
-complete starter matrix and succeeds only when all three aggregated job results
-are `success`. This is the single fail-closed summary of the parallel graph.
+There is no serial summary job. GitHub marks the workflow successful only when
+every matrix cell and independent framework job succeeds. The publisher selects
+that successful completed workflow for the exact commit SHA, so the workflow's
+native conclusion is already the fail-closed aggregate.
 
 Superseded branch or pull-request runs are cancelled. Tag publication is a
 separate non-cancellable workflow, so an in-progress npm publication can never
@@ -76,9 +82,9 @@ target starter variants. `bun run starter-head-lane` composes both HEAD variants
 For a focused lane, call the executable directly with one explicit combination:
 
 ```bash
-bun scripts/starter-lane.ts --mode=target --variant=blank
-bun scripts/starter-lane.ts --mode=head --variant=repository
+bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all
+bun scripts/starter-lane.ts --mode=head --variant=repository --browser=webkit
 ```
 
-Missing, duplicate or unknown mode/variant arguments fail before a workspace is
-created, preventing an accidentally partial CI gate.
+Missing, duplicate or unknown mode/variant/browser arguments fail before a
+workspace is created, preventing an accidentally partial CI gate.

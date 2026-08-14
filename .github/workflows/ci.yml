@@ -2,8 +2,9 @@
 # only after this workflow has completed successfully for the exact commit SHA.
 #
 # The release-critical path is deliberately flat: framework checks, the packed
-# Node consumer and every starter mode/variant are independent jobs. The tiny
-# final `ci` job is the single fail-closed aggregate result.
+# Node consumer and every starter mode/variant/browser group are independent
+# jobs. GitHub's workflow conclusion is the fail-closed aggregate consumed by
+# the exact-SHA publisher.
 name: CI
 
 on:
@@ -77,7 +78,7 @@ jobs:
         working-directory: packages/core
 
   starter:
-    name: Starter ${{ matrix.mode }} / ${{ matrix.variant }}
+    name: Starter ${{ matrix.mode }} / ${{ matrix.variant }} / ${{ matrix.browser }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -85,6 +86,7 @@ jobs:
       matrix:
         mode: [target, head]
         variant: [blank, repository]
+        browser: [chromium, webkit]
     services:
       postgres:
         image: postgres:18-alpine
@@ -103,33 +105,21 @@ jobs:
       STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       STARTER_LANE_MODE: ${{ matrix.mode }}
       STARTER_LANE_VARIANT: ${{ matrix.variant }}
+      STARTER_LANE_BROWSER: ${{ matrix.browser }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - name: Install lockfile-pinned Playwright browsers
-        # ubuntu-latest already carries the system browser libraries. Re-running
-        # apt provisioning in every matrix cell adds about 50 seconds without
-        # changing the browser revisions selected by the frozen lockfile.
-        run: bunx playwright install chromium webkit
-      - name: Run one isolated starter surface
-        run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT"
-
-  ci:
-    name: ci
-    if: ${{ always() }}
-    needs: [core, node-smoke, starter]
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Require every release gate
-        env:
-          CORE_RESULT: ${{ needs.core.result }}
-          NODE_RESULT: ${{ needs.node-smoke.result }}
-          STARTER_RESULT: ${{ needs.starter.result }}
+      - name: Install lockfile-pinned Playwright browser
+        # Chromium runs on the hosted image as-is. WebKit needs its larger media
+        # stack, so only the WebKit half of the matrix pays apt provisioning.
         run: |
-          test "$CORE_RESULT" = success
-          test "$NODE_RESULT" = success
-          test "$STARTER_RESULT" = success
+          if [ "$STARTER_LANE_BROWSER" = webkit ]; then
+            bunx playwright install --with-deps webkit
+          else
+            bunx playwright install chromium
+          fi
+      - name: Run one isolated starter surface
+        run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
