@@ -46,6 +46,13 @@ depends on package-mirror or browser-CDN variance. The repository install also
 skips its development-only prepare hook: the lane itself creates, installs and
 validates its own disposable scaffold.
 
+The container intentionally has no `unzip`, so starter cells do not invoke
+`setup-bun` (which delegates ZIP extraction to that host executable) or install
+another OS package. They fetch Bun's official platform tarball at the repository
+starter `packageManager` version, verify the registry-published SHA-512 integrity
+and put that exact binary on `PATH`. The workflow test binds this version to the
+starter manifest.
+
 There is no serial summary job. GitHub marks the workflow successful only when
 every matrix cell and independent framework job succeeds. The publisher selects
 that successful completed workflow for the exact commit SHA, so the workflow's

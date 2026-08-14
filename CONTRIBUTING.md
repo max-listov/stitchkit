@@ -80,6 +80,9 @@ frozen `@playwright/test` version. When that dependency advances, update both th
 image tag and digest in `.github/workflows/ci.yml`; never restore per-run browser
 downloads or `playwright install --with-deps`, which put mirror provisioning on
 the release-critical path.
+The starter job bootstraps the repository-pinned Bun version from its official
+platform tarball because the browser image intentionally has no `unzip`; update
+its SHA-512 integrity in the same workflow edit when `packageManager` changes.
 
 The canonical template is an autonomous nested Bun workspace. Root `bun install`
 installs its frozen lockfile and generates its ignored Prisma client so source is

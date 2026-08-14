@@ -11,6 +11,10 @@ import { join } from 'node:path';
 const root = join(import.meta.dir, '..');
 const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 const release = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+const starterManifest = readFileSync(
+  join(root, 'packages/create-stitchkit/template/package.json'),
+  'utf8',
+);
 const starterLock = readFileSync(
   join(root, 'packages/create-stitchkit/template/bun.lock'),
   'utf8',
@@ -21,6 +25,12 @@ const playwrightLockVersion = starterLock.match(
 )?.[1];
 if (!playwrightLockVersion) {
   throw new Error('The starter lockfile is missing its resolved @playwright/test version');
+}
+const bunPackageManagerVersion = starterManifest.match(
+  /"packageManager":\s*"bun@([^"]+)"/,
+)?.[1];
+if (!bunPackageManagerVersion) {
+  throw new Error('The starter manifest is missing its pinned Bun package manager');
 }
 
 function actionExpression(value: string): string {
@@ -94,6 +104,14 @@ describe('CI release-critical graph', () => {
       `image: mcr.microsoft.com/playwright:v${playwrightLockVersion}-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e`,
     );
     expect(starterSection).toContain('PLAYWRIGHT_BROWSERS_PATH: /ms-playwright');
+    expect(starterSection).toContain(`BUN_VERSION: ${bunPackageManagerVersion}`);
+    expect(starterSection).toContain(
+      'BUN_ARCHIVE_SHA512: ece55300abf07cf9926c85751e974ea15571e5545ce36ec6b8f3e77bddcdeaf93879004f21df675e664387dff319a28f75b56356d41265a7d6428523c77f14b7',
+    );
+    expect(starterSection).toContain(
+      'echo "$BUN_ARCHIVE_SHA512  $archive" | sha512sum --check',
+    );
+    expect(starterSection).not.toContain('oven-sh/setup-bun');
     expect(starterSection).toContain(
       'STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@postgres:5432/postgres',
     );

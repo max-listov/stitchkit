@@ -54,6 +54,12 @@ variant, packed-package or exact-SHA guarantee.
   repository install and `1:28` provisioning 181 WebKit OS packages plus browser
   binaries, while its complete isolated starter proof took `0:55`. The runtime
   proof was not slow: live mirror provisioning made the release time unstable.
+- Run `31817976772` rejected the preloaded image integration in `0:38`: all
+  starter cells reached the pinned container, then `setup-bun` failed because it
+  delegates extraction to an absent `unzip` executable. Installing `unzip` by
+  live apt would reintroduce the same mirror dependency on every runner. Starter
+  cells instead verify and extract Bun's official platform tarball with tools
+  already present in the image.
 - The final graph splits each mode/variant by browser group. Chromium and mobile
   Chromium remain separate from WebKit. Every cell now uses the immutable
   official image matching the lockfile Playwright version, with browsers and OS
