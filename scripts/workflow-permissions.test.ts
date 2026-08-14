@@ -111,6 +111,8 @@ describe('CI release-critical graph', () => {
     expect(starterSection).toContain(
       'echo "$BUN_ARCHIVE_SHA512  $archive" | sha512sum --check',
     );
+    expect(starterSection).toContain('ln --symbolic /usr/local/bin/bun /usr/local/bin/bunx');
+    expect(starterSection).toContain('test "$(bunx --version)" = "$BUN_VERSION"');
     expect(starterSection).not.toContain('oven-sh/setup-bun');
     expect(starterSection).toContain(
       'STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@postgres:5432/postgres',

@@ -60,6 +60,11 @@ variant, packed-package or exact-SHA guarantee.
   live apt would reintroduce the same mirror dependency on every runner. Starter
   cells instead verify and extract Bun's official platform tarball with tools
   already present in the image.
+- Run `31818378304` completed in `1:33` and proved that the verified Bun binary
+  bootstrap itself is fast, but all starter cells failed when generated package
+  scripts invoked the standard sibling command `bunx`. The bootstrap now exposes
+  both official command names from the same integrity-checked binary and verifies
+  both versions before any repository install.
 - The final graph splits each mode/variant by browser group. Chromium and mobile
   Chromium remain separate from WebKit. Every cell now uses the immutable
   official image matching the lockfile Playwright version, with browsers and OS

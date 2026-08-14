@@ -131,7 +131,9 @@ jobs:
           echo "$BUN_ARCHIVE_SHA512  $archive" | sha512sum --check
           tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
           install --mode 0755 "$RUNNER_TEMP/package/bin/bun" /usr/local/bin/bun
+          ln --symbolic /usr/local/bin/bun /usr/local/bin/bunx
           test "$(bun --version)" = "$BUN_VERSION"
+          test "$(bunx --version)" = "$BUN_VERSION"
       # The lane creates and prepares its own disposable scaffold. Running the
       # repository prepare hook here would install/generate the persistent
       # template a second time without contributing to the isolated proof.
