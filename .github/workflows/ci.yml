@@ -109,7 +109,11 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium webkit
+      - name: Install lockfile-pinned Playwright browsers
+        # ubuntu-latest already carries the system browser libraries. Re-running
+        # apt provisioning in every matrix cell adds about 50 seconds without
+        # changing the browser revisions selected by the frozen lockfile.
+        run: bunx playwright install chromium webkit
       - name: Run one isolated starter surface
         run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT"
 

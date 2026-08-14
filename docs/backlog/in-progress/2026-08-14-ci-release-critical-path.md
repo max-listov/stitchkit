@@ -57,9 +57,9 @@ variant, packed-package or exact-SHA guarantee.
   consumer job and four starter matrix entries (`target/head × blank/repository`).
 - [ ] Remove every heavy-job `needs` edge; add one tiny final required aggregator
   that fails unless all matrix entries and both framework jobs succeeded.
-- [ ] Install the exact Playwright runtime once per isolated starter job through
-  a deterministic, pinned browser environment; never share mutable generated
-  applications or databases between matrix entries.
+- [ ] Install the lockfile-pinned Playwright browser revisions once per isolated
+  starter job, reuse the GitHub runner's existing system libraries and never
+  share mutable generated applications or databases between matrix entries.
 - [ ] Keep exact-SHA tarball selection and OIDC publish permissions unchanged.
 - [ ] Add branch/PR concurrency cancellation so superseded SHA checks stop
   consuming runners; tag publication remains non-cancellable.
@@ -89,4 +89,3 @@ variant, packed-package or exact-SHA guarantee.
   job and step timeline is recorded in `Что сделано`.
 - [ ] No package version, changelog release section, git tag or npm publication is
   produced by this task.
-

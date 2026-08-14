@@ -76,6 +76,12 @@ describe('CI release-critical graph', () => {
     );
   });
 
+  test('starter cells install pinned browsers without repeated system provisioning', () => {
+    const starterSection = ci.slice(ci.indexOf('  starter:'), ci.indexOf('  ci:'));
+    expect(starterSection).toContain('bunx playwright install chromium webkit');
+    expect(starterSection).not.toContain('playwright install --with-deps');
+  });
+
   test('one fail-closed aggregate requires every independent gate', () => {
     const aggregate = ci.slice(ci.indexOf('  ci:'));
     expect(aggregate).toContain(`if: ${actionExpression('always()')}`);

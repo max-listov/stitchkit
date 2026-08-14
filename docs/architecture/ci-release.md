@@ -33,6 +33,12 @@ other three surfaces. Across the matrix the existing 33 blank and 42 repository
 browser cases run in both modes: 150 browser cases, including Chromium, WebKit
 and the mobile project.
 
+Browser revisions come from the frozen lockfile and are installed explicitly in
+each isolated cell. GitHub's `ubuntu-latest` image already provides their system
+libraries, so CI does not repeat Playwright's `--with-deps` apt provisioning in
+all four cells. The browsers remain exact while duplicated host setup stays off
+the critical path.
+
 The final `ci` job contains no build. It runs after `core`, `node-smoke` and the
 complete starter matrix and succeeds only when all three aggregated job results
 are `success`. This is the single fail-closed summary of the parallel graph.
