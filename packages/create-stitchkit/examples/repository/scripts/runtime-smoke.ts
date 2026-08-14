@@ -3,6 +3,7 @@ import { createRealtimeClient, defineRealtimeContract } from 'stitchkit';
 import { z } from 'zod';
 import { defineSurfaceProbe, runSurfaceConformance } from './surface-conformance';
 import { loadToolingEnv } from './tooling-env';
+import { assertPublicWebSurface } from './web-surface-smoke';
 
 const toolingEnv = loadToolingEnv();
 const apiOrigin = toolingEnv.NEXT_PUBLIC_API_URL;
@@ -166,4 +167,6 @@ await runSurfaceConformance({
   }
 }
 
-console.log('Runtime HTTP, OpenAPI, Socket.IO and MCP smoke passed');
+await assertPublicWebSurface(toolingEnv.NEXT_PUBLIC_WEB_URL);
+
+console.log('Runtime HTTP, OpenAPI, Socket.IO, MCP and public web smoke passed');

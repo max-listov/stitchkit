@@ -170,6 +170,31 @@ describe('scaffoldProject', () => {
     ).rejects.toThrow();
   });
 
+  test('probes SEO transport once before browser-specific metadata checks', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const overlayRoot = join(import.meta.dir, '..', 'examples/repository');
+    const neutralSmoke = await readFile(
+      join(templateRoot, 'scripts/runtime-smoke.ts'),
+      'utf8',
+    );
+    const repositorySmoke = await readFile(
+      join(overlayRoot, 'scripts/runtime-smoke.ts'),
+      'utf8',
+    );
+    const webProbe = await readFile(
+      join(templateRoot, 'scripts/web-surface-smoke.ts'),
+      'utf8',
+    );
+    const browserMetadata = await readFile(join(templateRoot, 'e2e/starter.spec.ts'), 'utf8');
+
+    expect(neutralSmoke).toContain('assertPublicWebSurface');
+    expect(repositorySmoke).toContain('assertPublicWebSurface');
+    expect(webProbe).toContain('image/png');
+    expect(webProbe).toContain("'/sitemap.xml'");
+    expect(browserMetadata).toContain("'/api/og/en/themes'");
+    expect(browserMetadata).not.toContain('request.get(');
+  });
+
   test('runs PM2 apps from their package directories', async () => {
     const templateRoot = join(import.meta.dir, '..', 'template');
     for (const configName of ['ecosystem.dev.config.cjs', 'ecosystem.config.cjs']) {

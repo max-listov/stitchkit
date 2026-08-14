@@ -29,10 +29,7 @@ test('calls the live backend through the typed contract client', async () => {
   await expect(client.status()).resolves.toEqual({ status: 'ok' });
 });
 
-test('publishes complete page metadata and a reachable Open Graph card', async ({
-  page,
-  request,
-}) => {
+test('publishes complete page metadata', async ({ page }) => {
   await page.goto('/en/ui/themes');
   await expect(page).toHaveTitle(`Theme system · ${appIdentity.name}`);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
@@ -45,15 +42,9 @@ test('publishes complete page metadata and a reachable Open Graph card', async (
   );
 
   const imageUrl = await page.locator('meta[property="og:image"]').getAttribute('content');
-  expect(imageUrl).not.toBeNull();
-  if (!imageUrl) throw new Error('Open Graph image URL is missing');
-  const imageResponse = await request.get(imageUrl);
-  expect(imageResponse.status()).toBe(200);
-  expect(imageResponse.headers()['content-type']).toContain('image/png');
-
-  const sitemapResponse = await request.get('/sitemap.xml');
-  expect(sitemapResponse.status()).toBe(200);
-  expect(await sitemapResponse.text()).toContain('/ru/ui/themes');
+  expect(imageUrl).toBe(
+    new URL('/api/og/en/themes', toolingEnv.NEXT_PUBLIC_WEB_URL).toString(),
+  );
 });
 
 test('switches catalogue sections and component tabs', async ({ page }) => {

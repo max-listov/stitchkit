@@ -3,8 +3,10 @@ import { createClient, createHttpClient } from 'stitchkit';
 import { z } from 'zod';
 import { runSurfaceConformance } from './surface-conformance';
 import { loadToolingEnv } from './tooling-env';
+import { assertPublicWebSurface } from './web-surface-smoke';
 
-const apiOrigin = loadToolingEnv().NEXT_PUBLIC_API_URL;
+const toolingEnv = loadToolingEnv();
+const apiOrigin = toolingEnv.NEXT_PUBLIC_API_URL;
 
 async function json(path: string): Promise<unknown> {
   const response = await fetch(`${apiOrigin}${path}`);
@@ -26,5 +28,6 @@ if (!Object.keys(openApi.paths).includes('/api/system/status')) {
 }
 
 await runSurfaceConformance({ apiOrigin });
+await assertPublicWebSurface(toolingEnv.NEXT_PUBLIC_WEB_URL);
 
-console.log('Runtime HTTP, typed client, OpenAPI and MCP smoke passed');
+console.log('Runtime HTTP, typed client, OpenAPI, MCP and public web smoke passed');
