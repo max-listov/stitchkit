@@ -82,19 +82,20 @@ function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
 }
 
 describe.each([
-  ['bare fetch', () => createClient(contract, { baseUrl })],
+  ['bare fetch', () => createClient(contract, { baseUrl }), () => ({ baseUrl })],
   [
     'Ky adapter',
     () => createClient(contract, createHttpClient({ baseUrl, retry: { limit: 0 } })),
+    () => createHttpClient({ baseUrl, retry: { limit: 0 } }),
   ],
-])('typed client cancellation — %s', (_name, makeClient) => {
+])('typed client cancellation — %s', (_name, makeClient, makeTransport) => {
   test('caller abort cancels GET, JSON, multipart and raw-response calls', async () => {
     const api = makeClient();
     const cases: Array<(signal: AbortSignal) => Promise<unknown>> = [
-      (signal) => api.search({ query: 'value' }, { signal }),
-      (signal) => api.create({ value: 'value' }, { signal }),
-      (signal) => api.upload({ file: new File(['data'], 'data.txt') }, { signal }),
-      (signal) => api.download({ signal }),
+      (signal) => api.search.withOptions({ query: 'value' }, { signal }),
+      (signal) => api.create.withOptions({ value: 'value' }, { signal }),
+      (signal) => api.upload.withOptions({ file: new File(['data'], 'data.txt') }, { signal }),
+      (signal) => api.download.withOptions({ signal }),
     ];
     for (const call of cases) {
       const controller = new AbortController();
@@ -109,9 +110,46 @@ describe.each([
     const before = requests;
     const controller = new AbortController();
     controller.abort();
-    await expectCode(api.ping({ signal: controller.signal }), 'REQUEST_ABORTED');
+    await expectCode(api.ping.withOptions({ signal: controller.signal }), 'REQUEST_ABORTED');
     await Bun.sleep(10);
     expect(requests).toBe(before);
+  });
+
+  test('scoped methods preserve cancellation without sending prefix keys', async () => {
+    const scoped = createClient(contract, makeTransport(), {
+      pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
+      stripPrefixKeys: ['tenantId'],
+    });
+    const before = requests;
+    const controller = new AbortController();
+    controller.abort();
+    await expectCode(
+      scoped.create.withOptions(
+        { tenantId: 'tenant-1', value: 'value' },
+        { signal: controller.signal },
+      ),
+      'REQUEST_ABORTED',
+    );
+    await Bun.sleep(10);
+    expect(requests).toBe(before);
+  });
+
+  test('ordinary callables ignore foreign callback context completely', async () => {
+    const api = makeClient();
+    const foreignContext = Object.defineProperty({}, 'signal', {
+      get() {
+        throw new Error('foreign callback context was read');
+      },
+    });
+
+    await expect(
+      Reflect.apply(api.create, undefined, [{ value: 'value' }, foreignContext]),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      Reflect.apply(api.ping, undefined, [undefined, foreignContext]),
+    ).resolves.toEqual({
+      ok: true,
+    });
   });
 
   test('endpoint timeout is distinct from caller cancellation', async () => {
@@ -126,7 +164,7 @@ test('abort and timeout do not emit Ky network_error events', async () => {
   http.subscribe((event) => void events.push(event.type));
   const api = createClient(contract, http);
   const controller = new AbortController();
-  const pending = api.ping({ signal: controller.signal });
+  const pending = api.ping.withOptions({ signal: controller.signal });
   controller.abort();
   await expectCode(pending, 'REQUEST_ABORTED');
   await expectCode(api.timeout(), 'REQUEST_TIMEOUT');
@@ -165,16 +203,18 @@ test('the first cancellation cause wins the caller/timeout race', async () => {
   timeoutFirst.abort();
 });
 
-// Compile-time surface: no-arg endpoints accept options directly; endpoints
-// with arguments keep request args first and options second.
+// Compile-time surface: ordinary calls carry only contract arguments; transport
+// options live exclusively on the callable's explicit method.
 function compileTimeCancellationChecks(): void {
   const typeClient = createClient(contract, { baseUrl: 'http://localhost' });
   const typeSignal = new AbortController().signal;
-  void typeClient.ping({ signal: typeSignal });
+  void typeClient.ping.withOptions({ signal: typeSignal });
+  void typeClient.create.withOptions({ value: 'ok' }, { signal: typeSignal });
+  // @ts-expect-error positional request options were removed
   void typeClient.create({ value: 'ok' }, { signal: typeSignal });
+  // @ts-expect-error no-argument endpoints accept no ordinary-call options
+  void typeClient.ping({ signal: typeSignal });
   // @ts-expect-error request options are not endpoint input
   void typeClient.create({ signal: typeSignal });
-  // @ts-expect-error no-arg endpoint has no separate args object
-  void typeClient.ping({}, { signal: typeSignal });
 }
 void compileTimeCancellationChecks;

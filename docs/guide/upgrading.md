@@ -48,7 +48,40 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
-## Upcoming migration: `[Unreleased]`
+## Released migration: 0.48.0
+
+### Typed-client request options move to `.withOptions`
+
+Generated endpoint methods reserve their ordinary call signature for contract
+variables. This keeps them directly assignable to callback APIs whose runtime
+supplies its own second context argument, including `react-query-kit` and
+TanStack Query. Move imperative cancellation to the callable's explicit method:
+
+```ts
+// before — endpoint with arguments
+await api.create({ name: 'Max' }, { signal })
+
+// after
+await api.create.withOptions({ name: 'Max' }, { signal })
+
+// before — endpoint without arguments
+await api.health({ signal })
+
+// after
+await api.health.withOptions({ signal })
+```
+
+Direct query and mutation composition remains unchanged:
+
+```ts
+createMutation({ mutationFn: api.create })
+createQuery({ queryKey: ['search'], fetcher: api.search })
+```
+
+There is no positional-options alias. Ordinary generated methods ignore extra
+runtime callback arguments; only `.withOptions` reads `ClientRequestOptions`.
+
+## Released migration: 0.47.0
 
 ### HTTP auth moves to the pre-body `authorize` phase
 

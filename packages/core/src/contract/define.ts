@@ -708,10 +708,20 @@ export type MultipartBufferedFiles<M> = M extends { files: infer F }
     }
   : never;
 
-/** Public per-call options shared by every typed HTTP endpoint. */
+/** Public per-call options accepted by every typed HTTP endpoint's `withOptions` method. */
 export interface ClientRequestOptions {
   signal?: AbortSignal;
 }
+
+type ClientEndpointWithArgs<Args, Output> = {
+  (args: Args): Promise<Output>;
+  withOptions(args: Args, options: ClientRequestOptions): Promise<Output>;
+};
+
+type ClientEndpointWithoutArgs<Output> = {
+  (): Promise<Output>;
+  withOptions(options: ClientRequestOptions): Promise<Output>;
+};
 
 type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &
   InferInput<Prop<E, 'input'>> &
@@ -729,8 +739,8 @@ type EndpointOutput<E> = E extends { rawResponse: true }
     : undefined;
 
 export type EndpointFn<E> = [keyof EndpointArgs<E>] extends [never]
-  ? (options?: ClientRequestOptions) => Promise<EndpointOutput<E>>
-  : (args: EndpointArgs<E>, options?: ClientRequestOptions) => Promise<EndpointOutput<E>>;
+  ? ClientEndpointWithoutArgs<EndpointOutput<E>>
+  : ClientEndpointWithArgs<EndpointArgs<E>, EndpointOutput<E>>;
 
 export type TypedClient<C extends Record<string, EndpointDef>> = {
   [K in keyof C]: EndpointFn<C[K]>;
@@ -752,8 +762,8 @@ type ExposesHttp<E> = E extends { expose: readonly Transport[] }
 type ArgsWith<E, Extra> = EndpointArgs<E> & Extra;
 
 export type ScopedEndpointFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
-  ? (options?: ClientRequestOptions) => Promise<EndpointOutput<E>>
-  : (args: ArgsWith<E, Extra>, options?: ClientRequestOptions) => Promise<EndpointOutput<E>>;
+  ? ClientEndpointWithoutArgs<EndpointOutput<E>>
+  : ClientEndpointWithArgs<ArgsWith<E, Extra>, EndpointOutput<E>>;
 
 export type ScopedHttpClient<C extends Record<string, EndpointDef>, Extra> = {
   [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: ScopedEndpointFn<C[K], Extra>;

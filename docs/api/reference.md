@@ -33,7 +33,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
-| `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
+| `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |

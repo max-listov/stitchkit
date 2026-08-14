@@ -158,6 +158,15 @@ export const useUsers = createQuery({ queryKey: ['users'], fetcher: () => api.li
 export const useCreateUser = createMutation({ mutationFn: api.create })
 ```
 
+The ordinary generated method contains only contract variables, so it remains
+safe to pass directly as a query or mutation callback. Imperative calls that
+need cancellation use the method's explicit transport-options surface:
+
+```ts
+await api.create.withOptions({ name: 'Max' }, { signal })
+await api.health.withOptions({ signal }) // endpoint without contract arguments
+```
+
 For cursor-paginated lists, `createCursorQuery` is the canonical helper:
 
 ```ts

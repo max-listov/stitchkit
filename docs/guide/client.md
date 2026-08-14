@@ -108,14 +108,15 @@ contract:
 
 ### Per-call cancellation
 
-Every endpoint accepts optional `ClientRequestOptions` containing an
-`AbortSignal`. Endpoints with arguments use `(args, options?)`; endpoints with
-no arguments use `(options?)`:
+Every endpoint callable exposes a `withOptions` method accepting required
+`ClientRequestOptions`. The ordinary callable contains only contract arguments,
+so it can be passed directly to callback APIs such as `react-query-kit` without
+mistaking their callback context for Stitchkit transport options:
 
 ```ts
 const controller = new AbortController()
 
-const pending = api.upload(
+const pending = api.upload.withOptions(
   { file: selectedFile, title: 'Draft' },
   { signal: controller.signal },
 )
@@ -137,6 +138,12 @@ the same client-only errors:
 Abort and timeout do not emit `network_error` and are not retried. The same
 options work for query, JSON, multipart and raw-response calls. Stitchkit does
 not expose upload progress: Fetch has no portable upload-progress primitive.
+
+For an endpoint without contract arguments, pass only the options object:
+
+```ts
+await api.health.withOptions({ signal: controller.signal })
+```
 
 ### Many contracts at once
 
@@ -370,6 +377,10 @@ import { api } from './api'
 export const useUsers      = createQuery({ queryKey: ['users'], fetcher: () => api.list() })
 export const useCreateUser = createMutation({ mutationFn: api.create })
 ```
+
+Generated methods intentionally keep their ordinary call signature limited to
+contract variables. Use `api.create.withOptions(variables, { signal })` only for
+an imperative call that needs per-request cancellation.
 
 ### Cursor pagination
 

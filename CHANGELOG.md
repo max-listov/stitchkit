@@ -15,6 +15,23 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-08-14
+
+### ⚠️ Breaking changes
+
+- **Generated HTTP request options move to `.withOptions`.** The optional second
+  positional parameter conflicted with callback contexts supplied by
+  `react-query-kit` and TanStack Query. Ordinary methods now contain only
+  contract variables and can again be passed directly as `mutationFn` or
+  `fetcher`; imperative cancellation uses the callable's explicit method.
+  `// before: api.create(args, { signal }); api.health({ signal })` →
+  `// after: api.create.withOptions(args, { signal }); api.health.withOptions({ signal })`
+
+### Fixed
+
+- Restored compile-time and runtime-safe direct composition of plain, batch and
+  scoped generated clients with `react-query-kit` query and mutation callbacks.
+
 ## [0.47.0] — 2026-08-14
 
 ### ⚠️ Breaking changes
@@ -2674,7 +2691,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/max-listov/stitchkit/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/max-listov/stitchkit/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/max-listov/stitchkit/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/max-listov/stitchkit/compare/v0.44.1...v0.45.0

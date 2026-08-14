@@ -87,6 +87,7 @@ These records were consolidated from the project's internal design notes on
 | [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066 |
 | [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams |
 | [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks |
+| [0073](0073-client-request-options-are-not-callback-context.md) | Client request options are not callback context | Accepted — extends 0005, 0008 and 0025 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

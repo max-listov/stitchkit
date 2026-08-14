@@ -141,16 +141,20 @@ export function createClient<
   contractConfig?: ContractClientConfig<K>,
 ): ScopedHttpClient<T, ScopedKeys<K>> {
   const client: Partial<TypedHttpClient<T>> = {};
-  const makeMethod = isHttpAdapter(configOrClient)
+  const makeExecutor = isHttpAdapter(configOrClient)
     ? (endpoint: EndpointDef) =>
-        createHttpMethod(endpoint, contract.meta.prefix, configOrClient, contractConfig)
+        createHttpExecutor(endpoint, contract.meta.prefix, configOrClient, contractConfig)
     : (endpoint: EndpointDef) =>
-        createFetchMethod(endpoint, contract.meta.prefix, configOrClient, contractConfig);
+        createFetchExecutor(endpoint, contract.meta.prefix, configOrClient, contractConfig);
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;
 
-    setClientMethod(client, key, makeMethod(endpoint));
+    setClientMethod(
+      client,
+      key,
+      createEndpointMethod(endpoint, makeExecutor(endpoint), contractConfig),
+    );
   }
 
   return client as unknown as ScopedHttpClient<T, ScopedKeys<K>>;
@@ -285,12 +289,38 @@ function setClientMethod(target: object, key: PropertyKey, method: unknown): voi
   (target as Record<PropertyKey, unknown>)[key] = method;
 }
 
-function createHttpMethod<K extends string>(
+type ClientRequestExecutor = (
+  requestArgs: Record<string, unknown>,
+  options?: ClientRequestOptions,
+) => Promise<unknown>;
+
+function createEndpointMethod<K extends string>(
+  endpoint: EndpointDef,
+  execute: ClientRequestExecutor,
+  contractConfig?: ContractClientConfig<K>,
+): unknown {
+  const hasScopedArguments = (contractConfig?.stripPrefixKeys?.length ?? 0) > 0;
+  if (endpointHasArguments(endpoint) || hasScopedArguments) {
+    const method = (requestArgs: unknown) =>
+      execute(readClientRequestArgs(requestArgs), undefined);
+    return Object.assign(method, {
+      withOptions: (requestArgs: unknown, options: unknown) =>
+        execute(readClientRequestArgs(requestArgs), readClientRequestOptions(options)),
+    });
+  }
+
+  const method = () => execute({}, undefined);
+  return Object.assign(method, {
+    withOptions: (options: unknown) => execute({}, readClientRequestOptions(options)),
+  });
+}
+
+function createHttpExecutor<K extends string>(
   endpoint: EndpointDef,
   prefix: string,
   client: HttpAdapter,
   config?: ContractClientConfig<K>,
-): (...args: unknown[]) => Promise<unknown> {
+): ClientRequestExecutor {
   const httpMethod = endpoint.method.toLowerCase() as
     | 'get'
     | 'head'
@@ -298,9 +328,8 @@ function createHttpMethod<K extends string>(
     | 'put'
     | 'patch'
     | 'delete';
-  return (...args: unknown[]) => {
-    const { requestArgs: firstArg, options } = splitClientCall(endpoint, args, config);
-    const plan = planClientRequest(endpoint, prefix, firstArg, config);
+  return (requestArgs, options) => {
+    const plan = planClientRequest(endpoint, prefix, requestArgs, config);
 
     if (endpoint.multipart) {
       // Multipart uses the endpoint's declared body verb — a `PUT` upload must
@@ -342,14 +371,13 @@ function createHttpMethod<K extends string>(
   };
 }
 
-function createFetchMethod<K extends string>(
+function createFetchExecutor<K extends string>(
   endpoint: EndpointDef,
   prefix: string,
   config: ClientConfig,
   contractConfig?: ContractClientConfig<K>,
-): (...args: unknown[]) => Promise<unknown> {
-  return async (...callArgs: unknown[]) => {
-    const { requestArgs, options } = splitClientCall(endpoint, callArgs, contractConfig);
+): ClientRequestExecutor {
+  return async (requestArgs, options) => {
     const plan = planClientRequest(endpoint, prefix, requestArgs, contractConfig);
     const url = joinClientBaseUrl(config.baseUrl, plan.relativeUrl);
 
@@ -427,30 +455,14 @@ function endpointHasArguments(endpoint: EndpointDef): boolean {
   return Boolean(endpoint.params || endpoint.input || endpoint.multipart);
 }
 
-function splitClientCall(
-  endpoint: EndpointDef,
-  args: readonly unknown[],
-  contractConfig?: ContractClientConfig<string>,
-): { requestArgs: Record<string, unknown>; options?: ClientRequestOptions } {
-  const hasScopedArguments = (contractConfig?.stripPrefixKeys?.length ?? 0) > 0;
-  if (!endpointHasArguments(endpoint) && !hasScopedArguments) {
-    return {
-      requestArgs: {},
-      options: readClientRequestOptions(args[0]),
-    };
-  }
-  const requestArgs = args[0];
+function readClientRequestArgs(requestArgs: unknown): Record<string, unknown> {
   if (requestArgs !== undefined && !isRecord(requestArgs)) {
     throw new TypeError('Endpoint arguments must be an object');
   }
-  return {
-    requestArgs: requestArgs ?? {},
-    options: readClientRequestOptions(args[1]),
-  };
+  return requestArgs ?? {};
 }
 
-function readClientRequestOptions(value: unknown): ClientRequestOptions | undefined {
-  if (value === undefined) return undefined;
+function readClientRequestOptions(value: unknown): ClientRequestOptions {
   if (!isRecord(value)) throw new TypeError('Client request options must be an object');
   const signal = value.signal;
   if (signal === undefined) return {};
