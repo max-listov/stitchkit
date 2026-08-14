@@ -278,7 +278,7 @@ import { parseSSE } from 'stitchkit'           // client: Response → AsyncGene
 | **Auth** | `createAuthHook()` / `createBearerResolver()` — scope-aware auth from `contract.scope` |
 | **SSE Streaming** | `streamSSE()` / `parseSSE()` — async generator ↔ SSE |
 | **Events** | `createEventBus<EventMap>()` — typed in-process pub/sub |
-| **Multipart** | `parseMultipart()` — file upload with field validation |
+| **Multipart** | typed buffered or streaming single/multi-file uploads with limits and MIME policy |
 | **Rate Limiting** | `createRateLimiter()` — token bucket, per-key |
 | **Cache** | `createCache()` — in-memory with TTL + `cacheHeaders()` |
 | **Errors** | `AppError`, `notFound()`, `badRequest()`, `unauthorized()` |
@@ -316,7 +316,8 @@ createServer({
   services: [service],
   hooks: {
     onRequest(req) { },              // logging, rate limiting
-    beforeHandle(ctx, endpoint) { }, // auth, scope checks
+    authorize(ctx, endpoint) { },    // auth before request-body reads
+    beforeHandle(ctx, endpoint) { }, // validated-input preconditions
     afterHandle(ctx, result) { },    // transform, cache headers
     onError(ctx, error) { },         // error formatting
   },
@@ -340,7 +341,7 @@ const authHook = createAuthHook<User>({
   },
 })
 
-createServer({ services, hooks: { beforeHandle: authHook } })
+createServer({ services, hooks: { authorize: authHook } })
 ```
 
 ## Dependencies

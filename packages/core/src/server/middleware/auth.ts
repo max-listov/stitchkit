@@ -3,7 +3,7 @@ import { forbidden, unauthorized } from '../../contract';
 import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
-import type { OperationIdentity } from '../types';
+import type { AuthorizationContext, OperationIdentity } from '../types';
 import { parseCookies } from './cookies';
 
 export interface JwtPayload {
@@ -203,16 +203,19 @@ export interface AuthHookConfig<TIdentity> {
   onForbidden?: () => never;
 }
 
-export type AuthHook = (ctx: RuntimeContext, endpoint: OperationIdentity) => Promise<void>;
+export interface AuthHook {
+  (ctx: AuthorizationContext, endpoint: OperationIdentity): Promise<void>;
+  (ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void>;
+}
 
 /**
- * Build a `beforeHandle` hook that enforces `endpoint.scope`.
+ * Build a scope authorization hook.
  *
  * Identity resolution and the scope vocabulary stay in the project; the
  * project annotates its `rules` object with `satisfies Record<MyScope, …>` to
  * keep scope coverage exhaustive.
  *
- * The hook runs on both surfaces: as `createServer`'s `beforeHandle` (HTTP) and
+ * The hook runs on both surfaces: as `createServer`'s `authorize` (HTTP) and
  * as a tool mount's `lifecycle.beforeHandle` (MCP / agent). On HTTP it resolves
  * identity from `ctx.req` via `resolve`; on a tool call — where there is no
  * `req` — it uses `resolveFromContext`. If `resolveFromContext` is omitted, a
@@ -222,7 +225,9 @@ export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): Au
   const onAnonymous = config.onAnonymous ?? ((): never => unauthorized());
   const onForbidden = config.onForbidden ?? ((): never => forbidden());
 
-  return async (ctx, endpoint) => {
+  async function auth(ctx: AuthorizationContext, endpoint: OperationIdentity): Promise<void>;
+  async function auth(ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void>;
+  async function auth(ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void> {
     // The transport tag is authoritative — `ctx.source` is `'http'` only on a
     // real HTTP request. HTTP resolves identity from `ctx.req`; a tool call has
     // none, so it uses `resolveFromContext`. Never skip the scope check.
@@ -249,7 +254,9 @@ export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): Au
     }
     if (rule === 'authenticated') return;
     if (!(await rule(identity, ctx))) onForbidden();
-  };
+  }
+
+  return auth;
 }
 
 // ─── Bearer-token resolver ───────────────────────────

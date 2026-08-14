@@ -126,8 +126,9 @@ Notes for a Node host:
   to join the two logs.
 - **Rate limiting** — `createRateLimiter` in `onRequest` for a global limit;
   per-route limits belong in `beforeHandle`.
-- **Auth** — a `createAuthHook` `beforeHandle` guards every transport at once;
-  do not re-check auth per handler.
+- **Auth** — wire one `createAuthHook` as HTTP `hooks.authorize` and tool
+  `lifecycle.beforeHandle`; do not re-check auth per handler. HTTP authorization
+  runs before JSON or multipart body reads.
 - **Errors** — handlers throw `AppError`; let the standard envelope render them.
   Add an `onError` hook only to integrate an error tracker.
 - **Secrets** — read them from the environment; never commit them.

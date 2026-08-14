@@ -94,7 +94,7 @@ const server = createServer({
   port: 0,
   services: [service],
   hooks: {
-    beforeHandle: createAuthHook({
+    authorize: createAuthHook({
       resolve: async (ctx) => (ctx.req?.headers.get('authorization') ? { id: 'u1' } : null),
       rules: { admin: 'authenticated', public: 'public' },
     }),
@@ -440,7 +440,7 @@ describe('multipart + rawResponse — upload in, bytes out', () => {
         method: 'POST',
         path: '/',
         desc: 'Convert an uploaded file',
-        multipart: 'file',
+        multipart: { files: { file: {} } },
         rawResponse: true,
         contentType: 'application/pdf',
       },

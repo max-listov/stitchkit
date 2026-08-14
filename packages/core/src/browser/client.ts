@@ -1,4 +1,5 @@
 import type {
+  ClientRequestOptions,
   ContractDef,
   EndpointDef,
   ScopedHttpClient,
@@ -6,8 +7,9 @@ import type {
   TypedHttpClient,
   TypedUrlBuilder,
 } from '../contract';
-import { mapObject, typedEntries } from '../internal/typed';
-import { appendFormFields, appendMultipartFile, isMultipartFile } from './client-multipart';
+import { isRecord, mapObject, typedEntries } from '../internal/typed';
+import { createRequestCancellation, RequestCancellationError } from './cancellation';
+import { buildMultipartForm } from './client-multipart';
 import { createClientRouteMatcher, joinClientBaseUrl, planClientRequest } from './client-url';
 import {
   ApiError,
@@ -63,6 +65,7 @@ function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<un
 /** Config for the built-in fetch client — used when no `HttpClient` is passed. */
 export interface ClientConfig {
   baseUrl: string;
+  timeout?: number;
   headers?: Record<string, string> | (() => Record<string, string>);
   credentials?: RequestCredentials;
   onError?: (status: number, body: unknown) => void;
@@ -296,14 +299,10 @@ function createHttpMethod<K extends string>(
     | 'patch'
     | 'delete';
   return (...args: unknown[]) => {
-    const firstArg = (args[0] ?? {}) as Record<string, unknown>;
+    const { requestArgs: firstArg, options } = splitClientCall(endpoint, args, config);
     const plan = planClientRequest(endpoint, prefix, firstArg, config);
 
     if (endpoint.multipart) {
-      const file = firstArg[endpoint.multipart];
-      if (!isMultipartFile(file)) {
-        throw new Error(`Missing multipart file field: ${endpoint.multipart}`);
-      }
       // Multipart uses the endpoint's declared body verb — a `PUT` upload must
       // not silently become a `POST` (the bare-fetch path already honours it).
       if (httpMethod === 'get' || httpMethod === 'head' || httpMethod === 'delete') {
@@ -311,26 +310,24 @@ function createHttpMethod<K extends string>(
           `Multipart endpoint ${endpoint.method} ${endpoint.path} must be POST / PUT / PATCH`,
         );
       }
-      const formData = new FormData();
-      appendMultipartFile(formData, endpoint.multipart, file);
-      appendFormFields(formData, plan.remainingArgs, new Set([endpoint.multipart]));
+      const formData = buildMultipartForm(endpoint.multipart, plan.remainingArgs);
       return withOutput(
         endpoint,
-        client[httpMethod](plan.relativeUrl, formData, withTimeout(undefined, endpoint)),
+        client[httpMethod](plan.relativeUrl, formData, withTimeout(options, endpoint)),
       );
     }
 
     if (httpMethod === 'get' || httpMethod === 'head') {
       return withOutput(
         endpoint,
-        client[httpMethod](plan.relativeUrl, withTimeout(undefined, endpoint)),
+        client[httpMethod](plan.relativeUrl, withTimeout(options, endpoint)),
       );
     }
 
     if (httpMethod === 'delete') {
       return withOutput(
         endpoint,
-        client.delete(plan.relativeUrl, withTimeout(undefined, endpoint)),
+        client.delete(plan.relativeUrl, withTimeout(options, endpoint)),
       );
     }
 
@@ -339,7 +336,7 @@ function createHttpMethod<K extends string>(
       client[httpMethod](
         plan.relativeUrl,
         Object.keys(plan.remainingArgs).length > 0 ? plan.remainingArgs : undefined,
-        withTimeout(undefined, endpoint),
+        withTimeout(options, endpoint),
       ),
     );
   };
@@ -350,9 +347,10 @@ function createFetchMethod<K extends string>(
   prefix: string,
   config: ClientConfig,
   contractConfig?: ContractClientConfig<K>,
-): (args?: Record<string, unknown>) => Promise<unknown> {
-  return async (args?: Record<string, unknown>) => {
-    const plan = planClientRequest(endpoint, prefix, args ?? {}, contractConfig);
+): (...args: unknown[]) => Promise<unknown> {
+  return async (...callArgs: unknown[]) => {
+    const { requestArgs, options } = splitClientCall(endpoint, callArgs, contractConfig);
+    const plan = planClientRequest(endpoint, prefix, requestArgs, contractConfig);
     const url = joinClientBaseUrl(config.baseUrl, plan.relativeUrl);
 
     const headers: Record<string, string> = {
@@ -363,8 +361,10 @@ function createFetchMethod<K extends string>(
     // Apply the endpoint's declared `timeout` — the HttpClient path already did;
     // the bare-fetch path used to ignore it, so a declared timeout silently did
     // nothing here.
-    const signal =
-      endpoint.timeout !== undefined ? AbortSignal.timeout(endpoint.timeout) : undefined;
+    const cancellation = createRequestCancellation(
+      options?.signal,
+      endpoint.timeout ?? config.timeout ?? 30_000,
+    );
 
     const hasBody =
       endpoint.method !== 'GET' &&
@@ -372,78 +372,105 @@ function createFetchMethod<K extends string>(
       endpoint.method !== 'DELETE' &&
       !endpoint.multipart &&
       endpoint.input &&
-      args;
+      Object.keys(plan.remainingArgs).length > 0;
 
     if (hasBody) headers['Content-Type'] = 'application/json';
 
-    if (endpoint.multipart && args) {
-      const file = args[endpoint.multipart];
-      if (!isMultipartFile(file)) {
-        throw new Error(`Missing multipart file field: ${endpoint.multipart}`);
-      }
-      const formData = new FormData();
-      appendMultipartFile(formData, endpoint.multipart, file);
-      appendFormFields(formData, plan.remainingArgs, new Set([endpoint.multipart]));
+    try {
+      return await cancellation.run(async (signal) => {
+        const body = endpoint.multipart
+          ? buildMultipartForm(endpoint.multipart, plan.remainingArgs)
+          : hasBody
+            ? JSON.stringify(plan.remainingArgs)
+            : undefined;
+        const res = await fetch(url, {
+          method: endpoint.method,
+          headers,
+          credentials: config.credentials,
+          signal,
+          ...(body !== undefined && { body }),
+        });
 
-      const res = await fetch(url, {
-        method: endpoint.method,
-        headers,
-        credentials: config.credentials,
-        body: formData,
-        signal,
-      });
-
-      if (!res.ok) {
-        await throwForErrorResponse(res, config, null);
-      }
-
-      // An upload that answers with bytes ("convert this file and give it back")
-      // is a legal combination — `multipart` describes the request, `raw` the
-      // response. Checked here too, or this path would parse the bytes as JSON
-      // while the ky path returned the `Response`. → ADR 0038.
-      if (endpoint.rawResponse) return res;
-
-      if (!endpoint.output) {
-        const text = await res.text();
-        if (text.length > 0) {
-          throw new Error('Server returned data for an endpoint with no output contract');
+        if (!res.ok) {
+          await throwForErrorResponse(res, config, { error: res.statusText });
         }
-        return undefined;
+
+        if (endpoint.rawResponse) return res;
+
+        if (!endpoint.output) {
+          const text = await res.text();
+          if (text.length > 0) {
+            throw new Error('Server returned data for an endpoint with no output contract');
+          }
+          return undefined;
+        }
+
+        return endpoint.output.parse(await res.json());
+      });
+    } catch (error) {
+      if (error instanceof RequestCancellationError) {
+        throw new ApiError(
+          error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
+          0,
+          undefined,
+          error.message,
+        );
       }
-
-      return endpoint.output.parse(await res.json());
+      if (ApiError.is(error)) throw error;
+      const message = error instanceof Error ? error.message : undefined;
+      throw new ApiError('UNKNOWN_ERROR', 0, message ? { message } : undefined, message);
     }
-
-    const res = await fetch(url, {
-      method: endpoint.method,
-      headers,
-      credentials: config.credentials,
-      signal,
-      ...(hasBody && {
-        body: JSON.stringify(plan.remainingArgs),
-      }),
-    });
-
-    if (!res.ok) {
-      await throwForErrorResponse(res, config, { error: res.statusText });
-    }
-
-    // A raw endpoint answers with bytes and headers — hand the whole `Response`
-    // back untouched (the caller reads `Content-Disposition` for the filename,
-    // then `.blob()` / `.body`). No 204 short-circuit: `undefined` would erase a
-    // legitimately empty-bodied response. → ADR 0038.
-    if (endpoint.rawResponse) return res;
-
-    if (!endpoint.output) {
-      const text = await res.text();
-      if (text.length > 0) {
-        throw new Error('Server returned data for an endpoint with no output contract');
-      }
-      return undefined;
-    }
-
-    return endpoint.output.parse(await res.json());
   };
+}
+
+function endpointHasArguments(endpoint: EndpointDef): boolean {
+  return Boolean(endpoint.params || endpoint.input || endpoint.multipart);
+}
+
+function splitClientCall(
+  endpoint: EndpointDef,
+  args: readonly unknown[],
+  contractConfig?: ContractClientConfig<string>,
+): { requestArgs: Record<string, unknown>; options?: ClientRequestOptions } {
+  const hasScopedArguments = (contractConfig?.stripPrefixKeys?.length ?? 0) > 0;
+  if (!endpointHasArguments(endpoint) && !hasScopedArguments) {
+    return {
+      requestArgs: {},
+      options: readClientRequestOptions(args[0]),
+    };
+  }
+  const requestArgs = args[0];
+  if (requestArgs !== undefined && !isRecord(requestArgs)) {
+    throw new TypeError('Endpoint arguments must be an object');
+  }
+  return {
+    requestArgs: requestArgs ?? {},
+    options: readClientRequestOptions(args[1]),
+  };
+}
+
+function readClientRequestOptions(value: unknown): ClientRequestOptions | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new TypeError('Client request options must be an object');
+  const signal = value.signal;
+  if (signal === undefined) return {};
+  if (!isAbortSignal(signal)) {
+    throw new TypeError('Client request signal must be an AbortSignal');
+  }
+  return { signal };
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'aborted' in value &&
+    typeof value.aborted === 'boolean' &&
+    'addEventListener' in value &&
+    typeof value.addEventListener === 'function' &&
+    'removeEventListener' in value &&
+    typeof value.removeEventListener === 'function'
+  );
 }
 
 /** Read an error response, fire `onError`, throw a typed `ApiError` — never returns. */

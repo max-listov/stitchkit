@@ -60,6 +60,19 @@ const ACCEPTED = {
   CursorParam: 'inference helper — the cursor field, derived from the contract',
   WithStaticContext: 'inference helper — toolkit context shape',
   WithAuthContext: 'inference helper — toolkit context shape',
+  StreamingEndpoint: 'inference helper — defineMultipartStream derives it from the endpoint',
+  ReceiverMap:
+    'inference helper — defineMultipartStream derives receiver keys from the endpoint',
+  StreamedFiles: 'inference helper — receiver result values are computed for the handler',
+  StreamingReturn:
+    'inference helper — the handler return is computed from the endpoint output',
+  InferParams: 'inference helper — endpoint params are computed from its schema',
+  InferInput: 'inference helper — endpoint input is computed from its schema',
+  InferMcpInput: 'inference helper — MCP input is computed from endpoint policy',
+  RequiredRequest: 'inference helper — raw endpoints compute required request access',
+  RetainedRawBody: 'inference helper — raw-body endpoints compute retained body access',
+  RequiredResponseMetadata:
+    'inference helper — response metadata access is computed from the endpoint declaration',
 
   // Members of an exported union. Narrow `EndpointDef` with its discriminant
   // (`expose`, `rawResponse`, `rawBody`, `responseMeta`), not by naming the member.

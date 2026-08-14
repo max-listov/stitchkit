@@ -31,7 +31,7 @@ matched value is on the context root as `ctx.tenantId`
 ```ts
 createServer({
   groups: [
-    { pathPrefix: '/tenants/:tenantId', services: [widgetsService], hooks: { beforeHandle: authHook } },
+    { pathPrefix: '/tenants/:tenantId', services: [widgetsService], hooks: { authorize: authHook } },
   ],
 })
 // → /tenants/:tenantId/widgets
@@ -45,7 +45,7 @@ the flat `services` list — no hand-partitioning, the mapping lives in one plac
 createServer({
   services,                                  // mixed scopes, listed once
   scopePrefixes: { tenant: 'tenants/:tenantId', project: 'projects/:projectId' },
-  hooks: { beforeHandle: authHook },
+  hooks: { authorize: authHook },
 })
 // `tenant`-scoped → /tenants/:tenantId/..., `project` → /projects/:projectId/..., the rest flat
 ```

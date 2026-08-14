@@ -57,7 +57,7 @@ export {
   staticRoute,
   weakETag,
 } from './file';
-export { createImplement, implement } from './implement';
+export { createImplement, defineMultipartStream, implement } from './implement';
 export type { LogFormat } from './logger';
 export {
   type AuthHook,
@@ -88,7 +88,7 @@ export {
   DEFAULT_CORS_EXPOSE_HEADERS,
 } from './middleware/cors';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
-export { type MultipartResult, parseMultipart } from './multipart';
+export { type MultipartLifecycle, type MultipartResult, parseMultipart } from './multipart';
 export {
   generateOpenApiDocument,
   type OpenApiConfig,
@@ -117,15 +117,21 @@ export type { SocketIOServerConfig, SocketIOServerHandle } from './socket-io';
 export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
+  AuthorizationContext,
+  EndpointHandlerContext,
   Handlers,
   LifecycleHooks,
   LoggingConfig,
   LogOutcome,
   MethodDef,
+  MultipartFileMetadata,
+  MultipartReceiver,
+  MultipartReceiverResult,
   OperationIdentity,
   RouteGroup,
   ServiceDef,
   StitchLogger,
+  StreamingMultipartImplementation,
 } from './types';
 export {
   type ComposedLane,

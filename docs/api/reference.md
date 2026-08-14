@@ -33,6 +33,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
+| `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
@@ -122,6 +123,7 @@ from the root `stitchkit`.
 | `TransportSource` | _type_ | `http \| mcp \| agent \| cli` — the value of `ctx.source` |
 | `RuntimeContext` | _type_ | the loose context seen by transport and hooks |
 | `HandlerContext` | _type_ | the typed context seen by a handler |
+| `EndpointHandlerContext` | _type_ | one endpoint handler's fully inferred params, input, files and runtime context |
 | `EndpointFn` | _type_ | the call signature of one client method |
 | `TypedClient` | _type_ | the full typed client for a contract |
 | `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
@@ -132,6 +134,9 @@ from the root `stitchkit`.
 | `ScopedUrlFn` | _type_ | one URL method's signature with scoped-prefix keys folded in |
 | `MultipartFile` | _type_ | a `multipart` file field — `Blob \| FileDescriptor` |
 | `FileDescriptor` | _type_ | a React Native / Expo file — `{ uri, name, type }` |
+| `MultipartDescriptor` | _type_ | file fields, cardinality, delivery and request/text limits |
+| `MultipartFilePolicy` | _type_ | required/multiple, per-file bytes/count and declared MIME policy |
+| `MultipartBufferedFiles` | _type_ | `File` map inferred from a multipart descriptor |
 | `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`) |
 | `EndpointUiMeta` | _type_ | MCP Apps widget metadata on an endpoint |
 | `EndpointMcpInputRequired` | _type_ | typed MCP multi-round input request (`key`, message and Zod object schema) |
@@ -210,7 +215,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
 | `OperationIdentity` | _type_ | path-free service/action/scope/method identity shared by contract and native tool operations |
 | `Handlers` | _type_ | the typed handler map `implement` expects |
-| `LifecycleHooks` | _type_ | `onRequest` / `beforeHandle` / `afterHandle` / `onError` |
+| `LifecycleHooks` | _type_ | `onRequest` / pre-body `authorize` / `beforeHandle` / `afterHandle` / `onError` |
+| `AuthorizationContext` | _type_ | HTTP pre-body context with validated params, `input: undefined` and no files |
 | `RouteGroup` | _type_ | a prefixed group of services with its own hooks |
 | `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context |
 | `RawRouteContext` | _type_ | the Bun-bound routing context a raw handler receives |
@@ -227,7 +233,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAuthHook` | function | a scope-enforcing `beforeHandle` hook — [guide](../guide/auth-and-errors.md#createauthhook) |
+| `createAuthHook` | function | one scope gate for HTTP `authorize` and tool `beforeHandle` — [guide](../guide/auth-and-errors.md#createauthhook) |
 | `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
 | `ErrorHookConfig` | _type_ | async observer/renderer config for `createErrorHook` |
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
@@ -285,8 +291,14 @@ Also re-exports the error helpers from `stitchkit/contract`.
 |--------|------|---------|
 | `streamSSE` | function | an async generator → SSE `Response` — [guide](../guide/server.md#sse-streaming) |
 | `parseSSE` | function | parse an SSE `Response` (also on the root entrypoint) |
+| `MultipartLifecycle` | _type_ | request-scoped rollback ownership for accepted streamed handles |
 | `MultipartResult` | _type_ | what `parseMultipart` returns |
-| `parseMultipart` | function | parse a `multipart/form-data` request — [guide](../guide/server.md#multipart) |
+| `parseMultipart` | function | parse a typed buffered/streaming multipart descriptor — [guide](../guide/server.md#multipart) |
+| `defineMultipartStream` | function | bind typed streaming file receivers and a final endpoint handler |
+| `MultipartFileMetadata` | _type_ | field, filename, declared media type and optional declared size |
+| `MultipartReceiver` | _type_ | consumer-owned Web-stream storage receiver |
+| `MultipartReceiverResult` | _type_ | receiver value plus rollback cleanup |
+| `StreamingMultipartImplementation` | _type_ | receiver registry and handler shape inferred by `defineMultipartStream` |
 | `createRateLimiter` | function | token-bucket rate limiting — [guide](../guide/server.md#rate-limiting) |
 | `createCache` | function | an in-memory TTL cache |
 | `CacheOptions` | _type_ | bounded-cache options, including the maximum retained entry count |
@@ -331,9 +343,12 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
-| `Observability` | _type_ | the `{ request?, toolCall }` wiring result |
-| `RequestEventSinkConfig` | _type_ | `write`, `filter` and sanitisation for one event surface |
+| `Observability` | _type_ | `{ request?, toolCall, flush(), close() }` with bounded sink lifecycle |
+| `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
 | `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture |
+| `SinkDropReason` | _type_ | `'capacity' \| 'closed'` |
+| `SinkError` | _type_ | isolated sink/projection failure and optional event |
+| `SinkDrop` | _type_ | rejected event, reason and current pending count |
 | `HttpRequestCompletion` | _type_ | the single framework-owned HTTP outcome projected to logging and request events |
 | `HttpRequestObserver` | _type_ | server-facing projection consumed by `HandlerConfig.observability` |
 

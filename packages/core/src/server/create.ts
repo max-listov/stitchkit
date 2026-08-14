@@ -16,7 +16,12 @@ import {
   setRequestError,
 } from '../observability/context';
 import { resolveTraceContext } from '../observability/trace';
-import { buildBaseContext, buildErrorContext, parseRequestInto } from './context';
+import {
+  buildBaseContext,
+  buildErrorContext,
+  parsePathParamsInto,
+  parseRequestPayloadInto,
+} from './context';
 import {
   buildLogFields,
   levelForStatus,
@@ -375,13 +380,22 @@ export function createHandler<TServer = unknown>(
     // audit event is attributed to its `(service, action)` even on a 400. → ADR 0022 / 0029.
     setRequestEndpoint(method.serviceName, method.key);
 
+    let multipartLifecycle: Awaited<ReturnType<typeof parseRequestPayloadInto>>;
     try {
-      await parseRequestInto(
+      parsePathParamsInto(ctx, method);
+
+      if (hooks?.authorize) {
+        await hooks.authorize(ctx, method);
+      }
+      if (groupHooks?.authorize) {
+        await groupHooks.authorize(ctx, method);
+      }
+
+      multipartLifecycle = await parseRequestPayloadInto(
         ctx,
         req,
         url,
         method,
-        config.maxUploadBytes,
         config.maxJsonBodyBytes,
       );
 
@@ -497,6 +511,7 @@ export function createHandler<TServer = unknown>(
       complete(responseStatus);
       return body;
     } catch (err) {
+      await multipartLifecycle?.rollback();
       return respondError(err, ctx, method);
     }
   }

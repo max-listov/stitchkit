@@ -61,7 +61,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `scope` | no | access scope for this endpoint — see [Auth & errors](./auth-and-errors.md) |
 | `expose` | no | which transports carry this endpoint — see [below](#transports) |
 | `toolName` | no | explicit MCP / agent tool name (default: a verb-aware derivation, see below — not a literal `prefix_key`) |
-| `multipart` | no | field name of a file upload — see [below](#file-uploads) |
+| `multipart` | no | typed file fields, cardinality, delivery and upload policy — see [below](#file-uploads) |
 | `maxJsonBodyBytes` | no | per-route JSON body ceiling; overrides the server default |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
 | `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
@@ -282,21 +282,61 @@ it to curate a public spec (e.g. `meta: { public: true }`), without ever emittin
 
 ## File uploads
 
-`multipart` names the form field carrying a file. The handler receives it as
-`ctx.file`:
+`multipart` is the single source of truth for file fields, cardinality and
+transport-level upload policy. Buffered delivery (the default) gives the
+handler a typed `ctx.files` map:
 
 ```ts
-upload: {
+uploadAttachments: {
   method: 'POST',
-  path: '/avatar',
-  desc: 'Upload an avatar',
-  multipart: 'file',
-  output: z.object({ url: z.string() }),
+  path: '/:answerId/attachments',
+  desc: 'Upload attachments',
+  params: AnswerIdParamsSchema,
+  input: UploadMetadataSchema,
+  output: UploadedAttachmentsSchema,
+  multipart: {
+    maxRequestBytes: 120 * 1024 * 1024,
+    maxFieldBytes: 64 * 1024,
+    files: {
+      cover: {
+        required: false,
+        maxBytes: 10 * 1024 * 1024,
+        contentTypes: ['image/*'],
+      },
+      attachments: {
+        multiple: true,
+        maxFiles: 8,
+        maxBytes: 20 * 1024 * 1024,
+        contentTypes: ['image/*', 'application/pdf'],
+      },
+    },
+  },
 }
 ```
 
-The client sends a `multipart/form-data` request; the field value must be a
-`Blob`. See [HTTP server → multipart](./server.md#multipart).
+```ts
+uploadAttachments: ({ params, input, files }) => {
+  files.cover        // File | undefined
+  files.attachments  // File[] in multipart order
+}
+```
+
+`required` defaults to `true`; `multiple` defaults to `false`. `maxFiles` is
+valid only for a multiple field. `contentTypes` accepts exact media types and
+validated type wildcards such as `image/*`; it checks the declared multipart
+header, not file contents. Content sniffing, antivirus and storage policy stay
+in the application.
+
+The typed client accepts a web `Blob`/`File` or React Native
+`{ uri, name, type }` descriptor for each single value, and arrays for multiple
+fields. It appends repeated multipart field names in stable order. Undeclared
+file fields, duplicate single fields, missing required fields and wrong part
+kinds fail before the handler. Multipart endpoints are HTTP-only.
+
+Set `delivery: 'stream'` when files must go directly to consumer-owned storage
+without becoming `File` objects in framework memory. The contract descriptor
+stays the same; the implementation supplies receivers with Web streams. See
+[HTTP server → multipart](./server.md#multipart).
 
 ### Multipart text fields
 

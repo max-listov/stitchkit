@@ -71,6 +71,66 @@ Each sink runs fire-and-forget and fails independently: a slow or broken request
 sink cannot block the response, suppress operational logging or break the tool
 sink.
 
+The fire-and-forget work has an explicit bounded lifecycle:
+
+```ts
+export const observability = createObservability({
+  request: {
+    maxPending: 1_000,
+    write: persistRequestEvent,
+    onSinkError: ({ error, event }) => reportAuditFailure(error, event),
+    onDrop: ({ reason, event, pending }) => {
+      reportAuditDrop({ reason, traceId: event.traceId, pending })
+    },
+  },
+  tools: {
+    maxPending: 500,
+    write: persistToolEvent,
+    onSinkError: ({ error, event }) => reportToolAuditFailure(error, event),
+    onDrop: reportToolAuditDrop,
+  },
+})
+
+await observability.flush()
+await observability.close()
+```
+
+`maxPending` defaults to `1000` per sink and must be a positive safe integer.
+Filtering and sanitisation happen before a write occupies a pending slot. At
+capacity, a new event is rejected with `onDrop({ reason: 'capacity', ... })`;
+after close, admission reports `reason: 'closed'`. Existing writes are never
+cancelled. Sink, filter and diagnostic-callback failures remain isolated from
+the observed request or tool call and are reported through `onSinkError` when
+configured; `onSinkError`/`onDrop` cannot create unhandled rejections.
+
+`flush()` snapshots the current generation and waits only for events admitted
+up to that call. `close()` atomically stops admission, drains every accepted
+generation and is idempotent. Graceful shutdown order is therefore:
+
+1. stop HTTP/MCP admission;
+2. wait for active requests and tool calls;
+3. `await observability.close()`;
+4. close the database/storage connection used by the sinks.
+
+Stitchkit manages only in-process delivery. If process-crash durability matters,
+make `write` enqueue into a consumer-owned durable outbox and let that adapter
+own retry, replay and storage policy:
+
+```ts
+interface AuditOutbox {
+  enqueue(event: RequestEvent): Promise<void>
+}
+
+const observability = createObservability({
+  request: { write: (event) => outbox.enqueue(event) },
+  tools: { write: (event) => outbox.enqueue(event) },
+})
+```
+
+The core intentionally contains no retry scheduler, database dependency or
+disk queue. A durable adapter can use `(traceId, spanId, source, toolPhase)` as
+its idempotency identity.
+
 ### RequestEvent
 
 Every surface produces the same shape — so a single audit table stays

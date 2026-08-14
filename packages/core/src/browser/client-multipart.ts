@@ -6,7 +6,7 @@
  * the only genuinely subtle part, and keeping it together with its two guards
  * makes that subtlety readable in one screen.
  */
-import type { FileDescriptor, MultipartFile } from '../contract';
+import type { FileDescriptor, MultipartDescriptor, MultipartFile } from '../contract';
 
 /**
  * A React Native / Expo file descriptor — a plain `{ uri, name, type }` object
@@ -54,4 +54,38 @@ export function appendFormFields(
     if (skipKeys.has(key) || value === undefined || value === null) continue;
     formData.append(key, typeof value === 'string' ? value : JSON.stringify(value));
   }
+}
+
+/** Build one FormData body from the contract's multipart descriptor. */
+export function buildMultipartForm(
+  descriptor: MultipartDescriptor,
+  values: Record<string, unknown>,
+): FormData {
+  const formData = new FormData();
+  const fileFields = new Set(Object.keys(descriptor.files));
+
+  for (const [field, policy] of Object.entries(descriptor.files)) {
+    const value = values[field];
+    if (value === undefined) {
+      if (policy.required !== false) throw new Error(`Missing multipart file field: ${field}`);
+      continue;
+    }
+    if (policy.multiple === true) {
+      if (!Array.isArray(value) || value.length === 0) {
+        throw new Error(`Multipart file field "${field}" must be a non-empty array`);
+      }
+      for (const file of value) {
+        if (!isMultipartFile(file)) {
+          throw new Error(`Invalid multipart file field: ${field}`);
+        }
+        appendMultipartFile(formData, field, file);
+      }
+      continue;
+    }
+    if (!isMultipartFile(value)) throw new Error(`Invalid multipart file field: ${field}`);
+    appendMultipartFile(formData, field, value);
+  }
+
+  appendFormFields(formData, values, fileFields);
+  return formData;
 }

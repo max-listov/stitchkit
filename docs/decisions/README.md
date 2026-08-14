@@ -18,7 +18,7 @@ These records were consolidated from the project's internal design notes on
 | [0001](0001-bun-serve-no-framework.md) | Build on `Bun.serve()`, no HTTP framework | Accepted |
 | [0002](0002-generic-core.md) | A generic core — the framework carries no domain model | Accepted |
 | [0003](0003-two-context-types.md) | Two context types: `RuntimeContext` and `HandlerContext` | Accepted |
-| [0004](0004-lifecycle-hooks.md) | Four lifecycle hooks instead of a middleware chain | Accepted |
+| [0004](0004-lifecycle-hooks.md) | Four lifecycle hooks instead of a middleware chain | Superseded by 0072 |
 | [0005](0005-typed-client.md) | The typed client is inferred from the contract | Accepted |
 | [0006](0006-route-groups-query-params.md) | Route groups and GET/DELETE query params | Accepted |
 | [0007](0007-mcp-agent-tools.md) | MCP and agent tools from one shared pipeline | Accepted |
@@ -85,6 +85,8 @@ These records were consolidated from the project's internal design notes on
 | [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies |
 | [0069](0069-realtime-contracts-validate-without-owning-delivery.md) | Realtime contracts validate without owning delivery | Accepted — extends 0008; 0020 remains orthogonal |
 | [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066 |
+| [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams |
+| [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

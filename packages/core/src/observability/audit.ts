@@ -14,15 +14,33 @@ import { childSpan, createTraceContext } from './trace';
 /** One isolated RequestEvent sink and its sanitisation policy. */
 export interface RequestEventSinkConfig {
   /**
-   * The sink — persists one audit event. It runs fire-and-forget and its own
-   * errors are swallowed, so a slow or failing write never blocks or breaks the
-   * request it observes. Keep it asynchronous and self-contained.
+   * The sink — persists one audit event. It runs fire-and-forget; failures are
+   * reported through `onSinkError` without breaking the observed work.
    */
   write: (event: RequestEvent) => void | Promise<void>;
   /** Keep only events for which this returns `true`. Default: keep every event. */
   filter?: (event: RequestEvent) => boolean;
   /** Payload sanitisation tuning — passed through to `sanitizePayload`. */
   sanitize?: SanitizeOptions;
+  /** Maximum writes concurrently awaiting settlement. Default: 1000. */
+  maxPending?: number;
+  /** Observe failed filtering, projection or persistence. */
+  onSinkError?: (failure: SinkError) => void | Promise<void>;
+  /** Observe events rejected by bounded or closed admission. */
+  onDrop?: (drop: SinkDrop) => void | Promise<void>;
+}
+
+export type SinkDropReason = 'capacity' | 'closed';
+
+export interface SinkError {
+  error: unknown;
+  event?: RequestEvent;
+}
+
+export interface SinkDrop {
+  reason: SinkDropReason;
+  event: RequestEvent;
+  pending: number;
 }
 
 export interface RequestObservabilityConfig extends RequestEventSinkConfig {
@@ -53,6 +71,10 @@ export interface HttpRequestObserver {
 export interface Observability {
   request?: HttpRequestObserver;
   toolCall: ToolCallHooks;
+  /** Wait for events admitted before this call. */
+  flush(): Promise<void>;
+  /** Stop admission and drain every previously accepted event. Idempotent. */
+  close(): Promise<void>;
 }
 
 /** Pull a human-readable message out of a failed `ToolResult`. */
@@ -124,26 +146,113 @@ function readMcpContext(value: unknown): RequestEvent['mcp'] | undefined {
   };
 }
 
-function createEmitter(config: RequestEventSinkConfig) {
-  return async (event: RequestEvent): Promise<void> => {
+const DEFAULT_MAX_PENDING = 1000;
+
+interface SinkManager {
+  submit(produce: () => RequestEvent | Promise<RequestEvent>): void;
+  flush(): Promise<void>;
+  close(): Promise<void>;
+}
+
+function invokeIsolated(callback: (() => void | Promise<void>) | undefined): void {
+  if (!callback) return;
+  void Promise.resolve()
+    .then(callback)
+    .catch(() => {
+      // Diagnostics cannot create an unhandled rejection.
+    });
+}
+
+function createSinkManager(config: RequestEventSinkConfig): SinkManager {
+  const maxPending = config.maxPending ?? DEFAULT_MAX_PENDING;
+  if (!Number.isSafeInteger(maxPending) || maxPending <= 0) {
+    throw new TypeError('Observability maxPending must be a positive safe integer');
+  }
+
+  let sequence = 0;
+  let closed = false;
+  let closePromise: Promise<void> | undefined;
+  const preparing = new Map<number, Promise<void>>();
+  const writes = new Map<number, Promise<void>>();
+
+  const reportError = (error: unknown, event?: RequestEvent): void => {
+    invokeIsolated(
+      config.onSinkError
+        ? () => config.onSinkError?.({ error, ...(event !== undefined && { event }) })
+        : undefined,
+    );
+  };
+  const reportDrop = (reason: SinkDropReason, event: RequestEvent): void => {
+    invokeIsolated(
+      config.onDrop
+        ? () => config.onDrop?.({ reason, event, pending: writes.size })
+        : undefined,
+    );
+  };
+  const admit = (id: number, event: RequestEvent): void => {
     try {
       if (config.filter && !config.filter(event)) return;
-      await config.write(event);
-    } catch {
-      // An audit sink must never break the call it observes.
+    } catch (error) {
+      reportError(error, event);
+      return;
     }
+    if (writes.size >= maxPending) {
+      reportDrop('capacity', event);
+      return;
+    }
+    const write = Promise.resolve()
+      .then(() => config.write(event))
+      .catch((error) => reportError(error, event))
+      .finally(() => writes.delete(id));
+    writes.set(id, write);
+  };
+  const awaitGeneration = async (boundary: number): Promise<void> => {
+    const through = <T>(values: Map<number, T>): T[] =>
+      [...values].filter(([id]) => id <= boundary).map(([, value]) => value);
+    await Promise.allSettled(through(preparing));
+    await Promise.allSettled(through(writes));
+  };
+
+  return {
+    submit(produce) {
+      const id = ++sequence;
+      if (closed) {
+        void Promise.resolve()
+          .then(produce)
+          .then((event) => reportDrop('closed', event))
+          .catch((error) => reportError(error));
+        return;
+      }
+      const preparation = Promise.resolve()
+        .then(produce)
+        .then((event) => admit(id, event))
+        .catch((error) => reportError(error))
+        .finally(() => preparing.delete(id));
+      preparing.set(id, preparation);
+    },
+    flush() {
+      return awaitGeneration(sequence);
+    },
+    close() {
+      if (closePromise) return closePromise;
+      closed = true;
+      closePromise = awaitGeneration(sequence);
+      return closePromise;
+    },
   };
 }
 
 export function createObservability(config: ObservabilityConfig): Observability {
+  const requestManager = config.request ? createSinkManager(config.request) : undefined;
+  const toolManager = config.tools ? createSinkManager(config.tools) : undefined;
+  let closePromise: Promise<void> | undefined;
   const request: HttpRequestObserver | undefined = config.request
     ? {
         includePayload: config.request.includePayload ?? false,
         complete: ({ context, statusCode, durationMs, payload }) => {
           const requestConfig = config.request;
           if (!requestConfig) return;
-          const emit = createEmitter(requestConfig);
-          void (async () => {
+          requestManager?.submit(async () => {
             let body: unknown;
             if (payload) {
               try {
@@ -152,7 +261,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
                 body = undefined;
               }
             }
-            await emit({
+            return {
               source: context.source,
               method: context.method,
               path: context.path,
@@ -181,9 +290,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
               ipAddress: context.ipAddress,
               userAgent: context.userAgent,
               startedAt: new Date(Date.now() - durationMs),
-            });
-          })().catch(() => {
-            // Fire-and-forget observability must never create an unhandled rejection.
+            };
           });
         },
       }
@@ -197,7 +304,6 @@ export function createObservability(config: ObservabilityConfig): Observability 
             // throwing config getter must not reach the observed call.
             const toolConfig = config.tools;
             if (!toolConfig) return;
-            const emit = createEmitter(toolConfig);
             // Each tool call is a span. Under an HTTP request it is a child of that
             // request's span; on its own (a stdio server) it opens a fresh trace.
             const requestCtx = getRequestContext();
@@ -207,7 +313,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
               : { resultSize: null, responseBytes: 0 };
             const mcp = context.source === 'mcp' ? readMcpContext(context.mcp) : undefined;
             const toolPhase = mcp?.outcome === 'input_required' ? 'input-round' : 'operation';
-            void emit({
+            toolManager?.submit(() => ({
               source: context.source,
               method: 'TOOL',
               httpMethod: endpoint.method,
@@ -243,7 +349,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
               ipAddress: readString(context.ipAddress),
               userAgent: readString(context.userAgent),
               startedAt: new Date(Date.now() - durationMs),
-            });
+            }));
           } catch {
             // Projection failures are observational only and cannot affect the tool.
           }
@@ -254,5 +360,16 @@ export function createObservability(config: ObservabilityConfig): Observability 
   return {
     ...(request && { request }),
     toolCall: toolCall ?? {},
+    async flush() {
+      await Promise.all([requestManager?.flush(), toolManager?.flush()]);
+    },
+    close() {
+      if (!closePromise) {
+        closePromise = Promise.all([requestManager?.close(), toolManager?.close()]).then(
+          () => undefined,
+        );
+      }
+      return closePromise;
+    },
   };
 }

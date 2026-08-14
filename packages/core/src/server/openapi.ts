@@ -242,22 +242,42 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       }
       if (!inputInQuery && (method.inputSchema || method.multipart)) {
         if (method.multipart) {
-          // A file-upload endpoint is `multipart/form-data` at runtime, with the
-          // file under `method.multipart` plus the JSON-schema input fields.
           const inputJson = safeJson(method.inputSchema, 'input');
           const baseProps = isRecord(inputJson.properties) ? inputJson.properties : {};
           const baseRequired = Array.isArray(inputJson.required) ? inputJson.required : [];
+          const fileProperties: Record<string, unknown> = {};
+          const requiredFiles: string[] = [];
+          for (const [field, policy] of Object.entries(method.multipart.files)) {
+            const binary = {
+              type: 'string',
+              format: 'binary',
+              ...(policy.maxBytes !== undefined && { maxLength: policy.maxBytes }),
+              ...(policy.contentTypes !== undefined && {
+                'x-accepted-content-types': policy.contentTypes,
+              }),
+            };
+            fileProperties[field] =
+              policy.multiple === true
+                ? {
+                    type: 'array',
+                    items: binary,
+                    minItems: policy.required === false ? 0 : 1,
+                    ...(policy.maxFiles !== undefined && { maxItems: policy.maxFiles }),
+                  }
+                : binary;
+            if (policy.required !== false) requiredFiles.push(field);
+          }
           operation.requestBody = {
-            required: true,
+            required: baseRequired.length > 0 || requiredFiles.length > 0,
             content: {
               'multipart/form-data': {
                 schema: {
                   type: 'object',
                   properties: {
                     ...baseProps,
-                    [method.multipart]: { type: 'string', format: 'binary' },
+                    ...fileProperties,
                   },
-                  required: [...baseRequired, method.multipart],
+                  required: [...baseRequired, ...requiredFiles],
                 },
               },
             },

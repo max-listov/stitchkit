@@ -72,6 +72,24 @@ const contract = defineContract(
       desc: 'Return an explicit empty success status',
       responseMeta: { status: 205 },
     },
+    upload: {
+      method: 'POST',
+      path: '/upload',
+      desc: 'Upload typed files',
+      input: z.object({ title: z.string() }),
+      multipart: {
+        files: {
+          cover: { required: false, maxBytes: 1024, contentTypes: ['image/*'] },
+          attachments: {
+            multiple: true,
+            maxFiles: 2,
+            maxBytes: 2048,
+            contentTypes: ['application/pdf'],
+          },
+        },
+      },
+      output: z.object({ count: z.number() }),
+    },
   },
 );
 
@@ -88,6 +106,7 @@ const service = implement(contract, {
   nullable: () => null,
   empty: () => undefined,
   reset: () => undefined,
+  upload: ({ files }) => ({ count: files.attachments.length }),
 });
 
 const doc = generateOpenApiDocument({
@@ -122,6 +141,7 @@ describe('generateOpenApiDocument', () => {
       '/api/items/{id}',
       '/api/nullable',
       '/api/reset',
+      '/api/upload',
     ]);
     expect(doc.paths['/api/tool']).toBeUndefined();
   });
@@ -161,6 +181,30 @@ describe('generateOpenApiDocument', () => {
       spec.paths['/api/items'].post.requestBody.content['application/json'].schema;
     expect(schema.type).toBe('object');
     expect(schema.properties.name).toBeDefined();
+  });
+
+  test('multipart descriptors preserve cardinality, required fields and file policy', () => {
+    const requestBody = spec.paths['/api/upload'].post.requestBody;
+    const schema = requestBody.content['multipart/form-data'].schema;
+    expect(requestBody.required).toBe(true);
+    expect(schema.required).toEqual(['title', 'attachments']);
+    expect(schema.properties.cover).toEqual({
+      type: 'string',
+      format: 'binary',
+      maxLength: 1024,
+      'x-accepted-content-types': ['image/*'],
+    });
+    expect(schema.properties.attachments).toEqual({
+      type: 'array',
+      items: {
+        type: 'string',
+        format: 'binary',
+        maxLength: 2048,
+        'x-accepted-content-types': ['application/pdf'],
+      },
+      minItems: 1,
+      maxItems: 2,
+    });
   });
 
   test('a scoped contract carries 401/403 error responses', () => {

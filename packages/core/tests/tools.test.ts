@@ -64,7 +64,7 @@ const multipartContract = defineContract(
       method: 'POST',
       path: '/',
       desc: 'Upload a file',
-      multipart: 'file',
+      multipart: { files: { file: {} } },
       output: z.object({ url: z.string() }),
     },
   },

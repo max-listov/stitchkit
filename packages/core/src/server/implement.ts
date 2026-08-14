@@ -1,7 +1,87 @@
-import type { ContractDef, EndpointDef, RuntimeContext } from '../contract';
+import type { ZodType } from 'zod';
+import type {
+  ContractDef,
+  EndpointDef,
+  MultipartDescriptor,
+  RuntimeContext,
+} from '../contract';
 import { mergeMeta } from '../contract/define';
 import { callRuntimeHandler, typedEntries } from '../internal/typed';
-import type { Handlers, MethodDef, ServiceDef } from './types';
+import type {
+  EndpointHandlerContext,
+  Handlers,
+  MethodDef,
+  MultipartReceiver,
+  ServiceDef,
+  StreamingMultipartImplementation,
+} from './types';
+
+type StreamingEndpoint = EndpointDef & {
+  multipart: MultipartDescriptor & { delivery: 'stream' };
+};
+type ReceiverMap<E extends StreamingEndpoint> = {
+  [K in keyof E['multipart']['files']]: MultipartReceiver;
+};
+type ReceiverValue<R> = R extends MultipartReceiver<infer V> ? V : never;
+type StreamedFiles<E extends StreamingEndpoint, R extends ReceiverMap<E>> = {
+  [K in keyof E['multipart']['files']]: E['multipart']['files'][K] extends {
+    multiple: true;
+  }
+    ? ReceiverValue<R[K]>[]
+    : E['multipart']['files'][K] extends { required: false }
+      ? ReceiverValue<R[K]> | undefined
+      : ReceiverValue<R[K]>;
+};
+type StreamingReturn<E extends EndpointDef> = E extends { output: ZodType<infer O> }
+  ? O | Promise<O>
+  : void | Promise<void>;
+
+function isStreamingImplementation(value: unknown): value is StreamingMultipartImplementation {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    value.kind === 'stitchkit.multipart.stream'
+  );
+}
+
+/**
+ * Bind streaming multipart receivers to one endpoint while inferring the
+ * receiver values handed to its final handler.
+ */
+export function defineMultipartStream<
+  const E extends StreamingEndpoint,
+  const R extends ReceiverMap<E>,
+>(
+  endpoint: E,
+  config: {
+    files: R & Record<Exclude<keyof R, keyof E['multipart']['files']>, never>;
+    handler: (
+      ctx: EndpointHandlerContext<E, RuntimeContext> & { files: StreamedFiles<E, R> },
+    ) => StreamingReturn<E>;
+  },
+): StreamingMultipartImplementation {
+  const receivers: Record<string, MultipartReceiver> = {};
+  for (const [key, receiver] of typedEntries(config.files)) {
+    receivers[String(key)] = receiver;
+  }
+  const declared = Object.keys(endpoint.multipart.files);
+  const configured = Object.keys(receivers);
+  if (
+    declared.length !== configured.length ||
+    declared.some((field) => !Object.hasOwn(receivers, field))
+  ) {
+    throw new Error('Streaming multipart receivers must exactly match declared file fields');
+  }
+
+  return {
+    kind: 'stitchkit.multipart.stream',
+    receivers,
+    execute(ctx, files) {
+      return callRuntimeHandler(config.handler, { ...ctx, files });
+    },
+  };
+}
 
 /** Frozen so the same array cannot be mutated through one method and seen by another. */
 const HTTP_ONLY = Object.freeze(['HTTP'] as const);
@@ -25,11 +105,22 @@ export function implement<
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     const typedHandler = handlers[key];
-    if (typeof typedHandler !== 'function') {
+    const isStreaming = endpoint.multipart?.delivery === 'stream';
+    if (!isStreaming && typeof typedHandler !== 'function') {
       throw new Error(
         `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
       );
     }
+    if (isStreaming && !isStreamingImplementation(typedHandler)) {
+      throw new Error(
+        `[stitchkit] implement: streaming multipart endpoint "${contract.meta.prefix}.${String(key)}" must use defineMultipartStream()`,
+      );
+    }
+
+    const streamingHandler = isStreamingImplementation(typedHandler)
+      ? typedHandler
+      : undefined;
+    const regularHandler = typeof typedHandler === 'function' ? typedHandler : undefined;
 
     methods[String(key)] = {
       method: endpoint.method,
@@ -56,7 +147,7 @@ export function implement<
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
-      maxUploadBytes: endpoint.maxUploadBytes,
+      multipartReceivers: streamingHandler?.receivers,
       maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
       // Transport-neutral retry/replay hint — rides through untouched (→ ADR 0027).
       idempotent: endpoint.idempotent,
@@ -73,7 +164,16 @@ export function implement<
       rawBody: endpoint.rawBody,
       responseMeta: endpoint.responseMeta,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
-      handler: (ctx: RuntimeContext) => callRuntimeHandler(typedHandler, ctx),
+      handler: streamingHandler
+        ? (ctx: RuntimeContext) => streamingHandler.execute(ctx, ctx.files ?? {})
+        : (ctx: RuntimeContext) => {
+            if (!regularHandler) {
+              throw new Error(
+                `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
+              );
+            }
+            return callRuntimeHandler(regularHandler, ctx);
+          },
     };
   }
 

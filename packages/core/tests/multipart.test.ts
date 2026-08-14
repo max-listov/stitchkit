@@ -1,7 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
-import { defineContract } from '../src/contract';
+import { createHttpClient } from '../src/browser/http';
+import {
+  defineContract,
+  type MultipartDescriptor,
+  type MultipartFilePolicy,
+} from '../src/contract';
 import { createServer, implement } from '../src/server';
 import { parseMultipart } from '../src/server/multipart';
 
@@ -24,15 +29,20 @@ describe('multipart parsing', () => {
       port: 0,
       async fetch(req) {
         try {
-          const result = await parseMultipart(req, 'file', MetaSchema);
+          const result = await parseMultipart(req, { files: { file: {} } }, MetaSchema);
+          const file = result.files.file;
+          if (!(file instanceof File)) throw new Error('Expected file');
           return Response.json({
-            fileName: result.file.name,
-            fileSize: result.file.size,
-            fileType: result.file.type,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type,
             fields: result.fields,
           });
         } catch (e) {
-          return Response.json({ error: (e as Error).message }, { status: 400 });
+          return Response.json(
+            { error: e instanceof Error ? e.message : 'Unknown error' },
+            { status: 400 },
+          );
         }
       },
     });
@@ -70,7 +80,7 @@ describe('multipart parsing', () => {
     const res = await fetch(`http://localhost:${PORT}`, { method: 'POST', body: form });
     expect(res.status).toBe(400);
     const data = await res.json();
-    expect(data.error).toContain('Missing file field');
+    expect(data.error).toContain('Missing multipart file field');
   });
 
   test('a numeric-looking id stays a string under z.string() (no content sniffing)', async () => {
@@ -114,10 +124,13 @@ describe('multipart field typing', () => {
       port: 0,
       async fetch(req) {
         try {
-          const result = await parseMultipart(req, 'file', TypedSchema);
+          const result = await parseMultipart(req, { files: { file: {} } }, TypedSchema);
           return Response.json({ fields: result.fields });
         } catch (e) {
-          return Response.json({ error: (e as Error).message }, { status: 400 });
+          return Response.json(
+            { error: e instanceof Error ? e.message : 'Unknown error' },
+            { status: 400 },
+          );
         }
       },
     });
@@ -159,7 +172,7 @@ describe('multipart field typing', () => {
     const rawServer = Bun.serve({
       port: 0,
       async fetch(req) {
-        const result = await parseMultipart(req, 'file');
+        const result = await parseMultipart(req, { files: { file: {} } });
         return Response.json({ fields: result.fields });
       },
     });
@@ -191,7 +204,7 @@ describe('multipart contract integration', () => {
         method: 'POST',
         path: '/',
         desc: 'Upload a file',
-        multipart: 'file',
+        multipart: { files: { file: {} } },
         input: z.object({ title: z.string() }),
         output: z.object({ fileName: z.string(), fileSize: z.number(), title: z.string() }),
       },
@@ -200,9 +213,11 @@ describe('multipart contract integration', () => {
 
   const service = implement(uploads, {
     create: (ctx) => {
-      // A `multipart` endpoint always has `ctx.file` — the router parses it.
-      if (!ctx.file) throw new Error('Expected multipart file');
-      return { fileName: ctx.file.name, fileSize: ctx.file.size, title: ctx.input.title };
+      return {
+        fileName: ctx.files.file.name,
+        fileSize: ctx.files.file.size,
+        title: ctx.input.title,
+      };
     },
   });
 
@@ -213,7 +228,7 @@ describe('multipart contract integration', () => {
     PORT = server.port ?? 0;
   });
 
-  test('client sends FormData and server injects ctx.file + ctx.input', async () => {
+  test('client sends FormData and server injects typed ctx.files + ctx.input', async () => {
     const api = createClient(uploads, { baseUrl: `http://localhost:${PORT}` });
     const result = await api.create({
       file: new File(['hello'], 'hello.txt', { type: 'text/plain' }),
@@ -238,7 +253,7 @@ describe('multipart — platform file descriptor (React Native)', () => {
         method: 'POST',
         path: '/',
         desc: 'Upload a file',
-        multipart: 'file',
+        multipart: { files: { file: {} } },
         input: z.object({ title: z.string() }),
         output: z.object({ ok: z.boolean() }),
       },
@@ -280,13 +295,12 @@ describe('multipart — platform file descriptor (React Native)', () => {
     // untyped JS caller.
     const loose: { create(args: Record<string, unknown>): Promise<unknown> } = api;
     await expect(loose.create({ file: { uri: 'file:///x' }, title: 't' })).rejects.toThrow(
-      'Missing multipart file field',
+      'Invalid multipart file field',
     );
   });
 });
 
-describe('multipart maxUploadBytes — per-route + global', () => {
-  // tiny: per-route cap 2000; normal: no per-route → falls back to global.
+describe('multipart descriptor request limits', () => {
   const uploads = defineContract(
     { prefix: 'up' },
     {
@@ -294,8 +308,7 @@ describe('multipart maxUploadBytes — per-route + global', () => {
         method: 'POST',
         path: '/tiny',
         desc: 'Tiny upload',
-        multipart: 'file',
-        maxUploadBytes: 2000,
+        multipart: { maxRequestBytes: 2000, files: { file: {} } },
         input: z.object({}),
         output: z.object({ size: z.number() }),
       },
@@ -303,18 +316,17 @@ describe('multipart maxUploadBytes — per-route + global', () => {
         method: 'POST',
         path: '/normal',
         desc: 'Normal upload',
-        multipart: 'file',
+        multipart: { maxRequestBytes: 4000, files: { file: {} } },
         input: z.object({}),
         output: z.object({ size: z.number() }),
       },
     },
   );
   const svc = implement(uploads, {
-    tiny: (ctx) => ({ size: ctx.file?.size ?? 0 }),
-    normal: (ctx) => ({ size: ctx.file?.size ?? 0 }),
+    tiny: (ctx) => ({ size: ctx.files.file.size }),
+    normal: (ctx) => ({ size: ctx.files.file.size }),
   });
-  // global default 4000 — per-route `tiny` (2000) overrides it.
-  const server = createServer({ port: 0, services: [svc], maxUploadBytes: 4000 });
+  const server = createServer({ port: 0, services: [svc] });
   const base = `http://localhost:${server.port}`;
 
   afterAll(() => server.stop(true));
@@ -325,7 +337,7 @@ describe('multipart maxUploadBytes — per-route + global', () => {
     return fetch(`${base}/up${path}`, { method: 'POST', body: form });
   };
 
-  test('per-route cap overrides the global — tiny rejects 3000 (global would allow)', async () => {
+  test('a descriptor request cap rejects an oversized request', async () => {
     expect((await upload('/tiny', 3000)).status).toBe(400);
   });
 
@@ -333,11 +345,223 @@ describe('multipart maxUploadBytes — per-route + global', () => {
     expect((await upload('/tiny', 50)).status).toBe(200);
   });
 
-  test('global default applies when no per-route cap — normal allows 3000', async () => {
+  test('a larger descriptor cap allows the same request', async () => {
     expect((await upload('/normal', 3000)).status).toBe(200);
   });
 
-  test('global default rejects an over-limit upload — normal rejects 9000', async () => {
+  test('the larger descriptor cap still rejects an over-limit upload', async () => {
     expect((await upload('/normal', 9000)).status).toBe(400);
+  });
+});
+
+describe('typed multipart descriptor cardinality and policy', () => {
+  const descriptor = {
+    files: {
+      cover: { required: false, maxBytes: 4, contentTypes: ['image/*'] },
+      attachments: {
+        multiple: true,
+        maxFiles: 2,
+        maxBytes: 5,
+        contentTypes: ['text/plain'],
+      },
+    },
+  } satisfies MultipartDescriptor;
+
+  test('returns optional single and ordered multiple fields from one descriptor', async () => {
+    const form = new FormData();
+    form.append('attachments', new File(['one'], 'one.txt', { type: 'text/plain' }));
+    form.append('attachments', new File(['two'], 'two.txt', { type: 'text/plain' }));
+    const result = await parseMultipart(
+      new Request('http://localhost', { method: 'POST', body: form }),
+      descriptor,
+    );
+    expect(result.files.cover).toBeUndefined();
+    const attachments = result.files.attachments;
+    expect(Array.isArray(attachments)).toBe(true);
+    if (!Array.isArray(attachments)) throw new Error('Expected attachments array');
+    expect(attachments.map((file) => (file instanceof File ? file.name : 'invalid'))).toEqual([
+      'one.txt',
+      'two.txt',
+    ]);
+  });
+
+  test('rejects duplicate single, extra file and text in a file field', async () => {
+    const duplicate = new FormData();
+    duplicate.append('cover', new File(['a'], 'a.png', { type: 'image/png' }));
+    duplicate.append('cover', new File(['b'], 'b.png', { type: 'image/png' }));
+    duplicate.append('attachments', new File(['one'], 'one.txt', { type: 'text/plain' }));
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: duplicate }),
+        descriptor,
+      ),
+    ).rejects.toThrow('Too many files for multipart field: cover');
+
+    const extra = new FormData();
+    extra.append('attachments', new File(['one'], 'one.txt', { type: 'text/plain' }));
+    extra.append('other', new File(['x'], 'x.txt', { type: 'text/plain' }));
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: extra }),
+        descriptor,
+      ),
+    ).rejects.toThrow('Unexpected multipart file field: other');
+
+    const wrongKind = new FormData();
+    wrongKind.append('attachments', 'not a file');
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: wrongKind }),
+        descriptor,
+      ),
+    ).rejects.toThrow('must contain a file');
+  });
+
+  test('enforces maxFiles, per-file bytes and exact/wildcard MIME policy', async () => {
+    const tooMany = new FormData();
+    for (const name of ['one', 'two', 'three']) {
+      tooMany.append('attachments', new File([name], `${name}.txt`, { type: 'text/plain' }));
+    }
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: tooMany }),
+        descriptor,
+      ),
+    ).rejects.toThrow('Too many files');
+
+    const exactLimit = new FormData();
+    exactLimit.append('cover', new File(['1234'], 'cover.png', { type: 'IMAGE/PNG' }));
+    exactLimit.append('attachments', new File(['12345'], 'file.txt', { type: 'text/plain' }));
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: exactLimit }),
+        descriptor,
+      ),
+    ).resolves.toBeDefined();
+
+    const oversized = new FormData();
+    oversized.append('attachments', new File(['123456'], 'file.txt', { type: 'text/plain' }));
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: oversized }),
+        descriptor,
+      ),
+    ).rejects.toThrow('exceeds 5 bytes');
+
+    const mismatch = new FormData();
+    mismatch.append('attachments', new File(['123'], 'file.pdf', { type: 'application/pdf' }));
+    await expect(
+      parseMultipart(
+        new Request('http://localhost', { method: 'POST', body: mismatch }),
+        descriptor,
+      ),
+    ).rejects.toThrow('Unsupported content type');
+  });
+
+  test('both bare and Ky-backed typed clients append repeated file fields', async () => {
+    const contract = defineContract(
+      { prefix: 'multi' },
+      {
+        upload: {
+          method: 'POST',
+          path: '/',
+          desc: 'Upload multiple files',
+          multipart: { files: { files: { multiple: true } } },
+          output: z.object({ names: z.array(z.string()) }),
+        },
+      },
+    );
+    const service = implement(contract, {
+      upload: ({ files }) => ({ names: files.files.map((file) => file.name) }),
+    });
+    const server = createServer({ port: 0, services: [service] });
+    try {
+      const baseUrl = `http://localhost:${server.port}`;
+      const clients = [
+        createClient(contract, { baseUrl }),
+        createClient(contract, createHttpClient({ baseUrl, retry: { limit: 0 } })),
+      ];
+      for (const client of clients) {
+        const result = await client.upload({
+          files: [new File(['1'], 'one.txt'), new File(['2'], 'two.txt')],
+        });
+        expect(result.names).toEqual(['one.txt', 'two.txt']);
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+const multipartTypes = defineContract(
+  { prefix: 'multipart-types' },
+  {
+    upload: {
+      method: 'POST',
+      path: '/',
+      desc: 'Multipart type surface',
+      multipart: {
+        files: {
+          cover: {},
+          attachments: { multiple: true },
+          preview: { required: false },
+        },
+      },
+    },
+  },
+);
+const multipartTypeClient = createClient(multipartTypes, { baseUrl: 'http://localhost' });
+function compileTimeMultipartChecks(): void {
+  void multipartTypeClient.upload({
+    cover: new Blob(),
+    attachments: [new Blob()],
+  });
+  // @ts-expect-error required cover cannot be omitted
+  void multipartTypeClient.upload({ attachments: [new Blob()] });
+  // @ts-expect-error single fields reject arrays
+  void multipartTypeClient.upload({ cover: [new Blob()], attachments: [new Blob()] });
+  // @ts-expect-error multiple fields reject scalar files
+  void multipartTypeClient.upload({ cover: new Blob(), attachments: new Blob() });
+}
+void compileTimeMultipartChecks;
+
+// @ts-expect-error maxFiles requires multiple: true
+const invalidMultipartPolicy: MultipartFilePolicy = { maxFiles: 2 };
+void invalidMultipartPolicy;
+
+describe('multipart descriptor definition-time validation', () => {
+  const endpoint = (
+    multipart: MultipartDescriptor,
+  ): {
+    method: 'POST';
+    path: string;
+    desc: string;
+    multipart: MultipartDescriptor;
+  } => ({
+    method: 'POST',
+    path: '/',
+    desc: 'Validate multipart definition',
+    multipart,
+  });
+
+  test('rejects empty fields and invalid limits', () => {
+    expect(() =>
+      defineContract({ prefix: 'empty-multipart' }, { upload: endpoint({ files: {} }) }),
+    ).toThrow('must declare at least one file field');
+    expect(() =>
+      defineContract(
+        { prefix: 'invalid-multipart-limit' },
+        { upload: endpoint({ maxRequestBytes: 0, files: { file: {} } }) },
+      ),
+    ).toThrow('maxRequestBytes must be a positive safe integer');
+  });
+
+  test('rejects invalid content-type policy before the server starts', () => {
+    expect(() =>
+      defineContract(
+        { prefix: 'invalid-multipart-content-type' },
+        { upload: endpoint({ files: { file: { contentTypes: ['image'] } } }) },
+      ),
+    ).toThrow('invalid content type policy');
   });
 });

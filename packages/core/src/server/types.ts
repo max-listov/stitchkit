@@ -7,6 +7,8 @@ import type {
   EndpointUiMeta,
   HandlerContext,
   HttpMethod,
+  MultipartBufferedFiles,
+  MultipartDescriptor,
   ResponseMetadata,
   RuntimeContext,
   Transport,
@@ -61,19 +63,52 @@ type RequiredResponseMetadata<E> = E extends { responseMeta: EndpointResponseMet
   ? { req: Request; response: ResponseMetadata }
   : unknown;
 
+export type EndpointHandlerContext<
+  E extends EndpointDef,
+  TCtx extends RuntimeContext = HandlerContext,
+> = TCtx & { params: InferParams<E>; input: InferInput<E> } & RequiredRequest<E> &
+  RetainedRawBody<E> &
+  RequiredResponseMetadata<E> &
+  InferMcpInput<E> &
+  (E extends { multipart: infer M extends MultipartDescriptor }
+    ? M extends { delivery: 'stream' }
+      ? unknown
+      : { files: MultipartBufferedFiles<M> }
+    : unknown);
+
 export type Handlers<
   C extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = HandlerContext,
 > = {
-  [K in keyof C]: (
-    ctx: TCtx & { params: InferParams<C[K]>; input: InferInput<C[K]> } & RequiredRequest<
-        C[K]
-      > &
-      RetainedRawBody<C[K]> &
-      RequiredResponseMetadata<C[K]> &
-      InferMcpInput<C[K]>,
-  ) => HandlerReturn<C[K]>;
+  [K in keyof C]: C[K] extends { multipart: { delivery: 'stream' } }
+    ? StreamingMultipartImplementation
+    : (ctx: EndpointHandlerContext<C[K], TCtx>) => HandlerReturn<C[K]>;
 };
+
+export interface MultipartFileMetadata {
+  field: string;
+  filename: string;
+  contentType: string;
+  size?: number;
+}
+
+export interface MultipartReceiverResult<T> {
+  value: T;
+  cleanup: () => void | Promise<void>;
+}
+
+export type MultipartReceiver<T = unknown> = (options: {
+  metadata: MultipartFileMetadata;
+  stream: ReadableStream<Uint8Array>;
+  signal: AbortSignal;
+}) => MultipartReceiverResult<T> | Promise<MultipartReceiverResult<T>>;
+
+/** Runtime-neutral representation produced by `defineMultipartStream`. */
+export interface StreamingMultipartImplementation {
+  readonly kind: 'stitchkit.multipart.stream';
+  readonly receivers: Record<string, MultipartReceiver>;
+  execute(ctx: RuntimeContext, files: Record<string, unknown>): unknown;
+}
 
 /**
  * Stable identity shared by HTTP contract endpoints and pathless native tool
@@ -118,10 +153,8 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   paramsSchema?: ZodType<TParams>;
   inputSchema?: ZodType<TInput>;
   outputSchema?: ZodType<TOutput>;
-  multipart?: string;
-  /** Per-route upload ceiling (bytes) for a multipart endpoint — overrides the
-   *  server `maxUploadBytes` default; from `EndpointDef.maxUploadBytes`. */
-  maxUploadBytes?: number;
+  multipart?: MultipartDescriptor;
+  multipartReceivers?: Record<string, MultipartReceiver>;
   /** Per-route JSON body ceiling; enforced before full buffering. */
   maxJsonBodyBytes?: number;
   /**
@@ -146,6 +179,15 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   handler: (ctx: RuntimeContext) => Promise<TOutput> | TOutput;
 }
 
+/**
+ * HTTP context available to the pre-body authorization phase. Path params have
+ * already been validated, while request payload state is deliberately absent.
+ */
+export interface AuthorizationContext extends RuntimeContext {
+  input: undefined;
+  files?: never;
+}
+
 export interface ServiceDef {
   name: string;
   prefix: string;
@@ -155,6 +197,7 @@ export interface ServiceDef {
 
 export interface LifecycleHooks {
   onRequest?: (req: Request) => undefined | Response | Promise<undefined | Response>;
+  authorize?: (ctx: AuthorizationContext, endpoint: MethodDef) => void | Promise<void>;
   beforeHandle?: (ctx: RuntimeContext, endpoint: MethodDef) => void | Promise<void>;
   afterHandle?: (
     ctx: RuntimeContext,
@@ -335,12 +378,6 @@ export interface HandlerConfig<TServer = unknown> {
    */
   scopePrefixes?: Record<string, string>;
   rawRoutes?: RawRoute<TServer>[];
-  /**
-   * Default upload ceiling (bytes) for every `multipart` endpoint. A per-route
-   * `EndpointDef.maxUploadBytes` overrides it; without either, multipart uploads
-   * are capped at the 25 MB framework default.
-   */
-  maxUploadBytes?: number;
   /**
    * Default JSON request-body ceiling in bytes. A per-route
    * `EndpointDef.maxJsonBodyBytes` overrides it. Unset preserves the existing

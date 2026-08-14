@@ -50,7 +50,7 @@ const videos = defineContract(
       method: 'POST',
       path: '/upload',
       desc: 'Upload a video',
-      multipart: 'file',
+      multipart: { files: { file: {} } },
       output: Ok,
     },
   },

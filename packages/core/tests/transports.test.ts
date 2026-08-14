@@ -23,7 +23,13 @@ const widgets = defineContract(
       expose: ['HTTP', 'MCP', 'AGENT', 'CLI'],
       output: Ok,
     }, // all four
-    upload: { method: 'POST', path: '/upload', desc: 'Upload', multipart: 'file', output: Ok }, // HTTP only (multipart)
+    upload: {
+      method: 'POST',
+      path: '/upload',
+      desc: 'Upload',
+      multipart: { files: { file: {} } },
+      output: Ok,
+    }, // HTTP only (multipart)
   },
 );
 

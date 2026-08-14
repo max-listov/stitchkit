@@ -58,7 +58,7 @@ const tenantFiles = defineContract(
       params: FileParams,
       input: z.object({ caption: z.string().optional() }),
       output: z.object({ ok: z.boolean() }),
-      multipart: 'file',
+      multipart: { files: { file: {} } },
     },
     remove: {
       method: 'DELETE',

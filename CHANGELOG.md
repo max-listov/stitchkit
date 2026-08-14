@@ -15,6 +15,55 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-08-14
+
+### ⚠️ Breaking changes
+
+- **HTTP authorization has its own pre-body lifecycle phase.** Wire
+  `createAuthHook()` to `hooks.authorize`; `beforeHandle` remains the
+  post-validation application-precondition phase. Tool transports still use the
+  same hook through their `lifecycle.beforeHandle` because their input has
+  already crossed the transport boundary.
+  `// before: createServer({ hooks: { beforeHandle: auth } })` →
+  `// after:  createServer({ hooks: { authorize: auth } })`
+- **Multipart contracts use one typed descriptor.** The string field name,
+  top-level `maxUploadBytes` and `ctx.file` are removed. Declare every file
+  field, cardinality and byte policy under `multipart`, then read the inferred
+  `ctx.files` map. The typed client uses the same scalar/array shape.
+
+  ```ts
+  // before
+  upload: { method: 'POST', path: '/', multipart: 'file', maxUploadBytes: 10_000_000 }
+  upload: ({ file }) => save(file)
+
+  // after
+  upload: {
+    method: 'POST',
+    path: '/',
+    multipart: {
+      maxRequestBytes: 10_000_000,
+      files: { file: { maxBytes: 10_000_000 } },
+    },
+  }
+  upload: ({ files }) => save(files.file)
+  ```
+
+### Added
+
+- **Fetch-clean streaming multipart receivers.** `delivery: 'stream'` and
+  `defineMultipartStream()` route each file part directly into a
+  consumer-owned Web Stream receiver. Receiver handles are available only after
+  complete text-field validation, and registered cleanups run exactly once in
+  reverse order on parse, validation, receiver or handler failure.
+- **Per-call typed-client cancellation.** Every generated HTTP method accepts
+  `ClientRequestOptions` with an `AbortSignal`; caller cancellation and timeout
+  are normalized as `REQUEST_ABORTED` and `REQUEST_TIMEOUT` in both the bare
+  Fetch and Ky-backed clients.
+- **Managed observability sink lifecycle.** Request and tool sinks support
+  bounded `maxPending`, isolated `onSinkError`/`onDrop` diagnostics, generation
+  aware `flush()` and idempotent draining `close()` without blocking observed
+  business calls.
+
 ## [0.46.0] — 2026-08-10
 
 ### ⚠️ Breaking changes
@@ -2625,7 +2674,12 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/max-listov/stitchkit/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/max-listov/stitchkit/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/max-listov/stitchkit/compare/v0.44.1...v0.45.0
+[0.44.1]: https://github.com/max-listov/stitchkit/compare/v0.44.0...v0.44.1
+[0.44.0]: https://github.com/max-listov/stitchkit/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/max-listov/stitchkit/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/max-listov/stitchkit/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/max-listov/stitchkit/compare/v0.41.0...v0.42.0

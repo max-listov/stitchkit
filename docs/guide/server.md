@@ -32,7 +32,7 @@ Every handler receives one `ctx` argument:
 |-------------|------|--------|
 | `params` | inferred from `params` schema | parsed path params |
 | `input` | inferred from `input` schema | parsed body / query |
-| `file` | `File` | the `multipart` upload, if any |
+| `files` | inferred `File` map or receiver values | the endpoint's typed multipart fields |
 | `source` | `'http' \| 'mcp' \| 'agent'` | the transport that invoked the handler |
 | `traceId` | `string` | per-request trace id |
 | `ipAddress` | `string` | caller IP |
@@ -84,7 +84,6 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `groups` | route groups — a shared path prefix and hooks (see below) |
 | `scopePrefixes` | `scope → path prefix` map — mount `services` by `service.scope` (see below) |
 | `rawRoutes` | non-contract routes (see below) |
-| `maxUploadBytes` | default multipart upload cap (bytes); per-route `EndpointDef.maxUploadBytes` overrides |
 | `maxJsonBodyBytes` | optional JSON body cap (bytes); per-route value overrides; unset preserves existing behaviour |
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }`. `origin` is **required** when `cors` is present: pass an explicit origin (or list), or `'*'` to deliberately allow every origin — an origin-less config is a construction error, never a silent wildcard. Omit `cors` entirely to emit no CORS headers. |
@@ -204,7 +203,7 @@ A group gives a set of services a shared path prefix and its own hooks:
 createServer({
   groups: [
     { pathPrefix: '/api',       services: [usersService, postsService] },
-    { pathPrefix: '/api/admin', services: [adminService], hooks: { beforeHandle: adminAuth } },
+    { pathPrefix: '/api/admin', services: [adminService], hooks: { authorize: adminAuth } },
   ],
 })
 ```
@@ -220,7 +219,7 @@ or resource-scoped API:
 ```ts
 createServer({
   groups: [
-    { pathPrefix: '/tenants/:tenantId', services: [widgetsService], hooks: { beforeHandle: auth } },
+    { pathPrefix: '/tenants/:tenantId', services: [widgetsService], hooks: { authorize: auth } },
   ],
 })
 // widgetsService (prefix 'widgets') → /tenants/:tenantId/widgets/...
@@ -229,8 +228,8 @@ createServer({
 **Where the prefix param lands.** The router matches the *full* path (group
 prefix + service prefix + endpoint path) and collects every `:param` — from the
 prefix and from the endpoint alike — into one set. Each is spread onto the
-context root, so it is available as **`ctx.tenantId`** (a raw `string`) in both
-the handler and `beforeHandle`/`afterHandle`/`onError`:
+context root, so it is available as **`ctx.tenantId`** (a raw `string`) in the
+`authorize` hook, handler and later lifecycle hooks:
 
 ```ts
 beforeHandle: (ctx) => {
@@ -294,14 +293,17 @@ Scope stays a free string; the core attaches no meaning beyond this lookup
 
 ## Lifecycle hooks
 
-Four hooks wrap every contract request, in order:
+Five hooks wrap every contract request. Route matching and path-param
+validation happen before authorization; body/query parsing happens only after
+authorization succeeds:
 
 ```ts
 createServer({
   services,
   hooks: {
     onRequest(req)               { /* logging, global rate limit — may return a Response to short-circuit */ },
-    beforeHandle(ctx, endpoint)  { /* auth, scope checks — throw to reject */ },
+    authorize(ctx, endpoint)     { /* identity + scope, before body reads — throw to reject */ },
+    beforeHandle(ctx, endpoint)  { /* validated-input preconditions */ },
     afterHandle(ctx, result, ep) { /* transform the result data */ },
     onError(ctx, error, ep)      { /* custom error response — return a Response */ },
   },
@@ -310,9 +312,13 @@ createServer({
 
 - **`onRequest`** — runs first, with the raw `Request`. Return a `Response` to
   short-circuit (a rate-limit 429, a redirect); return nothing to continue.
-- **`beforeHandle`** — runs after the context is built, before the handler.
-  Throw an `AppError` to reject. This is where auth lives —
-  [`createAuthHook`](./auth-and-errors.md#createauthhook) is a `beforeHandle`.
+- **`authorize`** — runs after route matching and validated path params, but
+  before query, JSON or multipart parsing. It receives request metadata and
+  params, with `input: undefined` and no files. This is the HTTP home of
+  [`createAuthHook`](./auth-and-errors.md#createauthhook).
+- **`beforeHandle`** — runs after the complete context has been parsed and
+  validated, immediately before the handler. Put input-dependent application
+  preconditions here, not authentication.
 - **`afterHandle`** — receives the handler result; return a replacement to
   transform it.
 - **`onError`** — receives any thrown error; return a `Response` to customise
@@ -615,7 +621,7 @@ focused helper — not a sub-framework.
 |--------|------|
 | `serveFile()` | serve a file with `Range` / `304` / `HEAD` (media seeking) |
 | `streamSSE()` | turn an `AsyncGenerator` into a Server-Sent-Events `Response` |
-| `parseMultipart()` | parse a `multipart/form-data` request with a size cap |
+| `parseMultipart()` | parse a typed buffered/streaming multipart descriptor |
 | `createRateLimiter()` | per-key token-bucket rate limiting |
 | `createCache()` + `cacheHeaders()` | in-memory TTL cache; `Cache-Control` builder |
 | `createEventBus<EventMap>()` | typed in-process pub/sub |
@@ -642,28 +648,84 @@ The client side is [`parseSSE`](./client.md#sse).
 
 ### Multipart
 
-```ts
-import { parseMultipart } from 'stitchkit/server'
-
-const { file, fields } = await parseMultipart(req, 'file', undefined, 10_000_000)
-```
-
-When an endpoint declares `multipart`, the framework parses the upload for you
-and the file arrives as `ctx.file` — call `parseMultipart` directly only from a
-raw route.
-
-The upload cap defaults to **25 MB**. Raise it per route with
-`EndpointDef.maxUploadBytes`, or set a server-wide default with
-`createServer({ maxUploadBytes })` — a per-route value wins over the global:
+The contract owns one descriptor for buffered and streaming delivery:
 
 ```ts
-// contract
-upload: { method: 'POST', path: '/', desc: 'Upload a video',
-          multipart: 'file', maxUploadBytes: 200 * 1024 * 1024 }
-
-// server — default for every multipart route that declares no own cap
-createServer({ services, maxUploadBytes: 50 * 1024 * 1024 })
+const uploads = defineContract({ prefix: 'uploads' }, {
+  create: {
+    method: 'POST', path: '/', desc: 'Upload media',
+    input: UploadMetadataSchema,
+    output: UploadedMediaSchema,
+    multipart: {
+      maxRequestBytes: 220 * 1024 * 1024,
+      maxFieldBytes: 64 * 1024,
+      files: {
+        cover: { required: false, maxBytes: 10 * 1024 * 1024, contentTypes: ['image/*'] },
+        media: { multiple: true, maxFiles: 4, maxBytes: 50 * 1024 * 1024 },
+      },
+    },
+  },
+})
 ```
+
+Buffered delivery is the default. Each file becomes a Web `File`; single,
+optional and multiple cardinality is inferred on `ctx.files`. The request cap
+defaults to **25 MB** when omitted. The parser measures actual bytes including
+boundaries and headers instead of trusting `Content-Length`; per-file bytes,
+file count, text-field bytes and declared MIME policy are enforced while
+reading. Text fields remain strings until the endpoint's Zod `input` parses
+them.
+
+For large files, set `delivery: 'stream'` and define receivers. A receiver gets
+a Web `ReadableStream<Uint8Array>` and writes directly to consumer-owned
+storage; Stitchkit holds only bounded parser state:
+
+```ts
+const streamingUploads = defineContract({ prefix: 'uploads' }, {
+  create: {
+    method: 'POST', path: '/', desc: 'Upload media',
+    input: UploadMetadataSchema,
+    output: UploadedMediaSchema,
+    multipart: {
+      delivery: 'stream',
+      maxRequestBytes: 260 * 1024 * 1024,
+      files: { media: { maxBytes: 250 * 1024 * 1024, contentTypes: ['video/*'] } },
+    },
+  },
+})
+
+const service = implement(streamingUploads, {
+  create: defineMultipartStream(streamingUploads.endpoints.create, {
+    files: {
+      media: async ({ metadata, stream, signal }) => {
+        const stored = await storage.write({ metadata, stream, signal })
+        return {
+          value: stored,
+          cleanup: () => storage.remove(stored.key),
+        }
+      },
+    },
+    handler: ({ input, files }) => mediaService.attach(input, files.media),
+  }),
+})
+```
+
+Receivers run sequentially in multipart order. A multiple receiver runs once
+per part and the handler gets an ordered value array. `cleanup` is registered
+as soon as a receiver materialises external state. Disconnect, size/policy
+failure, a later receiver/text validation failure or handler failure rolls
+accepted handles back exactly once in reverse order. After handler success,
+ownership transfers to the application.
+
+Authorization always completes before the multipart parser or any receiver is
+started. The receiver signal is tied to the request abort. The core does not
+provide filesystem/S3 adapters, retries, antivirus or a distributed
+storage/database transaction; those policies belong to the application.
+
+`parseMultipart(req, descriptor, fieldsSchema?, receivers?)` is also exported
+for a custom raw transport. It uses the same descriptor and returns
+`{ files, fields, rollback }`; contract endpoints should prefer the automatic
+dispatcher path.
 
 ### Rate limiting
 

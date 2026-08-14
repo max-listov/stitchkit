@@ -142,7 +142,7 @@ await createCli({
   version: '1.0.0',
   auth: await resolveIdentityFromToken(process.env.MYAPP_TOKEN),
   context: (identity) => ({ user: identity }),   // resolveFromContext reads this
-  lifecycle: { beforeHandle: authHook },          // same gate as HTTP
+  lifecycle: { beforeHandle: authHook },          // same policy; HTTP wires it as authorize
   services,
 })
 ```

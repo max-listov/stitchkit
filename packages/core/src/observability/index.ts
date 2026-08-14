@@ -14,6 +14,9 @@ export {
   type ObservabilityConfig,
   type RequestEventSinkConfig,
   type RequestObservabilityConfig,
+  type SinkDrop,
+  type SinkDropReason,
+  type SinkError,
 } from './audit';
 export {
   getRequestContext,

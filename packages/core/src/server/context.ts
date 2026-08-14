@@ -4,10 +4,10 @@
  */
 import { badRequest, type RuntimeContext } from '../contract';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
-import { parseMultipart } from './multipart';
+import { type MultipartLifecycle, parseMultipart } from './multipart';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from './request';
 import { readRequestText } from './request-body';
-import type { MethodDef } from './types';
+import type { AuthorizationContext, MethodDef } from './types';
 
 /** Context keys the router owns — a path `:param` may never shadow them. */
 const RESERVED_KEYS = new Set([
@@ -46,8 +46,8 @@ function parseJsonBody(req: Request, text: string): unknown {
  * Assemble everything knowable from the URL alone — path params, the request,
  * trace id and client info — **before** any schema parsing. Bound first so a
  * later validation failure still hands `onError` the path params and the
- * request (an empty context loses both); `parseRequestInto` then enriches it
- * with the schema-validated `params` / `input`.
+ * request (an empty context loses both); the two parsing phases then enrich it
+ * with schema-validated params and payload.
  *
  * `params` starts as the raw matched path params (a property of the URL, known
  * the moment the route matched) and is replaced by the validated value when the
@@ -59,7 +59,7 @@ export function buildBaseContext(
   pathParams: Record<string, string>,
   traceId: string,
   clientIp: ClientIpOptions,
-): RuntimeContext {
+): AuthorizationContext {
   const safePathParams: Record<string, string> = {};
   for (const [k, v] of Object.entries(pathParams)) {
     // Skip both router-owned keys and prototype-pollution keys — a `:param`
@@ -85,26 +85,32 @@ export function buildBaseContext(
  * already-assembled base context. A validation failure throws a `ZodError`
  * here — the base context (path params, request) is preserved for `onError`.
  */
-export async function parseRequestInto(
+export function parsePathParamsInto(ctx: RuntimeContext, method: MethodDef): void {
+  if (method.paramsSchema) {
+    ctx.params = method.paramsSchema.parse(ctx.params);
+  }
+}
+
+/** Parse query, JSON or multipart payload after pre-body authorization. */
+export async function parseRequestPayloadInto(
   ctx: RuntimeContext,
   req: Request,
   url: URL,
   method: MethodDef,
-  maxUploadBytes?: number,
   maxJsonBodyBytes?: number,
-): Promise<void> {
-  if (method.paramsSchema) {
-    ctx.params = method.paramsSchema.parse(ctx.params);
-  }
-
+): Promise<MultipartLifecycle | undefined> {
   if (method.multipart) {
-    // Per-route cap wins over the server default; `parseMultipart` falls back to
-    // its 25 MB framework default when both are undefined.
-    const cap = method.maxUploadBytes ?? maxUploadBytes;
-    const multipart = await parseMultipart(req, method.multipart, method.inputSchema, cap);
+    const multipart = await parseMultipart(
+      req,
+      method.multipart,
+      method.inputSchema,
+      method.multipartReceivers,
+    );
     ctx.input = multipart.fields;
-    if (multipart.file) ctx.file = multipart.file;
-  } else if (method.inputSchema) {
+    ctx.files = multipart.files;
+    return multipart;
+  }
+  if (method.inputSchema) {
     if (req.method === 'GET') {
       ctx.input = method.inputSchema.parse(parseQueryParams(url));
     } else if (req.method === 'DELETE') {
@@ -122,6 +128,7 @@ export async function parseRequestInto(
       ctx.input = method.inputSchema.parse(parseJsonBody(req, text));
     }
   }
+  return undefined;
 }
 
 export function buildErrorContext(

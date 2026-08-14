@@ -20,7 +20,7 @@ const widgets = defineContract(
       method: 'POST',
       path: '/upload',
       desc: 'Upload',
-      multipart: 'file',
+      multipart: { files: { file: {} } },
       input: z.object({ title: z.string() }),
       output: z.object({ title: z.string(), bytes: z.number() }),
     },
@@ -45,8 +45,7 @@ const service = implement(widgets, {
   list: () => ['w'],
   create: (ctx) => ({ id: '1', name: ctx.input.name }),
   upload: (ctx) => {
-    if (!ctx.file) throw new Error('Expected multipart file');
-    return { title: ctx.input.title, bytes: ctx.file.size };
+    return { title: ctx.input.title, bytes: ctx.files.file.size };
   },
   download: () => new Response('downloaded', { headers: { 'Content-Type': 'text/plain' } }),
   hidden: () => ({ ok: true }),

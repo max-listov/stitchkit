@@ -36,10 +36,12 @@ The framework attaches no meaning to the strings — `'public'`, `'user'`,
 
 ## `createAuthHook`
 
-`createAuthHook` builds a `beforeHandle` hook that enforces `endpoint.scope`.
-Every request runs the same three steps — resolve the identity, read the scope,
-allow / 401 / 403 — so the flow lives in the framework and you supply only
-`resolve` and a `rules` map.
+`createAuthHook` builds one scope gate that can run in both HTTP and tool
+lifecycles. On HTTP it belongs in `hooks.authorize`: Stitchkit validates path
+params, resolves identity and scope, and rejects `401`/`403` **before reading a
+JSON or multipart body**. On MCP, agent and CLI surfaces it belongs in
+`lifecycle.beforeHandle`, because those transports have already received their
+arguments before the common tool runner starts.
 
 ```ts
 import { createAuthHook, createServer } from 'stitchkit/server'
@@ -54,7 +56,7 @@ const authHook = createAuthHook<User>({
   inject: (ctx, user) => { ctx.user = user },
 })
 
-createServer({ services, hooks: { beforeHandle: authHook } })
+createServer({ services, hooks: { authorize: authHook } })
 ```
 
 ### `AuthRule`
@@ -64,8 +66,9 @@ The value of each `rules` entry, keyed by scope:
 - **`'public'`** — always passes; the identity is attached if present.
 - **`'authenticated'`** — any resolved identity passes; no identity ⇒ 401.
 - **a function** `(identity, ctx) => boolean | Promise<boolean>` — a custom
-  check. It receives the full context, so a resource-scoped rule can read the
-  request's path params and do a DB lookup. May be async.
+  check. It receives request metadata and validated path params, so a
+  resource-scoped rule can do a DB lookup. It cannot read `input` or files: the
+  body has deliberately not been consumed yet. May be async.
 
 #### Resource-scoped rule — reading a path/prefix param
 
@@ -112,14 +115,15 @@ catches a scope you forgot to cover.
 
 ### Auth on the tool surface — `resolveFromContext`
 
-The hook runs in `beforeHandle`, so it guards **every transport** — HTTP, MCP
-and agent calls all pass through it. But identity is resolved differently per
-surface:
+The same hook guards every transport, but the lifecycle slot and identity
+source differ:
 
-- **HTTP** — `resolve(ctx)` reads `ctx.req` (a cookie or bearer token).
+- **HTTP** — `hooks.authorize` calls `resolve(ctx)` from `ctx.req` (a cookie or
+  bearer token) before body parsing.
 - **Tool calls (MCP / agent)** — there is no `req`. The transport authenticated
   the caller (an MCP API key) and `buildMcpServer`'s `context` injected the
-  identity into `ctx`. `resolveFromContext(ctx)` locates it.
+  identity into `ctx`. `lifecycle.beforeHandle` calls
+  `resolveFromContext(ctx)` to locate it.
 
 ```ts
 const authHook = createAuthHook<User>({
@@ -133,6 +137,11 @@ The **scope check is identical** on both surfaces — only identity resolution
 differs. If you omit `resolveFromContext`, a scoped tool call has no identity
 and **fails closed** (rejected by `onAnonymous`) — the hook never silently
 passes a tool call it cannot authenticate. → [ADR 0014](../decisions/0014-tool-http-parity.md)
+
+```ts
+createServer({ services, hooks: { authorize: authHook } })
+createMcpHandler({ services, lifecycle: { beforeHandle: authHook } })
+```
 
 ## `createBearerResolver`
 

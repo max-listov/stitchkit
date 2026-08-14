@@ -299,15 +299,15 @@ handlers must still be idempotent where retries matter.
 
 A tool call runs the same handler an HTTP request would. `lifecycle` makes it
 run the same gate: a `beforeHandle` (throw to reject) and an `afterHandle`
-(transform the result) — the tool-side twin of `createServer`'s hooks. Pass the
-**same** [`createAuthHook`](./auth-and-errors.md#createauthhook) result you give
-the HTTP server and tool calls are scope-checked by the identical rules:
+(transform the result). Pass the **same**
+[`createAuthHook`](./auth-and-errors.md#createauthhook) result used as the HTTP
+server's `authorize` hook and tool calls are scope-checked by identical rules:
 
 ```ts
 createMcpHandler({ serverInfo, auth, services, lifecycle: { beforeHandle: authHook } })
 ```
 
-Without it, a tool call bypasses the HTTP `beforeHandle` — the contract's
+Without it, a tool call bypasses the HTTP `authorize` gate — the contract's
 `scope` is not enforced on the MCP / agent surface. `mountMcp`, `mountAgent` and
 `buildMcpServer` take `lifecycle` too.
 
@@ -669,7 +669,7 @@ the merged `params` + `input`. `context` is merged into every tool handler's
 | `runtimeTools` | framework-managed pathless operations from `defineRuntimeTool` |
 
 `lifecycle` works the same as on the MCP server — without it an agent tool call
-bypasses the HTTP `beforeHandle` auth gate. Pass your `createAuthHook` result.
+bypasses the HTTP `authorize` gate. Pass your `createAuthHook` result.
 
 ### Adding tool-only args — `extend`
 

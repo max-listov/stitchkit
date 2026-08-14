@@ -72,7 +72,7 @@ const media = defineContract(
       params: z.object({ fileId: z.string() }),
       input: z.object({ caption: z.string().optional() }),
       output: UrlEchoSchema,
-      multipart: 'file',
+      multipart: { files: { file: {} } },
     },
     toolOnly: {
       method: 'GET',

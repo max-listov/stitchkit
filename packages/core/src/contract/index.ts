@@ -1,6 +1,7 @@
 export {
   ALL_TRANSPORTS,
   type BodyHttpSuccessStatus,
+  type ClientRequestOptions,
   type ContractDef,
   type ContractMeta,
   defineContract,
@@ -16,7 +17,10 @@ export {
   type HeadEndpointDef,
   type HttpMethod,
   type HttpSuccessStatus,
+  type MultipartBufferedFiles,
+  type MultipartDescriptor,
   type MultipartFile,
+  type MultipartFilePolicy,
   type ResponseMetadata,
   type RuntimeContext,
   type ScopedEndpointFn,

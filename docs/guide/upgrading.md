@@ -48,6 +48,86 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Upcoming migration: `[Unreleased]`
+
+### HTTP auth moves to the pre-body `authorize` phase
+
+Move the HTTP wiring of `createAuthHook` from `beforeHandle` to `authorize`.
+This lets Stitchkit reject an unauthorized JSON or multipart request after path
+parameter validation but before reading a body chunk. Keep application
+preconditions that depend on validated input in `beforeHandle`.
+
+```ts
+const auth = createAuthHook({ authenticate, authorize })
+
+// before
+createServer({ services, hooks: { beforeHandle: auth } })
+
+// after
+createServer({ services, hooks: { authorize: auth } })
+```
+
+Tool transports already receive parsed input, so their wiring does not move:
+
+```ts
+createMcpHandler({ services, lifecycle: { beforeHandle: auth } })
+```
+
+If a custom HTTP authorization hook read `ctx.input`, `ctx.files` or raw body
+state, split it: identity/scope checks belong in `authorize`; validated payload
+preconditions belong in `beforeHandle` or the domain service.
+
+### Multipart uses a typed descriptor and `ctx.files`
+
+Replace every string multipart declaration, top-level `maxUploadBytes` and
+`ctx.file`. The descriptor is now the only source of request, per-file,
+cardinality and declared media-type policy.
+
+```ts
+// before
+upload: {
+  method: 'POST',
+  path: '/',
+  multipart: 'file',
+  maxUploadBytes: 25 * 1024 * 1024,
+}
+upload: ({ file, input }) => store(file, input)
+
+// after
+upload: {
+  method: 'POST',
+  path: '/',
+  multipart: {
+    maxRequestBytes: 25 * 1024 * 1024,
+    files: {
+      file: {
+        maxBytes: 20 * 1024 * 1024,
+        contentTypes: ['image/*', 'application/pdf'],
+      },
+    },
+  },
+}
+upload: ({ files, input }) => store(files.file, input)
+```
+
+Multiple files are repeated under one multipart field name and arrive in the
+same order:
+
+```ts
+files: {
+  attachments: { multiple: true, maxFiles: 8 },
+}
+
+await api.upload({ attachments: [firstFile, secondFile] })
+// handler: files.attachments is File[]
+```
+
+For direct-to-storage delivery, set `delivery: 'stream'` and implement the
+endpoint with `defineMultipartStream`. A receiver must consume its Web Stream
+and return `{ value, cleanup }`; the final handler sees only receiver values.
+There is no deprecated overload or buffered compatibility path under the old
+contract shape.
+
 ## Worked example — frozen on 0.3, jumping to 0.7
 
 1. `bun.lock` → consumer resolves `stitchkit@0.3.x`.

@@ -100,10 +100,43 @@ contract:
 - for `GET` / `DELETE`, the remaining fields become the **query string**
   (arrays become repeated keys),
 - for `POST` / `PUT` / `PATCH`, they become the **JSON body**,
-- a `multipart` field is a `Blob` (web / Bun) or a platform `FileDescriptor`
-  (`{ uri, name, type }`, for React Native / Expo) and is sent as `form-data`.
-  The exported `MultipartFile` / `FileDescriptor` types let you annotate your own
-  upload helpers.
+- a single `multipart.files` field is a `Blob` (web / Bun) or platform
+  `FileDescriptor` (`{ uri, name, type }`, React Native / Expo); a multiple
+  field is an array and is appended under the same form field name in order.
+  The exported `MultipartFile` / `FileDescriptor` types let you annotate your
+  own upload helpers.
+
+### Per-call cancellation
+
+Every endpoint accepts optional `ClientRequestOptions` containing an
+`AbortSignal`. Endpoints with arguments use `(args, options?)`; endpoints with
+no arguments use `(options?)`:
+
+```ts
+const controller = new AbortController()
+
+const pending = api.upload(
+  { file: selectedFile, title: 'Draft' },
+  { signal: controller.signal },
+)
+
+controller.abort()
+await pending
+```
+
+Caller cancellation and the endpoint/client timeout are composed; whichever
+fires first owns the result. Both the bare-fetch and Ky-backed clients expose
+the same client-only errors:
+
+| Failure | `ApiError.code` | `status` |
+|---------|-----------------|----------|
+| caller `AbortSignal` | `REQUEST_ABORTED` | `0` |
+| endpoint/client timeout | `REQUEST_TIMEOUT` | `0` |
+| other transport failure | `UNKNOWN_ERROR` | `0` |
+
+Abort and timeout do not emit `network_error` and are not retried. The same
+options work for query, JSON, multipart and raw-response calls. Stitchkit does
+not expose upload progress: Fetch has no portable upload-progress primitive.
 
 ### Many contracts at once
 

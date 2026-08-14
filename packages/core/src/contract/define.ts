@@ -1,5 +1,6 @@
 import { type ZodType, z } from 'zod';
 import { parseTrailingWildcard } from '../internal/route-pattern';
+import { isUnsafeKey } from '../internal/safe-json';
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -44,14 +45,7 @@ interface EndpointDefBase {
   params?: ZodType<unknown>;
   input?: ZodType<unknown>;
   output?: ZodType<unknown>;
-  multipart?: string;
-  /**
-   * Per-route upload ceiling in bytes for a `multipart` endpoint. Overrides the
-   * server's `maxUploadBytes` default; without either, the 25 MB framework
-   * default applies. Lets an avatar (5 MB) and a video (200 MB) declare their
-   * own caps. Ignored on non-multipart endpoints.
-   */
-  maxUploadBytes?: number;
+  multipart?: MultipartDescriptor;
   /**
    * Per-route ceiling in bytes for a JSON request body. Overrides the server's
    * `maxJsonBodyBytes`; without either, JSON body size is unchanged/unbounded.
@@ -291,7 +285,6 @@ export interface HeadEndpointDef {
   output?: never;
   multipart?: never;
   rawBody?: never;
-  maxUploadBytes?: never;
   maxJsonBodyBytes?: never;
   toolName?: never;
   ui?: never;
@@ -389,6 +382,8 @@ export function defineContract(
       );
     }
 
+    if (ep.multipart) assertMultipartEndpoint(meta.prefix, key, ep);
+
     if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
     if (ep.method === 'HEAD') assertHeadEndpoint(meta.prefix, key, ep);
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
@@ -430,6 +425,49 @@ export function defineContract(
   }
 
   return { meta, endpoints };
+}
+
+function assertPositiveLimit(where: string, name: string, value: number | undefined): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(`${where} ${name} must be a positive safe integer, received ${value}`);
+  }
+}
+
+/** Multipart is one declarative HTTP-only request boundary. */
+function assertMultipartEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": multipart endpoint "${key}"`;
+  if (ep.method !== 'POST' && ep.method !== 'PUT' && ep.method !== 'PATCH') {
+    throw new Error(`${where} must use POST, PUT or PATCH`);
+  }
+  const multipart = ep.multipart;
+  if (!multipart || typeof multipart !== 'object') {
+    throw new Error(`${where} must declare a multipart descriptor`);
+  }
+  assertPositiveLimit(where, 'maxRequestBytes', multipart.maxRequestBytes);
+  assertPositiveLimit(where, 'maxFieldBytes', multipart.maxFieldBytes);
+  const entries = Object.entries(multipart.files);
+  if (entries.length === 0) throw new Error(`${where} must declare at least one file field`);
+  for (const [field, policy] of entries) {
+    if (!field || isUnsafeKey(field))
+      throw new Error(`${where} has an invalid file field name`);
+    assertPositiveLimit(`${where} field "${field}"`, 'maxBytes', policy.maxBytes);
+    assertPositiveLimit(`${where} field "${field}"`, 'maxFiles', policy.maxFiles);
+    if (policy.multiple !== true && policy.maxFiles !== undefined) {
+      throw new Error(`${where} field "${field}" may set maxFiles only with multiple: true`);
+    }
+    if (policy.contentTypes) {
+      if (policy.contentTypes.length === 0) {
+        throw new Error(`${where} field "${field}" contentTypes cannot be empty`);
+      }
+      for (const contentType of policy.contentTypes) {
+        if (!/^[a-z0-9!#$&^_.+-]+\/(?:[a-z0-9!#$&^_.+-]+|\*)$/i.test(contentType)) {
+          throw new Error(
+            `${where} field "${field}" has invalid content type policy "${contentType}"`,
+          );
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -534,7 +572,7 @@ export function mergeMeta(
 export interface RuntimeContext {
   params: unknown;
   input: unknown;
-  file?: File;
+  files?: Record<string, unknown>;
   /** Original decoded JSON request text when the endpoint declares `rawBody: true`. */
   rawBody?: string;
   source: TransportSource;
@@ -563,7 +601,7 @@ export interface RuntimeContext {
 export interface HandlerContext<TParams = undefined, TInput = undefined> {
   params: TParams;
   input: TInput;
-  file?: File;
+  files?: Record<string, unknown>;
   /** Original decoded JSON request text when the endpoint declares `rawBody: true`. */
   rawBody?: string;
   source: TransportSource;
@@ -618,9 +656,62 @@ export interface FileDescriptor {
  */
 export type MultipartFile = Blob | FileDescriptor;
 
-type MultipartArgs<E> = E extends { multipart: infer K extends string }
-  ? { [P in K]: MultipartFile }
+/** A single named file policy within a multipart request. */
+export type MultipartFilePolicy =
+  | {
+      required?: boolean;
+      multiple?: false;
+      maxFiles?: never;
+      maxBytes?: number;
+      contentTypes?: readonly string[];
+    }
+  | {
+      required?: boolean;
+      multiple: true;
+      maxFiles?: number;
+      maxBytes?: number;
+      contentTypes?: readonly string[];
+    };
+
+/** One source of truth for multipart cardinality, delivery and byte policy. */
+export interface MultipartDescriptor {
+  delivery?: 'buffer' | 'stream';
+  maxRequestBytes?: number;
+  maxFieldBytes?: number;
+  files: Record<string, MultipartFilePolicy>;
+}
+
+type MultipartClientValue<P> = P extends { multiple: true } ? MultipartFile[] : MultipartFile;
+
+type RequiredMultipartKeys<F> = {
+  [K in keyof F]: F[K] extends { required: false } ? never : K;
+}[keyof F];
+
+type OptionalMultipartKeys<F> = {
+  [K in keyof F]: F[K] extends { required: false } ? K : never;
+}[keyof F];
+
+type MultipartArgs<E> = E extends { multipart: { files: infer F } }
+  ? { [K in RequiredMultipartKeys<F>]: MultipartClientValue<F[K]> } & {
+      [K in OptionalMultipartKeys<F>]?: MultipartClientValue<F[K]>;
+    }
   : unknown;
+
+/** Buffered server-side file values inferred from a multipart descriptor. */
+export type MultipartBufferedFiles<M> = M extends { files: infer F }
+  ? {
+      [K in keyof F]: F[K] extends { multiple: true }
+        ? File[]
+        : F[K] extends { required: false }
+          ? File | undefined
+          : File;
+    }
+  : never;
+
+/** Public per-call options shared by every typed HTTP endpoint. */
+export interface ClientRequestOptions {
+  signal?: AbortSignal;
+}
 
 type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &
   InferInput<Prop<E, 'input'>> &
@@ -638,8 +729,8 @@ type EndpointOutput<E> = E extends { rawResponse: true }
     : undefined;
 
 export type EndpointFn<E> = [keyof EndpointArgs<E>] extends [never]
-  ? () => Promise<EndpointOutput<E>>
-  : (args: EndpointArgs<E>) => Promise<EndpointOutput<E>>;
+  ? (options?: ClientRequestOptions) => Promise<EndpointOutput<E>>
+  : (args: EndpointArgs<E>, options?: ClientRequestOptions) => Promise<EndpointOutput<E>>;
 
 export type TypedClient<C extends Record<string, EndpointDef>> = {
   [K in keyof C]: EndpointFn<C[K]>;
@@ -661,8 +752,8 @@ type ExposesHttp<E> = E extends { expose: readonly Transport[] }
 type ArgsWith<E, Extra> = EndpointArgs<E> & Extra;
 
 export type ScopedEndpointFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
-  ? () => Promise<EndpointOutput<E>>
-  : (args: ArgsWith<E, Extra>) => Promise<EndpointOutput<E>>;
+  ? (options?: ClientRequestOptions) => Promise<EndpointOutput<E>>
+  : (args: ArgsWith<E, Extra>, options?: ClientRequestOptions) => Promise<EndpointOutput<E>>;
 
 export type ScopedHttpClient<C extends Record<string, EndpointDef>, Extra> = {
   [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: ScopedEndpointFn<C[K], Extra>;

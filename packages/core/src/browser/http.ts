@@ -2,6 +2,7 @@ import ky, { isHTTPError, type KyInstance, type Options } from 'ky';
 import type { ErrorEnvelope } from '../contract';
 import { isRecord, transportResult } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
+import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import { responseTraceId } from './request-id';
 
 export type ApiEvent =
@@ -90,6 +91,7 @@ type ParamArrayValue = Array<string | number>;
 export interface RequestOptions {
   params?: Record<string, ParamValue | ParamArrayValue>;
   timeout?: number;
+  signal?: AbortSignal;
   /**
    * How to read the body. `'response'` hands back the untouched `Response` —
    * what a `raw` endpoint answers with, and strictly more than `'blob'`: the
@@ -146,7 +148,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
   const client: KyInstance = ky.create({
     prefix: config.baseUrl,
     credentials: config.credentials ?? 'include',
-    timeout: config.timeout ?? 30_000,
+    timeout: false,
     // Transport retry — only what's safe and invisible: a connection that
     // never landed (network error), on idempotent GET. NOT 5xx — a server
     // that responded with an error is the data layer's call. Empty
@@ -214,8 +216,13 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     data?: unknown,
     options: RequestOptions = {},
   ): Promise<T> {
+    const cancellation = createRequestCancellation(
+      options.signal,
+      options.timeout ?? config.timeout ?? 30_000,
+    );
     const kyOptions: Options = {
-      timeout: options.timeout,
+      timeout: false,
+      signal: cancellation.signal,
     };
 
     if (options.params) {
@@ -240,39 +247,42 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     }
 
     try {
-      if (options.responseType === 'blob') {
-        return transportResult<T>(await client[method](url, kyOptions).blob());
-      }
-      if (options.responseType === 'response') {
-        // No parsing, no 204 special-case — the caller owns the body. Errors
-        // still surface as `ApiError` through the catch below, so a failed
-        // download does not masquerade as a zero-byte file.
-        return transportResult<T>(await client[method](url, kyOptions));
-      }
-      const response = await client[method](url, kyOptions);
-      if (options.responseType === 'void') {
-        const text = await response.text();
-        if (text.length > 0) {
-          throw new Error('Server returned data for an endpoint with no output contract');
+      return await cancellation.run(async () => {
+        if (options.responseType === 'blob') {
+          return transportResult<T>(await client[method](url, kyOptions).blob());
         }
-      }
-      if (
-        options.responseType === 'void' ||
-        response.status === 204 ||
-        response.headers.get('content-length') === '0'
-      ) {
-        return transportResult<T>(undefined);
-      }
-      // Awaited INSIDE the try — a malformed body must reach the same catch
-      // that normalises every other transport failure into an ApiError.
-      return await response.json<T>();
+        if (options.responseType === 'response') {
+          // No parsing, no 204 special-case — the caller owns the body.
+          return transportResult<T>(await client[method](url, kyOptions));
+        }
+        const response = await client[method](url, kyOptions);
+        if (options.responseType === 'void') {
+          const text = await response.text();
+          if (text.length > 0) {
+            throw new Error('Server returned data for an endpoint with no output contract');
+          }
+        }
+        if (
+          options.responseType === 'void' ||
+          response.status === 204 ||
+          response.headers.get('content-length') === '0'
+        ) {
+          return transportResult<T>(undefined);
+        }
+        return await response.json<T>();
+      });
     } catch (error) {
-      if (ApiError.is(error)) throw error;
-      const isAbort = error instanceof Error && error.name === 'AbortError';
-      if (!isAbort) {
-        emit({ type: 'network_error' });
+      if (error instanceof RequestCancellationError) {
+        throw new ApiError(
+          error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
+          0,
+          undefined,
+          error.message,
+        );
       }
-      const response = !isAbort && isHTTPError(error) ? error.response : undefined;
+      if (ApiError.is(error)) throw error;
+      emit({ type: 'network_error' });
+      const response = isHTTPError(error) ? error.response : undefined;
       const status = response?.status ?? 0;
       const msg = error instanceof Error ? error.message : undefined;
       throw new ApiError(
