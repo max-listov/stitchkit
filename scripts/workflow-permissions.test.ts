@@ -78,13 +78,28 @@ describe('CI release-critical graph', () => {
     expect(topLevel).toContain('cancel-in-progress: true');
   });
 
-  test('core, Node and starter gates have no heavy-job dependency', () => {
-    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  node-smoke:'));
-    const nodeSection = ci.slice(ci.indexOf('  node-smoke:'), ci.indexOf('  starter:'));
+  test('the combined framework/Node gate and starter cells have no heavy-job dependency', () => {
+    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
     const starterSection = ci.slice(ci.indexOf('  starter:'));
-    for (const section of [coreSection, nodeSection, starterSection]) {
+    for (const section of [coreSection, starterSection]) {
       expect(section).not.toMatch(/^\s+needs:/m);
     }
+  });
+
+  test('the graph fits nine runners without dropping the Node consumer gate', () => {
+    const jobsSection = ci.slice(ci.indexOf('jobs:'));
+    expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(2);
+    expect(ci).not.toContain('\n  node-smoke:');
+
+    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
+    expect(coreSection).toContain(
+      'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
+    );
+    expect(coreSection).toContain('node-version: 22');
+    expect(coreSection).toContain('- run: bun run build');
+    expect(coreSection).toContain('- run: bun run smoke:node');
+    expect(coreSection).toContain('- run: bun run consumer-lane');
+    expect(ci.match(/- run: bun run build\n/g)).toHaveLength(1);
   });
 
   test('the starter matrix contains every mode, variant and browser surface', () => {
@@ -132,7 +147,7 @@ describe('CI release-critical graph', () => {
   test('publication inputs are packed and uploaded only by the core job', () => {
     expect(ci.match(/name: release-packages/g)).toHaveLength(1);
     expect(ci.match(/bun pm pack/g)).toHaveLength(2);
-    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  node-smoke:'));
+    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
     expect(coreSection).toContain('name: release-packages');
     expect(release).toContain('name: release-packages');
     expect(release).toContain(`run-id: ${actionExpression('steps.ci.outputs.run-id')}`);

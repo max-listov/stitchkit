@@ -20,8 +20,7 @@ Every expensive gate is eligible to start at workflow time zero:
 
 | Job | Guarantee |
 |---|---|
-| `core` | lint, TypeScript, unit/integration tests, package build, packed docs and the two immutable release tarballs |
-| `node-smoke` | Node 22 imports, runtime smoke and packed external-consumer lane |
+| `core` | lint, TypeScript, unit/integration tests, package build, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and the two immutable release tarballs |
 | `starter / target / blank / chromium` | blank published-target scaffold in desktop and mobile Chromium |
 | `starter / target / blank / webkit` | blank published-target scaffold in WebKit |
 | `starter / target / repository / chromium` | repository published-target example in desktop and mobile Chromium |
@@ -54,7 +53,7 @@ and expose both standard `bun` and `bunx` command names from that exact binary o
 `PATH`. The workflow test binds this version to the starter manifest.
 
 There is no serial summary job. GitHub marks the workflow successful only when
-every matrix cell and independent framework job succeeds. The publisher selects
+every matrix cell and the framework job succeeds. The publisher selects
 that successful completed workflow for the exact commit SHA, so the workflow's
 native conclusion is already the fail-closed aggregate.
 
@@ -68,6 +67,10 @@ The successful branch workflow has a wall-clock budget of three minutes on the
 normal GitHub-hosted runner path. No gate may be removed to meet the budget. A
 regression is diagnosed from the longest parallel job's step timings; the fix
 must remove duplicated setup or serial dependency rather than weaken coverage.
+The graph expands to nine jobs: one framework/Node/artifact job and eight
+starter cells. Node smoke and the packed consumer lane reuse the core checkout,
+install and build instead of creating a tenth job that must wait when the
+repository has nine concurrent GitHub-hosted runners.
 The pinned Playwright image is advanced together with the lockfile browser
 version; a version mismatch fails browser launch instead of silently downloading
 a different runtime.

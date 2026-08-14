@@ -1,10 +1,10 @@
 # Branch and pull-request validation. Release tags are handled by release.yml
 # only after this workflow has completed successfully for the exact commit SHA.
 #
-# The release-critical path is deliberately flat: framework checks, the packed
-# Node consumer and every starter mode/variant/browser group are independent
-# jobs. GitHub's workflow conclusion is the fail-closed aggregate consumed by
-# the exact-SHA publisher.
+# The release-critical path is deliberately flat and capacity-aligned: one
+# framework/Node/artifact job plus every starter mode/variant/browser group.
+# GitHub's workflow conclusion is the fail-closed aggregate consumed by the
+# exact-SHA publisher.
 name: CI
 
 on:
@@ -23,11 +23,14 @@ concurrency:
 
 jobs:
   core:
-    name: Core and publication artifacts
+    name: Framework, Node and publication artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
@@ -36,6 +39,8 @@ jobs:
       - run: bun run check
       - run: bun run test
       - run: bun run build
+      - run: bun run smoke:node
+      - run: bun run consumer-lane
       - name: Pack the exact validated publication inputs
         run: |
           mkdir -p release-artifacts
@@ -56,26 +61,6 @@ jobs:
           path: release-artifacts/*.tgz
           if-no-files-found: error
           retention-days: 30
-
-  node-smoke:
-    name: Packed Node consumer
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-        working-directory: packages/core
-      - run: bun run smoke:node
-        working-directory: packages/core
-      - run: bun run consumer-lane
-        working-directory: packages/core
 
   starter:
     name: Starter ${{ matrix.mode }} / ${{ matrix.variant }} / ${{ matrix.browser }}
