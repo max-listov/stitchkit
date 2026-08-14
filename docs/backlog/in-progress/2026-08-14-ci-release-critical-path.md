@@ -43,6 +43,12 @@ variant, packed-package or exact-SHA guarantee.
   roughly two minutes, but correctly failed: the hosted image runs Chromium but
   lacks WebKit's GTK/GStreamer/Flite stack. This rejected experiment proves the
   dependency boundary instead of assuming it from runner documentation.
+- Run `31816328883` exercised the final eight-cell graph in `2:31`, but one
+  WebKit cell correctly kept the workflow red: a repository E2E assertion used
+  a page-wide text locator that became ambiguous when the same value appeared
+  in two DOM surfaces. The regression assertion now scopes the value to the one
+  required `repository-summary`, retaining both uniqueness and visibility
+  checks instead of adding a retry or weakening strict mode.
 - The final graph splits each mode/variant by browser group. Chromium and mobile
   Chromium use the hosted image directly; only WebKit cells install WebKit host
   dependencies. All 150 cases remain release-blocking while dependency setup

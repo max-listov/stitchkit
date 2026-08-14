@@ -14,6 +14,13 @@ async function gotoWithRealtime(page: Page): Promise<void> {
   await connected;
 }
 
+async function expectRepositorySummary(page: Page): Promise<void> {
+  const summary = page.getByTestId('repository-summary');
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toBeVisible();
+  await expect(summary.getByText('max-listov/stitchkit', { exact: true })).toBeVisible();
+}
+
 test('prefetched data hydrates without a loading flash or a client refetch', async ({
   page,
   request,
@@ -35,7 +42,7 @@ test('prefetched data hydrates without a loading flash or a client refetch', asy
     await route.continue();
   });
   await page.goto('/en');
-  await expect(page.getByText('max-listov/stitchkit')).toBeVisible();
+  await expectRepositorySummary(page);
   expect(clientReads).toBe(0);
 });
 
@@ -73,7 +80,7 @@ test('renders and refreshes the repository example', async ({ page }) => {
     await route.continue();
   });
   await page.goto('/en');
-  await expect(page.getByText('max-listov/stitchkit')).toBeVisible();
+  await expectRepositorySummary(page);
 
   const refresh = page.getByRole('button', { name: 'Refresh repository data' });
   await expect(refresh).toHaveCSS('height', '32px');
