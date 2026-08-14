@@ -91,8 +91,8 @@ export const observability = createObservability({
   },
 })
 
-await observability.flush()
-await observability.close()
+const status = observability.getStatus()
+const drained = await observability.close()
 ```
 
 `maxPending` defaults to `1000` per sink and must be a positive safe integer.
@@ -103,9 +103,15 @@ cancelled. Sink, filter and diagnostic-callback failures remain isolated from
 the observed request or tool call and are reported through `onSinkError` when
 configured; `onSinkError`/`onDrop` cannot create unhandled rejections.
 
+`getStatus()` returns immutable per-surface and aggregate counters: capacity,
+received, accepted, filtered, completed, dropped, failed, preparation failures,
+preparing/pending work and the closed flag. Read it from readiness or metrics
+without parsing callback logs.
+
 `flush()` snapshots the current generation and waits only for events admitted
 up to that call. `close()` atomically stops admission, drains every accepted
-generation and is idempotent. Graceful shutdown order is therefore:
+generation and returns the final counters plus `durationMs`; repeated calls
+return the same report. Graceful shutdown order is therefore:
 
 1. stop HTTP/MCP admission;
 2. wait for active requests and tool calls;

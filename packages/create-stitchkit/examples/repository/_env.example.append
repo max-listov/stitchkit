@@ -1,4 +1,6 @@
 GITHUB_REPOSITORY=max-listov/stitchkit
 GITHUB_CACHE_TTL_SECONDS=900
+# Optional. Defaults to the public GitHub API and supports GitHub Enterprise.
+# GITHUB_API_URL=https://api.github.com
 # Optional. Authenticated conditional requests have a higher GitHub rate limit.
 # GITHUB_TOKEN=github_pat_...

@@ -374,15 +374,18 @@ validateMcpSchemas({
   extend,
   flattenUnionInput: true,
   requireTypedProperties: true,
-  allowUntyped: ['docs_create.payload'],   // deliberately free-form
   requirePortableFormats: true,
   allowFormats: [],
 })
 ```
 
-Off by default, because a contract may legitimately declare `z.unknown()`.
-`allowUntyped` takes dotted `tool.property` paths — an entry there is a decision,
-anything else is a finding. On `createMcpHandler`, put the policy under
+For an arbitrary **JSON value**, declare `z.json()`: its recursive JSON Schema
+describes strings, numbers, booleans, null, arrays and objects, so strict schema
+validation needs no exception. `z.unknown()` means an unknown runtime value —
+including values JSON cannot represent — and therefore gives a model no usable
+shape. The guard is off by default for existing contracts. `allowUntyped` takes
+dotted `tool.property` paths and is reserved for a presentation value that is
+genuinely impossible to represent as JSON Schema. On `createMcpHandler`, put the policy under
 `schemaValidation`; the handler supplies its real `extend` and
 `flattenUnionInput`, so the check cannot vet a different document from the one
 advertised.

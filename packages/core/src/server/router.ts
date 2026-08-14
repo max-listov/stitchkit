@@ -19,6 +19,17 @@ interface RouteEntry {
   groupHooks?: LifecycleHooks;
 }
 
+type RouteShapeSegment =
+  | { kind: 'static'; value: string }
+  | { kind: 'param' }
+  | { kind: 'wildcard' };
+
+interface RawRouteShape {
+  segments: RouteShapeSegment[];
+  signature: string;
+  wildcard: boolean;
+}
+
 /** Compiled route table — HTTP method → entries (param routes sorted last). */
 export type RouteMap = Map<string, RouteEntry[]>;
 
@@ -35,6 +46,56 @@ function joinPath(...parts: string[]): string {
     .filter(Boolean)
     .join('/');
   return `/${joined}`;
+}
+
+/** One segmentation rule shared by contract matching, raw matching and validation. */
+function routeSegments(path: string): string[] {
+  return path.split('/').filter(Boolean);
+}
+
+function rawRouteShape(path: string): RawRouteShape {
+  parseTrailingWildcard(path);
+  const segments = routeSegments(path).map<RouteShapeSegment>((segment) => {
+    if (segment.startsWith(':')) return { kind: 'param' };
+    if (segment.startsWith('*')) return { kind: 'wildcard' };
+    return { kind: 'static', value: segment };
+  });
+  return {
+    segments,
+    signature: segments
+      .map((segment) => (segment.kind === 'static' ? segment.value : `:${segment.kind}`))
+      .join('/'),
+    wildcard: segments.at(-1)?.kind === 'wildcard',
+  };
+}
+
+function segmentCovers(earlier: RouteShapeSegment, later: RouteShapeSegment): boolean {
+  if (earlier.kind === 'param') return later.kind !== 'wildcard';
+  if (earlier.kind === 'wildcard') return true;
+  return later.kind === 'static' && earlier.value === later.value;
+}
+
+/** Whether every path accepted by `later` is already accepted by `earlier`. */
+function routeShapeCovers(earlier: RawRouteShape, later: RawRouteShape): boolean {
+  const earlierPrefixLength = earlier.wildcard
+    ? earlier.segments.length - 1
+    : earlier.segments.length;
+  const laterPrefixLength = later.wildcard ? later.segments.length - 1 : later.segments.length;
+
+  if (earlier.wildcard) {
+    if (earlierPrefixLength > laterPrefixLength) return false;
+  } else {
+    if (later.wildcard || earlierPrefixLength !== laterPrefixLength) return false;
+  }
+
+  for (let index = 0; index < earlierPrefixLength; index++) {
+    const earlierSegment = earlier.segments[index];
+    const laterSegment = later.segments[index];
+    if (!earlierSegment || !laterSegment || !segmentCovers(earlierSegment, laterSegment)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -96,7 +157,7 @@ export function buildRouteMap(groups: NormalizedGroup[]): RouteMap {
         method.path === '/' ? '' : method.path,
       );
       const fullPath = prefix ? joinPath(prefix, servicePath) : servicePath;
-      const segments = fullPath.split('/').filter(Boolean);
+      const segments = routeSegments(fullPath);
 
       const entries = map.get(method.method) ?? [];
       entries.push({ method, pattern: fullPath, segments, groupHooks: hooks });
@@ -127,7 +188,7 @@ export function matchRoute(
   const entries = routeMap.get(httpMethod);
   if (!entries) return null;
 
-  const requestSegments = pathname.split('/').filter(Boolean);
+  const requestSegments = routeSegments(pathname);
 
   for (const entry of entries) {
     const pathParams = matchSegments(entry.segments, requestSegments);
@@ -148,7 +209,7 @@ export function matchRoute(
  * header when the path exists but not under the requested method.
  */
 export function allowedMethods(routeMap: RouteMap, pathname: string): string[] {
-  const requestSegments = pathname.split('/').filter(Boolean);
+  const requestSegments = routeSegments(pathname);
   const methods: string[] = [];
 
   for (const [method, entries] of routeMap) {
@@ -253,8 +314,8 @@ export function matchRawRoute<TServer>(
 
     // A named trailing wildcard shares the contract router's segment semantics.
     if (parseTrailingWildcard(route.path)) {
-      const routeSegs = route.path.split('/').filter(Boolean);
-      const pathSegs = pathname.split('/').filter(Boolean);
+      const routeSegs = routeSegments(route.path);
+      const pathSegs = routeSegments(pathname);
       const params = matchSegments(routeSegs, pathSegs);
       if (params) return { route, params };
       continue;
@@ -262,8 +323,8 @@ export function matchRawRoute<TServer>(
 
     // `:param` segments — matched and passed to the handler.
     if (route.path.includes('/:')) {
-      const routeSegs = route.path.split('/').filter(Boolean);
-      const pathSegs = pathname.split('/').filter(Boolean);
+      const routeSegs = routeSegments(route.path);
+      const pathSegs = routeSegments(pathname);
       const params = matchSegments(routeSegs, pathSegs);
       if (params) return { route, params };
       continue;
@@ -274,7 +335,48 @@ export function matchRawRoute<TServer>(
   return null;
 }
 
-/** Validate raw route parameter and named-wildcard structure once at startup. */
+/**
+ * Validate raw route structure and reject routes that the ordered matcher can
+ * prove ambiguous or unreachable. Partial overlaps remain legal.
+ */
 export function validateRawRoutes<TServer>(rawRoutes: RawRoute<TServer>[] | undefined): void {
-  for (const route of rawRoutes ?? []) parseTrailingWildcard(route.path);
+  const routes = rawRoutes ?? [];
+  const shapes = routes.map((route) => rawRouteShape(route.path));
+  const conflicts: string[] = [];
+
+  for (const [laterIndex, later] of routes.entries()) {
+    const laterShape = shapes[laterIndex];
+    if (!laterShape) continue;
+
+    for (let earlierIndex = 0; earlierIndex < laterIndex; earlierIndex++) {
+      const earlier = routes[earlierIndex];
+      const earlierShape = shapes[earlierIndex];
+      if (!earlier || !earlierShape) continue;
+
+      if (earlier.method === later.method && earlier.path === later.path) {
+        conflicts.push(
+          `${later.method} ${later.path} duplicates earlier ${earlier.method} ${earlier.path}`,
+        );
+        continue;
+      }
+
+      if (earlier.method === later.method && earlierShape.signature === laterShape.signature) {
+        conflicts.push(
+          `${later.method} ${later.path} has the same parameter shape as earlier ${earlier.method} ${earlier.path}`,
+        );
+        continue;
+      }
+
+      const methodCovered = earlier.method === 'ALL' || earlier.method === later.method;
+      if (methodCovered && routeShapeCovers(earlierShape, laterShape)) {
+        conflicts.push(
+          `${later.method} ${later.path} is unreachable because earlier ${earlier.method} ${earlier.path} matches every request it could receive`,
+        );
+      }
+    }
+  }
+
+  if (conflicts.length > 0) {
+    throw new Error(`[stitchkit] conflicting raw routes:\n- ${conflicts.join('\n- ')}`);
+  }
 }

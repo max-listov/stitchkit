@@ -1,6 +1,7 @@
 export {
   type ClientConfig,
   type ClientContract,
+  type ClientFetch,
   type ClientRegistryValue,
   type ContractClientConfig,
   contractEndpointMatchers,

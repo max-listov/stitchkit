@@ -220,7 +220,7 @@ function prepareMcpTool(
         : '';
       reportIncompatible(
         `MCP tool "${mountable.name}" — input property "${untyped.path}" carries no type, enum or $ref${clue}. ` +
-          'A model is given no way to know what to send. Widen the contract, or list it in `allowUntyped` if it is deliberately free-form.',
+          'A model is given no way to know what to send. Use `z.json()` for an arbitrary JSON value; use `allowUntyped` only when the presentation value is genuinely not representable as JSON Schema.',
         policy === 'skip' ? 'warn' : policy,
         logger,
         failures,

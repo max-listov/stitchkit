@@ -98,6 +98,30 @@ describe('validateMcpSchemas({ requireTypedProperties })', () => {
     ).not.toThrow();
   });
 
+  test('z.json describes arbitrary JSON without an allowUntyped entry', () => {
+    const arbitraryJson = z.object({ payload: z.json() });
+    const jsonSchema = z.toJSONSchema(arbitraryJson, { unrepresentable: 'throw' });
+    expect(findUntypedProperties(jsonSchema)).toEqual([]);
+    expect(() =>
+      validateMcpSchemas({
+        services: [service(arbitraryJson)],
+        flattenUnionInput: true,
+        requireTypedProperties: true,
+        requirePortableFormats: true,
+      }),
+    ).not.toThrow();
+  });
+
+  test('the diagnostic points arbitrary JSON authors to z.json', () => {
+    expect(() =>
+      validateMcpSchemas({
+        services: [service(freeForm)],
+        flattenUnionInput: true,
+        requireTypedProperties: true,
+      }),
+    ).toThrow(/z\.json\(\).*allowUntyped/s);
+  });
+
   test('a fully typed contract passes', () => {
     const typed = z.object({ partIndex: z.number().int().min(0), text: z.string() });
     expect(() =>

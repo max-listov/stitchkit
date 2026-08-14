@@ -23,7 +23,7 @@ realtime, `@tanstack/react-query` + `react-query-kit` for React). See
 
 ## Entrypoints
 
-stitchkit ships eight entrypoints. Each is import-safe for one environment —
+stitchkit ships nine entrypoints. Each is import-safe for one environment —
 keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 
 | Import | Use in | Holds |
@@ -35,6 +35,7 @@ keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 | `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
 | `stitchkit/cli` | server | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
 | `stitchkit/observability` | server | request/tool event projections — `createObservability`, trace context, sanitisation |
+| `stitchkit/testing` | tests on Bun or Node | in-process generated clients over a real Fetch handler, without a TCP port |
 | `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server

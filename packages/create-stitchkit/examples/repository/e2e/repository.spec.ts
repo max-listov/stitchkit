@@ -1,4 +1,18 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
+
+async function gotoWithRealtime(page: Page): Promise<void> {
+  const connected = page
+    .waitForEvent('websocket', {
+      predicate: (socket) => socket.url().includes('/socket.io/'),
+    })
+    .then((socket) =>
+      socket.waitForEvent('framereceived', {
+        predicate: ({ payload }) => typeof payload === 'string' && payload.startsWith('40'),
+      }),
+    );
+  await page.goto('/en');
+  await connected;
+}
 
 test('prefetched data hydrates without a loading flash or a client refetch', async ({
   page,
@@ -26,17 +40,18 @@ test('prefetched data hydrates without a loading flash or a client refetch', asy
 });
 
 test('a server realtime event updates the TanStack cache without a client refetch', async ({
+  context,
   page,
 }) => {
-  await page.goto('/en');
+  await gotoWithRealtime(page);
   const summary = page.getByTestId('repository-summary');
   await expect(summary).toBeVisible();
   const before = await summary.getAttribute('data-fetched-at');
   expect(before).not.toBeNull();
 
-  // Sever the refetch path completely: the refresh mutation invalidates the
-  // query, but its refetch is aborted here — so the ONLY way the summary can
-  // carry a new snapshot is the Socket.IO event through the cache bridge.
+  // Sever the observer's HTTP read path completely, then refresh from a second
+  // tab. The observer never invokes the mutation and cannot consume its HTTP
+  // result, so only the Socket.IO event can update its TanStack cache.
   await page.route('**/api/repository', async (route) => {
     if (route.request().method() === 'GET') {
       await route.abort();
@@ -44,7 +59,9 @@ test('a server realtime event updates the TanStack cache without a client refetc
     }
     await route.continue();
   });
-  await page.getByRole('button', { name: 'Refresh repository data' }).click();
+  const trigger = await context.newPage();
+  await trigger.goto('/en');
+  await trigger.getByRole('button', { name: 'Refresh repository data' }).click();
   await expect(summary).not.toHaveAttribute('data-fetched-at', before ?? '', {
     timeout: 10_000,
   });

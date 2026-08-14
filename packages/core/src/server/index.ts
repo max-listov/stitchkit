@@ -57,7 +57,16 @@ export {
   staticRoute,
   weakETag,
 } from './file';
-export { createImplement, defineMultipartStream, implement } from './implement';
+export {
+  createImplement,
+  createImplementRegistry,
+  defineMultipartStream,
+  type ExactRegistryHandlers,
+  type ImplementationRegistry,
+  implement,
+  implementRegistry,
+  type RegistryHandlers,
+} from './implement';
 export type { LogFormat } from './logger';
 export {
   type AuthHook,

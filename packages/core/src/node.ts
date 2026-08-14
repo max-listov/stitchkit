@@ -15,7 +15,15 @@ export {
   unauthorized,
 } from './contract';
 export { createHandler } from './server/create';
-export { createImplement, implement } from './server/implement';
+export {
+  createImplement,
+  createImplementRegistry,
+  type ExactRegistryHandlers,
+  type ImplementationRegistry,
+  implement,
+  implementRegistry,
+  type RegistryHandlers,
+} from './server/implement';
 export type { LogFormat } from './server/logger';
 export { type NodeServerConfig, type NodeServerHandle, serveNode } from './server/node';
 export {

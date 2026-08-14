@@ -55,6 +55,30 @@ export const implement = createImplement<AppContext>()
 // every implement() call now has ctx.user typed
 ```
 
+### `implementRegistry` — one backend registry
+
+When contracts already live in one literal registry, bind the backend from that
+same source instead of maintaining a parallel `services` list:
+
+```ts
+import { implementRegistry } from 'stitchkit/server'
+
+export const apiServices = implementRegistry(apiContractRegistry, {
+  users: usersHandlers,
+  posts: postsHandlers,
+})
+```
+
+Every registry key is required, extra keys fail, and each handler map is checked
+against its own contract. The returned service order follows the contract
+registry order. `createImplementRegistry<AppContext>()` fixes the application
+context once, like `createImplement` does for a single contract. Runtime callers
+also fail first on missing/extra keys and duplicate contract prefixes.
+
+The registry is intentionally flat: every key must point to one concrete
+`defineContract()` result. Composed namespace arrays are mounted explicitly with
+`implement()` because they do not have a one-key-to-one-handler-map boundary.
+
 ## `createServer`
 
 `createServer(config)` builds the router and starts `Bun.serve()`. It returns
@@ -361,6 +385,21 @@ not retain the text. `maxJsonBodyBytes` may also be set once on `createServer` /
 `createHandler`; a route value wins. Both limits are opt-in and abort an
 oversized stream before it is fully buffered. → ADR 0051
 
+### Choosing an HTTP boundary
+
+| Need | Contract declaration | What remains framework-owned |
+|------|----------------------|------------------------------|
+| Typed JSON request/response | ordinary `input` / `output` | routing, auth, schemas, hooks, client, OpenAPI |
+| HMAC-signed JSON | `rawBody: true` + `input` / `output` | the same pipeline plus the exact decoded request text |
+| File upload | typed `multipart` descriptor | file cardinality/limits, text input validation and client form encoding |
+| File, stream or redirect response behind contract auth | `rawResponse: true` | request parsing, route identity, auth and typed URL/client surface |
+| Transport that cannot be expressed as the contract pipeline | `RawRoute` | only raw routing, CORS, request hook and error normalisation |
+
+`rawBody` is for JSON signatures: verify `ctx.rawBody` against the signature
+header, then use the already validated `ctx.input`. A provider-specific binary
+signature protocol, OAuth callback or WebSocket upgrade can be a real raw route,
+but it must own its validation and authorization explicitly.
+
 ## Typed JSON response metadata
 
 A JSON endpoint that must attach dynamic HTTP headers while preserving typed
@@ -527,6 +566,13 @@ wildcard — and the two combine: `/app/:slug/*filePath` matches `/app/x/a/b` wi
 `ctx.params.slug === 'x'` and the remainder in `ctx.params.filePath` (a SPA
 deep-link fallback). List more specific routes before the wildcard — the first
 match wins. `staticRoute()` builds a raw route that serves a directory.
+
+At startup Stitchkit rejects exact duplicates, equivalent parameter shapes
+(`/users/:id` vs `/users/:userId`) and any later raw route completely hidden by
+an earlier raw route. Partial overlap stays legal, including the recommended
+specific-before-wildcard order. `GET` and `HEAD` remain independent because that
+is how the actual raw matcher dispatches them. Raw-vs-contract overlap remains a
+startup diagnostic naming the bypassed contract identity and scope.
 
 ### Raw-route helpers
 

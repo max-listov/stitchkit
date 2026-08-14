@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.48.1] — 2026-08-14
+
+### Added
+
+- Added `implementRegistry` / `createImplementRegistry` so one literal contract
+  registry type-checks the complete backend implementation registry.
+- Added `stitchkit/testing` with in-process generated clients over a real Fetch
+  handler, including scoped, multipart, cancellation and error-correlation paths.
+- Added immutable observability status counters and a final drain report from
+  `close()` for readiness, metrics and shutdown diagnostics.
+- Added a one-argument `buildMcpServer(config)` form for no-auth MCP servers.
+
+### Fixed
+
+- Bun `ConnectionRefused` fetch failures now follow the configured safe HTTP
+  retry budget for allowed methods; domain errors, HTTP responses,
+  cancellation and timeouts retain their existing semantics.
+- Raw-route construction now fails first on exact/shape duplicates and fully
+  shadowed later routes while preserving legal specific-before-wildcard order.
+- Strict MCP schema guidance now distinguishes arbitrary JSON (`z.json()`) from
+  a genuinely unrepresentable unknown presentation value.
+
 ## [0.48.0] — 2026-08-14
 
 ### ⚠️ Breaking changes

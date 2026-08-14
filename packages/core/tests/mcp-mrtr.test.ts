@@ -441,7 +441,7 @@ describe('framework-owned MCP multi-round input', () => {
         'remove_project',
         { id: 'p1' },
         {
-          requestState: `${state.slice(0, -1)}x`,
+          requestState: `${state}x`,
           inputResponses,
         },
       ),

@@ -155,12 +155,12 @@ export class GitHubRepositoryCache {
 
     try {
       const [repositoryResponse, commitsResponse] = await Promise.all([
-        this.fetcher(new URL(`/repos/${repositoryName}`, 'https://api.github.com'), {
+        this.fetcher(new URL(`/repos/${repositoryName}`, env.GITHUB_API_URL), {
           headers: githubHeaders(),
           signal: AbortSignal.timeout(8_000),
         }),
         this.fetcher(
-          new URL(`/repos/${repositoryName}/commits?per_page=1`, 'https://api.github.com'),
+          new URL(`/repos/${repositoryName}/commits?per_page=1`, env.GITHUB_API_URL),
           { headers: githubHeaders(), signal: AbortSignal.timeout(8_000) },
         ),
       ]);

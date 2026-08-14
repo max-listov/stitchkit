@@ -33,6 +33,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
+| `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework testing adapters |
 | `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
@@ -41,7 +42,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
-| `HttpClientConfig` | _type_ | config for `createHttpClient` |
+| `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default — [details](../guide/client.md#createhttpclient) |
 | `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
 | `RequestOptions` | _type_ | per-call options — params, timeout, response type |
 | `HeaderProvider` | _type_ | static or per-request headers |
@@ -194,6 +195,11 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createHandler` | function | the router as a bare `(req) => Response` — [guide](../guide/server.md#createserver) |
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `createImplement` | function | fix the handler context type once |
+| `implementRegistry` | function | bind one exact contract registry to one exact backend handler registry |
+| `createImplementRegistry` | function | context-typed factory for `implementRegistry` |
+| `ImplementationRegistry` | _type_ | flat literal registry of concrete contracts accepted by `implementRegistry` |
+| `RegistryHandlers` | _type_ | exact backend handler registry inferred from a contract registry |
+| `ExactRegistryHandlers` | _type_ | fail-first handler shape that rejects extra registry and endpoint keys |
 | `staticRoute` | function | a raw route that serves a directory |
 | `serveFile` | function | serve a file with `Range` / `304` / `HEAD` — [guide](../guide/server.md#serving-files--range-requests) |
 | `parseByteRange` | function | parse a single `Range` header → range / `unsatisfiable` / `null` |
@@ -343,7 +349,11 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
-| `Observability` | _type_ | `{ request?, toolCall, flush(), close() }` with bounded sink lifecycle |
+| `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(), close() }` with bounded sink lifecycle |
+| `ObservabilitySinkStatus` | _type_ | immutable counters for one bounded request/tool sink |
+| `ObservabilityStatus` | _type_ | per-surface plus aggregate operational snapshot |
+| `ObservabilityDrainReport` | _type_ | final closed/drained snapshot plus duration |
+| `ObservabilitySinkStatusSchema` / `ObservabilityStatusSchema` / `ObservabilityDrainReportSchema` | schema | runtime schemas for status/report integration boundaries |
 | `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
 | `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture |
 | `SinkDropReason` | _type_ | `'capacity' \| 'closed'` |
@@ -410,7 +420,7 @@ payload.
 | `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
 | `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
 | `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
-| `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces — the transport-neutral core |
+| `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
@@ -569,6 +579,22 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
+
+---
+
+## `stitchkit/testing`
+
+Fetch-only integration helpers that preserve the real generated-client and
+handler pipeline without opening a TCP port.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createHandlerTestClient` | function | one contract client backed by an in-process `FetchHandler` |
+| `createHandlerTestClients` | function | exact contract-registry batch form |
+| `HandlerTestClientDefaults` | _type_ | ordinary bare-client defaults with handler-owned `baseUrl` and `fetch` removed |
+| `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
+| `HandlerTestClientsConfig` | _type_ | batch helper configuration |
+| `HandlerTestTransportConfig` | _type_ | shared in-process handler, origin, prefix, client defaults and optional server handle |
 
 ---
 

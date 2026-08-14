@@ -6,7 +6,7 @@ import type {
   RuntimeContext,
 } from '../contract';
 import { mergeMeta } from '../contract/define';
-import { callRuntimeHandler, typedEntries } from '../internal/typed';
+import { callRuntimeHandler, isRecord, typedEntries } from '../internal/typed';
 import type {
   EndpointHandlerContext,
   Handlers,
@@ -92,10 +92,7 @@ const HTTP_ONLY = Object.freeze(['HTTP'] as const);
  * Pass `TCtx` for a typed handler context — or use `createImplement` to fix it
  * once.
  */
-export function implement<
-  T extends Record<string, EndpointDef>,
-  TCtx extends RuntimeContext = RuntimeContext,
->(contract: ContractDef<T, string>, handlers: Handlers<T, TCtx>): ServiceDef {
+function bindContract(contract: ContractDef, handlers: Record<string, unknown>): ServiceDef {
   const methods: Record<string, MethodDef<unknown, unknown, unknown>> = {};
 
   // Effective scope of the whole contract — endpoints inherit it unless they
@@ -104,7 +101,7 @@ export function implement<
   const groupScope = contract.meta.scope ?? 'public';
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
-    const typedHandler = handlers[key];
+    const typedHandler = handlers[String(key)];
     const isStreaming = endpoint.multipart?.delivery === 'stream';
     if (!isStreaming && typeof typedHandler !== 'function') {
       throw new Error(
@@ -185,6 +182,13 @@ export function implement<
   };
 }
 
+export function implement<
+  T extends Record<string, EndpointDef>,
+  TCtx extends RuntimeContext = RuntimeContext,
+>(contract: ContractDef<T, string>, handlers: Handlers<T, TCtx>): ServiceDef {
+  return bindContract(contract, handlers);
+}
+
 /**
  * Fix the handler context type once — `const implement =
  * createImplement<MyContext>()` — so each `implement()` call site stays free of
@@ -195,4 +199,120 @@ export function createImplement<TCtx extends RuntimeContext>() {
     contract: ContractDef<T, string>,
     handlers: Handlers<T, TCtx>,
   ): ServiceDef => implement(contract, handlers);
+}
+
+type ImplementationContract = ContractDef<Record<string, EndpointDef>, string>;
+export type ImplementationRegistry = Record<
+  string,
+  ContractDef<Record<string, EndpointDef>, string>
+>;
+
+function isImplementationContract(value: unknown): value is ImplementationContract {
+  return (
+    isRecord(value) &&
+    isRecord(value.meta) &&
+    typeof value.meta.prefix === 'string' &&
+    isRecord(value.endpoints)
+  );
+}
+
+/** Exact handlers map derived from a literal contract registry. */
+export type RegistryHandlers<
+  TContracts extends ImplementationRegistry,
+  TCtx extends RuntimeContext = RuntimeContext,
+> = {
+  [K in keyof TContracts]: TContracts[K] extends ContractDef<infer TEndpoints, string>
+    ? Handlers<TEndpoints, TCtx>
+    : never;
+};
+
+export type ExactRegistryHandlers<
+  TContracts extends ImplementationRegistry,
+  THandlers extends RegistryHandlers<TContracts, TCtx>,
+  TCtx extends RuntimeContext,
+> = THandlers &
+  RegistryHandlers<TContracts, TCtx> &
+  Record<Exclude<keyof THandlers, keyof TContracts>, never> & {
+    [K in keyof THandlers & keyof TContracts]: THandlers[K] &
+      Record<Exclude<keyof THandlers[K], keyof RegistryHandlers<TContracts, TCtx>[K]>, never>;
+  };
+
+function bindRegistry(
+  contracts: ImplementationRegistry,
+  handlers: Record<string, unknown>,
+): ServiceDef[] {
+  const contractKeys = Object.keys(contracts);
+  const handlerKeys = Object.keys(handlers);
+  const missing = contractKeys.filter((key) => !Object.hasOwn(handlers, key));
+  const extra = handlerKeys.filter((key) => !Object.hasOwn(contracts, key));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `[stitchkit] implementRegistry: registry mismatch (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`,
+    );
+  }
+
+  const prefixes = new Map<string, string>();
+  const services: ServiceDef[] = [];
+  for (const [key, candidate] of Object.entries(contracts)) {
+    if (!isImplementationContract(candidate)) {
+      throw new TypeError(
+        `[stitchkit] implementRegistry: registry entry "${key}" must be one contract; composed arrays and namespaces are not supported`,
+      );
+    }
+    const contract = candidate;
+    const previousKey = prefixes.get(contract.meta.prefix);
+    if (previousKey !== undefined) {
+      throw new Error(
+        `[stitchkit] implementRegistry: duplicate contract prefix "${contract.meta.prefix}" at "${previousKey}" and "${key}"`,
+      );
+    }
+    prefixes.set(contract.meta.prefix, key);
+    const entryHandlers = handlers[key];
+    if (!isRecord(entryHandlers)) {
+      throw new TypeError(
+        `[stitchkit] implementRegistry: handlers for "${key}" must be an object`,
+      );
+    }
+    const endpointKeys = Object.keys(contract.endpoints);
+    const handlerEntryKeys = Object.keys(entryHandlers);
+    const missingEndpoints = endpointKeys.filter(
+      (endpointKey) => !Object.hasOwn(entryHandlers, endpointKey),
+    );
+    const extraEndpoints = handlerEntryKeys.filter(
+      (endpointKey) => !Object.hasOwn(contract.endpoints, endpointKey),
+    );
+    if (missingEndpoints.length > 0 || extraEndpoints.length > 0) {
+      throw new Error(
+        `[stitchkit] implementRegistry: handlers for "${key}" mismatch (missing: ${missingEndpoints.join(', ') || 'none'}; extra: ${extraEndpoints.join(', ') || 'none'})`,
+      );
+    }
+    services.push(bindContract(contract, entryHandlers));
+  }
+  return services;
+}
+
+/**
+ * Bind an exact `name → contract` registry to its exact handlers map. Missing,
+ * extra and endpoint-incompatible implementations fail at compile time; loose
+ * JavaScript callers receive the same checks at runtime.
+ */
+export function implementRegistry<
+  const TContracts extends ImplementationRegistry,
+  const THandlers extends RegistryHandlers<TContracts>,
+>(
+  contracts: TContracts,
+  handlers: ExactRegistryHandlers<TContracts, THandlers, RuntimeContext>,
+): ServiceDef[] {
+  return bindRegistry(contracts, handlers);
+}
+
+/** Fix one handler context type for every entry in an implementation registry. */
+export function createImplementRegistry<TCtx extends RuntimeContext>() {
+  return <
+    const TContracts extends ImplementationRegistry,
+    const THandlers extends RegistryHandlers<TContracts, TCtx>,
+  >(
+    contracts: TContracts,
+    handlers: ExactRegistryHandlers<TContracts, THandlers, TCtx>,
+  ): ServiceDef[] => bindRegistry(contracts, handlers);
 }

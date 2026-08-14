@@ -22,12 +22,14 @@ import {
 import {
   createHandler,
   implement,
+  implementRegistry,
   type LifecycleHooks,
   type LogFormat,
   type LoggingConfig,
   type MethodDef,
   type StitchLogger,
 } from 'stitchkit/server';
+import { createHandlerTestClient } from 'stitchkit/testing';
 import { z } from 'zod';
 
 // Declared locally on purpose. The fixture runs with `types: []` so that the
@@ -80,6 +82,64 @@ const service = implement(widgets, {
     return { id: 'complete' };
   },
 });
+
+const registryServices = implementRegistry(
+  { widgets },
+  {
+    widgets: {
+      get: ({ params }) => ({ id: params.id }),
+      complete: () => ({ id: 'complete' }),
+    },
+  },
+);
+check(
+  'the packed implementation registry binds every declared contract',
+  registryServices.length === 1 && registryServices[0]?.name === 'widgets',
+);
+
+if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+  // @ts-expect-error every registry contract requires a handlers entry
+  implementRegistry({ widgets }, {});
+  implementRegistry(
+    { widgets },
+    {
+      widgets: {
+        get: ({ params }) => ({ id: params.id }),
+        complete: () => ({ id: 'complete' }),
+      },
+      // @ts-expect-error handlers cannot add a contract absent from the registry
+      extra: {},
+    },
+  );
+  implementRegistry(
+    { widgets },
+    {
+      // @ts-expect-error every contract endpoint requires an implementation
+      widgets: {},
+    },
+  );
+  implementRegistry(
+    { widgets },
+    {
+      widgets: {
+        get: ({ params }) => ({ id: params.id }),
+        complete: () => ({ id: 'complete' }),
+        // @ts-expect-error contract does not declare an extra endpoint handler
+        extra: () => undefined,
+      },
+    },
+  );
+  implementRegistry(
+    { widgets },
+    {
+      widgets: {
+        // @ts-expect-error endpoint output must match its contract schema
+        get: ({ params }) => ({ wrong: params.id }),
+        complete: () => ({ id: 'complete' }),
+      },
+    },
+  );
+}
 
 // ── types a consumer is required to name ─────────────────────────────────────
 // Each of these is a public signature's type. If one stops being exported this
@@ -134,6 +194,15 @@ async function callWith(logConfig: LoggingConfig, path: string): Promise<string[
   }
   return lines;
 }
+
+const testApi = createHandlerTestClient({
+  contract: widgets,
+  handler: createHandler({ services: registryServices }),
+});
+check(
+  'the packed testing entrypoint runs a generated client through a real handler',
+  (await testApi.get({ id: 'packed-test' })).id === 'packed-test',
+);
 
 const json = await callWith(logging, '/widgets/w1');
 check('json format writes exactly one line', json.length === 1, json);

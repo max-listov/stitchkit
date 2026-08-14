@@ -5,7 +5,33 @@
 stitchkit's own test suite runs on `bun:test`. The contract makes most of an
 API testable without a live socket.
 
-### Test handlers in process
+### Test generated clients in process
+
+`createHandlerTestClient` runs the real generated client against the real Fetch
+handler without opening a TCP port. It keeps URL construction, headers/cookies,
+multipart encoding, cancellation, output validation, `ApiError` and
+`x-request-id` correlation in the test path:
+
+```ts
+import { createHandlerTestClient } from 'stitchkit/testing'
+
+const api = createHandlerTestClient({
+  contract: notes,
+  handler,
+  pathPrefix: 'api',
+  client: { headers: { cookie: 'session=test' } },
+})
+
+expect(await api.create({ text: 'hi' })).toEqual({ id: '1', text: 'hi' })
+```
+
+`contractConfig` accepts the same scoped `pathPrefix` / `stripPrefixKeys` as
+`createClient`. `createHandlerTestClients` is the batch form for a literal
+contract registry. Both helpers are Fetch-only: they construct ordinary
+absolute `Request` objects and call `createHandler` directly, so Bun and Node
+exercise the same framework pipeline.
+
+### Test handlers with raw Requests
 
 `createHandler` is the router as a plain `(req) => Promise<Response>` function —
 no `Bun.serve`, no port. Drive it with a `Request`:
@@ -35,8 +61,8 @@ test('create returns the note', async () => {
 })
 ```
 
-This exercises the full pipeline — routing, schema parsing, hooks, the error
-envelope — with no network.
+This lower-level form exercises the same pipeline while letting a test inspect
+the raw `Response` itself.
 
 ### Test handlers directly
 

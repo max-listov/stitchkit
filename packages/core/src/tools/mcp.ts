@@ -272,10 +272,15 @@ export type McpServerBuildConfig<
  * Build an `McpServer` from contract services for a resolved identity.
  * Transport-agnostic — the shared core behind every MCP transport.
  */
+export function buildMcpServer(config: McpServerBuildConfig<undefined>): McpServer;
 export function buildMcpServer<TAuth>(
   config: McpServerBuildConfig<TAuth>,
   auth: TAuth,
-): McpServer {
+): McpServer;
+export function buildMcpServer(config: unknown, auth?: unknown): McpServer {
+  if (!isMcpServerBuildConfig(config)) {
+    throw new TypeError('[stitchkit] buildMcpServer requires a valid config object');
+  }
   let surface: McpSurfaceDefinition;
   if (config.surfaces) {
     const key = config.selectSurface(auth);
@@ -305,6 +310,10 @@ export function buildMcpServer<TAuth>(
     },
   });
   return buildMcpServerFromPrepared(config, auth, prepared);
+}
+
+function isMcpServerBuildConfig(value: unknown): value is McpServerBuildConfig<unknown> {
+  return isRecord(value) && isRecord(value.serverInfo);
 }
 
 /** Build one fresh server from a deterministic surface prepared by its owner. */

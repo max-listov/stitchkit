@@ -9,6 +9,15 @@ import type { ToolCallHooks, ToolResult } from '../tools/execute';
 import { getRequestContext, type RequestContext } from './context';
 import type { RequestEvent } from './event';
 import { measureSize, type SanitizeOptions, sanitizePayload } from './sanitize';
+import {
+  aggregateObservabilityStatus,
+  type ObservabilityDrainReport,
+  ObservabilityDrainReportSchema,
+  type ObservabilitySinkStatus,
+  ObservabilitySinkStatusSchema,
+  type ObservabilityStatus,
+  ObservabilityStatusSchema,
+} from './status';
 import { childSpan, createTraceContext } from './trace';
 
 /** One isolated RequestEvent sink and its sanitisation policy. */
@@ -73,8 +82,10 @@ export interface Observability {
   toolCall: ToolCallHooks;
   /** Wait for events admitted before this call. */
   flush(): Promise<void>;
+  /** Read an immutable snapshot of each enabled sink and their aggregate. */
+  getStatus(): ObservabilityStatus;
   /** Stop admission and drain every previously accepted event. Idempotent. */
-  close(): Promise<void>;
+  close(): Promise<ObservabilityDrainReport>;
 }
 
 /** Pull a human-readable message out of a failed `ToolResult`. */
@@ -151,7 +162,8 @@ const DEFAULT_MAX_PENDING = 1000;
 interface SinkManager {
   submit(produce: () => RequestEvent | Promise<RequestEvent>): void;
   flush(): Promise<void>;
-  close(): Promise<void>;
+  getStatus(): ObservabilitySinkStatus;
+  close(): Promise<ObservabilitySinkStatus>;
 }
 
 function invokeIsolated(callback: (() => void | Promise<void>) | undefined): void {
@@ -171,7 +183,14 @@ function createSinkManager(config: RequestEventSinkConfig): SinkManager {
 
   let sequence = 0;
   let closed = false;
-  let closePromise: Promise<void> | undefined;
+  let received = 0;
+  let accepted = 0;
+  let filtered = 0;
+  let completed = 0;
+  let dropped = 0;
+  let failed = 0;
+  let preparationFailed = 0;
+  let closePromise: Promise<ObservabilitySinkStatus> | undefined;
   const preparing = new Map<number, Promise<void>>();
   const writes = new Map<number, Promise<void>>();
 
@@ -191,18 +210,30 @@ function createSinkManager(config: RequestEventSinkConfig): SinkManager {
   };
   const admit = (id: number, event: RequestEvent): void => {
     try {
-      if (config.filter && !config.filter(event)) return;
+      if (config.filter && !config.filter(event)) {
+        filtered += 1;
+        return;
+      }
     } catch (error) {
+      preparationFailed += 1;
       reportError(error, event);
       return;
     }
     if (writes.size >= maxPending) {
+      dropped += 1;
       reportDrop('capacity', event);
       return;
     }
+    accepted += 1;
     const write = Promise.resolve()
       .then(() => config.write(event))
-      .catch((error) => reportError(error, event))
+      .then(() => {
+        completed += 1;
+      })
+      .catch((error) => {
+        failed += 1;
+        reportError(error, event);
+      })
       .finally(() => writes.delete(id));
     writes.set(id, write);
   };
@@ -215,28 +246,67 @@ function createSinkManager(config: RequestEventSinkConfig): SinkManager {
 
   return {
     submit(produce) {
+      received += 1;
       const id = ++sequence;
       if (closed) {
         void Promise.resolve()
           .then(produce)
-          .then((event) => reportDrop('closed', event))
-          .catch((error) => reportError(error));
+          .then((event) => {
+            dropped += 1;
+            reportDrop('closed', event);
+          })
+          .catch((error) => {
+            preparationFailed += 1;
+            reportError(error);
+          });
         return;
       }
       const preparation = Promise.resolve()
         .then(produce)
         .then((event) => admit(id, event))
-        .catch((error) => reportError(error))
+        .catch((error) => {
+          preparationFailed += 1;
+          reportError(error);
+        })
         .finally(() => preparing.delete(id));
       preparing.set(id, preparation);
     },
     flush() {
       return awaitGeneration(sequence);
     },
+    getStatus() {
+      return ObservabilitySinkStatusSchema.parse({
+        capacity: maxPending,
+        received,
+        accepted,
+        filtered,
+        completed,
+        dropped,
+        failed,
+        preparationFailed,
+        preparing: preparing.size,
+        pending: writes.size,
+        closed,
+      });
+    },
     close() {
       if (closePromise) return closePromise;
       closed = true;
-      closePromise = awaitGeneration(sequence);
+      closePromise = awaitGeneration(sequence).then(() =>
+        ObservabilitySinkStatusSchema.parse({
+          capacity: maxPending,
+          received,
+          accepted,
+          filtered,
+          completed,
+          dropped,
+          failed,
+          preparationFailed,
+          preparing: preparing.size,
+          pending: writes.size,
+          closed,
+        }),
+      );
       return closePromise;
     },
   };
@@ -245,7 +315,8 @@ function createSinkManager(config: RequestEventSinkConfig): SinkManager {
 export function createObservability(config: ObservabilityConfig): Observability {
   const requestManager = config.request ? createSinkManager(config.request) : undefined;
   const toolManager = config.tools ? createSinkManager(config.tools) : undefined;
-  let closePromise: Promise<void> | undefined;
+  let closed = false;
+  let closePromise: Promise<ObservabilityDrainReport> | undefined;
   const request: HttpRequestObserver | undefined = config.request
     ? {
         includePayload: config.request.includePayload ?? false,
@@ -357,16 +428,38 @@ export function createObservability(config: ObservabilityConfig): Observability 
       }
     : undefined;
 
+  const getStatus = (): ObservabilityStatus => {
+    const requestStatus = requestManager?.getStatus();
+    const toolsStatus = toolManager?.getStatus();
+    const surfaces = [requestStatus, toolsStatus].filter(
+      (status): status is ObservabilitySinkStatus => status !== undefined,
+    );
+    return ObservabilityStatusSchema.parse({
+      ...(requestStatus && { request: requestStatus }),
+      ...(toolsStatus && { tools: toolsStatus }),
+      total: aggregateObservabilityStatus(surfaces, closed),
+    });
+  };
+
   return {
     ...(request && { request }),
     toolCall: toolCall ?? {},
     async flush() {
       await Promise.all([requestManager?.flush(), toolManager?.flush()]);
     },
+    getStatus,
     close() {
       if (!closePromise) {
+        closed = true;
+        const startedAt = performance.now();
         closePromise = Promise.all([requestManager?.close(), toolManager?.close()]).then(
-          () => undefined,
+          () => {
+            const status = getStatus();
+            return ObservabilityDrainReportSchema.parse({
+              ...status,
+              durationMs: performance.now() - startedAt,
+            });
+          },
         );
       }
       return closePromise;

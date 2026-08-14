@@ -63,8 +63,12 @@ function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<un
 }
 
 /** Config for the built-in fetch client — used when no `HttpClient` is passed. */
+export type ClientFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface ClientConfig {
   baseUrl: string;
+  /** Override Web Fetch delivery while preserving the complete client pipeline. */
+  fetch?: ClientFetch;
   timeout?: number;
   headers?: Record<string, string> | (() => Record<string, string>);
   credentials?: RequestCredentials;
@@ -377,6 +381,7 @@ function createFetchExecutor<K extends string>(
   config: ClientConfig,
   contractConfig?: ContractClientConfig<K>,
 ): ClientRequestExecutor {
+  const executeFetch = config.fetch ?? globalThis.fetch;
   return async (requestArgs, options) => {
     const plan = planClientRequest(endpoint, prefix, requestArgs, contractConfig);
     const url = joinClientBaseUrl(config.baseUrl, plan.relativeUrl);
@@ -411,7 +416,7 @@ function createFetchExecutor<K extends string>(
           : hasBody
             ? JSON.stringify(plan.remainingArgs)
             : undefined;
-        const res = await fetch(url, {
+        const res = await executeFetch(url, {
           method: endpoint.method,
           headers,
           credentials: config.credentials,

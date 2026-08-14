@@ -6,6 +6,14 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Repository refresh and realtime verification are deterministic.** A successful
+  refresh updates the initiating browser from its typed mutation result, remote
+  browsers still update through the Socket.IO cache bridge, and the release lane
+  exercises the complete backend path against a local GitHub-compatible upstream
+  instead of depending on public API availability.
+
 ## [0.3.0] — 2026-08-10
 
 ### ⚠️ Breaking changes

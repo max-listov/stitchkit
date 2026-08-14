@@ -38,6 +38,7 @@ const ENTRYPOINTS = {
   'stitchkit/tools': 'tools.d.ts',
   'stitchkit/cli': 'cli.d.ts',
   'stitchkit/observability': 'observability/index.d.ts',
+  'stitchkit/testing': 'testing.d.ts',
   'stitchkit/react': 'react.d.ts',
 };
 

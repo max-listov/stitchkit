@@ -42,6 +42,14 @@ export {
   truncatePreview,
 } from './sanitize';
 export {
+  type ObservabilityDrainReport,
+  ObservabilityDrainReportSchema,
+  type ObservabilitySinkStatus,
+  ObservabilitySinkStatusSchema,
+  type ObservabilityStatus,
+  ObservabilityStatusSchema,
+} from './status';
+export {
   childSpan,
   createTraceContext,
   formatTraceparent,

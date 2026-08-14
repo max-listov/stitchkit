@@ -22,16 +22,17 @@ const entrypoints = [
   'stitchkit/tools',
   'stitchkit/node',
   'stitchkit/observability',
+  'stitchkit/testing',
 ];
 for (const name of entrypoints) {
   await import(name);
   console.log(`import ${name}: OK`);
 }
 
-const { defineContract, defineRealtimeContract } = await import('stitchkit');
-const { bindRealtimeServer, createSocketIOServer, implement, serveNode } = await import(
-  'stitchkit/node'
-);
+const { createHttpClient, defineContract, defineRealtimeContract } = await import('stitchkit');
+const { bindRealtimeServer, createHandler, createSocketIOServer, implement, serveNode } =
+  await import('stitchkit/node');
+const { createHandlerTestClient } = await import('stitchkit/testing');
 const { z } = await import('zod');
 
 // 2 — serveNode HTTP round-trip.
@@ -55,6 +56,21 @@ const service = implement(contract, {
   },
 });
 
+const inProcessHandler = createHandler({
+  groups: [{ pathPrefix: '/api', services: [service] }],
+});
+const inProcessApi = createHandlerTestClient({
+  contract,
+  handler: inProcessHandler,
+  pathPrefix: 'api',
+});
+assert.deepEqual(
+  await inProcessApi.ping(),
+  { ok: true },
+  'testing entrypoint should drive the generated client through a Fetch handler on Node',
+);
+console.log('in-process generated-client round-trip: OK');
+
 // Port 0 — the kernel picks a free one and the handle reports it back. A fixed
 // number is a scheduled flake: an ephemeral range that starts at 1024 lets any
 // outgoing connection on the machine hold it.
@@ -77,7 +93,109 @@ assert.deepEqual(
 console.log('serveNode HTTP round-trip: OK');
 await http.close();
 
-// 3 — serveNode + Socket.IO round-trip (WebSocket).
+// 3 — Node's native fetch classification remains intact when Stitchkit adds
+// its narrow Bun adapter. The backend starts only after the first native fetch
+// has rejected, so success proves a real second transport attempt.
+const { createServer: createNativeNodeServer } = await import('node:http');
+const reservation = createNativeNodeServer((_request, response) => response.end());
+await new Promise((resolve, reject) => {
+  reservation.once('error', reject);
+  reservation.listen(0, '127.0.0.1', resolve);
+});
+const reservedAddress = reservation.address();
+assert.notEqual(reservedAddress, null, 'port reservation should expose an address');
+assert.equal(typeof reservedAddress, 'object', 'port reservation should expose a TCP address');
+const retryPort = reservedAddress.port;
+await new Promise((resolve, reject) =>
+  reservation.close((error) => (error ? reject(error) : resolve())),
+);
+
+const nativeFetch = globalThis.fetch;
+let nativeAttempts = 0;
+let resolveFirstFailure = () => undefined;
+const firstFailure = new Promise((resolve) => {
+  resolveFirstFailure = resolve;
+});
+let resolveServerListening = () => undefined;
+let rejectServerListening = () => undefined;
+const serverListening = new Promise((resolve, reject) => {
+  resolveServerListening = resolve;
+  rejectServerListening = reject;
+});
+globalThis.fetch = async (input, init) => {
+  nativeAttempts += 1;
+  try {
+    return await nativeFetch(input, init);
+  } catch (error) {
+    if (nativeAttempts === 1) {
+      resolveFirstFailure(error);
+      await serverListening;
+    }
+    throw error;
+  }
+};
+
+let lateServer;
+try {
+  const retryClient = createHttpClient({ baseUrl: `http://127.0.0.1:${retryPort}` });
+  const pendingRetry = retryClient.get('/retry');
+  void pendingRetry.catch(() => undefined);
+  let failureTimer;
+  try {
+    await Promise.race([
+      firstFailure,
+      new Promise((_resolve, reject) => {
+        failureTimer = setTimeout(
+          () => reject(new Error('first Node fetch did not fail')),
+          5_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(failureTimer);
+  }
+  lateServer = createNativeNodeServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ ok: true }));
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      lateServer.once('error', reject);
+      lateServer.listen(retryPort, '127.0.0.1', resolve);
+    });
+    resolveServerListening();
+  } catch (error) {
+    rejectServerListening(error);
+    throw error;
+  }
+  let retryTimer;
+  let retryResult;
+  try {
+    retryResult = await Promise.race([
+      pendingRetry,
+      new Promise((_resolve, reject) => {
+        retryTimer = setTimeout(
+          () => reject(new Error('Node network retry did not complete')),
+          10_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(retryTimer);
+  }
+  assert.deepEqual(retryResult, { ok: true });
+  assert.equal(nativeAttempts, 2, 'Node retry should perform exactly two native fetches');
+  console.log('Node network retry round-trip: OK');
+} finally {
+  globalThis.fetch = nativeFetch;
+  if (lateServer) {
+    await new Promise((resolve, reject) =>
+      lateServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}
+
+// 4 — serveNode + Socket.IO round-trip (WebSocket).
 const { io: ioClient } = await import('socket.io-client');
 const socket = await createSocketIOServer({ cors: { origin: '*' } });
 const realtimeContract = defineRealtimeContract({

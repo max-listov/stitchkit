@@ -31,7 +31,7 @@ without repeating transport configuration.
 | `baseUrl` | — | URL prefix for every request |
 | `timeout` | `30000` | request timeout, ms |
 | `credentials` | `'include'` | fetch credentials mode |
-| `retry` | 2× GET, network errors only | transport retry policy |
+| `retry` | 2 retries after the initial GET; network errors only | transport retry policy |
 | `headers` | — | extra headers — an object, or a function re-run per request |
 | `suppressUnauthorizedFor` | `[]` | exact contract-derived operation matchers whose expected 401 does not emit `unauthorized` |
 | `parseError` | built-in | map an error body to `{ code, message, details, hint }` |
@@ -57,7 +57,10 @@ end-to-end. A `traceparent` you set yourself (via `headers`) always wins.
 Retry is deliberately conservative: only a connection that never landed (a
 network error), only on idempotent `GET`. A server that *responded* with a 5xx
 is the data layer's call (TanStack Query), not the transport's — retrying in
-both places multiplies attempts.
+both places multiplies attempts. `retry.limit` counts retries after the initial
+attempt, so the default `2` permits at most three total attempts. The default
+`statusCodes: []` does not replay HTTP responses; explicit `methods` or
+`statusCodes` expand that policy when a project has a proven idempotent case.
 
 ## `createClient`
 

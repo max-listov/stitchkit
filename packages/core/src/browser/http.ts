@@ -1,4 +1,10 @@
-import ky, { isHTTPError, type KyInstance, type Options } from 'ky';
+import ky, {
+  isHTTPError,
+  isNetworkError,
+  isTimeoutError,
+  type KyInstance,
+  type Options,
+} from 'ky';
 import type { ErrorEnvelope } from '../contract';
 import { isRecord, transportResult } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
@@ -33,6 +39,25 @@ export class ApiError extends Error {
   }
 }
 
+/** @internal Narrow adapter for a Bun fetch error Ky does not classify. */
+export function shouldRetryBunNetworkError(error: unknown): true | undefined {
+  if (
+    ApiError.is(error) ||
+    isHTTPError(error) ||
+    isNetworkError(error) ||
+    isTimeoutError(error) ||
+    error instanceof RequestCancellationError ||
+    (error instanceof DOMException &&
+      (error.name === 'AbortError' || error.name === 'TimeoutError'))
+  ) {
+    return undefined;
+  }
+  if (!(error instanceof Error)) return undefined;
+
+  const code = Object.getOwnPropertyDescriptor(error, 'code');
+  return code && 'value' in code && code.value === 'ConnectionRefused' ? true : undefined;
+}
+
 /**
  * Parse a response body into an `ErrorEnvelope['error']` — the default
  * `HttpClientConfig.parseError`. Returns `null` when the body is not a
@@ -60,10 +85,11 @@ export interface HttpClientConfig {
   timeout?: number;
   credentials?: RequestCredentials;
   /**
-   * Transport retry. Defaults: 2 attempts, GET only, network errors only
-   * (empty `statusCodes`). Retrying a server that *responded* (5xx) belongs
-   * in the data layer (e.g. TanStack Query), not the transport — keeping it
-   * here too would multiply attempts. Override per project if really needed.
+   * Transport retry. `limit` counts retries after the initial attempt, so the
+   * default `2` permits at most three total attempts. Defaults: GET only and
+   * network errors only (`statusCodes: []`). Retrying a server that responded
+   * belongs in the data layer unless `methods` / `statusCodes` explicitly
+   * expand this transport policy.
    */
   retry?: { limit?: number; methods?: string[]; statusCodes?: number[] };
   parseError?: (body: unknown) => ErrorEnvelope['error'] | null;
@@ -157,6 +183,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       limit: config.retry?.limit ?? 2,
       methods: config.retry?.methods ?? ['get'],
       statusCodes: config.retry?.statusCodes ?? [],
+      shouldRetry: ({ error }) => shouldRetryBunNetworkError(error),
     },
     hooks: {
       beforeRequest: [

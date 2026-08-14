@@ -30,8 +30,8 @@ export function RepositorySummary() {
   const queryClient = useQueryClient();
   const repository = useRepository();
   const refresh = useRefreshRepository({
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: useRepository.getKey() });
+    onSuccess: (snapshot) => {
+      queryClient.setQueryData(useRepository.getKey(), snapshot);
     },
   });
 

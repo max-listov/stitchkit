@@ -116,6 +116,53 @@ function freePort(): number {
   return port;
 }
 
+function startGitHubFixture(): ReturnType<typeof Bun.serve> {
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url);
+      if (request.method !== 'GET') return new Response(null, { status: 405 });
+
+      if (url.pathname === '/repos/max-listov/stitchkit') {
+        return Response.json({
+          full_name: 'max-listov/stitchkit',
+          description: 'Contract-first backend framework for Bun and Node',
+          html_url: 'https://github.com/max-listov/stitchkit',
+          language: 'TypeScript',
+          visibility: 'public',
+          stargazers_count: 2,
+          forks_count: 0,
+          open_issues_count: 0,
+        });
+      }
+
+      if (url.pathname === '/repos/max-listov/stitchkit/commits') {
+        const lastPage = new URL(
+          '/repos/max-listov/stitchkit/commits?per_page=1&page=57',
+          server.url,
+        );
+        return Response.json(
+          [
+            {
+              sha: '4fb99240c34b28da95ea3ac2f43f7132244a97c0',
+              commit: {
+                message: 'release(core): ship operational APIs and Bun retry in 0.48.1',
+                author: { date: '2026-08-14T12:00:00.000Z' },
+                committer: { date: '2026-08-14T12:00:00.000Z' },
+              },
+            },
+          ],
+          { headers: { Link: `<${lastPage}>; rel="last"` } },
+        );
+      }
+
+      return new Response(null, { status: 404 });
+    },
+  });
+  return server;
+}
+
 async function waitFor(
   url: string,
   processName: string,
@@ -258,6 +305,11 @@ try {
     }
 
     const database = await createStarterLaneDatabase(mode);
+    const githubFixture = example === 'repository' ? startGitHubFixture() : undefined;
+    const githubApiUrl = githubFixture?.url.origin;
+    if (example === 'repository' && !githubApiUrl) {
+      throw new Error('Repository starter lane requires its GitHub fixture');
+    }
     try {
       const webPort = freePort();
       const apiPort = freePort();
@@ -276,6 +328,7 @@ try {
       ];
       if (example === 'repository') {
         environmentLines.push(
+          `GITHUB_API_URL=${githubApiUrl}`,
           'GITHUB_REPOSITORY=max-listov/stitchkit',
           'GITHUB_CACHE_TTL_SECONDS=900',
         );
@@ -296,6 +349,7 @@ try {
         PLAYWRIGHT_BASE_URL: webOrigin,
         LOG_FORMAT: 'json',
         ...(example === 'repository' && {
+          GITHUB_API_URL: githubApiUrl,
           GITHUB_REPOSITORY: 'max-listov/stitchkit',
           GITHUB_CACHE_TTL_SECONDS: '900',
         }),
@@ -411,6 +465,7 @@ try {
         `Packed ${variant} starter ${mode} lane passed with stitchkit ${installedVersion} (${mode === 'target' ? templateTarget : 'local HEAD'}) across DB, HTTP, OpenAPI, Socket.IO, MCP, CLI, Chromium and WebKit`,
       );
     } finally {
+      await githubFixture?.stop(true);
       await database.dispose();
     }
   }

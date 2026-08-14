@@ -63,6 +63,13 @@ describe('managed observability sink lifecycle', () => {
     await observability.flush();
     await Promise.resolve();
     expect(failures).toEqual(['sync:/one', 'async:/two']);
+    expect(observability.getStatus().request).toMatchObject({
+      received: 2,
+      accepted: 2,
+      completed: 0,
+      failed: 2,
+      pending: 0,
+    });
   });
 
   test('flush waits only for the generation admitted before it starts', async () => {
@@ -133,6 +140,13 @@ describe('managed observability sink lifecycle', () => {
     expect(drops).toEqual([{ reason: 'capacity', path: '/dropped', pending: 1 }]);
     held.resolve();
     await observability.flush();
+    expect(observability.getStatus().request).toMatchObject({
+      received: 2,
+      accepted: 1,
+      completed: 1,
+      dropped: 1,
+      pending: 0,
+    });
   });
 
   test('filtered events do not consume capacity', async () => {
@@ -162,7 +176,8 @@ describe('managed observability sink lifecycle', () => {
     await waitFor(() => writes.length === 1);
     expect(writes).toEqual(['/kept']);
     held.resolve();
-    await observability.close();
+    const report = await observability.close();
+    expect(report.request).toMatchObject({ filtered: 1, accepted: 1, completed: 1 });
   });
 
   test('close is idempotent, drains accepted writes and reports closed admission', async () => {
@@ -197,8 +212,20 @@ describe('managed observability sink lifecycle', () => {
     await Promise.resolve();
     expect(closed).toBe(false);
     held.resolve();
-    await closing;
+    const report = await closing;
     expect(closed).toBe(true);
+    expect(report.request).toMatchObject({
+      received: 2,
+      accepted: 1,
+      completed: 1,
+      dropped: 1,
+      pending: 0,
+      closed: true,
+    });
+    expect(report.request).toEqual(report.total);
+    expect(report.durationMs).toBeGreaterThanOrEqual(0);
+    expect(Object.isFrozen(report)).toBe(true);
+    expect(Object.isFrozen(report.request)).toBe(true);
   });
 
   test('diagnostic callback failures stay isolated', async () => {
@@ -219,7 +246,9 @@ describe('managed observability sink lifecycle', () => {
       statusCode: 500,
       durationMs: 1,
     });
-    await expect(observability.close()).resolves.toBeUndefined();
+    await expect(observability.close()).resolves.toMatchObject({
+      request: { accepted: 1, failed: 1, closed: true },
+    });
     observability.request?.complete({
       context: context('/closed'),
       statusCode: 200,
@@ -233,5 +262,51 @@ describe('managed observability sink lifecycle', () => {
     expect(() =>
       createObservability({ request: { maxPending: 0, write: () => undefined } }),
     ).toThrow('positive safe integer');
+  });
+
+  test('separates preparation failures from admitted write failures', async () => {
+    const failures: unknown[] = [];
+    const observability = createObservability({
+      request: {
+        filter: () => {
+          throw new Error('filter failed');
+        },
+        write: () => undefined,
+        onSinkError: ({ error }) => {
+          failures.push(error);
+        },
+      },
+    });
+    observability.request?.complete({
+      context: context('/filter-error'),
+      statusCode: 200,
+      durationMs: 1,
+    });
+    await observability.flush();
+    expect(failures).toHaveLength(1);
+    expect(observability.getStatus().request).toMatchObject({
+      received: 1,
+      accepted: 0,
+      preparationFailed: 1,
+      failed: 0,
+    });
+  });
+
+  test('aggregates enabled surfaces without losing their individual capacity', async () => {
+    const observability = createObservability({
+      request: { maxPending: 3, write: () => undefined },
+      tools: { maxPending: 7, write: () => undefined },
+    });
+    const open = observability.getStatus();
+    expect(open.request?.capacity).toBe(3);
+    expect(open.tools?.capacity).toBe(7);
+    expect(open.total).toMatchObject({ capacity: 10, closed: false });
+
+    const firstClose = observability.close();
+    expect(observability.close()).toBe(firstClose);
+    const report = await firstClose;
+    expect(report.total).toMatchObject({ capacity: 10, closed: true });
+    expect(report.request?.closed).toBe(true);
+    expect(report.tools?.closed).toBe(true);
   });
 });
