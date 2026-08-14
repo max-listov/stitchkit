@@ -37,12 +37,14 @@ other seven surfaces. Across the matrix the existing 33 blank and 42 repository
 browser cases run in both modes: 150 browser cases, including Chromium, WebKit
 and the mobile project.
 
-Browser revisions come from the frozen lockfile and each cell installs only its
-selected browser. GitHub's `ubuntu-latest` image already runs Chromium, including
-the mobile-emulation project. WebKit additionally needs GTK, GStreamer, Flite and
-media libraries, so only the WebKit half of the matrix invokes Playwright's
-`--with-deps` provisioning. The browser revisions and complete coverage remain
-exact while WebKit setup and Chromium execution proceed on separate runners.
+Browser revisions come from the frozen lockfile. Every starter cell runs in the
+official Playwright image for that exact version, pinned by immutable OCI digest.
+The image already contains Chromium, WebKit and their system libraries; branch CI
+therefore performs no live `apt` provisioning or browser download. Chromium and
+WebKit execution still proceed on separate runners, but setup latency no longer
+depends on package-mirror or browser-CDN variance. The repository install also
+skips its development-only prepare hook: the lane itself creates, installs and
+validates its own disposable scaffold.
 
 There is no serial summary job. GitHub marks the workflow successful only when
 every matrix cell and independent framework job succeeds. The publisher selects
@@ -59,6 +61,9 @@ The successful branch workflow has a wall-clock budget of three minutes on the
 normal GitHub-hosted runner path. No gate may be removed to meet the budget. A
 regression is diagnosed from the longest parallel job's step timings; the fix
 must remove duplicated setup or serial dependency rather than weaken coverage.
+The pinned Playwright image is advanced together with the lockfile browser
+version; a version mismatch fails browser launch instead of silently downloading
+a different runtime.
 
 ## Publication boundary
 

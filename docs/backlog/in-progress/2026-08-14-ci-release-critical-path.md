@@ -49,10 +49,16 @@ variant, packed-package or exact-SHA guarantee.
   in two DOM surfaces. The regression assertion now scopes the value to the one
   required `repository-summary`, retaining both uniqueness and visibility
   checks instead of adding a retry or weakening strict mode.
+- Run `31817041259` was fully green but took `3:35`. Nine jobs completed in
+  `0:32–2:30`; the outlying target/repository/WebKit cell spent `0:39` in the
+  repository install and `1:28` provisioning 181 WebKit OS packages plus browser
+  binaries, while its complete isolated starter proof took `0:55`. The runtime
+  proof was not slow: live mirror provisioning made the release time unstable.
 - The final graph splits each mode/variant by browser group. Chromium and mobile
-  Chromium use the hosted image directly; only WebKit cells install WebKit host
-  dependencies. All 150 cases remain release-blocking while dependency setup
-  and the Chromium test workload no longer add on one critical path.
+  Chromium remain separate from WebKit. Every cell now uses the immutable
+  official image matching the lockfile Playwright version, with browsers and OS
+  dependencies already present. All 150 cases remain release-blocking while no
+  cell performs live `apt` or browser provisioning.
 
 ## Результат
 
@@ -78,9 +84,9 @@ variant, packed-package or exact-SHA guarantee.
   × chromium/webkit`).
 - [ ] Remove every `needs` edge and use the native workflow conclusion as the
   fail-closed aggregate selected by the exact-SHA publisher.
-- [ ] Install only the selected lockfile-pinned browser in each isolated starter
-  job. Provision host libraries only for WebKit; never share mutable generated
-  applications or databases between matrix entries.
+- [ ] Run every isolated starter job in the immutable official image matching
+  the lockfile Playwright version; perform no live OS/browser provisioning and
+  never share mutable generated applications or databases between entries.
 - [ ] Keep exact-SHA tarball selection and OIDC publish permissions unchanged.
 - [ ] Add branch/PR concurrency cancellation so superseded SHA checks stop
   consuming runners; tag publication remains non-cancellable.

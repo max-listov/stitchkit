@@ -75,6 +75,12 @@ conclusion fails closed if any result fails. See
 [`docs/architecture/ci-release.md`](docs/architecture/ci-release.md) for the
 graph, exact-SHA publication boundary and performance budget.
 
+Starter CI runs inside the immutable official Playwright image matching the
+frozen `@playwright/test` version. When that dependency advances, update both the
+image tag and digest in `.github/workflows/ci.yml`; never restore per-run browser
+downloads or `playwright install --with-deps`, which put mirror provisioning on
+the release-critical path.
+
 The canonical template is an autonomous nested Bun workspace. Root `bun install`
 installs its frozen lockfile and generates its ignored Prisma client so source is
 clean in editors, but it is not linked to framework HEAD. Advancing the starter

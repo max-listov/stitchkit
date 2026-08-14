@@ -11,6 +11,17 @@ import { join } from 'node:path';
 const root = join(import.meta.dir, '..');
 const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 const release = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+const starterLock = readFileSync(
+  join(root, 'packages/create-stitchkit/template/bun.lock'),
+  'utf8',
+);
+
+const playwrightLockVersion = starterLock.match(
+  /"@playwright\/test": \["@playwright\/test@([^"]+)"/,
+)?.[1];
+if (!playwrightLockVersion) {
+  throw new Error('The starter lockfile is missing its resolved @playwright/test version');
+}
 
 function actionExpression(value: string): string {
   return `\${{ ${value} }}`;
@@ -77,12 +88,17 @@ describe('CI release-critical graph', () => {
     );
   });
 
-  test('only WebKit cells provision the system media stack', () => {
+  test('starter cells use one immutable lockfile-matched browser image', () => {
     const starterSection = ci.slice(ci.indexOf('  starter:'));
-    expect(starterSection).toContain('if [ "$STARTER_LANE_BROWSER" = webkit ]');
-    expect(starterSection).toContain('bunx playwright install --with-deps webkit');
-    expect(starterSection).toContain('bunx playwright install chromium');
-    expect(starterSection).not.toContain('playwright install --with-deps chromium');
+    expect(starterSection).toContain(
+      `image: mcr.microsoft.com/playwright:v${playwrightLockVersion}-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e`,
+    );
+    expect(starterSection).toContain('PLAYWRIGHT_BROWSERS_PATH: /ms-playwright');
+    expect(starterSection).toContain(
+      'STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@postgres:5432/postgres',
+    );
+    expect(starterSection).toContain('bun install --frozen-lockfile --ignore-scripts');
+    expect(starterSection).not.toContain('playwright install');
   });
 
   test('the workflow conclusion is the fail-closed aggregate used by publication', () => {

@@ -81,6 +81,11 @@ jobs:
     name: Starter ${{ matrix.mode }} / ${{ matrix.variant }} / ${{ matrix.browser }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # v1.62.1-noble, pinned to the immutable multi-platform index. The image
+    # carries the exact lockfile browser revisions and their system libraries,
+    # so release latency cannot depend on eight live apt/browser provisions.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     strategy:
       fail-fast: false
       matrix:
@@ -102,7 +107,10 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      # Service containers share the job-container network and are addressed by
+      # their service label, not through a host-published loopback port.
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       STARTER_LANE_MODE: ${{ matrix.mode }}
       STARTER_LANE_VARIANT: ${{ matrix.variant }}
       STARTER_LANE_BROWSER: ${{ matrix.browser }}
@@ -111,15 +119,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
-      - run: bun install --frozen-lockfile
-      - name: Install lockfile-pinned Playwright browser
-        # Chromium runs on the hosted image as-is. WebKit needs its larger media
-        # stack, so only the WebKit half of the matrix pays apt provisioning.
-        run: |
-          if [ "$STARTER_LANE_BROWSER" = webkit ]; then
-            bunx playwright install --with-deps webkit
-          else
-            bunx playwright install chromium
-          fi
+      # The lane creates and prepares its own disposable scaffold. Running the
+      # repository prepare hook here would install/generate the persistent
+      # template a second time without contributing to the isolated proof.
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Run one isolated starter surface
         run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
