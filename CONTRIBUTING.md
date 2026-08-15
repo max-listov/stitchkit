@@ -139,7 +139,8 @@ rerun the expensive gates.
 root `prepare` script):
 
 - **`pre-commit`** — checks exactly the staged paths, including names containing
-  spaces, without rewriting files or changing the index.
+  spaces and files owned by the nested template Biome project, without rewriting
+  files or changing the index.
 - **`pre-push`** — runs `verify` once for a code/branch push. A tag-only release
   runs only the release metadata preflight; deletion-only pushes run no build.
 

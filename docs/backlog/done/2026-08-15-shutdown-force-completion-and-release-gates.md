@@ -2,9 +2,10 @@
 title: Доказать forced shutdown и exact-SHA runtime gates
 description: Убрать ложный physical-zero на Bun, гарантировать forced cleanup после ошибок и включить Next SSR fixture в release CI.
 type: task
-status: in-progress
+status: done
 created: 2026-08-15
 updated: 2026-08-15
+completed: 2026-08-15 01:24 +0000
 related: docs/backlog/done/2026-08-14-managed-http-socketio-shutdown.md
 ---
 
@@ -39,8 +40,8 @@ physical и exact-SHA гарантий сильнее фактического �
       physical state и без обхода forced cleanup при исключении.
 - [x] Добавить Next SSR smoke в exact-SHA core job и закрепить workflow test.
 - [x] Исправить canonical composed-WebSocket example и lifecycle docs.
-- [ ] Завершить starter migration на managed handle и опубликованный patch.
-- [ ] Выпустить и проверить `stitchkit@0.49.1` через exact-SHA pipeline.
+- [x] Завершить starter migration на managed handle и опубликованный patch.
+- [x] Выпустить и проверить `stitchkit@0.49.1` через exact-SHA pipeline.
 
 ## Acceptance
 
@@ -52,7 +53,38 @@ physical и exact-SHA гарантий сильнее фактического �
       оставить `shutdown()` pending без ограниченного и диагностируемого исхода.
 - [x] Два настоящих OS signals дают одну lifecycle chain, второй signal вызывает
       forced transition, subprocess выходит самостоятельно.
-- [ ] GitHub CI exact SHA содержит и успешно выполняет `smoke:next-ssr` до
+- [x] GitHub CI exact SHA содержит и успешно выполняет `smoke:next-ssr` до
       упаковки publication artifact.
-- [ ] Target и HEAD starter lanes проходят с canonical managed API; release
+- [x] Target и HEAD starter lanes проходят с canonical managed API; release
       bridge task закрыта после обновления lock на опубликованный patch.
+
+## Что сделано
+
+- [x] **Failure containment:** `packages/core/tests/server-shutdown-lifecycle.test.ts`
+      доказывает forced cleanup и сохранение исходной ошибки в tests
+      `closeRealtime failure still forces transport cleanup and preserves the original error`,
+      `stopGracefully failure still forces transport cleanup and preserves the original error`,
+      `a non-settling forced adapter rejects within its explicit completion timeout`
+      и `a forced-cleanup failure retains the original graceful phase error`.
+- [x] **Physical Bun close:** `packages/core/tests/server-shutdown.test.ts`, test
+      `forced raw Bun WebSocket waits for the server-side close callback`, не
+      разрешает forced result до server-side close callback и не обнуляет tracker
+      вручную.
+- [x] **Повторный signal:** `packages/core/tests/server-shutdown-signal.test.ts`,
+      test `a second real SIGTERM forces the same Bun shutdown chain and exits naturally`,
+      отправляет subprocess два настоящих `SIGTERM` и проверяет одну forced chain.
+- [x] **Exact-SHA CI:** run `31856039330` для commit
+      `26be1b548c22b6bf0523611ad7a83b4a951a86b6` успешно выполнил
+      `smoke:next-ssr` до pack/upload; `scripts/workflow-permissions.test.ts`, test
+      `the graph fits nine runners without dropping the runtime consumer gates`,
+      закрепляет runtime gates в release graph.
+- [x] **Release:** `stitchkit@0.49.1` опубликован из exact-SHA artifact с npm
+      shasum `cdd7ee1cc5d400c02bf031e3d7910655156f5fc7`; tag и GitHub Release
+      `v0.49.1` созданы release run `31856154413`.
+- [x] **Starter bridge:** template catalog и lock разрешают опубликованный
+      `stitchkit@0.49.1`; `bun run verify` прошёл target blank/repository lanes,
+      а `bun run starter-head-lane` — HEAD blank/repository lanes, обе с полным
+      browser E2E. Отдельный release `create-stitchkit` в эту core-задачу не входит.
+- [x] **Commit gate:** `scripts/check-staged.test.ts`, test
+      `the staged-path hook checks root and nested template Biome projects`,
+      закрепляет выбор правильного Biome config для starter-only commit.
