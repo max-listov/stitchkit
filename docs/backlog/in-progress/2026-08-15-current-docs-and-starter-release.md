@@ -30,23 +30,23 @@ hardcoded test count через `llms-full.txt`, а накопленные start
 
 ## План
 
-- [ ] Убрать нестабильные/stale факты из live docs и добавить regression-guard
+- [x] Убрать нестабильные/stale факты из live docs и добавить regression-guard
       на удалённые lifecycle patterns в current-facing документации.
-- [ ] Выпустить docs-only `stitchkit@0.49.2` через exact-SHA CI artifact.
-- [ ] Обновить starter catalog/lock на опубликованный `^0.49.2`, закрыть
+- [x] Выпустить docs-only `stitchkit@0.49.2` через exact-SHA CI artifact.
+- [x] Обновить starter catalog/lock на опубликованный `^0.49.2`, закрыть
       changelog `create-stitchkit@0.3.1` и пройти target/HEAD lanes.
 - [ ] Выпустить `create-stitchkit@0.3.1` и проверить npm/GitHub Release.
 
 ## Acceptance
 
-- [ ] Live docs не содержат split-ownership lifecycle snippets
+- [x] Live docs не содержат split-ownership lifecycle snippets
       `rawRoutes: [socket.route]`, `server.stop()` или parallel
       `socket.io.close()` вне явно исторического upgrading before-block.
-- [ ] Generated `llms.txt`/`llms-full.txt` происходят из актуальных guide/API
+- [x] Generated `llms.txt`/`llms-full.txt` происходят из актуальных guide/API
       sources и не содержат hardcoded числа tests.
 - [ ] Exact-SHA CI обоих release commits зелёный; npm versions, tag SHA и
       GitHub Releases совпадают с проверенными commits.
-- [ ] Packed target и HEAD starter variants проходят DB, HTTP, OpenAPI,
+- [x] Packed target и HEAD starter variants проходят DB, HTTP, OpenAPI,
       Socket.IO, MCP, CLI и browser lanes на последнем Stitchkit patch.
-- [ ] В release не добавлены deprecated aliases, legacy lifecycle wrappers или
+- [x] В release не добавлены deprecated aliases, legacy lifecycle wrappers или
       consumer workaround.

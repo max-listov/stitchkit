@@ -6,9 +6,11 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-15
+
 ### Changed
 
-- **The template targets Stitchkit 0.49.1 and owns one managed server lifecycle.**
+- **The template targets Stitchkit 0.49.2 and owns one managed server lifecycle.**
   Generated backends pass the full Socket.IO handle to `createServer()`, close
   through `server.shutdown()`, and use a repeated process signal to force the
   same shutdown chain instead of creating a competing close path.
