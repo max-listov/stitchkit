@@ -81,8 +81,9 @@ expect(res.status).toBe(404)
 expect(await res.json()).toEqual({ error: { code: 'NOT_FOUND', message: 'Note not found' } })
 ```
 
-stitchkit's own suite — 143 tests in `packages/core/tests` — is the working
-reference for testing each piece.
+The suite in `packages/core/tests` is the working reference for testing each
+piece. Its size changes with the public surface, so the guide does not pin a
+count that can drift independently from the test runner.
 
 ## Deployment
 

@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.49.2] — 2026-08-15
+
+### Fixed
+
+- Published guide and generated agent documentation no longer freeze a stale
+  test count, and a regression guard rejects removed split-ownership server
+  lifecycle snippets from current-facing docs. Historical before/after migration
+  examples remain isolated in the upgrading guide.
+
 ## [0.49.1] — 2026-08-15
 
 ### Added
