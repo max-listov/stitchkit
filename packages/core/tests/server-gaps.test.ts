@@ -81,7 +81,7 @@ describe('GET query params', () => {
     expect(res.status).toBe(400);
   });
 
-  afterAll(() => server?.stop());
+  afterAll(() => server?.shutdown({ gracePeriodMs: 0 }));
 });
 
 // ─── Gap 2: Route groups ────────────────────────────
@@ -157,7 +157,7 @@ describe('route groups', () => {
     expect(data.botId).toBe('my-bot-id');
   });
 
-  afterAll(() => server?.stop());
+  afterAll(() => server?.shutdown({ gracePeriodMs: 0 }));
 });
 
 // ─── Gap 2b: Per-group hooks ────────────────────────
@@ -206,7 +206,7 @@ describe('per-group hooks', () => {
     expect(data.enriched).toBe(true);
   });
 
-  afterAll(() => server?.stop());
+  afterAll(() => server?.shutdown({ gracePeriodMs: 0 }));
 });
 
 // ─── Gap 4: createImplement factory ─────────────────
@@ -278,5 +278,5 @@ describe('client GET query params (fetch path)', () => {
     expect(result?.page).toBe(3);
   });
 
-  afterAll(() => server?.stop());
+  afterAll(() => server?.shutdown({ gracePeriodMs: 0 }));
 });

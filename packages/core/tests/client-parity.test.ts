@@ -72,5 +72,5 @@ describe('HttpClient path validates output', () => {
     expect(await api.get()).toEqual({ id: '1' });
   });
 
-  afterAll(() => server?.stop());
+  afterAll(() => server?.shutdown({ gracePeriodMs: 0 }));
 });

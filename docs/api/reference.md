@@ -38,7 +38,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
-| `createHttpClient` | function | the Ky-based HTTP transport — [guide](../guide/client.md#createhttpclient) |
+| `createHttpClient` | function | the Ky-based HTTP transport; on Next.js SSR its first attempt stays request-memoizable while every retry is a distinct transport attempt — [guide](../guide/client.md#createhttpclient) |
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
@@ -217,6 +217,12 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
 | `HandlerConfig` | _type_ | config for `createHandler`, including optional `maxJsonBodyBytes`; bound to `BunServer` on this entrypoint |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun) |
+| `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
+| `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |
+| `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | one grace budget, retry hint and optional external abort signal |
+| `ShutdownStatusSchema` / `ShutdownStatus` | schema / _type_ | live state and request/WebSocket counters |
+| `ShutdownResultSchema` / `ShutdownResult` | schema / _type_ | clean/forced result with final counters and at-force snapshots |
+| `ShutdownStateSchema` / `ShutdownState` | schema / _type_ | managed lifecycle state machine |
 | `ServiceDef` | _type_ | the result of `implement` |
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
 | `OperationIdentity` | _type_ | path-free service/action/scope/method identity shared by contract and native tool operations |
@@ -282,8 +288,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `RealtimeServer` | _type_ | validated broadcast and connection API inferred from a realtime contract |
 | `RealtimeServerConnection` | _type_ | one validated connection with raw socket access for auth and rooms |
 | `RealtimeServerHandle` | _type_ | minimal Socket.IO server handle accepted by `bindRealtimeServer` |
+| `SocketIORequestPolicy` | _type_ | runtime-neutral async-capable Web `Request` handshake admission policy |
 | `SocketIOServerConfig` | _type_ | config for `createSocketIOServer` |
-| `SocketIOServerHandle` | _type_ | the `{ io, websocket, route }` handle |
+| `SocketIOServerHandle` | _type_ | typed Socket.IO server plus Bun mount fields and idempotent lifecycle |
+| `SocketIOServerLifecycle` | _type_ | non-generic Bun mount/shutdown portion accepted by `createServer` |
 | `composeWebSocketHandlers` | function | compose one Bun `websocket` from N lanes — a raw binary lane beside Socket.IO ([guide](../guide/realtime.md#raw-binary-lane-bun)) |
 | `webSocketLane` | function | a typed, cast-free lane for `composeWebSocketHandlers` |
 | `socketIoLane` | function | the Socket.IO catch-all lane for `composeWebSocketHandlers` |
@@ -612,9 +620,11 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `createSocketIOServer` | function | the typed Node Socket.IO server (`io` + `attach`; no Bun engine declarations) |
 | `implement` / `createImplement` | function | bind a contract to typed handlers (same as `/server`) |
 | `NodeServerConfig` | _type_ | config for `serveNode` |
-| `NodeServerHandle` | _type_ | the `serveNode` handle (`{ port, stop }`) |
+| `NodeServerHandle` | _type_ | managed Node handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
+| `NodeRuntimeServer` | _type_ | concrete `srvx/node` runtime escape hatch |
+| `NodeSocketLifecycle` | _type_ | Bun-free Socket.IO lifecycle accepted by `serveNode` |
 | `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
-| `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | shared config and the Node-only `{ io, attach }` handle |
+| `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config and Bun-free Node handle with `io`, `attach` and lifecycle |
 | `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---

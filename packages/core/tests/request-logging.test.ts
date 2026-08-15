@@ -501,7 +501,7 @@ describe('composition seam', () => {
       expect(events[0]?.userAgent).toBe('probe/2');
       expect(events[0]?.path).toBe('/items');
     } finally {
-      server.stop(true);
+      await server.shutdown({ gracePeriodMs: 0 });
     }
   });
 
@@ -527,7 +527,7 @@ describe('composition seam', () => {
       expect(traceIds).toHaveLength(1);
       expect(traceIds[0]).toBeTruthy();
     } finally {
-      await server.close();
+      await server.shutdown({ gracePeriodMs: 0 });
     }
   });
 });

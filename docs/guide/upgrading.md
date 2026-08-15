@@ -761,9 +761,68 @@ socket.io
 socket.attach(nodeHttpServer)
 ```
 
-Inline Bun routes passed to `createServer` continue to infer `BunServer`; no
-annotation is needed. Node consumers can remove `@types/bun` unless another
-dependency independently requires it.
+Node consumers can remove `@types/bun` unless another dependency independently
+requires it.
+
+### Managed server shutdown
+
+`createServer()` and `serveNode()` now return the same structural managed
+lifecycle. Replace every direct runtime stop and parallel Socket.IO close:
+
+```ts
+// before — split ownership
+const socket = await createSocketIOServer(config)
+const server = createServer({
+  services,
+  websocket: socket.websocket,
+  rawRoutes: [socket.route],
+})
+server.stop()
+await socket.io.close()
+
+// after — one owner and one total deadline
+const socket = await createSocketIOServer(config)
+const server = createServer({ services, socket })
+const result = await server.shutdown({ gracePeriodMs: 30_000 })
+```
+
+On Node, keep the same `socket` field and replace `handle.close()` with
+`handle.shutdown()`. Runtime-specific diagnostics move under `handle.runtime`;
+do not use it as a second shutdown path. Standalone CLI/tools that create a
+Socket.IO handle without an HTTP server call `await socket.close()`.
+
+If Bun Socket.IO shares the port with a raw lane, keep the explicit composition
+but let the server mount the Socket.IO route:
+
+```ts
+createServer({
+  services,
+  socket,
+  websocket: composeWebSocketHandlers([
+    webSocketLane({ match: isRaw, handlers: rawHandlers }),
+    socketIoLane(socket.websocket),
+  ]),
+  rawRoutes: [rawUpgradeRoute],
+})
+```
+
+Move native Bun `routes` entries to `rawRoutes`. Native routes run before the
+Fetch handler and therefore cannot participate in admission or drain. Wire
+`SIGTERM`/`SIGINT` in the application; the first signal starts `shutdown()`, and
+a later signal may abort the same controller. Close MCP, databases and queues
+after the server result—those resources remain application-owned.
+
+Move a handshake policy from the Node-only callback shape inside
+`serverOptions` to the runtime-neutral top-level policy. It receives a Web
+`Request`, may be async, and returns whether to admit the handshake:
+
+```ts
+// before
+serverOptions: { allowRequest: (request, done) => done(null, allowed(request)) }
+
+// after
+allowRequest: (request) => allowed(request)
+```
 
 ## Your handlers may be returning more than the contract declares
 

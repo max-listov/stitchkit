@@ -109,7 +109,7 @@ const server = createServer({
     },
   },
 });
-afterAll(() => server.stop(true));
+afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
 const base = `http://localhost:${server.port}`;
 const AUTH = { authorization: 'Bearer t' };
@@ -184,7 +184,7 @@ describe('the response reaches the wire untouched', () => {
       expect(res.status).toBe(500);
       expect(JSON.stringify(await res.json())).toContain('rawResponse: true');
     } finally {
-      s.stop(true);
+      await s.shutdown({ gracePeriodMs: 0 });
     }
   });
 
@@ -209,7 +209,7 @@ describe('the response reaches the wire untouched', () => {
       expect(res.status).toBe(500);
       expect(JSON.stringify(await res.json())).toContain('afterHandle');
     } finally {
-      s.stop(true);
+      await s.shutdown({ gracePeriodMs: 0 });
     }
   });
 
@@ -229,7 +229,7 @@ describe('the response reaches the wire untouched', () => {
       expect(res.status).toBe(500);
       expect(JSON.stringify(await res.json())).toContain('must return a Response');
     } finally {
-      s.stop(true);
+      await s.shutdown({ gracePeriodMs: 0 });
     }
   });
 });
@@ -323,7 +323,7 @@ describe('implementRemote proxies the bytes through', () => {
       expect(await res.text()).toBe(CONTENT);
       expect(res.headers.get('Content-Disposition')).toContain('abc.pdf');
     } finally {
-      gateway.stop(true);
+      await gateway.shutdown({ gracePeriodMs: 0 });
     }
   });
 
@@ -378,7 +378,7 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
   // contract to gain the auth gate". Forget to delete the old raw route and the
   // bytes keep being served ungated — raw routes match first. Silent, that is
   // the exact failure the feature is meant to prevent.
-  function warningsFor(rawRoutes: Parameters<typeof createServer>[0]['rawRoutes']) {
+  async function warningsFor(rawRoutes: Parameters<typeof createServer>[0]['rawRoutes']) {
     const lines: string[] = [];
     const s = createServer({
       port: 0,
@@ -394,12 +394,12 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
         },
       },
     });
-    s.stop(true);
+    await s.shutdown({ gracePeriodMs: 0 });
     return lines;
   }
 
-  test('an exact-shape raw route is named, with the scope it bypasses', () => {
-    const lines = warningsFor([
+  test('an exact-shape raw route is named, with the scope it bypasses', async () => {
+    const lines = await warningsFor([
       { method: 'GET', path: '/documents/:id/pdf', handler: () => new Response('LEFTOVER') },
     ]);
     expect(lines).toHaveLength(1);
@@ -408,8 +408,8 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
     expect(lines[0]).toContain('scope "admin"');
   });
 
-  test('a wildcard raw route is caught too', () => {
-    const lines = warningsFor([
+  test('a wildcard raw route is caught too', async () => {
+    const lines = await warningsFor([
       { method: 'ALL', path: '/documents/*filePath', handler: () => new Response('x') },
     ]);
     // Both the raw endpoint and its sibling are shadowed by the wildcard.
@@ -417,14 +417,16 @@ describe('a leftover raw route that shadows the endpoint is reported at startup'
     expect(lines.join('\n')).toContain('documents.download');
   });
 
-  test('a non-overlapping raw route is silent', () => {
+  test('a non-overlapping raw route is silent', async () => {
     expect(
-      warningsFor([{ method: 'GET', path: '/health', handler: () => new Response('ok') }]),
+      await warningsFor([
+        { method: 'GET', path: '/health', handler: () => new Response('ok') },
+      ]),
     ).toEqual([]);
   });
 
-  test('no raw routes at all is silent', () => {
-    expect(warningsFor(undefined)).toEqual([]);
+  test('no raw routes at all is silent', async () => {
+    expect(await warningsFor(undefined)).toEqual([]);
   });
 });
 
@@ -448,7 +450,7 @@ describe('multipart + rawResponse — upload in, bytes out', () => {
   );
   const svc = implement(convert, { run: () => new Response('converted:ok') });
   const s = createServer({ port: 0, services: [svc] });
-  afterAll(() => s.stop(true));
+  afterAll(() => s.shutdown({ gracePeriodMs: 0 }));
   const url = () => `http://localhost:${s.port}`;
 
   test('the bare-fetch client returns the Response, not a parse error', async () => {
@@ -494,7 +496,7 @@ describe('the guide traversal recipe actually holds', () => {
   });
   const s = createServer({ port: 0, services: [svc] });
   afterAll(async () => {
-    s.stop(true);
+    await s.shutdown({ gracePeriodMs: 0 });
     await rm(ROOT, { force: true, recursive: true });
   });
 

@@ -6,6 +6,7 @@ import {
   extractReleaseNotes,
   releasePlanForTag,
   selectSuccessfulCiRun,
+  shouldRunStarterHeadLane,
 } from './release-plan';
 
 const SHA = '1'.repeat(40);
@@ -84,6 +85,17 @@ describe('release plan', () => {
       version: '2.0.0',
     });
     expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');
+  });
+
+  test('skips HEAD only for an unaligned, changelog-proven breaking core minor', () => {
+    const breaking = '### ⚠️ Breaking changes\n\n- managed server hard cut';
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(false);
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.49.0', breaking)).toBe(true);
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', '### Added\n\n- additive')).toBe(
+      true,
+    );
+    expect(shouldRunStarterHeadLane('1.0.0', '^0.46.0', breaking)).toBe(true);
+    expect(shouldRunStarterHeadLane('0.49.0', 'workspace:*', breaking)).toBe(true);
   });
 
   test('extracts a non-empty exact-version changelog section', () => {

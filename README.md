@@ -225,8 +225,7 @@ socket.io.on('connection', (s) => { /* rooms, handshake auth — your domain log
 
 createServer({
   services: [service],
-  websocket: socket.websocket,    // → Bun.serve
-  rawRoutes: [socket.route],      // ready /socket.io/*socketPath route
+  socket,                         // route + websocket + managed shutdown
 })
 ```
 

@@ -21,21 +21,19 @@ import type {
   ServerOptions as BunEngineServerOptions,
 } from '@socket.io/bun-engine';
 import type { ServerWebSocket } from 'bun';
-import type { Server as SocketIOServer } from 'socket.io';
+import type {
+  Server as SocketIOServer,
+  ServerOptions as SocketIOServerOptions,
+} from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
 import type { BunServer } from './bun';
 import type { SocketIOServerConfig } from './socket-io-config';
 import type { RawRoute } from './types';
 import { type ComposedLane, webSocketLane } from './websocket';
 
-export type { SocketIOServerConfig } from './socket-io-config';
+export type { SocketIORequestPolicy, SocketIOServerConfig } from './socket-io-config';
 
-export interface SocketIOServerHandle<
-  TServerEvents extends SocketEventMap,
-  TClientEvents extends SocketEventMap,
-> {
-  /** The typed Socket.IO server — attach `io.on('connection', ...)` handlers. */
-  io: SocketIOServer<TClientEvents, TServerEvents>;
+export interface SocketIOServerLifecycle {
   /**
    * WebSocket handler for `Bun.serve({ websocket })`. Real on Bun; on Node it is
    * an inert no-op — sockets there are driven by the `node:http.Server`
@@ -56,6 +54,20 @@ export interface SocketIOServerHandle<
    * `serveNode({ socket })` calls this for you.
    */
   attach(server: HttpServer): void;
+  /** Stop admitting new Engine.IO handshakes. Called by the managed server. */
+  beginShutdown(): void;
+  /** Idempotently close namespaces, adapters and the bound transport engine. */
+  close(): Promise<void>;
+  /** Current Engine.IO client count, when the engine has been bound. */
+  connections(): number;
+}
+
+export interface SocketIOServerHandle<
+  TServerEvents extends SocketEventMap,
+  TClientEvents extends SocketEventMap,
+> extends SocketIOServerLifecycle {
+  /** The typed Socket.IO server — attach `io.on('connection', ...)` handlers. */
+  io: SocketIOServer<TClientEvents, TServerEvents>;
 }
 
 /** Inert handler for a runtime-irrelevant slot (Bun's `attach`, Node's `websocket`). */
@@ -109,6 +121,36 @@ export async function createSocketIOServer<
     credentials: config.cors.credentials ?? true,
     methods: ['GET', 'POST'],
   };
+  let accepting = true;
+  let attached = false;
+  let closePromise: Promise<void> | undefined;
+  const consumerAllowRequest = config.allowRequest;
+  const checkRequest = async (request: Request): Promise<void> => {
+    if (consumerAllowRequest && !(await consumerAllowRequest(request))) {
+      throw new Error('Request rejected by the configured Socket.IO policy');
+    }
+    if (!accepting) throw new Error('Server is shutting down');
+  };
+  const allowRequest: NonNullable<SocketIOServerOptions['allowRequest']> = (request, done) => {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (Array.isArray(value)) {
+        for (const item of value) headers.append(name, item);
+      } else if (value !== undefined) {
+        headers.set(name, value);
+      }
+    }
+    const host = headers.get('host') ?? 'localhost';
+    const webRequest = new Request(new URL(request.url ?? '/', `http://${host}`), {
+      method: request.method,
+      headers,
+    });
+    void checkRequest(webRequest).then(
+      () => done(null, true),
+      (error: unknown) =>
+        done(error instanceof Error ? error.message : 'Request rejected', false),
+    );
+  };
 
   const { Server } = await importPeer(() => import('socket.io'), 'socket.io');
   const io = new Server<TClientEvents, TServerEvents>({
@@ -119,7 +161,22 @@ export async function createSocketIOServer<
     transports,
     pingTimeout,
     pingInterval,
+    allowRequest,
   });
+
+  const lifecycle = {
+    beginShutdown() {
+      accepting = false;
+    },
+    close() {
+      if (closePromise) return closePromise;
+      closePromise = onBun || attached ? io.close() : Promise.resolve();
+      return closePromise;
+    },
+    connections() {
+      return io.engine?.clientsCount ?? 0;
+    },
+  };
 
   if (onBun) {
     const { Server: Engine } = await importPeer(
@@ -136,6 +193,7 @@ export async function createSocketIOServer<
       cors,
       pingTimeout,
       pingInterval,
+      allowRequest: checkRequest,
     };
     if (config.serverOptions?.maxHttpBufferSize !== undefined) {
       engineOpts.maxHttpBufferSize = config.serverOptions.maxHttpBufferSize;
@@ -163,7 +221,7 @@ export async function createSocketIOServer<
       },
     };
 
-    return { io, websocket, route, attach: noop };
+    return { io, websocket, route, attach: noop, ...lifecycle };
   }
 
   // Node: Socket.IO attaches directly to the node:http.Server (srvx
@@ -171,7 +229,10 @@ export async function createSocketIOServer<
   // guard — it is never mounted on Node, but keeps the handle shape uniform.
   return {
     io,
-    attach: (server) => io.attach(server),
+    attach: (server) => {
+      io.attach(server);
+      attached = true;
+    },
     // Inert on Node — never read (the `upgrade` event drives sockets). Present
     // so Bun consumers get a non-optional `websocket` with no runtime guard.
     websocket: { open: noop, message: noop, close: noop, maxPayloadLength: 0 },
@@ -184,6 +245,7 @@ export async function createSocketIOServer<
         );
       },
     },
+    ...lifecycle,
   };
 }
 

@@ -26,7 +26,7 @@ const service = implement(items, {
 
 describe('a realtime violation thrown inside an HTTP handler', () => {
   let server: ReturnType<typeof createServer> | undefined;
-  afterEach(() => server?.stop());
+  afterEach(() => server?.shutdown({ gracePeriodMs: 0 }));
 
   test('the HTTP response does not expose the event name or field paths', async () => {
     const { realtimeContractViolation } = await import('../src/realtime/rejection');
@@ -76,7 +76,7 @@ describe('a realtime violation thrown inside an HTTP handler', () => {
 
 describe('error context on a pre-handler (validation) failure', () => {
   let server: ReturnType<typeof createServer> | undefined;
-  afterEach(() => server?.stop());
+  afterEach(() => server?.shutdown({ gracePeriodMs: 0 }));
 
   test('onError still receives the path params, the request and the endpoint', async () => {
     let captured: { ctx: RuntimeContext; endpoint?: MethodDef } | undefined;

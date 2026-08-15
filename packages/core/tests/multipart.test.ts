@@ -241,7 +241,7 @@ describe('multipart contract integration', () => {
   });
 
   afterAll(() => {
-    server?.stop();
+    return server?.shutdown({ gracePeriodMs: 0 });
   });
 });
 
@@ -329,7 +329,7 @@ describe('multipart descriptor request limits', () => {
   const server = createServer({ port: 0, services: [svc] });
   const base = `http://localhost:${server.port}`;
 
-  afterAll(() => server.stop(true));
+  afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
   const upload = (path: string, bytes: number) => {
     const form = new FormData();
@@ -488,7 +488,7 @@ describe('typed multipart descriptor cardinality and policy', () => {
         expect(result.names).toEqual(['one.txt', 'two.txt']);
       }
     } finally {
-      server.stop(true);
+      await server.shutdown({ gracePeriodMs: 0 });
     }
   });
 });

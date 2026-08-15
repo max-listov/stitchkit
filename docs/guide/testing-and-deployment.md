@@ -105,8 +105,34 @@ createServer({
 })
 ```
 
-`createServer` returns the `Bun.serve` instance — keep the reference if you need
-`.stop()` for a graceful shutdown.
+Keep the managed handle and wire process policy explicitly:
+
+```ts
+const server = createServer({ services, socket })
+const force = new AbortController()
+let closing: Promise<void> | undefined
+
+function shutdown() {
+  if (closing) {
+    force.abort() // a later signal shortens the same shutdown, not a second chain
+    return closing
+  }
+  closing = server.shutdown({ gracePeriodMs: 30_000, signal: force.signal }).then(async result => {
+    await mcp.close()
+    await prisma.$disconnect()
+    console.log(result)
+  })
+  return closing
+}
+
+process.on('SIGTERM', () => void shutdown())
+process.on('SIGINT', () => void shutdown())
+```
+
+The server owns HTTP/Socket.IO transport resources. MCP, databases, queues and
+domain run-state remain application resources and close explicitly after server
+drain. Do not call `runtime.stop()` or `socket.io.close()` in parallel with
+`shutdown()`.
 
 ### Deploy on Node
 
@@ -117,10 +143,13 @@ the listener differs: replace `createServer` with **`serveNode`** (from
 ```ts
 import { serveNode } from 'stitchkit/node'
 
-serveNode({
+const server = await serveNode({
   services,
+  socket,
   port: Number(process.env.PORT ?? 3000),
 })
+
+await server.shutdown({ gracePeriodMs: 30_000 })
 ```
 
 Notes for a Node host:
@@ -129,9 +158,6 @@ Notes for a Node host:
   raw routes use `RawRoute<TServer = unknown>`; supply a host server generic
   only when an embedding adapter passes one to `createHandler`.
 
-- Add **`@types/bun`** as a dev dependency — it is an optional peer that types the
-  shared `stitchkit/server` surface (without it `tsc` reports a missing `Bun`
-  namespace).
 - **Socket.IO** attaches to the Node HTTP server via `serveNode({ socket })`, and
   on Node the default transport is `['websocket']` — set the client to match
   (`transports: ['websocket']`). See [realtime](./realtime.md).

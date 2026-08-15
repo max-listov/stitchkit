@@ -1,6 +1,9 @@
 /** Runtime-neutral Socket.IO configuration shared by Bun and Node adapters. */
 import type { ServerOptions } from 'socket.io';
 
+/** Runtime-neutral Engine.IO handshake policy, evaluated before shutdown admission. */
+export type SocketIORequestPolicy = (request: Request) => boolean | Promise<boolean>;
+
 export interface SocketIOServerConfig {
   /** CORS — the browser origin(s) allowed to open a socket. */
   cors: { origin: string | string[]; credentials?: boolean };
@@ -12,6 +15,8 @@ export interface SocketIOServerConfig {
   pingTimeout?: number;
   /** Heartbeat: ms between pings. */
   pingInterval?: number;
+  /** Runtime-neutral policy for accepting a new Engine.IO handshake. */
+  allowRequest?: SocketIORequestPolicy;
   /** Typed Socket.IO options not owned by this wrapper. */
-  serverOptions?: Partial<ServerOptions>;
+  serverOptions?: Omit<Partial<ServerOptions>, 'allowRequest'>;
 }

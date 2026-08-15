@@ -29,7 +29,7 @@ const server = createServer({
 const base = `http://localhost:${server.port}`;
 
 describe('scopePrefixes — scope drives the mount prefix', () => {
-  afterAll(() => server.stop(true));
+  afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
   test('a tenant-scoped service mounts under its prefix; :param reaches pathParams', async () => {
     const res = await fetch(`${base}/tenants/acme/widgets`);

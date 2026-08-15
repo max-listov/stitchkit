@@ -14,7 +14,7 @@ const nodeServer = await serveNode({ services: [responseMetadataService], port: 
 
 afterAll(async () => {
   bunServer.stop(true);
-  await nodeServer.close(true);
+  await nodeServer.shutdown({ gracePeriodMs: 0 });
 });
 
 describe('typed JSON response metadata — runtime', () => {

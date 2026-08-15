@@ -5,7 +5,7 @@ import type { SocketEventMap } from '../browser/socket-io';
 import { createSocketIOServer as createRuntimeSocketIOServer } from './socket-io';
 import type { SocketIOServerConfig } from './socket-io-config';
 
-export type { SocketIOServerConfig } from './socket-io-config';
+export type { SocketIORequestPolicy, SocketIOServerConfig } from './socket-io-config';
 
 /** The runtime-neutral part of a Socket.IO handle used by `serveNode`. */
 export interface NodeSocketIOServerHandle<
@@ -14,6 +14,9 @@ export interface NodeSocketIOServerHandle<
 > {
   io: SocketIOServer<TClientEvents, TServerEvents>;
   attach(server: HttpServer): void;
+  beginShutdown(): void;
+  close(): Promise<void>;
+  connections(): number;
 }
 
 /** Create a Socket.IO handle typed only for the Node capabilities it exposes. */

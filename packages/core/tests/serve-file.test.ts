@@ -223,7 +223,7 @@ describe('serveFile — via a raw route (HEAD reaches it through method ALL)', (
     ],
   });
   const base = `http://localhost:${server.port}`;
-  afterAll(() => server.stop(true));
+  afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
   test('GET → 200 with full body', async () => {
     const res = await fetch(`${base}/media`);

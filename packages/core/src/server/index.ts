@@ -32,6 +32,7 @@ export {
   type BunRawRouteContext as RawRouteContext,
   type BunServer,
   type BunServerConfig,
+  type BunServerHandle,
   createServer,
   type ServerPassthrough,
 } from './bun';
@@ -122,7 +123,23 @@ export {
   resolveSocketIp,
   resolveTraceId,
 } from './request';
-export type { SocketIOServerConfig, SocketIOServerHandle } from './socket-io';
+export {
+  type ManagedServerHandle,
+  type ShutdownOptions,
+  ShutdownOptionsSchema,
+  type ShutdownResult,
+  ShutdownResultSchema,
+  type ShutdownState,
+  ShutdownStateSchema,
+  type ShutdownStatus,
+  ShutdownStatusSchema,
+} from './shutdown';
+export type {
+  SocketIORequestPolicy,
+  SocketIOServerConfig,
+  SocketIOServerHandle,
+  SocketIOServerLifecycle,
+} from './socket-io';
 export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {

@@ -140,7 +140,7 @@ describe('createClient', () => {
   });
 
   afterAll(() => {
-    server?.stop();
+    return server?.shutdown({ gracePeriodMs: 0 });
   });
 });
 
@@ -231,10 +231,6 @@ describe('GET / DELETE query input', () => {
       /DELETE \/: input field "filter"/,
     );
   });
-
-  afterAll(() => {
-    queryServer?.stop();
-  });
 });
 
 describe('createHttpClient trace', () => {
@@ -277,5 +273,9 @@ describe('createHttpClient trace', () => {
     );
     const { tp } = await api.get();
     expect(tp).toBe(manual);
+  });
+
+  afterAll(() => {
+    return queryServer?.shutdown({ gracePeriodMs: 0 });
   });
 });

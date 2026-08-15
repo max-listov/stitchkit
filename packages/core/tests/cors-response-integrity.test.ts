@@ -44,7 +44,7 @@ const server = createServer({
     { method: 'GET', path: '/go', handler: () => Response.redirect(`${base}/media`, 302) },
   ],
 });
-afterAll(() => server.stop(true));
+afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
 const base = `http://localhost:${server.port}`;
 
@@ -145,8 +145,8 @@ describe('cors config never falls open to a wildcard', () => {
     expect(() => createServer({ port: 0, cors: { origin: [] } })).toThrow(/empty list/);
   });
 
-  test('allowing every origin stays available — as an EXPLICIT opt-in', () => {
+  test('allowing every origin stays available — as an EXPLICIT opt-in', async () => {
     const open = createServer({ port: 0, cors: { origin: '*' } });
-    open.stop();
+    await open.shutdown({ gracePeriodMs: 0 });
   });
 });

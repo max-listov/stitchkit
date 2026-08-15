@@ -6,7 +6,20 @@ import { ApiError, shouldRetryBunNetworkError } from '../src/browser/http';
 const ProbeResultSchema = z.object({
   lateServer: z.object({
     attempts: z.number(),
+    signals: z.array(z.object({ explicit: z.boolean(), matchesRequest: z.boolean() })),
     events: z.array(z.string()),
+    result: z.object({ ok: z.boolean() }),
+  }),
+  parallel: z.object({
+    attempts: z.record(z.string(), z.number()),
+    signals: z.record(z.string(), z.array(z.boolean())),
+    results: z.array(z.object({ path: z.string() })),
+  }),
+  head: z.object({ attempts: z.number(), signals: z.array(z.boolean()) }),
+  body: z.object({
+    attempts: z.number(),
+    retryDuplex: z.boolean(),
+    retryBody: z.string(),
     result: z.object({ ok: z.boolean() }),
   }),
   exhausted: z.object({
@@ -57,7 +70,27 @@ test('Bun HTTP retry preserves method, budget, cancellation and response semanti
   expect(exitCode, stderr).toBe(0);
   const result = ProbeResultSchema.parse(JSON.parse(stdout));
 
-  expect(result.lateServer).toEqual({ attempts: 2, events: [], result: { ok: true } });
+  expect(result.lateServer).toEqual({
+    attempts: 2,
+    signals: [
+      { explicit: false, matchesRequest: false },
+      { explicit: true, matchesRequest: true },
+    ],
+    events: [],
+    result: { ok: true },
+  });
+  expect(result.parallel).toEqual({
+    attempts: { '/first': 2, '/second': 2 },
+    signals: { '/first': [false, true], '/second': [false, true] },
+    results: [{ path: '/first' }, { path: '/second' }],
+  });
+  expect(result.head).toEqual({ attempts: 2, signals: [false, true] });
+  expect(result.body).toEqual({
+    attempts: 2,
+    retryDuplex: true,
+    retryBody: '{"value":"preserved"}',
+    result: { ok: true },
+  });
   expect(result.exhausted).toEqual({
     attempts: 3,
     events: ['network_error'],

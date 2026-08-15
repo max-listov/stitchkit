@@ -94,7 +94,7 @@ describe('createContractFactory', () => {
     const server = createServer({ services: [service], port: 0 });
     const api = createClient(users, { baseUrl: `http://localhost:${server.port}` });
     expect(await api.list()).toEqual(['alice', 'bob']);
-    server.stop();
+    await server.shutdown({ gracePeriodMs: 0 });
   });
 
   test('validation still fires (empty desc throws)', () => {

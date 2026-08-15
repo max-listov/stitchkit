@@ -13,6 +13,8 @@
  * Resolves `stitchkit/*` via the package's own `exports` map (Node self-reference).
  */
 import assert from 'node:assert';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 // 1 — every server-side entrypoint must IMPORT cleanly under Node.
 const entrypoints = [
@@ -91,7 +93,7 @@ assert.deepEqual(
   'serveNode HTTP should return the typed body',
 );
 console.log('serveNode HTTP round-trip: OK');
-await http.close();
+await http.shutdown({ gracePeriodMs: 0 });
 
 // 3 — Node's native fetch classification remains intact when Stitchkit adds
 // its narrow Bun adapter. The backend starts only after the first native fetch
@@ -112,6 +114,7 @@ await new Promise((resolve, reject) =>
 
 const nativeFetch = globalThis.fetch;
 let nativeAttempts = 0;
+const retrySignals = [];
 let resolveFirstFailure = () => undefined;
 const firstFailure = new Promise((resolve) => {
   resolveFirstFailure = resolve;
@@ -124,6 +127,7 @@ const serverListening = new Promise((resolve, reject) => {
 });
 globalThis.fetch = async (input, init) => {
   nativeAttempts += 1;
+  retrySignals.push(init?.signal instanceof AbortSignal);
   try {
     return await nativeFetch(input, init);
   } catch (error) {
@@ -185,6 +189,11 @@ try {
   }
   assert.deepEqual(retryResult, { ok: true });
   assert.equal(nativeAttempts, 2, 'Node retry should perform exactly two native fetches');
+  assert.deepEqual(
+    retrySignals,
+    [false, true],
+    'only the Node retry should expose its current Request signal in fetch init',
+  );
   console.log('Node network retry round-trip: OK');
 } finally {
   globalThis.fetch = nativeFetch;
@@ -194,6 +203,84 @@ try {
     );
   }
 }
+
+// An opt-in body-method retry must preserve the stream body and Undici's
+// `duplex: "half"` requirement when the adapter materializes URL + init.
+let bodyAttempts = 0;
+const bodyServer = createNativeNodeServer(async (request, response) => {
+  bodyAttempts += 1;
+  let body = '';
+  for await (const chunk of request) body += chunk;
+  if (bodyAttempts === 1) {
+    response.writeHead(503);
+    response.end('retry');
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ body }));
+});
+await new Promise((resolve, reject) => {
+  bodyServer.once('error', reject);
+  bodyServer.listen(0, '127.0.0.1', resolve);
+});
+const bodyAddress = bodyServer.address();
+assert.notEqual(bodyAddress, null);
+assert.equal(typeof bodyAddress, 'object');
+try {
+  const bodyClient = createHttpClient({
+    baseUrl: `http://127.0.0.1:${bodyAddress.port}`,
+    retry: { limit: 1, methods: ['put'], statusCodes: [503] },
+  });
+  assert.deepEqual(await bodyClient.put('/body', { value: 'preserved' }), {
+    body: '{"value":"preserved"}',
+  });
+  assert.equal(bodyAttempts, 2);
+  console.log('Node body-method retry round-trip: OK');
+} finally {
+  await new Promise((resolve, reject) =>
+    bodyServer.close((error) => (error ? reject(error) : resolve())),
+  );
+}
+
+// A clean result waits for ServerResponse.finish, not merely for the handler to
+// return its streaming Response.
+let resolveStreamStarted;
+const streamStarted = new Promise((resolve) => {
+  resolveStreamStarted = resolve;
+});
+let releaseStream;
+const streamRelease = new Promise((resolve) => {
+  releaseStream = resolve;
+});
+const streamingServer = await serveNode({
+  port: 0,
+  rawRoutes: [
+    {
+      method: 'GET',
+      path: '/stream',
+      handler: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('started'));
+              resolveStreamStarted();
+              void streamRelease.then(() => controller.close());
+            },
+          }),
+        ),
+    },
+  ],
+});
+const streamingResponse = await fetch(`${streamingServer.url}/stream`);
+await streamStarted;
+const streamingShutdown = streamingServer.shutdown({ gracePeriodMs: 1_000 });
+assert.equal(streamingServer.status.pendingRequests, 1);
+releaseStream();
+assert.equal(await streamingResponse.text(), 'started');
+const streamingResult = await streamingShutdown;
+assert.equal(streamingResult.outcome, 'clean');
+assert.equal(streamingResult.pendingRequests, 0);
+console.log('serveNode streaming response physical clean finish: OK');
 
 // 4 — serveNode + Socket.IO round-trip (WebSocket).
 const { io: ioClient } = await import('socket.io-client');
@@ -246,8 +333,141 @@ assert.deepEqual(
   'Socket.IO round-trip should validate its acknowledgement and pong 42',
 );
 console.log('serveNode Socket.IO acknowledgement round-trip: OK');
-client.close();
-await realtime.close();
+const cleanDisconnect = new Promise((resolve) => client.once('disconnect', resolve));
+const cleanRealtimeResult = await realtime.shutdown({ gracePeriodMs: 1_000 });
+await cleanDisconnect;
+assert.equal(cleanRealtimeResult.outcome, 'clean');
+assert.equal(cleanRealtimeResult.pendingWebSockets, 0);
+console.log('serveNode Socket.IO physical clean close: OK');
+
+// The forced path snapshots and destroys an upgraded socket before resolving.
+const forcedSocket = await createSocketIOServer({
+  cors: { origin: '*' },
+  transports: ['websocket'],
+});
+const forcedRealtime = await serveNode({ socket: forcedSocket, port: 0 });
+const forcedClient = ioClient(forcedRealtime.url, {
+  transports: ['websocket'],
+  reconnection: false,
+});
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('forced socket connect timed out')), 5_000);
+  forcedClient.once('connect', () => {
+    clearTimeout(timer);
+    resolve();
+  });
+  forcedClient.once('connect_error', reject);
+});
+assert.equal(forcedRealtime.status.pendingWebSockets, 1);
+const forcedDisconnect = new Promise((resolve) => forcedClient.once('disconnect', resolve));
+const forceController = new AbortController();
+forceController.abort();
+const forcedRealtimeResult = await forcedRealtime.shutdown({
+  gracePeriodMs: 10_000,
+  signal: forceController.signal,
+});
+await forcedDisconnect;
+assert.equal(forcedRealtimeResult.outcome, 'forced');
+assert.equal(forcedRealtimeResult.pendingWebSocketsAtForce, 1);
+assert.equal(forcedRealtimeResult.forcedWebSockets, 1);
+assert.equal(forcedRealtimeResult.pendingWebSockets, 0);
+console.log('serveNode Socket.IO physical forced close: OK');
+
+// A handshake after the shutdown boundary is rejected by the transport policy
+// and never enters application admission/accounting.
+let resolveHeldRequest;
+const heldRequestStarted = new Promise((resolve) => {
+  resolveHeldRequest = resolve;
+});
+let releaseHeldRequest;
+const heldRequestRelease = new Promise((resolve) => {
+  releaseHeldRequest = resolve;
+});
+let shutdownPolicyCalls = 0;
+const boundarySocket = await createSocketIOServer({
+  cors: { origin: '*' },
+  transports: ['websocket'],
+  allowRequest: () => {
+    shutdownPolicyCalls += 1;
+    return true;
+  },
+});
+const boundaryServer = await serveNode({
+  socket: boundarySocket,
+  port: 0,
+  rawRoutes: [
+    {
+      method: 'GET',
+      path: '/hold',
+      async handler() {
+        resolveHeldRequest();
+        await heldRequestRelease;
+        return new Response('done');
+      },
+    },
+  ],
+});
+const heldRequest = fetch(`${boundaryServer.url}/hold`);
+await heldRequestStarted;
+const boundaryShutdown = boundaryServer.shutdown({ gracePeriodMs: 1_000 });
+const rejectedClient = ioClient(boundaryServer.url, {
+  transports: ['websocket'],
+  reconnection: false,
+});
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(
+    () => reject(new Error('post-boundary handshake timed out')),
+    5_000,
+  );
+  rejectedClient.once('connect_error', () => {
+    clearTimeout(timer);
+    resolve();
+  });
+});
+assert.equal(shutdownPolicyCalls, 1);
+assert.equal(boundaryServer.status.acceptedRequests, 1);
+rejectedClient.close();
+releaseHeldRequest();
+assert.equal(await (await heldRequest).text(), 'done');
+assert.equal((await boundaryShutdown).outcome, 'clean');
+console.log('serveNode post-boundary Socket.IO handshake rejection: OK');
+
+// 5 — a real SIGTERM reaches an active HTTP + Socket.IO Node subprocess. The
+// child must leave naturally after one managed shutdown chain (no process.exit).
+const signalChild = spawn(
+  process.execPath,
+  [fileURLToPath(new URL('./node-shutdown-signal.mjs', import.meta.url))],
+  {
+    cwd: new URL('..', import.meta.url),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  },
+);
+let signalOutput = '';
+let signalError = '';
+let signalSent = false;
+signalChild.stdout.on('data', (chunk) => {
+  signalOutput += chunk.toString();
+  if (!signalSent && signalOutput.includes('READY\n')) {
+    signalSent = true;
+    signalChild.kill('SIGTERM');
+  }
+});
+signalChild.stderr.on('data', (chunk) => {
+  signalError += chunk.toString();
+});
+const signalTimer = setTimeout(() => signalChild.kill('SIGKILL'), 5_000);
+const signalExit = await new Promise((resolve) => signalChild.once('exit', resolve)).finally(
+  () => clearTimeout(signalTimer),
+);
+assert.equal(signalExit, 0, signalError);
+const signalResultLine = signalOutput.split('\n').find((line) => line.startsWith('RESULT '));
+assert(signalResultLine, `Node SIGTERM fixture returned no result:\n${signalOutput}`);
+const signalResult = JSON.parse(signalResultLine.slice('RESULT '.length));
+assert.equal(signalResult.outcome, 'clean');
+assert.equal(signalResult.pendingRequests, 0);
+assert.equal(signalResult.pendingWebSockets, 0);
+assert.equal(signalResult.signalCount, 1);
+console.log('serveNode real SIGTERM shutdown: OK');
 
 console.log('\n✅ Node smoke passed — stitchkit runs on Node (HTTP + Socket.IO).');
 process.exit(0);

@@ -114,6 +114,46 @@ export interface HttpClientConfig {
 type ParamValue = string | number | boolean | undefined;
 type ParamArrayValue = Array<string | number>;
 
+/**
+ * Keep Next.js request memoization for the first attempt, then make each Ky
+ * retry observable as a new transport attempt. Next only treats a signal that
+ * survives in the second fetch argument at its dedupe boundary as an opt-out.
+ * Its patched fetch merges `init` into Request inputs first, so retries use a
+ * URL plus a materialized init while the untouched first attempt keeps the
+ * exact Ky Request.
+ */
+function createRetryAwareFetch(): NonNullable<Options['fetch']> {
+  const runtimeFetch = globalThis.fetch.bind(globalThis);
+  let attempt = 0;
+
+  return (input, init) => {
+    attempt += 1;
+    if (attempt === 1) {
+      return runtimeFetch(input, init);
+    }
+    if (!(input instanceof Request)) return runtimeFetch(input, init);
+    // Undici requires `duplex: 'half'` when a Request body stream is moved into
+    // URL + RequestInit form. Keep it in a spread because `duplex` is a runtime
+    // Fetch field that is not yet present in every TypeScript DOM lib.
+    const streamedBody = input.body ? { body: input.body, duplex: 'half' } : {};
+    return runtimeFetch(input.url, {
+      ...init,
+      method: input.method,
+      headers: input.headers,
+      ...streamedBody,
+      cache: input.cache,
+      credentials: input.credentials,
+      integrity: input.integrity,
+      keepalive: input.keepalive,
+      mode: input.mode,
+      redirect: input.redirect,
+      referrer: input.referrer,
+      referrerPolicy: input.referrerPolicy,
+      signal: input.signal,
+    });
+  };
+}
+
 export interface RequestOptions {
   params?: Record<string, ParamValue | ParamArrayValue>;
   timeout?: number;
@@ -248,6 +288,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.timeout ?? config.timeout ?? 30_000,
     );
     const kyOptions: Options = {
+      fetch: createRetryAwareFetch(),
       timeout: false,
       signal: cancellation.signal,
     };

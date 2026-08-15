@@ -27,8 +27,7 @@ sock.io.on('connection', (s) => {
 
 const server = createServer({
   port: 0,
-  websocket: sock.websocket,
-  rawRoutes: [sock.route],
+  socket: sock,
 });
 const URL = `http://localhost:${server.port}`;
 
@@ -64,7 +63,7 @@ function makeClient() {
 
 describe('Socket.IO wrappers', () => {
   afterAll(() => {
-    server.stop(true);
+    return server.shutdown({ gracePeriodMs: 0 });
   });
 
   test('server handle exposes a ready named /socket.io/*socketPath route', () => {
@@ -165,14 +164,13 @@ realtime.onConnection((connection) => {
 });
 const realtimeServer = createServer({
   port: 0,
-  websocket: realtimeHandle.websocket,
-  rawRoutes: [realtimeHandle.route],
+  socket: realtimeHandle,
 });
 const REALTIME_URL = `http://localhost:${realtimeServer.port}`;
 
 describe('Zod-first realtime contracts', () => {
   afterAll(() => {
-    realtimeServer.stop(true);
+    return realtimeServer.shutdown({ gracePeriodMs: 0 });
   });
 
   test('validates tuples, acknowledgements, no-payload and binary events', async () => {
@@ -299,7 +297,7 @@ describe('Socket.IO ServerOptions passthrough', () => {
     // On Bun the engine's maxPayloadLength is its maxHttpBufferSize — so a value
     // over the 1 MB default proves the option was forwarded, not dropped.
     expect(handle.websocket.maxPayloadLength).toBe(big);
-    handle.io.close();
+    await handle.close();
   });
 
   test('default maxHttpBufferSize is the 1 MB engine default when omitted', async () => {
@@ -307,7 +305,7 @@ describe('Socket.IO ServerOptions passthrough', () => {
       cors: { origin: '*' },
     });
     expect(handle.websocket.maxPayloadLength).toBe(1e6);
-    handle.io.close();
+    await handle.close();
   });
 });
 
@@ -345,8 +343,7 @@ authSock.io.on('connection', (s) => {
 });
 const authServer = createServer({
   port: 0,
-  websocket: authSock.websocket,
-  rawRoutes: [authSock.route],
+  socket: authSock,
 });
 const AUTH_URL = `http://localhost:${authServer.port}`;
 
@@ -360,7 +357,7 @@ function makeAuthClient(config: Partial<SocketIOClientConfig<AuthServerEvents>> 
 
 describe('Socket.IO handshake auth', () => {
   afterAll(() => {
-    authServer.stop(true);
+    return authServer.shutdown({ gracePeriodMs: 0 });
   });
 
   test('object auth — a valid token connects and reaches handshake.auth', async () => {
@@ -518,8 +515,9 @@ const composedWebSocket = composeWebSocketHandlers(
 );
 const composeServer = createServer({
   port: 0,
+  socket: composeSock,
   websocket: composedWebSocket,
-  rawRoutes: [composeSock.route, echoUpgradeRoute],
+  rawRoutes: [echoUpgradeRoute],
 });
 const COMPOSE_URL = `http://localhost:${composeServer.port}`;
 
@@ -547,7 +545,7 @@ function rawRoundTrip(payload: string, count: number): Promise<string[]> {
 
 describe('composed WebSocket lanes (Socket.IO + raw)', () => {
   afterAll(() => {
-    composeServer.stop(true);
+    return composeServer.shutdown({ gracePeriodMs: 0 });
   });
 
   test('the raw lane handles its own sockets', async () => {
@@ -612,14 +610,13 @@ kickSock.io.on('connection', (s) => {
 });
 const kickServer = createServer({
   port: 0,
-  websocket: kickSock.websocket,
-  rawRoutes: [kickSock.route],
+  socket: kickSock,
 });
 const KICK_URL = `http://localhost:${kickServer.port}`;
 
 describe('Socket.IO server-initiated disconnect', () => {
   afterAll(() => {
-    kickServer.stop(true);
+    return kickServer.shutdown({ gracePeriodMs: 0 });
   });
 
   test('onConnectionChange reports the disconnect reason', async () => {
@@ -716,14 +713,13 @@ stickySock.io.on('connection', (s) => {
 });
 const stickyServer = createServer({
   port: 0,
-  websocket: stickySock.websocket,
-  rawRoutes: [stickySock.route],
+  socket: stickySock,
 });
 const STICKY_URL = `http://localhost:${stickyServer.port}`;
 
 describe('Socket.IO sticky events (retain)', () => {
   afterAll(() => {
-    stickyServer.stop(true);
+    return stickyServer.shutdown({ gracePeriodMs: 0 });
   });
 
   test('a handler subscribed after the event still gets the last value', async () => {

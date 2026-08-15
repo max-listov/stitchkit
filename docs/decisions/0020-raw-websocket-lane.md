@@ -8,7 +8,7 @@ updated: 2026-06-05
 
 # ADR 0020 — A raw WebSocket lane composed beside Socket.IO
 
-- **Status:** Accepted — upholds [ADR 0008](0008-thin-wrappers.md), Bun-only per [ADR 0013](0013-runtime-agnostic-core.md)
+- **Status:** Accepted — upholds [ADR 0008](0008-thin-wrappers.md), Bun-only per [ADR 0013](0013-runtime-agnostic-core.md), lifecycle extended by [ADR 0074](0074-server-owned-managed-shutdown.md)
 - **Date:** 2026-06-05
 
 ## Context
@@ -76,3 +76,6 @@ inspected.
   server, Socket.IO engine Bun-only).
 - **Tuning is server-wide.** `maxPayloadLength`/`idleTimeout`/… apply to every
   socket (Bun cannot scope them per-lane); set them to the most permissive lane.
+- **Lifecycle is server-owned.** When a full Socket.IO handle and the composed
+  handler are passed together, `createServer({ socket, websocket })` mounts the
+  Socket.IO route once and tracks every lane for managed shutdown (ADR 0074).

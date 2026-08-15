@@ -62,6 +62,15 @@ attempt, so the default `2` permits at most three total attempts. The default
 `statusCodes: []` does not replay HTTP responses; explicit `methods` or
 `statusCodes` expand that policy when a project has a proven idempotent case.
 
+Inside Next.js 16 server rendering, the first attempt still uses Next's normal
+request memoization. If Ky authorizes a retry after a network rejection,
+Stitchkit passes that retry's current `Request.signal` in the second fetch
+argument and materializes the current Request as URL + init. Next 16.3 otherwise
+merges `init` into a Request before its dedupe layer and loses the explicit
+signal opt-out. The retry therefore performs a new network attempt instead of
+returning the cached rejection. This adapter does not broaden retry policy: POST, unconfigured HTTP
+statuses, cancellation and exhausted budgets retain the rules above.
+
 ## `createClient`
 
 ```ts

@@ -1,53 +1,145 @@
-import type { Server as HttpServer } from 'node:http';
-import { serve } from 'srvx';
+import type { Server as HttpServer, ServerResponse } from 'node:http';
+import type { Socket } from 'node:net';
+import { serve } from 'srvx/node';
 import { createHandler } from './create';
+import {
+  createServerLifecycle,
+  type ManagedServerHandle,
+  type ShutdownAdapter,
+} from './shutdown';
 import type { FetchComposition, HandlerConfig } from './types';
+
+export interface NodeSocketLifecycle {
+  attach(server: HttpServer): void;
+  beginShutdown(): void;
+  close(): Promise<void>;
+  connections(): number;
+}
 
 export interface NodeServerConfig extends HandlerConfig, FetchComposition {
   port?: number;
   hostname?: string;
-  /**
-   * A Socket.IO handle from `createSocketIOServer` — attached to the underlying
-   * `node:http.Server` (srvx `server.node.server`) once it is listening, so
-   * Socket.IO owns the HTTP `upgrade` event on the same port.
-   */
-  socket?: { attach(server: HttpServer): void };
+  /** A full Socket.IO lifecycle from `createSocketIOServer`. */
+  socket?: NodeSocketLifecycle;
 }
 
-export interface NodeServerHandle {
-  url: string;
-  port: number;
-  close(closeActive?: boolean): Promise<void>;
-}
+export type NodeRuntimeServer = ReturnType<typeof serve>;
+export type NodeServerHandle = ManagedServerHandle<NodeRuntimeServer>;
 
 export async function serveNode(config: NodeServerConfig): Promise<NodeServerHandle> {
   const { port = 3000, hostname, socket, wrapFetch, ...handlerConfig } = config;
   const handler = createHandler(handlerConfig);
-  const fetch = wrapFetch ? wrapFetch(handler) : handler;
 
-  const server = serve({ port, hostname, fetch });
-  await server.ready();
+  let runtime: NodeRuntimeServer | undefined;
+  let nodeServer: HttpServer | undefined;
+  const sockets = new Set<Socket>();
+  const upgradedSockets = new Set<Socket>();
+  const responses = new Set<ServerResponse>();
+  const socketDrainWaiters = new Set<() => void>();
+  const resolveSocketDrain = () => {
+    if (sockets.size !== 0) return;
+    for (const resolve of socketDrainWaiters) resolve();
+    socketDrainWaiters.clear();
+  };
+  const waitForSocketDrain = () => {
+    if (sockets.size === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => socketDrainWaiters.add(resolve));
+  };
+  const requireRuntime = (): NodeRuntimeServer => {
+    if (!runtime) throw new Error('[stitchkit] Node server lifecycle started before srvx');
+    return runtime;
+  };
+  const requireNodeServer = (): HttpServer => {
+    if (!nodeServer) throw new Error('[stitchkit] Node HTTP server is unavailable');
+    return nodeServer;
+  };
 
-  if (socket) {
-    // srvx types the underlying server as `http.Server | http2.Server`; serveNode
-    // never configures http2, so narrow to the `http.Server` Socket.IO attaches
-    // to (`maxRequestsPerSocket` exists on http.Server, not http2.Server).
-    const nodeServer = server.node?.server;
-    if (!nodeServer || !('maxRequestsPerSocket' in nodeServer)) {
-      throw new Error(
-        '[stitchkit] serveNode: expected a node:http.Server for Socket.IO (none / http2).',
+  const adapter: ShutdownAdapter = {
+    beginShutdown: () => socket?.beginShutdown(),
+    pendingRequests: () => responses.size,
+    // Engine.IO drops clientsCount when it initiates close, before the upgraded
+    // TCP socket has necessarily emitted `close`. The physical set is the
+    // lifecycle truth on Node.
+    pendingWebSockets: () => upgradedSockets.size,
+    closeRealtime: () => socket?.close() ?? Promise.resolve(),
+    async stopGracefully() {
+      const runtimeClose = socket ? Promise.resolve() : requireRuntime().close(false);
+      // Once listener close has begun, proactively close idle keep-alive
+      // connections. They carry no response work and otherwise can outlive the
+      // managed result even though all application work is complete.
+      requireNodeServer().closeIdleConnections?.();
+      await runtimeClose;
+      // Socket.IO owns http.Server.close() when attached. Node's close callback
+      // does not wait for upgraded connections, so always wait for the tracked
+      // transport sockets as a separate physical completion barrier.
+      await waitForSocketDrain();
+    },
+    async forceStop() {
+      const activeServer = requireNodeServer();
+      const logicalClose = socket?.close();
+      const physicalClosures = [...sockets].map(
+        (activeSocket) =>
+          new Promise<void>((resolve) => {
+            if (activeSocket.closed) resolve();
+            else activeSocket.once('close', () => resolve());
+          }),
       );
-    }
-    socket.attach(nodeServer);
-  }
+      activeServer.closeAllConnections?.();
+      for (const activeSocket of sockets) activeSocket.destroy();
+      if (logicalClose) await logicalClose;
+      else await requireRuntime().close(true);
+      await Promise.all(physicalClosures);
+      // A force result is emitted only after every tracked transport socket is
+      // closed. Some runtimes do not emit ServerResponse.close after destroy;
+      // the at-force snapshot already preserves those aborted responses.
+      responses.clear();
+    },
+  };
+  const lifecycle = createServerLifecycle(() => adapter);
+  const consumerFetch = wrapFetch ? wrapFetch(handler) : handler;
+  const fetch = lifecycle.wrapFetch(consumerFetch);
 
-  const listenUrl = server.url ?? `http://${hostname ?? 'localhost'}:${port}`;
+  runtime = serve({ port, hostname, fetch, gracefulShutdown: false });
+  await runtime.ready();
+
+  const candidate = runtime.node?.server;
+  if (!candidate || !('maxRequestsPerSocket' in candidate)) {
+    await runtime.close(true);
+    throw new Error(
+      '[stitchkit] serveNode: expected a node:http.Server for the managed lifecycle.',
+    );
+  }
+  nodeServer = candidate;
+  nodeServer.on('connection', (activeSocket) => {
+    sockets.add(activeSocket);
+    activeSocket.once('close', () => {
+      sockets.delete(activeSocket);
+      upgradedSockets.delete(activeSocket);
+      resolveSocketDrain();
+    });
+  });
+  nodeServer.on('upgrade', (request) => upgradedSockets.add(request.socket));
+  nodeServer.prependListener('request', (_request, response) => {
+    responses.add(response);
+    const complete = () => responses.delete(response);
+    response.once('finish', complete);
+    response.once('close', complete);
+  });
+
+  socket?.attach(nodeServer);
+
+  const listenUrl = runtime.url ?? `http://${hostname ?? 'localhost'}:${port}`;
   const resolvedPort = Number(new URL(listenUrl).port) || port;
   const resolvedHost = hostname ?? 'localhost';
+  const server = runtime;
 
   return {
     url: `http://${resolvedHost}:${resolvedPort}`,
     port: resolvedPort,
-    close: (closeActive) => server.close(closeActive),
+    runtime: server,
+    get status() {
+      return lifecycle.status;
+    },
+    shutdown: lifecycle.shutdown,
   };
 }

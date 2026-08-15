@@ -81,8 +81,9 @@ The registry is intentionally flat: every key must point to one concrete
 
 ## `createServer`
 
-`createServer(config)` builds the router and starts `Bun.serve()`. It returns
-the Bun server instance.
+`createServer(config)` builds the router and starts `Bun.serve()`. It returns a
+managed handle with `url`, `port`, the concrete server under `runtime`, live
+`status`, and one idempotent `shutdown()` lifecycle.
 
 ```ts
 import { createServer } from 'stitchkit/server'
@@ -115,8 +116,34 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
 | `traceId` | override per-request trace-id resolution — may return `undefined` to fall back |
 | `wrapFetch` | compose wrappers around the finished handler (request context, audit) |
-| `websocket` | Bun WebSocket handlers — e.g. from `createSocketIOServer` |
-| `routes` / `development` / `bun` | passthrough to `Bun.serve` |
+| `socket` | full Stitchkit Socket.IO handle; route, default WebSocket handler and shutdown are mounted once |
+| `websocket` | custom Bun WebSocket handler; with `socket`, this is the explicit composed handler |
+| `development` / `bun` | passthrough to `Bun.serve` |
+
+Native Bun `routes` are intentionally not accepted: Bun matches them before
+`fetch`, so they could bypass shutdown admission. Use `rawRoutes`; they retain
+the Fetch `Request → Response` model and participate in lifecycle tracking.
+
+### Managed shutdown
+
+```ts
+const server = createServer({ services, socket })
+
+const result = await server.shutdown({
+  gracePeriodMs: 30_000,
+  retryAfterSeconds: 5,
+  signal: shutdownController.signal,
+})
+```
+
+The first call closes HTTP and Socket.IO admission, drains accepted application
+requests, closes realtime transports and stops the runtime within one total
+budget. Repeated calls return the same Promise; the first options win. New
+ordinary HTTP work receives `503`, `Retry-After` and `Connection: close` outside
+`wrapFetch`. `result.outcome` is `clean` or `forced`; a forced result preserves
+the pending snapshot and reason while final pending counters describe the
+post-close transport state. `runtime` is a diagnostics escape hatch, not a
+second canonical stop path.
 
 ### Trusted HTTPS in development
 

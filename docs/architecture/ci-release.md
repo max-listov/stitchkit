@@ -4,7 +4,7 @@ description: Parallel release gates, immutable publication inputs and the three-
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 ---
 
 # CI and exact-SHA release pipeline
@@ -57,6 +57,15 @@ every matrix cell and the framework job succeeds. The publisher selects
 that successful completed workflow for the exact commit SHA, so the workflow's
 native conclusion is already the fail-closed aggregate.
 
+One narrow bridge exists for an intentional pre-1.0 hard cut. When the current
+core release notes contain the exact breaking-changes heading and the canonical
+starter still targets another `^0.minor`, target cells remain mandatory while
+HEAD cells report an explicit skip. A single template cannot compile against
+both sides of the removed API before the new core exists on npm. After core
+publication, the separate starter migration advances its catalog target; the
+predicate becomes aligned and all eight cells are mandatory again. Additive
+releases, unknown range forms and ordinary commits never qualify for the skip.
+
 Superseded branch or pull-request runs are cancelled. Tag publication is a
 separate non-cancellable workflow, so an in-progress npm publication can never
 be interrupted by a newer commit.
@@ -94,6 +103,10 @@ pinned to a full commit SHA.
 
 `bun run verify` remains the complete local framework gate and composes both
 target starter variants. `bun run starter-head-lane` composes both HEAD variants.
+For an unaligned breaking core release candidate, local `verify` proves the
+still-published target while CI applies the same explicit HEAD bridge described
+above; the migrated HEAD template is validated after the core package becomes
+available and before the starter advances.
 For a focused lane, call the executable directly with one explicit combination:
 
 ```bash

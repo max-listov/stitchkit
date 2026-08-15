@@ -42,7 +42,7 @@ const server = await serveNode({
 
 const base = `http://localhost:${server.port}`;
 
-afterAll(() => server.close());
+afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
 describe('serveNode', () => {
   test('GET returns JSON', async () => {
@@ -104,6 +104,44 @@ describe('serveNode', () => {
     });
     expect(res.headers.get('access-control-allow-origin')).toBe('https://example.com');
 
-    await corsServer.close();
+    await corsServer.shutdown({ gracePeriodMs: 0 });
+  });
+
+  test('does not install hidden srvx signal listeners', async () => {
+    const beforeTerm = process.listenerCount('SIGTERM');
+    const beforeInterrupt = process.listenerCount('SIGINT');
+    const managed = await serveNode({ port: 0 });
+    expect(process.listenerCount('SIGTERM')).toBe(beforeTerm);
+    expect(process.listenerCount('SIGINT')).toBe(beforeInterrupt);
+    await managed.shutdown({ gracePeriodMs: 0 });
+  });
+
+  test('forces a physically open streaming response and preserves its snapshot', async () => {
+    const streamStarted = Promise.withResolvers<void>();
+    const managed = await serveNode({
+      port: 0,
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/stream',
+          handler: () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('started'));
+                  streamStarted.resolve();
+                },
+              }),
+            ),
+        },
+      ],
+    });
+    const request = fetch(`${managed.url}/stream`).catch(() => undefined);
+    await streamStarted.promise;
+    const result = await managed.shutdown({ gracePeriodMs: 25 });
+    expect(result.outcome).toBe('forced');
+    expect(result.pendingRequestsAtForce).toBeGreaterThan(0);
+    expect(result.pendingRequests).toBe(0);
+    await request;
   });
 });

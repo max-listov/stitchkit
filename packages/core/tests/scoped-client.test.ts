@@ -60,7 +60,7 @@ const server = createServer({
 const baseUrl = `http://localhost:${server.port}`;
 
 describe('scoped client (stripPrefixKeys) — runtime', () => {
-  afterAll(() => server.stop(true));
+  afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
   test('the consumed key drives the URL prefix → request reaches the scoped route', async () => {
     const http = createHttpClient({ baseUrl });

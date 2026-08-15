@@ -133,7 +133,7 @@ describe('createServer + implement', () => {
   });
 
   afterAll(() => {
-    server?.stop();
+    return server?.shutdown({ gracePeriodMs: 0 });
   });
 });
 
@@ -183,7 +183,7 @@ describe('lifecycle hooks', () => {
   });
 
   test('onRequest can return early Response', async () => {
-    hookServer?.stop();
+    await hookServer?.shutdown({ gracePeriodMs: 0 });
     let BLOCK_PORT = 0;
 
     const contract = defineContract(
@@ -212,6 +212,6 @@ describe('lifecycle hooks', () => {
   });
 
   afterAll(() => {
-    hookServer?.stop();
+    return hookServer?.shutdown({ gracePeriodMs: 0 });
   });
 });

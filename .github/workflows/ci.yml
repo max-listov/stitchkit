@@ -124,4 +124,9 @@ jobs:
       # template a second time without contributing to the isolated proof.
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Run one isolated starter surface
-        run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
+        run: |
+          if [ "$STARTER_LANE_MODE" = "head" ] && [ "$(bun scripts/release-plan.ts starter-head)" = "skip" ]; then
+            echo "Skipping packed HEAD only for the changelog-proven breaking core release bridge; target remains mandatory."
+            exit 0
+          fi
+          bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"

@@ -66,13 +66,12 @@ realtime.onConnection(({ raw, events, to }) => {
 })
 ```
 
-It returns a handle with three pieces, all wired into `createServer`:
+Pass the full handle to `createServer`; it mounts and owns the transport once:
 
 ```ts
 createServer({
   services,
-  websocket: socket.websocket,   // → Bun.serve websocket handlers
-  rawRoutes: [socket.route],     // ready-made /socket.io/*socketPath route
+  socket,
 })
 
 // elsewhere — validated broadcast:
@@ -92,11 +91,15 @@ export function publishExampleNote(realtime: ExampleRealtimePublisher): void {
 | Handle field | Purpose |
 |--------------|---------|
 | `io` | raw Socket.IO server for middleware, handshake auth and transport ownership |
-| `websocket` | Bun WebSocket handlers — pass to `createServer({ websocket })` |
-| `route` | the `/socket.io/*socketPath` raw route — pass to `createServer({ rawRoutes })` |
+| `websocket` | Bun handlers used directly only in explicit raw-lane composition |
+| `route` | `/socket.io/*socketPath`, mounted automatically by `createServer({ socket })` |
+| `close()` | idempotent standalone close for CLI/tools with no HTTP server |
+| `beginShutdown()` / `connections()` | lifecycle surface consumed by the managed server |
 
-`SocketIOServerConfig` also takes `path`, `transports`, `pingTimeout` and
-`pingInterval`. For anything else socket.io's `ServerOptions` exposes, use the
+`SocketIOServerConfig` also takes `path`, `transports`, `pingTimeout`,
+`pingInterval` and a runtime-neutral `allowRequest(Request)` handshake policy.
+The policy is composed with managed-shutdown admission on both Bun and Node.
+For anything else socket.io's `ServerOptions` exposes, use the
 typed **`serverOptions`** passthrough — most often `maxHttpBufferSize` to lift the
 1 MB default for large emits:
 
@@ -107,7 +110,8 @@ await createSocketIOServer({
 })
 ```
 
-The wrapper-owned fields (`cors` / `path` / `transports` / `ping*`) take
+The wrapper-owned fields (`cors` / `path` / `transports` / `ping*` /
+`allowRequest`) take
 precedence over the same keys in `serverOptions`. On Bun the engine-level options
 (`maxHttpBufferSize`, the ping heartbeat, `upgradeTimeout`) are forwarded to
 `@socket.io/bun-engine` too — so a configured `maxHttpBufferSize` actually applies
@@ -404,8 +408,9 @@ const websocket = composeWebSocketHandlers(
 
 createServer({
   services,
+  socket,
   websocket,
-  rawRoutes: [socket.route, pcmRoute],
+  rawRoutes: [pcmRoute],
 })
 ```
 

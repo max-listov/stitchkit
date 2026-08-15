@@ -2,6 +2,7 @@ import { ApiError, createHttpClient } from '../../src/browser/http';
 
 type Probe = {
   attempts(): number;
+  signals(): Array<{ explicit: boolean; matchesRequest: boolean }>;
   firstAttempt: Promise<void>;
   firstFailure: Promise<unknown>;
   restore(): void;
@@ -10,6 +11,8 @@ type Probe = {
 function installFetchProbe(): Probe {
   const nativeFetch = globalThis.fetch;
   let attempts = 0;
+  let currentRequestSignal: AbortSignal | undefined;
+  const signals: Array<{ explicit: boolean; matchesRequest: boolean }> = [];
   let resolveFirstAttempt = (): void => undefined;
   let resolveFirstFailure = (_error: unknown): void => undefined;
   const firstAttempt = new Promise<void>((resolve) => {
@@ -22,6 +25,11 @@ function installFetchProbe(): Probe {
   globalThis.fetch = Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       attempts += 1;
+      if (attempts === 1 && input instanceof Request) currentRequestSignal = input.signal;
+      signals.push({
+        explicit: init?.signal !== undefined,
+        matchesRequest: init?.signal === currentRequestSignal,
+      });
       if (attempts === 1) resolveFirstAttempt();
       try {
         return await nativeFetch(input, init);
@@ -35,6 +43,7 @@ function installFetchProbe(): Probe {
 
   return {
     attempts: () => attempts,
+    signals: () => signals,
     firstAttempt,
     firstFailure,
     restore() {
@@ -90,10 +99,111 @@ async function lateServerProbe() {
     }
     server = Bun.serve({ port, fetch: () => Response.json({ ok: true }) });
     const result = await withDeadline(pending, 'late-server retry');
-    return { attempts: probe.attempts(), events, result };
+    return { attempts: probe.attempts(), signals: probe.signals(), events, result };
   } finally {
     probe.restore();
     await server?.stop(true);
+  }
+}
+
+function retryableConnectionError(): Error {
+  const error = new Error('deterministic transport failure');
+  Object.defineProperty(error, 'code', { value: 'ConnectionRefused' });
+  return error;
+}
+
+async function parallelRetryProbe() {
+  const nativeFetch = globalThis.fetch;
+  const attempts = new Map<string, number>();
+  const signals = new Map<string, boolean[]>();
+  const requestSignals = new Map<string, AbortSignal>();
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      const count = (attempts.get(path) ?? 0) + 1;
+      attempts.set(path, count);
+      if (count === 1) requestSignals.set(path, request.signal);
+      signals.set(path, [
+        ...(signals.get(path) ?? []),
+        count === 1 ? false : init?.signal === requestSignals.get(path),
+      ]);
+      if (count === 1) throw retryableConnectionError();
+      return Response.json({ path });
+    },
+    { preconnect: nativeFetch.preconnect },
+  );
+
+  try {
+    const http = createHttpClient({ baseUrl: 'http://retry.test', retry: { limit: 1 } });
+    const [first, second] = await Promise.all([
+      http.get<{ path: string }>('/first'),
+      http.get<{ path: string }>('/second'),
+    ]);
+    return {
+      attempts: Object.fromEntries(attempts),
+      signals: Object.fromEntries(signals),
+      results: [first, second],
+    };
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+}
+
+async function optInHeadRetryProbe() {
+  const nativeFetch = globalThis.fetch;
+  let attempts = 0;
+  let requestSignal: AbortSignal | undefined;
+  const signals: boolean[] = [];
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      attempts += 1;
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (attempts === 1) requestSignal = request.signal;
+      signals.push(attempts === 1 ? false : init?.signal === requestSignal);
+      if (attempts === 1) throw retryableConnectionError();
+      return new Response(null, { status: 204 });
+    },
+    { preconnect: nativeFetch.preconnect },
+  );
+
+  try {
+    const http = createHttpClient({
+      baseUrl: 'http://retry.test',
+      retry: { limit: 1, methods: ['head'] },
+    });
+    await http.head('/head', { responseType: 'void' });
+    return { attempts, signals };
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+}
+
+async function optInBodyRetryProbe() {
+  const nativeFetch = globalThis.fetch;
+  let attempts = 0;
+  let retryDuplex = false;
+  let retryBody = '';
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      attempts += 1;
+      if (attempts === 1) throw retryableConnectionError();
+      retryDuplex = init !== undefined && 'duplex' in init && init.duplex === 'half';
+      retryBody = await new Request(input, init).text();
+      return Response.json({ ok: true });
+    },
+    { preconnect: nativeFetch.preconnect },
+  );
+
+  try {
+    const http = createHttpClient({
+      baseUrl: 'http://retry.test',
+      retry: { limit: 1, methods: ['put'] },
+    });
+    const result = await http.put<{ ok: boolean }>('/body', { value: 'preserved' });
+    return { attempts, retryDuplex, retryBody, result };
+  } finally {
+    globalThis.fetch = nativeFetch;
   }
 }
 
@@ -267,6 +377,9 @@ async function responseSemanticsProbe() {
 
 const result = {
   lateServer: await lateServerProbe(),
+  parallel: await parallelRetryProbe(),
+  head: await optInHeadRetryProbe(),
+  body: await optInBodyRetryProbe(),
   exhausted: await exhaustedProbe(2),
   noRetry: await exhaustedProbe(0),
   post: await postProbe(),

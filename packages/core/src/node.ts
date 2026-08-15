@@ -25,7 +25,13 @@ export {
   type RegistryHandlers,
 } from './server/implement';
 export type { LogFormat } from './server/logger';
-export { type NodeServerConfig, type NodeServerHandle, serveNode } from './server/node';
+export {
+  type NodeRuntimeServer,
+  type NodeServerConfig,
+  type NodeServerHandle,
+  type NodeSocketLifecycle,
+  serveNode,
+} from './server/node';
 export {
   bindRealtimeServer,
   type RealtimeServer,
@@ -33,8 +39,20 @@ export {
   type RealtimeServerHandle,
 } from './server/realtime';
 export {
+  type ManagedServerHandle,
+  type ShutdownOptions,
+  ShutdownOptionsSchema,
+  type ShutdownResult,
+  ShutdownResultSchema,
+  type ShutdownState,
+  ShutdownStateSchema,
+  type ShutdownStatus,
+  ShutdownStatusSchema,
+} from './server/shutdown';
+export {
   createNodeSocketIOServer as createSocketIOServer,
   type NodeSocketIOServerHandle as SocketIOServerHandle,
+  type SocketIORequestPolicy,
   type SocketIOServerConfig,
 } from './server/socket-io-node';
 export type {

@@ -18,6 +18,34 @@ export interface PrePushPlan {
   releaseTags: string[];
 }
 
+function preOneMinor(version: string): number | null {
+  const match = /^0\.(\d+)\.\d+(?:[-+].*)?$/.exec(version);
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+function caretPreOneMinor(range: string): number | null {
+  const match = /^\^0\.(\d+)\.\d+(?:[-+].*)?$/.exec(range);
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+/**
+ * A hard-cut core minor cannot be consumed by the still-published starter
+ * before that core version exists on npm. Keep every ordinary HEAD lane; skip
+ * only this explicit, changelog-proven release bridge. Unknown version/range
+ * forms fail closed by running the lane.
+ */
+export function shouldRunStarterHeadLane(
+  coreVersion: string,
+  starterTarget: string,
+  releaseNotes: string,
+): boolean {
+  if (!releaseNotes.includes('### ⚠️ Breaking changes')) return true;
+  const coreMinor = preOneMinor(coreVersion);
+  const targetMinor = caretPreOneMinor(starterTarget);
+  if (coreMinor === null || targetMinor === null) return true;
+  return coreMinor === targetMinor;
+}
+
 export function releasePlanForTag(tag: string): ReleasePlan {
   if (tag.startsWith('create-stitchkit-v')) {
     const version = tag.slice('create-stitchkit-v'.length);
@@ -296,8 +324,39 @@ async function main(): Promise<void> {
     process.stdout.write(decidePublishAction(artifactShasum ?? '', publishedShasum ?? null));
     return;
   }
+  if (command === 'starter-head') {
+    const coreManifest: unknown = JSON.parse(
+      await readFile(join(root, 'packages/core/package.json'), 'utf8'),
+    );
+    const starterManifest: unknown = JSON.parse(
+      await readFile(join(root, 'packages/create-stitchkit/template/package.json'), 'utf8'),
+    );
+    const coreVersion =
+      typeof coreManifest === 'object' && coreManifest !== null
+        ? Reflect.get(coreManifest, 'version')
+        : undefined;
+    const catalog =
+      typeof starterManifest === 'object' && starterManifest !== null
+        ? Reflect.get(starterManifest, 'catalog')
+        : undefined;
+    const starterTarget =
+      typeof catalog === 'object' && catalog !== null
+        ? Reflect.get(catalog, 'stitchkit')
+        : undefined;
+    if (typeof coreVersion !== 'string' || typeof starterTarget !== 'string') {
+      throw new Error('core version and starter catalog.stitchkit must be strings');
+    }
+    const releaseNotes = extractReleaseNotes(
+      await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
+      coreVersion,
+    );
+    process.stdout.write(
+      shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes) ? 'run' : 'skip',
+    );
+    return;
+  }
   throw new Error(
-    'Usage: release-plan.ts <preflight TAG|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]>',
+    'Usage: release-plan.ts <preflight TAG|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
   );
 }
 

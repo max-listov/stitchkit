@@ -89,7 +89,6 @@ const ACCEPTED = {
   // Local aliases over `@types/bun`. A consumer on Bun names Bun's own types;
   // re-exporting ours would fork them. → ADR 0013.
   BunServeOptions: 'alias over @types/bun',
-  BunRoutes: 'alias over @types/bun',
   BunWebSocketHandlers: 'alias over @types/bun',
   BunDevelopmentOptions: 'alias over @types/bun',
 };

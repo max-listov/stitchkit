@@ -108,7 +108,7 @@ const malformedBase = `http://localhost:${malformedServer.port}`;
 afterAll(async () => {
   bunServer.stop(true);
   malformedServer.stop(true);
-  await nodeServer.close(true);
+  await nodeServer.shutdown({ gracePeriodMs: 0 });
 });
 
 async function response(baseUrl: string, path: string, method = 'GET'): Promise<Response> {

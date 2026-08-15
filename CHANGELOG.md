@@ -15,6 +15,49 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-08-15
+
+### ⚠️ Breaking changes
+
+- **Bun `createServer()` and Node `serveNode()` now return managed handles.**
+  The server owns admission, accepted HTTP drain, Socket.IO/raw WebSocket
+  closure and one deadline-bounded runtime stop. The runtime-specific instance
+  remains under `.runtime`; shutdown uses the shared result-bearing method.
+  `// before: server.stop(); await socket.io.close()` →
+  `// after:  await server.shutdown({ gracePeriodMs: 30_000 })`
+- **Socket.IO is mounted through the full `socket` handle.** This gives the
+  server one owner for route, WebSocket/Node attachment and closure. For a raw
+  Bun lane, keep the composed `websocket` handler and pass `socket` beside it.
+  `// before: createServer({ websocket: socket.websocket, rawRoutes: [socket.route] })` →
+  `// after:  createServer({ socket })`
+- **Bun native `routes` are removed from `BunServerConfig`.** Native routes run
+  before the Fetch handler and bypass managed admission. Move them to explicit
+  framework routes.
+  `// before: createServer({ routes: { '/health': () => Response.json({ ok: true }) } })` →
+  `// after:  createServer({ rawRoutes: [{ method: 'GET', path: '/health', handler: () => Response.json({ ok: true }) }] })`
+- **Socket.IO handshake policy moves out of the Node-shaped passthrough.** The
+  shared policy now receives a Web `Request` and is composed with shutdown
+  admission on both Bun and Node.
+  `// before: createSocketIOServer({ serverOptions: { allowRequest: (req, done) => done(null, allowed(req)) }, ... })` →
+  `// after:  createSocketIOServer({ allowRequest: (request) => allowed(request), ... })`
+
+### Added
+
+- Added Zod-first shutdown option/status/result schemas, live status counters,
+  literal Promise idempotency, shared deadline/AbortSignal semantics and clean
+  versus forced evidence for Bun and Node.
+
+### Fixed
+
+- Ky retries inside Next.js 16 SSR now bypass a memoized first-attempt rejection
+  only from the second attempt onward. The first attempt keeps Next fetch
+  memoization; retry calls preserve Ky's request fields and future `init`
+  extensions while materializing URL + init so the current signal survives
+  Next 16.3's Request-merge stage and reaches its dedupe boundary.
+- Managed Node servers now force the `srvx/node` adapter, disable srvx's hidden
+  process-signal lifecycle and destroy tracked upgraded TCP sockets on a forced
+  shutdown. Socket.IO remains the sole graceful close owner when attached.
+
 ## [0.48.1] — 2026-08-14
 
 ### Added
