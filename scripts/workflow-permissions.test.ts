@@ -86,7 +86,7 @@ describe('CI release-critical graph', () => {
     }
   });
 
-  test('the graph fits nine runners without dropping the Node consumer gate', () => {
+  test('the graph fits nine runners without dropping the runtime consumer gates', () => {
     const jobsSection = ci.slice(ci.indexOf('jobs:'));
     expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(2);
     expect(ci).not.toContain('\n  node-smoke:');
@@ -97,6 +97,7 @@ describe('CI release-critical graph', () => {
     );
     expect(coreSection).toContain('node-version: 22');
     expect(coreSection).toContain('- run: bun run build');
+    expect(coreSection).toContain('- run: bun run smoke:next-ssr');
     expect(coreSection).toContain('- run: bun run smoke:node');
     expect(coreSection).toContain('- run: bun run consumer-lane');
     expect(ci.match(/- run: bun run build\n/g)).toHaveLength(1);

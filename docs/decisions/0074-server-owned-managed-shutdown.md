@@ -4,7 +4,7 @@ description: Make admission, HTTP drain, realtime closure and runtime stop one b
 type: decision
 status: accepted
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 ---
 
 # ADR 0074 — Server-owned managed shutdown
@@ -33,9 +33,12 @@ has physically finished.
 
 `createServer()` and `serveNode()` return one
 `ManagedServerHandle<TRuntime>`: `{ url, port, runtime, status, shutdown() }`.
-The first `shutdown()` closes admission and fixes one monotonic grace budget plus
-an optional caller `AbortSignal`. Later calls return the same Promise object and
-cannot replace its options.
+The first `shutdown()` closes admission and fixes one monotonic grace budget,
+one forced-completion timeout and an optional caller `AbortSignal`. Later calls
+return the same Promise object and cannot replace its options. The grace budget
+is shared by every non-destructive phase; physical confirmation after the force
+boundary has its own bounded timeout because it necessarily starts after the
+grace budget has been consumed.
 
 The state chain is `running → draining-http → closing-realtime →
 stopping-runtime → clean | forced`:
@@ -49,7 +52,13 @@ stopping-runtime → clean | forced`:
    server-side `close` callback; only the forced path calls `terminate()`. Node
    uses Socket.IO as the sole graceful close owner when attached;
 5. the runtime stops. At deadline or external abort, Bun forces runtime stop;
-   Node destroys every tracked TCP socket, including upgraded WebSockets.
+   Node destroys every tracked TCP socket, including upgraded WebSockets. Both
+   adapters must confirm physical closure before the forced result; timeout or
+   adapter failure rejects rather than manufacturing zero pending counters.
+
+An exception from realtime or graceful runtime close does not bypass teardown:
+the lifecycle runs the same forced adapter, marks the live state `forced`, then
+rejects with the original phase error.
 
 `acceptedRequests` and `completedRequests` describe application admission.
 Transport pending counts describe physical state. A forced result preserves

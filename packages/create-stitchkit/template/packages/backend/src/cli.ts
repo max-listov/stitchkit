@@ -9,5 +9,5 @@ const { services, socket } = await createSurface();
 try {
   await createCli({ name: appIdentity.slug, version: appIdentity.version, services });
 } finally {
-  await socket.io.close();
+  await socket.close();
 }

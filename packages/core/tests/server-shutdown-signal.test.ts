@@ -2,13 +2,14 @@ import { expect, test } from 'bun:test';
 import { z } from 'zod';
 
 const ResultSchema = z.object({
-  outcome: z.literal('clean'),
+  outcome: z.literal('forced'),
+  reason: z.literal('signal'),
   pendingRequests: z.literal(0),
   pendingWebSockets: z.literal(0),
-  signalCount: z.literal(1),
+  signalCount: z.literal(2),
 });
 
-test('Bun subprocess handles real SIGTERM and exits naturally after managed shutdown', async () => {
+test('a second real SIGTERM forces the same Bun shutdown chain and exits naturally', async () => {
   const child = Bun.spawn({
     cmd: [process.execPath, 'tests/fixtures/bun-shutdown-signal.ts'],
     cwd: import.meta.dir.replace(/\/tests$/, ''),
@@ -26,6 +27,12 @@ test('Bun subprocess handles real SIGTERM and exits naturally after managed shut
       output += decoder.decode(chunk.value);
     }
     child.kill('SIGTERM');
+    while (!output.includes('SHUTTING_DOWN\n')) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error('Bun shutdown fixture exited before shutdown began');
+      output += decoder.decode(chunk.value);
+    }
+    child.kill('SIGTERM');
     while (!output.includes('RESULT ')) {
       const chunk = await reader.read();
       if (chunk.done) break;
@@ -38,10 +45,11 @@ test('Bun subprocess handles real SIGTERM and exits naturally after managed shut
     expect(resultLine).toBeDefined();
     const result = ResultSchema.parse(JSON.parse(resultLine?.slice('RESULT '.length) ?? ''));
     expect(result).toMatchObject({
-      outcome: 'clean',
+      outcome: 'forced',
+      reason: 'signal',
       pendingRequests: 0,
       pendingWebSockets: 0,
-      signalCount: 1,
+      signalCount: 2,
     });
   } finally {
     clearTimeout(deadline);

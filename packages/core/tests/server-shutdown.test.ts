@@ -195,6 +195,61 @@ describe('managed Bun server shutdown', () => {
     expect(result.pendingWebSockets).toBe(0);
   });
 
+  test('forced raw Bun WebSocket waits for the server-side close callback', async () => {
+    const opened = Promise.withResolvers<void>();
+    let physicalCloseObserved = false;
+    const server = createServer({
+      port: 0,
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/forced-raw',
+          handler(request, context) {
+            return context.server?.upgrade(request, { data: undefined })
+              ? new Response(null)
+              : new Response('upgrade failed', { status: 400 });
+          },
+        },
+      ],
+      websocket: {
+        open() {
+          opened.resolve();
+        },
+        message() {
+          // no-op
+        },
+        close() {
+          physicalCloseObserved = true;
+        },
+      },
+    });
+    const client = new WebSocket(`${server.url.replace('http:', 'ws:')}/forced-raw`);
+    await opened.promise;
+    const closed = new Promise<void>((resolve) =>
+      client.addEventListener('close', () => resolve()),
+    );
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await server.shutdown({
+      gracePeriodMs: 10_000,
+      forceTimeoutMs: 1_000,
+      signal: controller.signal,
+    });
+    expect(physicalCloseObserved).toBe(true);
+    expect(result.outcome).toBe('forced');
+    expect(result.reason).toBe('signal');
+    expect(result.pendingWebSocketsAtForce).toBe(1);
+    expect(result.forcedWebSockets).toBe(1);
+    expect(result.pendingWebSockets).toBe(0);
+    await closed;
+    const listenerStillAccepts = await fetch(`${server.url}/after-force`).then(
+      () => true,
+      () => false,
+    );
+    expect(listenerStillAccepts).toBe(false);
+  });
+
   test('native Bun routes are a compile-time error because they bypass admission', () => {
     const rejectedConfig: BunServerConfig = {
       port: 0,

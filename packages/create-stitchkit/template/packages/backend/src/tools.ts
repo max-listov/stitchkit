@@ -20,5 +20,5 @@ try {
     ),
   );
 } finally {
-  await socket.io.close();
+  await socket.close();
 }

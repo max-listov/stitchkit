@@ -99,7 +99,7 @@ export function webSocketLane<TData>(lane: WebSocketLane<TData>): ComposedLane {
  *   [webSocketLane({ match: isPcmSocket, handlers: pcmHandlers }), socketIoLane(socket.websocket)],
  *   { maxPayloadLength: 16 * 1024 * 1024 },
  * )
- * createServer({ websocket: ws, rawRoutes: [socket.route, pcmUpgradeRoute] })
+ * createServer({ socket, websocket: ws, rawRoutes: [pcmUpgradeRoute] })
  * ```
  */
 export function composeWebSocketHandlers(

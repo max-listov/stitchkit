@@ -39,6 +39,7 @@ jobs:
       - run: bun run check
       - run: bun run test
       - run: bun run build
+      - run: bun run smoke:next-ssr
       - run: bun run smoke:node
       - run: bun run consumer-lane
       - name: Pack the exact validated publication inputs

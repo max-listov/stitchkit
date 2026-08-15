@@ -219,7 +219,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `BunServerConfig` | _type_ | config for `createServer` (Bun) |
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |
-| `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | one grace budget, retry hint and optional external abort signal |
+| `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | one graceful budget, bounded forced-completion timeout, retry hint and optional external abort signal |
 | `ShutdownStatusSchema` / `ShutdownStatus` | schema / _type_ | live state and request/WebSocket counters |
 | `ShutdownResultSchema` / `ShutdownResult` | schema / _type_ | clean/forced result with final counters and at-force snapshots |
 | `ShutdownStateSchema` / `ShutdownState` | schema / _type_ | managed lifecycle state machine |

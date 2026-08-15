@@ -131,19 +131,24 @@ const server = createServer({ services, socket })
 
 const result = await server.shutdown({
   gracePeriodMs: 30_000,
+  forceTimeoutMs: 5_000,
   retryAfterSeconds: 5,
   signal: shutdownController.signal,
 })
 ```
 
-The first call closes HTTP and Socket.IO admission, drains accepted application
-requests, closes realtime transports and stops the runtime within one total
-budget. Repeated calls return the same Promise; the first options win. New
+The first call closes HTTP and Socket.IO admission, then gives the complete
+graceful request/realtime/runtime chain one `gracePeriodMs` budget. If that
+budget or the external signal forces destructive teardown, `forceTimeoutMs`
+bounds physical completion separately. Repeated calls return the same Promise;
+the first options win. New
 ordinary HTTP work receives `503`, `Retry-After` and `Connection: close` outside
 `wrapFetch`. `result.outcome` is `clean` or `forced`; a forced result preserves
 the pending snapshot and reason while final pending counters describe the
-post-close transport state. `runtime` is a diagnostics escape hatch, not a
-second canonical stop path.
+post-close transport state. A graceful phase error still runs forced cleanup and
+then rejects with the original error; a forced transport that cannot confirm
+completion before `forceTimeoutMs` rejects instead of reporting a false zero.
+`runtime` is a diagnostics escape hatch, not a second canonical stop path.
 
 ### Trusted HTTPS in development
 

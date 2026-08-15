@@ -62,7 +62,17 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     | Bun.WebSocketHandler<unknown>
     | undefined;
   const openSockets = new Set<Bun.ServerWebSocket<unknown>>();
+  const socketDrainWaiters = new Set<() => void>();
   let hadWebSockets = false;
+  const resolveSocketDrain = () => {
+    if (openSockets.size !== 0) return;
+    for (const resolve of socketDrainWaiters) resolve();
+    socketDrainWaiters.clear();
+  };
+  const waitForSocketDrain = () => {
+    if (openSockets.size === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => socketDrainWaiters.add(resolve));
+  };
   const trackedWebSocket: typeof websocket = websocket
     ? {
         ...websocket,
@@ -73,6 +83,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
         },
         close(ws: Bun.ServerWebSocket<unknown>, code: number, reason: string) {
           openSockets.delete(ws);
+          resolveSocketDrain();
           websocket.close?.(ws, code, reason);
         },
       }
@@ -94,21 +105,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
       // close callback. The shared lifecycle deadline owns the fallback to
       // terminate() for any socket Bun still reports as open at that boundary.
       for (const ws of openSockets) ws.close(1001, 'Server shutting down');
-      await Promise.all([
-        logicalClose,
-        new Promise<void>((resolve) => {
-          if (openSockets.size === 0) {
-            resolve();
-            return;
-          }
-          const timer = setInterval(() => {
-            if (openSockets.size === 0) {
-              clearInterval(timer);
-              resolve();
-            }
-          }, 5);
-        }),
-      ]);
+      await Promise.all([logicalClose, waitForSocketDrain()]);
     },
     async stopGracefully() {
       // After all accepted work and tracked WebSockets are physically gone,
@@ -126,11 +123,18 @@ export function createServer(config: BunServerConfig): BunServerHandle {
       await server.stop(false);
     },
     async forceStop() {
-      for (const ws of openSockets) ws.terminate();
-      openSockets.clear();
+      const logicalClose = socket?.close();
+      const physicalClose = waitForSocketDrain();
+      for (const ws of [...openSockets]) ws.terminate();
       const stopping = requireRuntime().stop(true);
+      // Bun 1.3.14 closes the listener synchronously and emits the physical
+      // server-side WebSocket close callback, but its stop Promise remains
+      // pending after an upgraded connection. The tracker callback is therefore
+      // the physical completion boundary; awaiting `stopping` would deadlock an
+      // otherwise closed server.
       if (!hadWebSockets) await stopping;
       else void stopping.catch(() => undefined);
+      await Promise.all([logicalClose, physicalClose]);
     },
   };
   const lifecycle = createServerLifecycle(() => adapter);

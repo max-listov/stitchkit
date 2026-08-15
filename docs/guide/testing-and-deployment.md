@@ -117,7 +117,11 @@ function shutdown() {
     force.abort() // a later signal shortens the same shutdown, not a second chain
     return closing
   }
-  closing = server.shutdown({ gracePeriodMs: 30_000, signal: force.signal }).then(async result => {
+  closing = server.shutdown({
+    gracePeriodMs: 30_000,
+    forceTimeoutMs: 5_000,
+    signal: force.signal,
+  }).then(async result => {
     await mcp.close()
     await prisma.$disconnect()
     console.log(result)

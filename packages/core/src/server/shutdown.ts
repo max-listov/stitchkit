@@ -13,6 +13,7 @@ export type ShutdownState = z.infer<typeof ShutdownStateSchema>;
 
 export const ShutdownOptionsSchema = z.object({
   gracePeriodMs: z.number().int().nonnegative().default(30_000),
+  forceTimeoutMs: z.number().int().nonnegative().default(5_000),
   retryAfterSeconds: z.number().int().nonnegative().default(5),
   signal: z
     .custom<AbortSignal>(
@@ -110,6 +111,22 @@ function untilAbort(signal: AbortSignal): Promise<void> {
   );
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function createServerLifecycle(getAdapter: () => ShutdownAdapter): ServerLifecycle {
   let state: ShutdownState = 'running';
   let acceptedRequests = 0;
@@ -154,8 +171,9 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
 
     shutdownPromise = new Promise<ShutdownResult>((resolve, reject) => {
       const phaseAbort = new AbortController();
-      let forcedReason: 'deadline' | 'signal' | undefined;
-      const force = (reason: 'deadline' | 'signal') => {
+      let forcedReason: 'deadline' | 'signal' | 'error' | undefined;
+      let phaseError: unknown;
+      const force = (reason: 'deadline' | 'signal' | 'error') => {
         if (forcedReason) return;
         forcedReason = reason;
         phaseAbort.abort();
@@ -171,26 +189,21 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
       };
 
       void (async () => {
-        await waitForZero(() => pendingApplicationRequests, phaseAbort.signal);
-        if (!forcedReason) {
-          state = 'closing-realtime';
-          const closeRealtime = adapter.closeRealtime();
-          await Promise.race([
-            closeRealtime.catch((error) => {
-              if (!forcedReason) throw error;
-            }),
-            untilAbort(phaseAbort.signal),
-          ]);
-        }
-        if (!forcedReason) {
-          state = 'stopping-runtime';
-          const stopGracefully = adapter.stopGracefully();
-          await Promise.race([
-            stopGracefully.catch((error) => {
-              if (!forcedReason) throw error;
-            }),
-            untilAbort(phaseAbort.signal),
-          ]);
+        try {
+          await waitForZero(() => pendingApplicationRequests, phaseAbort.signal);
+          if (!forcedReason) {
+            state = 'closing-realtime';
+            await Promise.race([adapter.closeRealtime(), untilAbort(phaseAbort.signal)]);
+          }
+          if (!forcedReason) {
+            state = 'stopping-runtime';
+            await Promise.race([adapter.stopGracefully(), untilAbort(phaseAbort.signal)]);
+          }
+        } catch (error) {
+          if (!forcedReason) {
+            phaseError = error;
+            force('error');
+          }
         }
 
         let pendingRequestsAtForce = 0;
@@ -199,8 +212,31 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
           state = 'stopping-runtime';
           pendingRequestsAtForce = adapter.pendingRequests();
           pendingWebSocketsAtForce = adapter.pendingWebSockets();
-          await adapter.forceStop();
-          state = 'forced';
+          let forceError: unknown;
+          let forceFailed = false;
+          try {
+            await withTimeout(
+              adapter.forceStop(),
+              parsed.forceTimeoutMs,
+              `[stitchkit] forced shutdown did not complete within ${parsed.forceTimeoutMs}ms`,
+            );
+          } catch (error) {
+            forceFailed = true;
+            forceError = error;
+          } finally {
+            state = 'forced';
+          }
+          if (forcedReason === 'error') {
+            if (forceFailed) {
+              throw new AggregateError(
+                [phaseError, forceError],
+                '[stitchkit] graceful shutdown failed and forced cleanup also failed',
+                { cause: phaseError },
+              );
+            }
+            throw phaseError;
+          }
+          if (forceFailed) throw forceError;
         } else {
           state = 'clean';
         }

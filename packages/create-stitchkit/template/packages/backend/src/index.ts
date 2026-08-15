@@ -26,9 +26,8 @@ async function main(): Promise<void> {
     cors: { origin: env.CORS_ORIGIN },
     hooks: { onError },
     logging: { format: env.LOG_FORMAT },
-    websocket: socket.websocket,
+    socket,
     rawRoutes: [
-      socket.route,
       openApiRoute('/openapi.json', openApi),
       createMcpHttpRoute({ path: '/mcp', handler: mcp }),
       {
@@ -40,15 +39,33 @@ async function main(): Promise<void> {
     wrapFetch: (fetch) => wrapInRequestContext(fetch),
   });
 
-  async function shutdown(): Promise<void> {
-    server.stop();
-    await mcp.close();
-    await socket.io.close();
-    await prisma.$disconnect();
+  const shutdownController = new AbortController();
+  let shutdownPromise: Promise<void> | undefined;
+
+  function shutdown(): Promise<void> {
+    if (shutdownPromise) {
+      shutdownController.abort();
+      return shutdownPromise;
+    }
+
+    shutdownPromise = (async () => {
+      await server.shutdown({
+        gracePeriodMs: 30_000,
+        signal: shutdownController.signal,
+      });
+      await mcp.close();
+      await prisma.$disconnect();
+    })();
+    return shutdownPromise;
   }
 
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
+  const onSignal = () =>
+    void shutdown().catch((error: unknown) => {
+      console.error('Shutdown failed', error);
+    });
+
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
   console.log(`API listening on http://127.0.0.1:${env.API_PORT}`);
 }
 

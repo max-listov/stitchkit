@@ -2,7 +2,6 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer, createSocketIOServer } from '../../src/server';
 
 const requestStarted = Promise.withResolvers<void>();
-const releaseRequest = Promise.withResolvers<void>();
 const socket = await createSocketIOServer({ cors: { origin: '*' } });
 const server = createServer({
   port: 0,
@@ -13,7 +12,7 @@ const server = createServer({
       path: '/slow',
       async handler() {
         requestStarted.resolve();
-        await releaseRequest.promise;
+        await new Promise(() => undefined);
         return Response.json({ ok: true });
       },
     },
@@ -24,7 +23,7 @@ await new Promise<void>((resolve, reject) => {
   client.once('connect', () => resolve());
   client.once('connect_error', reject);
 });
-const request = fetch(`${server.url}/slow`);
+const request = fetch(`${server.url}/slow`).catch(() => undefined);
 await requestStarted.promise;
 
 let signalCount = 0;
@@ -37,7 +36,6 @@ const onSignal = () => {
     return;
   }
   shutdownPromise = (async () => {
-    setTimeout(() => releaseRequest.resolve(), 20);
     const result = await server.shutdown({
       gracePeriodMs: 1_000,
       signal: shutdownController.signal,
@@ -46,6 +44,7 @@ const onSignal = () => {
     client.close();
     process.stdout.write(`RESULT ${JSON.stringify({ ...result, signalCount })}\n`);
   })();
+  process.stdout.write('SHUTTING_DOWN\n');
 };
 process.on('SIGTERM', onSignal);
 process.stdout.write('READY\n');

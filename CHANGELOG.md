@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.49.1] — 2026-08-15
+
+### Added
+
+- Managed shutdown options now include `forceTimeoutMs` (default `5_000`) so a
+  runtime that cannot confirm destructive transport closure rejects within an
+  explicit bound instead of leaving the shared shutdown Promise pending.
+
+### Fixed
+
+- Forced Bun WebSocket shutdown now retains every tracked socket until Bun's
+  server-side `close` callback. The result no longer manufactures a physical
+  zero by clearing its tracker, and the stopped listener is verified separately
+  from Bun 1.3.14's non-settling post-upgrade `stop(true)` Promise.
+- Realtime or graceful-runtime close failures now run forced transport cleanup
+  before rejection. If cleanup also fails, both errors remain available instead
+  of masking the original phase failure.
+- Exact-SHA GitHub CI now runs the real Next.js 16.3 production SSR retry smoke
+  before packing release artifacts, and the managed-shutdown subprocess proves
+  that a second real OS signal forces the existing lifecycle chain.
+- The raw WebSocket composition example and canonical starter now pass the full
+  managed Socket.IO handle without manually mounting its route or splitting
+  shutdown ownership.
+
 ## [0.49.0] — 2026-08-15
 
 ### ⚠️ Breaking changes

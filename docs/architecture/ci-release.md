@@ -20,7 +20,7 @@ Every expensive gate is eligible to start at workflow time zero:
 
 | Job | Guarantee |
 |---|---|
-| `core` | lint, TypeScript, unit/integration tests, package build, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and the two immutable release tarballs |
+| `core` | lint, TypeScript, unit/integration tests, package build, real Next 16.3 production SSR smoke, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and the two immutable release tarballs |
 | `starter / target / blank / chromium` | blank published-target scaffold in desktop and mobile Chromium |
 | `starter / target / blank / webkit` | blank published-target scaffold in WebKit |
 | `starter / target / repository / chromium` | repository published-target example in desktop and mobile Chromium |

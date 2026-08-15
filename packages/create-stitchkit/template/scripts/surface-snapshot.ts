@@ -17,5 +17,5 @@ try {
   await writeFile(target, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`Wrote ${manifest.length} operation(s) to ${SURFACE_SNAPSHOT_PATH}`);
 } finally {
-  await socket.io.close();
+  await socket.close();
 }
