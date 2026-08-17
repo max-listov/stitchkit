@@ -85,6 +85,62 @@ export type Handlers<
     : (ctx: EndpointHandlerContext<C[K], TCtx>) => HandlerReturn<C[K]>;
 };
 
+/**
+ * The scope a single endpoint actually runs under — its own `scope` when it
+ * declares one, otherwise the contract's group scope. Mirrors the runtime
+ * resolution in `bindContract` (`endpoint.scope ?? groupScope`).
+ *
+ * The test is on the KEY, not on the property being required: an endpoint built
+ * with a conditional spread has `scope?: 'public'`, meaning it may or may not
+ * carry that scope at runtime. Such an endpoint resolves to BOTH scopes, so its
+ * handler is typed against what the two guarantee in common — never against the
+ * group scope alone, which is what a required-property test would silently do.
+ *
+ * An endpoint that widens `scope` to `string` (a hoisted variable, an
+ * `EndpointDef` annotation) is no key of any scope map, so `ScopedHandlers`
+ * reports it instead of falling back.
+ */
+export type EffectiveScope<
+  E extends EndpointDef,
+  TContractScope extends string,
+> = 'scope' extends keyof E
+  ? Extract<E['scope'], string> | (undefined extends E['scope'] ? TContractScope : never)
+  : TContractScope;
+
+/** A scope map: each scope key to the extra context fields it guarantees. */
+export type ScopeContexts = Record<string, object>;
+
+/**
+ * Handlers typed per endpoint by that endpoint's effective scope, instead of one
+ * superset context for the whole contract.
+ *
+ * The guard (`extends keyof TScopes ? … : …`) is load-bearing twice: it keeps
+ * `TScopes[…]` a legal index inside the library, and it puts the failure in the
+ * handler map's VALUE position, so TypeScript reports
+ * `Types of property "x" are incompatible` against a message that names the
+ * offending scope — not `not assignable to type never`.
+ *
+ * Streaming multipart endpoints keep today's shape: `defineMultipartStream`
+ * pins its own context, so scope fields do not reach them here either.
+ */
+export type ScopedHandlers<
+  C extends Record<string, EndpointDef>,
+  TContractScope extends string,
+  TScopes extends ScopeContexts,
+> = {
+  [K in keyof C]: C[K] extends { multipart: { delivery: 'stream' } }
+    ? StreamingMultipartImplementation
+    : EffectiveScope<C[K], TContractScope> extends keyof TScopes
+      ? (
+          ctx: EndpointHandlerContext<
+            C[K],
+            RuntimeContext & TScopes[EffectiveScope<C[K], TContractScope> & keyof TScopes]
+          >,
+        ) => HandlerReturn<C[K]>
+      : `stitchkit: endpoint scope "${EffectiveScope<C[K], TContractScope> &
+          string}" is not declared in createScopedImplement`;
+};
+
 export interface MultipartFileMetadata {
   field: string;
   filename: string;

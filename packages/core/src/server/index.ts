@@ -61,12 +61,20 @@ export {
 export {
   createImplement,
   createImplementRegistry,
+  createMultipartStream,
+  createScopedImplement,
+  createScopedImplementRegistry,
   defineMultipartStream,
   type ExactRegistryHandlers,
+  type ExactScopedRegistryHandlers,
   type ImplementationRegistry,
   implement,
   implementRegistry,
+  type MultipartStreamConfig,
   type RegistryHandlers,
+  type ScopedImplementationRegistry,
+  type ScopedRegistryHandlers,
+  type StreamScope,
 } from './implement';
 export type { LogFormat } from './logger';
 export {
@@ -107,6 +115,15 @@ export {
   type OpenApiServer,
   openApiRoute,
 } from './openapi';
+export {
+  bindProcessSignals,
+  type ProcessSignalName,
+  type ProcessSignalsBinding,
+  type ProcessSignalsErrorPhase,
+  type ProcessSignalsOptions,
+  type ShutdownTarget,
+  type SignalSource,
+} from './process-signals';
 export { createRateLimiter, type RateLimitConfig } from './rate-limit';
 export { errorResponse, parseBody, respondJson } from './raw';
 export {
@@ -144,6 +161,7 @@ export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
 export type {
   AuthorizationContext,
+  EffectiveScope,
   EndpointHandlerContext,
   Handlers,
   LifecycleHooks,
@@ -155,6 +173,8 @@ export type {
   MultipartReceiverResult,
   OperationIdentity,
   RouteGroup,
+  ScopeContexts,
+  ScopedHandlers,
   ServiceDef,
   StitchLogger,
   StreamingMultipartImplementation,

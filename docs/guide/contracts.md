@@ -424,6 +424,21 @@ the exact config without `NonNullable` or another wrapper. Plain `ContractDef`
 keeps optional scope because ordinary `defineContract` still supports its
 default-public overload.
 
+The union covers **per-endpoint overrides too**, not just the contract's scope —
+that is where typos are densest, and one there used to compile and then fail
+closed at request time (`[stitchkit] auth: no rule for scope "…"`):
+
+```ts
+defineContract({ prefix: 'posts', scope: 'user' }, {
+  drop: { method: 'DELETE', path: '/:id', desc: 'Drop', scope: 'admn', … },
+  //                                              ^ compile error, and TypeScript
+  //                                                suggests 'admin'
+})
+```
+
+Contracts built with plain `defineContract` are unaffected — their endpoint
+`scope` stays a free string.
+
 ## One source of truth
 
 A contract is plain data — no classes, no decorators, no codegen. It is imported

@@ -1,18 +1,20 @@
 /**
  * Declare an application's domain errors once. Each definition owns its HTTP
- * status and optional Zod schema for structured details; generated factories
- * construct (but do not throw) branded `AppError` instances.
+ * status, its default message and an optional Zod schema for structured
+ * details; generated factories construct (but do not throw) branded `AppError`
+ * instances.
  *
  * ```ts
  * export const appErrors = defineErrors({
- *   SESSION_NOT_FOUND: { status: 404 },
+ *   SESSION_NOT_FOUND: { status: 404, message: 'No such session' },
  *   QUOTA_EXCEEDED: {
  *     status: 429,
+ *     message: 'Monthly quota exhausted',
  *     details: z.object({ retryAfterSeconds: z.number().int().positive() }),
  *   },
  * })
  *
- * throw appErrors.errors.SESSION_NOT_FOUND({ message: 'No such session' })
+ * throw appErrors.errors.SESSION_NOT_FOUND()
  * throw appErrors.errors.QUOTA_EXCEEDED({
  *   details: { retryAfterSeconds: 30 },
  *   hint: 'Wait for the current window to expire',
@@ -26,10 +28,20 @@ import { AppError } from './errors';
 /** Supported structured-details schemas: a required or optional Zod object. */
 export type ErrorDetailsSchema = z.ZodObject | z.ZodOptional<z.ZodObject>;
 
-/** One domain error definition. Omitting `details` forbids structured details. */
+/**
+ * One domain error definition. Omitting `details` forbids structured details.
+ *
+ * `message` is the code's default human-readable text: without it `AppError`
+ * falls back to the code itself, and every `throw` site has to repeat the
+ * sentence. A per-call `message` still wins.
+ */
 export type ErrorDefinition =
-  | { readonly status: number; readonly details?: never }
-  | { readonly status: number; readonly details: ErrorDetailsSchema };
+  | { readonly status: number; readonly message?: string; readonly details?: never }
+  | {
+      readonly status: number;
+      readonly message?: string;
+      readonly details: ErrorDetailsSchema;
+    };
 
 export type ErrorDefinitions = Record<string, ErrorDefinition>;
 
@@ -84,8 +96,19 @@ export type ErrorFactories<TDefinitions extends ErrorDefinitions> = {
   readonly [TCode in keyof TDefinitions]: ErrorFactory<TCode & string, TDefinitions[TCode]>;
 };
 
+/**
+ * `const` inference keeps only the keys a definition actually wrote, so a
+ * registry that mixes codes with and without `message` has no common `message`
+ * key — and `definitions[code].message`, the whole point of declaring it, would
+ * not type-check. Normalising the optional key restores that lookup.
+ *
+ * A declared literal stays literal (`'gone' & string` is `'gone'`); this only
+ * adds the key where a definition omitted it.
+ */
 export type FrozenErrorDefinitions<TDefinitions extends ErrorDefinitions> = {
-  readonly [TCode in keyof TDefinitions]: Readonly<TDefinitions[TCode]>;
+  readonly [TCode in keyof TDefinitions]: Readonly<TDefinitions[TCode]> & {
+    readonly message?: string;
+  };
 };
 
 /** The immutable handle returned by `defineErrors`. */
@@ -128,6 +151,12 @@ function validateDefinition(code: string, definition: ErrorDefinition): void {
       `[stitchkit] Error "${code}" details must be a Zod object or optional Zod object`,
     );
   }
+  if (
+    definition.message !== undefined &&
+    (typeof definition.message !== 'string' || definition.message.trim() === '')
+  ) {
+    throw new Error(`[stitchkit] Error "${code}" message must be a non-empty string`);
+  }
 }
 
 /** Declare an immutable, Zod-first domain error vocabulary. */
@@ -150,14 +179,17 @@ export function defineErrors<const TDefinitions extends ErrorDefinitions>(
   >(definitions, (code, definition) => {
     const name = String(code);
     return (options: RuntimeErrorOptions = {}) => {
+      // Per-call text wins; then the declared default; `AppError` falls back to
+      // the code itself, which is the pre-`message` behaviour.
+      const message = options.message ?? definition.message;
       if (definition.details === undefined) {
         if ('details' in options) {
           throw new Error(`[stitchkit] Error "${name}" does not declare details`);
         }
-        return new AppError(name, options.message, definition.status, undefined, options.hint);
+        return new AppError(name, message, definition.status, undefined, options.hint);
       }
       const details = definition.details.parse(options.details);
-      return new AppError(name, options.message, definition.status, details, options.hint);
+      return new AppError(name, message, definition.status, details, options.hint);
     };
   });
   Object.freeze(errors);

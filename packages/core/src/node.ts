@@ -18,11 +18,19 @@ export { createHandler } from './server/create';
 export {
   createImplement,
   createImplementRegistry,
+  createMultipartStream,
+  createScopedImplement,
+  createScopedImplementRegistry,
   type ExactRegistryHandlers,
+  type ExactScopedRegistryHandlers,
   type ImplementationRegistry,
   implement,
   implementRegistry,
+  type MultipartStreamConfig,
   type RegistryHandlers,
+  type ScopedImplementationRegistry,
+  type ScopedRegistryHandlers,
+  type StreamScope,
 } from './server/implement';
 export type { LogFormat } from './server/logger';
 export {
@@ -32,6 +40,15 @@ export {
   type NodeSocketLifecycle,
   serveNode,
 } from './server/node';
+export {
+  bindProcessSignals,
+  type ProcessSignalName,
+  type ProcessSignalsBinding,
+  type ProcessSignalsErrorPhase,
+  type ProcessSignalsOptions,
+  type ShutdownTarget,
+  type SignalSource,
+} from './server/process-signals';
 export {
   bindRealtimeServer,
   type RealtimeServer,
@@ -56,6 +73,7 @@ export {
   type SocketIOServerConfig,
 } from './server/socket-io-node';
 export type {
+  EffectiveScope,
   FetchComposition,
   FetchHandler,
   HandlerConfig,
@@ -63,5 +81,7 @@ export type {
   LogOutcome,
   RawRoute,
   RawRouteContext,
+  ScopeContexts,
+  ScopedHandlers,
   ServiceDef,
 } from './server/types';

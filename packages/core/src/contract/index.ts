@@ -66,6 +66,7 @@ export {
   createContractFactory,
   type ExplicitScopedDefineContract,
   type ExplicitToolExposureEndpoints,
+  type FactoryScopedEndpoint,
   type ScopedContractDef,
   type ScopedDefineContract,
 } from './factory';

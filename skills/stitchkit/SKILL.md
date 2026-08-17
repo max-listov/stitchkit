@@ -30,10 +30,12 @@ Work in this order; each step links a contract field to a transport.
 
 1. **Define the contract** (`defineContract`) — usually in a shared package so
    front and back share it. Zod schemas are the source of truth; `scope` is a
-   free string you'll gate on. → `llms-full.txt` § Contracts.
+   free string you'll gate on — or your own typed union via
+   `createContractFactory<Scope>()`. → `llms-full.txt` § Contracts.
 2. **Implement handlers** (`implement` / `createImplement<Ctx>` for a typed
-   context). A handler is a pure `(ctx) => result`; `ctx.input` / `ctx.params`
-   are typed from the schemas. → § HTTP server.
+   context, `createScopedImplement<Scopes>` when each scope guarantees different
+   context fields). A handler is a pure `(ctx) => result`; `ctx.input` /
+   `ctx.params` are typed from the schemas. → § HTTP server.
 3. **Serve** — `createServer({ services })` on Bun, or `serveNode(...)` on Node
    ≥ 22. Add lifecycle hooks (`beforeHandle` for auth, `afterHandle`,
    `onError`). → § HTTP server.

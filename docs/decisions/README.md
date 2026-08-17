@@ -38,7 +38,7 @@ These records were consolidated from the project's internal design notes on
 | [0021](0021-endpoint-meta-passthrough.md) | Endpoint meta passthrough (opaque per-endpoint metadata) | Accepted — extends 0002 |
 | [0022](0022-endpoint-identity.md) | Stable (service, action) identity on MethodDef | Accepted — extends 0002, 0021 |
 | [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013 |
-| [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002 |
+| [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002; the deferred scope→context clause superseded by 0075 |
 | [0025](0025-typed-scoped-client.md) | Typed scoped client (consumed keys as args) | Accepted — extends 0005 |
 | [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 |
 | [0027](0027-transport-neutral-contract-execution.md) | Transport-neutral contract execution (BYO transport) | Accepted — dispatcher portion superseded by 0028 |
@@ -72,7 +72,7 @@ These records were consolidated from the project's internal design notes on
 | [0055](0055-runtime-tools-share-one-neutral-operation.md) | Runtime tools share one neutral operation | Accepted — extends 0014, 0045 and 0048 |
 | [0056](0056-entity-cache-shapes-are-declared.md) | Entity cache shapes are declared | Accepted — keeps the cache bridge generic and explicit |
 | [0057](0057-finite-prepared-mcp-surfaces.md) | Finite prepared MCP surfaces | Accepted — bounded descriptor preparation with fresh request state |
-| [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Accepted — immutable status/schema registry and typed constructors |
+| [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Extended by 0077 — Accepted — immutable status/schema registry and typed constructors |
 | [0059](0059-unified-tool-surface-introspection.md) | Unified tool-surface introspection | Accepted — one mixed contract/runtime collector for mounts and diagnostics |
 | [0060](0060-official-starter-composes-next-and-stitchkit.md) | Official starter composes Next.js with a separate Stitchkit backend | Accepted — one production-shaped scaffold without framework-owned frontend infrastructure |
 | [0061](0061-independent-starter-release-line.md) | Official starter advances independently from framework HEAD | Accepted — explicit catalog target, lockfile and separate release tags |
@@ -88,7 +88,10 @@ These records were consolidated from the project's internal design notes on
 | [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams |
 | [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks |
 | [0073](0073-client-request-options-are-not-callback-context.md) | Client request options are not callback context | Accepted — extends 0005, 0008 and 0025 |
-| [0074](0074-server-owned-managed-shutdown.md) | Server-owned managed shutdown | Accepted — extends 0008, 0013 and 0020 |
+| [0074](0074-server-owned-managed-shutdown.md) | Server-owned managed shutdown | Accepted — extends 0008, 0013 and 0020; its signal clause superseded by 0076 |
+| [0075](0075-per-scope-handler-context.md) | Per-scope handler context (`createScopedImplement`) | Accepted — supersedes the deferred scope→context clause of 0024 |
+| [0076](0076-explicit-process-signal-binding.md) | Explicit process-signal binding (`bindProcessSignals`) | Accepted — supersedes the signal clause of 0074 |
+| [0077](0077-error-definition-carries-its-message.md) | An error definition carries its default message | Accepted — extends 0058 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

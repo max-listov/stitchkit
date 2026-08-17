@@ -55,6 +55,74 @@ export const implement = createImplement<AppContext>()
 // every implement() call now has ctx.user typed
 ```
 
+### Per-scope handler context — `createScopedImplement`
+
+`createImplement<Ctx>()` gives every handler the **same** context type. In an app
+where each scope guarantees different injected fields, that single type is a
+superset: a `public` handler is told it has a `userId` the runtime never injects
+there. `createScopedImplement` types each handler by its endpoint's **effective**
+scope instead — the endpoint's own `scope`, else the contract's:
+
+```ts
+import { createScopedImplement } from 'stitchkit/server'
+
+export const implementFor = createScopedImplement<{
+  public: object                                 // no extra fields
+  user: { userId: string }
+  admin: { userId: string; isAdmin: boolean }
+}>()
+
+implementFor(postsContract, {
+  list: (ctx) => listPosts(ctx.userId),          // contract scope 'user'
+  purge: (ctx) => (ctx.isAdmin ? purge() : []),  // endpoint scope 'admin'
+  ping: () => ({ ok: true }),                    // endpoint scope 'public'
+})
+```
+
+The map is **type-only** — scope fields are types, so there is no runtime
+argument and no `{} as UserFields` at the call site. `'public'` must be a key:
+a contract without a `scope` is `'public'`. A scope outside the map is a compile
+error on that endpoint, naming the scope.
+
+Three boundaries worth knowing:
+
+- A field of another scope is not a compile error on access — `RuntimeContext`
+  keeps its `[key: string]: unknown` index signature (transports write through
+  it). It degrades to `unknown`, so it can no longer pose as a `string`; using it
+  in a typed position fails.
+- The map states what **your** `beforeHandle` / `createAuthHook.inject` puts on
+  the context. The framework does not verify that claim (→ ADR 0075).
+- An endpoint hoisted out of the contract literal widens its `scope` to `string`,
+  which is no key of any map, and lands in the error branch. An endpoint whose
+  `scope` is added by a conditional spread is optional, so it resolves to **both**
+  scopes and is typed against what they guarantee in common. Write endpoints
+  inline for the precise type.
+- Scope keys are string literals. A map declared as an index signature
+  (`Record<string, …>`) makes every scope valid and disables the check.
+
+The same map has a registry form and a streaming form:
+
+```ts
+// one contract registry, handlers still typed per endpoint scope
+const implementAll = createScopedImplementRegistry<Scopes>()
+export const services = implementAll(apiContractRegistry, { posts, users })
+
+// a streaming multipart handler that reads its scope's fields. The endpoint
+// must declare its own `scope`, and only that literal is accepted: an endpoint
+// inheriting the contract's scope cannot be verified from here, and guessing it
+// would rebuild the superset this factory removes.
+implementFor(mediaContract, {
+  upload: implementFor.stream('admin', mediaContract.endpoints.upload, {
+    files: { file: receiveFile },
+    handler: ({ files, userId }) => store(files.file, userId),
+  }),
+})
+```
+
+Outside a scoped app, `createMultipartStream<Ctx>()` does for streaming handlers
+what `createImplement<Ctx>()` does for ordinary ones. Plain
+`defineMultipartStream` still gives the loose `RuntimeContext`.
+
 ### `implementRegistry` — one backend registry
 
 When contracts already live in one literal registry, bind the backend from that
@@ -343,9 +411,11 @@ createServer({
 
 A prefix may carry `:param` segments (they land on the context exactly as above).
 Services listed under explicit `groups` are unaffected — the group prefix wins.
-Scope stays a free string; the core attaches no meaning beyond this lookup
-(→ ADR 0024). When each scope needs a different handler-context shape, declare one
-`createImplement<Ctx>()` per scope rather than a single superset context.
+Scope stays a free string (unless the contract is authored through
+`createContractFactory<Scope>()`); the core attaches no meaning beyond this lookup
+(→ ADR 0024). When each scope needs a different handler-context shape, use
+[`createScopedImplement`](#per-scope-handler-context--createscopedimplement)
+rather than a single superset context.
 
 ## Lifecycle hooks
 

@@ -21,7 +21,9 @@ the scope vocabulary are yours.
 ## Scopes
 
 An endpoint declares a `scope` — a free string. The contract `meta.scope` is the
-default for endpoints that declare none.
+default for endpoints that declare none. (Authored through
+[`createContractFactory<Scope>()`](./contracts.md#scope), both the contract's
+scope and any endpoint override are held to your own union instead.)
 
 ```ts
 export const posts = defineContract({ prefix: 'posts', scope: 'user' }, {
@@ -313,35 +315,56 @@ onError: (ctx, err) => {
 
 ## Domain errors — `defineErrors`
 
-Declare each domain code, HTTP status and optional structured-details schema in
-one immutable registry. The generated functions construct typed branded
-`AppError` instances; ordinary `throw` remains explicit at the call site:
+Declare each domain code, HTTP status, default message and optional
+structured-details schema in one immutable registry. The generated functions
+construct typed branded `AppError` instances; ordinary `throw` remains explicit
+at the call site:
 
 ```ts
 import { z } from 'zod'
 
 export const { errors, codes, definitions, isCode } = defineErrors({
-  SESSION_NOT_FOUND: { status: 404 },
+  SESSION_NOT_FOUND: { status: 404, message: 'No such session' },
   QUOTA_EXCEEDED: {
     status: 429,
+    message: 'Monthly quota exhausted',
     details: z.object({ retryAfterSeconds: z.number().int().positive() }),
   },
 })
 
-throw errors.SESSION_NOT_FOUND({ message: 'No such session' })
+throw errors.SESSION_NOT_FOUND()                      // uses the declared message
 throw errors.QUOTA_EXCEEDED({
-  message: 'Try later',
+  message: 'Try later',                               // overrides it here only
   details: { retryAfterSeconds: 30 },
   hint: 'Wait for the current window to expire',
 })
 
 // Construction without throwing is useful for composition or inspection.
 const error = errors.QUOTA_EXCEEDED({ details: { retryAfterSeconds: 30 } })
-definitions.QUOTA_EXCEEDED.status // 429 — same source, no copied status map
+definitions.QUOTA_EXCEEDED.status  // 429 — same source, no copied status map
+definitions[code].message          // the declared text, by a `code` variable
 
 // client — match the code, never a magic string
 if (err instanceof ApiError && err.code === codes.SESSION_NOT_FOUND) { … }
 ```
+
+`message` is optional: declare it once instead of repeating the sentence at every
+`throw`, and a per-call `message` still wins. A code without one keeps the
+existing fallback — `AppError.message` is the code itself. An empty declared
+message is rejected when the registry is declared, not when the error is thrown.
+
+**The tool envelope has no `message` field**, and what the model sees depends on
+whether the code declares `details`:
+
+| | HTTP / typed client | MCP / agent / CLI |
+|---|---|---|
+| code **with** a `details` schema | the declared message | no text at all — only `details` and `hint` |
+| code **without** one | the declared message | the same text, delivered as `details.message` |
+
+The model-facing envelope is `{ error, details?, _hint? }`; for a code with no
+details schema the framework fills `details` with `{ message }`, so declaring a
+message changes what the model reads there — it used to be the code itself. Put
+anything the model must reliably read in `details` or `hint`, not in `message`.
 
 With no `details` schema, the options object forbids `details`. A required
 `z.object` makes `details` required; `z.object(...).optional()` makes it

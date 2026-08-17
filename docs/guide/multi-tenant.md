@@ -53,10 +53,20 @@ createServer({
 Handlers read `ctx.tenantId` (a raw `string` — narrow it). To get it typed inside
 `ctx.params`, add `tenantId` to the endpoint's `params` schema (a `z.strictObject`
 that omits it will reject the request). When each scope guarantees different
-injected fields, call `createImplement<TenantCtx>()` / `createImplement<BaseCtx>()`
-**once per scope** and implement each contract with the matching factory — every
-handler is typed to its scope, with no superset context that lies about a
-`tenantId` a `public` handler never has.
+injected fields, declare the scope map once with
+[`createScopedImplement`](./server.md#per-scope-handler-context--createscopedimplement):
+
+```ts
+export const implementFor = createScopedImplement<{
+  public: object
+  tenant: { tenantId: string; userId: string }
+  project: { projectId: string; userId: string }
+}>()
+```
+
+Each handler is then typed by its endpoint's effective scope — no superset
+context that promises a `tenantId` a `public` handler never receives. A contract
+that mixes scopes across its endpoints needs no splitting.
 
 ## 3. Auth — gate the tenant in the path
 

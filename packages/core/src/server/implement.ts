@@ -12,6 +12,8 @@ import type {
   Handlers,
   MethodDef,
   MultipartReceiver,
+  ScopeContexts,
+  ScopedHandlers,
   ServiceDef,
   StreamingMultipartImplementation,
 } from './types';
@@ -46,23 +48,55 @@ function isStreamingImplementation(value: unknown): value is StreamingMultipartI
 }
 
 /**
+ * Receivers plus the final handler for one streaming multipart endpoint. `TCtx`
+ * is the handler context: `RuntimeContext` by default, an application context
+ * through `createMultipartStream`, a scope's context through
+ * `createScopedImplement(...).stream`.
+ */
+export interface MultipartStreamConfig<
+  E extends StreamingEndpoint,
+  R extends ReceiverMap<E>,
+  TCtx extends RuntimeContext,
+> {
+  files: R & Record<Exclude<keyof R, keyof E['multipart']['files']>, never>;
+  handler: (
+    ctx: EndpointHandlerContext<E, TCtx> & { files: StreamedFiles<E, R> },
+  ) => StreamingReturn<E>;
+}
+
+/**
  * Bind streaming multipart receivers to one endpoint while inferring the
  * receiver values handed to its final handler.
+ *
+ * The handler context is the loose `RuntimeContext`. To read fields the
+ * application injects, build the implementation through
+ * `createMultipartStream<Ctx>()` or, in a scoped app,
+ * `createScopedImplement<Scopes>().stream(scope, …)`.
  */
 export function defineMultipartStream<
   const E extends StreamingEndpoint,
   const R extends ReceiverMap<E>,
 >(
   endpoint: E,
-  config: {
-    files: R & Record<Exclude<keyof R, keyof E['multipart']['files']>, never>;
-    handler: (
-      ctx: EndpointHandlerContext<E, RuntimeContext> & { files: StreamedFiles<E, R> },
-    ) => StreamingReturn<E>;
-  },
+  config: MultipartStreamConfig<E, R, RuntimeContext>,
+): StreamingMultipartImplementation {
+  return buildMultipartStream(endpoint, config.files, config.handler);
+}
+
+/**
+ * The runtime half, shared by every typed entry point. The handler arrives as
+ * `unknown` because each entry point has already type-checked it against its own
+ * context; the runtime only ever hands it a context object, so widening here
+ * costs no guarantee and keeps the typed wrappers free of casts (the context
+ * types are contravariant, so one wrapper cannot delegate to another).
+ */
+function buildMultipartStream(
+  endpoint: StreamingEndpoint,
+  files: Record<string, MultipartReceiver>,
+  handler: unknown,
 ): StreamingMultipartImplementation {
   const receivers: Record<string, MultipartReceiver> = {};
-  for (const [key, receiver] of typedEntries(config.files)) {
+  for (const [key, receiver] of typedEntries(files)) {
     receivers[String(key)] = receiver;
   }
   const declared = Object.keys(endpoint.multipart.files);
@@ -77,10 +111,23 @@ export function defineMultipartStream<
   return {
     kind: 'stitchkit.multipart.stream',
     receivers,
-    execute(ctx, files) {
-      return callRuntimeHandler(config.handler, { ...ctx, files });
+    execute(ctx, streamedFiles) {
+      return callRuntimeHandler(handler, { ...ctx, files: streamedFiles });
     },
   };
+}
+
+/**
+ * Fix one handler context type for streaming multipart endpoints, the way
+ * `createImplement` fixes it for ordinary handlers. Without this, a streaming
+ * handler only ever sees the loose `RuntimeContext`.
+ */
+export function createMultipartStream<TCtx extends RuntimeContext>() {
+  return <const E extends StreamingEndpoint, const R extends ReceiverMap<E>>(
+    endpoint: E,
+    config: MultipartStreamConfig<E, R, TCtx>,
+  ): StreamingMultipartImplementation =>
+    buildMultipartStream(endpoint, config.files, config.handler);
 }
 
 /** Frozen so the same array cannot be mutated through one method and seen by another. */
@@ -199,6 +246,142 @@ export function createImplement<TCtx extends RuntimeContext>() {
     contract: ContractDef<T, string>,
     handlers: Handlers<T, TCtx>,
   ): ServiceDef => implement(contract, handlers);
+}
+
+/**
+ * Fix one scope→context map for the application, then implement every contract
+ * with it — each handler typed by its endpoint's **effective** scope rather than
+ * by a superset that promises fields the runtime never injects into a
+ * `public` call.
+ *
+ * ```ts
+ * const implementFor = createScopedImplement<{
+ *   public: object
+ *   user: { userId: string }
+ *   admin: { userId: string; isAdmin: true }
+ * }>()
+ *
+ * implementFor(usersContract, { … })  // ctx typed per endpoint scope
+ * ```
+ *
+ * The map is type-only — scope fields are types, and a runtime map would force
+ * `{} as UserFields` at the call site. A contract with no `scope` is `'public'`
+ * (→ `defineContract`), so `'public'` must be a key of the map.
+ *
+ * The map states what the application's `beforeHandle` / `createAuthHook.inject`
+ * puts in the context. The framework does not verify it — a scope whose fields
+ * are never injected still type-checks. → ADR 0075.
+ */
+export function createScopedImplement<TScopes extends ScopeContexts>() {
+  const implementScoped = <
+    const T extends Record<string, EndpointDef>,
+    TContractScope extends Extract<keyof TScopes, string>,
+  >(
+    contract: ContractDef<T, TContractScope>,
+    handlers: ScopedHandlers<T, TContractScope, TScopes>,
+  ): ServiceDef => bindContract(contract, handlers);
+
+  /**
+   * A streaming multipart implementation typed to one scope's context.
+   *
+   * The scope is written at the call site, but it is not free: it must be the
+   * scope THIS endpoint declares. An endpoint that declares none (or only
+   * optionally) is rejected — its effective scope comes from the contract, which
+   * this builder cannot see, and guessing it would rebuild the very superset
+   * this factory removes. Declare the scope on the endpoint, or use
+   * `createMultipartStream<Ctx>()` for an application-wide context.
+   */
+  const stream = <const E extends StreamingEndpoint, const R extends ReceiverMap<E>>(
+    scope: StreamScope<E, TScopes>,
+    endpoint: E,
+    config: MultipartStreamConfig<
+      E,
+      R,
+      RuntimeContext & TScopes[StreamScope<E, TScopes> & keyof TScopes]
+    >,
+  ): StreamingMultipartImplementation => {
+    // The type already pins `scope` to the endpoint's own when it declares one.
+    // Repeated at runtime so a JavaScript caller cannot type a handler against a
+    // scope the endpoint never runs under.
+    if (endpoint.scope !== undefined && endpoint.scope !== scope) {
+      throw new Error(
+        `[stitchkit] createScopedImplement.stream: endpoint declares scope "${endpoint.scope}" but "${String(scope)}" was given`,
+      );
+    }
+    return buildMultipartStream(endpoint, config.files, config.handler);
+  };
+
+  return Object.assign(implementScoped, { stream });
+}
+
+/** A contract registry whose every group scope is a key of the scope map. */
+export type ScopedImplementationRegistry<TScopes extends ScopeContexts> = Record<
+  string,
+  ContractDef<Record<string, EndpointDef>, Extract<keyof TScopes, string>>
+>;
+
+/**
+ * The scope `createScopedImplement(...).stream` accepts for one endpoint: the
+ * literal the endpoint declares, or a message explaining why it cannot be typed.
+ */
+export type StreamScope<
+  E extends EndpointDef,
+  TScopes extends ScopeContexts,
+> = 'scope' extends keyof E
+  ? undefined extends E['scope']
+    ? 'stitchkit: .stream() needs the endpoint to declare its own scope'
+    : Extract<E['scope'], string> extends infer S extends string
+      ? [S] extends [Extract<keyof TScopes, string>]
+        ? S
+        : `stitchkit: scope "${S}" is not declared in createScopedImplement`
+      : 'stitchkit: .stream() needs the endpoint to declare its own scope'
+  : 'stitchkit: .stream() needs the endpoint to declare its own scope';
+
+/** Exact scoped handlers map derived from a literal contract registry. */
+export type ScopedRegistryHandlers<
+  TContracts extends ImplementationRegistry,
+  TScopes extends ScopeContexts,
+> = {
+  [K in keyof TContracts]: TContracts[K] extends ContractDef<
+    infer TEndpoints,
+    infer TContractScope extends string
+  >
+    ? ScopedHandlers<TEndpoints, TContractScope, TScopes>
+    : never;
+};
+
+export type ExactScopedRegistryHandlers<
+  TContracts extends ImplementationRegistry,
+  THandlers extends ScopedRegistryHandlers<TContracts, TScopes>,
+  TScopes extends ScopeContexts,
+> = THandlers &
+  ScopedRegistryHandlers<TContracts, TScopes> &
+  Record<Exclude<keyof THandlers, keyof TContracts>, never> & {
+    [K in keyof THandlers & keyof TContracts]: THandlers[K] &
+      Record<
+        Exclude<keyof THandlers[K], keyof ScopedRegistryHandlers<TContracts, TScopes>[K]>,
+        never
+      >;
+  };
+
+/**
+ * The registry form of {@link createScopedImplement} — one literal contract
+ * registry bound to one handler registry, with every handler still typed by its
+ * endpoint's effective scope. Missing, extra and endpoint-incompatible entries
+ * fail exactly as they do in `implementRegistry`.
+ */
+export function createScopedImplementRegistry<TScopes extends ScopeContexts>() {
+  return <
+    // Group scopes are constrained on the CONTRACTS parameter, mirroring the
+    // single-contract form. Putting the check inside the handlers mapped type
+    // would wrap each handler in a conditional and defeat contextual typing of
+    // an unannotated `ctx`.
+    const TContracts extends ScopedImplementationRegistry<TScopes>,
+    const THandlers extends ScopedRegistryHandlers<TContracts, TScopes>,
+  >(
+    contracts: TContracts,
+    handlers: ExactScopedRegistryHandlers<TContracts, THandlers, TScopes>,
+  ): ServiceDef[] => bindRegistry(contracts, handlers);
 }
 
 type ImplementationContract = ContractDef<Record<string, EndpointDef>, string>;

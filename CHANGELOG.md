@@ -15,6 +15,87 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.50.0] — 2026-08-17
+
+### ⚠️ Breaking changes
+
+- **`createContractFactory<Scope>()` now holds the per-endpoint `scope` to the
+  same union.** The contract-level scope was typed since the factory shipped,
+  while a per-endpoint override stayed a free string — exactly where overrides
+  are densest. A typo there minted a scope no auth rule matched, surfacing as a
+  fail-closed runtime throw on the first request instead of a compile error.
+  Plain `defineContract` is unchanged: its endpoint `scope` stays a free string.
+
+  ```ts
+  const { defineContract } = createContractFactory<'public' | 'user' | 'admin'>()
+  // before: compiled, then threw `no rule for scope "admn"` at request time
+  // after:  Type '"admn"' is not assignable to type
+  //          '"admin" | "public" | "user" | undefined'. Did you mean '"admin"'?
+  defineContract({ prefix: 'posts', scope: 'user' }, {
+    purge: { method: 'DELETE', path: '/all', desc: 'Purge', scope: 'admn', output },
+  })
+  ```
+
+- **A `defineErrors` registry that already declared a `message` now sends it.**
+  The key was accepted before (excess-property checking does not fire through a
+  `const` generic) and silently ignored, so such a code put its own name on the
+  wire; it now puts the declared text there — on HTTP, and on the tool path for a
+  code that declares no `details` schema (its model-facing `details` is filled
+  with `{ message }`). Registries that declare no `message` are unaffected.
+
+  ```ts
+  const { errors } = defineErrors({ GONE: { status: 410, message: 'Long gone' } })
+  // before: errors.GONE().message === 'GONE'      — the key was ignored
+  // after:  errors.GONE().message === 'Long gone'
+  // tool envelope, before: { error: 'GONE', details: { message: 'GONE' } }
+  // tool envelope, after:  { error: 'GONE', details: { message: 'Long gone' } }
+  ```
+
+### Added
+
+- **`defineErrors` definitions accept a `message`.** Declare a code's text once
+  beside its status instead of repeating it at every `throw`; a per-call
+  `message` still wins, and a code without one keeps falling back to the code
+  itself. `definitions[code].message` is readable by a `code` variable. The text
+  reaches HTTP and the typed client; the model-facing tool envelope gains no
+  `message` field, but a code with no `details` schema still delivers it as
+  `details.message` — the guide tabulates both halves and tests pin them. `hint`
+  is intentionally not accepted: it would duplicate against a surface-wide
+  `ErrorHintFn`. → ADR 0077
+- **`createScopedImplement<Scopes>()`** (`stitchkit/server`) — one scope→context
+  map for the application, and every handler is typed by its endpoint's
+  **effective** scope (`endpoint.scope ?? contract scope`) instead of one
+  superset context that promises a `userId` a `public` handler never receives.
+  A contract may mix scopes across its endpoints; a scope outside the map is a
+  compile error naming that scope. The map is type-only — there is no runtime
+  argument and no cast at the call site. A field of another scope degrades to
+  `unknown` rather than erroring on access (`RuntimeContext` keeps its index
+  signature), so it can no longer pose as a typed value. → ADR 0075
+- **`createScopedImplementRegistry<Scopes>()`** (`stitchkit/server`,
+  `stitchkit/node`) — the registry form of the same map, so moving from a hand-written
+  service list to one contract registry no longer costs per-scope typing. Missing,
+  extra and endpoint-incompatible entries fail exactly as in `implementRegistry`.
+- **`bindProcessSignals(handle, options)`** (`stitchkit/server`, `stitchkit/node`) —
+  the signal state machine every application was rewriting, as one explicit opt-in
+  call. The first signal runs `onShutdown` then one `shutdown()`; a later signal
+  forces **that** chain (the only channel a running shutdown has, since its options
+  are parsed once), while signals delivered in the same turn as the first are not
+  counted so a supervisor sending two at once does not collapse the grace period.
+  A signal during asynchronous preparation is no longer lost, and a failing
+  preparation no longer cancels the shutdown. Failures are routed by phase through
+  `onError('prepare' | 'shutdown' | 'complete', …)`, and nothing escapes into a
+  signal handler. The signal after the force re-delivers itself so the default
+  disposition applies — best-effort, since another listener in the process would
+  swallow it, which is reported through `onEscalationBlocked`. The framework
+  registers no listener of its own and never calls `process.exit` — set
+  `process.exitCode` in `onComplete`. → ADR 0076
+- **`createMultipartStream<Ctx>()`** and **`createScopedImplement(...).stream(scope, …)`**
+  (`stitchkit/server`, `stitchkit/node`) — a streaming multipart handler can finally
+  read the context its application injects. `defineMultipartStream` pinned the loose
+  `RuntimeContext`, so `createImplement<Ctx>()` never reached a streaming handler
+  either. The scoped form requires the endpoint to declare its own `scope` and
+  accepts only that literal. Plain `defineMultipartStream` is unchanged.
+
 ## [0.49.2] — 2026-08-15
 
 ### Fixed

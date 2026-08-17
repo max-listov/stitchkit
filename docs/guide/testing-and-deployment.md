@@ -106,33 +106,57 @@ createServer({
 })
 ```
 
-Keep the managed handle and wire process policy explicitly:
+### Process signals — `bindProcessSignals`
+
+Keep the managed handle and wire process policy explicitly. The framework
+registers no signal listener on its own; `bindProcessSignals` is that explicit
+step, and it owns the state machine:
 
 ```ts
-const server = createServer({ services, socket })
-const force = new AbortController()
-let closing: Promise<void> | undefined
+import { bindProcessSignals } from 'stitchkit/server'
 
-function shutdown() {
-  if (closing) {
-    force.abort() // a later signal shortens the same shutdown, not a second chain
-    return closing
-  }
-  closing = server.shutdown({
-    gracePeriodMs: 30_000,
-    forceTimeoutMs: 5_000,
-    signal: force.signal,
-  }).then(async result => {
+const server = createServer({ services, socket })
+
+bindProcessSignals(server, {
+  shutdown: { gracePeriodMs: 30_000, forceTimeoutMs: 5_000 },
+  onShutdown: () => stopSchedulers(),        // before the drain starts
+  onComplete: async (result) => {            // after it finishes
     await mcp.close()
     await prisma.$disconnect()
-    console.log(result)
-  })
-  return closing
-}
-
-process.on('SIGTERM', () => void shutdown())
-process.on('SIGINT', () => void shutdown())
+    process.exitCode = result.outcome === 'clean' ? 0 : 1
+  },
+  onError: (error) => {
+    console.error(error)
+    process.exitCode = 1
+  },
+})
 ```
+
+- The first signal runs `onShutdown`, then one `shutdown()`.
+- A later signal **forces that same chain** — never a second shutdown. Signals
+  delivered in the same turn as the first (a supervisor sending `SIGINT` and
+  `SIGTERM` together) are not counted, so the grace period is not collapsed to
+  zero.
+- The signal after the force — or one arriving while `onComplete` still runs —
+  re-delivers the signal so its default disposition applies, letting an operator
+  kill a process stuck on some other resource. This works only while nothing else
+  in the process listens for that signal; if something does, the signal is
+  swallowed and `onEscalationBlocked` fires instead. The framework will not call
+  `process.exit` on your behalf.
+- `shutdown` budgets are validated when you bind, not when the signal arrives.
+  `signal` is not accepted there — the binding owns it, and that is what makes a
+  later signal force the first chain.
+- `onError(phase, error)` separates the phases. A failing `onShutdown`
+  (`'prepare'`) is reported and the shutdown **still runs** — a failed
+  preparation must not leave the server listening. A failing `onComplete`
+  (`'complete'`) leaves `promise` resolved, because the transport did shut down.
+  Only a failing `shutdown()` (`'shutdown'`) rejects it.
+
+`close()` removes the listeners. Closing a binding that never received a signal
+resolves `promise` with `undefined`, so an awaiting application does not hang;
+closing one whose chain is already running leaves that chain to finish and keeps
+the handle claimed, since a second binding could not force it. `promise` is
+already observed internally, so ignoring it never raises an `unhandledRejection`.
 
 The server owns HTTP/Socket.IO transport resources. MCP, databases, queues and
 domain run-state remain application resources and close explicitly after server

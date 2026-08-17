@@ -103,13 +103,14 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
-| `createContractFactory` | function | a `defineContract` with a required allowed scope that retains each concrete literal — [guide](../guide/contracts.md#scope) |
+| `createContractFactory` | function | a `defineContract` whose scope — on the contract **and** on any endpoint override — is required and held to your union, retaining each concrete literal — [guide](../guide/contracts.md#scope) |
 | `ContractFactoryConfig` | _type_ | optional scoped-factory policy, including explicit tool exposure |
 | `ContractFactoryToolExposure` | _type_ | `'explicit'` — omitted endpoint exposure materializes as HTTP-only |
 | `ExplicitScopedDefineContract` | _type_ | scoped factory authoring with explicit tool opt-in |
 | `ExplicitToolExposureEndpoints` | _type_ | endpoint map after missing exposure is materialized as `['HTTP']` |
+| `FactoryScopedEndpoint` | _type_ | an endpoint authored through the factory — its own `scope` override is held to the same union |
 | `ScopedContractDef` | _type_ | a factory-defined contract whose `meta.scope` is the required concrete literal |
-| `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns |
+| `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns — endpoint `scope` overrides join the union |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
@@ -159,7 +160,7 @@ from the root `stitchkit`.
 | `defineErrors` | function | declare immutable domain error definitions → typed `AppError` constructors, codes and schemas — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
 | `DefinedErrors` | _type_ | the `{ errors, codes, definitions, isCode }` handle `defineErrors` returns |
 | `DefinedAppError` | _type_ | literal-code error instance with schema-refined details |
-| `ErrorDefinition` | _type_ | `{ status, details? }` definition for one domain code |
+| `ErrorDefinition` | _type_ | `{ status, message?, details? }` definition for one domain code |
 | `ErrorDefinitions` | _type_ | string-keyed domain error definition registry |
 | `ErrorDetailsSchema` | _type_ | required or optional Zod object accepted for structured details |
 | `ErrorDetailsOutput` | _type_ | parsed details inferred from one definition |
@@ -195,6 +196,15 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createHandler` | function | the router as a bare `(req) => Response` — [guide](../guide/server.md#createserver) |
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `createImplement` | function | fix the handler context type once |
+| `createScopedImplement` | function | fix one scope→context map, then type every handler by its endpoint's effective scope — [guide](../guide/server.md#per-scope-handler-context--createscopedimplement) |
+| `ScopedHandlers` | _type_ | handler map typed per endpoint by its effective scope |
+| `ScopeContexts` | _type_ | scope → extra context fields map accepted by `createScopedImplement` |
+| `EffectiveScope` | _type_ | an endpoint's own `scope`, else its contract's group scope |
+| `createScopedImplementRegistry` | function | the registry form of `createScopedImplement` — one contract registry, handlers still typed per endpoint scope |
+| `ScopedRegistryHandlers` | _type_ | scoped handler registry inferred from a contract registry |
+| `ScopedImplementationRegistry` | _type_ | contract registry whose every group scope is a key of the scope map |
+| `StreamScope` | _type_ | the scope `createScopedImplement(...).stream` accepts for one endpoint |
+| `ExactScopedRegistryHandlers` | _type_ | fail-first scoped registry shape that rejects extra registry and endpoint keys |
 | `implementRegistry` | function | bind one exact contract registry to one exact backend handler registry |
 | `createImplementRegistry` | function | context-typed factory for `implementRegistry` |
 | `ImplementationRegistry` | _type_ | flat literal registry of concrete contracts accepted by `implementRegistry` |
@@ -309,10 +319,19 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `MultipartResult` | _type_ | what `parseMultipart` returns |
 | `parseMultipart` | function | parse a typed buffered/streaming multipart descriptor — [guide](../guide/server.md#multipart) |
 | `defineMultipartStream` | function | bind typed streaming file receivers and a final endpoint handler |
+| `createMultipartStream` | function | fix one handler context type for streaming multipart endpoints |
+| `MultipartStreamConfig` | _type_ | receivers plus the context-typed handler accepted by the streaming builders |
 | `MultipartFileMetadata` | _type_ | field, filename, declared media type and optional declared size |
 | `MultipartReceiver` | _type_ | consumer-owned Web-stream storage receiver |
 | `MultipartReceiverResult` | _type_ | receiver value plus rollback cleanup |
 | `StreamingMultipartImplementation` | _type_ | receiver registry and handler shape inferred by `defineMultipartStream` |
+| `bindProcessSignals` | function | bind `SIGINT` / `SIGTERM` to one managed `shutdown()` — one chain, force on a later signal, default disposition on the one after — [guide](../guide/testing-and-deployment.md#process-signals--bindprocesssignals) |
+| `ProcessSignalsOptions` | _type_ | config for `bindProcessSignals` |
+| `ProcessSignalsBinding` | _type_ | the `{ promise, close }` handle `bindProcessSignals` returns |
+| `ProcessSignalsErrorPhase` | _type_ | `'prepare' \| 'shutdown' \| 'complete'` — which phase an `onError` report came from |
+| `SignalSource` | _type_ | injectable signal source — `process` by default |
+| `ProcessSignalName` | _type_ | signal names the binding accepts (owned, so the published types need no `@types/node`) |
+| `ShutdownTarget` | _type_ | the `shutdown`-only slice of a managed handle a binding needs |
 | `createRateLimiter` | function | token-bucket rate limiting — [guide](../guide/server.md#rate-limiting) |
 | `createCache` | function | an in-memory TTL cache |
 | `CacheOptions` | _type_ | bounded-cache options, including the maximum retained entry count |
@@ -618,7 +637,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `serveNode` | function | build the router and start a Node HTTP server (via `srvx`) |
 | `createHandler` | function | the router as a bare `(req) => Response` (same as `/server`) |
 | `createSocketIOServer` | function | the typed Node Socket.IO server (`io` + `attach`; no Bun engine declarations) |
-| `implement` / `createImplement` | function | bind a contract to typed handlers (same as `/server`) |
+| `implement` / `createImplement` / `createScopedImplement` / `createScopedImplementRegistry` / `createMultipartStream` | function | bind a contract to typed handlers, optionally typed per endpoint scope (same as `/server`) |
 | `NodeServerConfig` | _type_ | config for `serveNode` |
 | `NodeServerHandle` | _type_ | managed Node handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `NodeRuntimeServer` | _type_ | concrete `srvx/node` runtime escape hatch |

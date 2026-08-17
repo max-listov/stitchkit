@@ -201,3 +201,146 @@ describe('domain error transport normalization', () => {
     }
   });
 });
+
+describe('defineErrors — declared message', () => {
+  const registry = defineErrors({
+    SESSION_EXPIRED: { status: 401, message: 'Your session expired' },
+    QUOTA_EXCEEDED: {
+      status: 429,
+      message: 'Monthly quota exhausted',
+      details: z.object({ retryAfterSeconds: z.number().int().positive() }),
+    },
+    PLAIN: { status: 409 },
+  });
+
+  test('uses the declared message when the call site gives none', () => {
+    expect(registry.errors.SESSION_EXPIRED().message).toBe('Your session expired');
+    expect(
+      registry.errors.QUOTA_EXCEEDED({ details: { retryAfterSeconds: 30 } }).message,
+    ).toBe('Monthly quota exhausted');
+  });
+
+  test('a per-call message overrides the declared one', () => {
+    expect(registry.errors.SESSION_EXPIRED({ message: 'Signed out' }).message).toBe(
+      'Signed out',
+    );
+  });
+
+  test('a code without a declared message still falls back to the code', () => {
+    expect(registry.errors.PLAIN().message).toBe('PLAIN');
+  });
+
+  test('the declared message is readable by a union key and by a narrowed string', () => {
+    const unionKey: keyof typeof registry.definitions = 'SESSION_EXPIRED';
+    const byUnionKey: string | undefined = registry.definitions[unionKey].message;
+    expect(byUnionKey).toBe('Your session expired');
+    expect(registry.definitions.PLAIN.message).toBeUndefined();
+
+    // The consumer path: a code arriving as a plain string, narrowed by isCode.
+    const fromTheWire: string = 'SESSION_EXPIRED';
+    if (!registry.isCode(fromTheWire)) throw new Error('expected a declared code');
+    const byNarrowedString: string | undefined = registry.definitions[fromTheWire].message;
+    expect(byNarrowedString).toBe('Your session expired');
+  });
+
+  test('an explicit message: undefined falls through to the declared text', () => {
+    expect(registry.errors.SESSION_EXPIRED({ message: undefined }).message).toBe(
+      'Your session expired',
+    );
+  });
+
+  test('a non-string message is rejected with a stitchkit error, not a TypeError', () => {
+    expect(() => defineErrors(JSON.parse('{"BAD":{"status":400,"message":42}}'))).toThrow(
+      '[stitchkit] Error "BAD" message must be a non-empty string',
+    );
+    expect(() => defineErrors(JSON.parse('{"BAD":{"status":400,"message":null}}'))).toThrow(
+      '[stitchkit] Error "BAD" message must be a non-empty string',
+    );
+  });
+
+  test('an empty declared message is rejected when the registry is declared', () => {
+    expect(() => defineErrors({ BAD: { status: 400, message: '   ' } })).toThrow(
+      '[stitchkit] Error "BAD" message must be a non-empty string',
+    );
+  });
+
+  test('the declared message reaches the HTTP envelope', () => {
+    expect(registry.errors.SESSION_EXPIRED().toJSON()).toMatchObject({
+      error: { code: 'SESSION_EXPIRED', message: 'Your session expired' },
+    });
+  });
+
+  test('the model-facing tool projection still carries no message — by design', async () => {
+    const contract = defineContract(
+      { prefix: 'quota' },
+      {
+        check: {
+          method: 'POST',
+          path: '/check',
+          desc: 'Check quota',
+          toolName: 'quota_message_check',
+          input: z.object({}),
+        },
+      },
+    );
+    const service = implement(contract, {
+      check: () => {
+        throw registry.errors.QUOTA_EXCEEDED({ details: { retryAfterSeconds: 30 } });
+      },
+    });
+    const result = await executable(mountAgent([service]), 'quota_message_check')(
+      {},
+      { toolCallId: 'quota-message', messages: [], context: undefined },
+    );
+
+    // A code WITH a details schema shows the model no text at all: the envelope
+    // is `{ error, details?, _hint? }` and its `details` is the parsed payload.
+    expect(result).toEqual({
+      error: 'QUOTA_EXCEEDED',
+      details: { retryAfterSeconds: 30 },
+    });
+  });
+
+  test('a code without a details schema delivers the declared text as details.message', async () => {
+    const contract = defineContract(
+      { prefix: 'session' },
+      {
+        touch: {
+          method: 'POST',
+          path: '/touch',
+          desc: 'Touch the session',
+          toolName: 'session_touch',
+          input: z.object({}),
+        },
+      },
+    );
+    const withMessage = implement(contract, {
+      touch: () => {
+        throw registry.errors.SESSION_EXPIRED();
+      },
+    });
+    const withoutMessage = implement(contract, {
+      touch: () => {
+        throw registry.errors.PLAIN();
+      },
+    });
+
+    // This is the branch the declared message actually changes on the tool path:
+    // the framework fills `details` with `{ message }` when a code declares no
+    // details schema. It used to be the code itself.
+    expect(
+      await executable(mountAgent([withMessage]), 'session_touch')(
+        {},
+        { toolCallId: 'touch-1', messages: [], context: undefined },
+      ),
+    ).toEqual({ error: 'SESSION_EXPIRED', details: { message: 'Your session expired' } });
+
+    // A code that declares no message is unchanged — `details.message` is the code.
+    expect(
+      await executable(mountAgent([withoutMessage]), 'session_touch')(
+        {},
+        { toolCallId: 'touch-2', messages: [], context: undefined },
+      ),
+    ).toEqual({ error: 'PLAIN', details: { message: 'PLAIN' } });
+  });
+});

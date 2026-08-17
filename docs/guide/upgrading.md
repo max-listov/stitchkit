@@ -48,6 +48,69 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.50.0
+
+### The factory's scope union now covers per-endpoint overrides
+
+`createContractFactory<Scope>()` already required a typed `scope` on the
+contract. It now holds a per-endpoint `scope` override to the same union. Nothing
+to migrate unless an override is outside the union — which was always a bug: the
+scope reached no auth rule, and `createAuthHook` threw
+`[stitchkit] auth: no rule for scope "…"` on the first request to it.
+
+```ts
+const { defineContract } = createContractFactory<'public' | 'user' | 'admin'>()
+
+defineContract({ prefix: 'posts', scope: 'user' }, {
+  // before: compiled; failed at request time
+  // after:  compile error naming the scope (TypeScript even suggests 'admin')
+  purge: { method: 'DELETE', path: '/all', desc: 'Purge', scope: 'admn', output },
+})
+```
+
+Fix the typo, or widen the factory union if the scope is real. Contracts built
+with plain `defineContract` are unaffected.
+
+### A declared `defineErrors` message is now used
+
+`ErrorDefinition` accepts `message`. Nothing to migrate unless a registry already
+wrote that key: it type-checked before (excess-property checking does not fire
+through a `const` generic) and was ignored, so the code itself went on the wire.
+
+```ts
+const { errors } = defineErrors({ GONE: { status: 410, message: 'Long gone' } })
+// before: errors.GONE().message === 'GONE'
+// after:  errors.GONE().message === 'Long gone'
+```
+
+If a registry carried `message` as a note to the reader rather than as
+user-facing text, either fix the text or drop the key. A code with no `details`
+schema also shows that text to a model (its tool `details` is `{ message }`).
+
+### Optional: adopt `createScopedImplement`
+
+If the app declares one superset handler context because different scopes inject
+different fields, replace it with a scope map. This is additive — `createImplement`
+still works.
+
+```ts
+// before — one context for every scope; `ctx.userId` is typed even in a
+// `public` handler, where the runtime never injects it
+interface AppContext extends RuntimeContext { userId: string; isAdmin: boolean }
+export const implement = createImplement<AppContext>()
+
+// after — each handler typed by its endpoint's effective scope
+export const implementFor = createScopedImplement<{
+  public: object
+  user: { userId: string }
+  admin: { userId: string; isAdmin: boolean }
+}>()
+```
+
+`'public'` must be a key (a contract with no `scope` is `'public'`). Write
+endpoints inline in the contract literal: an endpoint hoisted into a variable
+widens its `scope` to `string` and is reported as undeclared.
+
 ## Released migration: 0.48.0
 
 ### Typed-client request options move to `.withOptions`

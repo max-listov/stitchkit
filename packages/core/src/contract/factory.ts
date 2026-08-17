@@ -46,10 +46,24 @@ export interface ScopedContractDef<
   meta: ContractMeta<TScope> & { scope: TScope };
 }
 
+/**
+ * An endpoint authored through the factory: the per-endpoint `scope` override is
+ * held to the same union as the contract's.
+ *
+ * Constraining the type parameter (rather than intersecting the argument) keeps
+ * `T` itself unchanged, so `ExplicitToolExposureEndpoints<T>` and the boundary
+ * mapping below still see the endpoints the caller wrote. The check is
+ * structural, so it also covers `HeadEndpointDef`, which declares its own
+ * `scope` outside `EndpointDefBase`.
+ */
+export type FactoryScopedEndpoint<TScope extends string> = EndpointDef & {
+  scope?: TScope;
+};
+
 /** A `defineContract` whose `scope` is required and typed to `TScope`. */
 export type ScopedDefineContract<TScope extends string> = <
   const TContractScope extends TScope,
-  const T extends Record<string, EndpointDef>,
+  const T extends Record<string, FactoryScopedEndpoint<TScope>>,
 >(
   meta: { prefix: string; scope: TContractScope; meta?: Record<string, unknown> },
   endpoints: T,
@@ -58,7 +72,7 @@ export type ScopedDefineContract<TScope extends string> = <
 /** Scoped contract authoring where every omitted exposure becomes HTTP-only. */
 export type ExplicitScopedDefineContract<TScope extends string> = <
   const TContractScope extends TScope,
-  const T extends Record<string, EndpointDef>,
+  const T extends Record<string, FactoryScopedEndpoint<TScope>>,
 >(
   meta: { prefix: string; scope: TContractScope; meta?: Record<string, unknown> },
   endpoints: T,
