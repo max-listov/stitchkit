@@ -197,7 +197,6 @@ export class GitHubRepositoryCache {
     } catch (error) {
       if (previous) return serialize(previous, 'stale');
       throw domainErrors.GITHUB_UNAVAILABLE({
-        message: 'GitHub repository data is temporarily unavailable',
         details: { cause: error instanceof Error ? error.message : 'Unknown upstream error' },
         hint: 'Retry after the upstream service recovers',
       });

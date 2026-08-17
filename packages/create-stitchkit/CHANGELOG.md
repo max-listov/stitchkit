@@ -6,6 +6,21 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-08-17
+
+### Changed
+
+- **The template targets Stitchkit 0.50.0 and binds process signals through the
+  framework.** Generated backends replace the hand-written shutdown coordinator
+  with `bindProcessSignals(server, …)`: MCP and Prisma close in `onComplete`, the
+  exit code is set there, and failures are reported by phase. The manual version
+  the template used to ship reported a failing `mcp.close()` as a failed
+  shutdown, did nothing on a third signal, and collapsed the grace period when a
+  supervisor delivered two signals at once.
+- **The repository example declares its domain error message once.**
+  `GITHUB_UNAVAILABLE` carries its text in the `defineErrors` definition instead
+  of repeating it at the throw site.
+
 ## [0.3.1] — 2026-08-15
 
 ### Changed
