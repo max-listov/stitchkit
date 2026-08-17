@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
-import { createScopedImplement, createScopedImplementRegistry } from '../src/server/implement';
+import {
+  createScopedImplement,
+  createScopedImplementRegistry,
+  implementRegistry,
+} from '../src/server/implement';
 
 const output = z.object({ ok: z.boolean() });
 
@@ -118,5 +122,44 @@ describe('createScopedImplement().stream', () => {
         { files: {}, handler: () => ({ stored: '', by: '' }) },
       ]),
     ).toThrow('Streaming multipart receivers must exactly match declared file fields');
+  });
+});
+
+describe('keyed registry results', () => {
+  test('byKey addresses the same service objects the array mounts', () => {
+    const services = implementAll(registry, {
+      posts: {
+        list: (ctx) => ({ ok: ctx.userId.length > 0 }),
+        purge: (ctx) => ({ ok: ctx.isAdmin }),
+      },
+      health: { read: () => ({ ok: true }) },
+    });
+
+    const [first, second] = services;
+    if (!first || !second) throw new Error('expected two services');
+    expect(services.byKey.posts).toBe(first);
+    expect(services.byKey.health).toBe(second);
+    // The filtering use case: pick services by their load-bearing keys.
+    const allowed = [services.byKey.health];
+    expect(allowed.map((service) => service.prefix)).toEqual(['health']);
+  });
+
+  test('implementRegistry carries the same keyed shape', () => {
+    const plain = implementRegistry({ health }, { health: { read: () => ({ ok: true }) } });
+    expect(plain.byKey.health?.prefix).toBe('health');
+    expect(plain).toHaveLength(1);
+  });
+
+  test('byKey is invisible to array enumeration — a real consumer iterates with Object.values', () => {
+    const services = implementRegistry({ health }, { health: { read: () => ({ ok: true }) } });
+    // A consumer migrating from a hand-written record does exactly this; a
+    // phantom extra entry here would be a silent tool-surface leak.
+    const [only] = services;
+    if (!only) throw new Error('expected one service');
+    expect(Object.values(services)).toHaveLength(1);
+    expect(Object.keys(services)).toEqual(['0']);
+    const spread: Record<string, unknown> = { ...services };
+    expect(spread).toEqual({ '0': only });
+    expect(JSON.parse(JSON.stringify(services))).toHaveLength(1);
   });
 });

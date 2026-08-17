@@ -15,6 +15,49 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-08-17
+
+### Added
+
+- **The scope map derives from the auth hook.** A rule may take the form
+  `{ rule, inject }` where `inject(identity, ctx)` returns the fields the scope
+  contributes; the hook merges them into the context, and
+  `createScopedImplement<AuthScopes<typeof hook>>()` consumes the derived map —
+  one declaration fills the context and types the handlers, so the map cannot
+  drift from the hook. A `'public'` rule's fields come out optional (public
+  admits the anonymous caller; it still resolves and injects the logged-in one).
+  A rule whose type merely ADMITS `'public'` (a union) also derives optional
+  fields, and `inject` must be synchronous — a thenable is a compile error and a
+  runtime throw, since merging a Promise would merge nothing. Requires the
+  identity generic to be inferred; the hand-written map stays as the fallback.
+  → ADR 0078
+- **`listContractToolNames(contracts)`** (`stitchkit/tools`) — the tool-name
+  baseline straight from contracts. Names, kinds and exposure are deterministic
+  contract facts, so a surface snapshot no longer needs stub services — or the
+  untyped `createImplement<RuntimeContext>()` escape factory a consumer kept
+  around to build them. Entry-for-entry equal to `listToolNames` over the
+  implemented services — structurally (both read only the mounted method
+  definitions) and pinned by a deep-equality test.
+- **Registry results carry their keys.** `implementRegistry`,
+  `createImplementRegistry` and `createScopedImplementRegistry` still return the
+  mount-ordered `ServiceDef[]`, and the same services now also ride under
+  `.byKey`, typed by the registry's literal keys (`KeyedServices`). The property
+  is **non-enumerable**, so `Object.keys` / `Object.values` / spread of the
+  array are byte-identical to before. Keys are load-bearing where a consumer
+  filters its tool surface per caller; dropping them forced a silent
+  hand-rebuilt prefix lookup.
+
+### Fixed
+
+- **The deployment guide documents the composite `ShutdownTarget`.**
+  `bindProcessSignals` always accepted any `Pick<ManagedServerHandle,
+  'shutdown'>`, but the guide never showed a multi-domain shutdown composing its
+  parallel drains under the binding's signal machine — the first consumer with
+  one read the primitive as transport-only and kept a hand-written machine. The
+  guide now shows the composite target, the application-side hard-exit timer
+  (`process.exitCode` cannot fire while a stuck resource holds the event loop),
+  and an explicit "when NOT to use" list.
+
 ## [0.50.0] — 2026-08-17
 
 ### ⚠️ Breaking changes

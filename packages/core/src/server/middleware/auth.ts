@@ -180,7 +180,59 @@ export type AuthRule<TIdentity> =
   | 'authenticated'
   | ((identity: Awaited<TIdentity>, ctx: RuntimeContext) => boolean | Promise<boolean>);
 
-export interface AuthHookConfig<TIdentity> {
+/**
+ * A rule that also DECLARES this scope's contribution to the handler context —
+ * by doing it. `inject` runs whenever an identity resolved (on `'public'` too:
+ * that rule admits the anonymous, it does not refuse to know the logged-in),
+ * and its returned fields are merged into the context.
+ *
+ * The return type is the point: {@link AuthScopes} derives the scope→context
+ * map from it, so `createScopedImplement<AuthScopes<typeof hook>>()` types
+ * handlers from the same declaration that fills the context. One source of
+ * truth instead of a hand-written map drifting beside the hook. → ADR 0078
+ *
+ * `inject` must be **synchronous** — the type forbids a thenable and the
+ * runtime throws on one, because `Object.assign(ctx, promise)` would merge
+ * nothing, silently. It also runs before the rule check (and so for an
+ * identity the rule may still reject), so keep it pure: derive fields, cause
+ * nothing.
+ */
+export interface ScopedAuthRule<TIdentity, TFields extends object = object> {
+  rule: AuthRule<TIdentity>;
+  /** Fields this scope guarantees. Runs after the shared `inject`, only with an identity. */
+  inject?: (identity: Awaited<TIdentity>, ctx: RuntimeContext) => TFields & { then?: never };
+}
+
+/** The `rules` map: a bare rule, or a rule carrying its context contribution. */
+export type AuthRules<TIdentity> = Record<
+  string,
+  AuthRule<TIdentity> | ScopedAuthRule<TIdentity, object>
+>;
+
+/**
+ * The scope→context map derived from a `rules` object. A rule whose TYPE can
+ * be `'public'` yields optional fields — public still resolves and injects for
+ * a logged-in caller, it just never rejects the anonymous one — so its
+ * handlers see `field?: T`, not a promise the runtime may break. The test is
+ * membership, not the exact literal: a union such as
+ * `flag ? 'public' : 'authenticated'` may skip the inject at runtime, so its
+ * fields must be optional too.
+ */
+export type RuleScopes<TRules> = {
+  [K in keyof TRules & string]: TRules[K] extends {
+    rule: infer TRule;
+    inject: (...args: never[]) => infer TFields extends object;
+  }
+    ? 'public' extends Extract<TRule, string>
+      ? Partial<TFields>
+      : TFields
+    : object;
+};
+
+export interface AuthHookConfig<
+  TIdentity,
+  TRules extends AuthRules<TIdentity> = AuthRules<TIdentity>,
+> {
   /** Resolve the request identity — cookie / bearer + DB lookup. */
   resolve: (ctx: RuntimeContext) => Promise<TIdentity | null>;
   /**
@@ -192,7 +244,7 @@ export interface AuthHookConfig<TIdentity> {
    */
   resolveFromContext?: (ctx: RuntimeContext) => TIdentity | null | Promise<TIdentity | null>;
   /** Access rule per scope; `endpoint.scope` is the key. */
-  rules: Record<string, AuthRule<TIdentity>>;
+  rules: TRules;
   /** Scope applied when an endpoint declares none. */
   defaultScope?: string;
   /** Write the resolved identity onto the context for handlers. */
@@ -203,10 +255,36 @@ export interface AuthHookConfig<TIdentity> {
   onForbidden?: () => never;
 }
 
+function isThenable(value: object): value is PromiseLike<unknown> {
+  return 'then' in value && typeof value.then === 'function';
+}
+
 export interface AuthHook {
   (ctx: AuthorizationContext, endpoint: OperationIdentity): Promise<void>;
   (ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void>;
 }
+
+/**
+ * An auth hook that carries its derived scope→context map at the type level.
+ * The marker property never exists at runtime; it only lets {@link AuthScopes}
+ * recover the map.
+ */
+export interface ScopedAuthHook<TScopes extends Record<string, object>> extends AuthHook {
+  /** Type-only carrier for {@link AuthScopes}; never present at runtime. */
+  readonly '~scopes'?: TScopes;
+}
+
+/**
+ * The scope→context map a hook derived from its rules — feed it straight to
+ * `createScopedImplement`:
+ *
+ * ```ts
+ * const hook = createAuthHook({ resolve, rules })
+ * export const implementFor = createScopedImplement<AuthScopes<typeof hook>>()
+ * ```
+ */
+export type AuthScopes<THook extends ScopedAuthHook<Record<string, object>>> =
+  THook extends ScopedAuthHook<infer TScopes> ? TScopes : never;
 
 /**
  * Build a scope authorization hook.
@@ -221,7 +299,10 @@ export interface AuthHook {
  * `req` — it uses `resolveFromContext`. If `resolveFromContext` is omitted, a
  * scoped tool call has no identity and **fails closed** (never silently passes).
  */
-export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): AuthHook {
+export function createAuthHook<
+  TIdentity,
+  const TRules extends AuthRules<TIdentity> = AuthRules<TIdentity>,
+>(config: AuthHookConfig<TIdentity, TRules>): ScopedAuthHook<RuleScopes<TRules>> {
   const onAnonymous = config.onAnonymous ?? ((): never => unauthorized());
   const onForbidden = config.onForbidden ?? ((): never => forbidden());
 
@@ -240,12 +321,29 @@ export function createAuthHook<TIdentity>(config: AuthHookConfig<TIdentity>): Au
     const scope = endpoint.scope ?? config.defaultScope;
     if (!scope) return;
 
-    const rule = Object.hasOwn(config.rules, scope) ? config.rules[scope] : undefined;
+    const entry = Object.hasOwn(config.rules, scope) ? config.rules[scope] : undefined;
     // An endpoint that declares a scope with no matching rule is a config
     // mistake — fail closed, never silently pass an unguarded endpoint.
-    if (!rule) {
+    if (!entry) {
       throw new Error(`[stitchkit] auth: no rule for scope "${scope}"`);
     }
+
+    const rule = typeof entry === 'object' ? entry.rule : entry;
+    // The scoped contribution runs before the check and on `'public'` too: a
+    // public rule admits the anonymous caller, it does not refuse to know the
+    // logged-in one. With no identity there is nothing to derive fields from.
+    if (typeof entry === 'object' && entry.inject && identity !== null) {
+      const fields = entry.inject(identity, ctx);
+      // The type already forbids a thenable; this catches an untyped JavaScript
+      // caller, whose async inject would otherwise merge nothing — silently.
+      if (isThenable(fields)) {
+        throw new Error(
+          `[stitchkit] auth: the inject of scope "${scope}" must be synchronous — an async inject merges a Promise, not fields`,
+        );
+      }
+      Object.assign(ctx, fields);
+    }
+
     if (rule === 'public') return;
 
     if (!identity) {

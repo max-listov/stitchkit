@@ -113,7 +113,61 @@ endpoints under the group declare `scope: 'tenant'`.
 | `onForbidden` | thrown when an identity is present but the rule rejects it (default 403) |
 
 Annotate `rules` with `satisfies Record<MyScope, AuthRule<User>>` so the compiler
-catches a scope you forgot to cover.
+catches a scope you forgot to cover. With the scoped rule objects below, widen
+the annotation to
+`satisfies Record<MyScope, AuthRule<User> | ScopedAuthRule<User, object>>` — it
+keeps the coverage check and does not disturb the derivation. (When every scope
+comes from the derived map, the check is already implicit: a scope missing from
+`rules` is no key of the map, and a contract using it fails to compile.)
+
+### Scoped rules — the map `createScopedImplement` consumes
+
+A rule may take an object form, `{ rule, inject }`, where `inject` **returns**
+the fields this scope contributes. That return type is a declaration the hook
+derives a scope→context map from — feed it to
+[`createScopedImplement`](./server.md#per-scope-handler-context--createscopedimplement)
+and the map can never drift from the hook, because it is computed from it:
+
+```ts
+const authHook = createAuthHook({
+  resolve: sessionResolver,             // no explicit generic — let it infer
+  rules: {
+    public: { rule: 'public', inject: (user) => ({ userId: user.id }) },
+    user: { rule: 'authenticated', inject: (user) => ({ userId: user.id }) },
+    admin: {
+      rule: (user) => user.admin,
+      inject: (user) => ({ userId: user.id, isAdmin: user.admin }),
+    },
+  },
+})
+
+export const implementFor = createScopedImplement<AuthScopes<typeof authHook>>()
+```
+
+- A `'public'` rule's fields come out **optional**: public admits the anonymous
+  caller, it does not refuse to know the logged-in one — `resolve` and `inject`
+  still run, so a public `me` / `logout` handler reads `ctx.userId` as
+  `string | undefined` and narrows, instead of being pushed toward a cast by a
+  `public: object` map.
+- Any other rule's fields are required — the rule rejected the request before
+  the handler if no identity resolved.
+- A scope with no rule is no key of the derived map, so a contract using it
+  fails to compile — the type-level mirror of the hook's fail-closed
+  `no rule for scope` throw.
+
+The per-rule `inject` runs after the shared one, only when an identity
+resolved, and **before** the rule check — it may run for an identity the rule
+then rejects, so keep it pure and synchronous (an async `inject` is a compile
+error, and a runtime one for untyped callers: merging a Promise would merge
+nothing). Write rule objects inline in `rules` — a hoisted, annotated rule
+widens its inject and degrades that scope's fields to `object`.
+
+Derivation needs the identity generic to be **inferred** (write no explicit
+`createAuthHook<User>` — TypeScript has no partial inference); with an explicit
+generic, or fields injected outside the hook, keep the hand-written map. Two
+hooks guarding different scopes compose by intersection:
+`createScopedImplement<AuthScopes<typeof userHook> & AuthScopes<typeof botHook>>()`.
+→ ADR 0078
 
 ### Auth on the tool surface — `resolveFromContext`
 

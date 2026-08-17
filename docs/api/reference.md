@@ -208,6 +208,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `implementRegistry` | function | bind one exact contract registry to one exact backend handler registry |
 | `createImplementRegistry` | function | context-typed factory for `implementRegistry` |
 | `ImplementationRegistry` | _type_ | flat literal registry of concrete contracts accepted by `implementRegistry` |
+| `KeyedServices` | _type_ | registry result: the mount-ordered `ServiceDef[]` carrying the same services under `.byKey` |
 | `RegistryHandlers` | _type_ | exact backend handler registry inferred from a contract registry |
 | `ExactRegistryHandlers` | _type_ | fail-first handler shape that rejects extra registry and endpoint keys |
 | `staticRoute` | function | a raw route that serves a directory |
@@ -269,6 +270,11 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `AuthHook` | _type_ | the hook `createAuthHook` returns |
 | `AuthHookConfig` | _type_ | config for `createAuthHook` |
 | `AuthRule` | _type_ | `'public' \| 'authenticated' \| predicate` |
+| `ScopedAuthRule` | _type_ | a rule plus its typed context contribution — `{ rule, inject? }` |
+| `AuthRules` | _type_ | the `rules` map: bare rules or scoped rules |
+| `RuleScopes` | _type_ | scope→context map derived from a `rules` object; `'public'` fields become optional |
+| `ScopedAuthHook` | _type_ | an auth hook carrying its derived scope map at the type level |
+| `AuthScopes` | _type_ | recover the derived map — `createScopedImplement<AuthScopes<typeof hook>>()` |
 | `BearerResolverConfig` | _type_ | config for `createBearerResolver` |
 | `JwtPayload` | _type_ | a decoded JWT payload |
 | `SignJwtOptions` | _type_ | options for `signJwt` (expiry, claims) |
@@ -331,7 +337,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ProcessSignalsErrorPhase` | _type_ | `'prepare' \| 'shutdown' \| 'complete'` — which phase an `onError` report came from |
 | `SignalSource` | _type_ | injectable signal source — `process` by default |
 | `ProcessSignalName` | _type_ | signal names the binding accepts (owned, so the published types need no `@types/node`) |
-| `ShutdownTarget` | _type_ | the `shutdown`-only slice of a managed handle a binding needs |
+| `ShutdownTarget` | _type_ | the `shutdown`-only slice a binding needs — an interface, so a [composite target](../guide/testing-and-deployment.md#composite-shutdown-target--parallel-domain-drains) can drain several domains under one signal machine |
 | `createRateLimiter` | function | token-bucket rate limiting — [guide](../guide/server.md#rate-limiting) |
 | `createCache` | function | an in-memory TTL cache |
 | `CacheOptions` | _type_ | bounded-cache options, including the maximum retained entry count |
@@ -460,6 +466,7 @@ payload.
 | `resolveMedia` | function | resolve a media reference for a tool result |
 | `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
 | `listToolNames` | function | every contract/runtime tool name with origin, identity and transports — for stable snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
+| `listContractToolNames` | function | the same listing straight from contracts — no handlers or stub services needed |
 | `McpHandlerConfig` | _type_ | server surface plus stateless HTTP transport config |
 | `McpHttpConfig` | _type_ | HTTP auth, protected-resource, legacy-era and security options |
 | `McpHttpHandler` | _type_ | framework-owned `{ fetch(request), close() }` lifecycle |

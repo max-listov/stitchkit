@@ -158,6 +158,71 @@ closing one whose chain is already running leaves that chain to finish and keeps
 the handle claimed, since a second binding could not force it. `promise` is
 already observed internally, so ignoring it never raises an `unhandledRejection`.
 
+#### Composite shutdown target — parallel domain drains
+
+`bindProcessSignals` takes `Pick<ManagedServerHandle, 'shutdown'>` — an
+**interface**, not the server. An application whose shutdown spans several
+domains (transport, bots, agent runs, broadcasts) composes them into one target;
+the signal machine stays the framework's, the composition stays yours:
+
+```ts
+const composite: ShutdownTarget = {
+  async shutdown(options?: ShutdownOptions): Promise<ShutdownResult> {
+    const { signal } = ShutdownOptionsSchema.parse(options ?? {})
+    // Domain drains run in parallel with the transport drain, all watching the
+    // same force signal the second OS signal aborts.
+    const [transport, bots, agents, broadcasts] = await Promise.all([
+      server.shutdown(options),
+      drainBots(signal),
+      drainAgents(signal),
+      drainBroadcasts(signal),
+    ])
+    return {
+      ...transport,
+      // Fold domain leftovers into the transport result so `onComplete` sees
+      // one honest outcome.
+      outcome: transport.outcome === 'clean' && bots + agents + broadcasts === 0
+        ? 'clean'
+        : 'forced',
+    }
+  },
+}
+
+bindProcessSignals(composite, { shutdown: { gracePeriodMs: 30_000 } })
+```
+
+The transport half inside stays the real managed handle — its admission gate and
+HTTP drain are not reimplemented, only composed. Domain drains must watch the
+`signal` themselves: it is the only channel a second OS signal has into a
+running chain.
+
+#### The last line of defence is yours
+
+The framework never calls `process.exit`, and `process.exitCode` only takes
+effect once the event loop empties — which is exactly what a stuck resource
+prevents. If the deployment must exit before the supervisor's `SIGKILL`, arm an
+application-side timer:
+
+```ts
+onShutdown: () => {
+  setTimeout(() => process.exit(1), 60_000).unref()
+},
+```
+
+`unref()` keeps the timer from holding a healthy process open; it only fires if
+something else already is.
+
+#### When NOT to use `bindProcessSignals`
+
+- The application already runs a signal machine with states this one does not
+  have (staged escalation policies, per-signal semantics beyond
+  first/force/escalate). Two machines on the same signals is worse than either.
+- Signal policy must differ per signal (e.g. `SIGHUP` = reload, not shutdown) —
+  bind only the terminating signals here and keep the rest yours.
+- Something else in the process must keep listening for the same signal: the
+  escalation path restores the default disposition only when nothing else
+  listens, and reports `onEscalationBlocked` otherwise.
+
 The server owns HTTP/Socket.IO transport resources. MCP, databases, queues and
 domain run-state remain application resources and close explicitly after server
 drain. Do not call `runtime.stop()` or `socket.io.close()` in parallel with

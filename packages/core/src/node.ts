@@ -26,6 +26,7 @@ export {
   type ImplementationRegistry,
   implement,
   implementRegistry,
+  type KeyedServices,
   type MultipartStreamConfig,
   type RegistryHandlers,
   type ScopedImplementationRegistry,

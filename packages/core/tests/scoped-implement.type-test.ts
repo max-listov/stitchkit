@@ -8,7 +8,12 @@
  */
 import { z } from 'zod';
 import { createContractFactory, defineContract } from '../src/contract';
-import { createScopedImplement, createScopedImplementRegistry } from '../src/server';
+import {
+  type AuthScopes,
+  createAuthHook,
+  createScopedImplement,
+  createScopedImplementRegistry,
+} from '../src/server';
 
 const implementFor = createScopedImplement<{
   public: object;
@@ -334,3 +339,104 @@ implementAll(
   { partner },
   { partner: { read: () => ({ ok: true }) } },
 );
+
+// ─── The scope map derived from the auth hook — one source of truth ──────────
+
+interface AuthedUser {
+  id: string;
+  admin: boolean;
+}
+
+const derivedHook = createAuthHook({
+  resolve: async (): Promise<AuthedUser | null> => null,
+  rules: {
+    public: { rule: 'public', inject: (user) => ({ userId: user.id }) },
+    user: { rule: 'authenticated', inject: (user) => ({ userId: user.id }) },
+    admin: {
+      rule: (user) => user.admin,
+      inject: (user) => ({ userId: user.id, isAdmin: user.admin }),
+    },
+  },
+});
+
+const implementDerived = createScopedImplement<AuthScopes<typeof derivedHook>>();
+
+const derivedPosts = defineContract(
+  { prefix: 'derived-posts', scope: 'user' },
+  {
+    list: { method: 'GET', path: '/', desc: 'List', output },
+    purge: { method: 'DELETE', path: '/all', desc: 'Purge', scope: 'admin', output },
+    ping: { method: 'GET', path: '/ping', desc: 'Ping', scope: 'public', output },
+  },
+);
+
+implementDerived(derivedPosts, {
+  // The `user` rule's inject returns { userId: string } — typed exactly here.
+  list: (ctx) => {
+    const userId: string = ctx.userId;
+    return { ok: userId.length > 0 };
+  },
+  // The `admin` rule's contribution is typed only under the admin scope.
+  purge: (ctx) => {
+    const isAdmin: boolean = ctx.isAdmin;
+    return { ok: isAdmin };
+  },
+  // A `public` rule injects for a logged-in caller but admits the anonymous —
+  // so its fields are OPTIONAL, not absent and not falsely guaranteed.
+  ping: (ctx) => {
+    const maybeUser: string | undefined = ctx.userId;
+    // @ts-expect-error — `userId` is optional under `public`; it is not `string`.
+    const definitelyUser: string = ctx.userId;
+    return { ok: Boolean(maybeUser) || Boolean(definitelyUser) };
+  },
+});
+
+// A scope with no rule in the hook is not a key of the derived map.
+const derivedForeign = defineContract(
+  { prefix: 'derived-foreign', scope: 'user' },
+  { run: { method: 'POST', path: '/run', desc: 'Run', scope: 'manager', output } },
+);
+
+implementDerived(derivedForeign, {
+  // @ts-expect-error — the hook declares no `manager` rule, so the derived map
+  // has no such scope.
+  run: () => ({ ok: true }),
+});
+
+// ─── Rule-derivation edges pinned after review ───────────────────────────────
+
+const flag = Math.random() > 0.5;
+const unionHook = createAuthHook({
+  resolve: async (): Promise<AuthedUser | null> => null,
+  rules: {
+    mixed: {
+      // The type admits 'public', so at runtime the inject may be skipped for
+      // an anonymous caller — the derived fields MUST be optional.
+      rule: flag ? ('public' as const) : ('authenticated' as const),
+      inject: (user) => ({ userId: user.id }),
+    },
+  },
+});
+
+const implementUnion = createScopedImplement<AuthScopes<typeof unionHook>>();
+const unionContract = defineContract(
+  { prefix: 'union', scope: 'mixed' },
+  { read: { method: 'GET', path: '/', desc: 'Read', output } },
+);
+
+implementUnion(unionContract, {
+  read: (ctx): { ok: boolean } => {
+    const maybe: string | undefined = ctx.userId;
+    // @ts-expect-error — a union rule containing 'public' cannot guarantee the field.
+    const definitely: string = ctx.userId;
+    return { ok: Boolean(maybe) || Boolean(definitely) };
+  },
+});
+
+createAuthHook({
+  resolve: async (): Promise<AuthedUser | null> => null,
+  rules: {
+    // @ts-expect-error — an async inject would merge a Promise, not fields.
+    user: { rule: 'authenticated', inject: async (user) => ({ userId: user.id }) },
+  },
+});

@@ -91,7 +91,12 @@ Three boundaries worth knowing:
   it). It degrades to `unknown`, so it can no longer pose as a `string`; using it
   in a typed position fails.
 - The map states what **your** `beforeHandle` / `createAuthHook.inject` puts on
-  the context. The framework does not verify that claim (→ ADR 0075).
+  the context. The framework does not verify a hand-written claim (→ ADR 0075) —
+  so prefer not to write one: scoped auth rules declare their contribution by
+  performing it, and `createScopedImplement<AuthScopes<typeof hook>>()` derives
+  the map from the hook
+  ([details](./auth-and-errors.md#scoped-rules--the-map-createscopedimplement-consumes),
+  → ADR 0078).
 - An endpoint hoisted out of the contract literal widens its `scope` to `string`,
   which is no key of any map, and lands in the error branch. An endpoint whose
   `scope` is added by a conditional spread is optional, so it resolves to **both**
@@ -139,7 +144,17 @@ export const apiServices = implementRegistry(apiContractRegistry, {
 
 Every registry key is required, extra keys fail, and each handler map is checked
 against its own contract. The returned service order follows the contract
-registry order. `createImplementRegistry<AppContext>()` fixes the application
+registry order — and the same services ride along under `.byKey`, so a consumer
+whose registry keys are load-bearing (filtering a tool surface per caller) never
+rebuilds a prefix lookup by hand:
+
+```ts
+const services = implementRegistry(apiContractRegistry, handlers)
+createServer({ services })                       // the array, as before
+const visible = [services.byKey.users]           // the same objects, by key
+```
+
+`createImplementRegistry<AppContext>()` fixes the application
 context once, like `createImplement` does for a single contract. Runtime callers
 also fail first on missing/extra keys and duplicate contract prefixes.
 

@@ -6,7 +6,12 @@ import type {
   RuntimeContext,
 } from '../contract';
 import { mergeMeta } from '../contract/define';
-import { callRuntimeHandler, isRecord, typedEntries } from '../internal/typed';
+import {
+  callRuntimeHandler,
+  isRecord,
+  transportResult,
+  typedEntries,
+} from '../internal/typed';
 import type {
   EndpointHandlerContext,
   Handlers,
@@ -128,6 +133,46 @@ export function createMultipartStream<TCtx extends RuntimeContext>() {
     config: MultipartStreamConfig<E, R, TCtx>,
   ): StreamingMultipartImplementation =>
     buildMultipartStream(endpoint, config.files, config.handler);
+}
+
+function isStreamingEndpoint(endpoint: EndpointDef): endpoint is StreamingEndpoint {
+  return endpoint.multipart?.delivery === 'stream';
+}
+
+/**
+ * A `ServiceDef` whose handlers only throw — enough for everything that reads
+ * the mounted surface (names, exposure, kinds) without implementing anything.
+ *
+ * Internal on purpose (not re-exported from an entrypoint): a listing helper.
+ * Going through the real `bindContract` is the point — the produced methods are
+ * the same objects the real mounts see, so a name listing derived from here can
+ * never drift from the mounted surface.
+ */
+export function contractOnlyService(contract: ContractDef): ServiceDef {
+  const handlers: Record<string, unknown> = {};
+  for (const [key, endpoint] of Object.entries(contract.endpoints)) {
+    if (isStreamingEndpoint(endpoint)) {
+      const receivers: Record<string, MultipartReceiver> = {};
+      for (const field of Object.keys(endpoint.multipart.files)) {
+        receivers[field] = () => {
+          throw new Error('[stitchkit] contract-only service: handlers are not callable');
+        };
+      }
+      const streaming: StreamingMultipartImplementation = {
+        kind: 'stitchkit.multipart.stream',
+        receivers,
+        execute: () => {
+          throw new Error('[stitchkit] contract-only service: handlers are not callable');
+        },
+      };
+      handlers[key] = streaming;
+      continue;
+    }
+    handlers[key] = () => {
+      throw new Error('[stitchkit] contract-only service: handlers are not callable');
+    };
+  }
+  return bindContract(contract, handlers);
 }
 
 /** Frozen so the same array cannot be mutated through one method and seen by another. */
@@ -381,7 +426,9 @@ export function createScopedImplementRegistry<TScopes extends ScopeContexts>() {
   >(
     contracts: TContracts,
     handlers: ExactScopedRegistryHandlers<TContracts, THandlers, TScopes>,
-  ): ServiceDef[] => bindRegistry(contracts, handlers);
+  ): KeyedServices<TContracts> =>
+    // Same boundary as `implementRegistry` — see the comment there.
+    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
 }
 
 type ImplementationContract = ContractDef<Record<string, EndpointDef>, string>;
@@ -420,10 +467,26 @@ export type ExactRegistryHandlers<
       Record<Exclude<keyof THandlers[K], keyof RegistryHandlers<TContracts, TCtx>[K]>, never>;
   };
 
+/**
+ * Registry results keep both shapes: the mount-ordered array a server consumes,
+ * and the same services by their registry key. Keys are load-bearing for
+ * consumers that filter a tool surface per caller ("these bots see only
+ * services X and Y") — dropping them forced a hand-rebuilt prefix lookup, and a
+ * silent one at that.
+ */
+export type KeyedServices<TContracts extends ImplementationRegistry> = ServiceDef[] & {
+  /**
+   * The same services, by registry key. Same objects as the array entries.
+   * Non-enumerable: `Object.keys` / `Object.values` / object spread of the
+   * array see only the services, exactly as before.
+   */
+  readonly byKey: { readonly [K in keyof TContracts]: ServiceDef };
+};
+
 function bindRegistry(
   contracts: ImplementationRegistry,
   handlers: Record<string, unknown>,
-): ServiceDef[] {
+): ServiceDef[] & { byKey: Record<string, ServiceDef> } {
   const contractKeys = Object.keys(contracts);
   const handlerKeys = Object.keys(handlers);
   const missing = contractKeys.filter((key) => !Object.hasOwn(handlers, key));
@@ -436,6 +499,7 @@ function bindRegistry(
 
   const prefixes = new Map<string, string>();
   const services: ServiceDef[] = [];
+  const byKey: Record<string, ServiceDef> = {};
   for (const [key, candidate] of Object.entries(contracts)) {
     if (!isImplementationContract(candidate)) {
       throw new TypeError(
@@ -469,9 +533,16 @@ function bindRegistry(
         `[stitchkit] implementRegistry: handlers for "${key}" mismatch (missing: ${missingEndpoints.join(', ') || 'none'}; extra: ${extraEndpoints.join(', ') || 'none'})`,
       );
     }
-    services.push(bindContract(contract, entryHandlers));
+    const service = bindContract(contract, entryHandlers);
+    services.push(service);
+    byKey[key] = service;
   }
-  return services;
+  // Non-enumerable on purpose: an existing caller iterating the ARRAY with
+  // `Object.values` / `Object.keys` (a real consumer pattern) must not receive
+  // a phantom extra entry. Loose→typed boundary (→ ADR 0003): the type system
+  // cannot see a `defineProperty` attachment.
+  Object.defineProperty(services, 'byKey', { value: byKey, enumerable: false });
+  return transportResult<ServiceDef[] & { byKey: Record<string, ServiceDef> }>(services);
 }
 
 /**
@@ -485,8 +556,11 @@ export function implementRegistry<
 >(
   contracts: TContracts,
   handlers: ExactRegistryHandlers<TContracts, THandlers, RuntimeContext>,
-): ServiceDef[] {
-  return bindRegistry(contracts, handlers);
+): KeyedServices<TContracts> {
+  // Loose→typed boundary (→ ADR 0003): `bindRegistry` builds `byKey` from the
+  // runtime keys of `contracts`, which are exactly `keyof TContracts` — the
+  // generic mapped type just cannot see that through an index signature.
+  return transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
 }
 
 /** Fix one handler context type for every entry in an implementation registry. */
@@ -497,5 +571,7 @@ export function createImplementRegistry<TCtx extends RuntimeContext>() {
   >(
     contracts: TContracts,
     handlers: ExactRegistryHandlers<TContracts, THandlers, TCtx>,
-  ): ServiceDef[] => bindRegistry(contracts, handlers);
+  ): KeyedServices<TContracts> =>
+    // Same boundary as `implementRegistry` — see the comment there.
+    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
 }

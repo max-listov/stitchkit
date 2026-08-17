@@ -8,7 +8,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { implement } from '../src/server';
-import { listToolNames } from '../src/tools';
+import { listContractToolNames, listToolNames } from '../src/tools';
 
 const Ok = z.object({ ok: z.boolean() });
 
@@ -133,5 +133,34 @@ describe('listToolNames', () => {
   test('output is sorted by name — a stable snapshot shape', () => {
     const names = entries.map((e) => e.name);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  });
+});
+
+describe('listContractToolNames', () => {
+  test('matches listToolNames over the implemented services, byte for byte', () => {
+    expect(listContractToolNames([videos, analytics])).toEqual(
+      listToolNames({ services: [videoService, analyticsService] }),
+    );
+  });
+
+  test('covers a streaming multipart contract without any handler', () => {
+    const media = defineContract(
+      { prefix: 'media', scope: 'user' },
+      {
+        stream: {
+          method: 'POST',
+          path: '/stream',
+          desc: 'Stream upload',
+          multipart: { delivery: 'stream' as const, files: { file: {} } },
+          output: Ok,
+        },
+        note: { method: 'POST', path: '/note', desc: 'Add a note', output: Ok },
+      },
+    );
+
+    const entries = listContractToolNames([media]);
+    // The streaming endpoint is never a tool; the plain one is, with no
+    // handler ever having been written.
+    expect(entries.map((entry) => entry.name)).toEqual(['note_media']);
   });
 });

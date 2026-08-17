@@ -92,6 +92,7 @@ These records were consolidated from the project's internal design notes on
 | [0075](0075-per-scope-handler-context.md) | Per-scope handler context (`createScopedImplement`) | Accepted — supersedes the deferred scope→context clause of 0024 |
 | [0076](0076-explicit-process-signal-binding.md) | Explicit process-signal binding (`bindProcessSignals`) | Accepted — supersedes the signal clause of 0074 |
 | [0077](0077-error-definition-carries-its-message.md) | An error definition carries its default message | Accepted — extends 0058 |
+| [0078](0078-scope-map-derived-from-the-auth-hook.md) | The scope map is derived from the auth hook | Accepted — extends 0075 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

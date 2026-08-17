@@ -27,7 +27,11 @@ export {
   type ToolInvokerConfig,
   type ToolInvokerTransport,
 } from './tools/invoker';
-export { listToolNames, type ToolNameEntry } from './tools/list-names';
+export {
+  listContractToolNames,
+  listToolNames,
+  type ToolNameEntry,
+} from './tools/list-names';
 export {
   buildToolManifest,
   type ToolManifestConfig,

@@ -10,7 +10,8 @@
  * Built on the mixed-surface collector used by the mounts — the listing cannot
  * drift when pathless runtime tools sit beside contract operations.
  */
-import type { Transport } from '../contract';
+import type { ContractDef, Transport } from '../contract';
+import { contractOnlyService } from '../server/implement';
 import {
   collectToolSurface,
   type ToolSurfaceDefinition,
@@ -69,4 +70,19 @@ export function listToolNames(surface: ToolSurfaceDefinition): ToolNameEntry[] {
   return [...entries.values()].sort(
     (a, b) => a.name.localeCompare(b.name) || a.service.localeCompare(b.service),
   );
+}
+
+/**
+ * The same listing straight from contracts — no handlers required. Names, kinds
+ * and exposure are deterministic contract facts, so a surface snapshot should
+ * not force the caller to build (or stub) services; a stub factory left lying
+ * around is an untyped door out of `createScopedImplement`.
+ *
+ * Each contract runs through the real `implement` binding internally, so this
+ * produces exactly the entries `listToolNames` yields for the implemented
+ * services — structurally guaranteed (both read only the mounted method
+ * definitions) and pinned by a deep-equality test.
+ */
+export function listContractToolNames(contracts: readonly ContractDef[]): ToolNameEntry[] {
+  return listToolNames({ services: contracts.map(contractOnlyService) });
 }
