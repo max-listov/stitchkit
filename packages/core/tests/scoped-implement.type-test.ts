@@ -440,3 +440,41 @@ createAuthHook({
     user: { rule: 'authenticated', inject: async (user) => ({ userId: user.id }) },
   },
 });
+
+// ─── declare: typed handlers without binding — the registry path ─────────────
+
+const declaredPosts = implementFor.declare(posts)({
+  list: (ctx) => {
+    const userId: string = ctx.userId;
+    return { ok: userId.length > 0 };
+  },
+  purge: (ctx) => ({ ok: ctx.isAdmin }),
+  ping: () => ({ ok: true }),
+});
+
+// The declared object binds through the registry exactly like inline handlers.
+implementAll({ posts }, { posts: declaredPosts });
+// …and through the direct form too.
+implementFor(posts, declaredPosts);
+
+implementFor.declare(posts)({
+  // @ts-expect-error — `isAdmin` belongs to `admin`; `list` runs under `user`.
+  list: (ctx): { ok: boolean } => ({ ok: ctx.isAdmin }),
+  purge: () => ({ ok: true }),
+  ping: () => ({ ok: true }),
+});
+
+implementFor.declare(posts)({
+  list: (ctx) => ({ ok: ctx.userId.length > 0 }),
+  purge: () => ({ ok: true }),
+  ping: () => ({ ok: true }),
+  // @ts-expect-error — a handler for an endpoint the contract does not declare
+  // fails at the declaration, not at the faraway registry bind.
+  ghost: () => ({ ok: true }),
+});
+
+// @ts-expect-error — a missing handler is still an error at the declaration.
+implementFor.declare(posts)({
+  list: (ctx) => ({ ok: ctx.userId.length > 0 }),
+  purge: () => ({ ok: true }),
+});

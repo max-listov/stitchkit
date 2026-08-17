@@ -196,7 +196,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createHandler` | function | the router as a bare `(req) => Response` — [guide](../guide/server.md#createserver) |
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `createImplement` | function | fix the handler context type once |
-| `createScopedImplement` | function | fix one scope→context map, then type every handler by its endpoint's effective scope — [guide](../guide/server.md#per-scope-handler-context--createscopedimplement) |
+| `createScopedImplement` | function | fix one scope→context map, then type every handler by its endpoint's effective scope; `.declare(contract)(handlers)` types without binding for the registry path, `.stream(scope, …)` covers streaming multipart — [guide](../guide/server.md#per-scope-handler-context--createscopedimplement) |
 | `ScopedHandlers` | _type_ | handler map typed per endpoint by its effective scope |
 | `ScopeContexts` | _type_ | scope → extra context fields map accepted by `createScopedImplement` |
 | `EffectiveScope` | _type_ | an endpoint's own `scope`, else its contract's group scope |

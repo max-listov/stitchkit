@@ -356,7 +356,29 @@ export function createScopedImplement<TScopes extends ScopeContexts>() {
     return buildMultipartStream(endpoint, config.files, config.handler);
   };
 
-  return Object.assign(implementScoped, { stream });
+  /**
+   * Contextually type one contract's handlers WITHOUT binding them — for the
+   * registry path, where binding happens once in
+   * `createScopedImplementRegistry` and the service file only declares.
+   *
+   * Curried out of necessity, not style: a single call cannot both take the
+   * contract and contextually infer the handlers from it. The extra-key
+   * validator keeps a stray handler an error at the declaration, where the
+   * author is, instead of at the faraway registry bind.
+   */
+  const declare =
+    <
+      const T extends Record<string, EndpointDef>,
+      TContractScope extends Extract<keyof TScopes, string>,
+    >(
+      _contract: ContractDef<T, TContractScope>,
+    ) =>
+    <const THandlers extends ScopedHandlers<T, TContractScope, TScopes>>(
+      handlers: THandlers & Record<Exclude<keyof THandlers, keyof T>, never>,
+    ): THandlers =>
+      handlers;
+
+  return Object.assign(implementScoped, { stream, declare });
 }
 
 /** A contract registry whose every group scope is a key of the scope map. */
@@ -507,13 +529,22 @@ function bindRegistry(
       );
     }
     const contract = candidate;
-    const previousKey = prefixes.get(contract.meta.prefix);
+    // Duplicate detection keys on (scope, prefix), not prefix alone: the same
+    // prefix under two different group scopes is a legal, mounted-in-production
+    // shape — `scopePrefixes` separates their URLs, and a genuine path clash is
+    // caught by the router per colliding route. Only a same-scope duplicate is
+    // a registry mistake worth failing first. NUL-joined so the composite key
+    // cannot collide with a real scope or prefix — the same idiom as the tool
+    // surface ids in `tools/list-names.ts`.
+    const groupScope = contract.meta.scope ?? 'public';
+    const identity = `${groupScope}\u0000${contract.meta.prefix}`;
+    const previousKey = prefixes.get(identity);
     if (previousKey !== undefined) {
       throw new Error(
-        `[stitchkit] implementRegistry: duplicate contract prefix "${contract.meta.prefix}" at "${previousKey}" and "${key}"`,
+        `[stitchkit] implementRegistry: duplicate contract prefix "${contract.meta.prefix}" in scope "${groupScope}" at "${previousKey}" and "${key}"`,
       );
     }
-    prefixes.set(contract.meta.prefix, key);
+    prefixes.set(identity, key);
     const entryHandlers = handlers[key];
     if (!isRecord(entryHandlers)) {
       throw new TypeError(

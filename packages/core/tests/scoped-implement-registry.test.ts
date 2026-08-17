@@ -163,3 +163,96 @@ describe('keyed registry results', () => {
     expect(JSON.parse(JSON.stringify(services))).toHaveLength(1);
   });
 });
+
+describe('declare — handlers without binding', () => {
+  const implementFor = createScopedImplement<{
+    public: object;
+    user: { userId: string };
+    admin: { userId: string; isAdmin: boolean };
+  }>();
+  const media = defineContract(
+    { prefix: 'media-declare', scope: 'user' },
+    {
+      upload: {
+        method: 'POST',
+        path: '/',
+        desc: 'Stream media',
+        scope: 'admin',
+        output: z.object({ stored: z.string(), by: z.string() }),
+        multipart: {
+          delivery: 'stream' as const,
+          files: { file: { contentTypes: ['text/plain'] } },
+        },
+      },
+    },
+  );
+
+  test('a declared handler object binds to the same services as inline handlers', () => {
+    const declared = implementFor.declare(media)({
+      upload: implementFor.stream('admin', media.endpoints.upload, {
+        files: {
+          file: async ({ stream }) => ({
+            value: await new Response(stream).text(),
+            cleanup: () => undefined,
+          }),
+        },
+        handler: ({ files, userId }) => ({ stored: files.file, by: userId }),
+      }),
+    });
+
+    const viaRegistry = implementAll({ media }, { media: declared });
+    const direct = implementFor(media, declared);
+
+    expect(viaRegistry.byKey.media?.prefix).toBe('media-declare');
+    expect(Object.keys(viaRegistry.byKey.media?.methods ?? {})).toEqual(
+      Object.keys(direct.methods),
+    );
+    expect(viaRegistry.byKey.media?.methods.upload?.scope).toBe('admin');
+  });
+});
+
+describe('shared prefix across scopes', () => {
+  const output = z.object({ ok: z.boolean() });
+  const activityProject = defineContract(
+    { prefix: 'activity', scope: 'user' },
+    { list: { method: 'GET', path: '/', desc: 'List activity', output } },
+  );
+  const activityAdmin = defineContract(
+    { prefix: 'activity', scope: 'admin' },
+    { purgeAll: { method: 'DELETE', path: '/all', desc: 'Purge activity', output } },
+  );
+
+  test('the same prefix under two scopes is a legal registry, both reachable by key', () => {
+    const services = implementAll(
+      { activity: activityProject, activityAdmin },
+      {
+        activity: { list: (ctx) => ({ ok: ctx.userId.length > 0 }) },
+        activityAdmin: { purgeAll: (ctx) => ({ ok: ctx.isAdmin }) },
+      },
+    );
+
+    expect(services).toHaveLength(2);
+    expect(services.byKey.activity?.scope).toBe('user');
+    expect(services.byKey.activityAdmin?.scope).toBe('admin');
+    expect(services.byKey.activity?.prefix).toBe('activity');
+    expect(services.byKey.activityAdmin?.prefix).toBe('activity');
+  });
+
+  test('the same prefix in the SAME scope still fails first, naming the scope', () => {
+    const twin = defineContract(
+      { prefix: 'activity', scope: 'user' },
+      { read: { method: 'GET', path: '/one', desc: 'Read one', output } },
+    );
+    expect(() =>
+      Reflect.apply(implementAll, undefined, [
+        { activity: activityProject, twin },
+        {
+          activity: { list: () => ({ ok: true }) },
+          twin: { read: () => ({ ok: true }) },
+        },
+      ]),
+    ).toThrow(
+      '[stitchkit] implementRegistry: duplicate contract prefix "activity" in scope "user" at "activity" and "twin"',
+    );
+  });
+});

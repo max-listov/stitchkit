@@ -15,6 +15,27 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-08-17
+
+### Added
+
+- **`createScopedImplement(...).declare(contract)(handlers)`** — contextually
+  typed handlers WITHOUT binding, for the registry path where binding happens
+  once in `createScopedImplementRegistry`. The first registry adopter had to
+  hand-write this exact helper to keep its service files typed; a stray or
+  missing handler now fails at the declaration, where the author is, not at the
+  faraway registry bind.
+
+### Fixed
+
+- **Registries accept the same prefix under different scopes.** The fail-first
+  duplicate check keyed on the prefix alone and rejected a legal,
+  mounted-in-production shape — two contracts sharing a prefix whose group
+  scopes are separated by `scopePrefixes` (an `activity` pair for `project` and
+  `admin`). It now keys on (scope, prefix); a same-scope duplicate still fails
+  at construction, and the error names the scope. A consumer's six services no
+  longer have to live outside the registry in a hand-maintained block.
+
 ## [0.51.0] — 2026-08-17
 
 ### Added

@@ -112,6 +112,14 @@ The same map has a registry form and a streaming form:
 const implementAll = createScopedImplementRegistry<Scopes>()
 export const services = implementAll(apiContractRegistry, { posts, users })
 
+// a service FILE declares its handlers typed but unbound — binding happens
+// once, in the registry. Curried out of necessity: one call cannot both take
+// the contract and contextually infer the handlers from it.
+export const posts = implementFor.declare(postsContract)({
+  list: (ctx) => listPosts(ctx.userId),          // ctx typed per endpoint scope
+  purge: (ctx) => (ctx.isAdmin ? purge() : []),
+})
+
 // a streaming multipart handler that reads its scope's fields. The endpoint
 // must declare its own `scope`, and only that literal is accepted: an endpoint
 // inheriting the contract's scope cannot be verified from here, and guessing it
@@ -156,7 +164,10 @@ const visible = [services.byKey.users]           // the same objects, by key
 
 `createImplementRegistry<AppContext>()` fixes the application
 context once, like `createImplement` does for a single contract. Runtime callers
-also fail first on missing/extra keys and duplicate contract prefixes.
+also fail first on missing/extra keys and on a duplicate prefix **within one
+scope** — the same prefix under two different group scopes is legal (their URLs
+are separated by `scopePrefixes`, and a genuine path clash is the router's own
+construction error).
 
 The registry is intentionally flat: every key must point to one concrete
 `defineContract()` result. Composed namespace arrays are mounted explicitly with
