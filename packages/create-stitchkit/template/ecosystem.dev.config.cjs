@@ -4,7 +4,13 @@ const identity = require('./app.config.json');
 
 config({ path: path.join(__dirname, '.env'), quiet: true });
 
-const frontendArgs = ['dev', '--port', process.env.WEB_PORT, '--hostname', '0.0.0.0'];
+const frontendArgs = [
+  'dev',
+  '--port',
+  process.env.WEB_PORT,
+  '--hostname',
+  process.env.BIND_HOST ?? '127.0.0.1',
+];
 
 module.exports = {
   apps: [

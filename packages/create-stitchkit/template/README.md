@@ -75,4 +75,12 @@ PostgreSQL is external infrastructure in development and production. The
 application owns its schema and migrations; the environment owns the database
 process and supplies its connection through `DATABASE_URL`.
 
+Both processes bind `BIND_HOST` (default `127.0.0.1`, loopback only). Set
+`BIND_HOST=0.0.0.0` in `.env` to expose the app on every network interface —
+that is a conscious opt-in, typically behind a reverse proxy or firewall.
+
+Always drive Prisma through the root `bun run db:*` scripts — invoking the
+`prisma` CLI directly fails because the datasource URL is wired through the
+`@app/db` package environment, not a static config.
+
 `bun run dev` and `bun run pm2:dev` use the same direct PM2 development path.

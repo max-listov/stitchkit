@@ -6,6 +6,31 @@ is declared in the template root catalog.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-08-18
+
+### Changed
+
+- **Generated applications bind loopback by default.** Both processes listen on
+  `BIND_HOST` (default `127.0.0.1`) instead of a hardcoded `0.0.0.0` in the
+  backend server and both PM2 configs. Exposing the app to the network is now a
+  single conscious opt-in (`BIND_HOST=0.0.0.0` in `.env`) rather than the state
+  a forgotten edit leaves behind. Reported from a production deployment of a
+  generated app.
+- **The template targets Stitchkit `^0.52.0`** — new applications get
+  `implement.declare`, keyed registries and hook-derived scope maps out of the
+  box. Purely additive relative to 0.50.
+- **`bun run dev` reports honest URLs and fails fast on occupied ports.** The
+  final `Web:`/`API:` lines are rendered from the validated environment instead
+  of hardcoded ports, and before starting fresh PM2 processes the script probes
+  `API_PORT`/`WEB_PORT` and names the offending variable when a foreign process
+  holds one. Reloads of the app's own processes are unaffected.
+- **`start` without a build says what to do.** A missing `dist/index.js` now
+  fails with “run `bun run build` first” (also preflighted in `pm2:prod`)
+  instead of a bare module-resolution error.
+- **README and AGENTS.md pin the Prisma entry point.** Database commands go
+  through the root `bun run db:*` scripts; the `prisma` CLI invoked directly has
+  no datasource URL by design.
+
 ## [0.3.2] — 2026-08-17
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "create-stitchkit",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Create a production-shaped Stitchkit application",
   "license": "MIT",
   "author": "Max Listov <maxlistov@gmail.com>",

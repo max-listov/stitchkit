@@ -10,6 +10,9 @@ export const env = createEnv({
   server: {
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: z.url(),
+    // Loopback by default — exposing the app to the network is an explicit
+    // opt-in (`BIND_HOST=0.0.0.0`), never something a forgotten edit causes.
+    BIND_HOST: z.string().min(1).default('127.0.0.1'),
     API_PORT: z.coerce.number().int().positive(),
     WEB_PORT: z.coerce.number().int().positive(),
     NEXT_PUBLIC_API_URL: z.url(),

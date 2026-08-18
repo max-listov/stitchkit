@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const server = createServer({
     groups: [{ pathPrefix: '/api', services }],
     port: env.API_PORT,
-    hostname: '0.0.0.0',
+    hostname: env.BIND_HOST,
     cors: { origin: env.CORS_ORIGIN },
     hooks: { onError },
     logging: { format: env.LOG_FORMAT },
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     },
   });
 
-  console.log(`API listening on http://127.0.0.1:${env.API_PORT}`);
+  console.log(`API listening on http://${env.BIND_HOST}:${env.API_PORT}`);
 }
 
 main().catch((error: unknown) => {

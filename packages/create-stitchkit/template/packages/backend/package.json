@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/tools.ts --outdir dist --target bun --packages external",
-    "start": "bun dist/index.js",
+    "start": "bun scripts/ensure-built.ts && bun dist/index.js",
     "check": "bun x tsc --noEmit",
     "test": "bun test --pass-with-no-tests",
     "cli": "bun src/cli.ts",

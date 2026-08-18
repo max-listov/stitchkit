@@ -207,6 +207,20 @@ describe('scaffoldProject', () => {
       expect(config).not.toContain("args: 'run ");
     }
 
+    // The bind address is env-driven with a loopback default — a hardcoded
+    // `0.0.0.0` anywhere in a process launcher is the regression this pins.
+    for (const configName of ['ecosystem.dev.config.cjs', 'ecosystem.config.cjs']) {
+      const config = await readFile(join(templateRoot, configName), 'utf8');
+      expect(config).not.toContain("'0.0.0.0'");
+      expect(config).toContain("process.env.BIND_HOST ?? '127.0.0.1'");
+    }
+    expect(
+      await readFile(join(templateRoot, 'packages/backend/src/index.ts'), 'utf8'),
+    ).toContain('hostname: env.BIND_HOST');
+    expect(await readFile(join(templateRoot, '_env.example'), 'utf8')).toContain(
+      'BIND_HOST=127.0.0.1',
+    );
+
     const developmentConfig = await readFile(
       join(templateRoot, 'ecosystem.dev.config.cjs'),
       'utf8',
@@ -214,9 +228,7 @@ describe('scaffoldProject', () => {
     expect(developmentConfig).toContain("script: 'src/index.ts'");
     expect(developmentConfig).toContain("interpreter_args: '--watch'");
     expect(developmentConfig).toContain("script: 'node_modules/.bin/next'");
-    expect(developmentConfig).toContain(
-      "const frontendArgs = ['dev', '--port', process.env.WEB_PORT",
-    );
+    expect(developmentConfig).toContain("const frontendArgs = [\n  'dev',");
     expect(developmentConfig).toContain('args: frontendArgs');
     expect(developmentConfig.match(/autorestart: true/g)).toHaveLength(2);
   });

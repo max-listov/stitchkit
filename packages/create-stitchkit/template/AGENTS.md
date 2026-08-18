@@ -29,6 +29,9 @@ Shared never imports an application runtime package.
   endpoint URLs, query keys or error envelopes by hand.
 - Use Socket.IO through the shared realtime contract and Stitchkit wrappers.
   Authentication, authorization and room membership remain application policy.
+- Drive Prisma only through the root `bun run db:*` scripts; the `prisma` CLI
+  invoked directly has no datasource URL. Keep `BIND_HOST` at its loopback
+  default unless network exposure is an explicit requirement.
 - Extend runtime smoke with an explicit typed probe for operations whose handler
   behavior matters. Generic OpenAPI/MCP discovery checks are already derived.
 

@@ -1,5 +1,7 @@
 NODE_ENV=development
 DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter
+# 0.0.0.0 exposes the app to every network interface — opt in consciously.
+BIND_HOST=127.0.0.1
 API_PORT=3211
 WEB_PORT=3210
 NEXT_PUBLIC_API_URL=http://127.0.0.1:3211
