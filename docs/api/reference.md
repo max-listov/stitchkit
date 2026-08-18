@@ -42,7 +42,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
-| `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default — [details](../guide/client.md#createhttpclient) |
+| `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `unix` dials a unix domain socket (Bun only) — [details](../guide/client.md#createhttpclient) |
 | `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
 | `RequestOptions` | _type_ | per-call options — params, timeout, response type |
 | `HeaderProvider` | _type_ | static or per-request headers |
@@ -58,8 +58,8 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createRealtimeClient` | function | inferred, runtime-validated Socket.IO client — [guide](../guide/realtime.md#client--createrealtimeclient) |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
-| `SocketIOClient` | _type_ | the client handle |
-| `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`) |
+| `SocketIOClient` | _type_ | the client handle; `emit` returns `false` for an emit dropped while disconnected |
+| `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`, `onConnectError`, `onDroppedEmit`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
 | `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
@@ -73,7 +73,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RealtimeRejectDirection` | _type_ | server/client inbound/outbound rejection direction |
 | `RealtimeRejectedEvent` | _type_ | structured rejected event with event, direction, phase, reason and fault |
 | `RealtimeRejectedEventHook` | _type_ | sync/async observer for structured realtime rejections |
-| `ValidatedRealtimeSocket` | _type_ | runtime-validating `on`/`emit` surface inferred from registries |
+| `ValidatedRealtimeSocket` | _type_ | runtime-validating `on`/`emit` surface inferred from registries; `emit` returns "accepted by the transport" (`false` only for a client-side disconnected drop) |
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 
@@ -227,7 +227,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ZodIssueSummary` | _type_ | one structured validation issue (`{ path, code, message }`) |
 | `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
 | `HandlerConfig` | _type_ | config for `createHandler`, including optional `maxJsonBodyBytes`; bound to `BunServer` on this entrypoint |
-| `BunServerConfig` | _type_ | config for `createServer` (Bun) |
+| `BunServerConfig` | _type_ | config for `createServer` (Bun); `unix` listens on a unix domain socket (mutually exclusive with `port`/`hostname`) — [details](../guide/server.md#local-daemon-over-a-unix-socket) |
+| `UnixListenConfig` | _type_ | unix listener — a socket path, or `{ path, mode }` to tighten the file mode after listen |
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |
 | `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | one graceful budget, bounded forced-completion timeout, retry hint and optional external abort signal |
@@ -303,9 +304,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `bindRealtimeServer` | function | inferred, runtime-validated connection and broadcast boundary |
 | `RealtimeServer` | _type_ | validated broadcast and connection API inferred from a realtime contract |
 | `RealtimeServerConnection` | _type_ | one validated connection with raw socket access for auth and rooms |
-| `RealtimeServerHandle` | _type_ | minimal Socket.IO server handle accepted by `bindRealtimeServer` |
+| `RealtimeServerHandle` | _type_ | minimal Socket.IO server handle accepted by `bindRealtimeServer`; carries the handshake identity type through to `connection.raw.data` |
 | `SocketIORequestPolicy` | _type_ | runtime-neutral async-capable Web `Request` handshake admission policy |
-| `SocketIOServerConfig` | _type_ | config for `createSocketIOServer` |
+| `SocketIOServerConfig` | _type_ | config for `createSocketIOServer`; `handshake` is the typed identity gate — [guide](../guide/realtime.md#handshake-auth--cookie-or-token) |
+| `SocketIOHandshakeConfig` | _type_ | the `handshake` gate — Zod `schema` over `handshake.auth` plus optional async `verify`; the result lands typed in `socket.data` |
 | `SocketIOServerHandle` | _type_ | typed Socket.IO server plus Bun mount fields and idempotent lifecycle |
 | `SocketIOServerLifecycle` | _type_ | non-generic Bun mount/shutdown portion accepted by `createServer` |
 | `composeWebSocketHandlers` | function | compose one Bun `websocket` from N lanes — a raw binary lane beside Socket.IO ([guide](../guide/realtime.md#raw-binary-lane-bun)) |

@@ -221,7 +221,7 @@ const socket = await createSocketIOServer<ServerToClientEvents, ClientToServerEv
   cors: { origin: 'https://app.example.com' },
 })
 
-socket.io.on('connection', (s) => { /* rooms, handshake auth — your domain logic */ })
+socket.io.on('connection', (s) => { /* rooms — your domain logic; typed handshake auth via `handshake` */ })
 
 createServer({
   services: [service],

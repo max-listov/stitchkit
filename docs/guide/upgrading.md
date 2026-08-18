@@ -48,6 +48,28 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.53.0
+
+### Realtime `emit` returns `boolean` instead of `void`
+
+Every **call site** compiles and behaves exactly as before — the return value
+is new information (`true` = accepted by the transport, `false` = dropped
+while the browser client was disconnected), not a behavior change. What breaks
+is **implementing** the interfaces: a test mock or app-side adapter of
+`SocketIOClient` / `RealtimeClient` / `ValidatedRealtimeSocket` /
+`RealtimeServer` whose `emit` returns `void` no longer typechecks.
+
+```ts
+// before — a void mock satisfied the interface
+const mock: Pick<RealtimeClient<S, C>, 'emit'> = { emit: () => {} }
+// after — report acceptance (true is what a live server-side emit reports)
+const mock: Pick<RealtimeClient<S, C>, 'emit'> = { emit: () => true }
+```
+
+While migrating, consider replacing hand-rolled `if (client.connected)` guards
+with the new honest surface: check `client.emit(...) === false`, or observe
+drops centrally with `onDroppedEmit`.
+
 ## Released migration: 0.50.0
 
 ### The factory's scope union now covers per-endpoint overrides

@@ -205,6 +205,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `rawRoutes` | non-contract routes (see below) |
 | `maxJsonBodyBytes` | optional JSON body cap (bytes); per-route value overrides; unset preserves existing behaviour |
 | `port` / `hostname` | listen address — port defaults to `3000` |
+| `unix` | listen on a unix domain socket instead of TCP — `'/run/app.sock'` or `{ path, mode }` (see below) |
 | `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }`. `origin` is **required** when `cors` is present: pass an explicit origin (or list), or `'*'` to deliberately allow every origin — an origin-less config is a construction error, never a silent wildcard. Omit `cors` entirely to emit no CORS headers. |
 | `hooks` | lifecycle hooks (see below) |
 | `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
@@ -217,6 +218,41 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 Native Bun `routes` are intentionally not accepted: Bun matches them before
 `fetch`, so they could bypass shutdown admission. Use `rawRoutes`; they retain
 the Fetch `Request → Response` model and participate in lifecycle tracking.
+
+### Local daemon over a unix socket
+
+A local daemon whose door is a socket file needs no TCP port at all:
+
+```ts
+const server = createServer({
+  services,
+  unix: { path: '/run/my-daemon.sock', mode: 0o600 },
+})
+```
+
+`unix` is mutually exclusive with `port`/`hostname` (construction error). The
+handle stays honest: `server.url` is `unix:///run/my-daemon.sock` — an
+identifier, **not** a fetchable address (dial the path with
+`createHttpClient({ unix })`, [client guide](client.md#unix-domain-sockets)) —
+and `server.port` is `0`.
+
+Socket-file hygiene is built in. A stale file left by a killed process is
+reclaimed automatically: the path is probed, and only a socket that is owned by
+the current user **and** answers no live listener is removed before binding
+(best-effort — two processes racing the same path resolve through the loud
+bind error of the loser). A regular file at the path, another user's socket, or
+a live listener each fail with a specific error instead of being unlinked. A
+clean `server.shutdown()` removes the file.
+
+`mode` tightens the socket file permissions after listen. Bun creates the file
+`0755` under a normal umask — since `connect(2)` requires *write* permission
+that is already owner-only in practice — but when access to the socket **is**
+the credential, set `mode: 0o600` explicitly and let the filesystem be the
+policy. The Socket.IO lifecycle (`socket`) cannot mount on a unix listener
+(socket.io clients dial TCP only — construction error); Bun's own WebSocket
+client cannot dial a unix path either. Unix listeners are Bun-only: `srvx`
+resolves a numeric port unconditionally, so `stitchkit/node` does not offer
+`unix` (no half-support).
 
 ### Managed shutdown
 

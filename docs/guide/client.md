@@ -36,6 +36,7 @@ without repeating transport configuration.
 | `suppressUnauthorizedFor` | `[]` | exact contract-derived operation matchers whose expected 401 does not emit `unauthorized` |
 | `parseError` | built-in | map an error body to `{ code, message, details, hint }` |
 | `trace` | `false` | emit a W3C `traceparent` header on every request |
+| `unix` | — | dial a unix domain socket instead of TCP (Bun only, see below) |
 
 `headers` as a function is the hook for runtime tokens — a bearer token or any
 short-lived credential — re-evaluated on every request.
@@ -48,6 +49,26 @@ second argument to select every HTTP operation in that contract. Pass the same
 compile the prefix structure without a concrete tenant id. Matching is exact by
 path segments, including params and trailing wildcards — a shared prefix never
 suppresses a neighbouring protected endpoint.
+
+### Unix domain sockets
+
+The same typed client dials a local daemon's socket file
+([server side](server.md#local-daemon-over-a-unix-socket)):
+
+```ts
+const http = createHttpClient({
+  baseUrl: 'http://localhost', // required prefix source; its host is ignored
+  unix: '/run/my-daemon.sock',
+})
+const daemon = createClient(daemonContract, http)
+```
+
+`baseUrl` stays required — it supplies the path prefix and the `Host` header,
+while the connection itself goes through the socket file. Bun runtime only:
+other runtimes ignore the option and dial `baseUrl` over TCP (Node's fetch
+would need an undici dispatcher — out of scope). A missing socket file
+surfaces as a normal `ApiError` and is not retried (transport retry stays
+connection-refused-only).
 
 `trace: true` mints a fresh root trace per request. The stitchkit server
 [continues an inbound `traceparent`](./observability.md#trace-context), so the

@@ -15,6 +15,63 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-08-18
+
+### ⚠️ Breaking changes
+
+- **Realtime `emit` reports acceptance: its declared return type is now
+  `boolean`, not `void`** — `true` = handed to the transport (not a delivery
+  guarantee), `false` = dropped because the browser client was disconnected.
+  Every *call site* keeps compiling and behaving identically (a
+  boolean-returning function is assignable wherever a void one was expected);
+  what breaks is the reverse direction — **code that implements or mocks**
+  `SocketIOClient`, `RealtimeClient`, `ValidatedRealtimeSocket` or the
+  `RealtimeServer` emit surface with a void-returning `emit`. The previous
+  signature let a caller wait out a full response deadline on a message that
+  was silently never sent.
+  `// before: emit: () => {}` → `// after: emit: () => true`
+  Server-side emits always return `true` (an empty room is not a drop).
+
+### Added
+
+- **Unix domain sockets are a first-class transport.**
+  `createServer({ unix: '/run/app.sock' })` (or `{ path, mode }` to tighten
+  the socket file mode — `0o600` when access to the socket is the credential)
+  listens on a socket file instead of TCP; `unix` is mutually exclusive with
+  `port`/`hostname`. Stale-socket hygiene is built in: a socket file left by a
+  killed process is probed and reclaimed, while a live listener, another
+  user's socket, or a plain file at the path fail loudly instead of being
+  unlinked. A clean shutdown removes the file. On the client,
+  `createHttpClient({ unix })` dials the same door with the full typed client
+  (Bun runtime; `baseUrl` stays the path/prefix source). The Socket.IO
+  lifecycle cannot mount on a unix listener (socket.io clients dial TCP only),
+  and `stitchkit/node` does not offer `unix` (srvx always resolves a numeric
+  port — no half-support). New exported type: `UnixListenConfig`. The first
+  consumer had to drop to `createHandler` + hand-rolled `Bun.serve({ unix })`
+  and raw `fetch` for exactly this.
+- **Typed handshake identity gate** —
+  `createSocketIOServer({ handshake: { schema, verify? } })` Zod-validates
+  `socket.handshake.auth`, runs an optional (async-safe) `verify`, and puts the
+  result into `socket.data` typed end-to-end: through the handle,
+  `bindRealtimeServer`, and into `connection.raw.data` at `onConnection`. A
+  throwing/`null` verify rejects before the connection handler with
+  `err.data.code === 'handshake_rejected'` (a thrown error's raw message is
+  logged server-side and never crosses to the unauthenticated peer).
+  Registered as the first
+  middleware, so app `io.use(...)` gates see typed data. New exported type:
+  `SocketIOHandshakeConfig`. The consumer that asked had `String(raw.data.x)`
+  coercions scattered across five files. (ADR 0079)
+- **`onConnectError` on the Socket.IO client** — handshake/connection failures
+  (`connect_error`) are now observable, with `terminal: true` marking a
+  rejection socket.io will not retry (a handshake-gate rejection is terminal —
+  the previous wrapper left the client silently dead with `connect()`
+  swallowed by the idempotence guard). On a terminal error the connection
+  intent resets, so rotate-the-token → `connect()` recovers and re-reads a
+  function-form `auth`.
+- **`onDroppedEmit` on the Socket.IO client** — one central observer for every
+  emit dropped while disconnected (including the lazy-load window right after
+  `connect()`), complementing the new `boolean` return of `emit`.
+
 ## [0.52.0] — 2026-08-17
 
 ### Added

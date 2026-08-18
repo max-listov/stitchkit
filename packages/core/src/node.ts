@@ -70,6 +70,7 @@ export {
 export {
   createNodeSocketIOServer as createSocketIOServer,
   type NodeSocketIOServerHandle as SocketIOServerHandle,
+  type SocketIOHandshakeConfig,
   type SocketIORequestPolicy,
   type SocketIOServerConfig,
 } from './server/socket-io-node';

@@ -42,10 +42,17 @@ export interface ValidatedRealtimeSocket<
     event: TEvent,
     handler: RealtimeEventHandler<TInbound[TEvent]>,
   ): () => void;
+  /**
+   * Emit a validated event. Three outcomes, in order: a local contract
+   * violation **throws** (validation runs even while disconnected); an emit a
+   * disconnected browser transport drops returns `false`; otherwise `true` —
+   * accepted by the transport, which is not a delivery guarantee. Server
+   * targets always return `true` (an empty room is not a drop).
+   */
   emit<TEvent extends keyof TOutbound & string>(
     event: TEvent,
     ...args: RealtimeEmitArguments<TOutbound[TEvent]>
-  ): void;
+  ): boolean;
 }
 
 function method(target: object, name: 'on' | 'off' | 'emit'): (...args: unknown[]) => unknown {
@@ -243,7 +250,12 @@ export function createValidatedRealtimeSocket<
           acknowledgement(ack.data);
         });
       }
-      emitTarget(event, ...wireArgs);
+      // "Accepted by the transport", not "delivered": socket.io server
+      // targets return `true` (an empty room is not a drop), duck-typed test
+      // targets return `undefined` → `true`; only the stitchkit browser
+      // transport reports an explicit `false` for an emit dropped while
+      // disconnected.
+      return emitTarget(event, ...wireArgs) !== false;
     },
   };
 }

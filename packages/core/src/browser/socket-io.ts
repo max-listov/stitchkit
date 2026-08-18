@@ -158,6 +158,27 @@ export interface SocketIOClientConfig<TServerEvents extends SocketEventMap = Soc
    * cycle. Only the first emitted argument of an event is retained.
    */
   retain?: Array<keyof TServerEvents & string>;
+  /**
+   * Observe handshake/connection failures (`connect_error`). `terminal: true`
+   * means socket.io will NOT retry on its own — that is how a server-side
+   * handshake gate rejection (`io.use` middleware / the stitchkit `handshake`
+   * option, `data.code === 'handshake_rejected'`) arrives, unlike a
+   * transport-level failure which keeps retrying. On a terminal error the
+   * client resets its connection intent, so a later `connect()` starts a fresh
+   * attempt and re-reads a function-form `auth` — the recovery path after
+   * rotating a rejected token. For transport-level failures (server down) the
+   * hook fires once **per retry attempt** — debounce before wiring it to
+   * user-facing alerts.
+   */
+  onConnectError?: (error: { message: string; data?: unknown; terminal: boolean }) => void;
+  /**
+   * Observe every emit dropped because the socket was disconnected (the
+   * central alternative to guarding each call with `connected`). Receives the
+   * **wire** arguments — for a validated `RealtimeClient` that is the
+   * Zod-parsed values plus the wrapped ack callback, not the caller's original
+   * arguments. The drop itself is also reported by `emit` returning `false`.
+   */
+  onDroppedEmit?: (dropped: { event: string; args: unknown[] }) => void;
 }
 
 export interface SocketIOClient<
@@ -176,11 +197,19 @@ export interface SocketIOClient<
    * survives a `disconnect()` / `connect()` cycle.
    */
   on<E extends keyof TServerEvents & string>(event: E, handler: TServerEvents[E]): () => void;
-  /** Emit a client → server event. No-op while disconnected. */
+  /**
+   * Emit a client → server event. Returns `true` when the event was handed to
+   * the transport (not a delivery guarantee) and `false` when it was dropped
+   * because the socket is disconnected — including the window while the lazy
+   * peer is still loading right after `connect()`. A drop also fires the
+   * `onDroppedEmit` hook. The default stays a drop (no buffering): after a
+   * reconnect the durable subscriptions replay state deterministically instead
+   * of an unordered backlog of stale emits.
+   */
   emit<E extends keyof TClientEvents & string>(
     event: E,
     ...args: Parameters<TClientEvents[E]>
-  ): void;
+  ): boolean;
   /**
    * Subscribe to connection up/down changes. Returns an unsubscribe. On a
    * disconnect the listener also receives the Socket.IO **reason** (e.g.
@@ -329,6 +358,19 @@ export function createSocketIOClient<
     socket.io.on('reconnect_failed', () => {
       desiredConnected = false;
     });
+    socket.on('connect_error', (error: Error) => {
+      // `active === false` → socket.io has destroyed its own retry path (a
+      // namespace middleware rejection is terminal); reset the connection
+      // intent so a later `connect()` is not swallowed by the idempotence
+      // guard and re-reads a function-form `auth`.
+      const terminal = socket !== null && !socket.active;
+      if (terminal) desiredConnected = false;
+      config.onConnectError?.({
+        message: error.message,
+        data: Reflect.get(error, 'data'),
+        terminal,
+      });
+    });
     // Record retained events' latest payload, independent of any user handler,
     // so the value is available to a subscriber that connects later. Attached
     // before connect so a handshake-time emission is captured too.
@@ -359,8 +401,9 @@ export function createSocketIOClient<
       }
       // `socket.io-client` loads lazily — the socket appears a tick later. Every
       // method already tolerates a null socket (durable subscriptions attach on
-      // build, `emit` no-ops while disconnected), so callers see no difference
-      // beyond the connection opening asynchronously, as it always did.
+      // build; `emit` in this window drops — returns `false` and fires
+      // `onDroppedEmit`), so callers see no difference beyond the connection
+      // opening asynchronously, as it always did.
       void loadIo().then(openSocket);
     },
 
@@ -408,9 +451,13 @@ export function createSocketIOClient<
     },
 
     emit(event, ...args) {
-      if (!socket?.connected) return;
       const name: string = event;
+      if (!socket?.connected) {
+        config.onDroppedEmit?.({ event: name, args });
+        return false;
+      }
       socket.emit(name, ...args);
+      return true;
     },
 
     onConnectionChange(listener) {

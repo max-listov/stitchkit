@@ -35,6 +35,7 @@ export {
   type BunServerHandle,
   createServer,
   type ServerPassthrough,
+  type UnixListenConfig,
 } from './bun';
 export { type CacheOptions, cacheHeaders, createCache } from './cache';
 export { createHandler } from './create';
@@ -158,6 +159,7 @@ export {
   ShutdownStatusSchema,
 } from './shutdown';
 export type {
+  SocketIOHandshakeConfig,
   SocketIORequestPolicy,
   SocketIOServerConfig,
   SocketIOServerHandle,

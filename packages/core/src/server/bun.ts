@@ -1,4 +1,5 @@
 /** Bun-owned server adapter and its concrete public types. */
+import { chmodSync, statSync, unlinkSync } from 'node:fs';
 import { createHandler } from './create';
 import {
   createServerLifecycle,
@@ -31,10 +32,27 @@ export type ServerPassthrough = Omit<
   'fetch' | 'port' | 'hostname' | 'unix' | 'routes' | 'websocket' | 'development'
 >;
 
+/**
+ * Unix domain socket listener. The plain-string form binds the path as-is;
+ * the object form additionally tightens the socket file mode after listen —
+ * `mode: 0o600` is the right choice when access to the socket IS the
+ * credential (a local daemon whose only auth is filesystem permission).
+ */
+export type UnixListenConfig = string | { path: string; mode?: number };
+
 /** Bun-specific server config layered over the Fetch-clean handler config. */
 export interface BunServerConfig extends BunHandlerConfig, BunFetchComposition {
   port?: number;
   hostname?: string;
+  /**
+   * Listen on a unix domain socket instead of a TCP port. Mutually exclusive
+   * with `port`/`hostname`. A stale socket file left by a killed process is
+   * reclaimed (probe-then-unlink, best-effort against concurrent starts); a
+   * path answered by a live listener — or one this process may not probe —
+   * fails loudly. Not compatible with the Socket.IO lifecycle (`socket`):
+   * socket.io clients cannot dial a unix socket.
+   */
+  unix?: UnixListenConfig;
   websocket?: BunWebSocketHandlers;
   /** Full Stitchkit Socket.IO lifecycle; route and default websocket are mounted automatically. */
   socket?: SocketIOServerLifecycle;
@@ -43,6 +61,61 @@ export interface BunServerConfig extends BunHandlerConfig, BunFetchComposition {
 }
 
 export type BunServerHandle = ManagedServerHandle<BunServer>;
+
+/**
+ * Reclaim a stale socket file left behind by a killed process, refusing every
+ * ambiguous case: a non-socket at the path, a socket owned by another user, a
+ * path a live listener still answers, and a probe that timed out. The
+ * liveness probe is a short subprocess connect (the only synchronous way to
+ * dial a unix socket), run only when the file already exists.
+ * Probe-then-unlink is best-effort — two processes racing the same path can
+ * interleave between probe and bind; a local daemon accepts that window.
+ */
+function reclaimStaleUnixSocket(path: string): void {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (stats === undefined) return;
+  if (!stats.isSocket()) {
+    throw new Error(
+      `[stitchkit] createServer: "${path}" exists and is not a socket — refusing to remove it`,
+    );
+  }
+  if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
+    throw new Error(
+      `[stitchkit] createServer: unix socket "${path}" is owned by another user — refusing to reclaim it`,
+    );
+  }
+  // In a `bun build --compile` binary, execPath IS the application — spawning
+  // it would rerun the whole daemon instead of the probe. Use the real
+  // interpreter, or refuse loudly rather than guess.
+  const standalone = Bun.main.startsWith('/$bunfs/');
+  const interpreter = standalone ? Bun.which('bun') : process.execPath;
+  if (!interpreter) {
+    throw new Error(
+      `[stitchkit] createServer: unix socket "${path}" already exists and no \`bun\` binary is on PATH to probe it from this compiled executable — remove the file manually if the previous process is dead`,
+    );
+  }
+  const probe = Bun.spawnSync({
+    cmd: [
+      interpreter,
+      '-e',
+      'try { const socket = await Bun.connect({ unix: Bun.env.STITCHKIT_UNIX_PROBE ?? "", socket: { data() { return undefined; } } }); socket.end(); process.exit(0); } catch (error) { process.exit(error && typeof error === "object" && "code" in error && error.code === "EACCES" ? 2 : 1); }',
+    ],
+    env: { ...process.env, STITCHKIT_UNIX_PROBE: path },
+    timeout: 2_000,
+  });
+  if (probe.exitedDueToTimeout) {
+    // Ambiguous — a jammed-but-live listener looks identical to a dead one.
+    throw new Error(
+      `[stitchkit] createServer: liveness probe for unix socket "${path}" timed out — refusing to reclaim; remove the file manually if the previous process is dead`,
+    );
+  }
+  if (probe.exitCode === 0 || probe.exitCode === 2) {
+    throw new Error(
+      `[stitchkit] createServer: unix socket "${path}" is already in use${probe.exitCode === 2 ? ' (connect permission denied)' : ' by a live listener'}`,
+    );
+  }
+  unlinkSync(path);
+}
 
 /** Start the contract router through `Bun.serve`. */
 export function createServer(config: BunServerConfig): BunServerHandle {
@@ -54,6 +127,27 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     port = 3000,
     hostname,
   } = config;
+  const unixPath = typeof config.unix === 'string' ? config.unix : config.unix?.path;
+  const unixMode = typeof config.unix === 'string' ? undefined : config.unix?.mode;
+  if (unixPath !== undefined) {
+    // Bun silently starts a TCP server on the default port for `unix: ''` —
+    // the exact inversion of what a socket-as-credential daemon intends.
+    if (unixPath.length === 0) {
+      throw new Error('[stitchkit] createServer: `unix` must be a non-empty socket path');
+    }
+    // Checked on the raw config: `port` has a default further down, and Bun
+    // itself silently ignores `port` next to `unix` instead of erroring.
+    if (config.port !== undefined || config.hostname !== undefined) {
+      throw new Error(
+        '[stitchkit] createServer: `unix` is mutually exclusive with `port`/`hostname`',
+      );
+    }
+    if (socket) {
+      throw new Error(
+        '[stitchkit] createServer: the Socket.IO lifecycle cannot listen on a unix socket — socket.io clients dial TCP only',
+      );
+    }
+  }
   const socketRoutePrefix = socket?.route.path.replace(/\*socketPath$/, '');
   // Boundary cast: Bun's handler data is opaque to the lifecycle wrapper. The
   // wrapper preserves the same socket object and only observes open/close;
@@ -155,27 +249,58 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     return admittedFetch(request, server);
   };
 
-  runtime = trackedWebSocket
-    ? Bun.serve({
-        ...bunExtra,
-        ...(development && { development }),
-        port,
-        hostname,
-        websocket: trackedWebSocket,
-        fetch,
-      })
-    : Bun.serve({
-        ...bunExtra,
-        ...(development && { development }),
-        port,
-        hostname,
-        fetch,
-      });
+  if (unixPath !== undefined) {
+    reclaimStaleUnixSocket(unixPath);
+    // The unix branch carries no `port`/`hostname` keys at all — Bun accepts
+    // and silently ignores `port` beside `unix`, which would mask config bugs.
+    // TCP-only passthrough keys are stripped the same way: Bun's unix options
+    // variant types them out, and they are meaningless on a socket file.
+    const { reusePort, ipv6Only, http3, http1, idleTimeout, ...unixExtra } = bunExtra ?? {};
+    void reusePort;
+    void ipv6Only;
+    void http3;
+    void http1;
+    void idleTimeout;
+    runtime = trackedWebSocket
+      ? Bun.serve({
+          ...unixExtra,
+          ...(development && { development }),
+          unix: unixPath,
+          websocket: trackedWebSocket,
+          fetch,
+        })
+      : Bun.serve({
+          ...unixExtra,
+          ...(development && { development }),
+          unix: unixPath,
+          fetch,
+        });
+    if (unixMode !== undefined) chmodSync(unixPath, unixMode);
+  } else {
+    runtime = trackedWebSocket
+      ? Bun.serve({
+          ...bunExtra,
+          ...(development && { development }),
+          port,
+          hostname,
+          websocket: trackedWebSocket,
+          fetch,
+        })
+      : Bun.serve({
+          ...bunExtra,
+          ...(development && { development }),
+          port,
+          hostname,
+          fetch,
+        });
+  }
 
   const server = runtime;
   return {
+    // In unix mode this is `unix://<path>` — an identifier, not a fetchable
+    // address (clients dial the path via `createHttpClient({ unix })`).
     url: server.url.toString().replace(/\/$/, ''),
-    port: server.port ?? port,
+    port: server.port ?? (unixPath !== undefined ? 0 : port),
     runtime: server,
     get status() {
       return lifecycle.status;

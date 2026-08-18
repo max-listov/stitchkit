@@ -22,16 +22,23 @@ import type {
 } from '@socket.io/bun-engine';
 import type { ServerWebSocket } from 'bun';
 import type {
+  DefaultEventsMap,
   Server as SocketIOServer,
   ServerOptions as SocketIOServerOptions,
+  Socket as SocketIOSocket,
 } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
+import { transportResult } from '../internal/typed';
 import type { BunServer } from './bun';
-import type { SocketIOServerConfig } from './socket-io-config';
+import type { SocketIOHandshakeConfig, SocketIOServerConfig } from './socket-io-config';
 import type { RawRoute } from './types';
 import { type ComposedLane, webSocketLane } from './websocket';
 
-export type { SocketIORequestPolicy, SocketIOServerConfig } from './socket-io-config';
+export type {
+  SocketIOHandshakeConfig,
+  SocketIORequestPolicy,
+  SocketIOServerConfig,
+} from './socket-io-config';
 
 export interface SocketIOServerLifecycle {
   /**
@@ -65,9 +72,10 @@ export interface SocketIOServerLifecycle {
 export interface SocketIOServerHandle<
   TServerEvents extends SocketEventMap,
   TClientEvents extends SocketEventMap,
+  TData = any,
 > extends SocketIOServerLifecycle {
   /** The typed Socket.IO server — attach `io.on('connection', ...)` handlers. */
-  io: SocketIOServer<TClientEvents, TServerEvents>;
+  io: SocketIOServer<TClientEvents, TServerEvents, DefaultEventsMap, TData>;
 }
 
 /** Inert handler for a runtime-irrelevant slot (Bun's `attach`, Node's `websocket`). */
@@ -107,10 +115,89 @@ async function importPeer<T>(load: () => Promise<T>, pkg: string): Promise<T> {
   }
 }
 
+/**
+ * Reject a handshake with a deterministic, client-inspectable error. The code
+ * rides in `err.data` — socket.io delivers it to the client's `connect_error`.
+ */
+function handshakeRejection(message: string): Error {
+  const error: Error & { data?: unknown } = new Error(message);
+  error.data = { code: 'handshake_rejected' };
+  return error;
+}
+
+/**
+ * Build the identity-gate middleware. Socket.IO does NOT catch a rejected
+ * promise from an async middleware (it leaks as an unhandledRejection and the
+ * handshake hangs), so `verify` — sync or async — always runs inside a
+ * settled promise chain that routes every outcome through `next`.
+ */
+function handshakeMiddleware<TParsed, TData>(
+  handshake: SocketIOHandshakeConfig<TParsed, TData>,
+): (
+  socket: { handshake: SocketIOSocket['handshake']; data: TData },
+  next: (err?: Error) => void,
+) => void {
+  return (socket, next) => {
+    // safeParse itself can THROW synchronously (an async refine/transform in
+    // the schema demands parseAsync) — and socket.io's middleware runner has
+    // no try/catch, so an uncaught throw would escape into the engine.
+    let parsed: ReturnType<typeof handshake.schema.safeParse>;
+    try {
+      parsed = handshake.schema.safeParse(socket.handshake.auth);
+    } catch (error) {
+      console.error('[stitchkit] handshake schema threw — use a synchronous schema', error);
+      next(handshakeRejection('handshake auth failed validation'));
+      return;
+    }
+    if (!parsed.success) {
+      next(handshakeRejection('handshake auth failed validation'));
+      return;
+    }
+    const verify = handshake.verify;
+    void Promise.resolve()
+      .then(() => {
+        if (verify) return verify(parsed.data, { handshake: socket.handshake });
+        // No `verify` → the API contract fixes TData to the schema output
+        // (generic default `TData = TParsed`); the compiler cannot carry that
+        // relation into this body — loose→typed bridge over Socket.IO's
+        // natively untyped `data`.
+        return transportResult<TData>(parsed.data);
+      })
+      .then(
+        (identity) => {
+          // `undefined` (an untyped JS verify that forgot to return) rejects
+          // like `null` — passing the gate with no identity would be a lie.
+          if (identity === null || identity === undefined) {
+            next(handshakeRejection('handshake rejected'));
+            return;
+          }
+          socket.data = identity;
+          next();
+        },
+        (error: unknown) => {
+          // The raw message never crosses to an UNAUTHENTICATED peer (same
+          // policy as the HTTP error normalizer) — a verify that hits real
+          // infrastructure would otherwise leak its failure details. The
+          // error stays visible server-side.
+          console.error('[stitchkit] handshake verify rejected', error);
+          next(handshakeRejection('handshake rejected'));
+        },
+      );
+  };
+}
+
 export async function createSocketIOServer<
   TServerEvents extends SocketEventMap,
   TClientEvents extends SocketEventMap,
->(config: SocketIOServerConfig): Promise<SocketIOServerHandle<TServerEvents, TClientEvents>> {
+  // `any`, not `unknown`: a no-`handshake` call must keep `socket.data: any`
+  // (the pre-gate behavior) — `unknown` would break every consumer reading
+  // `raw.data.x` before adopting the gate. Inference from `schema`/`verify`
+  // overrides the default whenever `handshake` is present.
+  TParsed = any,
+  TData = TParsed,
+>(
+  config: SocketIOServerConfig<TParsed, TData>,
+): Promise<SocketIOServerHandle<TServerEvents, TClientEvents, TData>> {
   const path = config.path ?? '/socket.io/';
   const onBun = 'Bun' in globalThis;
   const transports = config.transports ?? (onBun ? ['websocket', 'polling'] : ['websocket']);
@@ -153,7 +240,7 @@ export async function createSocketIOServer<
   };
 
   const { Server } = await importPeer(() => import('socket.io'), 'socket.io');
-  const io = new Server<TClientEvents, TServerEvents>({
+  const io = new Server<TClientEvents, TServerEvents, DefaultEventsMap, TData>({
     // Passthrough first; the wrapper-owned fields below override any overlap.
     ...config.serverOptions,
     path,
@@ -163,6 +250,10 @@ export async function createSocketIOServer<
     pingInterval,
     allowRequest,
   });
+  // Registered before anything else (and before the runtime branch, so Bun and
+  // Node share it) — app middlewares added on the returned `io` run after this
+  // gate and see the typed identity already in `socket.data`.
+  if (config.handshake) io.use(handshakeMiddleware(config.handshake));
 
   const lifecycle = {
     beginShutdown() {

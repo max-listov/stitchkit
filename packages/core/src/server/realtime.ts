@@ -1,4 +1,4 @@
-import type { Socket, Server as SocketIOServer } from 'socket.io';
+import type { DefaultEventsMap, Socket, Server as SocketIOServer } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
 import type { StitchLogger } from '../logger';
 import type {
@@ -14,9 +14,14 @@ import {
 export interface RealtimeServerConnection<
   TServerToClient extends RealtimeEventRegistry,
   TClientToServer extends RealtimeEventRegistry,
+  TData = any,
 > {
-  /** Raw Socket.IO socket for handshake auth, rooms and application-owned delivery policy. */
-  raw: Socket;
+  /**
+   * Raw Socket.IO socket for rooms and application-owned delivery policy.
+   * `raw.data` carries the typed handshake identity when the server was
+   * created with a `handshake` gate.
+   */
+  raw: Socket<SocketEventMap, SocketEventMap, DefaultEventsMap, TData>;
   events: ValidatedRealtimeSocket<TClientToServer, TServerToClient>;
   to(
     room: string,
@@ -26,10 +31,11 @@ export interface RealtimeServerConnection<
 export interface RealtimeServer<
   TServerToClient extends RealtimeEventRegistry,
   TClientToServer extends RealtimeEventRegistry,
+  TData = any,
 > {
   onConnection(
     handler: (
-      connection: RealtimeServerConnection<TServerToClient, TClientToServer>,
+      connection: RealtimeServerConnection<TServerToClient, TClientToServer, TData>,
     ) => void | Promise<void>,
   ): () => void;
   emit: ValidatedRealtimeSocket<RealtimeEventRegistry, TServerToClient>['emit'];
@@ -38,18 +44,19 @@ export interface RealtimeServer<
   ): Pick<ValidatedRealtimeSocket<RealtimeEventRegistry, TServerToClient>, 'emit'>;
 }
 
-export interface RealtimeServerHandle {
-  io: SocketIOServer<SocketEventMap, SocketEventMap>;
+export interface RealtimeServerHandle<TData = any> {
+  io: SocketIOServer<SocketEventMap, SocketEventMap, DefaultEventsMap, TData>;
 }
 
 export function bindRealtimeServer<
   const TServerToClient extends RealtimeEventRegistry,
   const TClientToServer extends RealtimeEventRegistry,
+  TData = any,
 >(
   contract: RealtimeContract<TServerToClient, TClientToServer>,
-  handle: RealtimeServerHandle,
+  handle: RealtimeServerHandle<TData>,
   options: { onRejected?: RealtimeRejectedEventHook; logger?: StitchLogger } = {},
-): RealtimeServer<TServerToClient, TClientToServer> {
+): RealtimeServer<TServerToClient, TClientToServer, TData> {
   const outbound = (target: object) =>
     createValidatedRealtimeSocket({
       target,
@@ -63,7 +70,9 @@ export function bindRealtimeServer<
   const broadcast = outbound(handle.io);
   return {
     onConnection: (handler) => {
-      const listener = (raw: Socket) => {
+      const listener = (
+        raw: Socket<SocketEventMap, SocketEventMap, DefaultEventsMap, TData>,
+      ) => {
         const events = createValidatedRealtimeSocket({
           target: raw,
           inbound: contract.clientToServer,

@@ -109,6 +109,13 @@ export interface HttpClientConfig {
    * Default `false`.
    */
   trace?: boolean;
+  /**
+   * Dial a unix domain socket instead of TCP (Bun runtime only — other
+   * runtimes ignore the option and dial `baseUrl` over TCP). `baseUrl` stays
+   * required as the path/prefix source; its host is ignored by the socket
+   * transport, so `baseUrl: 'http://localhost'` is the idiomatic pairing.
+   */
+  unix?: string;
 }
 
 type ParamValue = string | number | boolean | undefined;
@@ -122,22 +129,30 @@ type ParamArrayValue = Array<string | number>;
  * URL plus a materialized init while the untouched first attempt keeps the
  * exact Ky Request.
  */
-function createRetryAwareFetch(): NonNullable<Options['fetch']> {
+function createRetryAwareFetch(unix?: string): NonNullable<Options['fetch']> {
   const runtimeFetch = globalThis.fetch.bind(globalThis);
   let attempt = 0;
 
   return (input, init) => {
     attempt += 1;
-    if (attempt === 1) {
+    // The socket option must ride in materialized `fetch(url, init)` form —
+    // `fetch(Request, { unix })` is undocumented in Bun — so a unix client
+    // skips the pass-through even on the first attempt. (That pass-through
+    // guards Next.js request memoization, which never applies to a local
+    // daemon dial.) Without `unix` the behavior is bit-for-bit unchanged.
+    if (unix === undefined && attempt === 1) {
       return runtimeFetch(input, init);
     }
-    if (!(input instanceof Request)) return runtimeFetch(input, init);
+    if (!(input instanceof Request)) {
+      return runtimeFetch(input, unix === undefined ? init : { ...init, unix });
+    }
     // Undici requires `duplex: 'half'` when a Request body stream is moved into
     // URL + RequestInit form. Keep it in a spread because `duplex` is a runtime
     // Fetch field that is not yet present in every TypeScript DOM lib.
     const streamedBody = input.body ? { body: input.body, duplex: 'half' } : {};
     return runtimeFetch(input.url, {
       ...init,
+      ...(unix !== undefined && { unix }),
       method: input.method,
       headers: input.headers,
       ...streamedBody,
@@ -288,7 +303,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.timeout ?? config.timeout ?? 30_000,
     );
     const kyOptions: Options = {
-      fetch: createRetryAwareFetch(),
+      fetch: createRetryAwareFetch(config.unix),
       timeout: false,
       signal: cancellation.signal,
     };

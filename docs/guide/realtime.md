@@ -97,8 +97,11 @@ export function publishExampleNote(realtime: ExampleRealtimePublisher): void {
 | `beginShutdown()` / `connections()` | lifecycle surface consumed by the managed server |
 
 `SocketIOServerConfig` also takes `path`, `transports`, `pingTimeout`,
-`pingInterval` and a runtime-neutral `allowRequest(Request)` handshake policy.
-The policy is composed with managed-shutdown admission on both Bun and Node.
+`pingInterval`, a runtime-neutral `allowRequest(Request)` handshake policy and
+the typed **`handshake`** identity gate (schema + verify →
+[typed `socket.data`](#handshake-auth--cookie-or-token)). `allowRequest` is the
+transport gate (composed with managed-shutdown admission on both Bun and Node);
+`handshake` is the identity gate that runs after it.
 For anything else socket.io's `ServerOptions` exposes, use the
 typed **`serverOptions`** passthrough — most often `maxHttpBufferSize` to lift the
 1 MB default for large emits:
@@ -148,7 +151,40 @@ subscribe once; reconnection is the wrapper's problem, not yours.
 
 `SocketIOClientConfig` takes `url`, `path`, `withCredentials` (cookies on the
 handshake — default `true`), `auth`, `query`, `extraHeaders`, `transports`,
-`reconnectionAttempts`, `reconnectionDelay` and `retain` (below).
+`reconnectionAttempts`, `reconnectionDelay`, `retain` (below), `onConnectError`
+(handshake/connection failures — see the auth section) and `onDroppedEmit`
+(observability for emits dropped while disconnected — see below).
+
+### Honest emit — what happens while disconnected
+
+`emit` has exactly three outcomes, in order:
+
+1. **A local contract violation throws** (validated `RealtimeClient` only) —
+   validation runs before the connection guard, even while disconnected.
+2. **Disconnected → the emit is dropped**: `emit` returns `false` and the
+   `onDroppedEmit` hook fires with the event name and wire arguments. This
+   includes the short window right after `connect()` while the socket.io peer
+   is still loading.
+3. **Otherwise `emit` returns `true`** — handed to the transport, which is
+   *not* a delivery guarantee.
+
+The default is deliberately a drop, not a buffer: after a reconnect, durable
+subscriptions and [sticky events](#sticky-events) replay current state
+deterministically, instead of the server receiving an unordered backlog of
+stale emits. What changed is that the drop is now observable — assert it
+per-call (`if (!client.emit(...)) …`) or centrally:
+
+```ts
+const client = createSocketIOClient({
+  url,
+  onDroppedEmit: ({ event }) => metrics.count('realtime.dropped_emit', { event }),
+})
+```
+
+Server-side emits (`realtime.emit`, `to(room).emit`, `connection.events.emit`)
+always return `true` — a broadcast into an empty room is not a drop, and the
+server has no disconnected state of this kind. For state that must survive
+gaps, see [durability](#durability--idempotent--replay).
 
 ### Sticky events
 
@@ -203,32 +239,71 @@ const socket = createRealtimeClient(realtimeContract, {
 ```
 
 ```ts
-// server — the gate is your logic, on socket.handshake.auth
+// server — the typed identity gate: Zod-validate handshake.auth, verify,
+// and the result lands in socket.data — typed all the way to onConnection.
 import { verifyJwt } from 'stitchkit/server'
 
-socket.io.use(async (s, next) => {
-  const token = s.handshake.auth.token
-  if (typeof token !== 'string') return next(new Error('unauthorized'))
-  try {
-    s.data.user = await verifyJwt(token, secret)
-    next()
-  } catch {
-    next(new Error('unauthorized'))
-  }
+const socket = await createSocketIOServer({
+  cors: { origin: 'https://app.example.com' },
+  handshake: {
+    schema: z.object({ token: z.string() }),
+    verify: async ({ token }) => ({ user: await verifyJwt(token, secret) }),
+  },
+})
+
+const realtime = bindRealtimeServer(realtimeContract, socket)
+realtime.onConnection(({ raw }) => {
+  raw.data.user // typed — no String(...) coercions, no casts
 })
 ```
 
+`verify` may be async (the wrapper runs it inside a settled promise chain —
+raw async `io.use` middleware would leak an unhandled rejection); throwing or
+returning `null` rejects the handshake **before** the connection handler and
+before any event validation. A thrown error's raw message is logged
+server-side and never reaches the unauthenticated peer — the wire always
+carries the generic `handshake rejected` (the same never-leak policy as the
+HTTP error normalizer). The schema itself must be synchronous (no async
+refine/transform). Omit `verify` and the schema output itself is the
+identity. The gate registers as the **first** middleware, so `socket.io.use(…)`
+middlewares you add afterwards see the typed `socket.data` already in place.
+Raw `io.use` remains available for anything beyond identity.
+
+Type inference works on calls without explicit event generics (the
+`bindRealtimeServer` lane above). With explicit generics TypeScript cannot
+partially infer — pass the identity types too:
+`createSocketIOServer<S, C, z.infer<typeof schema>, Identity>`.
+
 A static object (`auth: { token }`) works too, but only the function form
 re-reads on reconnect — prefer it for rotating tokens. `query` adds handshake
-URL params (`socket.handshake.query`); `extraHeaders` adds handshake headers,
-but in a browser those apply to the **polling** transport only (a WebSocket
-upgrade cannot set request headers) — for browser WebSocket auth use `auth`.
-If an auth producer throws or rejects, the wrapper sends an empty auth object so
-the server gate can reject it instead of leaving the handshake waiting forever.
+URL params (`socket.handshake.query`) — note its values are **strings** on the
+wire, which is why the schema gate reads `auth`; `extraHeaders` adds handshake
+headers, but in a browser those apply to the **polling** transport only (a
+WebSocket upgrade cannot set request headers) — for browser WebSocket auth use
+`auth`.
 
-On a hard auth failure Socket.IO emits `connect_error` and keeps retrying
-(`reconnectionAttempts` defaults to `Infinity`) — set a finite value if a
-rejected token should stop hammering the server.
+**A gate rejection is terminal for the client.** Unlike a transport-level
+failure (which socket.io retries indefinitely), a middleware/handshake-gate
+rejection stops the client: socket.io destroys its retry path and will not
+reconnect on its own. The stitchkit client surfaces this through
+**`onConnectError`** with `terminal: true` (and `data.code ===
+'handshake_rejected'` for the built-in gate) and resets its connection intent —
+so recovery is explicit: rotate the credential, call `connect()`, and the
+function-form `auth` is re-read:
+
+```ts
+const client = createRealtimeClient(realtimeContract, {
+  url: 'https://api.example.com',
+  auth: () => ({ token: getAccessToken() }),
+  onConnectError: ({ terminal }) => {
+    if (terminal) refreshTokenThen(() => client.connect())
+  },
+})
+```
+
+If an auth producer throws or rejects, the wrapper sends an empty auth object —
+the server gate then rejects it visibly (via `onConnectError`) instead of
+leaving the handshake waiting forever.
 
 ## Cache bridge
 

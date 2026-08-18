@@ -111,10 +111,106 @@ describe('Socket.IO wrappers', () => {
     expect(received).toEqual([2, 11]);
   });
 
-  test('emit while disconnected is a silent no-op', () => {
-    const client = makeClient();
-    expect(() => client.emit('ping', { n: 0 })).not.toThrow();
+  test('emit while disconnected drops observably — false plus the onDroppedEmit hook', () => {
+    const dropped: Array<{ event: string; args: unknown[] }> = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: URL,
+      transports: ['websocket'],
+      onDroppedEmit: (drop) => dropped.push(drop),
+    });
+    expect(client.emit('ping', { n: 0 })).toBe(false);
     expect(client.connected).toBe(false);
+    expect(dropped).toEqual([{ event: 'ping', args: [{ n: 0 }] }]);
+  });
+
+  test('emit in the lazy-load window right after connect() drops observably', async () => {
+    const dropped: string[] = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: URL,
+      transports: ['websocket'],
+      onDroppedEmit: (drop) => dropped.push(drop.event),
+    });
+    client.connect();
+    // The peer loads asynchronously — this synchronous emit has no socket yet.
+    expect(client.emit('ping', { n: 1 })).toBe(false);
+    expect(dropped).toEqual(['ping']);
+
+    await whenConnected(client);
+    expect(client.emit('ping', { n: 2 })).toBe(true);
+    client.disconnect();
+    expect(client.emit('ping', { n: 3 })).toBe(false);
+    expect(dropped).toEqual(['ping', 'ping']);
+  });
+
+  test('the validated realtime client reports drops and acceptance the same way', async () => {
+    const dropped: Array<{ event: string; args: unknown[] }> = [];
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onDroppedEmit: (drop) => dropped.push(drop),
+    });
+    // Disconnected: valid payload → validated, then dropped at the transport.
+    expect(client.emit('ready')).toBe(false);
+    expect(dropped).toEqual([{ event: 'ready', args: [] }]);
+
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    expect(client.emit('ready')).toBe(true);
+    client.disconnect();
+    expect(client.emit('ready')).toBe(false);
+    expect(dropped.length).toBe(2);
+  });
+
+  test('the reconnect window after a server kick drops observably until the recycle lands', async () => {
+    const dropped: string[] = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: 200,
+      onDroppedEmit: (drop) => dropped.push(drop.event),
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    expect(client.emit('ping', { n: 1 })).toBe(true);
+
+    // Server-initiated kick: the socket stays non-null but disconnected until
+    // the recycle timer reconnects — the non-null half of the emit guard.
+    const dropWindow = new Promise<void>((resolve) => {
+      const off = client.onConnectionChange((isConnected) => {
+        if (!isConnected) {
+          off();
+          resolve();
+        }
+      });
+    });
+    const reconnected = new Promise<void>((resolve) => {
+      const off = client.onConnectionChange((isConnected) => {
+        if (isConnected) {
+          off();
+          resolve();
+        }
+      });
+    });
+    for (const [, s] of sock.io.of('/').sockets) s.disconnect();
+    await within(dropWindow, 'kick disconnect');
+    expect(client.emit('ping', { n: 2 })).toBe(false);
+    expect(dropped).toEqual(['ping']);
+    await within(reconnected, 'recycle reconnect');
+    expect(client.emit('ping', { n: 3 })).toBe(true);
+    client.disconnect();
+  });
+
+  test('a void-returning mock no longer satisfies the client emit signature', () => {
+    type ClientHandle = ReturnType<typeof makeClient>;
+    const mock: Pick<ClientHandle, 'emit'> = {
+      emit: () => true,
+    };
+    expect(mock.emit('ping', { n: 0 })).toBe(true);
+    // @ts-expect-error — emit now reports acceptance; a void mock is a type error
+    const broken: Pick<ClientHandle, 'emit'> = { emit: (): void => undefined };
+    void broken;
   });
 });
 
@@ -221,8 +317,10 @@ describe('Zod-first realtime contracts', () => {
     client.connect();
     await connected;
     const connection = await realtimeConnection.promise;
-    realtime.to('test-room').emit('pong', { n: 1 });
-    connection.to('test-room').emit('pong', { n: 2 });
+    // Server-side emits report "accepted" — always true, an empty room included.
+    expect(realtime.to('test-room').emit('pong', { n: 1 })).toBe(true);
+    expect(connection.to('test-room').emit('pong', { n: 2 })).toBe(true);
+    expect(realtime.to('nobody-here').emit('pong', { n: 3 })).toBe(true);
     await within(received.promise, 'room events');
     expect(values).toEqual([1, 2]);
     expect(() =>
