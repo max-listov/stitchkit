@@ -21,6 +21,17 @@ export type ApiEventListener = (event: ApiEvent) => void;
 /** Exact pathname policy used to suppress an expected `401` event. */
 export type UnauthorizedMatcher = (pathname: string) => boolean;
 
+/**
+ * Global brand for cross-realm / cross-chunk identification, mirroring
+ * `AppError`'s (→ ADR 0032). The published dist bundles this class into more
+ * than one chunk (the browser build and the server build each carry a copy),
+ * so an `ApiError` thrown by a client from one chunk fails `instanceof`
+ * against the other chunk's class — which silently killed the
+ * `ApiError → AppError` conversion in `implementRemote` and flattened every
+ * remote failure to `INTERNAL_SERVER_ERROR`.
+ */
+const API_ERROR_BRAND = Symbol.for('stitchkit.ApiError');
+
 export class ApiError extends Error {
   constructor(
     public readonly code: string,
@@ -32,10 +43,12 @@ export class ApiError extends Error {
   ) {
     super(message ?? `API Error: ${code}`);
     this.name = 'ApiError';
+    // Non-enumerable — invisible to JSON / spread, present for `is()`.
+    Object.defineProperty(this, API_ERROR_BRAND, { value: true });
   }
 
   static is(error: unknown): error is ApiError {
-    return error instanceof ApiError;
+    return typeof error === 'object' && error !== null && API_ERROR_BRAND in error;
   }
 }
 

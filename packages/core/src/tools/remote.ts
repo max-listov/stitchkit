@@ -103,10 +103,13 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
           throw new Error(`implementRemote: endpoint "${key}" is not exposed over HTTP`);
         }
         const args = toArgs(ctx);
-        const finalArgs = options?.transformArgs
-          ? await options.transformArgs(key, args)
-          : args;
         try {
+          // Inside the try: a throwing transform hook (which may itself call
+          // the remote API, e.g. to upload a referenced file) gets the same
+          // error conversion as the forwarded call.
+          const finalArgs = options?.transformArgs
+            ? await options.transformArgs(key, args)
+            : args;
           return await call(finalArgs);
         } catch (err) {
           // The typed client throws `ApiError` on a non-2xx remote response.
@@ -122,6 +125,7 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
               err.status,
               isRecord(err.details) ? err.details : undefined,
               err.hint,
+              err.traceId,
             );
           }
           throw err;

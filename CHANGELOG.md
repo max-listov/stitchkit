@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.53.1] — 2026-08-18
+
+### Fixed
+
+- **`ApiError.is` is brand-based — the `ApiError → AppError` conversion in
+  `implementRemote` works across build chunks.** The published dist carries
+  `ApiError` in both the browser and the server chunk; the old `instanceof`
+  check never matched an instance from the other chunk, so the conversion
+  branch was dead and **every remote failure flattened to
+  `INTERNAL_SERVER_ERROR`** with a raw "unhandled error" log — differentiated
+  consumer exit codes were unreachable. `ApiError.is` now checks
+  `Symbol.for('stitchkit.ApiError')`, exactly as `AppError` has since ADR
+  0032 (this also covers mixed-version graphs). Reported and diagnosed by a
+  consuming project's CLI.
+- **`transformArgs` errors are normalized too** — the hook now runs inside the
+  same try as the forwarded call, so an `ApiError` thrown while transforming
+  (e.g. an upload through the same client) converts instead of leaking raw.
+- **`AppError` carries an optional `traceId`** (additive 6th constructor
+  parameter) and the `implementRemote` conversion preserves the `ApiError`'s
+  `x-request-id` trace — it no longer vanishes at the boundary. `toJSON()` is
+  unchanged: the trace stays metadata, not envelope.
+
 ## [0.53.0] — 2026-08-18
 
 ### ⚠️ Breaking changes

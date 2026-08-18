@@ -44,6 +44,12 @@ export class AppError<
     public readonly status: number = 500,
     public readonly details?: TDetails,
     public readonly hint?: string,
+    /**
+     * Transport trace id (`x-request-id`) preserved across the
+     * `ApiError → AppError` conversion in `implementRemote`. Metadata for
+     * logs/observability — deliberately NOT part of `toJSON()`'s envelope.
+     */
+    public readonly traceId?: string,
   ) {
     super(message ?? code);
     this.name = 'AppError';
