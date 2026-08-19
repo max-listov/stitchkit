@@ -238,6 +238,40 @@ describe('createCli — execution & coercion', () => {
     expect(JSON.parse(err).error).toBe('VALIDATION_ERROR');
   });
 
+  test('piped stdin fills an unset REQUIRED field', async () => {
+    const { out, code } = await run(['create_widget', '--json'], {
+      stdin: async () => 'piped-box',
+    });
+    expect(code).toBe(0);
+    expect(JSON.parse(out).name).toBe('piped-box');
+  });
+
+  test('stdin is never read when every unset field is optional', async () => {
+    // In an agent's shell stdin is an open pipe with no EOF — a read for an
+    // optional field would hang the command forever. The reader must not run.
+    let stdinReads = 0;
+    const { out, code } = await run(['create_widget', '--name', 'box', '--json'], {
+      stdin: async () => {
+        stdinReads += 1;
+        return 'must-not-be-consumed';
+      },
+    });
+    expect(code).toBe(0);
+    expect(stdinReads).toBe(0);
+    expect(JSON.parse(out).name).toBe('box');
+
+    // A command with no input fields at all does not read stdin either.
+    stdinReads = 0;
+    const list = await run(['list_widgets', '--json'], {
+      stdin: async () => {
+        stdinReads += 1;
+        return 'ignored';
+      },
+    });
+    expect(list.code).toBe(0);
+    expect(stdinReads).toBe(0);
+  });
+
   test('handler error maps the code to its exit code (NOT_FOUND → 4)', async () => {
     const { err, code } = await run(['boom_widget']);
     expect(code).toBe(4);

@@ -19,6 +19,7 @@
  * writes the executable (`#!/usr/bin/env node` → `createCli({ … })`) and the
  * `bin` entry in its own `package.json`.
  */
+import { writeSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import process from 'node:process';
 import { safeJsonParse } from '../internal/safe-json';
@@ -303,8 +304,20 @@ export async function createCli<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
 >(config: CliConfig<TAuth, TContext>): Promise<void> {
-  const stdout = config.stdout ?? ((text: string) => void process.stdout.write(text));
-  const stderr = config.stderr ?? ((text: string) => void process.stderr.write(text));
+  // Synchronous by default: the async `process.stdout.write` buffers, and the
+  // `process.exit` right after a print truncates anything past the pipe
+  // buffer (observed: a 70 KB JSON cut at exactly 65536 bytes). `writeSync`
+  // lands the full payload before exit; the async writer stays as a fallback
+  // for exotic fds where a sync write is refused (e.g. EAGAIN).
+  const writeFd = (fd: 1 | 2, text: string): void => {
+    try {
+      writeSync(fd, text);
+    } catch {
+      void (fd === 1 ? process.stdout : process.stderr).write(text);
+    }
+  };
+  const stdout = config.stdout ?? ((text: string) => writeFd(1, text));
+  const stderr = config.stderr ?? ((text: string) => writeFd(2, text));
   const exit = config.exit ?? ((code: number) => void process.exit(code));
   const argv = config.argv ?? process.argv.slice(2);
   const readStdin = config.stdin ?? readPipedStdin;
@@ -408,9 +421,15 @@ export async function createCli<
     return exit(0);
   }
 
-  // A piped value fills the first unset non-boolean field — `echo "x" | app cmd`.
+  // A piped value fills the first unset REQUIRED non-boolean field —
+  // `echo "x" | app cmd`. Optional fields never trigger the read: in an
+  // agent's shell stdin is routinely an open pipe with no EOF, and awaiting
+  // it for a field the call does not need would hang `app cmd > file`
+  // forever.
   const fields = jsonSchemaFields(safeInputSchema(tool));
-  const firstUnset = fields.find((f) => !(f.name in toolArgs) && f.schema.type !== 'boolean');
+  const firstUnset = fields.find(
+    (f) => f.required && !(f.name in toolArgs) && f.schema.type !== 'boolean',
+  );
   if (firstUnset) {
     const piped = await readStdin();
     if (piped !== null) toolArgs[firstUnset.name] = piped;

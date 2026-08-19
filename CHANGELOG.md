@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.53.2] — 2026-08-19
+
+### Fixed
+
+- **`createCli` reads piped stdin only for a REQUIRED unset field.** It used
+  to await stdin for the *first* unset non-boolean field even when that field
+  was optional — and in an agent's shell stdin is routinely an open pipe with
+  no EOF, so a plain `app cmd --json > file` on a command with optional
+  arguments hung forever. Commands whose remaining unset fields are all
+  optional now never touch stdin. Reported by a consuming project's CLI
+  (reproduced with `< /dev/null` finishing in 0.7 s while the same call hung
+  without it).
+- **CLI output is written synchronously — no more 64 KB truncation.** The
+  default stdout/stderr writers used the async `process.stdout.write`, and
+  the `process.exit` right after a print cut anything past the pipe buffer at
+  exactly 65536 bytes. The defaults now `writeSync` to the fd (with the async
+  writer as a fallback), so a payload of any size survives exit.
+
 ## [0.53.1] — 2026-08-18
 
 ### Fixed
