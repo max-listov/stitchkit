@@ -9,6 +9,13 @@
  * throws, and a third signal on a process whose default disposition the first
  * `process.on` already suppressed. → ADR 0076
  */
+
+import {
+  DEFAULT_PROCESS_SIGNALS,
+  defaultSignalSource,
+  guardSignalCallback,
+  reportSignalError,
+} from './process-signal-common';
 import type { ManagedServerHandle, ShutdownOptions, ShutdownResult } from './shutdown';
 import { ShutdownOptionsSchema } from './shutdown';
 
@@ -110,25 +117,6 @@ export interface ProcessSignalsBinding {
   close(): void;
 }
 
-const DEFAULT_SIGNALS: readonly ProcessSignalName[] = ['SIGINT', 'SIGTERM'];
-
-const defaultSignalSource: SignalSource = {
-  on: (signal, handler) => {
-    process.on(signal, handler);
-  },
-  off: (signal, handler) => {
-    process.off(signal, handler);
-  },
-  raiseDefault: (signal) => {
-    // Another listener (a logger, a REPL, a second binding) would swallow the
-    // re-delivered signal and the process would survive. Report that instead of
-    // promising a kill this binding cannot perform.
-    if (process.listenerCount(signal) > 0) return false;
-    process.kill(process.pid, signal);
-    return true;
-  },
-};
-
 /**
  * One binding per handle while it can still start a chain. A second binding
  * would hand `shutdown()` a fresh `AbortSignal` that an existing chain ignores
@@ -136,32 +124,6 @@ const defaultSignalSource: SignalSource = {
  * its `promise` resolved with the first chain's result.
  */
 const bound = new WeakSet<ShutdownTarget>();
-
-function reportError(
-  phase: ProcessSignalsErrorPhase,
-  error: unknown,
-  onError: ProcessSignalsOptions['onError'],
-): void {
-  try {
-    onError?.(phase, error);
-  } catch {
-    // An `onError` that throws cannot be reported anywhere else, and must never
-    // escape into the signal handler.
-  }
-}
-
-/** User code must not break the machine — record the failure and carry on. */
-function guard(
-  run: () => void,
-  phase: ProcessSignalsErrorPhase,
-  onError: ProcessSignalsOptions['onError'],
-): void {
-  try {
-    run();
-  } catch (error) {
-    reportError(phase, error, onError);
-  }
-}
 
 /**
  * Bind `signals` to `handle.shutdown()`.
@@ -191,7 +153,7 @@ export function bindProcessSignals(
   }
   bound.add(handle);
 
-  const signals = [...new Set(options.signals ?? DEFAULT_SIGNALS)];
+  const signals = [...new Set(options.signals ?? DEFAULT_PROCESS_SIGNALS)];
   const source = options.signalSource ?? defaultSignalSource;
   // Parsed here so an invalid budget fails at binding time, not at the signal.
   const budgets = ShutdownOptionsSchema.omit({ signal: true }).parse(options.shutdown ?? {});
@@ -236,7 +198,7 @@ export function bindProcessSignals(
     } catch (error) {
       // Preparation failed — report it, but still shut the transport down.
       // Skipping it would leave the server accepting traffic with no owner.
-      reportError('prepare', error, options.onError);
+      reportSignalError('prepare', error, options.onError);
     }
 
     let result: ShutdownResult;
@@ -245,7 +207,7 @@ export function bindProcessSignals(
     } catch (error) {
       settled = true;
       rejectChain(error);
-      reportError('shutdown', error, options.onError);
+      reportSignalError('shutdown', error, options.onError);
       removeListeners();
       return;
     }
@@ -257,7 +219,7 @@ export function bindProcessSignals(
     } catch (error) {
       // The transport did shut down; `promise` stays resolved and the callback's
       // own failure is reported separately.
-      reportError('complete', error, options.onError);
+      reportSignalError('complete', error, options.onError);
     } finally {
       removeListeners();
     }
@@ -273,7 +235,7 @@ export function bindProcessSignals(
         sameTurnAsStart = false;
       });
       // `run` never rejects on its own, but a callback reached through it might.
-      void run(signal).catch((error) => reportError('shutdown', error, options.onError));
+      void run(signal).catch((error) => reportSignalError('shutdown', error, options.onError));
       return;
     }
 
@@ -285,20 +247,32 @@ export function bindProcessSignals(
       // State first, user code second — a throwing callback must not swallow the
       // force, and a re-entering one must find the machine consistent.
       controller.abort();
-      guard(() => options.onRepeatedSignal?.(signal, 'force'), 'shutdown', options.onError);
+      guardSignalCallback(
+        () => options.onRepeatedSignal?.(signal, 'force'),
+        'shutdown',
+        options.onError,
+      );
       return;
     }
 
     removeListeners();
-    guard(() => options.onRepeatedSignal?.(signal, 'escalate'), 'shutdown', options.onError);
+    guardSignalCallback(
+      () => options.onRepeatedSignal?.(signal, 'escalate'),
+      'shutdown',
+      options.onError,
+    );
     let restored = false;
     try {
       restored = source.raiseDefault(signal);
     } catch (error) {
-      reportError('shutdown', error, options.onError);
+      reportSignalError('shutdown', error, options.onError);
     }
     if (!restored) {
-      guard(() => options.onEscalationBlocked?.(signal), 'shutdown', options.onError);
+      guardSignalCallback(
+        () => options.onEscalationBlocked?.(signal),
+        'shutdown',
+        options.onError,
+      );
     }
   };
 

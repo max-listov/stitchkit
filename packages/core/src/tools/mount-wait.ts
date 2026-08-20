@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { isRecord } from '../internal/typed';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
-import { pollUntil } from './wait-core';
+import { runWaitOperation } from './wait-core';
 
 export interface WaitToolConfig {
   /** Tool name. Default `'wait'`. */
@@ -46,8 +46,9 @@ export function mountWait(server: McpServer, config: WaitToolConfig): void {
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
       try {
-        const { state, timedOut } = await pollUntil({
-          poll: () => config.poll(args),
+        const { state, timedOut } = await runWaitOperation({
+          input: args,
+          poll: (input) => config.poll(input),
           done: config.done,
           backoff: config.backoff,
           timeoutSec: config.timeoutFromArgs?.(args) ?? config.defaultTimeout,

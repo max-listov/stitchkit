@@ -28,6 +28,7 @@ describe('Stitchkit MCP v2 stdio entrypoint', () => {
       'echo_stdio',
       'values_stdio',
       'trace_stdio',
+      'client_stdio',
       'confirm_stdio',
     ]);
     const called = await client.callTool({
@@ -37,6 +38,12 @@ describe('Stitchkit MCP v2 stdio entrypoint', () => {
     expect(called.structuredContent).toEqual({ text: 'modern stdio' });
     const values = await client.callTool({ name: 'values_stdio', arguments: {} });
     expect(values.structuredContent).toEqual(['one', 'two']);
+    const clientInfo = await client.callTool({ name: 'client_stdio', arguments: {} });
+    expect(clientInfo.structuredContent).toEqual({
+      era: 'modern',
+      name: 'stitchkit-stdio-client',
+      version: '1',
+    });
     const traceId = '4bf92f3577b34da6a3ce929d0e0e4736';
     const parentSpanId = '00f067aa0ba902b7';
     const traced = await client.callTool({
@@ -89,6 +96,8 @@ describe('Stitchkit MCP v2 stdio entrypoint', () => {
       arguments: { text: 'legacy stdio' },
     });
     expect(called.structuredContent).toEqual({ text: 'legacy stdio' });
+    const clientInfo = await client.callTool({ name: 'client_stdio', arguments: {} });
+    expect(clientInfo.structuredContent).toEqual({ era: 'legacy' });
     const confirmed = await client.callTool({
       name: 'confirm_stdio',
       arguments: { operation: 'legacy stdio' },

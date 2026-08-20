@@ -16,8 +16,16 @@
  *
  * and point your app's `package.json` `bin` at it.
  */
-export { type CliConfig, createCli } from './tools/cli';
+export { type CliConfig, type CliSurfaceSource, createCli } from './tools/cli';
 export { type CliRunOptions, type ParsedCliArgs, parseCliArgs } from './tools/cli-args';
+export {
+  type CliCommandContext,
+  type CliCommandDefinition,
+  type CliCommandDefinitionBase,
+  type CliCommandDefinitionWithOutput,
+  type CliCommandDefinitionWithoutOutput,
+  defineCliCommand,
+} from './tools/cli-command';
 export {
   type CliWriters,
   DEFAULT_EXIT_CODES,

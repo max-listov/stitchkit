@@ -3,51 +3,12 @@
  * local filesystem. The app injects how to resolve the URL from the call's
  * args; the fetch / extension / write mechanics live here. → ADR 0019.
  */
-import { basename, extname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
-import { writeDownload } from '../internal/write-download';
+import { runDownloadOperation } from './download-core';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
-
-/** Default memory cap for a download — overridable per tool via `maxBytes`. */
-const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
-
-const MIME_EXT: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-  'video/mp4': '.mp4',
-  'video/webm': '.webm',
-  'audio/mpeg': '.mp3',
-  'audio/wav': '.wav',
-  'audio/ogg': '.ogg',
-};
-
-/** File extension from the content-type, else the URL path, else `.bin`. */
-function extensionFor(url: string, mime: string): string {
-  if (MIME_EXT[mime]) return MIME_EXT[mime];
-  try {
-    const ext = extname(new URL(url).pathname).toLowerCase();
-    if (ext) return ext;
-  } catch {
-    // Not a parseable URL — fall through to the default.
-  }
-  return '.bin';
-}
-
-/** Base file name from the URL path, capped — `download` when not parseable. */
-function baseNameFor(url: string): string {
-  try {
-    const path = new URL(url).pathname;
-    return (basename(path, extname(path)) || 'download').slice(0, 60);
-  } catch {
-    return 'download';
-  }
-}
 
 export interface DownloadToolConfig {
   /** Tool name. Default `'download'`. */
@@ -98,36 +59,14 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
         const url = await config.resolveUrl(args);
         if (!url) return textResult('Nothing to download.', true);
 
-        // SSRF guard: the URL is model-derived, so route it through the same
-        // per-redirect-hop private-host / scheme check `view_file` uses.
-        const res = await fetchGuarded(new URL(url), config.allowPrivateHosts ?? false, {
+        const result = await runDownloadOperation({
+          url,
+          dir: config.dirFromArgs?.(args) ?? config.defaultDir,
+          allowPrivateHosts: config.allowPrivateHosts,
+          maxBytes: config.maxBytes,
           timeoutMs: config.timeoutMs,
         });
-        if (!res.ok) return textResult(`Download failed: HTTP ${res.status}`, true);
-
-        const mimeType =
-          (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ||
-          'application/octet-stream';
-        const max = config.maxBytes ?? DEFAULT_MAX_BYTES;
-        const declared = Number(res.headers.get('content-length') ?? 0);
-        if (declared > max) {
-          await res.body?.cancel();
-          return textResult(`Download failed: file exceeds the ${max}-byte cap`, true);
-        }
-        // Size cap: a model-controlled URL must not OOM the process via an
-        // unbounded / understated-length body. `baseNameFor` is basename-only,
-        // so the filename cannot traverse out of `dir`.
-        const buffer = await readCapped(res, max);
-        if (!buffer)
-          return textResult(`Download failed: file exceeds the ${max}-byte cap`, true);
-
-        const dir = resolve(config.dirFromArgs?.(args) ?? config.defaultDir);
-        const filePath = resolve(dir, `${baseNameFor(url)}${extensionFor(url, mimeType)}`);
-        await writeDownload(dir, filePath, buffer);
-
-        return textResult(
-          JSON.stringify({ path: filePath, size: buffer.length, mimeType }, null, 2),
-        );
+        return textResult(JSON.stringify(result, null, 2));
       } catch (err) {
         return textResult(
           `Download failed: ${err instanceof Error ? err.message : String(err)}`,

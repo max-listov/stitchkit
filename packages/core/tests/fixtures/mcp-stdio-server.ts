@@ -34,6 +34,17 @@ const contract = defineContract(
         baggage: z.string().optional(),
       }),
     },
+    client: {
+      method: 'GET',
+      path: '/client',
+      desc: 'Inspect typed MCP client metadata',
+      expose: ['MCP'],
+      output: z.object({
+        era: z.enum(['modern', 'legacy']),
+        name: z.string().optional(),
+        version: z.string().optional(),
+      }),
+    },
     confirm: {
       method: 'POST',
       path: '/confirm',
@@ -63,6 +74,11 @@ const service = implement(contract, {
     if (!trace) throw new Error('missing stdio MCP trace context');
     return trace;
   },
+  client: ({ mcp }) => ({
+    era: mcp?.era ?? 'legacy',
+    name: mcp?.clientInfo?.name,
+    version: mcp?.clientInfo?.version,
+  }),
   confirm: ({ input, mcpInput }) => ({
     operation: input.operation,
     confirmed: mcpInput?.confirmation.confirmed ?? false,

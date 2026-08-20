@@ -28,6 +28,11 @@ import { isRecord } from '../internal/typed';
 import { writeDownload } from '../internal/write-download';
 import type { ServiceDef, StitchLogger } from '../server/types';
 import { CliArgumentError, parseCliArgs, RESERVED_CLI_OPTIONS } from './cli-args';
+import {
+  type CliCommandDefinition,
+  cliCommandPresentationSchema,
+  executeCliCommand,
+} from './cli-command';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
@@ -38,9 +43,15 @@ import {
   toolResultFromError,
 } from './execute';
 import { jsonSchemaFields } from './json-schema';
-import { collectTools, createToolRunner, type MountableTool } from './mount';
+import { createToolRunner, type MountableTool } from './mount';
 import { assertUniqueToolName } from './names';
+import type { RuntimeToolDefinition } from './runtime-tool';
 import { objectShapeKeys } from './schema';
+import { collectToolSurface } from './surface';
+
+export type CliSurfaceSource<TAuth, TValue> =
+  | readonly TValue[]
+  | ((auth: Awaited<TAuth> | undefined) => readonly TValue[]);
 
 export interface CliConfig<
   TAuth = unknown,
@@ -51,13 +62,19 @@ export interface CliConfig<
   /** Program version — printed by `--version`. */
   version: string;
   /** Contract services exposed as commands — may depend on the resolved identity. */
-  services: ServiceDef[] | ((auth: Awaited<TAuth> | undefined) => ServiceDef[]);
+  services?: CliSurfaceSource<TAuth, ServiceDef>;
+  /** Pathless managed operations. CLI exposure always requires `transports: ['CLI']`. */
+  runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolDefinition>;
+  /** CLI-only executable commands, dispatched before auth and managed surface factories. */
+  commands?: readonly CliCommandDefinition[];
   /**
    * Identity for the single CLI invocation — resolved ONCE at startup (from an
    * env var / token file), like a stdio MCP server, not per call. A value or a
    * promise of one.
    */
   auth?: TAuth | Promise<TAuth>;
+  /** Lazily resolve identity only when a managed command/surface actually needs it. */
+  resolveAuth?: () => TAuth | Promise<TAuth>;
   /**
    * Context merged into every handler. Typed against the app's context shape
    * when the CLI is built via `createToolkit<AppContext>()`.
@@ -216,10 +233,16 @@ function collectPassthrough(
   toolArgs[field] = base ? { ...base, ...bag } : bag;
 }
 
+interface CliHelpCommand {
+  description: string;
+  argumentSchema: Parameters<typeof parseCliArgs>[1];
+  presentationSchema: Record<string, unknown>;
+}
+
 function renderTopHelp(
   name: string,
   version: string,
-  tools: Map<string, MountableTool>,
+  commands: Map<string, CliHelpCommand>,
 ): string {
   const lines = [
     `${name} ${version}`,
@@ -228,9 +251,9 @@ function renderTopHelp(
     '',
     'Commands:',
   ];
-  const width = Math.max(0, ...[...tools.keys()].map((k) => k.length));
-  for (const [command, tool] of tools) {
-    lines.push(`  ${padRight(command, width)}  ${summarize(tool.method.desc)}`);
+  const width = Math.max(0, ...[...commands.keys()].map((key) => key.length));
+  for (const [command, descriptor] of commands) {
+    lines.push(`  ${padRight(command, width)}  ${summarize(descriptor.description)}`);
   }
   lines.push('', 'Global options:');
   const optWidth = Math.max(...GLOBAL_OPTIONS.map(([flag]) => flag.length));
@@ -240,9 +263,9 @@ function renderTopHelp(
   return `${lines.join('\n')}\n`;
 }
 
-function renderCommandHelp(name: string, command: string, tool: MountableTool): string {
-  const lines = [tool.method.desc, '', `Usage: ${name} ${command} [args] [--flags]`, ''];
-  const fields = jsonSchemaFields(tool.presentationSchema);
+function renderCommandHelp(name: string, command: string, descriptor: CliHelpCommand): string {
+  const lines = [descriptor.description, '', `Usage: ${name} ${command} [args] [--flags]`, ''];
+  const fields = jsonSchemaFields(descriptor.presentationSchema);
   if (fields.length > 0) {
     lines.push('Arguments:');
     const width = Math.max(...fields.map((f) => f.name.length));
@@ -254,6 +277,79 @@ function renderCommandHelp(name: string, command: string, tool: MountableTool): 
     lines.push('');
   }
   return `${lines.join('\n')}\n`;
+}
+
+function managedDescriptor(tool: MountableTool): CliHelpCommand {
+  return {
+    description: tool.method.desc,
+    argumentSchema: tool.argumentSchema,
+    presentationSchema: tool.presentationSchema,
+  };
+}
+
+function nativeDescriptor(definition: CliCommandDefinition): CliHelpCommand {
+  return {
+    description: definition.description,
+    argumentSchema: definition.input,
+    presentationSchema: cliCommandPresentationSchema(definition),
+  };
+}
+
+function assertCommandShape(name: string, descriptor: CliHelpCommand, exists: boolean): void {
+  assertUniqueToolName(name, exists, 'CLI command');
+  if (name === 'help' || name === 'version') {
+    throw new Error(`[stitchkit] CLI command "${name}" is reserved`);
+  }
+  const conflicting = jsonSchemaFields(descriptor.presentationSchema)
+    .map((field) => field.name)
+    .filter((field) => RESERVED_CLI_OPTIONS.has(field));
+  if (conflicting.length > 0) {
+    throw new Error(
+      `[stitchkit] CLI command "${name}" declares reserved option field(s): ${conflicting.join(', ')}`,
+    );
+  }
+}
+
+type PreparedCliInvocation =
+  | {
+      ok: true;
+      toolArgs: Record<string, unknown>;
+      options: ReturnType<typeof parseCliArgs>['options'];
+    }
+  | { ok: false; message: string };
+
+async function prepareInvocation(
+  command: string,
+  commandArgv: string[],
+  descriptor: CliHelpCommand,
+  config: Pick<CliConfig, 'passthrough'>,
+  readStdin: () => Promise<string | null>,
+): Promise<PreparedCliInvocation> {
+  let parsed: ReturnType<typeof parseCliArgs>;
+  try {
+    parsed = parseCliArgs(commandArgv, descriptor.argumentSchema, {
+      allowUnknown: config.passthrough?.[command] !== undefined,
+      knownFields: jsonSchemaFields(descriptor.presentationSchema).map((field) => field.name),
+    });
+  } catch (error) {
+    if (!(error instanceof CliArgumentError)) throw error;
+    return { ok: false, message: error.message };
+  }
+
+  const { toolArgs, options } = parsed;
+  const firstUnset = jsonSchemaFields(descriptor.presentationSchema).find(
+    (field) => field.required && !(field.name in toolArgs) && field.schema.type !== 'boolean',
+  );
+  if (firstUnset) {
+    const piped = await readStdin();
+    if (piped !== null) toolArgs[firstUnset.name] = piped;
+  }
+
+  const passthroughField = config.passthrough?.[command];
+  if (passthroughField) {
+    collectPassthrough(toolArgs, passthroughField, objectShapeKeys(descriptor.argumentSchema));
+  }
+  return { ok: true, toolArgs, options };
 }
 
 /** Default memory cap per downloaded file — overridable via `maxDownloadBytes`. */
@@ -295,11 +391,7 @@ async function downloadResults(
   return succeeded;
 }
 
-/**
- * Build and run a CLI from contract services, then exit. Parses `process.argv`
- * (or `config.argv`), routes to a command, executes it through the shared tool
- * pipeline and writes the result. Resolves identity once up front.
- */
+/** Build and run one mixed contract/runtime/native CLI surface, then exit. */
 export async function createCli<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
@@ -321,62 +413,23 @@ export async function createCli<
   const exit = config.exit ?? ((code: number) => void process.exit(code));
   const argv = config.argv ?? process.argv.slice(2);
   const readStdin = config.stdin ?? readPipedStdin;
-
-  const auth = config.auth === undefined ? undefined : await config.auth;
-  const services =
-    typeof config.services === 'function' ? config.services(auth) : config.services;
-  const context = config.context?.(auth);
-
-  const tools = new Map<string, MountableTool>();
-  for (const service of services) {
-    for (const mountable of collectTools(service, 'CLI')) {
-      assertUniqueToolName(mountable.name, tools.has(mountable.name), 'CLI command');
-      if (mountable.name === 'help' || mountable.name === 'version') {
-        throw new Error(`[stitchkit] CLI command "${mountable.name}" is reserved`);
-      }
-      const conflicting = jsonSchemaFields(mountable.presentationSchema)
-        .map((field) => field.name)
-        .filter((name) => RESERVED_CLI_OPTIONS.has(name));
-      if (conflicting.length > 0) {
-        throw new Error(
-          `[stitchkit] CLI command "${mountable.name}" declares reserved option field(s): ${conflicting.join(', ')}`,
-        );
-      }
-      tools.set(mountable.name, mountable);
-    }
+  if (config.auth !== undefined && config.resolveAuth !== undefined) {
+    throw new Error('[stitchkit] createCli: use either auth or resolveAuth, not both');
   }
 
-  const runTool = createToolRunner({
-    source: 'cli',
-    context,
-    hooks: config.hooks,
-    lifecycle: config.lifecycle,
-    errorHint: config.errorHint,
-    coerceJsonArgs: config.coerceJsonArgs,
-  });
+  const nativeCommands = new Map<string, CliCommandDefinition>();
+  const nativeHelp = new Map<string, CliHelpCommand>();
+  for (const definition of config.commands ?? []) {
+    const descriptor = nativeDescriptor(definition);
+    assertCommandShape(definition.name, descriptor, nativeCommands.has(definition.name));
+    nativeCommands.set(definition.name, definition);
+    nativeHelp.set(definition.name, descriptor);
+  }
 
   const [command, ...commandArgv] = argv;
-
-  if (
-    command === undefined ||
-    command === 'help' ||
-    command === '--help' ||
-    command === '-h'
-  ) {
-    stdout(renderTopHelp(config.name, config.version, tools));
-    return exit(0);
-  }
   if (command === '--version' || command === 'version') {
     stdout(`${config.name} ${config.version}\n`);
     return exit(0);
-  }
-
-  const tool = tools.get(command);
-  if (!tool) {
-    stderr(
-      `Unknown command "${command}". Run "${config.name} --help" for the command list.\n`,
-    );
-    return exit(1);
   }
 
   // `--help` wins over every option validator — a user must be able to ask a
@@ -385,23 +438,129 @@ export async function createCli<
     commandArgv.indexOf('--') === -1
       ? commandArgv
       : commandArgv.slice(0, commandArgv.indexOf('--'));
-  if (beforeSeparator.includes('--help') || beforeSeparator.includes('-h')) {
-    stdout(renderCommandHelp(config.name, command, tool));
+  const helpRequested = beforeSeparator.includes('--help') || beforeSeparator.includes('-h');
+
+  const native = command === undefined ? undefined : nativeCommands.get(command);
+  if (native && command !== undefined) {
+    const descriptor = nativeHelp.get(command);
+    if (!descriptor) throw new Error('[stitchkit] native CLI descriptor invariant failed');
+    if (helpRequested) {
+      stdout(renderCommandHelp(config.name, command, descriptor));
+      return exit(0);
+    }
+    const prepared = await prepareInvocation(
+      command,
+      commandArgv,
+      descriptor,
+      config,
+      readStdin,
+    );
+    if (!prepared.ok) {
+      stderr(`${prepared.message}\n`);
+      return exit(2);
+    }
+    const { toolArgs, options } = prepared;
+    if (options.help) {
+      stdout(renderCommandHelp(config.name, command, descriptor));
+      return exit(0);
+    }
+    if (options.wait) {
+      stderr(`--wait is not configured for native command "${command}"\n`);
+      return exit(2);
+    }
+    if (options.waitTimeout !== undefined) {
+      stderr('--wait-timeout requires --wait\n');
+      return exit(2);
+    }
+    if (options.outputDir !== undefined) {
+      stderr('--output-dir is not configured for native commands\n');
+      return exit(2);
+    }
+    if (options.dryRun) {
+      stdout(`${JSON.stringify({ command, args: toolArgs }, null, 2)}\n`);
+      return exit(0);
+    }
+    const result = await executeCliCommand(
+      native,
+      toolArgs,
+      options,
+      { stdout, stderr },
+      config.coerceJsonArgs ?? true,
+    );
+    const exitCode = emitResult(
+      result,
+      { stdout, stderr },
+      {
+        json: options.json,
+        toolName: command,
+        errorHint: config.errorHint,
+        exitCodes: { ...DEFAULT_EXIT_CODES, ...config.exitCodes },
+      },
+    );
+    return exit(exitCode);
+  }
+
+  let authPromise: Promise<Awaited<TAuth> | undefined> | undefined;
+  const resolveIdentity = (): Promise<Awaited<TAuth> | undefined> => {
+    authPromise ??= Promise.resolve(config.resolveAuth ? config.resolveAuth() : config.auth);
+    return authPromise;
+  };
+  const dynamicSurface =
+    typeof config.services === 'function' || typeof config.runtimeTools === 'function';
+  const buildManagedSurface = async (forExecution: boolean) => {
+    const auth = dynamicSurface || forExecution ? await resolveIdentity() : undefined;
+    const services =
+      typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
+    const runtimeTools =
+      typeof config.runtimeTools === 'function'
+        ? config.runtimeTools(auth)
+        : (config.runtimeTools ?? []);
+    const tools = new Map<string, MountableTool>();
+    const help = new Map(nativeHelp);
+    for (const { mountable } of collectToolSurface({
+      surface: { services, runtimeTools },
+      transport: 'CLI',
+    })) {
+      const descriptor = managedDescriptor(mountable);
+      assertCommandShape(mountable.name, descriptor, help.has(mountable.name));
+      tools.set(mountable.name, mountable);
+      help.set(mountable.name, descriptor);
+    }
+    return { auth, help, tools };
+  };
+
+  const topLevelHelp =
+    command === undefined || command === 'help' || command === '--help' || command === '-h';
+  const managed = await buildManagedSurface(!topLevelHelp && !helpRequested);
+  if (topLevelHelp) {
+    stdout(renderTopHelp(config.name, config.version, managed.help));
     return exit(0);
   }
 
-  let parsed: ReturnType<typeof parseCliArgs>;
-  try {
-    parsed = parseCliArgs(commandArgv, tool.argumentSchema, {
-      allowUnknown: config.passthrough?.[command] !== undefined,
-      knownFields: jsonSchemaFields(tool.presentationSchema).map((field) => field.name),
-    });
-  } catch (error) {
-    if (!(error instanceof CliArgumentError)) throw error;
-    stderr(`${error.message}\n`);
+  const tool = managed.tools.get(command);
+  if (!tool) {
+    stderr(
+      `Unknown command "${command}". Run "${config.name} --help" for the command list.\n`,
+    );
+    return exit(1);
+  }
+  const descriptor = managedDescriptor(tool);
+  if (helpRequested) {
+    stdout(renderCommandHelp(config.name, command, descriptor));
+    return exit(0);
+  }
+  const prepared = await prepareInvocation(
+    command,
+    commandArgv,
+    descriptor,
+    config,
+    readStdin,
+  );
+  if (!prepared.ok) {
+    stderr(`${prepared.message}\n`);
     return exit(2);
   }
-  const { toolArgs, options } = parsed;
+  const { toolArgs, options } = prepared;
 
   if (options.wait && !config.wait?.[command]) {
     stderr(`--wait is not configured for command "${command}"\n`);
@@ -417,27 +576,8 @@ export async function createCli<
   }
 
   if (options.help) {
-    stdout(renderCommandHelp(config.name, command, tool));
+    stdout(renderCommandHelp(config.name, command, descriptor));
     return exit(0);
-  }
-
-  // A piped value fills the first unset REQUIRED non-boolean field —
-  // `echo "x" | app cmd`. Optional fields never trigger the read: in an
-  // agent's shell stdin is routinely an open pipe with no EOF, and awaiting
-  // it for a field the call does not need would hang `app cmd > file`
-  // forever.
-  const fields = jsonSchemaFields(safeInputSchema(tool));
-  const firstUnset = fields.find(
-    (f) => f.required && !(f.name in toolArgs) && f.schema.type !== 'boolean',
-  );
-  if (firstUnset) {
-    const piped = await readStdin();
-    if (piped !== null) toolArgs[firstUnset.name] = piped;
-  }
-
-  const passthroughField = config.passthrough?.[command];
-  if (passthroughField) {
-    collectPassthrough(toolArgs, passthroughField, objectShapeKeys(tool.argumentSchema));
   }
 
   if (options.dryRun) {
@@ -445,6 +585,14 @@ export async function createCli<
     return exit(0);
   }
 
+  const runTool = createToolRunner({
+    source: 'cli',
+    context: config.context?.(managed.auth),
+    hooks: config.hooks,
+    lifecycle: config.lifecycle,
+    errorHint: config.errorHint,
+    coerceJsonArgs: config.coerceJsonArgs,
+  });
   let result: ToolResult;
   try {
     result = await runTool(tool, toolArgs);
@@ -458,7 +606,7 @@ export async function createCli<
       initial: result,
       wait: waitConfig,
       call: async (toolName, args) => {
-        const pollTool = tools.get(toolName);
+        const pollTool = managed.tools.get(toolName);
         if (!pollTool) {
           return {
             ok: false,
@@ -497,9 +645,4 @@ export async function createCli<
     },
   );
   return exit(downloadsOk ? exitCode : 1);
-}
-
-/** A tool's input JSON Schema, or `{}` when it cannot be represented. */
-function safeInputSchema(tool: MountableTool): Record<string, unknown> {
-  return tool.presentationSchema;
 }

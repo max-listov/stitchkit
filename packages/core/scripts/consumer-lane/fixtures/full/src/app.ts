@@ -12,18 +12,24 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { QueryClient } from '@tanstack/react-query';
 import { ApiError } from 'stitchkit';
+import { defineCliCommand } from 'stitchkit/cli';
 import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
 import {
+  bindStdioProcessSignals,
   buildMcpServer,
   buildToolManifest,
   createCli,
   createMcpHandler,
   createMcpHttpRoute,
   createToolInvoker,
+  defineDownloadTool,
   defineRuntimeTool,
+  defineUploadTool,
+  defineViewFileTool,
+  defineWaitTool,
   type ErrorHintFn,
   EXT_APPS_BUNDLE_PLACEHOLDER,
   flattenToolJsonSchema,
@@ -194,7 +200,11 @@ const nativeDefinition = defineRuntimeTool({
   input: NativeInputSchema,
   output: NativeOutputSchema,
   ui: { resourceUri: packedResourceUri },
-  handler: ({ input }) => ({ updated: input.id.length > 0 }),
+  handler: ({ input, mcp }) => {
+    const clientName: string | undefined = mcp?.clientInfo?.name;
+    void clientName;
+    return { updated: input.id.length > 0 };
+  },
   present: {
     mcp: (output) => ({
       content: [{ type: 'text', text: output.updated ? 'updated' : 'unchanged' }],
@@ -203,11 +213,52 @@ const nativeDefinition = defineRuntimeTool({
   },
 });
 
+const packedWaitDefinition = defineWaitTool({
+  name: 'wait_for_native',
+  description: 'Wait for a packed native operation',
+  identity: { serviceName: 'nativeWidgets', action: 'waitForNative' },
+  input: z.object({ id: z.string() }),
+  state: z.object({ id: z.string(), ready: z.boolean() }),
+  poll: async ({ id }) => ({ id, ready: true }),
+  done: (state) => state.ready,
+});
+const packedDownloadDefinition = defineDownloadTool({
+  name: 'download_native',
+  description: 'Download a packed native result',
+  identity: { serviceName: 'nativeWidgets', action: 'downloadNative' },
+  input: z.object({ url: z.url() }),
+  resolveUrl: ({ url }) => url,
+  defaultDir: '/tmp',
+});
+const packedUploadDefinition = defineUploadTool({
+  name: 'upload_native',
+  description: 'Upload a packed native input',
+  identity: { serviceName: 'nativeWidgets', action: 'uploadNative' },
+  output: z.object({ path: z.string(), uploaded: z.boolean() }),
+  upload: async (path) => ({ path, uploaded: true }),
+});
+const packedViewDefinition = defineViewFileTool({
+  name: 'view_native',
+  description: 'View protected packed media',
+  identity: { serviceName: 'nativeWidgets', action: 'viewNative' },
+});
+check(
+  'the packed managed view factory carries MCP and Agent exposure by default',
+  JSON.stringify(listToolNames({ runtimeTools: [packedViewDefinition] })[0]?.transports) ===
+    JSON.stringify(['MCP', 'AGENT']),
+);
+const packedRuntimeTools = [
+  nativeDefinition,
+  packedWaitDefinition,
+  packedDownloadDefinition,
+  packedUploadDefinition,
+];
+
 const packedNativeServer = buildMcpServer(
   {
     serverInfo: { name: 'consumer', version: '1' },
     services: [],
-    runtimeTools: [nativeDefinition],
+    runtimeTools: packedRuntimeTools,
   },
   undefined,
 );
@@ -229,7 +280,7 @@ check(
   typeof mountAgent([], { runtimeTools: [nativeDefinition] }).native_update?.execute ===
     'function',
 );
-const packedSurface = { services: [service], runtimeTools: [nativeDefinition] };
+const packedSurface = { services: [service], runtimeTools: packedRuntimeTools };
 const packedInvoker = createToolInvoker(service, { transport: 'AGENT' });
 check(
   'the packed in-process invoker runs the canonical contract tool',
@@ -249,9 +300,77 @@ await createCli({
   exit: () => undefined,
 });
 check('the packed CLI entrypoint executes', cliVersion === 'packed-cli 1\n');
+const packedCliRuntime = defineRuntimeTool({
+  name: 'local_runtime',
+  description: 'Run a packed pathless CLI operation',
+  identity: { serviceName: 'local', action: 'runtime', method: 'POST' },
+  input: z.object({ value: z.string() }),
+  output: z.object({ value: z.string() }),
+  transports: ['CLI'],
+  handler: ({ input }) => input,
+});
+const packedNativeCommand = defineCliCommand({
+  name: 'doctor',
+  description: 'Inspect the packed executable',
+  input: z.object({ target: z.string() }),
+  output: z.object({ target: z.string() }),
+  handler: ({ input }) => input,
+});
+let cliRuntimeOutput = '';
+await createCli({
+  name: 'packed-cli',
+  version: '1',
+  services: [],
+  runtimeTools: [packedCliRuntime],
+  commands: [packedNativeCommand],
+  argv: ['local_runtime', '--value', 'packed', '--json'],
+  stdout: (text) => {
+    cliRuntimeOutput += text;
+  },
+  exit: () => undefined,
+});
+check(
+  'the packed CLI executes an explicit pathless runtime definition',
+  JSON.parse(cliRuntimeOutput).value === 'packed',
+);
+let cliNativeOutput = '';
+await createCli({
+  name: 'packed-cli',
+  version: '1',
+  services: () => {
+    throw new Error('native dispatch resolved managed services');
+  },
+  resolveAuth: () => {
+    throw new Error('native dispatch resolved auth');
+  },
+  commands: [packedNativeCommand],
+  argv: ['doctor', '--target', 'packed', '--json'],
+  stdout: (text) => {
+    cliNativeOutput += text;
+  },
+  exit: () => undefined,
+});
+check(
+  'the packed native CLI command dispatches before auth and managed surfaces',
+  JSON.parse(cliNativeOutput).target === 'packed',
+);
+const idleStdioSignals = bindStdioProcessSignals(
+  { close: async () => undefined },
+  { signals: [] },
+);
+idleStdioSignals.close();
+await idleStdioSignals.promise;
 check(
   'the packed manifest includes contract and runtime tools without a local schema walker',
-  buildToolManifest({ ...packedSurface, transport: 'AGENT' }).length === 2,
+  buildToolManifest({ ...packedSurface, transport: 'AGENT' }).length === 5,
+);
+check(
+  'the packed managed native factories join the canonical manifest',
+  ['wait_for_native', 'download_native', 'upload_native'].every((name) =>
+    buildToolManifest({ ...packedSurface, transport: 'MCP' }).some(
+      (entry) => entry.name === name,
+    ),
+  ),
 );
 check(
   'the packed name snapshot carries the runtime origin',
@@ -261,7 +380,7 @@ check(
 );
 check(
   'the packed transport summary counts the runtime definition',
-  summarizeTransports(packedSurface).runtimeTools === 1,
+  summarizeTransports(packedSurface).runtimeTools === 4,
 );
 
 interface PackedEntity {

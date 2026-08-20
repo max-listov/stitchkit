@@ -569,6 +569,37 @@ export function mergeMeta(
   return { ...contractMeta, ...endpointMeta };
 }
 
+/** Self-reported MCP host identity. Attribution only — never an auth principal. */
+export interface McpClientInfo {
+  name: string;
+  version: string;
+}
+
+/** Outcome of one opt-in MCP multi-round input attempt. */
+export type McpRoundOutcome =
+  | 'input_required'
+  | 'declined'
+  | 'cancelled'
+  | 'invalid'
+  | 'complete';
+
+/**
+ * Validated metadata for the active managed MCP tool call.
+ *
+ * `clientInfo` is supplied by the MCP host. It is useful for display and
+ * operational attribution, but MUST NOT be used for authentication,
+ * authorization, tenant selection or rate limiting.
+ */
+export interface McpCallContext {
+  era: 'modern' | 'legacy';
+  method: string;
+  toolName: string;
+  protocolVersion?: string;
+  clientInfo?: McpClientInfo;
+  outcome?: McpRoundOutcome;
+  round?: number;
+}
+
 export interface RuntimeContext {
   params: unknown;
   input: unknown;
@@ -593,6 +624,8 @@ export interface RuntimeContext {
   userAgent?: string;
   /** Transport cancellation for the active call (MCP and future cancellable lanes). */
   signal?: AbortSignal;
+  /** Validated metadata for an MCP call; absent on every other transport. */
+  mcp?: McpCallContext;
   [key: string]: unknown;
 }
 
@@ -614,6 +647,8 @@ export interface HandlerContext<TParams = undefined, TInput = undefined> {
   spanId?: string;
   ipAddress?: string;
   userAgent?: string;
+  /** Validated metadata for an MCP call; absent on every other transport. */
+  mcp?: McpCallContext;
   [key: string]: unknown;
 }
 

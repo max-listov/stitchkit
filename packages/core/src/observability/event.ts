@@ -1,4 +1,4 @@
-import type { HttpMethod, TransportSource } from '../contract';
+import type { HttpMethod, McpCallContext, TransportSource } from '../contract';
 import type { JsonValue } from './sanitize';
 
 /**
@@ -40,18 +40,7 @@ export interface RequestEvent {
   /** Distinguishes a completed operation from an MRTR input-gating round. */
   toolPhase?: 'operation' | 'input-round';
   /** Validated MCP transport attribution, available only on MCP tool calls. */
-  mcp?: {
-    era: 'modern' | 'legacy';
-    protocolVersion?: string;
-    /** Self-reported host identity from the validated modern envelope. Never auth. */
-    clientInfo?: { name: string; version: string };
-    method: string;
-    toolName: string;
-    /** Semantic outcome of one MRTR attempt. */
-    outcome?: 'input_required' | 'declined' | 'cancelled' | 'invalid' | 'complete';
-    /** Zero-based MRTR round for this attempt. */
-    round?: number;
-  };
+  mcp?: McpCallContext;
   /** W3C trace id — correlates every span of one logical request. */
   traceId: string;
   /** W3C span id — unique to this call. */

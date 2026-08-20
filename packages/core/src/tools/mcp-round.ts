@@ -9,7 +9,12 @@ import {
   type RequestStateCodec,
   type ServerContext,
 } from '@modelcontextprotocol/server';
-import { AppError, type EndpointMcpPolicy } from '../contract';
+import {
+  AppError,
+  type EndpointMcpPolicy,
+  type McpCallContext,
+  type McpRoundOutcome,
+} from '../contract';
 import { isRecord } from '../internal/typed';
 import type { ToolResult } from './execute';
 import type { MountableTool } from './mount';
@@ -29,13 +34,6 @@ export interface McpRoundState {
   round: number;
   accepted: Record<string, unknown>;
 }
-
-export type McpRoundOutcome =
-  | 'input_required'
-  | 'declined'
-  | 'cancelled'
-  | 'invalid'
-  | 'complete';
 
 export interface McpRoundRuntime {
   codec: RequestStateCodec<McpRoundState>;
@@ -57,7 +55,7 @@ function transportContext(
   toolName: string,
   outcome?: McpRoundOutcome,
   round?: number,
-): Record<string, unknown> {
+): { signal: AbortSignal; mcp: McpCallContext } {
   const protocolVersionValue = isRecord(context.mcpReq.envelope)
     ? Reflect.get(context.mcpReq.envelope, PROTOCOL_VERSION_META_KEY)
     : undefined;

@@ -15,6 +15,44 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-08-20
+
+### Added
+
+- **Typed MCP call metadata on managed application context.** Contract and
+  runtime-tool handlers, lifecycle, tool hooks and runtime-tool factories can
+  read the same optional `context.mcp: McpCallContext` populated by the real
+  HTTP/stdio SDK path. It includes the protocol era/method/tool, validated
+  protocol/client information and multi-round fields. MCP `clientInfo` remains
+  self-reported attribution — never auth, RBAC or tenant identity.
+- **Managed generic native tool definitions.** `defineWaitTool`,
+  `defineDownloadTool` and `defineUploadTool` produce ordinary typed
+  `runtimeTools` for MCP and Agent, with stable identity, Zod validation,
+  lifecycle/hooks, cancellation and unified introspection. Existing
+  `mountWait` / `mountDownload` / `mountUpload` remain deliberate raw MCP
+  adapters over the same neutral mechanics.
+- **Managed multimodal view-file definition.** `defineViewFileTool` gives
+  protected MCP and Agent surfaces one Zod-first operation with lifecycle,
+  hooks, cancellation and default multimodal presenters. Managed and raw
+  `mountViewFile` paths now share one SSRF/path-safe batch core, one total 20 MB
+  budget and honest per-item failures; the raw mount keeps its content-only MCP
+  envelope.
+- **Pathless runtime tools on CLI.** `createCli({ runtimeTools })` executes
+  definitions that explicitly include `'CLI'` through the same canonical tool
+  runner, context, lifecycle/hooks, validation, collisions and introspection as
+  contract commands. The undefined runtime exposure default remains MCP+Agent,
+  and a runtime-only CLI needs neither MCP nor AI peers.
+- **Typed CLI-only native commands.** `defineCliCommand` composes executable
+  management commands with managed commands in one help/router/error boundary
+  without inventing tool identity or exposing them to MCP/Agent. The new
+  `resolveAuth` and dynamic surface factories keep version, selected native
+  commands and static help credential-free and lazily construct managed state.
+- **Explicit stdio MCP signal lifecycle.** `bindStdioProcessSignals` owns one
+  close-only `SIGINT`/`SIGTERM` chain, listener cleanup, phased error reporting
+  and truthful default-disposition escalation on a later signal. It installs
+  nothing implicitly, invents no force/grace result and never calls
+  `process.exit()`.
+
 ## [0.53.2] — 2026-08-19
 
 ### Fixed

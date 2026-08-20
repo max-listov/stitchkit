@@ -123,8 +123,11 @@ from the root `stitchkit`.
 | `HttpMethod` | _type_ | `GET \| HEAD \| POST \| PUT \| PATCH \| DELETE` |
 | `Transport` | _type_ | `HTTP \| MCP \| AGENT \| CLI` |
 | `TransportSource` | _type_ | `http \| mcp \| agent \| cli` — the value of `ctx.source` |
-| `RuntimeContext` | _type_ | the loose context seen by transport and hooks |
-| `HandlerContext` | _type_ | the typed context seen by a handler |
+| `RuntimeContext` | _type_ | the loose context seen by transport and hooks, including optional typed `mcp` metadata |
+| `HandlerContext` | _type_ | the typed context seen by a handler, including optional typed `mcp` metadata |
+| `McpCallContext` | _type_ | validated metadata for the active managed MCP call (`era`, method, tool, client and multi-round fields) |
+| `McpClientInfo` | _type_ | self-reported MCP host name/version; attribution only, never application identity |
+| `McpRoundOutcome` | _type_ | managed multi-round attempt outcome |
 | `EndpointHandlerContext` | _type_ | one endpoint handler's fully inferred params, input, files and runtime context |
 | `EndpointFn` | _type_ | the call signature of one client method |
 | `TypedClient` | _type_ | the full typed client for a contract |
@@ -455,14 +458,16 @@ payload.
 | `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
 | `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
 | `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
+| `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
 | `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
 | `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
-| `defineRuntimeTool` | function | define one validated pathless operation for MCP, Agent or both — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
+| `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
+| `defineCliCommand` | function | define one typed CLI-only command with no fake managed-tool identity — [guide](../guide/cli.md#native-binary-commands) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
@@ -476,6 +481,10 @@ payload.
 | `McpLegacyPolicy` | _type_ | `'serve' \| 'reject'` protocol-era compatibility policy |
 | `McpStdioHandle` | _type_ | closeable official stdio transport handle |
 | `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
+| `StdioCloseTarget` | _type_ | minimal close-only target accepted by `bindStdioProcessSignals` |
+| `StdioProcessSignalsOptions` | _type_ | signal source, close callbacks and phased error reporting |
+| `StdioProcessSignalsBinding` | _type_ | close-only signal binding with observed `promise` and listener `close()` |
+| `StdioProcessSignalsErrorPhase` | _type_ | `'prepare' \| 'close' \| 'complete'` reporting phase |
 | `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
 | `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
 | `McpServer` | _type_ | official split-SDK server instance accepted by raw extension points |
@@ -513,10 +522,16 @@ payload.
 | `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
 | `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
-| `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT'` |
+| `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT' \| 'CLI'`; omission still means MCP+Agent only |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli` |
+| `CliSurfaceSource` | _type_ | static managed surface or identity-dependent surface factory for `createCli` |
+| `CliCommandDefinition` | _type_ | Zod-first CLI-only command union |
+| `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
+| `CliCommandDefinitionWithOutput` | _type_ | native command with declared output schema and validated handler result |
+| `CliCommandDefinitionWithoutOutput` | _type_ | void native command with no output schema |
+| `CliCommandContext` | _type_ | parsed native command input, global options and injected writers |
 | `CliWaitConfig` | _type_ | `--wait` polling config |
 | `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
@@ -533,9 +548,15 @@ payload.
 | `ToolInvokerConfig` | _type_ | compile-time exposure, extension and presentation options |
 | `ToolInvocationOptions` | _type_ | per-call source, context, lifecycle, hooks and output-strip reporter |
 | `ToolInvokerTransport` | _type_ | invoker exposure policy: `MCP \| AGENT \| CLI` |
-| `ToolCallContext` | _type_ | the context every tool hook receives — `{ source }` plus whatever the mount's `context` added |
-| `ViewFileOptions` | _type_ | options for `mountViewFile` |
+| `ToolCallContext` | _type_ | the context every tool hook receives — `{ source, mcp? }` plus whatever the mount's `context` added |
+| `ViewFileOptions` | _type_ | shared URL/local-sandbox policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
+| `ViewFileOutput` | _type_ | neutral managed batch result with multimodal `content` and per-item `errors` |
+| `ViewFileInputSchema` | constant | fixed one-or-many media path/URL input schema |
+| `ViewFileOutputSchema` | constant | Zod schema for the neutral managed view-file batch result |
+| `ViewFileErrorSchema` | constant | Zod schema for one structured per-item view failure |
 | `McpAnnotations` | _type_ | MCP annotations on a media result |
+| `McpAnnotationsSchema` | constant | Zod schema for MCP media annotations |
+| `McpMediaContentSchema` | constant | Zod schema for text/image/audio media content |
 | `CollectToolsConfig` | _type_ | options for `collectTools` |
 | `findUntypedProperties` | function | every property in a JSON Schema with no `type`/`enum`/`$ref` — what a model is shown and cannot obey ([guide](../guide/mcp-and-agents.md)) |
 | `UntypedProperty` | _type_ | one such property — `{ path, description? }` |
@@ -548,13 +569,28 @@ payload.
 
 ### Native tools
 
-Generic host-supplied tools mounted onto a server — not derived from a contract.
+Generic host-supplied operations — managed definitions for the canonical
+runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `mountDownload` | function | a "download a URL to disk" tool (SSRF-guarded, size-capped) |
-| `mountUpload` | function | an "upload a local file" tool |
-| `mountWait` | function | a generic `--wait`-style polling tool |
+| `defineDownloadTool` | function | define a guarded, size-capped managed download for MCP/Agent `runtimeTools` |
+| `defineUploadTool` | function | define a typed managed local-file upload for MCP/Agent `runtimeTools` |
+| `defineWaitTool` | function | define a typed, cancellable managed polling operation for MCP/Agent `runtimeTools` |
+| `defineViewFileTool` | function | define a guarded, batch-capped managed multimodal operation for MCP/Agent `runtimeTools` |
+| `DefineDownloadToolConfig` | _type_ | Zod input, stable identity, URL resolver, storage policy and presenters for `defineDownloadTool` |
+| `DefineUploadToolConfig` | _type_ | stable identity, typed output, upload callback and presenters for `defineUploadTool` |
+| `DefineWaitToolConfig` | _type_ | Zod input/state, identity, poll/done/timeout policy and presenters for `defineWaitTool` |
+| `DefineViewFileToolConfig` | _type_ | identity, media security policy and optional presenters for `defineViewFileTool` |
+| `ManagedNativeToolConfig` | _type_ | shared name, description, identity, exposure and annotations for managed native factories |
+| `NativeToolIdentity` | _type_ | pathless service/action/scope/meta identity; semantic method is factory-owned |
+| `ManagedWaitRender` | _type_ | optional managed wait terminal text and failure classification |
+| `DownloadResultSchema` | constant | Zod schema for a saved download's path, byte size and MIME type |
+| `DownloadResult` | _type_ | validated output of `defineDownloadTool` |
+| `UploadToolInputSchema` | constant | fixed `{ path: string }` input schema for `defineUploadTool` |
+| `mountDownload` | function | raw MCP "download a URL to disk" adapter (SSRF-guarded, size-capped) |
+| `mountUpload` | function | raw MCP "upload a local file" adapter |
+| `mountWait` | function | raw MCP generic `--wait`-style polling adapter |
 | `DownloadToolConfig` | _type_ | config for `mountDownload` |
 | `UploadToolConfig` | _type_ | config for `mountUpload` |
 | `WaitToolConfig` | _type_ | config for `mountWait` |
@@ -659,17 +695,25 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 
 ## `stitchkit/cli`
 
-Server-only. Turns contracts into a command-line program — the fourth transport.
-Light by design: needs neither the MCP SDK nor the `ai` peer.
+Server-only. Composes contract/runtime managed operations and CLI-only native
+commands into one command-line program. Light by design: needs neither the MCP
+SDK nor the `ai` peer.
 
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createCli` | function | build and run a CLI from contracts — [guide](../guide/cli.md) |
+| `defineCliCommand` | function | define one Zod-typed CLI-only executable command |
 | `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
 | `emitResult` | function | write a `ToolResult` to stdout/stderr + exit code (advanced) |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
 | `CliConfig` | _type_ | config for `createCli` |
+| `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
+| `CliCommandDefinition` | _type_ | native command definition union |
+| `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
+| `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output |
+| `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
+| `CliCommandContext` | _type_ | parsed input, global options and stdout/stderr writers |
 | `CliRunOptions` | _type_ | parsed global flags (`--json`, `--wait`, …) |
 | `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
 | `CliWaitConfig` | _type_ | per-command `--wait` polling config |

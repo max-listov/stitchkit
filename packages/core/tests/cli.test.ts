@@ -15,8 +15,12 @@ import { isRecord } from '../src/internal/typed';
 import { implement } from '../src/server';
 import { type CliConfig, createCli } from '../src/tools/cli';
 import { CliArgumentError, parseCliArgs } from '../src/tools/cli-args';
+import { defineCliCommand } from '../src/tools/cli-command';
+import { listToolNames } from '../src/tools/list-names';
 import { collectTools } from '../src/tools/mount';
+import { defineRuntimeTool } from '../src/tools/runtime-tool';
 import { createToolkit } from '../src/tools/toolkit';
+import { summarizeTransports } from '../src/tools/transports';
 
 let jobPolls = 0;
 
@@ -338,6 +342,200 @@ describe('createCli — opt-in exposure', () => {
     expect(names).toContain('list_widgets');
     expect(names).toContain('create_widget');
     expect(names).not.toContain('do_default'); // default expose = MCP+AGENT
+  });
+});
+
+describe('createCli — pathless runtime tools', () => {
+  test('an explicit CLI definition shares help, validation, lifecycle and hooks', async () => {
+    const phases: string[] = [];
+    const definition = defineRuntimeTool({
+      name: 'inspect_local',
+      description: 'Inspect a local value',
+      identity: { serviceName: 'local', action: 'inspect', method: 'GET' },
+      input: z.object({ path: z.string() }),
+      output: z.object({ path: z.string(), source: z.literal('cli') }),
+      transports: ['CLI'],
+      handler: ({ input, source }): { path: string; source: 'cli' } => {
+        expect(source).toBe('cli');
+        return { path: input.path, source: 'cli' };
+      },
+    });
+    expect(listToolNames({ runtimeTools: [definition] })).toEqual([
+      {
+        kind: 'runtime',
+        name: 'inspect_local',
+        service: 'local',
+        method: 'inspect',
+        transports: ['CLI'],
+      },
+    ]);
+    expect(summarizeTransports({ runtimeTools: [definition] }).totals.CLI).toBe(1);
+    const help = await run(['--help'], { runtimeTools: [definition] });
+    expect(help.out).toContain('inspect_local');
+
+    const called = await run(['inspect_local', '--path', './asset.png', '--json'], {
+      runtimeTools: [definition],
+      lifecycle: {
+        beforeHandle: (_context, endpoint) => {
+          phases.push(`lifecycle:${endpoint.serviceName}:${endpoint.key}`);
+        },
+      },
+      hooks: {
+        afterToolCall: ({ result }) => {
+          phases.push(`hook:${result.ok}`);
+        },
+      },
+    });
+    expect(called.code).toBe(0);
+    expect(JSON.parse(called.out)).toEqual({ path: './asset.png', source: 'cli' });
+    expect(phases).toEqual(['lifecycle:local:inspect', 'hook:true']);
+  });
+
+  test('undefined exposure stays MCP+Agent-only and a runtime-only CLI works', async () => {
+    const hidden = defineRuntimeTool({
+      name: 'hidden_runtime',
+      description: 'Not a CLI command by default',
+      identity: { serviceName: 'local', action: 'hidden', method: 'GET' },
+      input: z.object({}),
+      handler: () => undefined,
+    });
+    const visible = defineRuntimeTool({
+      name: 'runtime_only',
+      description: 'Runtime-only CLI',
+      identity: { serviceName: 'local', action: 'only', method: 'GET' },
+      input: z.object({ value: z.string() }),
+      output: z.object({ value: z.string() }),
+      transports: ['CLI'],
+      handler: ({ input }) => input,
+    });
+    const result = await run(['runtime_only', 'yes', '--json'], {
+      services: [],
+      runtimeTools: [hidden, visible],
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ value: 'yes' });
+    const help = await run(['--help'], {
+      services: [],
+      runtimeTools: [hidden, visible],
+    });
+    expect(help.out).toContain('runtime_only');
+    expect(help.out).not.toContain('hidden_runtime');
+  });
+
+  test('a contract/runtime collision fails before dispatch', async () => {
+    const collision = defineRuntimeTool({
+      name: 'list_widgets',
+      description: 'Collision',
+      identity: { serviceName: 'runtime', action: 'list', method: 'GET' },
+      input: z.object({}),
+      transports: ['CLI'],
+      handler: () => undefined,
+    });
+    await expect(run(['list_widgets'], { runtimeTools: [collision] })).rejects.toThrow(
+      'Duplicate CLI command "list_widgets" across mounted operations',
+    );
+  });
+});
+
+describe('createCli — native command composition', () => {
+  const doctor = defineCliCommand({
+    name: 'doctor',
+    description: 'Inspect this executable',
+    input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
+    output: z.object({ target: z.string(), verbose: z.boolean() }),
+    handler: ({ input, options, stderr }) => {
+      if (!options.quiet) stderr('checking\n');
+      return input;
+    },
+  });
+
+  test('lists, documents, validates and emits one typed native command', async () => {
+    const top = await run(['--help'], { commands: [doctor] });
+    expect(top.out).toContain('doctor');
+    expect(top.out).toContain('list_widgets');
+
+    const help = await run(['doctor', '--help', '--mistyped'], { commands: [doctor] });
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('--target');
+
+    const called = await run(['doctor', 'runtime', '--verbose', '--json'], {
+      commands: [doctor],
+    });
+    expect(called.code).toBe(0);
+    expect(JSON.parse(called.out)).toEqual({ target: 'runtime', verbose: true });
+    expect(called.err).toBe('checking\n');
+
+    const invalid = await run(['doctor'], { commands: [doctor] });
+    expect(invalid.code).toBe(1);
+    expect(JSON.parse(invalid.err).error).toBe('VALIDATION_ERROR');
+  });
+
+  test('dispatches native commands before auth, services, context and runtime factories', async () => {
+    const calls: string[] = [];
+    const result = await run(['doctor', 'local', '--quiet', '--json'], {
+      commands: [doctor],
+      services: () => {
+        calls.push('services');
+        return [service];
+      },
+      runtimeTools: () => {
+        calls.push('runtimeTools');
+        return [];
+      },
+      resolveAuth: () => {
+        calls.push('auth');
+        return { userId: 'u1' };
+      },
+      context: () => {
+        calls.push('context');
+        return {};
+      },
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out).target).toBe('local');
+    expect(calls).toEqual([]);
+  });
+
+  test('version and static top-level help stay credential-free', async () => {
+    let authCalls = 0;
+    const config = {
+      commands: [doctor],
+      resolveAuth: () => {
+        authCalls += 1;
+        return { userId: 'u1' };
+      },
+    };
+
+    const version = await run(['--version'], config);
+    expect(version.code).toBe(0);
+    expect(version.out).toContain('widget 1.0.0');
+
+    const help = await run(['--help'], config);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('doctor');
+    expect(authCalls).toBe(0);
+  });
+
+  test('maps a native throw and rejects cross-source name collisions', async () => {
+    const failing = defineCliCommand({
+      name: 'native_fail',
+      description: 'Fail locally',
+      input: z.object({}),
+      handler: () => notFound('missing local state'),
+    });
+    const failed = await run(['native_fail'], { commands: [failing] });
+    expect(failed.code).toBe(4);
+    expect(JSON.parse(failed.err).error).toBe('NOT_FOUND');
+
+    const collision = defineCliCommand({
+      name: 'list_widgets',
+      description: 'Collision',
+      input: z.object({}),
+      handler: () => undefined,
+    });
+    await expect(run(['--help'], { commands: [collision] })).rejects.toThrow(
+      'Duplicate CLI command "list_widgets" across mounted operations',
+    );
   });
 });
 

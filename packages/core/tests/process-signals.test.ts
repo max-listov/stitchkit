@@ -6,6 +6,10 @@ import {
   type SignalSource,
 } from '../src/server/process-signals';
 import type { ShutdownOptions, ShutdownResult } from '../src/server/shutdown';
+import {
+  bindStdioProcessSignals,
+  type StdioProcessSignalsErrorPhase,
+} from '../src/tools/mcp-stdio-signals';
 
 const cleanResult: ShutdownResult = {
   outcome: 'clean',
@@ -456,12 +460,146 @@ describe('bindProcessSignals', () => {
   });
 
   test('never calls process.exit — the escalation path re-raises instead', async () => {
-    const source = await Bun.file(
+    const source = `${await Bun.file(
       `${import.meta.dir}/../src/server/process-signals.ts`,
-    ).text();
+    ).text()}\n${await Bun.file(
+      `${import.meta.dir}/../src/server/process-signal-common.ts`,
+    ).text()}`;
     expect(source).not.toInclude('process.exit(');
     // The only way this module can end a process is by handing the signal back
     // to its default disposition.
     expect(source).toInclude('process.kill(process.pid, signal)');
+  });
+});
+
+function createCloseHandle() {
+  let calls = 0;
+  let release: () => void = () => undefined;
+  let fail: (error: unknown) => void = () => undefined;
+  let markCalled: () => void = () => undefined;
+  const called = new Promise<void>((resolve) => {
+    markCalled = resolve;
+  });
+  const handle = {
+    close: () => {
+      calls += 1;
+      markCalled();
+      return new Promise<void>((resolve, reject) => {
+        release = resolve;
+        fail = reject;
+      });
+    },
+  };
+  return {
+    handle,
+    called,
+    calls: () => calls,
+    release: async () => {
+      await called;
+      release();
+    },
+    fail: async (error: unknown) => {
+      await called;
+      fail(error);
+    },
+  };
+}
+
+describe('bindStdioProcessSignals', () => {
+  test('one signal closes exactly once and the promise waits for physical close completion', async () => {
+    const { source, send, listenerCount } = createSource();
+    const close = createCloseHandle();
+    const phases: string[] = [];
+    const binding = bindStdioProcessSignals(close.handle, {
+      signalSource: source,
+      onClose: (signal) => void phases.push(`prepare:${signal}`),
+      onComplete: () => void phases.push('complete'),
+    });
+
+    send('SIGTERM');
+    await close.called;
+    expect(close.calls()).toBe(1);
+    expect(phases).toEqual(['prepare:SIGTERM']);
+
+    let settled = false;
+    void binding.promise.then(() => {
+      settled = true;
+    });
+    await nextTurn();
+    expect(settled).toBe(false);
+
+    await close.release();
+    await expect(binding.promise).resolves.toBeUndefined();
+    await nextTurn();
+    expect(phases).toEqual(['prepare:SIGTERM', 'complete']);
+    expect(listenerCount('SIGTERM')).toBe(0);
+  });
+
+  test('a later signal escalates instead of pretending close is forceable', async () => {
+    const { source, send, raised, listenerCount } = createSource();
+    const close = createCloseHandle();
+    const repeated: ProcessSignalName[] = [];
+    const binding = bindStdioProcessSignals(close.handle, {
+      signalSource: source,
+      onRepeatedSignal: (signal) => repeated.push(signal),
+    });
+
+    send('SIGINT');
+    await close.called;
+    await nextTurn();
+    send('SIGTERM');
+
+    expect(close.calls()).toBe(1);
+    expect(repeated).toEqual(['SIGTERM']);
+    expect(raised).toEqual(['SIGTERM']);
+    expect(listenerCount('SIGINT')).toBe(0);
+    expect(listenerCount('SIGTERM')).toBe(0);
+
+    await close.release();
+    await binding.promise;
+  });
+
+  test('reports prepare/close/complete failures without an unhandled rejection', async () => {
+    const { source, send } = createSource();
+    const close = createCloseHandle();
+    const seen: StdioProcessSignalsErrorPhase[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const binding = bindStdioProcessSignals(close.handle, {
+        signalSource: source,
+        onClose: () => {
+          throw new Error('pre-close failed');
+        },
+        onError: (phase) => void seen.push(phase),
+      });
+      send('SIGTERM');
+      await close.fail(new Error('stdio close failed'));
+      await expect(binding.promise).rejects.toThrow('stdio close failed');
+      await nextTurn();
+      expect(seen).toEqual(['prepare', 'close']);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  test('idle close is idempotent, releases the handle and settles the promise', async () => {
+    const { source, listenerCount } = createSource();
+    const close = createCloseHandle();
+    const binding = bindStdioProcessSignals(close.handle, { signalSource: source });
+    expect(() => bindStdioProcessSignals(close.handle, { signalSource: source })).toThrow(
+      'this stdio handle is already bound',
+    );
+
+    binding.close();
+    binding.close();
+    await expect(binding.promise).resolves.toBeUndefined();
+    expect(listenerCount('SIGINT')).toBe(0);
+    expect(listenerCount('SIGTERM')).toBe(0);
+    expect(() =>
+      bindStdioProcessSignals(close.handle, { signalSource: source }),
+    ).not.toThrow();
   });
 });

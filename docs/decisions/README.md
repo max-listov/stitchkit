@@ -94,6 +94,11 @@ These records were consolidated from the project's internal design notes on
 | [0077](0077-error-definition-carries-its-message.md) | An error definition carries its default message | Accepted — extends 0058 |
 | [0078](0078-scope-map-derived-from-the-auth-hook.md) | The scope map is derived from the auth hook | Accepted — extends 0075 |
 | [0079](0079-typed-handshake-identity-gate.md) | Typed handshake identity gate | Accepted |
+| [0080](0080-mcp-call-metadata-is-typed-context.md) | MCP call metadata is typed context | Accepted — extends 0003, 0045 and 0068 |
+| [0081](0081-generic-native-operations-use-managed-definitions.md) | Generic native operations use managed definitions | Accepted — extends 0019, 0055 and 0057 |
+| [0082](0082-view-file-has-one-managed-batch-operation.md) | `view_file` has one managed batch operation | Accepted — supersedes the raw-only view-file clause of 0081 |
+| [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059 |
+| [0084](0084-stdio-signals-are-close-only.md) | Stdio process signals are close-only | Accepted — extends 0076 without fake force semantics |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

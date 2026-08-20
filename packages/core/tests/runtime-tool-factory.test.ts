@@ -62,6 +62,18 @@ function compileTimeFactoryChecks(): void {
       void userId.missing;
     },
   });
+
+  factory.define({
+    name: 'typed_mcp_context',
+    action: 'typedMcpContext',
+    method: 'GET',
+    description: 'Read typed MCP metadata',
+    input: z.object({}),
+    handler: ({ mcp }) => {
+      const clientName: string | undefined = mcp?.clientInfo?.name;
+      void clientName;
+    },
+  });
 }
 void compileTimeFactoryChecks;
 

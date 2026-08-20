@@ -2,6 +2,7 @@ import type { ZodType, z } from 'zod';
 import {
   AppError,
   isStitchErrorCode,
+  type McpCallContext,
   type RuntimeContext,
   STITCH_ERROR_STATUS,
   type TransportSource,
@@ -30,6 +31,8 @@ const normalizedToolErrors = new WeakMap<ToolFailure, AppError>();
 
 export interface ToolCallContext {
   source: TransportSource;
+  /** Validated metadata for an MCP call; absent on every other transport. */
+  mcp?: McpCallContext;
   [key: string]: unknown;
 }
 
@@ -358,7 +361,14 @@ async function runToolMethod(
     }
     try {
       const resolved = await extension.resolve({ ...rawArgs, ...parsed.data });
-      callContext = { ...context, ...resolved, source: context.source };
+      callContext = {
+        ...context,
+        ...resolved,
+        // Transport-owned call identity always wins over a model-resolved
+        // extension, just like source/params/input below.
+        source: context.source,
+        ...(context.mcp !== undefined && { mcp: context.mcp }),
+      };
       hookContext = callContext;
       callArgs = Object.fromEntries(
         Object.entries(rawArgs).filter(([key]) => !extensionKeys.has(key)),

@@ -6,6 +6,7 @@ import type {
   EndpointToolAnnotations,
   EndpointUiMeta,
   HttpMethod,
+  McpCallContext,
   RuntimeContext,
 } from '../contract';
 import type { OperationIdentity } from '../server/types';
@@ -14,7 +15,7 @@ import type { MountableTool } from './mount';
 import { assertToolName } from './names';
 import { buildToolPresentationSchema } from './presentation';
 
-export type RuntimeToolTransport = 'MCP' | 'AGENT';
+export type RuntimeToolTransport = 'MCP' | 'AGENT' | 'CLI';
 
 export interface RuntimeToolIdentity {
   serviceName: string;
@@ -51,10 +52,12 @@ export type RuntimeToolFactoryHandlerContext<
   TContext extends ZodObject,
   TInput extends ZodObject,
   TMcp extends EndpointMcpPolicy | undefined = undefined,
-> = Omit<z.output<TContext>, 'input' | 'params'> & {
-  params: undefined;
-  input: z.output<TInput>;
-} & RuntimeMcpInput<TMcp>;
+> = Omit<RuntimeContext, 'input' | 'params' | 'mcp'> &
+  Omit<z.output<TContext>, 'input' | 'params' | 'mcp'> & {
+    params: undefined;
+    input: z.output<TInput>;
+    mcp?: McpCallContext;
+  } & RuntimeMcpInput<TMcp>;
 
 /** MCP-owned fields; validation and error state are always supplied by Stitchkit. */
 export type RuntimeMcpPresentation = Omit<CallToolResult, 'structuredContent' | 'isError'> & {
@@ -79,7 +82,7 @@ export interface RuntimeToolDefinitionBase<
   description: string;
   identity: RuntimeToolIdentity;
   input: TInput;
-  /** Default: both MCP and AGENT. */
+  /** Default: MCP and AGENT. CLI is always explicit opt-in. */
   transports?: readonly RuntimeToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
@@ -204,6 +207,7 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
       ...parsed,
       params: undefined,
       input: context.input,
+      ...(context.mcp !== undefined && { mcp: context.mcp }),
     };
   }
 
@@ -259,7 +263,8 @@ export function runtimeToolSupports(
   if (definition.transports?.length === 0) {
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
   }
-  return !definition.transports || definition.transports.includes(transport);
+  if (!definition.transports) return transport !== 'CLI';
+  return definition.transports.includes(transport);
 }
 
 export function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {

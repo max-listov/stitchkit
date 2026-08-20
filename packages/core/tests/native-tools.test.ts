@@ -161,6 +161,31 @@ describe('mountDownload', () => {
     await client.close();
   });
 
+  test('an HTTP failure keeps the raw mount error prefix exactly once', async () => {
+    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('unavailable', { status: 503 }),
+    );
+    try {
+      const client = await connectWith((s) =>
+        mountDownload(s, {
+          description: 'download',
+          inputSchema: { url: z.string() },
+          resolveUrl: (args) => (typeof args.url === 'string' ? args.url : null),
+          defaultDir: tmpdir(),
+        }),
+      );
+      const result = await client.callTool({
+        name: 'download',
+        arguments: { url: 'https://93.184.216.34/file.bin' },
+      });
+      expect(isErr(result)).toBe(true);
+      expect(firstText(result)).toBe('Download failed: HTTP 503');
+      await client.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('writes a fetched URL to disk with a content-type extension', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-dl-'));
     const spy = spyOn(globalThis, 'fetch').mockResolvedValue(

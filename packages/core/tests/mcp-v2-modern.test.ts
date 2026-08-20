@@ -558,6 +558,118 @@ describe('MCP 2026-07-28 wire semantics', () => {
     await handler.close();
   });
 
+  test('exposes one typed MCP call context to handlers, lifecycle and hooks', async () => {
+    const phases: Array<{ phase: string; mcp: unknown }> = [];
+    const metadataContract = defineContract(
+      { prefix: 'metadata', scope: 'public' },
+      {
+        inspect: {
+          method: 'GET',
+          path: '/inspect',
+          desc: 'Inspect typed MCP call metadata',
+          expose: ['MCP'],
+          output: z.object({ client: z.string(), toolName: z.string() }),
+        },
+      },
+    );
+    const metadataService = implement(metadataContract, {
+      inspect: (context) => {
+        const client: string | undefined = context.mcp?.clientInfo?.name;
+        phases.push({ phase: 'handler', mcp: context.mcp });
+        return {
+          client: client ?? 'missing',
+          toolName: context.mcp?.toolName ?? 'missing',
+        };
+      },
+    });
+    const runtimeMetadata = defineRuntimeTool({
+      name: 'runtime_metadata',
+      description: 'Inspect runtime-tool MCP metadata',
+      identity: { serviceName: 'metadata', action: 'runtime', method: 'GET' },
+      input: z.object({}),
+      output: z.object({ client: z.string() }),
+      handler: (context) => {
+        const client: string | undefined = context.mcp?.clientInfo?.name;
+        return { client: client ?? 'missing' };
+      },
+    });
+    const handler = createMcpHandler({
+      serverInfo: { name: 'modern-test', version: '1' },
+      auth: () => ({}),
+      services: [metadataService],
+      runtimeTools: [runtimeMetadata],
+      // Application context cannot shadow transport-owned call metadata.
+      context: () => ({
+        mcp: {
+          era: 'legacy',
+          method: 'spoofed',
+          toolName: 'spoofed',
+          clientInfo: { name: 'spoofed', version: '0' },
+        },
+      }),
+      lifecycle: {
+        beforeHandle: (context) => {
+          phases.push({ phase: 'lifecycle', mcp: context.mcp });
+        },
+      },
+      hooks: {
+        beforeToolCall: ({ context }) => {
+          phases.push({ phase: 'before-hook', mcp: context.mcp });
+        },
+        afterToolCall: ({ context }) => {
+          phases.push({ phase: 'after-hook', mcp: context.mcp });
+        },
+      },
+    });
+
+    const contractResponse = await handler.fetch(
+      modernRequest(
+        'tools/call',
+        { name: 'inspect_metadata', arguments: {} },
+        { 'mcp-name': 'inspect_metadata' },
+      ),
+    );
+    expect(contractResponse.status).toBe(200);
+    expect(
+      z
+        .object({ structuredContent: z.object({ client: z.string(), toolName: z.string() }) })
+        .parse((await json(contractResponse)).result).structuredContent,
+    ).toEqual({ client: 'stitchkit-test', toolName: 'inspect_metadata' });
+
+    const runtimeResponse = await handler.fetch(
+      modernRequest(
+        'tools/call',
+        { name: 'runtime_metadata', arguments: {} },
+        { 'mcp-name': 'runtime_metadata' },
+      ),
+    );
+    expect(runtimeResponse.status).toBe(200);
+    expect(
+      z
+        .object({ structuredContent: z.object({ client: z.string() }) })
+        .parse((await json(runtimeResponse)).result).structuredContent,
+    ).toEqual({ client: 'stitchkit-test' });
+
+    expect(phases.map(({ phase }) => phase)).toEqual([
+      'before-hook',
+      'lifecycle',
+      'handler',
+      'after-hook',
+      'before-hook',
+      'lifecycle',
+      'after-hook',
+    ]);
+    for (const { mcp } of phases) {
+      expect(mcp).toMatchObject({
+        era: 'modern',
+        method: 'tools/call',
+        protocolVersion: MODERN,
+        clientInfo: { name: 'stitchkit-test', version: '1' },
+      });
+    }
+    await handler.close();
+  });
+
   test('continues MCP trace metadata through handler, hooks and audit', async () => {
     const observed: Array<{ phase: string; traceId?: string }> = [];
     const events: RequestEvent[] = [];

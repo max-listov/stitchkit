@@ -81,8 +81,6 @@ export function collectToolSurface({
     }
   }
 
-  if (transport === 'CLI') return entries;
-
   for (const definition of surface.runtimeTools ?? []) {
     if (!runtimeToolSupports(definition, transport)) continue;
     append({

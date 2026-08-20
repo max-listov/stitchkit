@@ -1,10 +1,12 @@
 # CLI
 
-The same contract that drives the HTTP API, MCP tools and agent tools also
-drives a command-line program. `createCli` turns contract methods into commands
-— `myapp generate "a fox" --wait`, `myapp models list --json | jq …` — run
-through the very same validation, auth gate and error model as every other
-surface (HTTP ≡ MCP ≡ agent ≡ CLI, [ADR 0014](../decisions/0014-tool-http-parity.md)).
+The same contract and managed runtime tools that drive HTTP, MCP and agent
+surfaces can also drive a command-line program. `createCli` composes their
+commands with explicitly local binary commands in one router and help tree.
+Managed commands — `myapp generate "a fox" --wait`,
+`myapp models list --json | jq …` — run through the same validation, auth gate
+and error model as every other managed surface (HTTP ≡ MCP ≡ agent ≡ CLI,
+[ADR 0014](../decisions/0014-tool-http-parity.md)).
 
 It exists for what the other three surfaces cannot do: a generation kicked off
 with `Bash(run_in_background)` that notifies on exit, a `SKILL.md` that shells
@@ -25,8 +27,10 @@ the CLI never silently turns your existing API tools into shell commands.
 ```
 
 A fresh contract shows **zero** CLI commands until methods opt in — that is the
-design, not a bug. The command name is the tool name — `toolName` if set, else a
-verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
+design, not a bug. A pathless runtime definition follows the same rule: it must
+explicitly include `'CLI'` in `transports`; the undefined default remains
+`['MCP', 'AGENT']`. The command name is the tool name — `toolName` if set, else
+a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
 `get_widget`), not a literal `prefix_key`.
 
 ## A minimal CLI
@@ -44,7 +48,7 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   services: [catalogService, generateService],
-  auth: process.env.MYAPP_TOKEN,            // resolved ONCE, like a stdio MCP server
+  resolveAuth: () => resolveToken(process.env.MYAPP_TOKEN), // lazy, at most once
 })
 ```
 
@@ -55,6 +59,81 @@ await createCli({
 
 `stitchkit/cli` pulls in neither the MCP SDK nor `ai`, so a CLI binary needs no
 MCP/agent peer dependencies.
+
+## Pathless managed commands
+
+Use `runtimeTools` when an application operation has no HTTP path but must keep
+the canonical operation identity, context, lifecycle/RBAC, hooks and
+introspection. It can share one definition with MCP and Agent while opting into
+CLI explicitly:
+
+```ts
+import { createCli } from 'stitchkit/cli'
+import { defineUploadTool } from 'stitchkit/tools'
+import { z } from 'zod'
+
+const uploadInput = defineUploadTool({
+  name: 'upload_input',
+  description: 'Upload one local input file',
+  identity: { serviceName: 'jobs', action: 'uploadInput', scope: 'user' },
+  output: z.object({ url: z.url() }),
+  transports: ['MCP', 'AGENT', 'CLI'],
+  upload: (path, context) => uploadFile(path, context.signal),
+})
+
+await createCli({
+  name: 'myapp',
+  version: '1.0.0',
+  runtimeTools: [uploadInput],
+})
+```
+
+`services` and `runtimeTools` may each be static arrays or factories receiving
+the resolved identity. A runtime-only CLI is valid; `stitchkit/cli` still pulls
+in neither MCP nor AI peers. Contract/runtime name collisions and reserved
+option fields fail through the same checks before managed dispatch.
+
+## Native binary commands
+
+Login, self-update, diagnostics, integration setup and shell completion belong
+to the executable, not to HTTP/MCP/Agent. Define them with `defineCliCommand`:
+
+```ts
+import { createCli, defineCliCommand } from 'stitchkit/cli'
+import { z } from 'zod'
+
+const login = defineCliCommand({
+  name: 'login',
+  description: 'Store credentials for later managed commands',
+  input: z.object({ token: z.string() }),
+  output: z.object({ configured: z.boolean() }),
+  handler: async ({ input }) => {
+    await saveToken(input.token)
+    return { configured: true }
+  },
+})
+
+await createCli({
+  name: 'myapp',
+  version: '1.0.0',
+  commands: [login],
+  resolveAuth: loadStoredIdentity,
+  services: (identity) => createRemoteServices(identity),
+})
+```
+
+Native commands receive only typed `input`, parsed global `options` and the
+configured stdout/stderr writers. They reuse help, argv/stdin parsing,
+validation, dry-run, error envelopes and exit mapping, but deliberately have no
+fake service/action/scope/method identity, lifecycle or tool hooks and never
+appear in MCP/Agent manifests.
+
+`--version`, a selected native command and its command help run before
+`resolveAuth`, services, context or runtime-tool factories. Top-level help is
+also credential-free when managed surfaces are static. A dynamic factory must
+resolve identity to discover its command names; its collisions are checked at
+that resolution boundary. If eager global collision proof matters, keep the
+surface static.
 
 ## Calling commands
 
@@ -140,7 +219,7 @@ const authHook = createAuthHook({ /* resolve, resolveFromContext, rules */ })
 await createCli({
   name: 'myapp',
   version: '1.0.0',
-  auth: await resolveIdentityFromToken(process.env.MYAPP_TOKEN),
+  resolveAuth: () => resolveIdentityFromToken(process.env.MYAPP_TOKEN),
   context: (identity) => ({ user: identity }),   // resolveFromContext reads this
   lifecycle: { beforeHandle: authHook },          // same policy; HTTP wires it as authorize
   services,
@@ -172,8 +251,9 @@ await tools.createCli({
 })
 ```
 
-## Not in v1
+## Remaining boundary
 
-File-upload (`multipart`) endpoints are CLI-invisible, the same as on MCP /
-agent — a dedicated upload command (auto-uploading local paths) is future work.
-Streaming (SSE) output is not yet piped to stdout.
+File-upload (`multipart`) contract endpoints remain CLI-invisible, the same as
+on MCP/Agent: their wire body is not a JSON tool form. Model file-oriented
+application behavior as a managed pathless command, or binary-only behavior as
+a native command. Streaming (SSE) output is not yet piped to stdout.

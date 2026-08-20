@@ -4,7 +4,7 @@ description: Deterministic discovery, routing metadata, caching and capability b
 type: architecture
 status: active
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-20
 ---
 
 # MCP protocol semantics
@@ -17,7 +17,17 @@ order across HTTP and stdio. Tool manifests preserve mount order;
 consumer-owned. Modern
 `2026-07-28` requests are validated by the SDK before the Stitchkit runner.
 Negotiated era and validated MCP request metadata are projected into
-`RequestEvent.mcp`; routing headers are never treated as application identity.
+both `RequestEvent.mcp` and the typed per-call `context.mcp` seen by managed
+handlers, lifecycle and hooks. The host-supplied `clientInfo` is operational
+attribution only; routing headers and client self-description are never treated
+as application identity, authorization or tenant selection.
+
+Generic wait, download, upload and multimodal view-file operations use ordinary runtime-tool
+definitions on the managed path. MCP and Agent therefore share one neutral,
+validated operation plus canonical lifecycle, hooks, cancellation and
+introspection. Their direct `mount*` forms remain explicit raw MCP presentation
+adapters over the same mechanics. View-file batches additionally share one
+total byte budget and retain structured per-item failures beside valid media.
 
 ## Cache policy
 

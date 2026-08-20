@@ -1,10 +1,40 @@
 export type { McpServer } from '@modelcontextprotocol/server';
 export type { OperationIdentity } from './server/types';
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
-export { type CliConfig, createCli } from './tools/cli';
+export { type CliConfig, type CliSurfaceSource, createCli } from './tools/cli';
+export {
+  type CliCommandContext,
+  type CliCommandDefinition,
+  type CliCommandDefinitionBase,
+  type CliCommandDefinitionWithOutput,
+  type CliCommandDefinitionWithoutOutput,
+  defineCliCommand,
+} from './tools/cli-command';
 export type { ExitCodeMap } from './tools/cli-format';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
+export {
+  type DefineDownloadToolConfig,
+  defineDownloadTool,
+} from './tools/define-download-tool';
+export {
+  type DefineUploadToolConfig,
+  defineUploadTool,
+  UploadToolInputSchema,
+} from './tools/define-upload-tool';
+export {
+  type DefineViewFileToolConfig,
+  defineViewFileTool,
+} from './tools/define-view-file-tool';
+export {
+  type DefineWaitToolConfig,
+  defineWaitTool,
+  type ManagedWaitRender,
+} from './tools/define-wait-tool';
+export {
+  type DownloadResult,
+  DownloadResultSchema,
+} from './tools/download-core';
 export type {
   AfterToolCallOptions,
   BeforeToolCallOptions,
@@ -79,6 +109,13 @@ export {
   type StdioMcpServerConfig,
 } from './tools/mcp-stdio';
 export {
+  bindStdioProcessSignals,
+  type StdioCloseTarget,
+  type StdioProcessSignalsBinding,
+  type StdioProcessSignalsErrorPhase,
+  type StdioProcessSignalsOptions,
+} from './tools/mcp-stdio-signals';
+export {
   type CollectToolsConfig,
   collectTools,
   type MountableTool,
@@ -87,6 +124,10 @@ export {
 export { type DownloadToolConfig, mountDownload } from './tools/mount-download';
 export { mountUpload, type UploadToolConfig } from './tools/mount-upload';
 export { mountWait, type WaitToolConfig } from './tools/mount-wait';
+export type {
+  ManagedNativeToolConfig,
+  NativeToolIdentity,
+} from './tools/native-definition';
 export {
   oauthProtectedResourceRoute,
   PROTECTED_RESOURCE_PATH,
@@ -158,8 +199,14 @@ export {
 export { findUntypedProperties, type UntypedProperty } from './tools/untyped-properties';
 export {
   type McpAnnotations,
+  McpAnnotationsSchema,
   type McpMediaContent,
+  McpMediaContentSchema,
   mountViewFile,
   resolveMedia,
+  ViewFileErrorSchema,
+  ViewFileInputSchema,
   type ViewFileOptions,
+  type ViewFileOutput,
+  ViewFileOutputSchema,
 } from './tools/view-file';

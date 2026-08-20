@@ -8,8 +8,30 @@
 const DEFAULT_BACKOFF = [2, 3, 5, 5, 8, 10];
 const DEFAULT_TIMEOUT = 600;
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (action: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      action();
+    };
+    const timer = setTimeout(() => {
+      settle(resolve);
+    }, ms);
+    timer.unref?.();
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      settle(() => reject(signal?.reason ?? new Error('aborted')));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    // Close the check/listen race if the caller aborts between throwIfAborted
+    // above and listener registration.
+    if (signal?.aborted) onAbort();
+  });
+};
 
 export interface PollUntilParams<T> {
   /** Fetch the current state — called once per tick. */
@@ -21,9 +43,11 @@ export interface PollUntilParams<T> {
   /** Max seconds before giving up. Default `600`. */
   timeoutSec?: number;
   /** Injectable sleep for tests. */
-  sleepFn?: (ms: number) => Promise<void>;
+  sleepFn?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Progress callback — `(attempt, elapsedSec)` after each non-terminal poll. */
   onTick?: (attempt: number, elapsedSec: number) => void;
+  /** Optional caller cancellation, checked before/after every poll and during sleep. */
+  signal?: AbortSignal;
 }
 
 export interface PollUntilResult<T> {
@@ -46,7 +70,9 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
   const startedAt = Date.now();
 
   for (let attempt = 0; ; attempt++) {
+    params.signal?.throwIfAborted();
     const state = await params.poll();
+    params.signal?.throwIfAborted();
     if (params.done(state)) return { state, timedOut: false };
 
     const elapsedSec = (Date.now() - startedAt) / 1000;
@@ -54,6 +80,28 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
     if (elapsedSec >= timeoutSec) return { state, timedOut: true };
 
     const waitSec = backoff[Math.min(attempt, backoff.length - 1)] ?? lastBackoff;
-    await sleep(waitSec * 1000);
+    await sleep(waitSec * 1000, params.signal);
   }
+}
+
+/** Typed operation adapter shared by raw MCP and managed runtime wait tools. */
+export interface WaitOperationParams<TInput, TState>
+  extends Omit<PollUntilParams<TState>, 'poll'> {
+  input: TInput;
+  poll: (input: TInput, signal?: AbortSignal) => Promise<TState>;
+}
+
+/** Run one wait operation without owning any MCP/Agent presentation. */
+export function runWaitOperation<TInput, TState>(
+  params: WaitOperationParams<TInput, TState>,
+): Promise<PollUntilResult<TState>> {
+  return pollUntil({
+    poll: () => params.poll(params.input, params.signal),
+    done: params.done,
+    backoff: params.backoff,
+    timeoutSec: params.timeoutSec,
+    sleepFn: params.sleepFn,
+    onTick: params.onTick,
+    signal: params.signal,
+  });
 }

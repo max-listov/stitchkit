@@ -46,16 +46,43 @@ const EXT_MIME: Record<string, string> = {
  * `priority` (0–1) hints how prominently. Same shape as the MCP resource/prompt
  * annotation.
  */
-export interface McpAnnotations {
-  audience?: ('user' | 'assistant')[];
-  priority?: number;
-}
+export const McpAnnotationsSchema = z.object({
+  audience: z.array(z.enum(['user', 'assistant'])).optional(),
+  priority: z.number().optional(),
+});
+
+export type McpAnnotations = z.infer<typeof McpAnnotationsSchema>;
 
 /** An MCP content block — text / image / audio (video cannot be inlined). */
-export type McpMediaContent =
-  | { type: 'text'; text: string }
-  | { type: 'image'; data: string; mimeType: string; annotations?: McpAnnotations }
-  | { type: 'audio'; data: string; mimeType: string; annotations?: McpAnnotations };
+export const McpMediaContentSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({
+    type: z.literal('image'),
+    data: z.string(),
+    mimeType: z.string(),
+    annotations: McpAnnotationsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('audio'),
+    data: z.string(),
+    mimeType: z.string(),
+    annotations: McpAnnotationsSchema.optional(),
+  }),
+]);
+
+export type McpMediaContent = z.infer<typeof McpMediaContentSchema>;
+
+export const ViewFileErrorSchema = z.object({
+  path: z.string(),
+  message: z.string(),
+});
+
+export const ViewFileOutputSchema = z.object({
+  content: z.array(McpMediaContentSchema),
+  errors: z.array(ViewFileErrorSchema),
+});
+
+export type ViewFileOutput = z.infer<typeof ViewFileOutputSchema>;
 
 export interface ViewFileOptions {
   /**
@@ -76,6 +103,10 @@ export interface ViewFileOptions {
   timeoutMs?: number;
 }
 
+interface ViewFileOperationOptions extends ViewFileOptions {
+  signal?: AbortSignal;
+}
+
 type FetchedSource =
   | { buffer: Buffer; mimeType: string; bytesRead: number }
   | { tooLarge: true; mimeType: string; bytesRead: number }
@@ -83,7 +114,7 @@ type FetchedSource =
 
 async function fetchSource(
   pathOrUrl: string,
-  options: ViewFileOptions,
+  options: ViewFileOperationOptions,
   maxBytes: number,
 ): Promise<FetchedSource> {
   const extMime = EXT_MIME[extname(pathOrUrl).toLowerCase()];
@@ -92,6 +123,7 @@ async function fetchSource(
     const url = new URL(pathOrUrl);
     const res = await fetchGuarded(url, options.allowPrivateHosts ?? false, {
       timeoutMs: options.timeoutMs,
+      signal: options.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const headerMime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
@@ -121,6 +153,7 @@ async function fetchSource(
   if (!options.baseDir) {
     throw new Error('local file paths are disabled — set baseDir to allow them');
   }
+  options.signal?.throwIfAborted();
   // Only ever read a media file — never a `config.json` / `.env` / `id_rsa`
   // that happens to sit inside the sandbox. A path with no known media
   // extension is refused before it is touched.
@@ -142,7 +175,7 @@ async function fetchSource(
   const info = await stat(realTarget).catch(() => null);
   if (!info?.isFile()) throw new Error('file not found');
   if (info.size > maxBytes) return { tooLarge: true, mimeType: extMime, bytesRead: 0 };
-  const buffer = await readFile(realTarget);
+  const buffer = await readFile(realTarget, { signal: options.signal });
   return { buffer, mimeType: extMime, bytesRead: buffer.length };
 }
 
@@ -153,7 +186,7 @@ type ResolvedMedia = {
 
 async function resolveMediaWithinBudget(
   pathOrUrl: string,
-  options: ViewFileOptions,
+  options: ViewFileOperationOptions,
   maxBytes: number,
 ): Promise<ResolvedMedia> {
   if (maxBytes <= 0) {
@@ -250,11 +283,45 @@ export const ViewFileInputSchema = z.object({
 });
 
 /**
+ * Resolve one bounded batch into neutral media content. Per-item failures stay
+ * visible beside successful items; every item shares one total inline/read
+ * budget so a batch cannot multiply the single-call cap.
+ */
+export async function runViewFileOperation(
+  paths: z.output<typeof ViewFileInputSchema>['paths'],
+  options: ViewFileOptions = {},
+  signal?: AbortSignal,
+): Promise<ViewFileOutput> {
+  const list = Array.isArray(paths) ? paths : [paths];
+  const content: McpMediaContent[] = [];
+  const errors: ViewFileOutput['errors'] = [];
+  let remainingBytes = MAX_INLINE_BYTES;
+  for (const pathOrUrl of list) {
+    signal?.throwIfAborted();
+    try {
+      const resolved = await resolveMediaWithinBudget(
+        pathOrUrl,
+        { ...options, signal },
+        remainingBytes,
+      );
+      remainingBytes -= resolved.bytes;
+      content.push(...resolved.content);
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason ?? error;
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push({ path: pathOrUrl, message });
+      content.push({ type: 'text', text: `[${pathOrUrl}] Error: ${message}` });
+    }
+  }
+  return ViewFileOutputSchema.parse({ content, errors });
+}
+
+/**
  * Register the raw native MCP `view_file` tool on an SDK server. From
  * `createMcpHandler`, pass `rawTools: (server) =>
  * mountViewFile(server, options)`. Raw registration intentionally bypasses
- * stitchkit lifecycle/hooks; use a `defineRuntimeTool` + `resolveMedia` when
- * those guarantees are required. `options` controls the media security boundary.
+ * stitchkit lifecycle/hooks; use `defineViewFileTool` when those guarantees are
+ * required. `options` controls the media security boundary.
  */
 export function mountViewFile(server: McpServer, options: ViewFileOptions = {}): void {
   server.registerTool(
@@ -268,22 +335,8 @@ export function mountViewFile(server: McpServer, options: ViewFileOptions = {}):
       annotations: { title: 'View Media', readOnlyHint: true, idempotentHint: true },
     },
     async (args: { paths: string | string[] }) => {
-      const list = Array.isArray(args.paths) ? args.paths : [args.paths];
-      const content: McpMediaContent[] = [];
-      let remainingBytes = MAX_INLINE_BYTES;
-      for (const pathOrUrl of list) {
-        try {
-          const resolved = await resolveMediaWithinBudget(pathOrUrl, options, remainingBytes);
-          remainingBytes -= resolved.bytes;
-          content.push(...resolved.content);
-        } catch (err) {
-          content.push({
-            type: 'text',
-            text: `[${pathOrUrl}] Error: ${err instanceof Error ? err.message : String(err)}`,
-          });
-        }
-      }
-      return { content };
+      const result = await runViewFileOperation(args.paths, options);
+      return { content: result.content };
     },
   );
 }

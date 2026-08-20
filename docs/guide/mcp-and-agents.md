@@ -228,8 +228,9 @@ must not be used as authorization input.
 ### Modern discovery, routing and cache hints
 
 Stitchkit forwards the negotiated protocol era and validated MCP request data
-to `RequestEvent.mcp`; untrusted routing headers never become application
-identity. The SDK validates `MCP-Protocol-Version`, JSON-RPC shape and routing
+to both `RequestEvent.mcp` and the current managed call's typed `context.mcp`;
+untrusted routing headers never become application identity. The SDK validates
+`MCP-Protocol-Version`, JSON-RPC shape and routing
 metadata before lifecycle or tool handlers run. Framework-owned tool and
 resource registration preserves declaration order across HTTP and stdio. Tool
 manifests preserve mount order; `listToolNames` is a sorted diagnostics view.
@@ -243,6 +244,30 @@ always forced to zero/private even when an operation policy is present; use a
 finite `surfaces` registry when identities share a provably immutable surface.
 Stitchkit never advertises list-change or subscription capabilities
 without an implementation.
+
+### Typed MCP call metadata
+
+Contract handlers, runtime-tool handlers/factories, lifecycle and tool hooks all
+see the same optional `McpCallContext` for the current invocation:
+
+```ts
+const sourceLabel = context.mcp?.clientInfo?.name ?? context.source
+
+context.mcp?.era             // 'modern' | 'legacy'
+context.mcp?.method          // validated MCP method
+context.mcp?.toolName        // resolved framework tool name
+context.mcp?.protocolVersion // when supplied by a modern host
+context.mcp?.clientInfo      // { name, version } when validated
+context.mcp?.outcome         // multi-round attempt outcome
+context.mcp?.round           // multi-round attempt number
+```
+
+The field is absent on HTTP, Agent, CLI and bring-your-own transports. A legacy
+MCP call exposes `era: 'legacy'` but does not invent modern client information.
+`clientInfo` is the host's self-description: use it for labels or analytics,
+never for authentication, RBAC, tenant selection or rate limiting. Verified
+identity still comes from `auth`; the `context(auth)` callback remains the
+application-context factory and receives no protocol metadata.
 
 ### Multi-round tool input (`input_required`)
 
@@ -462,7 +487,7 @@ client (Claude Desktop, Claude Code, Cursor, Codex), on the user's machine, so
 it can reach the local filesystem.
 
 ```ts
-import { createStdioMcpServer } from 'stitchkit/tools'
+import { bindStdioProcessSignals, createStdioMcpServer } from 'stitchkit/tools'
 
 const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
@@ -470,8 +495,16 @@ const stdio = await createStdioMcpServer({
   services: [usersService],
 })
 
-// During graceful shutdown:
-await stdio.close()
+const signals = bindStdioProcessSignals(stdio, {
+  onClose: () => stopWorkers(),
+  onComplete: () => { process.exitCode = 0 },
+  onError: (_phase, error) => {
+    console.error(error) // stderr only — stdout is JSON-RPC
+    process.exitCode = 1
+  },
+})
+
+await signals.promise
 ```
 
 A stdio server is a single process serving one client, so `auth` is a value (or
@@ -483,6 +516,14 @@ The default `legacy: 'serve'` negotiates the modern or supported legacy opening
 through the official stdio adapter. Use `legacy: 'reject'` for a modern-only
 binary. Each invocation builds a fresh server; the returned handle owns
 transport shutdown.
+
+Signal binding is explicit: `createStdioMcpServer` installs no global process
+listeners by itself. The first `SIGINT`/`SIGTERM` starts exactly one official
+`close()` chain. Stdio has no force primitive, so a later signal restores the
+OS default disposition instead of reporting a fictional forced result.
+`signals.close()` removes an idle binding; the framework never calls
+`process.exit()` or chooses the exit code. See
+[deployment lifecycle](./testing-and-deployment.md#stdio-process-signals).
 
 Both transports build the server through the shared `buildMcpServer` — same
 contract/runtime pipeline, same surface selection, context, hooks, raw escape
@@ -807,7 +848,9 @@ const countRecords = knowledgeTools.define({
 `defineRuntimeTool` when tools do not share a context schema or identity.
 
 `transports` defaults to `['MCP', 'AGENT']`; set an explicit subset when an
-operation belongs on only one surface. The configured identity becomes the
+operation belongs on only one surface. Include `'CLI'` explicitly to reuse the
+definition through `createCli({ runtimeTools })`; adding CLI support never
+widens existing definitions silently. The configured identity becomes the
 hook/lifecycle `OperationIdentity` and the tool `RequestEvent`
 (`serviceName`, `action`, `httpMethod`). A runtime operation has no HTTP route,
 so no fake `path` is added.
@@ -824,12 +867,88 @@ The MCP registration uses an identity carrier: the SDK advertises the compiled
 JSON Schema but forwards the raw object into Stitchkit. Input failures therefore
 use the same validation, lifecycle and hook path as contract tools.
 
+### Managed wait, download, upload and view-file
+
+The common imperative shapes have typed definition factories. They produce
+ordinary runtime-tool definitions, so one value can enter `runtimeTools` on MCP
+and Agent and receives the same lifecycle, hooks, context, cancellation,
+collision checks and introspection as any `defineRuntimeTool` operation:
+
+```ts
+import {
+  defineDownloadTool,
+  defineUploadTool,
+  defineViewFileTool,
+  defineWaitTool,
+} from 'stitchkit/tools'
+import { z } from 'zod'
+
+const waitForJob = defineWaitTool({
+  name: 'wait_for_job',
+  description: 'Wait for a job to finish',
+  identity: { serviceName: 'jobs', action: 'waitForJob', scope: 'user' },
+  input: z.object({ id: z.string() }),
+  state: z.object({ id: z.string(), status: z.enum(['RUNNING', 'DONE']) }),
+  poll: ({ id }, context) => getJob(id, context.signal),
+  done: (state) => state.status === 'DONE',
+  backoff: [2, 3, 5],
+  defaultTimeout: 120,
+})
+
+const downloadResult = defineDownloadTool({
+  name: 'download_result',
+  description: 'Download a completed result',
+  identity: { serviceName: 'jobs', action: 'downloadResult', scope: 'user' },
+  input: z.object({ id: z.string(), dir: z.string().optional() }),
+  resolveUrl: ({ id }) => resolveResultUrl(id),
+  defaultDir: './downloads',
+  dirFromInput: ({ dir }) => dir,
+})
+
+const uploadInput = defineUploadTool({
+  name: 'upload_input',
+  description: 'Upload a local input file',
+  identity: { serviceName: 'jobs', action: 'uploadInput', scope: 'user' },
+  output: z.object({ url: z.url() }),
+  upload: (path, context) => uploadFile(path, context.signal),
+})
+
+const viewResult = defineViewFileTool({
+  name: 'view_result',
+  description: 'Inspect generated media',
+  identity: { serviceName: 'jobs', action: 'viewResult', scope: 'user' },
+  // Local files are disabled when baseDir is omitted. URL fetches retain SSRF
+  // protection; use allowPrivateHosts only for an explicitly trusted network.
+  baseDir: '/srv/job-media',
+})
+
+const runtimeTools = [waitForJob, downloadResult, uploadInput, viewResult]
+```
+
+Managed factories return neutral validated data. Expected failures go through
+the standard failed `ToolResult` path rather than masquerading as a successful
+payload with `isError`. Wait sleep is abort-aware, guarded downloads receive the
+active signal, and upload implementations receive it on their typed context.
+Managed view-file accepts one or several paths/URLs, retains successful
+multimodal content beside structured per-item `errors`, and charges every item
+to one total 20 MB batch budget. Its MCP and Agent presenters are built in;
+remote fetch cancellation follows the active call signal.
+
+The older `mountWait`, `mountDownload`, `mountUpload` and `mountViewFile`
+functions remain
+intentional raw MCP adapters with their text-envelope behavior. Use them under
+`rawTools` only when opting out of managed policy is deliberate; they share the
+same neutral mechanics but do not gain lifecycle or hooks. The raw view-file
+adapter preserves its content-only MCP envelope while using the same bounded
+batch operation.
+
 ### Explicit raw SDK registration
 
 `rawTools` is deliberately named as an escape hatch. A tool registered there
 does **not** receive stitchkit schema policy, lifecycle, per-call context or
-hooks. The built-in `mountViewFile` helper remains raw for callers that choose
-that boundary; it fetches media with SSRF and path-traversal defenses:
+hooks. The built-in `mountViewFile`, `mountWait`, `mountDownload` and
+`mountUpload` helpers remain raw for callers that choose that boundary; the
+media helper fetches with SSRF and path-traversal defenses:
 
 ```ts
 import { createMcpHandler, mountViewFile } from 'stitchkit/tools'
@@ -843,8 +962,10 @@ const handleMcp = createMcpHandler({
 ```
 
 Use raw registration only when opting out is intentional. For a protected
-`view_file`, define it with `defineRuntimeTool`, include it in `runtimeTools`,
-and call the exported `resolveMedia` core from its handler.
+`view_file`, use `defineViewFileTool` in `runtimeTools`; it supplies the
+canonical schemas, shared batch budget, structured partial failures and both
+multimodal presenters. `resolveMedia` remains the single-item core for custom
+operations whose contract intentionally differs.
 
 ## Introspecting the complete tool surface
 

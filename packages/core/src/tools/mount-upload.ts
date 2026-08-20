@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { isRecord } from '../internal/typed';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
+import { runUploadOperation } from './upload-core';
 
 export interface UploadToolConfig {
   /** Tool name. Default `'upload'`. */
@@ -40,7 +41,7 @@ export function mountUpload(server: McpServer, config: UploadToolConfig): void {
         // `config.upload` may resolve to `undefined`; `JSON.stringify(undefined)`
         // is the JS value `undefined`, not a string — coerce to `null` so the
         // text block is always a valid string.
-        const uploaded = await config.upload(path);
+        const uploaded = await runUploadOperation(path, config.upload);
         return textResult(JSON.stringify(uploaded ?? null, null, 2));
       } catch (err) {
         return textResult(

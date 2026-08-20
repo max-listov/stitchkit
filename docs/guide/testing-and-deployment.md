@@ -228,6 +228,38 @@ domain run-state remain application resources and close explicitly after server
 drain. Do not call `runtime.stop()` or `socket.io.close()` in parallel with
 `shutdown()`.
 
+### Stdio process signals
+
+An MCP stdio handle has `close()`, not managed HTTP `shutdown()` with a force
+signal and deadline. Bind its process lifecycle with the truthful close-only
+sibling from `stitchkit/tools`:
+
+```ts
+import {
+  bindStdioProcessSignals,
+  createStdioMcpServer,
+} from 'stitchkit/tools'
+
+const stdio = await createStdioMcpServer(config)
+const binding = bindStdioProcessSignals(stdio, {
+  onClose: () => stopWorkers(),
+  onComplete: () => { process.exitCode = 0 },
+  onError: (phase, error) => {
+    console.error(phase, error) // stderr; stdout stays JSON-RPC-only
+    process.exitCode = 1
+  },
+})
+
+await binding.promise
+```
+
+The first signal starts exactly one close chain. A same-turn duplicate is
+ignored; a later signal restores the default OS disposition because the
+official stdio close is not abortable and Stitchkit will not pretend otherwise.
+`binding.close()` removes idle listeners and resolves the promise with
+`undefined`. No listener is installed until the binder is called, and the
+framework never calls `process.exit()`.
+
 ### Deploy on Node
 
 The contract, `implement`, hooks, auth and the client are runtime-agnostic. Only
