@@ -64,7 +64,7 @@ describe('managed Bun server shutdown', () => {
     expect(server.status.state).toBe('clean');
   });
 
-  test('uses one total deadline and preserves the pending snapshot on force', async () => {
+  test('forces after the grace budget and preserves the pending snapshot', async () => {
     const started = Promise.withResolvers<void>();
     const service = implement(contract, {
       async wait() {
@@ -77,13 +77,15 @@ describe('managed Bun server shutdown', () => {
     const request = fetch(`${server.url}/lifecycle`).catch(() => undefined);
     await started.promise;
     const beganAt = performance.now();
-    const result = await server.shutdown({ gracePeriodMs: 25 });
+    const result = await server.shutdown({ gracePeriodMs: 25, forceTimeoutMs: 5_000 });
     expect(result.outcome).toBe('forced');
     expect(result.reason).toBe('deadline');
     expect(result.pendingRequestsAtForce).toBeGreaterThan(0);
     expect(result.abortedRequests).toBeGreaterThan(0);
     expect(result.pendingRequests).toBe(0);
-    expect(performance.now() - beganAt).toBeLessThan(500);
+    const elapsedMs = performance.now() - beganAt;
+    expect(elapsedMs).toBeGreaterThanOrEqual(20);
+    expect(elapsedMs).toBeLessThan(5_500);
     await request;
   });
 

@@ -27,6 +27,21 @@ describe('managed server lifecycle failure containment', () => {
     });
   });
 
+  test('graceful phases share one total budget instead of restarting the deadline', async () => {
+    const adapter = createAdapter({
+      closeRealtime: () => new Promise((resolve) => setTimeout(resolve, 20)),
+      stopGracefully: () => new Promise(() => undefined),
+    });
+    const lifecycle = createServerLifecycle(() => adapter);
+    const beganAt = performance.now();
+
+    const result = await lifecycle.shutdown({ gracePeriodMs: 30, forceTimeoutMs: 1_000 });
+
+    expect(result.outcome).toBe('forced');
+    expect(result.reason).toBe('deadline');
+    expect(performance.now() - beganAt).toBeLessThan(500);
+  });
+
   for (const phase of ['closeRealtime', 'stopGracefully'] satisfies Array<
     'closeRealtime' | 'stopGracefully'
   >) {
