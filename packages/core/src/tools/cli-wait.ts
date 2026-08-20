@@ -19,6 +19,13 @@ export interface CliWaitConfig {
   tool: string;
   /** Done when this returns `true` for a poll result. */
   done: (result: unknown) => boolean;
+  /**
+   * Terminal domain failure. A `true` result stops polling and turns the
+   * otherwise-successful tool payload into a `WAIT_FAILED` CLI failure. Checked
+   * before `done`, including for the initial result, so contradictory
+   * predicates fail closed.
+   */
+  failed?: (result: unknown) => boolean;
   /** Backoff schedule in seconds; the last entry repeats. Default `[2,3,5,5,8,10]`. */
   backoff?: number[];
   /** Max seconds before giving up. Default `600`. */
@@ -26,6 +33,17 @@ export interface CliWaitConfig {
 }
 
 const DEFAULT_TIMEOUT = 600;
+
+function waitFailure(tool: string, result: unknown): ToolResult {
+  return {
+    ok: false,
+    code: 'WAIT_FAILED',
+    details: {
+      message: `"${tool}" reached a terminal failed state`,
+      result,
+    },
+  };
+}
 
 export interface PollParams {
   /** The result of the initial (non-poll) call. */
@@ -39,30 +57,44 @@ export interface PollParams {
   onTick?: (attempt: number, elapsedSec: number) => void;
   /** Injectable sleep for tests. */
   sleepFn?: (ms: number) => Promise<void>;
+  /** Explicit caller cancellation. Process SIGINT wiring remains application-owned. */
+  signal?: AbortSignal;
 }
 
 /**
  * Poll `wait.tool` until `wait.done` or the timeout. Returns the last poll
  * result; returns the initial result untouched when the initial call failed,
- * already satisfies `done`, or yields no poll target. A timeout produces a
- * `TIMEOUT` failed `ToolResult`.
+ * already satisfies `done`, or yields no poll target. A terminal result matched
+ * by `failed` produces `WAIT_FAILED`; a timeout produces `TIMEOUT`.
  */
 export async function pollUntilDone(params: PollParams): Promise<ToolResult> {
   const { initial, wait, call } = params;
   if (!initial.ok) return initial;
+  if (wait.failed?.(initial.data)) return waitFailure(wait.tool, initial.data);
   if (wait.done(initial.data)) return initial;
   const pollArgs = wait.poll(initial.data);
   if (!pollArgs) return initial;
 
   const timeoutSec = params.timeoutSec ?? wait.timeout ?? DEFAULT_TIMEOUT;
+  let failedState: ToolResult | undefined;
   const { state, timedOut } = await pollUntil<ToolResult>({
     poll: () => call(wait.tool, pollArgs),
-    // Stop on a failed poll call (return that error) or when the result is done.
-    done: (result) => !result.ok || wait.done(result.data),
+    // Stop on a failed poll call (return that error), a terminal domain failure,
+    // or successful completion. Remember the exact failed state so the
+    // predicate runs once per polled value even when it has side effects.
+    done: (result) => {
+      if (!result.ok) return true;
+      if (wait.failed?.(result.data)) {
+        failedState = result;
+        return true;
+      }
+      return wait.done(result.data);
+    },
     backoff: wait.backoff,
     timeoutSec,
     sleepFn: params.sleepFn,
     onTick: params.onTick,
+    signal: params.signal,
   });
 
   if (timedOut) {
@@ -72,5 +104,6 @@ export async function pollUntilDone(params: PollParams): Promise<ToolResult> {
       details: { message: `Timed out after ${timeoutSec}s waiting for "${wait.tool}"` },
     };
   }
+  if (state === failedState && state.ok) return waitFailure(wait.tool, state.data);
   return state;
 }

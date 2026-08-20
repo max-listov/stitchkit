@@ -16,6 +16,8 @@ import { implement } from '../src/server';
 import { type CliConfig, createCli } from '../src/tools/cli';
 import { CliArgumentError, parseCliArgs } from '../src/tools/cli-args';
 import { defineCliCommand } from '../src/tools/cli-command';
+import { pollUntilDone } from '../src/tools/cli-wait';
+import type { ToolResult } from '../src/tools/execute';
 import { listToolNames } from '../src/tools/list-names';
 import { collectTools } from '../src/tools/mount';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
@@ -23,6 +25,7 @@ import { createToolkit } from '../src/tools/toolkit';
 import { summarizeTransports } from '../src/tools/transports';
 
 let jobPolls = 0;
+let jobTerminalStatus = 'COMPLETED';
 
 const contract = defineContract(
   { prefix: 'widget', scope: 'public' },
@@ -121,7 +124,7 @@ const service = implement(contract, {
   createJob: () => ({ id: 'j1', status: 'PENDING' }),
   getJob: (ctx) => {
     jobPolls += 1;
-    return { id: ctx.params.id, status: jobPolls >= 2 ? 'COMPLETED' : 'PENDING' };
+    return { id: ctx.params.id, status: jobPolls >= 2 ? jobTerminalStatus : 'PENDING' };
   },
   internalOnly: () => undefined,
   defaultExpose: () => undefined,
@@ -184,6 +187,9 @@ describe('createCli — routing & help', () => {
   test('command --help shows the flag table', async () => {
     const { out, code } = await run(['create_widget', '--help']);
     expect(code).toBe(0);
+    expect(out).toContain('Usage: widget create_widget <name> [count] [tags] [--flags]');
+    expect(out).toContain('<name> | --name');
+    expect(out).not.toContain('[active]');
     expect(out).toContain('--name');
     expect(out).toContain('--count');
     expect(out).toContain('(required)');
@@ -239,7 +245,16 @@ describe('createCli — execution & coercion', () => {
   test('missing required field → VALIDATION_ERROR, exit 1', async () => {
     const { err, code } = await run(['create_widget', '--count', '3', '--json']);
     expect(code).toBe(1);
-    expect(JSON.parse(err).error).toBe('VALIDATION_ERROR');
+    const error = JSON.parse(err);
+    expect(error.error).toBe('VALIDATION_ERROR');
+    expect(err).toBe(`${JSON.stringify(error)}\n`);
+  });
+
+  test('without --json a structured failure remains pretty-printed on stderr', async () => {
+    const { err, code } = await run(['create_widget', '--count', '3']);
+    expect(code).toBe(1);
+    const error = JSON.parse(err);
+    expect(err).toBe(`${JSON.stringify(error, null, 2)}\n`);
   });
 
   test('piped stdin fills an unset REQUIRED field', async () => {
@@ -299,6 +314,7 @@ describe('createCli — execution & coercion', () => {
 describe('createCli — --wait polling', () => {
   test('polls a tool until done', async () => {
     jobPolls = 0;
+    jobTerminalStatus = 'COMPLETED';
     const { out, code } = await run(['create_job', '--wait', '--quiet', '--json'], {
       wait: {
         create_job: {
@@ -311,6 +327,80 @@ describe('createCli — --wait polling', () => {
     });
     expect(code).toBe(0);
     expect(JSON.parse(out).status).toBe('COMPLETED');
+  });
+
+  test('terminal domain failure becomes WAIT_FAILED with a non-zero exit', async () => {
+    jobPolls = 0;
+    jobTerminalStatus = 'FAILED';
+    const { out, err, code } = await run(['create_job', '--wait', '--quiet', '--json'], {
+      wait: {
+        create_job: {
+          tool: 'get_job',
+          poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
+          done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
+          failed: (r) => isRecord(r) && r.status === 'FAILED',
+          backoff: [0],
+        },
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(out).toBe('');
+    expect(JSON.parse(err)).toEqual({
+      error: 'WAIT_FAILED',
+      details: {
+        message: '"get_job" reached a terminal failed state',
+        result: { id: 'j1', status: 'FAILED' },
+      },
+    });
+  });
+
+  test('failed is checked on the initial result and takes priority over done', async () => {
+    let polls = 0;
+    const result = await pollUntilDone({
+      initial: { ok: true, data: { id: 'j1', status: 'FAILED' } },
+      wait: {
+        tool: 'get_job',
+        poll: () => ({ id: 'j1' }),
+        done: () => true,
+        failed: (value) => isRecord(value) && value.status === 'FAILED',
+      },
+      call: async () => {
+        polls += 1;
+        return { ok: true, data: { status: 'COMPLETED' } };
+      },
+    });
+
+    expect(polls).toBe(0);
+    expect(result).toEqual({
+      ok: false,
+      code: 'WAIT_FAILED',
+      details: {
+        message: '"get_job" reached a terminal failed state',
+        result: { id: 'j1', status: 'FAILED' },
+      },
+    });
+  });
+
+  test('a failed poll call keeps its transport error instead of becoming WAIT_FAILED', async () => {
+    const transportFailure = {
+      ok: false,
+      code: 'UNAUTHORIZED',
+      details: { message: 'expired' },
+    } satisfies ToolResult;
+    const result = await pollUntilDone({
+      initial: { ok: true, data: { id: 'j1', status: 'PENDING' } },
+      wait: {
+        tool: 'get_job',
+        poll: () => ({ id: 'j1' }),
+        done: () => false,
+        failed: (value) => isRecord(value) && value.status === 'FAILED',
+        backoff: [0],
+      },
+      call: async () => transportFailure,
+    });
+
+    expect(result).toBe(transportFailure);
   });
 });
 
@@ -456,6 +546,9 @@ describe('createCli — native command composition', () => {
 
     const help = await run(['doctor', '--help', '--mistyped'], { commands: [doctor] });
     expect(help.code).toBe(0);
+    expect(help.out).toContain('Usage: widget doctor <target> [--flags]');
+    expect(help.out).toContain('<target> | --target');
+    expect(help.out).not.toContain('[verbose]');
     expect(help.out).toContain('--target');
 
     const called = await run(['doctor', 'runtime', '--verbose', '--json'], {

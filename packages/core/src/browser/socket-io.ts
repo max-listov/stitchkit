@@ -23,12 +23,22 @@
 import type { EventsMap } from '@socket.io/component-emitter';
 import type { StitchLogger } from '../logger';
 import type {
+  RealtimeAcknowledgedEvent,
+  RealtimeAcknowledgement,
   RealtimeContract,
   RealtimeEventRegistry,
   RealtimeRejectedEventHook,
+  RealtimeRequestArguments,
 } from '../realtime/contract';
 import {
+  RealtimeRequestDisconnectedError,
+  type RealtimeRequestOptions,
+  RealtimeRequestTimeoutError,
+} from '../realtime/request';
+import {
   createValidatedRealtimeSocket,
+  parseRealtimeRequestAcknowledgement,
+  parseRealtimeRequestArguments,
   type ValidatedRealtimeSocket,
 } from '../realtime/socket';
 import { createRetainedTopics } from '../retained';
@@ -211,6 +221,15 @@ export interface SocketIOClient<
     ...args: Parameters<TClientEvents[E]>
   ): boolean;
   /**
+   * Low-level native Socket.IO acknowledgement request. Contract-aware callers
+   * should use `createRealtimeClient().request()`, which validates both sides.
+   */
+  emitWithAck(
+    event: string,
+    args: unknown[],
+    options: RealtimeRequestOptions,
+  ): Promise<unknown>;
+  /**
    * Subscribe to connection up/down changes. Returns an unsubscribe. On a
    * disconnect the listener also receives the Socket.IO **reason** (e.g.
    * `io server disconnect`, `transport close`, `ping timeout`) as a second
@@ -227,6 +246,13 @@ export interface RealtimeClient<
   connect(): void;
   disconnect(): void;
   readonly connected: boolean;
+  request<TEvent extends RealtimeAcknowledgedEvent<TClientToServer>>(
+    event: TEvent,
+    ...args: [
+      ...RealtimeRequestArguments<TClientToServer[TEvent]>,
+      options: RealtimeRequestOptions,
+    ]
+  ): Promise<RealtimeAcknowledgement<TClientToServer[TEvent]>>;
   onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
 }
 
@@ -268,6 +294,49 @@ export function createRealtimeClient<
       };
     },
   });
+
+  async function request<TEvent extends RealtimeAcknowledgedEvent<TClientToServer>>(
+    event: TEvent,
+    ...args: [
+      ...RealtimeRequestArguments<TClientToServer[TEvent]>,
+      options: RealtimeRequestOptions,
+    ]
+  ): Promise<RealtimeAcknowledgement<TClientToServer[TEvent]>> {
+    const options = args.at(-1);
+    if (!options || typeof options !== 'object' || !('timeoutMs' in options)) {
+      throw new TypeError(`Realtime request "${event}" requires { timeoutMs }`);
+    }
+    const timeoutMs = options.timeoutMs;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new RangeError(`Realtime request "${event}" timeoutMs must be finite and > 0`);
+    }
+    const values = args.slice(0, -1);
+    const parsedArgs = parseRealtimeRequestArguments(
+      contract.clientToServer,
+      event,
+      'client-outbound',
+      values,
+    );
+    const definition = contract.clientToServer[event];
+    if (!definition?.ack) {
+      throw new Error(`Realtime request "${event}" has no acknowledgement schema`);
+    }
+    const value = await transport.emitWithAck(event, parsedArgs, { timeoutMs });
+    const acknowledgement = parseRealtimeRequestAcknowledgement(
+      definition.ack,
+      event,
+      'client-inbound',
+      value,
+      onRejected,
+      logger,
+    );
+    // Boundary cast: Socket.IO's emitter returns `unknown`; the selected
+    // contract key and successful Zod ack parse above prove the conditional
+    // acknowledgement output that TypeScript cannot retain through registry
+    // indexing.
+    return acknowledgement as RealtimeAcknowledgement<TClientToServer[TEvent]>;
+  }
+
   return {
     ...events,
     connect: transport.connect,
@@ -275,6 +344,7 @@ export function createRealtimeClient<
     get connected() {
       return transport.connected;
     },
+    request,
     onConnectionChange: transport.onConnectionChange,
   };
 }
@@ -294,6 +364,7 @@ export function createSocketIOClient<
   let desiredConnected = false;
   // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingRequestDisconnects = new Set<() => void>();
   const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
   const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
   // Durable event subscriptions — each re-attaches itself onto a fresh socket.
@@ -413,6 +484,7 @@ export function createSocketIOClient<
       // deliberate teardown that a queued reconnect must not undo.
       desiredConnected = false;
       clearReconnectTimer();
+      for (const reject of [...pendingRequestDisconnects]) reject();
       if (!socket) return;
       const wasConnected = socket.connected;
       // Drop every listener before releasing the socket — otherwise the
@@ -458,6 +530,43 @@ export function createSocketIOClient<
       }
       socket.emit(name, ...args);
       return true;
+    },
+
+    emitWithAck(event, args, options) {
+      const active = socket;
+      if (!active?.connected) {
+        return Promise.reject(new RealtimeRequestDisconnectedError(event));
+      }
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (result: () => void): void => {
+          if (settled) return;
+          settled = true;
+          pendingRequestDisconnects.delete(onDisconnect);
+          active.off('disconnect', onDisconnect);
+          result();
+        };
+        const onDisconnect = (): void => {
+          finish(() => reject(new RealtimeRequestDisconnectedError(event)));
+        };
+        pendingRequestDisconnects.add(onDisconnect);
+        active.on('disconnect', onDisconnect);
+        void active
+          .timeout(options.timeoutMs)
+          .emitWithAck(event, ...args)
+          .then(
+            (value) => finish(() => resolve(value)),
+            () => {
+              finish(() =>
+                reject(
+                  active.connected
+                    ? new RealtimeRequestTimeoutError(event, options.timeoutMs)
+                    : new RealtimeRequestDisconnectedError(event),
+                ),
+              );
+            },
+          );
+      });
     },
 
     onConnectionChange(listener) {

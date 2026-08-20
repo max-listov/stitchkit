@@ -8,7 +8,7 @@ import {
   type RuntimeToolHandlerContext,
   type RuntimeToolPresenters,
 } from './runtime-tool';
-import { runWaitOperation } from './wait-core';
+import { type PollUntilResult, runWaitOperation, WaitTimeoutError } from './wait-core';
 
 export interface ManagedWaitRender {
   text: string;
@@ -22,7 +22,7 @@ export interface DefineWaitToolConfig<TInput extends ZodObject, TState extends Z
   poll: (
     input: z.output<TInput>,
     context: RuntimeToolHandlerContext<TInput>,
-  ) => z.input<TState> | Promise<z.input<TState>>;
+  ) => unknown | Promise<unknown>;
   done: (state: z.output<TState>) => boolean;
   timeoutFromInput?: (input: z.output<TInput>) => number | undefined;
   backoff?: number[];
@@ -64,14 +64,23 @@ export function defineWaitTool<TInput extends ZodObject, TState extends ZodType>
     annotations: config.annotations,
     present,
     handler: async (context) => {
-      const result = await runWaitOperation({
-        input: context.input,
-        poll: async (input) => config.state.parse(await config.poll(input, context)),
-        done: config.done,
-        backoff: config.backoff,
-        timeoutSec: config.timeoutFromInput?.(context.input) ?? config.defaultTimeout,
-        signal: context.signal,
-      });
+      let result: PollUntilResult<z.output<TState>>;
+      try {
+        result = await runWaitOperation({
+          input: context.input,
+          poll: async (input, signal) =>
+            config.state.parse(await config.poll(input, { ...context, signal })),
+          done: config.done,
+          backoff: config.backoff,
+          timeoutSec: config.timeoutFromInput?.(context.input) ?? config.defaultTimeout,
+          signal: context.signal,
+        });
+      } catch (error) {
+        if (error instanceof WaitTimeoutError) {
+          throw new AppError('WAIT_TIMEOUT', 'Wait timed out before the first snapshot', 408);
+        }
+        throw error;
+      }
       const rendered = config.render?.(result.state, result.timedOut);
       if (result.timedOut) {
         throw new AppError(

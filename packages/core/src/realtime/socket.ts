@@ -1,3 +1,4 @@
+import type { z } from 'zod';
 import type { StitchLogger } from '../logger';
 import type {
   RealtimeEmitArguments,
@@ -9,6 +10,7 @@ import type {
   RealtimeRejectedEventHook,
 } from './contract';
 import { realtimeContractViolation } from './rejection';
+import { RealtimeRequestInvalidAcknowledgementError } from './request';
 
 interface ValidatedRealtimeSocketOptions<
   TInbound extends RealtimeEventRegistry,
@@ -114,6 +116,58 @@ function reportRejected(
   void Promise.resolve(hook(rejected)).catch((error) => {
     console.error('[stitchkit] realtime rejection hook failed', error);
   });
+}
+
+export function parseRealtimeRequestArguments(
+  registry: RealtimeEventRegistry,
+  event: string,
+  direction: RealtimeRejectDirection,
+  args: unknown[],
+): unknown[] {
+  const definition = eventDefinition(registry, event, direction);
+  const parsed = definition.args.safeParse(args);
+  if (!parsed.success) {
+    throw realtimeContractViolation({
+      event,
+      direction,
+      phase: 'arguments',
+      reason: 'invalid-arguments',
+      fault: 'local',
+      cause: parsed.error,
+    }).error;
+  }
+  if (!definition.ack) {
+    throw realtimeContractViolation({
+      event,
+      direction,
+      phase: 'acknowledgement',
+      reason: 'missing-acknowledgement',
+      fault: 'local',
+    }).error;
+  }
+  return parsed.data;
+}
+
+export function parseRealtimeRequestAcknowledgement<TAck extends z.ZodType>(
+  schema: TAck,
+  event: string,
+  direction: RealtimeRejectDirection,
+  value: unknown,
+  hook: RealtimeRejectedEventHook | undefined,
+  logger: StitchLogger | undefined,
+): z.output<TAck> {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const rejected = realtimeContractViolation({
+    event,
+    direction,
+    phase: 'acknowledgement',
+    reason: 'invalid-acknowledgement-value',
+    fault: 'peer',
+    cause: parsed.error,
+  });
+  reportRejected(rejected, hook, logger);
+  throw new RealtimeRequestInvalidAcknowledgementError(event, rejected.error);
 }
 
 export function createValidatedRealtimeSocket<

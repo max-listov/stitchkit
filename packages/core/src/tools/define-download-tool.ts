@@ -1,10 +1,7 @@
 import type { ZodObject, z } from 'zod';
-import { AppError } from '../contract';
-import {
-  DownloadOperationError,
-  DownloadResultSchema,
-  runDownloadOperation,
-} from './download-core';
+import { AppError, ManagedFileRefSchema } from '../contract';
+import type { ManagedFileBoundary } from '../files/boundary';
+import { DownloadOperationError, runDownloadOperation } from './download-core';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from './native-definition';
 import {
   defineRuntimeTool,
@@ -20,24 +17,24 @@ export interface DefineDownloadToolConfig<TInput extends ZodObject>
     input: z.output<TInput>,
     context: RuntimeToolHandlerContext<TInput>,
   ) => string | null | Promise<string | null>;
-  defaultDir: string;
-  dirFromInput?: (input: z.output<TInput>) => string | undefined;
+  files: ManagedFileBoundary;
+  pathFromInput?: (input: z.output<TInput>) => string | undefined;
   allowPrivateHosts?: boolean;
   maxBytes?: number;
   timeoutMs?: number;
-  present?: RuntimeToolPresenters<z.output<typeof DownloadResultSchema>>;
+  present?: RuntimeToolPresenters<z.output<typeof ManagedFileRefSchema>>;
 }
 
 /** Define one guarded managed download operation. */
 export function defineDownloadTool<TInput extends ZodObject>(
   config: DefineDownloadToolConfig<TInput>,
-): RuntimeToolDefinitionWithOutput<TInput, typeof DownloadResultSchema> {
+): RuntimeToolDefinitionWithOutput<TInput, typeof ManagedFileRefSchema> {
   return defineRuntimeTool({
     name: config.name ?? 'download',
     description: config.description,
     identity: managedNativeIdentity(config.identity, 'POST'),
     input: config.input,
-    output: DownloadResultSchema,
+    output: ManagedFileRefSchema,
     transports: config.transports,
     annotations: config.annotations,
     present: config.present,
@@ -49,7 +46,8 @@ export function defineDownloadTool<TInput extends ZodObject>(
       try {
         return await runDownloadOperation({
           url,
-          dir: config.dirFromInput?.(context.input) ?? config.defaultDir,
+          files: config.files,
+          path: config.pathFromInput?.(context.input),
           allowPrivateHosts: config.allowPrivateHosts,
           maxBytes: config.maxBytes,
           timeoutMs: config.timeoutMs,

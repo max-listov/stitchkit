@@ -18,7 +18,7 @@
  *
  * Runs after `build`, on `dist`. Usage: `bun scripts/check-public-types.mjs`.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 // TypeScript 7.0 ships the CLI without the compiler API. Keep the latest CLI
 // for project builds and use the official side-by-side API package for this
@@ -29,18 +29,18 @@ import ts from '@typescript/typescript6';
 const pkgRoot = join(import.meta.dirname, '..');
 const distDir = join(pkgRoot, 'dist');
 
-/** The published entrypoints, by the specifier a consumer writes. */
-const ENTRYPOINTS = {
-  stitchkit: 'index.d.ts',
-  'stitchkit/contract': 'contract/index.d.ts',
-  'stitchkit/server': 'server/index.d.ts',
-  'stitchkit/node': 'node.d.ts',
-  'stitchkit/tools': 'tools.d.ts',
-  'stitchkit/cli': 'cli.d.ts',
-  'stitchkit/observability': 'observability/index.d.ts',
-  'stitchkit/testing': 'testing.d.ts',
-  'stitchkit/react': 'react.d.ts',
-};
+/** Derive every published declaration entrypoint from the package source of truth. */
+const packageJson = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
+const ENTRYPOINTS = Object.fromEntries(
+  Object.entries(packageJson.exports).map(([key, target]) => {
+    const types = target?.types;
+    if (typeof types !== 'string' || !types.startsWith('./dist/')) {
+      throw new Error(`[check-public-types] ${key} has no ./dist declaration target`);
+    }
+    const specifier = key === '.' ? packageJson.name : `${packageJson.name}/${key.slice(2)}`;
+    return [specifier, types.slice('./dist/'.length)];
+  }),
+);
 
 /**
  * Names that are reachable but deliberately not re-exported, each with the

@@ -1,9 +1,12 @@
-/** Run one upload without owning schemas, registration or presentation. */
+import type { ManagedFileBoundary, ManagedFileSource } from '../files/boundary';
+
+/** Read one bounded managed source and hand its immutable bytes to an uploader. */
 export function runUploadOperation<T>(
+  files: ManagedFileBoundary,
   path: string,
-  upload: (path: string, signal?: AbortSignal) => T | Promise<T>,
+  upload: (source: ManagedFileSource, signal?: AbortSignal) => T | Promise<T>,
   signal?: AbortSignal,
-): T | Promise<T> {
+): Promise<T> {
   signal?.throwIfAborted();
-  return upload(path, signal);
+  return files.read(path, { signal }).then((source) => upload(source, signal));
 }

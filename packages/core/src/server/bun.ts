@@ -76,7 +76,7 @@ function reclaimStaleUnixSocket(path: string): void {
   if (stats === undefined) return;
   if (!stats.isSocket()) {
     throw new Error(
-      `[stitchkit] createServer: "${path}" exists and is not a socket — refusing to remove it`,
+      `[stitchkit] createServer: "${path}" exists and is not a socket — refusing to remove it; remove it manually if it is debris`,
     );
   }
   if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {

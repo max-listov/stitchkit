@@ -1,4 +1,6 @@
 import { type ZodType, z } from 'zod';
+import { ManagedFilePathSchema } from '../contract/file-ref';
+import type { ManagedFileBoundary, ManagedFileSource } from '../files/boundary';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from './native-definition';
 import {
   defineRuntimeTool,
@@ -9,14 +11,15 @@ import {
 import { runUploadOperation } from './upload-core';
 
 export const UploadToolInputSchema = z.object({
-  path: z.string().min(1).describe('Path to a local file on this machine'),
+  path: ManagedFilePathSchema.describe('Path relative to the configured file boundary'),
 });
 
 export interface DefineUploadToolConfig<TOutput extends ZodType>
   extends ManagedNativeToolConfig {
   output: TOutput;
+  files: ManagedFileBoundary;
   upload: (
-    path: string,
+    source: ManagedFileSource,
     context: RuntimeToolHandlerContext<typeof UploadToolInputSchema>,
   ) => z.output<TOutput> | Promise<z.output<TOutput>>;
   present?: RuntimeToolPresenters<z.output<TOutput>>;
@@ -37,8 +40,9 @@ export function defineUploadTool<TOutput extends ZodType>(
     present: config.present,
     handler: async (context) =>
       runUploadOperation(
+        config.files,
         context.input.path,
-        (path) => config.upload(path, context),
+        (source) => config.upload(source, context),
         context.signal,
       ),
   });

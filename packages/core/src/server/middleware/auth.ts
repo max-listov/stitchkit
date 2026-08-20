@@ -3,6 +3,7 @@ import { forbidden, unauthorized } from '../../contract';
 import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
+import { mergeContextContribution } from '../context-contribution';
 import type { AuthorizationContext, OperationIdentity } from '../types';
 import { parseCookies } from './cookies';
 
@@ -175,10 +176,15 @@ export function extractToken(req: Request, cookieName?: string): string | null {
  *    (so it can read `ctx.pathParams` for resource-scoped access). May be
  *    async — resource-scoped checks usually need a DB lookup.
  */
+export type AuthRuleContribution = Record<string, unknown>;
+
 export type AuthRule<TIdentity> =
   | 'public'
   | 'authenticated'
-  | ((identity: Awaited<TIdentity>, ctx: RuntimeContext) => boolean | Promise<boolean>);
+  | ((
+      identity: Awaited<TIdentity>,
+      ctx: RuntimeContext,
+    ) => boolean | AuthRuleContribution | Promise<boolean | AuthRuleContribution>);
 
 /**
  * A rule that also DECLARES this scope's contribution to the handler context —
@@ -197,7 +203,10 @@ export type AuthRule<TIdentity> =
  * identity the rule may still reject), so keep it pure: derive fields, cause
  * nothing.
  */
-export interface ScopedAuthRule<TIdentity, TFields extends object = object> {
+export interface ScopedAuthRule<
+  TIdentity,
+  TFields extends AuthRuleContribution = AuthRuleContribution,
+> {
   rule: AuthRule<TIdentity>;
   /** Fields this scope guarantees. Runs after the shared `inject`, only with an identity. */
   inject?: (identity: Awaited<TIdentity>, ctx: RuntimeContext) => TFields & { then?: never };
@@ -206,7 +215,7 @@ export interface ScopedAuthRule<TIdentity, TFields extends object = object> {
 /** The `rules` map: a bare rule, or a rule carrying its context contribution. */
 export type AuthRules<TIdentity> = Record<
   string,
-  AuthRule<TIdentity> | ScopedAuthRule<TIdentity, object>
+  AuthRule<TIdentity> | ScopedAuthRule<TIdentity, AuthRuleContribution>
 >;
 
 /**
@@ -218,15 +227,83 @@ export type AuthRules<TIdentity> = Record<
  * `flag ? 'public' : 'authenticated'` may skip the inject at runtime, so its
  * fields must be optional too.
  */
+type RuleOf<TEntry> = TEntry extends { rule: infer TRule } ? TRule : TEntry;
+
+type InjectOf<TEntry> = TEntry extends {
+  inject: (...args: never[]) => infer TFields extends object;
+}
+  ? TFields
+  : object;
+
+type RuleResult<TRule> = TRule extends (...args: infer _TArgs) => infer TResult
+  ? Awaited<TResult>
+  : true;
+
+type RuleObjectVariants<TRule> =
+  RuleResult<TRule> extends infer TResult ? (TResult extends object ? TResult : never) : never;
+
+type UnionKeys<T> = Extract<T extends unknown ? keyof T : never, string>;
+type UnionValue<T, K extends PropertyKey> = T extends T
+  ? K extends keyof T
+    ? T[K]
+    : never
+  : never;
+type RequiredUnionKeys<T> = {
+  [K in UnionKeys<T>]: [T] extends [Record<K, unknown>] ? K : never;
+}[UnionKeys<T>];
+
+type CollapseContribution<T> = [UnionKeys<T>] extends [never]
+  ? object
+  : {
+      [K in RequiredUnionKeys<T>]: UnionValue<T, K>;
+    } & {
+      [K in Exclude<UnionKeys<T>, RequiredUnionKeys<T>>]?: UnionValue<T, K>;
+    };
+
+type RuleContribution<TRule> =
+  true extends RuleResult<TRule>
+    ? Partial<CollapseContribution<RuleObjectVariants<TRule>>>
+    : CollapseContribution<RuleObjectVariants<TRule>>;
+
+type RequiredKeys<T> = Extract<
+  {
+    [K in keyof T]-?: object extends Pick<T, K> ? never : K;
+  }[keyof T],
+  string
+>;
+
+type MergedValue<TBase, TContribution, K extends PropertyKey> = K extends keyof TContribution
+  ? K extends RequiredKeys<TContribution>
+    ? TContribution[K]
+    : K extends keyof TBase
+      ? TBase[K] | Exclude<TContribution[K], undefined>
+      : TContribution[K]
+  : K extends keyof TBase
+    ? TBase[K]
+    : never;
+
+type MergeContributions<TBase extends object, TContribution extends object> = {
+  [K in RequiredKeys<TBase> | RequiredKeys<TContribution>]: MergedValue<
+    TBase,
+    TContribution,
+    K
+  >;
+} & {
+  [K in Exclude<
+    Extract<keyof TBase | keyof TContribution, string>,
+    RequiredKeys<TBase> | RequiredKeys<TContribution>
+  >]?: MergedValue<TBase, TContribution, K>;
+};
+
+type EntryContribution<TEntry> = MergeContributions<
+  InjectOf<TEntry>,
+  RuleContribution<RuleOf<TEntry>>
+>;
+
 export type RuleScopes<TRules> = {
-  [K in keyof TRules & string]: TRules[K] extends {
-    rule: infer TRule;
-    inject: (...args: never[]) => infer TFields extends object;
-  }
-    ? 'public' extends Extract<TRule, string>
-      ? Partial<TFields>
-      : TFields
-    : object;
+  [K in keyof TRules & string]: 'public' extends Extract<RuleOf<TRules[K]>, string>
+    ? Partial<EntryContribution<TRules[K]>>
+    : EntryContribution<TRules[K]>;
 };
 
 export interface AuthHookConfig<
@@ -256,7 +333,11 @@ export interface AuthHookConfig<
 }
 
 function isThenable(value: object): value is PromiseLike<unknown> {
-  return 'then' in value && typeof value.then === 'function';
+  try {
+    return 'then' in value && typeof value.then === 'function';
+  } catch {
+    return false;
+  }
 }
 
 export interface AuthHook {
@@ -336,12 +417,12 @@ export function createAuthHook<
       const fields = entry.inject(identity, ctx);
       // The type already forbids a thenable; this catches an untyped JavaScript
       // caller, whose async inject would otherwise merge nothing — silently.
-      if (isThenable(fields)) {
+      if (typeof fields === 'object' && fields !== null && isThenable(fields)) {
         throw new Error(
           `[stitchkit] auth: the inject of scope "${scope}" must be synchronous — an async inject merges a Promise, not fields`,
         );
       }
-      Object.assign(ctx, fields);
+      mergeContextContribution(ctx, fields, scope);
     }
 
     if (rule === 'public') return;
@@ -351,7 +432,13 @@ export function createAuthHook<
       return;
     }
     if (rule === 'authenticated') return;
-    if (!(await rule(identity, ctx))) onForbidden();
+    const result = await rule(identity, ctx);
+    if (result === false) {
+      onForbidden();
+      return;
+    }
+    if (result === true) return;
+    mergeContextContribution(ctx, result, scope);
   }
 
   return auth;

@@ -67,10 +67,11 @@ The value of each `rules` entry, keyed by scope:
 
 - **`'public'`** — always passes; the identity is attached if present.
 - **`'authenticated'`** — any resolved identity passes; no identity ⇒ 401.
-- **a function** `(identity, ctx) => boolean | Promise<boolean>` — a custom
+- **a function** `(identity, ctx) => boolean | contribution`, sync or async — a custom
   check. It receives request metadata and validated path params, so a
   resource-scoped rule can do a DB lookup. It cannot read `input` or files: the
-  body has deliberately not been consumed yet. May be async.
+  body has deliberately not been consumed yet. `false` denies, `true` passes,
+  and a returned plain object passes and contributes inferred handler fields.
 
 #### Resource-scoped rule — reading a path/prefix param
 
@@ -99,6 +100,30 @@ const authHook = createAuthHook<User>({
 identity *and* any derived values (role, parent-id) on `ctx` for handlers. Read
 them back as `ctx.tenantRole` (typed `unknown` — narrow at the read site). The
 endpoints under the group declare `scope: 'tenant'`.
+
+When the async authorization lookup already produced handler data, return it
+instead of repeating the lookup in `inject` and a handwritten scope map:
+
+```ts
+const auth = createAuthHook({
+  resolve: sessionResolver,
+  rules: {
+    project: async (user, ctx) => {
+      const membership = await findMembership(user.id, String(ctx.projectId))
+      return membership
+        ? { userId: user.id, projectId: membership.projectId, role: membership.role }
+        : false
+    },
+  },
+})
+
+const implementFor = createScopedImplement<AuthScopes<typeof auth>>()
+```
+
+Contributions are merged only after full validation. Runtime-owned context keys,
+arrays, class instances, accessors, symbols, unsafe prototypes and partial proxy
+reads fail without mutating context. `false | object` contributes required
+fields; `true | object` correctly makes them optional.
 
 ### `AuthHookConfig`
 

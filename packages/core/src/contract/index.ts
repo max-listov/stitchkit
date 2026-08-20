@@ -73,6 +73,12 @@ export {
   type ScopedContractDef,
   type ScopedDefineContract,
 } from './factory';
+export {
+  type ManagedFilePath,
+  ManagedFilePathSchema,
+  type ManagedFileRef,
+  ManagedFileRefSchema,
+} from './file-ref';
 
 export {
   decodeCursor,

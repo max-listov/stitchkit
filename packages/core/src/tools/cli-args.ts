@@ -23,7 +23,7 @@ import { isRecord } from '../internal/typed';
 
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
-  /** `--json` — emit raw JSON on stdout for piping. */
+  /** `--json` — emit compact success/error JSON records for scripts. */
   json: boolean;
   /** `--wait` — block-poll an async result to a terminal state. */
   wait: boolean;

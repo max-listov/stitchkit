@@ -4,25 +4,11 @@
  */
 import { badRequest, type RuntimeContext } from '../contract';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
+import { RUNTIME_CONTEXT_RESERVED_KEYS } from './context-contribution';
 import { type MultipartLifecycle, parseMultipart } from './multipart';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from './request';
 import { readRequestText } from './request-body';
 import type { AuthorizationContext, MethodDef } from './types';
-
-/** Context keys the router owns — a path `:param` may never shadow them. */
-const RESERVED_KEYS = new Set([
-  'params',
-  'input',
-  'source',
-  'req',
-  'url',
-  'headers',
-  'rawBody',
-  'traceId',
-  'spanId',
-  'ipAddress',
-  'userAgent',
-]);
 
 /**
  * Parse a JSON request body — an empty body is `{}`, a malformed body a 400.
@@ -64,7 +50,7 @@ export function buildBaseContext(
   for (const [k, v] of Object.entries(pathParams)) {
     // Skip both router-owned keys and prototype-pollution keys — a `:param`
     // named `__proto__` must never reach the spread into `RuntimeContext`.
-    if (!RESERVED_KEYS.has(k) && !isUnsafeKey(k)) safePathParams[k] = v;
+    if (!RUNTIME_CONTEXT_RESERVED_KEYS.has(k) && !isUnsafeKey(k)) safePathParams[k] = v;
   }
 
   return {
@@ -74,6 +60,7 @@ export function buildBaseContext(
     req,
     url,
     headers: req.headers,
+    signal: req.signal,
     ...safePathParams,
     traceId,
     ...getClientInfo(req, clientIp),
@@ -144,6 +131,7 @@ export function buildErrorContext(
     req,
     url,
     headers: req.headers,
+    signal: req.signal,
     traceId,
     ...getClientInfo(req, clientIp),
   };

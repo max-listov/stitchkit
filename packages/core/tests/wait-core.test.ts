@@ -73,6 +73,27 @@ describe('pollUntil — backoff & ordering', () => {
     expect(calls).toBe(1);
   });
 
+  test('caps sleep to the remaining absolute deadline', async () => {
+    let clockMs = 0;
+    let calls = 0;
+    const sleeps: number[] = [];
+    const result = await pollUntil<number>({
+      poll: async () => ++calls,
+      done: () => false,
+      timeoutSec: 2.5,
+      backoff: [10],
+      nowFn: () => clockMs,
+      sleepFn: async (ms) => {
+        sleeps.push(ms);
+        clockMs += ms;
+      },
+    });
+
+    expect(result).toEqual({ state: 1, timedOut: true });
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([2500]);
+  });
+
   test('onTick fires only after non-terminal polls, never after the terminal one', async () => {
     let calls = 0;
     const ticks: number[] = [];

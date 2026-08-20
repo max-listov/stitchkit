@@ -4,7 +4,8 @@
  * → ADR 0019.
  */
 import type { McpServer } from '@modelcontextprotocol/server';
-import { z } from 'zod';
+import { ManagedFilePathSchema } from '../contract/file-ref';
+import type { ManagedFileBoundary, ManagedFileSource } from '../files/boundary';
 import { isRecord } from '../internal/typed';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
@@ -14,8 +15,9 @@ export interface UploadToolConfig {
   /** Tool name. Default `'upload'`. */
   name?: string;
   description: string;
-  /** Read a local `path` and upload it, returning whatever the upload yields. */
-  upload: (path: string) => Promise<unknown>;
+  files: ManagedFileBoundary;
+  /** Upload one bounded source, returning whatever the transport yields. */
+  upload: (source: ManagedFileSource) => Promise<unknown>;
 }
 
 /**
@@ -31,7 +33,9 @@ export function mountUpload(server: McpServer, config: UploadToolConfig): void {
     name,
     {
       description: config.description,
-      inputSchema: { path: z.string().describe('Path to a local file on this machine') },
+      inputSchema: {
+        path: ManagedFilePathSchema.describe('Path relative to the configured file boundary'),
+      },
     },
     async (rawArgs) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
@@ -41,7 +45,7 @@ export function mountUpload(server: McpServer, config: UploadToolConfig): void {
         // `config.upload` may resolve to `undefined`; `JSON.stringify(undefined)`
         // is the JS value `undefined`, not a string — coerce to `null` so the
         // text block is always a valid string.
-        const uploaded = await runUploadOperation(path, config.upload);
+        const uploaded = await runUploadOperation(config.files, path, config.upload);
         return textResult(JSON.stringify(uploaded ?? null, null, 2));
       } catch (err) {
         return textResult(

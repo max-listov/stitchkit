@@ -54,7 +54,7 @@ export function defineViewFileTool(
       runViewFileOperation(
         context.input.paths,
         {
-          baseDir: config.baseDir,
+          files: config.files,
           allowPrivateHosts: config.allowPrivateHosts,
           timeoutMs: config.timeoutMs,
         },

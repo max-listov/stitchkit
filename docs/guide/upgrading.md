@@ -48,6 +48,45 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Unreleased migration: peer-free `implementRemote`
+
+`implementRemote` now has one canonical, optional-peer-free owner. This keeps
+MCP SDK and AI SDK modules out of CLI bundles that only proxy HTTP calls:
+
+```ts
+// before
+import { implementRemote } from 'stitchkit/tools'
+// after
+import { implementRemote } from 'stitchkit/remote'
+```
+
+## Unreleased migration: managed file boundary and strict auth returns
+
+Create one boundary during application bootstrap and pass the capability, never
+a per-call directory or host path:
+
+```ts
+import { createManagedFileBoundary } from 'stitchkit/files'
+
+const files = await createManagedFileBoundary({ root: '/srv/app-files' })
+
+// before
+defineDownloadTool({ defaultDir: '/srv/app-files', resolveUrl, ...common })
+defineUploadTool({ upload: (path) => provider.uploadFile(path), ...common })
+defineViewFileTool({ baseDir: '/srv/app-files', ...common })
+
+// after
+defineDownloadTool({ files, resolveUrl, ...common })
+defineUploadTool({ files, upload: ({ bytes }) => provider.upload(bytes), ...common })
+defineViewFileTool({ files, ...common })
+```
+
+Downloaded `path` is now relative to the boundary and MIME metadata is named
+`mediaType`. Update raw `mountDownload`/`mountUpload`/`mountViewFile` configs the
+same way. Auth predicates must explicitly return `true`, `false`, or a plain
+object of context fields; replace accidental `undefined` fallthroughs with the
+intended boolean.
+
 ## Released migration: 0.53.0
 
 ### Realtime `emit` returns `boolean` instead of `void`

@@ -15,6 +15,96 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-08-20
+
+### ⚠️ Breaking changes
+
+- **`implementRemote` moved from `stitchkit/tools` to the peer-free
+  `stitchkit/remote` entrypoint.** The broad tools barrel eagerly owns MCP and
+  Agent surfaces; importing it solely for an HTTP proxy pulled their optional
+  SDKs into thin CLI bundles. There is one canonical export and no compatibility
+  alias. `// before: import { implementRemote } from 'stitchkit/tools'` →
+  `// after: import { implementRemote } from 'stitchkit/remote'`.
+- **Managed local-file tools now require one bound `ManagedFileBoundary`; raw
+  host roots and paths are gone.** Download results are canonical relative
+  `ManagedFileRef` values (`mediaType`, not `mimeType`), upload callbacks receive
+  bounded `{ ref, bytes }`, and view-file takes `files` instead of `baseDir`.
+  This makes containment, streaming limits and atomic cleanup one framework
+  invariant instead of consumer convention.
+  `// before: defineDownloadTool({ defaultDir, dirFromInput, ... })` →
+  `// after: defineDownloadTool({ files: await createManagedFileBoundary({ root }), pathFromInput, ... })`;
+  `// before: defineUploadTool({ upload: (path) => upload(path), ... })` →
+  `// after: defineUploadTool({ files, upload: ({ ref, bytes }) => upload(bytes), ... })`;
+  `// before: defineViewFileTool({ baseDir, ... })` →
+  `// after: defineViewFileTool({ files, ... })`. The same config cut applies to
+  raw `mountDownload`, `mountUpload` and `mountViewFile`.
+- **Auth predicate returns are now strict.** Only `false`, `true`, or a validated
+  plain-object context contribution is accepted; legacy `undefined`, `null`,
+  numeric/string falsy values and exotic objects now throw a stable framework
+  error instead of being treated as authorization success.
+  `// before: rule: async () => undefined // accidentally passed` →
+  `// after: rule: async () => true // explicit pass, or false to deny`.
+
+### Added
+
+- **Typed realtime request-response acknowledgements.** `RealtimeClient.request`
+  is available only for events with an `ack` schema, infers the event tuple and
+  validated response, uses Socket.IO's native `timeout().emitWithAck()`, rejects
+  immediately while disconnected, and distinguishes stable timeout,
+  disconnect, and invalid-ack classes. Invalid acks retain the existing
+  `acknowledgement` / `onRejected` path. Long jobs and streaming remain separate
+  correlated events, not an RPC layer.
+- **CLI help now names accepted positional arguments.** Per-command usage and
+  argument rows derive required/optional positional forms from the same schema
+  order used by argv parsing, for both contract-derived and native commands;
+  boolean fields remain flag-only.
+
+- **Async auth context contributions.** Sync/async auth rules may return typed
+  fields from their authorization lookup; `AuthScopes` derives required versus
+  optional guarantees and one atomic safe merger protects runtime-owned keys.
+- **Ordered lifecycle composers.** `composeLifecycleHooks` and
+  `composeToolLifecycle` preserve existing short-circuit, fallthrough,
+  transformation, error and cancellation semantics without a middleware engine.
+- **Transport conformance kit.** `stitchkit/testing` now builds deterministic
+  topology/schema manifests, compares real discovery and runs bounded explicit
+  HTTP/MCP/Agent/CLI probes without owning application startup or credentials.
+- **Managed file boundary.** Peer-free `stitchkit/files` provides opened-handle
+  capped reads, abort-aware streaming writes, atomic reject/replace commits,
+  bounded content inspection and transport-safe `ManagedFileRefSchema` values.
+- **Composable async-operation protocol.** Runtime-only descriptors and
+  contract-backed binders link start/status/wait with optional
+  cancel/result/artifacts while application storage, queues, transitions and
+  resource authorization remain explicit. Wait now uses one monotonic absolute
+  deadline; HTTP, MCP and Agent forward cancellation, and CLI accepts an
+  explicit caller signal.
+
+### Fixed
+
+- **Async-operation `wait` now honours its own capability identity.** A
+  configured `scopes.wait` reaches authorization, and lifecycle/audit action is
+  consistently suffixed as `<operation>.wait`, matching status/cancel/result.
+- **Contract-backed async-operation keys are schema-compatible at compile
+  time.** Follow-up inputs must match the start output type and wait output must
+  match status; runtime identity checks remain a defence for untyped calls and
+  now name the failing capability plus the shared-instance requirement.
+- **Runtime-owned context names cannot be shadowed by route params.** The shared
+  reserved set now also filters `files`, `signal` and `mcp`; routes using those
+  parameter names must rename them because those fields belong to the transport
+  context.
+
+- **CLI `--wait` no longer reports a terminal domain failure as success.** An
+  optional `CliWaitConfig.failed(result)` predicate stops polling, emits a
+  structured `WAIT_FAILED` error with the terminal payload in `details.result`,
+  and returns a non-zero exit. It is checked before `done`, including on the
+  initial result; transport errors and `TIMEOUT` keep their existing codes.
+- **Unix listener regular-file errors now name the safe next step.** Stitchkit
+  still refuses to unlink a non-socket path, but the error explicitly suggests
+  manual removal when the file is known debris.
+- **`--json` now compacts structured failures as well as successes.** Success
+  remains on stdout, failure remains on stderr, and either is one
+  newline-terminated JSON record for line-oriented scripts. Default output
+  remains pretty-printed; progress and CLI usage diagnostics remain plain text.
+
 ## [0.54.0] — 2026-08-20
 
 ### Added

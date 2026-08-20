@@ -13,6 +13,26 @@ import { Glob } from 'bun';
 const DONE_DIR = `${import.meta.dir}/../../../docs/backlog/done`;
 
 describe('backlog hygiene', () => {
+  test('every done task has done status and a completed timestamp', () => {
+    const glob = new Glob('**/*.md');
+    const offenders: string[] = [];
+    for (const file of glob.scanSync({ cwd: DONE_DIR, absolute: true })) {
+      const source = readFileSync(file, 'utf8');
+      const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
+      if (!frontmatter) {
+        offenders.push(`${file} — missing frontmatter`);
+        continue;
+      }
+      if (!/^status:\s*done\s*$/m.test(frontmatter)) {
+        offenders.push(`${file} — status is not done`);
+      }
+      if (!/^completed:\s*\S.+$/m.test(frontmatter)) {
+        offenders.push(`${file} — missing completed timestamp`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test('no unchecked checkboxes in docs/backlog/done (done = finished)', () => {
     const glob = new Glob('**/*.md');
     const offenders: string[] = [];

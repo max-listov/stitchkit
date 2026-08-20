@@ -186,6 +186,36 @@ try {
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
     if (name === 'minimal') {
+      const remoteBundle = join(dir, 'remote-bundle.js');
+      const remoteMetafile = join(dir, 'remote-metafile.json');
+      step('minimal: bundle remote entrypoint', () =>
+        run(
+          'bun',
+          [
+            'build',
+            'src/remote-bundle.ts',
+            '--target=bun',
+            '--packages=bundle',
+            `--outfile=${remoteBundle}`,
+            `--metafile=${remoteMetafile}`,
+          ],
+          dir,
+        ),
+      );
+      const remoteInputs = Object.keys(
+        JSON.parse(readFileSync(remoteMetafile, 'utf8')).inputs,
+      );
+      const forbiddenRemoteInputs = remoteInputs.filter(
+        (input) => input.includes('@modelcontextprotocol/') || input.includes('/ai/'),
+      );
+      if (forbiddenRemoteInputs.length > 0) {
+        failed = true;
+        console.error(
+          `[consumer-lane] minimal: stitchkit/remote pulled optional tool peers into the bundle: ${forbiddenRemoteInputs.join(', ')}`,
+        );
+      }
+      step('minimal: run remote bundle', () => run('bun', [remoteBundle], dir));
+
       const missingToolsPeer = step('minimal: missing tools peer', () =>
         runExpectFailure('node', ['src/missing-mcp-peer.mjs'], dir),
       );

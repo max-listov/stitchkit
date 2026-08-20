@@ -157,10 +157,3 @@ Full flow lives in the `.github/workflows/ci.yml` header:
 The package versions never need to match. A framework release must not silently
 advance or publish the starter; a starter release must target a Stitchkit range
 that already exists on npm.
-
-After a release is green on npm, **announce it to the known consumers** — a
-message to each consumer's agent or a task in its backlog inbox. The address
-book is the untracked `CONSUMERS.local.md` on the canonical checkout (this
-public repo carries no downstream names); keep it current when a new consumer
-appears. Announcing is notification, not a forced upgrade — it exists so a
-consumer never silently falls thirty minors behind.

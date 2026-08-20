@@ -223,7 +223,7 @@ describe('createServer({ unix })', () => {
     writeFileSync(path, 'not a socket');
     cleanups.push(() => rmSync(path, { force: true }));
     expect(() => createServer({ unix: path, services: [echoService] })).toThrow(
-      'is not a socket',
+      `"${path}" exists and is not a socket — refusing to remove it; remove it manually if it is debris`,
     );
     expect(existsSync(path)).toBe(true);
   });

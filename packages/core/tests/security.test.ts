@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createManagedFileBoundary, type ManagedFileBoundary } from '../src/files/boundary';
 import { isUnsafeKey, safeJsonParse } from '../src/internal/safe-json';
 import { isWithinDir } from '../src/internal/within-dir';
 import { staticRoute } from '../src/server/file';
@@ -182,6 +183,7 @@ describe('staticRoute — real path containment', () => {
 describe('resolveMedia — local-file sandbox', () => {
   let base = '';
   let root = '';
+  let files: ManagedFileBoundary;
 
   beforeAll(async () => {
     base = await mkdtemp(join(tmpdir(), 'sk-vf-'));
@@ -191,6 +193,7 @@ describe('resolveMedia — local-file sandbox', () => {
     await writeFile(join(root, 'secret.json'), '{"apiKey":"ggk_secret"}');
     await writeFile(join(base, 'outside.png'), Buffer.from([1, 2, 3]));
     await symlink(join(base, 'outside.png'), join(root, 'link.png'));
+    files = await createManagedFileBoundary({ root });
   });
 
   afterAll(async () => {
@@ -198,24 +201,24 @@ describe('resolveMedia — local-file sandbox', () => {
   });
 
   test('reads a media file inside the sandbox', async () => {
-    const content = await resolveMedia('pic.png', { baseDir: root });
+    const content = await resolveMedia('pic.png', { files });
     expect(content[0]?.type).toBe('image');
   });
 
   test('refuses a non-media file even inside the sandbox', async () => {
     // The ggk_ key lives in a config.json — a media-only allowlist blocks it.
-    await expect(resolveMedia('secret.json', { baseDir: root })).rejects.toThrow(/non-media/);
+    await expect(resolveMedia('secret.json', { files })).rejects.toThrow(/non-media/);
   });
 
   test('refuses a path escaping the sandbox', async () => {
-    await expect(resolveMedia('../outside.png', { baseDir: root })).rejects.toThrow(/escapes/);
+    await expect(resolveMedia('../outside.png', { files })).rejects.toThrow(/invalid/);
   });
 
   test('refuses a symlink that points outside the sandbox', async () => {
-    await expect(resolveMedia('link.png', { baseDir: root })).rejects.toThrow(/escapes/);
+    await expect(resolveMedia('link.png', { files })).rejects.toThrow(/escapes/);
   });
 
-  test('local file access is disabled without a baseDir', async () => {
+  test('local file access is disabled without a managed boundary', async () => {
     await expect(resolveMedia('pic.png')).rejects.toThrow(/disabled/);
   });
 });

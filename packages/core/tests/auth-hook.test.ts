@@ -4,7 +4,9 @@
  * silently pass: without `resolveFromContext` it fails closed. See ADR 0014.
  */
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import type { RuntimeContext } from '../src/contract';
+import { RUNTIME_CONTEXT_RESERVED_KEYS } from '../src/server/context-contribution';
 import { createAuthHook } from '../src/server/middleware/auth';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
 
@@ -238,5 +240,156 @@ describe('createAuthHook — scoped rule edges', () => {
     const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
     await hook(ctx, endpoint('mixed'));
     expect(ctx.userId).toBeUndefined();
+  });
+
+  test('an async rule contributes access-derived fields exactly once', async () => {
+    let calls = 0;
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: {
+        resource: {
+          inject: (user) => ({ userId: user.id, role: 'stale' }),
+          rule: async () => {
+            calls += 1;
+            return { resourceId: 'canonical', role: 'owner' };
+          },
+        },
+      },
+    });
+    const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+    await hook(ctx, endpoint('resource'));
+
+    expect(calls).toBe(1);
+    expect(ctx).toMatchObject({
+      userId: 'u1',
+      resourceId: 'canonical',
+      role: 'owner',
+      source: 'http',
+    });
+  });
+
+  test('the same rule contribution is available on the tool path', async () => {
+    const hook = createAuthHook({
+      resolve: async () => null,
+      resolveFromContext: () => ({ id: 'u1' }),
+      rules: { resource: async () => ({ resourceId: 'canonical' }) },
+    });
+    const ctx = toolCtx();
+
+    await hook(ctx, endpoint('resource'));
+
+    expect(ctx.resourceId).toBe('canonical');
+  });
+
+  test('false and a thrown domain error never merge rule-returned fields', async () => {
+    const denied = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { resource: () => false },
+    });
+    const deniedCtx: RuntimeContext = {
+      params: undefined,
+      input: undefined,
+      source: 'http',
+    };
+    await expect(denied(deniedCtx, endpoint('resource'))).rejects.toThrow();
+    expect(deniedCtx.resourceId).toBeUndefined();
+
+    const failed = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: {
+        resource: (): never => {
+          throw new Error('domain failure');
+        },
+      },
+    });
+    const failedCtx: RuntimeContext = {
+      params: undefined,
+      input: undefined,
+      source: 'http',
+    };
+    await expect(failed(failedCtx, endpoint('resource'))).rejects.toThrow('domain failure');
+    expect(failedCtx.resourceId).toBeUndefined();
+  });
+
+  for (const invalid of [undefined, null, 0, '', [], new Date()]) {
+    test(`invalid rule contribution ${String(invalid)} fails closed`, async () => {
+      const looseRules: Record<string, unknown> = { resource: () => invalid };
+      const hook = Reflect.apply(createAuthHook, undefined, [
+        { resolve: async () => ({ id: 'u1' }), rules: looseRules },
+      ]);
+      const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+      await expect(
+        Reflect.apply(hook, undefined, [ctx, endpoint('resource')]),
+      ).rejects.toThrow('[stitchkit] auth: invalid context contribution');
+      expect(ctx.source).toBe('http');
+    });
+  }
+
+  test('reserved keys reject the complete contribution before any merge', async () => {
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { resource: () => ({ accepted: true, source: 'mcp' }) },
+    });
+    const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+    await expect(hook(ctx, endpoint('resource'))).rejects.toThrow('reserved key "source"');
+    expect(ctx.accepted).toBeUndefined();
+    expect(ctx.source).toBe('http');
+  });
+
+  test('reserved context keys exactly match the declared RuntimeContext fields', () => {
+    const source = readFileSync(`${import.meta.dir}/../src/contract/define.ts`, 'utf8');
+    const body = source.match(/export interface RuntimeContext \{([\s\S]*?)\n\}/)?.[1];
+    if (!body) throw new Error('RuntimeContext declaration not found');
+    const declared = [...body.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*)\??:/gm)]
+      .map((match) => match[1])
+      .filter((key) => key !== undefined)
+      .sort();
+
+    expect([...RUNTIME_CONTEXT_RESERVED_KEYS].sort()).toEqual(declared);
+  });
+
+  test('unsafe, symbol and accessor keys fail without invoking a getter', async () => {
+    let getterCalls = 0;
+    const unsafe: Record<string, unknown> = Object.create(null);
+    Object.defineProperty(unsafe, '__proto__', { enumerable: true, value: 'pollute' });
+    Object.defineProperty(unsafe, 'derived', {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        return 'secret';
+      },
+    });
+    const marker = Symbol('marker');
+    Object.defineProperty(unsafe, marker, { enumerable: true, value: true });
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { resource: () => unsafe },
+    });
+    const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+    await expect(hook(ctx, endpoint('resource'))).rejects.toThrow('unsafe key');
+    expect(getterCalls).toBe(0);
+    expect(Object.getPrototypeOf(ctx)).toBe(Object.prototype);
+  });
+
+  test('a hostile proxy produces a stable inspection error', async () => {
+    const contribution = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('secret trap');
+        },
+      },
+    );
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { resource: () => contribution },
+    });
+    const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
+
+    await expect(hook(ctx, endpoint('resource'))).rejects.toThrow('record inspection failed');
   });
 });

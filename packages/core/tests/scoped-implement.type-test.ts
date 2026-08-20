@@ -13,6 +13,7 @@ import {
   createAuthHook,
   createScopedImplement,
   createScopedImplementRegistry,
+  type RuleScopes,
 } from '../src/server';
 
 const implementFor = createScopedImplement<{
@@ -440,6 +441,50 @@ createAuthHook({
     user: { rule: 'authenticated', inject: async (user) => ({ userId: user.id }) },
   },
 });
+
+// ─── Async rule-return contributions ────────────────────────────────────────
+
+const asyncContributionHook = createAuthHook({
+  resolve: async (): Promise<AuthedUser | null> => null,
+  rules: {
+    guaranteed: {
+      inject: (user) => ({ userId: user.id, role: 'viewer' }),
+      rule: async (): Promise<false | { resourceId: string; role: 'owner' }> => ({
+        resourceId: 'r1',
+        role: 'owner',
+      }),
+    },
+    mixed: (): true | { resourceId: string } => (flag ? true : { resourceId: 'r1' }),
+    variants: (): { resourceId: string; ownerId: string } | { resourceId: string } =>
+      flag ? { resourceId: 'r1', ownerId: 'u1' } : { resourceId: 'r1' },
+  },
+});
+
+type AsyncContributionScopes = AuthScopes<typeof asyncContributionHook>;
+type DirectMixedScope = RuleScopes<{
+  mixed: () => true | { resourceId: string };
+}>['mixed'];
+const directMixed: DirectMixedScope = {};
+const directMaybeMixed: string | undefined = directMixed.resourceId;
+
+const guaranteedContribution: AsyncContributionScopes['guaranteed'] = {
+  userId: 'u1',
+  resourceId: 'r1',
+  role: 'owner',
+};
+const guaranteedRole: 'owner' = guaranteedContribution.role;
+const mixedContribution: AsyncContributionScopes['mixed'] = {};
+const maybeMixedResource: string | undefined = mixedContribution.resourceId;
+const variantContribution: AsyncContributionScopes['variants'] = { resourceId: 'r1' };
+const maybeOwner: string | undefined = variantContribution.ownerId;
+// @ts-expect-error — the true branch contributes no resourceId.
+const requiredMixedResource: string = mixedContribution.resourceId;
+
+void guaranteedRole;
+void directMaybeMixed;
+void maybeMixedResource;
+void maybeOwner;
+void requiredMixedResource;
 
 // ─── declare: typed handlers without binding — the registry path ─────────────
 

@@ -264,7 +264,7 @@ export interface LifecycleHooks {
     ctx: RuntimeContext,
     error: unknown,
     endpoint?: MethodDef,
-  ) => Response | Promise<Response> | undefined;
+  ) => Response | undefined | Promise<Response | undefined>;
 }
 
 export interface RouteGroup {

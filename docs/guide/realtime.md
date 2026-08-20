@@ -39,6 +39,57 @@ runtime. A malformed inbound tuple never reaches the application handler;
 invalid outbound data throws before Socket.IO publishes it. Rejections call the
 optional `onRejected` hook with event, direction, phase and the Zod error.
 
+### Protocol generations
+
+For a distributed producer/consumer pair, put a literal generation first in the
+first payload object. Zod validates object fields in declaration order, so an
+incompatible peer is identified before the rest of its payload is interpreted:
+
+```ts
+const ReplicationMessage = z.object({
+  v: z.literal(2),
+  item: ReplicatedItem,
+})
+
+const realtimeContract = defineRealtimeContract({
+  serverToClient: {
+    replicated: { args: z.tuple([ReplicationMessage]) },
+  },
+  clientToServer: {},
+})
+```
+
+The original `z.ZodError` is retained as `RealtimeRejectedEvent.error.cause`.
+Because event arguments are a tuple, the first payload's `v` path is
+`[0, 'v']` (not `['v']`):
+
+```ts
+import type { RealtimeRejectedEvent } from 'stitchkit'
+import { z } from 'zod'
+
+function isProtocolGenerationMismatch(rejected: RealtimeRejectedEvent): boolean {
+  const cause = rejected.error.cause
+  if (!(cause instanceof z.ZodError)) return false
+  const first = cause.issues[0]
+  return first?.code === 'invalid_value'
+    && first.path.length === 2
+    && first.path[0] === 0
+    && first.path[1] === 'v'
+}
+
+const socket = createRealtimeClient(realtimeContract, {
+  url,
+  onRejected: (rejected) => {
+    if (isProtocolGenerationMismatch(rejected)) schedulePeerUpgrade()
+    else reportMalformedRealtimePayload(rejected)
+  },
+})
+```
+
+A generation mismatch means “upgrade the peer”; another schema rejection means
+“fix the producer or payload”. This stays an application convention, not a core
+API: only the application knows which field denotes protocol compatibility.
+
 ## Server — `createSocketIOServer`
 
 ```ts
@@ -136,6 +187,35 @@ socket.connect()
 socket.on('note:created', (note) => { /* typed note */ })
 socket.emit('room:join', 'general', ({ joined }) => { /* typed + validated */ })
 ```
+
+### Request-response over realtime
+
+For an event with an `ack` schema, `request()` is the Promise form of the same
+native Socket.IO acknowledgement. Arguments and the resolved value are inferred
+from the contract and validated on both sides:
+
+```ts
+const result = await socket.request(
+  'room:join',
+  'general',
+  { timeoutMs: 5_000 },
+)
+// result: { joined: boolean }
+```
+
+An event without `ack` cannot be passed to `request()` by type. A disconnected
+client rejects immediately with `RealtimeRequestDisconnectedError`; an in-flight
+disconnect uses the same error; an elapsed native acknowledgement timeout uses
+`RealtimeRequestTimeoutError`. These are distinct stable classes and codes, so
+never parse Socket.IO error text. An invalid acknowledgement still fires the
+existing `onRejected` hook with phase `acknowledgement`, then rejects with
+`RealtimeRequestInvalidAcknowledgementError`.
+
+`timeoutMs` must be finite and greater than zero. Use acknowledgements only for
+bounded request-response work. A job that runs for minutes, progress streaming,
+or resumable delivery should use separate correlated events or the async
+operation protocol; keeping one acknowledgement open is not a durable RPC/job
+transport.
 
 ## Low-level transport
 

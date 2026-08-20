@@ -458,6 +458,25 @@ observe. (This is also why it lives on `ToolCallHooks` rather than being an
 `Response`, which a tool call has no use for, and a whole `createServer` hooks
 object must stay assignable to `ToolLifecycle`.)
 
+### Compose lifecycle policy explicitly
+
+When auth, a feature policy and audit identity are independent modules, compose
+their existing hooks instead of forwarding each phase by hand:
+
+```ts
+import { composeLifecycleHooks } from 'stitchkit/server'
+import { composeToolLifecycle } from 'stitchkit/tools'
+
+const httpLifecycle = composeLifecycleHooks(authLifecycle, featurePolicy, auditIdentity)
+const toolLifecycle = composeToolLifecycle(authHook, featureToolPolicy, auditToolIdentity)
+```
+
+Phases run left to right. `onRequest` stops on the first `Response`; `onError`
+falls through until a hook handles it; after transforms feed the current value
+forward and preserve it when a hook returns `undefined`. Throws remain owned by
+the existing outer error boundary, and the original context/signal identity is
+never replaced.
+
 **Do not reach for `setRequestError` here.** It writes to the *request* context,
 which the built-in **tool** row does not read: a tool event takes
 `errorCode` / `errorMessage` / `errorDetail` from the `ToolResult`, and only

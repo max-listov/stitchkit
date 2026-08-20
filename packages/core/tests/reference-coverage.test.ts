@@ -27,8 +27,10 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/react': 'react.ts',
   'stitchkit/node': 'node.ts',
   'stitchkit/cli': 'cli.ts',
+  'stitchkit/remote': 'remote.ts',
   'stitchkit/observability': 'observability/index.ts',
   'stitchkit/testing': 'testing.ts',
+  'stitchkit/files': 'files.ts',
 };
 
 const entryFiles = Object.values(ENTRYPOINTS).map((file) => join(SRC, file));

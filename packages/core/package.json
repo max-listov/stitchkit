@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.54.0",
+  "version": "0.55.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -60,6 +60,10 @@
       "types": "./dist/cli.d.ts",
       "import": "./dist/cli.js"
     },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "import": "./dist/remote.js"
+    },
     "./contract": {
       "types": "./dist/contract/index.d.ts",
       "import": "./dist/contract/index.js"
@@ -76,6 +80,10 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
     },
+    "./files": {
+      "types": "./dist/files.d.ts",
+      "import": "./dist/files.js"
+    },
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
@@ -87,7 +95,7 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts --outdir dist --target node --packages external --splitting --root src",
-    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/testing.ts src/observability/index.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",
     "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs",

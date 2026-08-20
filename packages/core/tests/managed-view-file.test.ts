@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
+import { createManagedFileBoundary, type ManagedFileBoundary } from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
 import { defineViewFileTool } from '../src/tools/define-view-file-tool';
 import { buildMcpServer } from '../src/tools/mcp';
@@ -18,12 +19,14 @@ async function connect(server: McpServer): Promise<Client> {
 
 describe('managed view_file definition', () => {
   let root = '';
+  let files: ManagedFileBoundary;
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'sk-managed-view-'));
     await mkdir(join(root, 'nested'));
     await writeFile(join(root, 'nested', 'pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(join(root, 'secret.json'), '{"secret":true}');
+    files = await createManagedFileBoundary({ root });
   });
 
   afterAll(async () => {
@@ -35,7 +38,7 @@ describe('managed view_file definition', () => {
     const definition = defineViewFileTool({
       description: 'Inspect protected media',
       identity: { serviceName: 'media', action: 'view', scope: 'user' },
-      baseDir: root,
+      files,
     });
     const client = await connect(
       buildMcpServer(
@@ -116,7 +119,7 @@ describe('managed view_file definition', () => {
 
   test('the raw mount keeps its content-only MCP envelope over the shared operation', async () => {
     const server = new McpServer({ name: 'raw-view', version: '1' });
-    mountViewFile(server, { baseDir: root });
+    mountViewFile(server, { files });
     const client = await connect(server);
     const result = await client.callTool({
       name: 'view_file',

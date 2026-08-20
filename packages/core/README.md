@@ -85,9 +85,12 @@ Server code imports server entrypoints:
 import { createServer, createHandler, implement } from 'stitchkit/server'
 import { createSocketIOServer, createAuthHook } from 'stitchkit/server'
 import { createMcpHandler, mountAgent } from 'stitchkit/tools'
+import { implementRemote } from 'stitchkit/remote'
 ```
 
-The root `stitchkit` entrypoint is browser-safe. Server and tool code live behind `stitchkit/server` and `stitchkit/tools`.
+The root `stitchkit` entrypoint is browser-safe. Server, tool and peer-free
+remote-proxy code live behind `stitchkit/server`, `stitchkit/tools` and
+`stitchkit/remote` respectively.
 
 ## Quick Start
 

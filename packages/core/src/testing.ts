@@ -98,3 +98,29 @@ export function createHandlerTestClients<
     config.contractConfig,
   );
 }
+
+export {
+  assertSurfaceDiscovery,
+  type ConformanceTransport,
+  type RunSurfaceProbesConfig,
+  runSurfaceProbes,
+  type SurfaceDiscoveryObservation,
+  type SurfaceProbe,
+  type SurfaceProbeDriver,
+  type TransportObservation,
+  TransportObservationSchema,
+} from './testing/surface-conformance';
+export {
+  assertSurfaceManifestSnapshot,
+  buildSurfaceManifest,
+  type SurfaceManifest,
+  type SurfaceManifestConfig,
+  type SurfaceManifestExtension,
+  SurfaceManifestExtensionSchema,
+  type SurfaceManifestOperation,
+  SurfaceManifestOperationSchema,
+  SurfaceManifestSchema,
+  type SurfaceRuntimeToolDefinition,
+  SurfaceSchemaDigestsSchema,
+  serializeSurfaceValue,
+} from './testing/surface-manifest';

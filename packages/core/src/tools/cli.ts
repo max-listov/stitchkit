@@ -27,7 +27,12 @@ import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
 import { writeDownload } from '../internal/write-download';
 import type { ServiceDef, StitchLogger } from '../server/types';
-import { CliArgumentError, parseCliArgs, RESERVED_CLI_OPTIONS } from './cli-args';
+import {
+  CliArgumentError,
+  describeSchemaFields,
+  parseCliArgs,
+  RESERVED_CLI_OPTIONS,
+} from './cli-args';
 import {
   type CliCommandDefinition,
   cliCommandPresentationSchema,
@@ -42,7 +47,7 @@ import {
   type ToolResult,
   toolResultFromError,
 } from './execute';
-import { jsonSchemaFields } from './json-schema';
+import { type JsonSchemaField, jsonSchemaFields } from './json-schema';
 import { createToolRunner, type MountableTool } from './mount';
 import { assertUniqueToolName } from './names';
 import type { RuntimeToolDefinition } from './runtime-tool';
@@ -80,6 +85,8 @@ export interface CliConfig<
    * when the CLI is built via `createToolkit<AppContext>()`.
    */
   context?: (auth: Awaited<TAuth> | undefined) => TContext;
+  /** Explicit cancellation for this invocation; applications may bind SIGINT to it. */
+  signal?: AbortSignal;
   /** Tool-call observability hooks — `afterToolCall` fires for every result,
    *  `onToolError` for the raw value behind a thrown one. */
   hooks?: ToolCallHooks;
@@ -133,7 +140,7 @@ export interface CliConfig<
 }
 
 const GLOBAL_OPTIONS = [
-  ['--json', 'Emit raw JSON on stdout (for piping / scripts)'],
+  ['--json', 'Emit compact success/error JSON records (for scripts)'],
   ['--wait', 'Block-poll an async result to a terminal state'],
   ['--wait-timeout <s>', 'Override the --wait timeout in seconds'],
   ['--output-dir <dir>', 'Download result media into a directory'],
@@ -264,15 +271,43 @@ function renderTopHelp(
 }
 
 function renderCommandHelp(name: string, command: string, descriptor: CliHelpCommand): string {
-  const lines = [descriptor.description, '', `Usage: ${name} ${command} [args] [--flags]`, ''];
   const fields = jsonSchemaFields(descriptor.presentationSchema);
+  const fieldsByName = new Map(fields.map((field) => [field.name, field]));
+  const positionals: JsonSchemaField[] = [];
+  for (const [fieldName, info] of describeSchemaFields(descriptor.argumentSchema)) {
+    if (info.kind === 'boolean') continue;
+    const field = fieldsByName.get(fieldName);
+    if (field) positionals.push(field);
+  }
+  const positionalSyntax = new Map(
+    positionals.map((field) => [
+      field.name,
+      field.required ? `<${field.name}>` : `[${field.name}]`,
+    ]),
+  );
+  const usage = [
+    `Usage: ${name} ${command}`,
+    ...positionals.map((field) => positionalSyntax.get(field.name) ?? field.name),
+    '[--flags]',
+  ].join(' ');
+  const lines = [descriptor.description, '', usage, ''];
   if (fields.length > 0) {
     lines.push('Arguments:');
-    const width = Math.max(...fields.map((f) => f.name.length));
+    const labels = new Map(
+      fields.map((field) => {
+        const positional = positionalSyntax.get(field.name);
+        return [
+          field.name,
+          positional ? `${positional} | --${field.name}` : `--${field.name}`,
+        ];
+      }),
+    );
+    const width = Math.max(...fields.map((field) => labels.get(field.name)?.length ?? 0));
     for (const f of fields) {
       const req = f.required ? ' (required)' : '';
       const desc = f.description ? ` — ${f.description}` : '';
-      lines.push(`  --${padRight(f.name, width)}  <${typeLabel(f.schema)}>${req}${desc}`);
+      const label = labels.get(f.name) ?? `--${f.name}`;
+      lines.push(`  ${padRight(label, width)}  <${typeLabel(f.schema)}>${req}${desc}`);
     }
     lines.push('');
   }
@@ -587,7 +622,7 @@ export async function createCli<
 
   const runTool = createToolRunner({
     source: 'cli',
-    context: config.context?.(managed.auth),
+    context: { ...config.context?.(managed.auth), signal: config.signal },
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,
@@ -618,6 +653,7 @@ export async function createCli<
       },
       timeoutSec: options.waitTimeout,
       onTick: options.quiet ? undefined : (attempt) => stderr(`waiting… (poll ${attempt})\n`),
+      signal: config.signal,
     });
   }
 

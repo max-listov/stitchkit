@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { ToolExecutionOptions, ToolSet } from 'ai';
 import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
@@ -69,10 +69,10 @@ export function mountAgent(
           ? { success: true, value }
           : { success: false, error: new Error('Tool arguments must be an object') },
     });
-    const execute = async (rawArgs: unknown) => {
+    const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
       const args = isRecord(rawArgs) ? rawArgs : {};
       try {
-        const result = await runTool(mountable, args);
+        const result = await runTool(mountable, args, { signal: options.abortSignal });
         if (result.ok) return result.data;
         return formatToolError(result, mountable.name, config.errorHint);
       } catch (err) {

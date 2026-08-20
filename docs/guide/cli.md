@@ -52,6 +52,12 @@ await createCli({
 })
 ```
 
+`createCli({ signal })` and its wait loop honor an explicit caller
+`AbortSignal`. Stitchkit does not install a process-global SIGINT handler for
+ordinary CLI programs: if desired, the application binds SIGINT to an
+`AbortController` and passes its signal. Aborting wait stops polling only; it
+does not cancel the underlying job.
+
 ```json
 // package.json
 { "bin": { "myapp": "./dist/cli.js" } }
@@ -165,7 +171,7 @@ same Zod schema an HTTP or MCP call does.
 
 | Flag                  | Effect                                                     |
 | --------------------- | ---------------------------------------------------------- |
-| `--json`              | Raw JSON on stdout for piping / scripts                    |
+| `--json`              | Compact success/error JSON records for scripts             |
 | `--wait`              | Block-poll an async result to a terminal state             |
 | `--wait-timeout <s>`  | Override the `--wait` timeout                              |
 | `--output-dir <dir>`  | Download result media into a directory                     |
@@ -173,10 +179,18 @@ same Zod schema an HTTP or MCP call does.
 | `--dry-run`           | Print the resolved call without executing                  |
 | `--help`, `-h`        | Usage — top-level or per-command flag table                |
 
-stdout carries the result; errors and progress go to stderr, so `--json` stays
-pipeable and `2>/dev/null` stays clean. The process exit code carries the error
-class (`0` ok, `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`,
-`NOT_FOUND → 4`, …) — override per app with `exitCodes`.
+stdout carries the result; structured errors and progress go to stderr. With
+`--json`, a success or structured failure is exactly one compact,
+newline-terminated JSON record on its respective stream; progress and CLI usage
+diagnostics remain ordinary stderr text. This keeps stdout pipeable and
+`2>/dev/null` clean. The process exit code carries the error class (`0` ok,
+`VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
+…) — override per app with `exitCodes`.
+
+Per-command help derives the positional form from the same schema order as the
+argv parser. For example, a required `action` and optional `profile` render as
+`Usage: myapp skill <action> [profile] [--flags]`; the argument table also shows
+`<action> | --action` and `[profile] | --profile`. Boolean fields remain flags.
 
 ## `--wait` — background-friendly generation
 
@@ -193,11 +207,18 @@ await createCli({
     generate: {
       tool: 'get_generation',
       poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
-      done: (r) => isRecord(r) && r.status === 'COMPLETED',
+      done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
+      failed: (r) => isRecord(r) && r.status === 'FAILED',
     },
   },
 })
 ```
+
+`failed` is optional. When it matches either the initial result or a later poll,
+polling stops and the CLI emits `WAIT_FAILED` on stderr with a non-zero exit;
+the terminal payload is retained under `details.result`. `failed` is checked
+before `done`, so overlapping predicates fail closed. A failed poll tool call
+keeps its own error code, and an elapsed deadline remains `TIMEOUT`.
 
 ```bash
 # foreground

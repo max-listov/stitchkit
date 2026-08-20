@@ -99,6 +99,13 @@ These records were consolidated from the project's internal design notes on
 | [0082](0082-view-file-has-one-managed-batch-operation.md) | `view_file` has one managed batch operation | Accepted — supersedes the raw-only view-file clause of 0081 |
 | [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059 |
 | [0084](0084-stdio-signals-are-close-only.md) | Stdio process signals are close-only | Accepted — extends 0076 without fake force semantics |
+| [0085](0085-auth-rules-may-contribute-context.md) | Auth rules may contribute typed context | Accepted — extends 0078 |
+| [0086](0086-lifecycle-composition-is-explicit.md) | Lifecycle composition is explicit and ordered | Accepted — refines 0072 |
+| [0087](0087-surface-conformance-is-a-manifest-plus-probes.md) | Surface conformance is a manifest plus explicit probes | Accepted — extends 0059 |
+| [0088](0088-managed-files-bind-one-root.md) | Managed files bind one application-owned root | Accepted — supersedes file-path mechanics of 0019/0081/0082 |
+| [0089](0089-async-operations-describe-transport-not-jobs.md) | Async operations describe transport, not jobs | Accepted — extends 0081 |
+| [0090](0090-remote-implementation-has-a-peer-free-entrypoint.md) | Remote implementation has a peer-free entrypoint | Accepted — narrows optional-peer ownership |
+| [0091](0091-realtime-request-is-a-typed-native-ack.md) | Realtime request is a typed native acknowledgement | Accepted — extends 0008 and 0069 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

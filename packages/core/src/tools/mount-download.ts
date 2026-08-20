@@ -5,6 +5,7 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import type { ManagedFileBoundary } from '../files/boundary';
 import { isRecord } from '../internal/typed';
 import { runDownloadOperation } from './download-core';
 import { assertToolName } from './names';
@@ -18,10 +19,10 @@ export interface DownloadToolConfig {
   inputSchema: z.ZodRawShape;
   /** Resolve the args to a media URL — `null` when there is nothing to download. */
   resolveUrl: (args: Record<string, unknown>) => Promise<string | null> | string | null;
-  /** Directory to save into by default. */
-  defaultDir: string;
-  /** Read a per-call output directory from the args. */
-  dirFromArgs?: (args: Record<string, unknown>) => string | undefined;
+  /** Managed boundary that owns every persisted download. */
+  files: ManagedFileBoundary;
+  /** Optional canonical relative destination path. */
+  pathFromArgs?: (args: Record<string, unknown>) => string | undefined;
   /**
    * Allow downloading from private / internal / loopback hosts. Default `false`
    * — the SSRF guard, since the URL comes from model-controlled args. Enable
@@ -61,7 +62,8 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
 
         const result = await runDownloadOperation({
           url,
-          dir: config.dirFromArgs?.(args) ?? config.defaultDir,
+          files: config.files,
+          path: config.pathFromArgs?.(args),
           allowPrivateHosts: config.allowPrivateHosts,
           maxBytes: config.maxBytes,
           timeoutMs: config.timeoutMs,

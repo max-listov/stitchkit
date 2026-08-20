@@ -31,6 +31,38 @@ contract registry. Both helpers are Fetch-only: they construct ordinary
 absolute `Request` objects and call `createHandler` directly, so Bun and Node
 exercise the same framework pipeline.
 
+### Transport conformance
+
+`buildSurfaceManifest` snapshots actual HTTP topology, MCP/Agent/CLI names,
+CLI-only commands, extensions and canonical schema digests. Compare real runner
+discovery with `assertSurfaceDiscovery`, then use `runSurfaceProbes` only for
+the transports you explicitly provide:
+
+```ts
+import {
+  assertSurfaceDiscovery,
+  buildSurfaceManifest,
+  runSurfaceProbes,
+} from 'stitchkit/testing'
+
+const manifest = buildSurfaceManifest({ services, runtimeTools, cliCommands })
+assertSurfaceDiscovery(manifest, {
+  openApi,
+  MCP: (await mcpClient.listTools()).tools.map((tool) => tool.name),
+  AGENT: Object.keys(agentTools),
+  CLI: cliHelpNames,
+})
+
+await runSurfaceProbes({
+  probes,
+  drivers: { HTTP: httpDriver, MCP: mcpDriver, AGENT: agentDriver, CLI: cliDriver },
+})
+```
+
+The kit never starts a server or invents credentials. Each probe declares its
+expected normalized outcome and has bounded timeout, setup/teardown and an
+AbortSignal. A missing driver is unsupported, not silently marked conformant.
+
 ### Test handlers with raw Requests
 
 `createHandler` is the router as a plain `(req) => Promise<Response>` function —

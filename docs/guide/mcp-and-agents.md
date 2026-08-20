@@ -641,7 +641,8 @@ through the contract's typed client:
 
 ```ts
 import { createHttpClient } from 'stitchkit'
-import { createStdioMcpServer, implementRemote } from 'stitchkit/tools'
+import { implementRemote } from 'stitchkit/remote'
+import { createStdioMcpServer } from 'stitchkit/tools'
 
 const http = createHttpClient({
   baseUrl: 'https://api.example.com',
@@ -881,7 +882,10 @@ import {
   defineViewFileTool,
   defineWaitTool,
 } from 'stitchkit/tools'
+import { createManagedFileBoundary } from 'stitchkit/files'
 import { z } from 'zod'
+
+const files = await createManagedFileBoundary({ root: '/srv/job-media' })
 
 const waitForJob = defineWaitTool({
   name: 'wait_for_job',
@@ -899,10 +903,10 @@ const downloadResult = defineDownloadTool({
   name: 'download_result',
   description: 'Download a completed result',
   identity: { serviceName: 'jobs', action: 'downloadResult', scope: 'user' },
-  input: z.object({ id: z.string(), dir: z.string().optional() }),
+  input: z.object({ id: z.string() }),
   resolveUrl: ({ id }) => resolveResultUrl(id),
-  defaultDir: './downloads',
-  dirFromInput: ({ dir }) => dir,
+  files,
+  pathFromInput: ({ id }) => `results/${id}.bin`,
 })
 
 const uploadInput = defineUploadTool({
@@ -910,16 +914,17 @@ const uploadInput = defineUploadTool({
   description: 'Upload a local input file',
   identity: { serviceName: 'jobs', action: 'uploadInput', scope: 'user' },
   output: z.object({ url: z.url() }),
-  upload: (path, context) => uploadFile(path, context.signal),
+  files,
+  upload: (source, context) => uploadBytes(source.bytes, context.signal),
 })
 
 const viewResult = defineViewFileTool({
   name: 'view_result',
   description: 'Inspect generated media',
   identity: { serviceName: 'jobs', action: 'viewResult', scope: 'user' },
-  // Local files are disabled when baseDir is omitted. URL fetches retain SSRF
+  // Local files are disabled when files is omitted. URL fetches retain SSRF
   // protection; use allowPrivateHosts only for an explicitly trusted network.
-  baseDir: '/srv/job-media',
+  files,
 })
 
 const runtimeTools = [waitForJob, downloadResult, uploadInput, viewResult]
@@ -942,6 +947,100 @@ same neutral mechanics but do not gain lifecycle or hooks. The raw view-file
 adapter preserves its content-only MCP envelope while using the same bounded
 batch operation.
 
+### Async-operation protocol
+
+For a complete long-running operation, define the linked runtime-only surface
+once. Stitchkit owns transport names, validation and wait mechanics; the
+application still owns storage, execution, retries and domain states:
+
+```ts
+import {
+  createAsyncOperationSnapshotSchema,
+  defineAsyncOperation,
+} from 'stitchkit/tools'
+
+const id = z.object({ id: z.string() })
+const state = z.object({
+  phase: z.enum(['pending', 'running', 'succeeded']),
+  value: z.string().optional(),
+})
+const snapshot = createAsyncOperationSnapshotSchema({
+  failure: z.object({ code: z.string() }),
+  progress: z.object({ current: z.number(), total: z.number() }),
+})
+
+const exportOperation = defineAsyncOperation({
+  mode: 'runtime-only',
+  name: 'export',
+  description: 'Export project data',
+  identity: { serviceName: 'exports', action: 'export', scope: 'user' },
+  startInput: z.object({ projectId: z.string() }),
+  id,
+  state,
+  snapshot,
+  start: ({ projectId }) => enqueueExport(projectId),
+  authorize: ({ id }, capability, ctx) => authorizeExport(id, capability, ctx),
+  inspect: ({ id }, ctx) => readExport(id, ctx.signal),
+  classify: (job) => ({ phase: job.phase }),
+  result: {
+    output: z.object({ value: z.string() }),
+    handler: (job) => ({ value: job.value ?? '' }),
+  },
+})
+
+const runtimeTools = exportOperation.runtimeTools
+```
+
+Every follow-up repeats `authorize`; an opaque id is never authority. Aborting
+`wait` only stops waiting and never calls optional domain `cancel`. A
+contract-backed operation uses `bindContractAsyncOperation` with literal methods
+from a dedicated existing contract, so it creates no second HTTP router or
+duplicate schemas. Capability keys are narrowed by schema-compatible TypeScript
+input/output types. At runtime, the binder additionally requires the exact same
+id and snapshot Zod instances; declare each once and reuse it:
+
+```ts
+import { defineContract } from 'stitchkit/contract'
+import { bindContractAsyncOperation } from 'stitchkit/tools'
+import { z } from 'zod'
+
+const operationId = z.object({ id: z.string() })
+const operationSnapshot = z.object({
+  phase: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
+})
+
+const operations = defineContract(
+  { prefix: 'exports' },
+  {
+    start: {
+      method: 'POST', path: '/', desc: 'Start export',
+      input: z.object({ projectId: z.string() }), output: operationId,
+    },
+    status: {
+      method: 'POST', path: '/status', desc: 'Read export status',
+      input: operationId, output: operationSnapshot,
+    },
+    wait: {
+      method: 'POST', path: '/wait', desc: 'Wait for export',
+      input: operationId, output: operationSnapshot,
+    },
+  },
+)
+
+const operationHandlers = {
+  start: () => ({ id: 'example' }),
+  status: (): z.output<typeof operationSnapshot> => ({ phase: 'pending' }),
+  wait: (): z.output<typeof operationSnapshot> => ({ phase: 'succeeded' }),
+}
+
+const bound = bindContractAsyncOperation({
+  mode: 'contract-backed',
+  contract: operations,
+  capabilities: { start: 'start', status: 'status', wait: 'wait' },
+  handlers: operationHandlers,
+})
+```
+
 ### Explicit raw SDK registration
 
 `rawTools` is deliberately named as an escape hatch. A tool registered there
@@ -957,7 +1056,7 @@ const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth,
   services: [service],
-  rawTools: (server) => mountViewFile(server, { baseDir: '/srv/uploads' }),
+  rawTools: (server) => mountViewFile(server, { files }),
 })
 ```
 

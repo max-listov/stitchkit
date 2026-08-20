@@ -1,6 +1,32 @@
 export type { McpServer } from '@modelcontextprotocol/server';
+export type {
+  ManagedFileBoundary,
+  ManagedFileReadOptions,
+  ManagedFileSource,
+  ManagedFileWriteOptions,
+} from './files/boundary';
 export type { OperationIdentity } from './server/types';
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
+export {
+  type AsyncOperationCancelCapability,
+  type AsyncOperationCancelResult,
+  AsyncOperationCancelResultSchema,
+  type AsyncOperationCapability,
+  type AsyncOperationFollowDefinition,
+  type AsyncOperationIdentity,
+  type AsyncOperationOutputCapability,
+  type AsyncOperationStartDefinition,
+  bindContractAsyncOperation,
+  type ContractAsyncOperationConfig,
+  type ContractAsyncOperationFollowKey,
+  type ContractAsyncOperationKeys,
+  type ContractAsyncOperationStartKey,
+  type ContractAsyncOperationWaitKey,
+  createAsyncOperationSnapshotSchema,
+  defineAsyncOperation,
+  type RuntimeAsyncOperation,
+  type RuntimeAsyncOperationConfig,
+} from './tools/async-operation';
 export { type CliConfig, type CliSurfaceSource, createCli } from './tools/cli';
 export {
   type CliCommandContext,
@@ -31,10 +57,6 @@ export {
   defineWaitTool,
   type ManagedWaitRender,
 } from './tools/define-wait-tool';
-export {
-  type DownloadResult,
-  DownloadResultSchema,
-} from './tools/download-core';
 export type {
   AfterToolCallOptions,
   BeforeToolCallOptions,
@@ -57,6 +79,7 @@ export {
   type ToolInvokerConfig,
   type ToolInvokerTransport,
 } from './tools/invoker';
+export { composeToolLifecycle } from './tools/lifecycle';
 export {
   listContractToolNames,
   listToolNames,
@@ -158,7 +181,6 @@ export {
   type NonPortableFormat,
   PORTABLE_JSON_SCHEMA_FORMATS,
 } from './tools/portable-formats';
-export { type ImplementRemoteOptions, implementRemote } from './tools/remote';
 export {
   createRuntimeToolFactory,
   defineRuntimeTool,

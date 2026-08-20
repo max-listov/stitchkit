@@ -13,12 +13,11 @@
  * sandboxed to a `baseDir`, and downloads are capped before they reach memory.
  */
 
-import { readFile, stat } from 'node:fs/promises';
-import { extname, resolve } from 'node:path';
+import { extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { type ManagedFileBoundary, ManagedFileError } from '../files/boundary';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
-import { isWithinDir, realPathWithinDir } from '../internal/within-dir';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
@@ -86,10 +85,10 @@ export type ViewFileOutput = z.infer<typeof ViewFileOutputSchema>;
 
 export interface ViewFileOptions {
   /**
-   * Directory that local file paths must resolve within. Omitted → local file
-   * access is disabled and only `http(s)` URLs are accepted.
+   * Managed boundary that owns local files. Omitted → local access is disabled
+   * and only `http(s)` URLs are accepted.
    */
-  baseDir?: string;
+  files?: ManagedFileBoundary;
   /**
    * Allow fetching URLs that resolve to private / loopback / link-local
    * addresses. Default `false` — the SSRF guard. Enable only in a trusted
@@ -149,9 +148,9 @@ async function fetchSource(
       : { tooLarge: true, mimeType, bytesRead: maxBytes };
   }
 
-  // Local file access is opt-in and sandboxed to `baseDir`.
-  if (!options.baseDir) {
-    throw new Error('local file paths are disabled — set baseDir to allow them');
+  // Local file access is opt-in and owned by one managed boundary.
+  if (!options.files) {
+    throw new Error('local file paths are disabled — set files to allow them');
   }
   options.signal?.throwIfAborted();
   // Only ever read a media file — never a `config.json` / `.env` / `id_rsa`
@@ -160,23 +159,23 @@ async function fetchSource(
   if (!extMime) {
     throw new Error('refusing to read a non-media file');
   }
-  const root = resolve(options.baseDir);
-  const target = resolve(root, pathOrUrl);
-  if (!isWithinDir(root, target)) {
-    throw new Error('path escapes the allowed directory');
+  try {
+    const source = await options.files.read(pathOrUrl, {
+      maxBytes,
+      signal: options.signal,
+    });
+    const buffer = Buffer.from(source.bytes);
+    return {
+      buffer,
+      mimeType: source.ref.mediaType ?? extMime,
+      bytesRead: buffer.length,
+    };
+  } catch (error) {
+    if (error instanceof ManagedFileError && error.code === 'FILE_TOO_LARGE') {
+      return { tooLarge: true, mimeType: extMime, bytesRead: maxBytes };
+    }
+    throw error;
   }
-  // Re-check the real, symlink-resolved paths so a symlink inside the sandbox
-  // cannot point out of it (and so a sandbox reached through a symlink still
-  // matches). `realpath` of a missing file rejects → treated as not found.
-  const realTarget = await realPathWithinDir(root, target);
-  if (realTarget === null) {
-    throw new Error('path escapes the allowed directory');
-  }
-  const info = await stat(realTarget).catch(() => null);
-  if (!info?.isFile()) throw new Error('file not found');
-  if (info.size > maxBytes) return { tooLarge: true, mimeType: extMime, bytesRead: 0 };
-  const buffer = await readFile(realTarget, { signal: options.signal });
-  return { buffer, mimeType: extMime, bytesRead: buffer.length };
 }
 
 type ResolvedMedia = {

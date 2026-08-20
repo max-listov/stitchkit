@@ -1,7 +1,7 @@
-import { basename, extname, resolve } from 'node:path';
-import { z } from 'zod';
-import { fetchGuarded, readCapped } from '../internal/secure-fetch';
-import { writeDownload } from '../internal/write-download';
+import { basename, extname } from 'node:path';
+import type { ManagedFileRef } from '../contract/file-ref';
+import type { ManagedFileBoundary } from '../files/boundary';
+import { fetchGuarded } from '../internal/secure-fetch';
 
 /** Default memory cap for a download — overridable per operation. */
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
@@ -17,15 +17,6 @@ const MIME_EXT: Record<string, string> = {
   'audio/wav': '.wav',
   'audio/ogg': '.ogg',
 };
-
-/** Stable neutral result shared by raw MCP and managed runtime downloads. */
-export const DownloadResultSchema = z.object({
-  path: z.string(),
-  size: z.number().int().nonnegative(),
-  mimeType: z.string(),
-});
-
-export type DownloadResult = z.infer<typeof DownloadResultSchema>;
 
 /** Expected, caller-safe download failure; unexpected runtime errors still throw raw. */
 export class DownloadOperationError extends Error {
@@ -63,7 +54,8 @@ function baseNameFor(url: string): string {
 
 export interface DownloadOperationConfig {
   url: string;
-  dir: string;
+  files: ManagedFileBoundary;
+  path?: string;
   allowPrivateHosts?: boolean;
   maxBytes?: number;
   timeoutMs?: number;
@@ -73,7 +65,7 @@ export interface DownloadOperationConfig {
 /** Fetch and persist one URL without owning tool registration or presentation. */
 export async function runDownloadOperation(
   config: DownloadOperationConfig,
-): Promise<DownloadResult> {
+): Promise<ManagedFileRef> {
   const res = await fetchGuarded(new URL(config.url), config.allowPrivateHosts ?? false, {
     timeoutMs: config.timeoutMs,
     signal: config.signal,
@@ -95,20 +87,11 @@ export async function runDownloadOperation(
       413,
     );
   }
-  const buffer = await readCapped(res, max);
-  if (!buffer) {
-    throw new DownloadOperationError(
-      'DOWNLOAD_TOO_LARGE',
-      `file exceeds the ${max}-byte cap`,
-      413,
-    );
-  }
-
-  const dir = resolve(config.dir);
-  const filePath = resolve(
-    dir,
-    `${baseNameFor(config.url)}${extensionFor(config.url, mimeType)}`,
-  );
-  await writeDownload(dir, filePath, buffer);
-  return { path: filePath, size: buffer.length, mimeType };
+  const path =
+    config.path ?? `${baseNameFor(config.url)}${extensionFor(config.url, mimeType)}`;
+  return config.files.write(path, res.body ?? new Uint8Array(), {
+    maxBytes: max,
+    mediaType: mimeType,
+    signal: config.signal,
+  });
 }

@@ -8,12 +8,13 @@
  */
 
 import { describe, expect, spyOn, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { createManagedFileBoundary } from '../src/files/boundary';
 import { isRecord } from '../src/internal/typed';
 import { mountDownload } from '../src/tools/mount-download';
 import { mountUpload } from '../src/tools/mount-upload';
@@ -93,29 +94,41 @@ describe('mountWait', () => {
 
 describe('mountUpload', () => {
   test('uploads a path and returns the result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sk-upload-'));
+    await writeFile(join(root, 'pic.png'), 'image');
+    const files = await createManagedFileBoundary({ root });
     const client = await connectWith((s) =>
-      mountUpload(s, { description: 'upload', upload: async (path) => ({ url: path }) }),
+      mountUpload(s, {
+        description: 'upload',
+        files,
+        upload: async (source) => ({ url: source.ref.path }),
+      }),
     );
     const result = await client.callTool({ name: 'upload', arguments: { path: 'pic.png' } });
     expect(isErr(result)).toBe(false);
     expect(firstText(result)).toContain('pic.png');
     await client.close();
+    await rm(root, { recursive: true, force: true });
   });
 
   test('an empty path is rejected', async () => {
+    const files = await createManagedFileBoundary({ root: tmpdir() });
     const client = await connectWith((s) =>
-      mountUpload(s, { description: 'upload', upload: async (path) => ({ url: path }) }),
+      mountUpload(s, { description: 'upload', files, upload: async () => ({}) }),
     );
     const result = await client.callTool({ name: 'upload', arguments: { path: '' } });
     expect(isErr(result)).toBe(true);
-    expect(firstText(result)).toContain('Provide `path`.');
     await client.close();
   });
 
   test('a throwing upload is framed "Upload failed:"', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sk-upload-'));
+    await writeFile(join(root, 'f'), 'file');
+    const files = await createManagedFileBoundary({ root });
     const client = await connectWith((s) =>
       mountUpload(s, {
         description: 'upload',
+        files,
         upload: async () => {
           throw new Error('disk full');
         },
@@ -125,17 +138,19 @@ describe('mountUpload', () => {
     expect(isErr(result)).toBe(true);
     expect(firstText(result)).toContain('Upload failed: disk full');
     await client.close();
+    await rm(root, { recursive: true, force: true });
   });
 });
 
 describe('mountDownload', () => {
   test('a null resolveUrl reports nothing to download', async () => {
+    const files = await createManagedFileBoundary({ root: tmpdir() });
     const client = await connectWith((s) =>
       mountDownload(s, {
         description: 'download',
         inputSchema: { id: z.string().optional() },
         resolveUrl: () => null,
-        defaultDir: tmpdir(),
+        files,
       }),
     );
     const result = await client.callTool({ name: 'download', arguments: {} });
@@ -145,6 +160,7 @@ describe('mountDownload', () => {
   });
 
   test('a throwing resolveUrl is framed "Download failed:"', async () => {
+    const files = await createManagedFileBoundary({ root: tmpdir() });
     const client = await connectWith((s) =>
       mountDownload(s, {
         description: 'download',
@@ -152,7 +168,7 @@ describe('mountDownload', () => {
         resolveUrl: () => {
           throw new Error('no such generation');
         },
-        defaultDir: tmpdir(),
+        files,
       }),
     );
     const result = await client.callTool({ name: 'download', arguments: {} });
@@ -162,6 +178,7 @@ describe('mountDownload', () => {
   });
 
   test('an HTTP failure keeps the raw mount error prefix exactly once', async () => {
+    const files = await createManagedFileBoundary({ root: tmpdir() });
     const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('unavailable', { status: 503 }),
     );
@@ -171,7 +188,7 @@ describe('mountDownload', () => {
           description: 'download',
           inputSchema: { url: z.string() },
           resolveUrl: (args) => (typeof args.url === 'string' ? args.url : null),
-          defaultDir: tmpdir(),
+          files,
         }),
       );
       const result = await client.callTool({
@@ -188,6 +205,7 @@ describe('mountDownload', () => {
 
   test('writes a fetched URL to disk with a content-type extension', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-dl-'));
+    const files = await createManagedFileBoundary({ root: dir });
     const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
     );
@@ -197,7 +215,7 @@ describe('mountDownload', () => {
           description: 'download',
           inputSchema: { url: z.string() },
           resolveUrl: (args) => (typeof args.url === 'string' ? args.url : null),
-          defaultDir: dir,
+          files,
         }),
       );
       const result = await client.callTool({
@@ -210,9 +228,9 @@ describe('mountDownload', () => {
       const parsed: unknown = JSON.parse(firstText(result));
       expect(isRecord(parsed)).toBe(true);
       if (isRecord(parsed)) {
-        expect(parsed.mimeType).toBe('image/png');
+        expect(parsed.mediaType).toBe('image/png');
         expect(parsed.size).toBe(3);
-        expect(typeof parsed.path === 'string' && parsed.path.endsWith('img.png')).toBe(true);
+        expect(parsed.path).toBe('img.png');
       }
       await client.close();
     } finally {
@@ -221,12 +239,10 @@ describe('mountDownload', () => {
     }
   });
 
-  test('a RELATIVE defaultDir works (regression: unresolved dir always failed containment)', async () => {
+  test('a boundary may bind a relative root once', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-dl-rel-'));
-    // The documented `mountDownload({ defaultDir: './downloads' })` shape — a
-    // relative directory must resolve before the containment check, not fail
-    // as a bogus security error naming the user's file.
     const relativeDir = relative(process.cwd(), dir);
+    const files = await createManagedFileBoundary({ root: relativeDir });
     const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
     );
@@ -236,7 +252,7 @@ describe('mountDownload', () => {
           description: 'download',
           inputSchema: { url: z.string() },
           resolveUrl: (args) => (typeof args.url === 'string' ? args.url : null),
-          defaultDir: relativeDir,
+          files,
         }),
       );
       const result = await client.callTool({

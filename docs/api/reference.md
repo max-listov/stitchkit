@@ -58,11 +58,18 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createRealtimeClient` | function | inferred, runtime-validated Socket.IO client — [guide](../guide/realtime.md#client--createrealtimeclient) |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
-| `SocketIOClient` | _type_ | the client handle; `emit` returns `false` for an emit dropped while disconnected |
+| `SocketIOClient` | _type_ | low-level client handle; `emit` reports disconnected drops and `emitWithAck` exposes the native Promise primitive used by validated `request()` |
 | `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`, `onConnectError`, `onDroppedEmit`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
 | `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
+| `RealtimeAcknowledgedEvent` | _type_ | event-name union restricted to definitions with an `ack` schema |
+| `RealtimeAcknowledgement` | _type_ | validated acknowledgement output inferred from an event definition |
+| `RealtimeRequestArguments` | _type_ | request arguments inferred from an acknowledged event tuple |
+| `RealtimeRequestOptions` | _type_ | finite positive native acknowledgement `timeoutMs` |
+| `RealtimeRequestTimeoutError` | class | stable `REALTIME_REQUEST_TIMEOUT` rejection |
+| `RealtimeRequestDisconnectedError` | class | stable `REALTIME_REQUEST_DISCONNECTED` rejection, including an immediate disconnected call |
+| `RealtimeRequestInvalidAcknowledgementError` | class | invalid ack was reported through `onRejected` and the request rejected |
 | `RealtimeContract` | _type_ | shared server-to-client and client-to-server event registries |
 | `RealtimeEventRegistry` | _type_ | string-keyed registry of event definitions |
 | `RealtimeEventDefinition` | _type_ | one tuple-shaped event and optional acknowledgement schema |
@@ -243,6 +250,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `OperationIdentity` | _type_ | path-free service/action/scope/method identity shared by contract and native tool operations |
 | `Handlers` | _type_ | the typed handler map `implement` expects |
 | `LifecycleHooks` | _type_ | `onRequest` / pre-body `authorize` / `beforeHandle` / `afterHandle` / `onError` |
+| `composeLifecycleHooks` | function | compose HTTP lifecycle phases in declaration order with short-circuit/fallthrough semantics |
 | `AuthorizationContext` | _type_ | HTTP pre-body context with validated params, `input: undefined` and no files |
 | `RouteGroup` | _type_ | a prefixed group of services with its own hooks |
 | `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context |
@@ -274,6 +282,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `AuthHook` | _type_ | the hook `createAuthHook` returns |
 | `AuthHookConfig` | _type_ | config for `createAuthHook` |
 | `AuthRule` | _type_ | `'public' \| 'authenticated' \| predicate` |
+| `AuthRuleContribution` | _type_ | plain context fields a sync/async rule may contribute after authorizing |
 | `ScopedAuthRule` | _type_ | a rule plus its typed context contribution — `{ rule, inject? }` |
 | `AuthRules` | _type_ | the `rules` map: bare rules or scoped rules |
 | `RuleScopes` | _type_ | scope→context map derived from a `rules` object; `'public'` fields become optional |
@@ -442,6 +451,18 @@ audit event. See the [Observability guide](../guide/observability.md).
 
 ---
 
+## `stitchkit/remote`
+
+Peer-free remote implementation boundary. Importing it does not load the MCP
+SDK, `ai`, or other optional tool peers, so it is safe in a thin CLI bundle.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
+| `ImplementRemoteOptions` | _type_ | optional argument-rewrite hook for `implementRemote` |
+
+---
+
 ## `stitchkit/tools`
 
 Server-only. Turns contracts into MCP and AI-agent tools. MCP server surfaces
@@ -461,7 +482,6 @@ payload.
 | `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
 | `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
-| `implementRemote` | function | bind a contract to a remote HTTP API — [guide](../guide/mcp-and-agents.md#proxying-a-remote-api--implementremote) |
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
@@ -493,7 +513,6 @@ payload.
 | `McpSurfaceDefinition` | _type_ | one immutable `{ services, runtimeTools }` MCP surface |
 | `McpSurfaceRegistry` | _type_ | finite keyed surface registry for eager preparation |
 | `StdioAuthConfig` | _type_ | startup identity composed into `StdioMcpServerConfig` |
-| `ImplementRemoteOptions` | _type_ | options for `implementRemote` |
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
 | `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
@@ -549,7 +568,7 @@ payload.
 | `ToolInvocationOptions` | _type_ | per-call source, context, lifecycle, hooks and output-strip reporter |
 | `ToolInvokerTransport` | _type_ | invoker exposure policy: `MCP \| AGENT \| CLI` |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source, mcp? }` plus whatever the mount's `context` added |
-| `ViewFileOptions` | _type_ | shared URL/local-sandbox policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
+| `ViewFileOptions` | _type_ | shared URL/managed-file-boundary policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
 | `ViewFileOutput` | _type_ | neutral managed batch result with multimodal `content` and per-item `errors` |
 | `ViewFileInputSchema` | constant | fixed one-or-many media path/URL input schema |
 | `ViewFileOutputSchema` | constant | Zod schema for the neutral managed view-file batch result |
@@ -585,9 +604,25 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `ManagedNativeToolConfig` | _type_ | shared name, description, identity, exposure and annotations for managed native factories |
 | `NativeToolIdentity` | _type_ | pathless service/action/scope/meta identity; semantic method is factory-owned |
 | `ManagedWaitRender` | _type_ | optional managed wait terminal text and failure classification |
-| `DownloadResultSchema` | constant | Zod schema for a saved download's path, byte size and MIME type |
-| `DownloadResult` | _type_ | validated output of `defineDownloadTool` |
 | `UploadToolInputSchema` | constant | fixed `{ path: string }` input schema for `defineUploadTool` |
+| `defineAsyncOperation` | function | runtime-only start/status/wait plus configured cancel/result/artifacts definitions |
+| `bindContractAsyncOperation` | function | bind literal methods from an existing contract without creating another HTTP surface |
+| `createAsyncOperationSnapshotSchema` | function | canonical pending/running/succeeded/failed/cancelled Zod snapshot |
+| `AsyncOperationCancelResultSchema` | constant | validated accepted/already_terminal/rejected cancellation result |
+| `AsyncOperationCancelResult` | _type_ | validated cancel capability result |
+| `AsyncOperationCancelCapability` | _type_ | optional typed domain cancellation callback |
+| `AsyncOperationCapability` | _type_ | generated capability-name union |
+| `AsyncOperationStartDefinition` / `AsyncOperationFollowDefinition` | _type_ | generated runtime definition types |
+| `AsyncOperationIdentity` | _type_ | shared service/action/scope/meta identity for an operation |
+| `AsyncOperationOutputCapability` | _type_ | optional result/artifact schema plus handler |
+| `RuntimeAsyncOperationConfig` | _type_ | runtime-only descriptor configuration |
+| `RuntimeAsyncOperation` | _type_ | inferred generated definitions and schemas |
+| `ContractAsyncOperationConfig` | _type_ | literal contract method binding and handlers |
+| `ContractAsyncOperationKeys` | _type_ | literal method-key union of a bound contract |
+| `ContractAsyncOperationStartKey` | _type_ | contract keys with a declared output schema, valid for `start` |
+| `ContractAsyncOperationFollowKey` | _type_ | contract keys whose input schema type matches the selected start output |
+| `ContractAsyncOperationWaitKey` | _type_ | follow-up keys whose output schema type also matches the selected status output |
+| `composeToolLifecycle` | function | ordered composition of tool before/after phases |
 | `mountDownload` | function | raw MCP "download a URL to disk" adapter (SSRF-guarded, size-capped) |
 | `mountUpload` | function | raw MCP "upload a local file" adapter |
 | `mountWait` | function | raw MCP generic `--wait`-style polling adapter |
@@ -667,6 +702,43 @@ handler pipeline without opening a TCP port.
 | `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
 | `HandlerTestClientsConfig` | _type_ | batch helper configuration |
 | `HandlerTestTransportConfig` | _type_ | shared in-process handler, origin, prefix, client defaults and optional server handle |
+| `buildSurfaceManifest` | function | deterministic actual HTTP/tool/CLI/extension topology with versioned schema digests |
+| `assertSurfaceManifestSnapshot` | function | bounded deterministic manifest drift assertion |
+| `assertSurfaceDiscovery` | function | compare real OpenAPI/MCP/Agent/CLI discovery to a manifest |
+| `runSurfaceProbes` | function | execute explicit transport drivers with per-probe setup, teardown, timeout and cancellation |
+| `TransportObservationSchema` | constant | normalized success/validation/domain-error/aborted probe outcome |
+| `ConformanceTransport` | _type_ | explicit probe transport union |
+| `RunSurfaceProbesConfig` | _type_ | probes, drivers and diagnostic byte cap |
+| `SurfaceDiscoveryObservation` | _type_ | real OpenAPI/tool/CLI/extension discovery values |
+| `SurfaceProbe` / `SurfaceProbeDriver` | _type_ | one bounded scenario and its consumer-supplied runner |
+| `TransportObservation` | _type_ | validated normalized driver result |
+| `SurfaceManifest` / `SurfaceManifestConfig` | _type_ | deterministic surface snapshot and its inputs |
+| `SurfaceManifestOperation` / `SurfaceManifestOperationSchema` | _type_ / schema | one contract or runtime operation row |
+| `SurfaceManifestExtension` / `SurfaceManifestExtensionSchema` | _type_ / schema | declared transport extension row |
+| `SurfaceManifestSchema` | schema | complete deterministic manifest schema |
+| `SurfaceRuntimeToolDefinition` | _type_ | peer-free structural runtime-operation subset accepted by manifests |
+| `SurfaceSchemaDigestsSchema` | schema | params/input/output/multipart digest object |
+| `serializeSurfaceValue` | function | canonical versioned serialization used for deterministic digests |
+
+---
+
+## `stitchkit/files`
+
+Peer-free Bun/Node filesystem capability. Browser/contract-safe refs are also
+available from `stitchkit/contract`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createManagedFileBoundary` | function | bind one existing application-owned root for capped reads and atomic writes |
+| `ManagedFileBoundary` | _type_ | non-reopenable `read`/`write` capability over canonical relative paths |
+| `ManagedFileBoundaryConfig` | _type_ | bound root, finite limits, inspector and cleanup observer |
+| `ManagedFileRefSchema` / `ManagedFileRef` | schema / _type_ | transport-safe relative path, measured size and optional media metadata |
+| `ManagedFilePathSchema` / `ManagedFilePath` | schema / _type_ | canonical POSIX relative managed-file path |
+| `ManagedFileSource` | _type_ | bounded immutable bytes plus validated ref passed to upload callbacks |
+| `ManagedFileReadOptions` / `ManagedFileWriteOptions` | _type_ | per-operation byte cap, signal and atomic write policy |
+| `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable caller-safe boundary failures |
+| `ManagedFileInspector` | _type_ | bounded-prefix content inspection callback that cannot own path or size |
+| `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector input and normalized metadata-only result |
 
 ---
 
@@ -705,7 +777,7 @@ SDK nor the `ai` peer.
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command |
 | `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
-| `emitResult` | function | write a `ToolResult` to stdout/stderr + exit code (advanced) |
+| `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
 | `CliConfig` | _type_ | config for `createCli` |
 | `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
@@ -714,9 +786,9 @@ SDK nor the `ai` peer.
 | `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output |
 | `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
 | `CliCommandContext` | _type_ | parsed input, global options and stdout/stderr writers |
-| `CliRunOptions` | _type_ | parsed global flags (`--json`, `--wait`, …) |
+| `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, …) |
 | `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
-| `CliWaitConfig` | _type_ | per-command `--wait` polling config |
+| `CliWaitConfig` | _type_ | per-command `--wait` polling config; optional `failed(result)` maps a terminal domain failure to `WAIT_FAILED` and a non-zero exit |
 | `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
 | `PollParams` | _type_ | params for `pollUntilDone` |
 | `CliWriters` | _type_ | stdout/stderr sinks for `emitResult` |

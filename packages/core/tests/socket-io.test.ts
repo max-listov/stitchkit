@@ -6,7 +6,12 @@ import {
   createSocketIOClient,
   type SocketIOClientConfig,
 } from '../src/browser/socket-io';
-import { defineRealtimeContract } from '../src/realtime';
+import {
+  defineRealtimeContract,
+  RealtimeRequestDisconnectedError,
+  RealtimeRequestInvalidAcknowledgementError,
+  RealtimeRequestTimeoutError,
+} from '../src/realtime';
 import { type BunServer, createServer } from '../src/server/bun';
 import { bindRealtimeServer, type RealtimeServerConnection } from '../src/server/realtime';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
@@ -224,6 +229,26 @@ const realtimeContract = defineRealtimeContract({
       args: z.tuple([z.object({ n: z.number() })]),
       ack: z.object({ accepted: z.boolean() }),
     },
+    slow: {
+      args: z.tuple([]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
+    lateAck: {
+      args: z.tuple([]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
+    sum: {
+      args: z.tuple([z.number(), z.number()]),
+      ack: z.number(),
+    },
+    disconnectBeforeAck: {
+      args: z.tuple([]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
+    invalidAck: {
+      args: z.tuple([]),
+      ack: z.object({ accepted: z.boolean() }),
+    },
     ready: { args: z.tuple([]) },
   },
 });
@@ -253,6 +278,22 @@ realtime.onConnection((connection) => {
     acknowledge({ accepted: true });
     events.emit('pong', { n: n + 1 });
     events.emit('blob', Buffer.from([1, 2, 3]));
+  });
+  events.on('slow', () => {
+    // Deliberately never acknowledge: the client must use Socket.IO's native
+    // acknowledgement timeout and translate it to a stable framework error.
+  });
+  events.on('lateAck', (acknowledge) => {
+    setTimeout(() => acknowledge({ accepted: true }), 40);
+  });
+  events.on('sum', (left, right, acknowledge) => {
+    acknowledge(left + right);
+  });
+  events.on('disconnectBeforeAck', () => {
+    raw.disconnect(true);
+  });
+  raw.on('invalidAck', (acknowledge: (value: unknown) => void) => {
+    acknowledge({ accepted: 'not-a-boolean' });
   });
   events.on('ready', () => {
     readyRealtimeEvents.push(true);
@@ -299,6 +340,120 @@ describe('Zod-first realtime contracts', () => {
     expect(binaryOrRejection).toEqual({ value: new Uint8Array([1, 2, 3]) });
     await Bun.sleep(20);
     expect(readyRealtimeEvents).toContain(true);
+    client.disconnect();
+  });
+
+  test('request resolves a validated native acknowledgement', async () => {
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+
+    const acknowledgement = await client.request('ping', { n: 8 }, { timeoutMs: 500 });
+    expect(acknowledgement).toEqual({ accepted: true });
+    expect(await client.request('sum', 20, 22, { timeoutMs: 500 })).toBe(42);
+
+    const requestTypeAssertions = (candidate: typeof client): void => {
+      // @ts-expect-error — request is available only for events with an ack schema
+      void candidate.request('ready', { timeoutMs: 100 });
+      // @ts-expect-error — request arguments are inferred from the event tuple
+      void candidate.request('ping', { n: 'wrong' }, { timeoutMs: 100 });
+      const typed: Promise<{ accepted: boolean }> = candidate.request(
+        'ping',
+        { n: 1 },
+        { timeoutMs: 100 },
+      );
+      void typed;
+    };
+    void requestTypeAssertions;
+    client.disconnect();
+  });
+
+  test('request rejects immediately while disconnected', async () => {
+    const client = createRealtimeClient(realtimeContract, { url: REALTIME_URL });
+    const error = await client
+      .request('ping', { n: 1 }, { timeoutMs: 500 })
+      .catch((cause) => cause);
+    expect(error).toBeInstanceOf(RealtimeRequestDisconnectedError);
+    expect(error.code).toBe('REALTIME_REQUEST_DISCONNECTED');
+  });
+
+  test('request timeout and in-flight disconnect are distinct', async () => {
+    const timeoutClient = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    let connected = whenConnected(timeoutClient);
+    timeoutClient.connect();
+    await connected;
+    const timeout = await timeoutClient
+      .request('slow', { timeoutMs: 20 })
+      .catch((cause) => cause);
+    expect(timeout).toBeInstanceOf(RealtimeRequestTimeoutError);
+    expect(timeout.code).toBe('REALTIME_REQUEST_TIMEOUT');
+    timeoutClient.disconnect();
+
+    const disconnectClient = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: false,
+    });
+    connected = whenConnected(disconnectClient);
+    disconnectClient.connect();
+    await connected;
+    const disconnected = await disconnectClient
+      .request('disconnectBeforeAck', { timeoutMs: 500 })
+      .catch((cause) => cause);
+    expect(disconnected).toBeInstanceOf(RealtimeRequestDisconnectedError);
+    expect(disconnected.code).toBe('REALTIME_REQUEST_DISCONNECTED');
+    disconnectClient.disconnect();
+  });
+
+  test('a late acknowledgement cannot settle a timed-out request twice', async () => {
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    let settlements = 0;
+    await client.request('lateAck', { timeoutMs: 10 }).then(
+      () => {
+        settlements += 1;
+      },
+      (error) => {
+        settlements += 1;
+        expect(error).toBeInstanceOf(RealtimeRequestTimeoutError);
+      },
+    );
+    await Bun.sleep(60);
+    expect(settlements).toBe(1);
+    client.disconnect();
+  });
+
+  test('invalid request acknowledgement reports onRejected and rejects', async () => {
+    const rejection = Promise.withResolvers<string>();
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onRejected: ({ event, phase }) => rejection.resolve(`${event}:${phase}`),
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+
+    const invalid = await client
+      .request('invalidAck', { timeoutMs: 500 })
+      .catch((cause) => cause);
+    expect(invalid).toBeInstanceOf(RealtimeRequestInvalidAcknowledgementError);
+    expect(invalid.code).toBe('REALTIME_REQUEST_INVALID_ACKNOWLEDGEMENT');
+    expect(await within(rejection.promise, 'invalid ack rejection')).toBe(
+      'invalidAck:acknowledgement',
+    );
     client.disconnect();
   });
 

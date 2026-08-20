@@ -14,6 +14,9 @@
  */
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // 1 — every server-side entrypoint must IMPORT cleanly under Node.
@@ -22,9 +25,11 @@ const entrypoints = [
   'stitchkit/contract',
   'stitchkit/server',
   'stitchkit/tools',
+  'stitchkit/remote',
   'stitchkit/node',
   'stitchkit/observability',
   'stitchkit/testing',
+  'stitchkit/files',
 ];
 for (const name of entrypoints) {
   await import(name);
@@ -35,7 +40,31 @@ const { createHttpClient, defineContract, defineRealtimeContract } = await impor
 const { bindRealtimeServer, createHandler, createSocketIOServer, implement, serveNode } =
   await import('stitchkit/node');
 const { createHandlerTestClient } = await import('stitchkit/testing');
+const { createManagedFileBoundary } = await import('stitchkit/files');
 const { z } = await import('zod');
+
+const fileRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-files-'));
+try {
+  const files = await createManagedFileBoundary({ root: fileRoot, maxReadBytes: 3 });
+  assert.deepEqual(await files.write('one.bin', new Uint8Array([1, 2, 3])), {
+    path: 'one.bin',
+    size: 3,
+  });
+  await assert.rejects(files.write('one.bin', new Uint8Array([9])), {
+    code: 'FILE_EXISTS',
+  });
+  assert.deepEqual(
+    new Uint8Array(await readFile(join(fileRoot, 'one.bin'))),
+    new Uint8Array([1, 2, 3]),
+  );
+  await files.write('one.bin', new Uint8Array([4, 5]), { replace: true, durable: true });
+  assert.deepEqual((await files.read('one.bin')).bytes, new Uint8Array([4, 5]));
+  await writeFile(join(fileRoot, 'large.bin'), new Uint8Array([1, 2, 3, 4]));
+  await assert.rejects(files.read('large.bin'), { code: 'FILE_TOO_LARGE' });
+  console.log('managed file boundary parity: OK');
+} finally {
+  await rm(fileRoot, { recursive: true, force: true });
+}
 
 // 2 — serveNode HTTP round-trip.
 const contract = defineContract(

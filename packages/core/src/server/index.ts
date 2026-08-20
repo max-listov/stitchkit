@@ -78,11 +78,13 @@ export {
   type ScopedRegistryHandlers,
   type StreamScope,
 } from './implement';
+export { composeLifecycleHooks } from './lifecycle';
 export type { LogFormat } from './logger';
 export {
   type AuthHook,
   type AuthHookConfig,
   type AuthRule,
+  type AuthRuleContribution,
   type AuthRules,
   type AuthScopes,
   type BearerResolverConfig,

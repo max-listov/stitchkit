@@ -1,11 +1,12 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError } from '../src/contract';
+import { createManagedFileBoundary } from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
 import { defineDownloadTool } from '../src/tools/define-download-tool';
 import { defineUploadTool } from '../src/tools/define-upload-tool';
@@ -185,6 +186,7 @@ describe('managed generic native tools', () => {
 
   test('download validates neutral output and forwards cancellation to guarded fetch', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-managed-download-'));
+    const files = await createManagedFileBoundary({ root: dir });
     let fetchSignal: AbortSignal | null | undefined;
     const fetchMock: typeof fetch = Object.assign(
       (_input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response> => {
@@ -206,7 +208,7 @@ describe('managed generic native tools', () => {
         identity: { serviceName: 'files', action: 'download' },
         input: z.object({ url: z.url() }),
         resolveUrl: ({ url }) => url,
-        defaultDir: dir,
+        files,
         allowPrivateHosts: true,
       });
       const controller = new AbortController();
@@ -228,18 +230,23 @@ describe('managed generic native tools', () => {
   });
 
   test('upload is a typed managed operation on MCP and Agent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sk-managed-upload-'));
+    await writeFile(join(dir, 'mcp.png'), 'mcp');
+    await writeFile(join(dir, 'agent.png'), 'agent');
+    const files = await createManagedFileBoundary({ root: dir });
     const calls: Array<{ path: string; source: string; aborted: boolean }> = [];
     const upload = defineUploadTool({
       description: 'Upload a local file',
       identity: { serviceName: 'files', action: 'upload', scope: 'user' },
       output: z.object({ url: z.url() }),
-      upload: async (path, context) => {
+      files,
+      upload: async (file, context) => {
         calls.push({
-          path,
+          path: file.ref.path,
           source: context.source,
           aborted: context.signal?.aborted ?? false,
         });
-        return { url: `https://example.com/${path}` };
+        return { url: `https://example.com/${file.ref.path}` };
       },
     });
     const client = await connect(
@@ -267,5 +274,6 @@ describe('managed generic native tools', () => {
       { path: 'agent.png', source: 'agent', aborted: false },
     ]);
     await client.close();
+    await rm(dir, { recursive: true, force: true });
   });
 });

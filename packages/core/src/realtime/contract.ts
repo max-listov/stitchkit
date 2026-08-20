@@ -44,6 +44,17 @@ export type RealtimeEventHandler<TDefinition extends RealtimeEventDefinition> = 
   ...args: RealtimeEventArguments<TDefinition>
 ) => void;
 
+export type RealtimeAcknowledgedEvent<TRegistry extends RealtimeEventRegistry> = {
+  [TEvent in keyof TRegistry]: TRegistry[TEvent] extends { ack: z.ZodType } ? TEvent : never;
+}[keyof TRegistry] &
+  string;
+
+export type RealtimeRequestArguments<TDefinition extends RealtimeEventDefinition> =
+  z.input<TDefinition['args']> extends unknown[] ? z.input<TDefinition['args']> : never;
+
+export type RealtimeAcknowledgement<TDefinition extends RealtimeEventDefinition> =
+  TDefinition extends { ack: infer TAck extends z.ZodType } ? z.output<TAck> : never;
+
 export type InferRealtimeEventMap<TRegistry extends RealtimeEventRegistry> = {
   [TEvent in keyof TRegistry]: RealtimeEventHandler<TRegistry[TEvent]>;
 };

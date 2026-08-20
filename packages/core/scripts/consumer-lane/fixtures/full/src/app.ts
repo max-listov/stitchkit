@@ -14,6 +14,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { ApiError } from 'stitchkit';
 import { defineCliCommand } from 'stitchkit/cli';
 import { defineContract, defineErrors } from 'stitchkit/contract';
+import { createManagedFileBoundary } from 'stitchkit/files';
 import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
@@ -222,20 +223,22 @@ const packedWaitDefinition = defineWaitTool({
   poll: async ({ id }) => ({ id, ready: true }),
   done: (state) => state.ready,
 });
+const packedFiles = await createManagedFileBoundary({ root: '/tmp' });
 const packedDownloadDefinition = defineDownloadTool({
   name: 'download_native',
   description: 'Download a packed native result',
   identity: { serviceName: 'nativeWidgets', action: 'downloadNative' },
   input: z.object({ url: z.url() }),
   resolveUrl: ({ url }) => url,
-  defaultDir: '/tmp',
+  files: packedFiles,
 });
 const packedUploadDefinition = defineUploadTool({
   name: 'upload_native',
   description: 'Upload a packed native input',
   identity: { serviceName: 'nativeWidgets', action: 'uploadNative' },
   output: z.object({ path: z.string(), uploaded: z.boolean() }),
-  upload: async (path) => ({ path, uploaded: true }),
+  files: packedFiles,
+  upload: async (source) => ({ path: source.ref.path, uploaded: true }),
 });
 const packedViewDefinition = defineViewFileTool({
   name: 'view_native',

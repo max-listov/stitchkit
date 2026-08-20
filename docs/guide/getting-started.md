@@ -23,7 +23,7 @@ realtime, `@tanstack/react-query` + `react-query-kit` for React). See
 
 ## Entrypoints
 
-stitchkit ships nine entrypoints. Each is import-safe for one environment —
+stitchkit ships eleven entrypoints. Each is import-safe for one environment —
 keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 
 | Import | Use in | Holds |
@@ -34,12 +34,15 @@ keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 | `stitchkit/node` | server (Node ≥ 22) | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
 | `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
 | `stitchkit/cli` | server | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
+| `stitchkit/remote` | browser **and** server | peer-free `implementRemote` for thin HTTP proxy processes |
+| `stitchkit/files` | server (Bun or Node) | peer-free managed local-file boundary |
 | `stitchkit/observability` | server | request/tool event projections — `createObservability`, trace context, sanitisation |
 | `stitchkit/testing` | tests on Bun or Node | in-process generated clients over a real Fetch handler, without a TCP port |
 | `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server
-code adds `stitchkit/server` (or `stitchkit/node` on Node) and `stitchkit/tools`.
+code adds `stitchkit/server` (or `stitchkit/node` on Node) and opts into
+`stitchkit/tools`, `stitchkit/remote` or `stitchkit/files` by capability.
 The full export list of each is in the [API reference](../api/reference.md).
 
 ## Project layout

@@ -4,7 +4,7 @@
  * Output is JSON — the CLI's audience is agents (Skills via Bash), scripts and
  * `| jq`, for which structured JSON is the right shape, not a hand-formatted
  * table. The default is pretty-printed (indented, the same shape an MCP tool
- * returns); `--json` switches to a compact single line for piping.
+ * returns); `--json` switches success and error records to one compact line.
  *
  * stdout is reserved for that result; an error goes to stderr as the same
  * model-facing `{ error, details, _hint }` object the MCP / agent transports
@@ -30,6 +30,7 @@ export const DEFAULT_EXIT_CODES: ExitCodeMap = {
   CONFLICT: 5,
   RATE_LIMITED: 6,
   TIMEOUT: 7,
+  WAIT_FAILED: 1,
   INTERNAL_SERVER_ERROR: 1,
 };
 
@@ -39,7 +40,7 @@ export interface CliWriters {
 }
 
 export interface EmitOptions {
-  /** Compact single-line JSON (for `| jq` / scripts); otherwise pretty-printed. */
+  /** Compact single-line success/error JSON; otherwise pretty-printed. */
   json: boolean;
   toolName: string;
   errorHint?: ErrorHintFn;
@@ -67,7 +68,8 @@ export function emitResult(
     return 0;
   }
   const error = formatToolError(result, opts.toolName, opts.errorHint);
-  writers.stderr(`${JSON.stringify(error, null, 2)}\n`);
+  const text = opts.json ? JSON.stringify(error) : JSON.stringify(error, null, 2);
+  writers.stderr(`${text}\n`);
   const codes = opts.exitCodes ?? DEFAULT_EXIT_CODES;
   return codes[result.code] ?? 1;
 }
