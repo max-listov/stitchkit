@@ -13,9 +13,15 @@ export interface ReleasePlan {
   version: string;
 }
 
+export interface ReleaseTagPush {
+  tag: string;
+  /** The SHA git is actually sending — NOT whatever the local tag name resolves to. */
+  sha: string;
+}
+
 export interface PrePushPlan {
   verify: boolean;
-  releaseTags: string[];
+  releaseTags: ReleaseTagPush[];
 }
 
 function preOneMinor(version: string): number | null {
@@ -113,7 +119,7 @@ export function extractReleaseNotes(changelog: string, version: string): string 
 
 export function classifyPrePush(input: string): PrePushPlan {
   let verify = false;
-  const releaseTags = new Set<string>();
+  const releaseTags = new Map<string, string>();
   for (const line of input.split('\n')) {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4) continue;
@@ -127,11 +133,16 @@ export function classifyPrePush(input: string): PrePushPlan {
     if (remoteRef.startsWith('refs/tags/')) {
       const tag = remoteRef.slice('refs/tags/'.length);
       if (tag.startsWith('v') || tag.startsWith('create-stitchkit-v')) {
-        releaseTags.add(tag);
+        // `git push origin <sha>:refs/tags/vX` sends a SHA the local tag name
+        // may not point at — classify by what is on the wire.
+        releaseTags.set(tag, localSha);
       }
     }
   }
-  return { verify, releaseTags: [...releaseTags] };
+  return {
+    verify,
+    releaseTags: [...releaseTags].map(([tag, sha]) => ({ tag, sha })),
+  };
 }
 
 /** Fail unless the tag points at the current release head of the default branch. */
@@ -139,6 +150,46 @@ export function assertTagOnReleaseHead(tagSha: string, remoteHeadSha: string): v
   if (!tagSha || !remoteHeadSha || tagSha !== remoteHeadSha) {
     throw new Error(
       `release tag must point at the current origin/master SHA (tag ${tagSha || '(none)'}, master ${remoteHeadSha || '(none)'})`,
+    );
+  }
+}
+
+/** The commit-subject scope each tag namespace must carry. */
+export function releaseScopeForTag(tag: string): 'core' | 'starter' {
+  return tag.startsWith('create-stitchkit-v') ? 'starter' : 'core';
+}
+
+/**
+ * Fail unless the tagged commit IS the release commit of that exact version.
+ *
+ * `assertTagOnReleaseHead` proves the tag sits on the branch head; it cannot
+ * tell a release commit from whatever landed on top of it. 0.55.0 was tagged
+ * on a follow-up test fix because the release commit was pushed before its CI
+ * was green — the tag then had to move to the new head, and `git show <tag>`
+ * points at the wrong change forever. Requiring the release subject makes the
+ * honest order ("fixes first, release commit last, green, then tag") the only
+ * one that reaches publication.
+ *
+ * The version is matched on digit/dot boundaries so `0.56.0-rc.1` and
+ * `10.56.0` never satisfy `0.56.0`, and the scope must match the tag
+ * namespace so a starter release commit cannot carry a core tag.
+ */
+export function assertReleaseCommitSubject(
+  subject: string,
+  version: string,
+  scope: 'core' | 'starter',
+): void {
+  const trimmed = subject.trim();
+  const expected = `release(${scope})`;
+  if (!trimmed.startsWith(`${expected}:`)) {
+    throw new Error(
+      `release tag must point at a "${expected}: … in ${version}" commit — its subject is ${trimmed === '' ? '(empty)' : JSON.stringify(trimmed)}. Land fixes first, make the release commit last, wait for green, then tag.`,
+    );
+  }
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`(?<![\\d.])${escaped}(?![\\d.\\-+])`).test(trimmed)) {
+    throw new Error(
+      `release commit subject must name version ${version} exactly — got ${JSON.stringify(trimmed)}`,
     );
   }
 }
@@ -282,6 +333,13 @@ async function release(target: ReleaseTarget): Promise<void> {
   if (version === null) throw new Error(`${packageDir}/package.json has no string version`);
   const tag = target === 'core' ? `v${version}` : `create-stitchkit-v${version}`;
   await validateReleaseTag(root, tag);
+  // The commit about to be tagged must itself be the release commit — a green
+  // follow-up fix on top of it is NOT a release (see assertReleaseCommitSubject).
+  assertReleaseCommitSubject(
+    await output(['git', 'log', '-1', '--format=%s', head]),
+    version,
+    releaseScopeForTag(tag),
+  );
   await run(['git', 'tag', tag, head]);
   await run(['git', 'push', 'origin', `refs/tags/${tag}`]);
 }
@@ -297,8 +355,17 @@ async function main(): Promise<void> {
   }
   if (command === 'pre-push') {
     const plan = classifyPrePush(await Bun.stdin.text());
+    // Cheap deterministic metadata first: a bad tag should not cost the full
+    // browser/starter gate before it is reported.
+    for (const { tag, sha } of plan.releaseTags) {
+      const validated = await validateReleaseTag(root, tag);
+      assertReleaseCommitSubject(
+        await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]),
+        validated.version,
+        releaseScopeForTag(tag),
+      );
+    }
     if (plan.verify) await run(['bun', 'run', 'verify']);
-    for (const tag of plan.releaseTags) await validateReleaseTag(root, tag);
     return;
   }
   if (command === 'release') {
@@ -306,6 +373,11 @@ async function main(): Promise<void> {
       throw new Error('Usage: release-plan.ts release <core|create-stitchkit>');
     }
     await release(argument);
+    return;
+  }
+  if (command === 'assert-subject') {
+    const [, subject, version, tag] = Bun.argv.slice(2);
+    assertReleaseCommitSubject(subject ?? '', version ?? '', releaseScopeForTag(tag ?? ''));
     return;
   }
   if (command === 'assert-head') {

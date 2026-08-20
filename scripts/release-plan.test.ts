@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  assertReleaseCommitSubject,
   assertTagOnReleaseHead,
   classifyPrePush,
   decidePublishAction,
   extractReleaseNotes,
   releasePlanForTag,
+  releaseScopeForTag,
   selectSuccessfulCiRun,
   shouldRunStarterHeadLane,
 } from './release-plan';
@@ -26,7 +28,7 @@ describe('release plan', () => {
       classifyPrePush(
         `refs/heads/main ${SHA} refs/heads/main ${ZERO}\nrefs/tags/v1.2.3 ${SHA} refs/tags/v1.2.3 ${ZERO}\n`,
       ),
-    ).toEqual({ verify: true, releaseTags: ['v1.2.3'] });
+    ).toEqual({ verify: true, releaseTags: [{ tag: 'v1.2.3', sha: SHA }] });
   });
 
   test('classifies by the REMOTE ref: HEAD:master and sha:refs/tags forms are covered', () => {
@@ -38,13 +40,73 @@ describe('release plan', () => {
     });
     expect(classifyPrePush(`${SHA} ${SHA} refs/tags/v9.9.9 ${ZERO}\n`)).toEqual({
       verify: false,
-      releaseTags: ['v9.9.9'],
+      releaseTags: [{ tag: 'v9.9.9', sha: SHA }],
     });
     expect(
       classifyPrePush(
         `HEAD ${SHA} refs/heads/master ${ZERO}\nHEAD ${SHA} refs/tags/create-stitchkit-v1.0.0 ${ZERO}\n`,
       ),
-    ).toEqual({ verify: true, releaseTags: ['create-stitchkit-v1.0.0'] });
+    ).toEqual({
+      verify: true,
+      releaseTags: [{ tag: 'create-stitchkit-v1.0.0', sha: SHA }],
+    });
+  });
+
+  test('a release tag on a non-release commit is refused, naming the honest order', () => {
+    // The 0.55.0 shape: the release commit was pushed before it was green, a
+    // follow-up fix became the head, and the tag had to land on the fix.
+    expect(() =>
+      assertReleaseCommitSubject(
+        'test(server): align shutdown timing with force budget',
+        '0.55.0',
+        'core',
+      ),
+    ).toThrow('must point at a "release(core): … in 0.55.0" commit');
+    expect(() => assertReleaseCommitSubject('', '0.55.0', 'core')).toThrow('(empty)');
+  });
+
+  test('the version must match on boundaries — prerelease and longer numbers do not pass', () => {
+    expect(() =>
+      assertReleaseCommitSubject('release(core): ship it in 0.56.0-rc.1', '0.56.0', 'core'),
+    ).toThrow('must name version 0.56.0 exactly');
+    expect(() =>
+      assertReleaseCommitSubject('release(core): bump to 10.56.0', '0.56.0', 'core'),
+    ).toThrow('must name version 0.56.0 exactly');
+    expect(() =>
+      assertReleaseCommitSubject(
+        'release(core): managed tools and CLI lifecycle in 0.54.0',
+        '0.55.0',
+        'core',
+      ),
+    ).toThrow('must name version 0.55.0 exactly');
+  });
+
+  test('the subject scope is bound to the tag namespace', () => {
+    // A starter release commit must not be able to carry a core tag when both
+    // packages happen to sit on the same version.
+    expect(releaseScopeForTag('v0.3.3')).toBe('core');
+    expect(releaseScopeForTag('create-stitchkit-v0.3.3')).toBe('starter');
+    expect(() =>
+      assertReleaseCommitSubject(
+        'release(starter): scaffolder fixes in 0.3.3',
+        '0.3.3',
+        'core',
+      ),
+    ).toThrow('release(core)');
+    expect(() =>
+      assertReleaseCommitSubject(
+        'release(core): transport policies and async operations in 0.55.0',
+        '0.55.0',
+        'core',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertReleaseCommitSubject(
+        'release(starter): safe loopback bind default in 0.3.3',
+        '0.3.3',
+        'starter',
+      ),
+    ).not.toThrow();
   });
 
   test('a stale tag SHA is refused before any publication step', () => {

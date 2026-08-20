@@ -94,8 +94,12 @@ entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by
 
 - A public API change → a note in `CHANGELOG.md` under `[Unreleased]` **and** a
   test in `packages/core/tests`.
-- Commit messages are plain (e.g. `release: 0.4.0`, `fix: …`) — **no
-  `Co-Authored-By`, AI or tool-signature footer**.
+- Commit messages are plain (e.g. `fix: …`) — **no `Co-Authored-By`, AI or
+  tool-signature footer**. A **release** commit is the one shape a gate checks:
+  `release(core): … in X.Y.Z` for a `vX.Y.Z` tag and `release(starter): … in
+  X.Y.Z` for `create-stitchkit-vX.Y.Z` (the older `release: 0.4.0` form no
+  longer passes). Bodies use real newlines — a literal `\n` is refused by the
+  `commit-msg` hook.
 - **Never name a private/consuming project** in committed docs, ADRs, the
   CHANGELOG or backlog — write "a consuming project". The public repo carries no
   downstream names.
@@ -157,3 +161,19 @@ Full flow lives in the `.github/workflows/ci.yml` header:
 The package versions never need to match. A framework release must not silently
 advance or publish the starter; a starter release must target a Stitchkit range
 that already exists on npm.
+
+**Order inside a release.** The release commit is the LAST commit of the
+release: land every fix first, make the release commit, wait for a green run,
+then tag it. Pushing the release commit before it is green forces the tag onto
+whatever fix lands next — `git show <tag>` then points at the wrong change, and
+the release commit keeps a red run forever (that is what 0.55.0 did). Two gates
+hold the shape, both in the publishing workflow, so neither depends on local
+hooks: `assert-head` keeps the tag on the branch head, and `assert-subject`
+requires that head to be the `release(<scope>): … in X.Y.Z` commit for the tag's
+own namespace and exact version. The `pre-push` hook runs the same checks
+earlier, before the expensive gate. A published tag is never moved.
+
+If a release commit is already pushed and its run goes red, the fix does not
+become taggable: land the fix, then make a **new** release commit for the same
+version on top of it (or bump the patch), and tag that. Recovering by tagging
+the fix itself is exactly the shape these gates refuse.

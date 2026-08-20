@@ -135,14 +135,20 @@ rerun the expensive gates.
 
 ### Git hooks
 
-`bun install` wires two hooks (`.githooks/`, via `core.hooksPath` set by the
+`bun install` wires three hooks (`.githooks/`, via `core.hooksPath` set by the
 root `prepare` script):
 
 - **`pre-commit`** — checks exactly the staged paths, including names containing
   spaces and files owned by the nested template Biome project, without rewriting
   files or changing the index.
-- **`pre-push`** — runs `verify` once for a code/branch push. A tag-only release
-  runs only the release metadata preflight; deletion-only pushes run no build.
+- **`commit-msg`** — refuses a message body carrying literal `\n` / `\t` escapes
+  instead of real line breaks (a quoting slip that stays in history forever).
+  Backticked spans and fenced blocks are exempt — there the sequence is being
+  quoted, not produced.
+- **`pre-push`** — runs the release metadata preflight for every pushed release
+  tag first (version, notes and the `release(<scope>): … in X.Y.Z` subject of
+  the pushed SHA), then `verify` once for a code/branch push. Deletion-only
+  pushes run no build.
 
 Wire them manually with `git config core.hooksPath .githooks`. Bypass once with
 Git's own `--no-verify` only for exceptional local diagnosis; it is not part of

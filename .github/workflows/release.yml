@@ -51,6 +51,8 @@ jobs:
         run: |
           git fetch origin master
           bun scripts/release-plan.ts assert-head "$GITHUB_SHA" "$(git rev-parse origin/master)"
+          bun scripts/release-plan.ts assert-subject "$(git log -1 --format=%s "$GITHUB_SHA")" \
+            "$(jq -r .version "$RUNNER_TEMP/release-plan.json")" "$GITHUB_REF_NAME"
           RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=completed" \
             --jq ".workflow_runs" \
             | bun scripts/release-plan.ts select-ci-run "$GITHUB_SHA")"

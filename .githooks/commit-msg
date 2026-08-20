@@ -1,0 +1,7 @@
+#!/bin/sh
+# Reject a body that carries literal `\n` / `\t` escapes instead of real line
+# breaks — a quoting slip that stays in history forever.
+# Bypass once with `git commit --no-verify`.
+set -e
+
+exec bun scripts/commit-message.ts "$1"
