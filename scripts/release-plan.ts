@@ -117,6 +117,54 @@ export function extractReleaseNotes(changelog: string, version: string): string 
   return notes;
 }
 
+/**
+ * Released versions in changelog order, newest first. Fence-aware for the same
+ * reason `extractReleaseNotes` is: a `## [x.y.z]` inside an example block is
+ * documentation, not a release.
+ */
+export function releasedVersionsInOrder(changelog: string): string[] {
+  const versions: string[] = [];
+  let inFence = false;
+  for (const line of changelog.split('\n')) {
+    if (/^(`{3,}|~{3,})/.test(line.trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const heading = /^## \[(\d+\.\d+\.\d+)\]/.exec(line);
+    if (heading?.[1] !== undefined) versions.push(heading[1]);
+  }
+  return versions;
+}
+
+/**
+ * A breaking change may never ship as a patch. The whole breaking-change policy
+ * rests on the caret being a real gate — `^0.56.0` stops before `0.57.0`, so a
+ * consumer crosses a break only on purpose. Ship that break as `0.56.1` and
+ * every caret consumer takes it on a plain `install`, silently, which is the one
+ * outcome the policy exists to prevent. The reverse (additive shipped as a
+ * minor) only costs an upgrade nobody needed, so it is not gated.
+ */
+export function assertVersionCalibre(changelog: string, version: string): void {
+  const notes = extractReleaseNotes(changelog, version);
+  if (!/^### \s*\u26a0\ufe0f?\s*Breaking changes/m.test(notes)) return;
+
+  const released = releasedVersionsInOrder(changelog);
+  const index = released.indexOf(version);
+  const previous = index === -1 ? undefined : released[index + 1];
+  if (previous === undefined) return;
+
+  const current = version.split('.').map(Number);
+  const prior = previous.split('.').map(Number);
+  const isPatchBump =
+    current[0] === prior[0] && current[1] === prior[1] && (current[2] ?? 0) > (prior[2] ?? 0);
+  if (!isPatchBump) return;
+
+  throw new Error(
+    `${version} carries a "### \u26a0\ufe0f Breaking changes" section but is a patch bump from ${previous}. A caret consumer takes a patch on a plain install — bump the minor so crossing the break stays an explicit opt-in.`,
+  );
+}
+
 export function classifyPrePush(input: string): PrePushPlan {
   let verify = false;
   const releaseTags = new Map<string, string>();
@@ -254,10 +302,9 @@ export async function validateReleaseTag(
       `${tag} does not match ${plan.packageName} package version ${packageVersion}`,
     );
   }
-  const notes = extractReleaseNotes(
-    await readFile(join(root, plan.changelog), 'utf8'),
-    plan.version,
-  );
+  const changelog = await readFile(join(root, plan.changelog), 'utf8');
+  const notes = extractReleaseNotes(changelog, plan.version);
+  assertVersionCalibre(changelog, plan.version);
   return { ...plan, notes };
 }
 

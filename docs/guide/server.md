@@ -340,6 +340,18 @@ createServer({
 | `'pretty'` | two coloured lines per request — `→` on arrival, `←` on completion | no — a line sized for a terminal is not a record |
 | `'json'` | one structured line per completed request | yes |
 
+Status `499` has one framework-wide meaning: the client closed the request. It
+is logged at `info`, not under the ordinary `4xx → warn` rule. A confirmed
+disconnect is not sent through project `onError`, `normalizeError` or the
+request-error recorder; an `AbortError` while the request signal is still active
+remains an internal failure. A runtime abort reason may be preserved by identity
+through at most eight cycle-safe standard `cause` links; error messages and codes
+are never classifiers. The same rule applies when the disconnect happens while
+Stitchkit is reading a JSON upload body: bounded reads race every pending stream
+read against the request signal and never parse a cancelled partial body. `499`
+is transport telemetry, not a response declared in the contract or generated
+OpenAPI document.
+
 Unset, `format` follows `NODE_ENV`: `json` under `production`, `pretty`
 otherwise. That default is read **per request** — not at import, not when this
 package was built — so it reflects the environment your app actually runs in.
@@ -510,7 +522,9 @@ createServer({
 - **`afterHandle`** — receives the handler result; return a replacement to
   transform it.
 - **`onError`** — receives any thrown error; return a `Response` to customise
-  the error body. Without it, errors render through the standard envelope.
+  the error body. Without it, errors render through the standard envelope. A
+  confirmed client disconnect is a transport cancellation rather than an
+  application error and deliberately bypasses this hook.
 
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
 That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).

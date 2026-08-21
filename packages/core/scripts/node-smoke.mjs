@@ -15,6 +15,7 @@
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +42,7 @@ const { bindRealtimeServer, createHandler, createSocketIOServer, implement, serv
   await import('stitchkit/node');
 const { createHandlerTestClient } = await import('stitchkit/testing');
 const { createManagedFileBoundary } = await import('stitchkit/files');
+const { createObservability } = await import('stitchkit/observability');
 const { z } = await import('zod');
 
 const fileRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-files-'));
@@ -159,6 +161,103 @@ assert.deepEqual(
 );
 console.log('serveNode HTTP round-trip: OK');
 await http.shutdown({ gracePeriodMs: 0 });
+
+// A physical peer close is a neutral transport cancellation, not an
+// application failure. Drive the real srvx bridge with node:net so this cannot
+// pass through an in-process Fetch Request whose signal the test owns itself.
+let resolveDisconnectAdmitted;
+const disconnectAdmitted = new Promise((resolve) => {
+  resolveDisconnectAdmitted = resolve;
+});
+let resolveDisconnectAborted;
+const disconnectAborted = new Promise((resolve) => {
+  resolveDisconnectAborted = resolve;
+});
+let resolveDisconnectCompleted;
+const disconnectCompleted = new Promise((resolve) => {
+  resolveDisconnectCompleted = resolve;
+});
+const disconnectEvents = [];
+const disconnectObservability = createObservability({
+  request: {
+    includeCancelled: true,
+    write: (event) => disconnectEvents.push(event),
+  },
+});
+let disconnectOnErrorCalls = 0;
+const disconnectServer = await serveNode({
+  port: 0,
+  rawRoutes: [
+    {
+      method: 'GET',
+      path: '/disconnect',
+      handler(req) {
+        resolveDisconnectAdmitted();
+        return new Promise((_resolve, reject) => {
+          const abort = () => {
+            resolveDisconnectAborted();
+            reject(
+              req.signal.reason ?? new DOMException('The connection was closed', 'AbortError'),
+            );
+          };
+          if (req.signal.aborted) abort();
+          else req.signal.addEventListener('abort', abort, { once: true });
+        });
+      },
+    },
+  ],
+  hooks: {
+    onError: () => {
+      disconnectOnErrorCalls += 1;
+      return undefined;
+    },
+  },
+  logging: {
+    logger: {
+      debug: () => undefined,
+      info: (_message, fields) => {
+        if (fields?.status === 499) resolveDisconnectCompleted();
+      },
+      warn: () => undefined,
+      error: () => undefined,
+    },
+  },
+  observability: disconnectObservability.request,
+});
+const disconnectClient = createConnection({
+  host: '127.0.0.1',
+  port: disconnectServer.port,
+});
+disconnectClient.on('error', () => undefined);
+await new Promise((resolve) => disconnectClient.once('connect', resolve));
+disconnectClient.write(
+  'GET /disconnect HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n',
+);
+await disconnectAdmitted;
+disconnectClient.destroy();
+let disconnectTimer;
+try {
+  await Promise.race([
+    Promise.all([disconnectAborted, disconnectCompleted]),
+    new Promise((_resolve, reject) => {
+      disconnectTimer = setTimeout(
+        () => reject(new Error('Node physical disconnect did not reach Request.signal')),
+        5_000,
+      );
+    }),
+  ]);
+} finally {
+  clearTimeout(disconnectTimer);
+}
+await disconnectObservability.flush();
+assert.equal(disconnectOnErrorCalls, 0);
+assert.equal(disconnectEvents.length, 1);
+assert.equal(disconnectEvents[0].outcome, 'cancelled');
+assert.equal(disconnectEvents[0].statusCode, 499);
+assert.equal(disconnectEvents[0].errorCode, undefined);
+assert.equal((await disconnectServer.shutdown({ gracePeriodMs: 1_000 })).outcome, 'clean');
+await disconnectObservability.close();
+console.log('serveNode physical client disconnect cancellation: OK');
 
 // 3 — Node's native fetch classification remains intact when Stitchkit adds
 // its narrow Bun adapter. The backend starts only after the first native fetch

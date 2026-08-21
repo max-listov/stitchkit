@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   assertReleaseCommitSubject,
   assertTagOnReleaseHead,
+  assertVersionCalibre,
   classifyPrePush,
   decidePublishAction,
   extractReleaseNotes,
+  releasedVersionsInOrder,
   releasePlanForTag,
   releaseScopeForTag,
   selectSuccessfulCiRun,
@@ -13,6 +15,7 @@ import {
 
 const SHA = '1'.repeat(40);
 const ZERO = '0'.repeat(40);
+const BREAKING = '### \u26a0\ufe0f Breaking changes';
 
 describe('release plan', () => {
   test('classifies branch, tag, deletion and mixed pushes without duplicate gates', () => {
@@ -198,5 +201,69 @@ describe('release plan', () => {
     const notes = extractReleaseNotes(changelog, '1.2.3');
     expect(notes).toContain('and a second substantial note');
     expect(notes).toContain('```md');
+  });
+  test('a breaking change may not ship as a patch — the caret would carry it silently', () => {
+    const changelog = [
+      '## [0.56.1]',
+      '',
+      `${BREAKING}`,
+      '',
+      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
+      '',
+      '## [0.56.0]',
+      '- the previous release',
+    ].join('\n');
+
+    expect(() => assertVersionCalibre(changelog, '0.56.1')).toThrow(
+      /patch bump from 0\.56\.0/,
+    );
+  });
+
+  test('the same breaking notes pass as a minor, and additive notes pass as a patch', () => {
+    const breakingMinor = [
+      '## [0.57.0]',
+      '',
+      `${BREAKING}`,
+      '',
+      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
+      '',
+      '## [0.56.0]',
+      '- the previous release',
+    ].join('\n');
+    const additivePatch = [
+      '## [0.56.1]',
+      '',
+      '### Added',
+      '',
+      '- an entirely additive option nobody has to adopt.',
+      '',
+      '## [0.56.0]',
+      '- the previous release',
+    ].join('\n');
+
+    expect(() => assertVersionCalibre(breakingMinor, '0.57.0')).not.toThrow();
+    expect(() => assertVersionCalibre(additivePatch, '0.56.1')).not.toThrow();
+  });
+
+  test('the first release in a changelog has no predecessor to compare against', () => {
+    const changelog = ['## [0.1.0]', '', `${BREAKING}`, '', '- the very first entry.'].join(
+      '\n',
+    );
+    expect(() => assertVersionCalibre(changelog, '0.1.0')).not.toThrow();
+  });
+
+  test('version headings are read in order and ignore fenced examples', () => {
+    const changelog = [
+      '## [1.2.3]',
+      '- real',
+      '',
+      '```md',
+      '## [9.9.9]',
+      '```',
+      '',
+      '## [1.2.2]',
+      '- older',
+    ].join('\n');
+    expect(releasedVersionsInOrder(changelog)).toEqual(['1.2.3', '1.2.2']);
   });
 });

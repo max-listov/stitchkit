@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.1] — 2026-08-21
+
+### Added
+
+- **Opt-in structured HTTP cancellation events.**
+  `createObservability({ request: { includeCancelled: true, ... } })` emits a
+  `RequestEvent` with `outcome: 'cancelled'`, `ok: false` and status `499` for a
+  confirmed client disconnect. The flag defaults to `false`, so existing sinks
+  do not receive a new row class after upgrading.
+
+### Fixed
+
+- **A client-closed HTTP request is no longer an internal server error.** When
+  the request signal is aborted and the thrown value is its `AbortError` or
+  preserves the exact abort reason through a bounded, cycle-safe `cause` chain,
+  Bun and Node/srvx now finish the access record as `499` at `info`, without
+  `INTERNAL_SERVER_ERROR`, `console.error`, request-error audit fields or project
+  `onError`. Framework JSON body reads also interrupt a pending bounded stream
+  read on mid-upload disconnect instead of hanging or parsing partial JSON.
+  Internal `AbortError` values on an active request remain 500s, and `499`
+  remains a transport outcome absent from OpenAPI.
+
 ## [0.56.0] — 2026-08-21
 
 ### ⚠️ Breaking changes

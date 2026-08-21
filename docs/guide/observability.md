@@ -26,9 +26,11 @@ a request context, and event projections — and you usually touch only the last
 ### createObservability
 
 `createObservability` configures request and tool projections independently.
-Every completed call is normalised into one `RequestEvent`; HTTP completion is
-owned directly by `createHandler`, while MCP/Agent completion uses the canonical
-`ToolCallHooks` runner. There is no nested HTTP audit wrapper.
+Every completed application call is normalised into one `RequestEvent`; HTTP
+completion is owned directly by `createHandler`, while MCP/Agent completion uses
+the canonical `ToolCallHooks` runner. Confirmed HTTP client cancellation stays
+in the access log by default and becomes a structured event only when the
+request sink opts in. There is no nested HTTP audit wrapper.
 
 ```ts
 import { createObservability } from 'stitchkit/observability'
@@ -49,6 +51,7 @@ export const observability = createObservability({
   request: {
     write,
     includePayload: false, // default: no Request.clone(), payload is null
+    includeCancelled: false, // default: keep client closes in access logs only
     filter: (event) => event.method !== 'GET',
   },
   tools: {
@@ -70,6 +73,40 @@ mountAgent(service, { hooks: observability.toolCall })
 Each sink runs fire-and-forget and fails independently: a slow or broken request
 sink cannot block the response, suppress operational logging or break the tool
 sink.
+
+#### Client cancellation
+
+A physical client close is classified only when the request's own signal is
+aborted and the thrown value is either an `AbortError` or contains the exact
+`request.signal.reason` by identity at the top level or within at most eight
+standard `cause` links. Cause traversal is cycle-safe. No message or error-code
+matching is used; active requests and unrelated/deeper causes remain application
+failures. The access completion is always `499/info`, without application error
+fields or project `onError`.
+
+Structured request sinks are default-preserving: existing sinks receive no row
+for this outcome. Opt in when cancellation frequency belongs in the durable
+stream:
+
+```ts
+const observability = createObservability({
+  request: {
+    includeCancelled: true,
+    write: (event) => {
+      if (event.outcome === 'cancelled') return recordClientClose(event)
+      return recordApplicationRequest(event)
+    },
+  },
+})
+```
+
+An opted-in row has `outcome: 'cancelled'`, `ok: false`, `statusCode: 499`, the
+ordinary identity/trace/timing fields and no `errorCode`, `errorMessage` or
+`errorDetail`. `ok` remains the legacy success bit: branch on `outcome` first.
+Cancellation rows use the same filter, capacity, diagnostics, ordering,
+`flush()` and `close()` machinery as every request event. MCP protocol
+cancellation remains represented by `event.mcp.outcome`; Agent and CLI have no
+generic client-disconnect signal and are not inferred from error text.
 
 The fire-and-forget work has an explicit bounded lifecycle:
 
@@ -151,7 +188,8 @@ queryable across all three:
 | `httpMethod` | the contract verb on **tool** events (their `method` is `TOOL`) — filter reads vs writes across both surfaces with `(event.httpMethod ?? event.method) !== 'GET'` |
 | `dimensions` | app-defined domain dimensions (tenant / project / entity id) — see [request context](#request-context) |
 | `traceId` / `spanId` / `parentSpanId` | [W3C trace context](#trace-context) |
-| `ok` / `statusCode` | outcome — real HTTP status, or `200`/`400` for a tool |
+| `outcome` | optional `'cancelled'` on explicitly enabled HTTP client-close rows; ordinary rows omit it |
+| `ok` / `statusCode` | legacy success bit plus real HTTP status, or `200`/`400` for a tool; an opted-in cancellation is `false` / `499` |
 | `durationMs` / `startedAt` | timing |
 | `errorCode` / `errorMessage` / `errorDetail` | failures only — `errorDetail` carries the structure the message flattens (e.g. Zod issues) |
 | `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled |
@@ -400,6 +438,10 @@ after every tool call —
 success and error alike — carrying the tool name, the arguments, the result, the
 duration, the call context, the endpoint identity, and (only when the call failed
 by throwing) the raw thrown value.
+
+A confirmed HTTP client disconnect is the exception to the raw-hook table: it
+is transport cancellation, so neither `afterHandle` nor project `onError` runs.
+Use the `499/info` access completion or opt-in request cancellation event above.
 
 ```ts
 createMcpHandler({

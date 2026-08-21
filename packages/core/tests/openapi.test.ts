@@ -124,6 +124,10 @@ describe('generateOpenApiDocument', () => {
     expect(doc.info.title).toBe('API');
   });
 
+  test('does not advertise transport-owned client disconnect status 499', () => {
+    expect(JSON.stringify(doc)).not.toContain('"499"');
+  });
+
   test('exposes contract metadata used by surface conformance', () => {
     expect(spec.paths['/api/items'].get).toMatchObject({
       'x-stitchkit-scope': 'authed',

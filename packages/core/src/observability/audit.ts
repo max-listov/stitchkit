@@ -55,6 +55,8 @@ export interface SinkDrop {
 export interface RequestObservabilityConfig extends RequestEventSinkConfig {
   /** Clone and record JSON request bodies. Default false. */
   includePayload?: boolean;
+  /** Emit client-closed HTTP requests as `outcome: 'cancelled'`. Default false. */
+  includeCancelled?: boolean;
 }
 
 export interface ObservabilityConfig {
@@ -68,6 +70,8 @@ export interface HttpRequestCompletion {
   statusCode: number;
   durationMs: number;
   payload?: Promise<unknown>;
+  /** Framework-owned neutral cancellation; currently paired with HTTP 499. */
+  outcome?: 'cancelled';
 }
 
 /** Server-facing request projection returned by `createObservability`. */
@@ -320,12 +324,14 @@ export function createObservability(config: ObservabilityConfig): Observability 
   const request: HttpRequestObserver | undefined = config.request
     ? {
         includePayload: config.request.includePayload ?? false,
-        complete: ({ context, statusCode, durationMs, payload }) => {
+        complete: ({ context, statusCode, durationMs, payload, outcome }) => {
           const requestConfig = config.request;
           if (!requestConfig) return;
+          const cancelled = outcome === 'cancelled';
+          if (cancelled && !requestConfig.includeCancelled) return;
           requestManager?.submit(async () => {
             let body: unknown;
-            if (payload) {
+            if (!cancelled && payload) {
               try {
                 body = await payload;
               } catch {
@@ -346,15 +352,18 @@ export function createObservability(config: ObservabilityConfig): Observability 
               traceId: context.trace.traceId,
               spanId: context.trace.spanId,
               parentSpanId: context.trace.parentSpanId,
-              ok: statusCode < 400,
+              ok: !cancelled && statusCode < 400,
+              ...(cancelled && { outcome: 'cancelled' }),
               statusCode,
               durationMs,
-              errorCode: context.error?.code,
-              errorMessage: context.error?.message,
-              ...(context.error?.details !== undefined && {
-                errorDetail: sanitizePayload(context.error.details, requestConfig.sanitize),
+              ...(!cancelled && {
+                errorCode: context.error?.code,
+                errorMessage: context.error?.message,
+                ...(context.error?.details !== undefined && {
+                  errorDetail: sanitizePayload(context.error.details, requestConfig.sanitize),
+                }),
               }),
-              payload: sanitizePayload(body, requestConfig.sanitize),
+              payload: cancelled ? null : sanitizePayload(body, requestConfig.sanitize),
               resultSize: null,
               responseBytes: 0,
               userId: context.userId,

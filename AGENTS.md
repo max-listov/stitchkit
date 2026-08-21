@@ -162,6 +162,15 @@ The package versions never need to match. A framework release must not silently
 advance or publish the starter; a starter release must target a Stitchkit range
 that already exists on npm.
 
+**Which number moves.** The minor is reserved as the *breaking* signal — that is
+what makes a consumer's caret (`^0.56.0` = `< 0.57.0`) a real gate: crossing it
+is always an explicit opt-in, never a plain `install`. Everything non-breaking
+is a **patch**, new API included: it is safe to auto-adopt by construction, and
+spending a minor on it would strand consumers on the fixes shipped beside it
+(0.48.1 added `stitchkit/testing`; 0.49.1 added `forceTimeoutMs`). So the
+question at release time is not "is there a `### Added` section" but "is there a
+`### ⚠️ Breaking changes` section" — that one alone moves the minor.
+
 **Order inside a release.** The release commit is the LAST commit of the
 release: land every fix first, make the release commit, wait for a green run,
 then tag it. Pushing the release commit before it is green forces the tag onto

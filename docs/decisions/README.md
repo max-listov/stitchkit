@@ -111,6 +111,7 @@ These records were consolidated from the project's internal design notes on
 | [0094](0094-auth-hook-composition-is-owned-and-atomic.md) | Auth hook composition is owned and atomic | Accepted — extends 0085 and 0086 |
 | [0095](0095-async-operation-contract-factory-and-adapters.md) | Async-operation contracts have one factory and typed adapters | Accepted — extends 0089 |
 | [0096](0096-managed-file-boundary-owns-safe-read-semantics.md) | Managed file boundaries own safe read semantics | Accepted — extends 0088 |
+| [0097](0097-request-cancellation-is-an-opt-in-observability-outcome.md) | Request cancellation is an opt-in observability outcome | Accepted — extends 0063 and 0043 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

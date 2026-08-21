@@ -401,7 +401,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
-| `RequestEvent` | _type_ | the normalised audit event handed to the sink |
+| `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
 | `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(), close() }` with bounded sink lifecycle |
 | `ObservabilitySinkStatus` | _type_ | immutable counters for one bounded request/tool sink |
@@ -409,11 +409,11 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `ObservabilityDrainReport` | _type_ | final closed/drained snapshot plus duration |
 | `ObservabilitySinkStatusSchema` / `ObservabilityStatusSchema` / `ObservabilityDrainReportSchema` | schema | runtime schemas for status/report integration boundaries |
 | `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
-| `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture |
+| `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture and default-off `includeCancelled` rows |
 | `SinkDropReason` | _type_ | `'capacity' \| 'closed'` |
 | `SinkError` | _type_ | isolated sink/projection failure and optional event |
 | `SinkDrop` | _type_ | rejected event, reason and current pending count |
-| `HttpRequestCompletion` | _type_ | the single framework-owned HTTP outcome projected to logging and request events |
+| `HttpRequestCompletion` | _type_ | the single framework-owned HTTP outcome, including optional neutral cancellation, projected to logging and request events |
 | `HttpRequestObserver` | _type_ | server-facing projection consumed by `HandlerConfig.observability` |
 
 ### Request context

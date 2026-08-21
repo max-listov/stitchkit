@@ -83,6 +83,7 @@ function safePath(pathname: string): string {
 
 /** Map an HTTP status to a log level. */
 export function levelForStatus(status: number): 'error' | 'warn' | 'info' {
+  if (status === 499) return 'info';
   if (status >= 500) return 'error';
   if (status >= 400) return 'warn';
   return 'info';

@@ -43,6 +43,33 @@ describe('audit — tool RequestEvent verb (A/#2) + errorDetail (#5)', () => {
     expect(e?.httpMethod).toBe('POST');
     expect(e?.serviceName).toBe('broadcast');
     expect(e?.action).toBe('create');
+    expect(e?.outcome).toBeUndefined();
+  });
+
+  test('MCP protocol cancellation stays nested and does not impersonate HTTP cancellation', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({ tools: { write: (e) => void events.push(e) } });
+
+    audit.toolCall.afterToolCall?.({
+      toolName: 'broadcast_create',
+      args: { name: 'x' },
+      result: { ok: false, code: 'REQUEST_ABORTED' },
+      durationMs: 5,
+      context: {
+        source: 'mcp',
+        mcp: {
+          era: 'modern',
+          method: 'tools/call',
+          toolName: 'broadcast_create',
+          outcome: 'cancelled',
+        },
+      },
+      endpoint,
+    });
+    await audit.flush();
+
+    expect(events[0]?.mcp?.outcome).toBe('cancelled');
+    expect(events[0]?.outcome).toBeUndefined();
   });
 
   test('a failed tool call carries structured errorDetail', async () => {

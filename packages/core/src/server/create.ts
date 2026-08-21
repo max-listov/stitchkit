@@ -9,6 +9,7 @@ import {
   recordedErrorMessage,
   validateDeclaredOutput,
 } from '../internal/errors';
+import { isRecord } from '../internal/typed';
 import {
   getRequestContext,
   runWithRequestContext,
@@ -53,6 +54,29 @@ import {
 import type { FetchHandler, HandlerConfig, MethodDef, StitchLogger } from './types';
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const MAX_REQUEST_ABORT_CAUSE_DEPTH = 8;
+
+function containsRequestAbortReason(error: unknown, reason: unknown): boolean {
+  let current = error;
+  const visited = new Set<unknown>();
+  for (let depth = 0; depth <= MAX_REQUEST_ABORT_CAUSE_DEPTH; depth += 1) {
+    if (current === reason) return true;
+    if (depth === MAX_REQUEST_ABORT_CAUSE_DEPTH || !isRecord(current)) return false;
+    if (visited.has(current)) return false;
+    visited.add(current);
+    current = current.cause;
+  }
+  return false;
+}
+
+/** A client disconnect is trustworthy only when the request and error agree. */
+function isClientClosedRequest(req: Request, error: unknown): boolean {
+  if (!req.signal.aborted) return false;
+  if (isRecord(error) && error.name === 'AbortError') return true;
+  return (
+    req.signal.reason !== undefined && containsRequestAbortReason(error, req.signal.reason)
+  );
+}
 
 export function createHandler<TServer = unknown>(
   config: HandlerConfig<TServer>,
@@ -175,7 +199,7 @@ export function createHandler<TServer = unknown>(
     // default, and a throw in the first call would be swallowed by the
     // `onError` catch only to be re-thrown — uncaught — by the second.
     let completed = false;
-    const complete = (status: number, errorCode?: string) => {
+    const complete = (status: number, errorCode?: string, outcome?: 'cancelled') => {
       if (completed) return;
       completed = true;
       const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
@@ -242,7 +266,13 @@ export function createHandler<TServer = unknown>(
       const context = getRequestContext();
       if (observability && context) {
         try {
-          observability.complete({ context, statusCode: status, durationMs, payload });
+          observability.complete({
+            context,
+            statusCode: status,
+            durationMs,
+            payload,
+            ...(outcome !== undefined && { outcome }),
+          });
         } catch {
           // An observability projection must never break the request it observes.
         }
@@ -257,6 +287,16 @@ export function createHandler<TServer = unknown>(
       errCtx?: RuntimeContext,
       endpoint?: MethodDef,
     ): Promise<Response> => {
+      if (isClientClosedRequest(req, err)) {
+        const response = applyCors(
+          new Response(null, { status: 499, statusText: 'Client Closed Request' }),
+          cors,
+          req,
+        );
+        complete(response.status, undefined, 'cancelled');
+        return response;
+      }
+
       // Record the failure on the request context so an audit row can name it
       // without the project hand-wiring `setRequestError` — the same thing the
       // tool row does for itself. Written after `onError` has had its turn and

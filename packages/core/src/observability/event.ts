@@ -49,6 +49,11 @@ export interface RequestEvent {
   parentSpanId?: string;
   /** Whether the call succeeded. */
   ok: boolean;
+  /**
+   * Explicit non-failure outcome. Present only for event classes a sink opted
+   * into; ordinary success/failure rows retain their released shape.
+   */
+  outcome?: 'cancelled';
   /** HTTP status — the real status for HTTP, `200` / `400` for a tool call. */
   statusCode: number;
   /** Wall-clock duration. */

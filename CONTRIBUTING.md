@@ -146,9 +146,10 @@ root `prepare` script):
   Backticked spans and fenced blocks are exempt — there the sequence is being
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
-  tag first (version, notes and the `release(<scope>): … in X.Y.Z` subject of
-  the pushed SHA), then `verify` once for a code/branch push. Deletion-only
-  pushes run no build.
+  tag first (version, notes, calibre — a `### ⚠️ Breaking changes` section may
+  not ride a patch bump — and the `release(<scope>): … in X.Y.Z` subject of the
+  pushed SHA), then `verify` once for a code/branch push. Deletion-only pushes
+  run no build.
 
 Wire them manually with `git config core.hooksPath .githooks`. Bypass once with
 Git's own `--no-verify` only for exceptional local diagnosis; it is not part of
