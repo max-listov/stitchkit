@@ -2,6 +2,7 @@ import type { ZodObject, z } from 'zod';
 import { AppError, ManagedFileRefSchema } from '../contract';
 import type { ManagedFileBoundary } from '../files/boundary';
 import { DownloadOperationError, runDownloadOperation } from './download-core';
+import { managedFileAppError } from './managed-file-error';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from './native-definition';
 import {
   defineRuntimeTool,
@@ -57,6 +58,8 @@ export function defineDownloadTool<TInput extends ZodObject>(
         if (error instanceof DownloadOperationError) {
           throw new AppError(error.code, `Download failed: ${error.message}`, error.status);
         }
+        const managedError = managedFileAppError(error);
+        if (managedError) throw managedError;
         throw error;
       }
     },

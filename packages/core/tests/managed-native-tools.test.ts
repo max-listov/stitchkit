@@ -3,10 +3,14 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import type { McpServer } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError } from '../src/contract';
-import { createManagedFileBoundary } from '../src/files/boundary';
+import {
+  createManagedFileBoundary,
+  type ManagedFileBoundary,
+  ManagedFileError,
+} from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
 import { defineDownloadTool } from '../src/tools/define-download-tool';
 import { defineUploadTool } from '../src/tools/define-upload-tool';
@@ -14,6 +18,8 @@ import { defineWaitTool } from '../src/tools/define-wait-tool';
 import { listToolNames } from '../src/tools/list-names';
 import { buildToolManifest } from '../src/tools/manifest';
 import { buildMcpServer } from '../src/tools/mcp';
+import { mountDownload } from '../src/tools/mount-download';
+import { mountUpload } from '../src/tools/mount-upload';
 import { summarizeTransports } from '../src/tools/transports';
 
 async function connect(server: McpServer): Promise<Client> {
@@ -27,6 +33,23 @@ function executable(tools: ReturnType<typeof mountAgent>, name: string) {
   const execute = tools[name]?.execute;
   if (!execute) throw new Error(`expected executable tool ${name}`);
   return execute;
+}
+
+function rejectingFiles(error: ManagedFileError): ManagedFileBoundary {
+  return {
+    read: async () => {
+      throw error;
+    },
+    write: async () => {
+      throw error;
+    },
+  };
+}
+
+function resultText(result: Awaited<ReturnType<Client['callTool']>>): string {
+  const first = result.content[0];
+  if (first?.type !== 'text') throw new Error('expected MCP text result');
+  return first.text;
 }
 
 const WaitInputSchema = z.object({ id: z.string() });
@@ -275,5 +298,130 @@ describe('managed generic native tools', () => {
     ]);
     await client.close();
     await rm(dir, { recursive: true, force: true });
+  });
+
+  test('managed factories preserve safe file codes on MCP/Agent and scrub internal IO', async () => {
+    const safeDefinition = defineUploadTool({
+      name: 'safe_upload',
+      description: 'Safe managed failure',
+      identity: { serviceName: 'files', action: 'safeUpload' },
+      output: z.object({ ok: z.boolean() }),
+      files: rejectingFiles(
+        new ManagedFileError(
+          'FILE_NOT_FOUND',
+          'missing at /srv/private/application-root/file.bin',
+        ),
+      ),
+      upload: async () => ({ ok: true }),
+    });
+    const internalDefinition = defineUploadTool({
+      name: 'internal_upload',
+      description: 'Internal managed failure',
+      identity: { serviceName: 'files', action: 'internalUpload' },
+      output: z.object({ ok: z.boolean() }),
+      files: rejectingFiles(
+        new ManagedFileError('FILE_IO_ERROR', 'EACCES /srv/private/application-root/file.bin'),
+      ),
+      upload: async () => ({ ok: true }),
+    });
+    const log = spyOn(console, 'error').mockImplementation(() => undefined);
+    const client = await connect(
+      buildMcpServer(
+        {
+          serverInfo: { name: 'managed-errors', version: '1' },
+          services: [],
+          runtimeTools: [safeDefinition, internalDefinition],
+        },
+        undefined,
+      ),
+    );
+    try {
+      const mcpSafe = await client.callTool({
+        name: 'safe_upload',
+        arguments: { path: 'file.bin' },
+      });
+      expect(mcpSafe.isError).toBe(true);
+      expect(resultText(mcpSafe)).toContain('"error": "FILE_NOT_FOUND"');
+      expect(resultText(mcpSafe)).not.toContain('/srv/private');
+
+      const agent = mountAgent([], { runtimeTools: [safeDefinition, internalDefinition] });
+      expect(
+        await executable(agent, 'safe_upload')(
+          { path: 'file.bin' },
+          { toolCallId: 'safe', messages: [], context: undefined },
+        ),
+      ).toMatchObject({ error: 'FILE_NOT_FOUND' });
+
+      const mcpInternal = await client.callTool({
+        name: 'internal_upload',
+        arguments: { path: 'file.bin' },
+      });
+      expect(resultText(mcpInternal)).toContain('"error": "INTERNAL_SERVER_ERROR"');
+      expect(resultText(mcpInternal)).not.toContain('/srv/private');
+      expect(log).toHaveBeenCalled();
+    } finally {
+      await client.close();
+      log.mockRestore();
+    }
+  });
+
+  test('raw managed adapters expose safe codes and scrub unknown causes', async () => {
+    const safeServer = new McpServer({ name: 'raw-managed-safe', version: '1' });
+    const fetchMock: typeof fetch = Object.assign(
+      async (): Promise<Response> =>
+        new Response(new Uint8Array([1]), {
+          headers: { 'content-type': 'application/octet-stream' },
+        }),
+      { preconnect: (): void => undefined },
+    );
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(fetchMock);
+    mountDownload(safeServer, {
+      name: 'raw_download',
+      description: 'Raw managed download',
+      inputSchema: { url: z.url() },
+      resolveUrl: ({ url }) => (typeof url === 'string' ? url : null),
+      files: rejectingFiles(
+        new ManagedFileError('FILE_EXISTS', 'already exists at /srv/private/file.bin'),
+      ),
+      allowPrivateHosts: true,
+    });
+    const safeClient = await connect(safeServer);
+    try {
+      const result = await safeClient.callTool({
+        name: 'raw_download',
+        arguments: { url: 'https://example.com/file.bin' },
+      });
+      expect(resultText(result)).toContain('Download failed [FILE_EXISTS]');
+      expect(resultText(result)).not.toContain('/srv/private');
+    } finally {
+      await safeClient.close();
+      fetchSpy.mockRestore();
+    }
+
+    const internalServer = new McpServer({ name: 'raw-managed-internal', version: '1' });
+    mountUpload(internalServer, {
+      name: 'raw_upload',
+      description: 'Raw managed upload',
+      files: rejectingFiles(
+        new ManagedFileError('FILE_IO_ERROR', 'EIO /srv/private/file.bin'),
+      ),
+      upload: async () => ({ ok: true }),
+    });
+    const log = spyOn(console, 'error').mockImplementation(() => undefined);
+    const internalClient = await connect(internalServer);
+    try {
+      const result = await internalClient.callTool({
+        name: 'raw_upload',
+        arguments: { path: 'file.bin' },
+      });
+      expect(resultText(result)).toContain(
+        'Upload failed [INTERNAL_SERVER_ERROR]: Internal server error',
+      );
+      expect(resultText(result)).not.toContain('/srv/private');
+      expect(log).toHaveBeenCalled();
+    } finally {
+      await internalClient.close();
+      log.mockRestore();
+    }
   });
 });

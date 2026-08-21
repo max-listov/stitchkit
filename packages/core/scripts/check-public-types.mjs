@@ -74,6 +74,32 @@ const ACCEPTED = {
   RetainedRawBody: 'inference helper — raw-body endpoints compute retained body access',
   RequiredResponseMetadata:
     'inference helper — response metadata access is computed from the endpoint declaration',
+  UnionKeys: 'inference helper — composed auth scopes are computed from hook scope maps',
+  HookScopeMaps: 'inference helper — composed auth scopes are computed from the hook tuple',
+  EndpointInputSchema:
+    'inference helper — async-operation adapter input is computed from a selected endpoint',
+  EndpointOutputSchema:
+    'inference helper — async-operation adapter output is computed from a selected endpoint',
+  AsyncOperationContractBaseConfig:
+    'inference helper — shared fields of the exported async-operation config variants',
+  ContractEndpointsOf:
+    'inference helper — adapted async-operation endpoints are computed from the contract',
+  ContractScopeOf:
+    'inference helper — adapted async-operation scope is computed from the contract',
+  DirectContractAsyncOperationCapabilities:
+    'inference helper — direct capability literals are computed from the contract',
+  DirectContractAsyncOperationConstraint:
+    'inference helper — direct capability compatibility is checked from selected literals',
+  EndpointRecord:
+    'inference helper — canonical async-operation endpoint records are derived from schemas',
+  CanonicalAsyncOperationEndpoints:
+    'inference helper — canonical async-operation endpoints are derived from config schemas',
+  CanonicalAsyncOperationCapabilities:
+    'inference helper — optional canonical capabilities are derived from config keys',
+  CanonicalAsyncOperationSchemas:
+    'inference helper — canonical schema registry is derived from config schemas',
+  CanonicalAsyncOperationInputFor:
+    'inference helper — canonical input adapters are derived from configured capabilities',
 
   // Members of an exported union. Narrow `EndpointDef` with its discriminant
   // (`expose`, `rawResponse`, `rawBody`, `responseMeta`), not by naming the member.

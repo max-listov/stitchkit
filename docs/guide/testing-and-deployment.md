@@ -33,35 +33,98 @@ exercise the same framework pipeline.
 
 ### Transport conformance
 
-`buildSurfaceManifest` snapshots actual HTTP topology, MCP/Agent/CLI names,
-CLI-only commands, extensions and canonical schema digests. Compare real runner
-discovery with `assertSurfaceDiscovery`, then use `runSurfaceProbes` only for
-the transports you explicitly provide:
+`buildSurfaceManifest` v2 snapshots canonical operations separately from actual
+HTTP topology and mounted MCP/Agent/CLI projections. Named MCP surfaces keep
+their own advertised input digests (including `extend`, flattening and schema
+policy), and named realtime contracts keep directional argument/ack input and
+output digests. Compare only discovery you actually observed, then run explicit
+drivers for the transports you provide:
 
 ```ts
+import { bindRealtimeClient } from 'stitchkit'
 import {
   assertSurfaceDiscovery,
   buildSurfaceManifest,
+  createRealtimeProbeDriver,
+  defineRealtimeProbe,
   runSurfaceProbes,
 } from 'stitchkit/testing'
 
-const manifest = buildSurfaceManifest({ services, runtimeTools, cliCommands })
+const manifest = buildSurfaceManifest({
+  groups: [{ pathPrefix: '/api', services: httpServices }],
+  mcpPreparation: { extend, schemaValidation, multiRound },
+  mcpSurfaces: {
+    member: { services: memberServices, runtimeTools },
+    admin: { services: adminServices, runtimeTools },
+  },
+  toolSurfaces: {
+    AGENT: { services: agentServices, runtimeTools },
+    CLI: { services: cliServices, runtimeTools: cliRuntimeTools },
+  },
+  realtime: { primary: realtimeContract },
+  cliCommands,
+})
 assertSurfaceDiscovery(manifest, {
   openApi,
-  MCP: (await mcpClient.listTools()).tools.map((tool) => tool.name),
+  toolSurfaces: [{
+    transport: 'MCP',
+    surface: 'member',
+    names: (await mcpClient.listTools()).tools.map((tool) => tool.name),
+  }],
   AGENT: Object.keys(agentTools),
   CLI: cliHelpNames,
+  realtime: {
+    primary: { serverToClient: observedServerEvents, clientToServer: observedClientEvents },
+  },
+})
+
+const invalidInbound = defineRealtimeProbe({
+  name: 'invalid inbound payload',
+  scenario: 'invalid_arguments',
+  fixture: invalidPayloadFixture,
+  expected: {
+    outcome: 'realtime_rejected',
+    code: 'REALTIME_CONTRACT_VIOLATION',
+    rejection: {
+      direction: 'server-inbound', phase: 'arguments',
+      reason: 'invalid-arguments', fault: 'peer',
+    },
+    handlerCalls: 0,
+  },
+})
+
+const realtimeDriver = createRealtimeProbeDriver({
+  bind: (onRejected, fixture) => {
+    const client = bindRealtimeClient(realtimeContract, existingTransport, { onRejected })
+    const scenario = bindApplicationRealtimeScenario(client, fixture)
+    return {
+      connected: () => client.connected,
+      invoke: scenario.invoke,
+      dispose: scenario.dispose, // subscriptions only; never disconnect the transport
+    }
+  },
+  handlerCalls: () => applicationRealtimeHandlerCalls,
 })
 
 await runSurfaceProbes({
-  probes,
-  drivers: { HTTP: httpDriver, MCP: mcpDriver, AGENT: agentDriver, CLI: cliDriver },
+  probes: [invalidInbound],
+  drivers: { REALTIME: realtimeDriver },
 })
 ```
 
-The kit never starts a server or invents credentials. Each probe declares its
-expected normalized outcome and has bounded timeout, setup/teardown and an
-AbortSignal. A missing driver is unsupported, not silently marked conformant.
+MCP preparation is global because the real MCP mount has one preparation
+policy; named surfaces select tools, while `extend.filter` decides which
+selected operations receive extra fields. CLI selection is deliberately plain,
+and Agent owns its own reachable presentation shaping.
+
+The kit never starts a server, discovers Socket.IO topology remotely, invents
+credentials or synthesises invalid Zod values. Fixtures and observations come
+from the application. The realtime driver creates a rejection channel per
+scenario, observes connection state before invocation, and disposes only
+probe-owned subscriptions. Each scenario has one absolute deadline shared by
+signalled setup, invocation and teardown. An outer timeout stops waiting; it
+does not disconnect a foreign transport or retract an already emitted packet.
+A missing driver is unsupported, not silently marked conformant.
 
 ### Test handlers with raw Requests
 

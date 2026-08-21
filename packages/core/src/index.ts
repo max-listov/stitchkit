@@ -31,13 +31,20 @@ export {
   type UnauthorizedMatcher,
 } from './browser/http';
 export type {
+  BindRealtimeClientOptions,
+  BoundRealtimeClient,
   RealtimeClient,
   RealtimeClientOptions,
+  RealtimeClientTransport,
   SocketEventMap,
   SocketIOClient,
   SocketIOClientConfig,
 } from './browser/socket-io';
-export { createRealtimeClient, createSocketIOClient } from './browser/socket-io';
+export {
+  bindRealtimeClient,
+  createRealtimeClient,
+  createSocketIOClient,
+} from './browser/socket-io';
 export { type ParseSSEOptions, parseSSE } from './browser/stream';
 export * from './contract';
 export type { StitchLogger } from './logger';

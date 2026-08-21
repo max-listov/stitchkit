@@ -106,6 +106,11 @@ These records were consolidated from the project's internal design notes on
 | [0089](0089-async-operations-describe-transport-not-jobs.md) | Async operations describe transport, not jobs | Accepted — extends 0081 |
 | [0090](0090-remote-implementation-has-a-peer-free-entrypoint.md) | Remote implementation has a peer-free entrypoint | Accepted — narrows optional-peer ownership |
 | [0091](0091-realtime-request-is-a-typed-native-ack.md) | Realtime request is a typed native acknowledgement | Accepted — extends 0008 and 0069 |
+| [0092](0092-existing-realtime-transport-binding.md) | Realtime contracts may bind an existing transport | Accepted — extends 0008, 0069 and 0091 |
+| [0093](0093-transport-projected-and-realtime-conformance.md) | Surface manifests are transport projections and include realtime | Accepted — extends 0059, 0069 and 0087 |
+| [0094](0094-auth-hook-composition-is-owned-and-atomic.md) | Auth hook composition is owned and atomic | Accepted — extends 0085 and 0086 |
+| [0095](0095-async-operation-contract-factory-and-adapters.md) | Async-operation contracts have one factory and typed adapters | Accepted — extends 0089 |
+| [0096](0096-managed-file-boundary-owns-safe-read-semantics.md) | Managed file boundaries own safe read semantics | Accepted — extends 0088 |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

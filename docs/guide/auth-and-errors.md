@@ -140,10 +140,10 @@ fields; `true | object` correctly makes them optional.
 Annotate `rules` with `satisfies Record<MyScope, AuthRule<User>>` so the compiler
 catches a scope you forgot to cover. With the scoped rule objects below, widen
 the annotation to
-`satisfies Record<MyScope, AuthRule<User> | ScopedAuthRule<User, object>>` — it
-keeps the coverage check and does not disturb the derivation. (When every scope
-comes from the derived map, the check is already implicit: a scope missing from
-`rules` is no key of the map, and a contract using it fails to compile.)
+`satisfies Record<MyScope, AuthRule<User> | ScopedAuthRule<User, AuthRuleContribution>>`
+— it keeps the coverage check and does not disturb the derivation. (When every
+scope comes from the derived map, the check is already implicit: a scope missing
+from `rules` is no key of the map, and a contract using it fails to compile.)
 
 ### Scoped rules — the map `createScopedImplement` consumes
 
@@ -189,10 +189,57 @@ widens its inject and degrades that scope's fields to `object`.
 
 Derivation needs the identity generic to be **inferred** (write no explicit
 `createAuthHook<User>` — TypeScript has no partial inference); with an explicit
-generic, or fields injected outside the hook, keep the hand-written map. Two
-hooks guarding different scopes compose by intersection:
-`createScopedImplement<AuthScopes<typeof userHook> & AuthScopes<typeof botHook>>()`.
+generic, or fields injected outside the hook, keep the hand-written map.
 → ADR 0078
+
+### Multiple auth domains — `composeAuthHooks`
+
+Independent identity domains should keep separate resolvers and rules. Compose
+their canonical hooks and derive one handler context without a manual dispatcher
+or scope-map intersection:
+
+```ts
+const userAuth = createAuthHook({
+  resolve: resolveUser,
+  resolveFromContext: resolveToolUser,
+  rules: {
+    user: (user) => ({ userId: user.id }),
+    workspace: (user) => ({ userId: user.id }),
+  },
+})
+
+const workspaceAuth = createAuthHook({
+  resolve: resolveMembership,
+  resolveFromContext: resolveToolMembership,
+  rules: {
+    workspace: (membership) => ({ workspaceId: membership.workspaceId }),
+  },
+})
+
+export const auth = composeAuthHooks({
+  hooks: [userAuth, workspaceAuth],
+  defaultScope: 'user',
+})
+export const implementFor = createScopedImplement<AuthScopes<typeof auth>>()
+```
+
+Only hooks that declare the selected scope run. An unknown scope fails closed;
+when several hooks own one scope, every owner must pass in declaration order.
+Each owner evaluates on an isolated shadow context. Stitchkit validates all
+changed fields, rejects reserved/unsafe fields and cross-owner key collisions,
+then commits the combined contribution once. A rejected or cancelled composite
+therefore exposes no partial fields to the handler.
+
+Isolation is per-key, not deep: a contribution is the set of context keys whose
+descriptor changed. Mutating an existing value **in place**
+(`ctx.user.role = 'admin'`) edits the object every owner already shares, so it
+is neither reported as a contribution nor checked for collisions — contribute
+new fields instead of editing another owner's object. External side effects
+likewise remain consumer-owned and are not rolled back.
+
+The composite's `defaultScope` is the only implicit scope. A child hook's own
+default must be absent or equal to it, so reordering hooks cannot change which
+scope protects an endpoint.
 
 ### Auth on the tool surface — `resolveFromContext`
 

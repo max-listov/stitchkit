@@ -7,7 +7,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { ManagedFileBoundary } from '../files/boundary';
 import { isRecord } from '../internal/typed';
-import { runDownloadOperation } from './download-core';
+import { DownloadOperationError, runDownloadOperation } from './download-core';
+import { normalizeFileToolError } from './managed-file-error';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
 
@@ -69,11 +70,12 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
           timeoutMs: config.timeoutMs,
         });
         return textResult(JSON.stringify(result, null, 2));
-      } catch (err) {
-        return textResult(
-          `Download failed: ${err instanceof Error ? err.message : String(err)}`,
-          true,
-        );
+      } catch (error) {
+        if (error instanceof DownloadOperationError) {
+          return textResult(`Download failed [${error.code}]: ${error.message}`, true);
+        }
+        const normalized = normalizeFileToolError(error);
+        return textResult(`Download failed [${normalized.code}]: ${normalized.message}`, true);
       }
     },
   );

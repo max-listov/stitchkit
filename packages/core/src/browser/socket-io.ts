@@ -239,12 +239,16 @@ export interface SocketIOClient<
   onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
 }
 
-export interface RealtimeClient<
+/** Minimal Stitchkit client transport required by a validated realtime binding. */
+export type RealtimeClientTransport = Pick<
+  SocketIOClient<SocketEventMap, SocketEventMap>,
+  'connected' | 'on' | 'emit' | 'emitWithAck' | 'onConnectionChange'
+>;
+
+export interface BoundRealtimeClient<
   TServerToClient extends RealtimeEventRegistry,
   TClientToServer extends RealtimeEventRegistry,
 > extends ValidatedRealtimeSocket<TServerToClient, TClientToServer> {
-  connect(): void;
-  disconnect(): void;
   readonly connected: boolean;
   request<TEvent extends RealtimeAcknowledgedEvent<TClientToServer>>(
     event: TEvent,
@@ -256,22 +260,46 @@ export interface RealtimeClient<
   onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
 }
 
-export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegistry>
-  extends SocketIOClientConfig<{
-    [TEvent in keyof TServerToClient]: (...args: unknown[]) => void;
-  }> {
+export interface RealtimeClient<
+  TServerToClient extends RealtimeEventRegistry,
+  TClientToServer extends RealtimeEventRegistry,
+> extends BoundRealtimeClient<TServerToClient, TClientToServer> {
+  connect(): void;
+  disconnect(): void;
+}
+
+export interface BindRealtimeClientOptions {
   onRejected?: RealtimeRejectedEventHook;
   logger?: StitchLogger;
 }
 
-export function createRealtimeClient<
+export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegistry>
+  extends BindRealtimeClientOptions,
+    SocketIOClientConfig<{
+      [TEvent in keyof TServerToClient]: (...args: unknown[]) => void;
+    }> {}
+
+function assertRealtimeClientTransport(transport: RealtimeClientTransport): void {
+  for (const capability of ['on', 'emit', 'emitWithAck', 'onConnectionChange']) {
+    if (typeof Reflect.get(transport, capability) !== 'function') {
+      throw new TypeError(`Realtime client transport does not implement ${capability}()`);
+    }
+  }
+  if (typeof transport.connected !== 'boolean') {
+    throw new TypeError('Realtime client transport does not expose boolean connected');
+  }
+}
+
+/** Add contract validation and typed acknowledgements without owning the transport lifecycle. */
+export function bindRealtimeClient<
   const TServerToClient extends RealtimeEventRegistry,
   const TClientToServer extends RealtimeEventRegistry,
 >(
   contract: RealtimeContract<TServerToClient, TClientToServer>,
-  { onRejected, logger, ...config }: RealtimeClientOptions<TServerToClient>,
-): RealtimeClient<TServerToClient, TClientToServer> {
-  const transport = createSocketIOClient<SocketEventMap, SocketEventMap>(config);
+  transport: RealtimeClientTransport,
+  { onRejected, logger }: BindRealtimeClientOptions = {},
+): BoundRealtimeClient<TServerToClient, TClientToServer> {
+  assertRealtimeClientTransport(transport);
   const events = createValidatedRealtimeSocket({
     target: transport,
     inbound: contract.serverToClient,
@@ -339,13 +367,30 @@ export function createRealtimeClient<
 
   return {
     ...events,
-    connect: transport.connect,
-    disconnect: transport.disconnect,
     get connected() {
       return transport.connected;
     },
     request,
-    onConnectionChange: transport.onConnectionChange,
+    onConnectionChange: (listener) => transport.onConnectionChange(listener),
+  };
+}
+
+export function createRealtimeClient<
+  const TServerToClient extends RealtimeEventRegistry,
+  const TClientToServer extends RealtimeEventRegistry,
+>(
+  contract: RealtimeContract<TServerToClient, TClientToServer>,
+  { onRejected, logger, ...config }: RealtimeClientOptions<TServerToClient>,
+): RealtimeClient<TServerToClient, TClientToServer> {
+  const transport = createSocketIOClient<SocketEventMap, SocketEventMap>(config);
+  const bound = bindRealtimeClient(contract, transport, { onRejected, logger });
+  return {
+    ...bound,
+    get connected() {
+      return bound.connected;
+    },
+    connect: transport.connect,
+    disconnect: transport.disconnect,
   };
 }
 

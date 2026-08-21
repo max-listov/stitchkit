@@ -1,6 +1,7 @@
 import { type ZodType, z } from 'zod';
 import { ManagedFilePathSchema } from '../contract/file-ref';
 import type { ManagedFileBoundary, ManagedFileSource } from '../files/boundary';
+import { managedFileAppError } from './managed-file-error';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from './native-definition';
 import {
   defineRuntimeTool,
@@ -38,12 +39,19 @@ export function defineUploadTool<TOutput extends ZodType>(
     transports: config.transports,
     annotations: config.annotations,
     present: config.present,
-    handler: async (context) =>
-      runUploadOperation(
-        config.files,
-        context.input.path,
-        (source) => config.upload(source, context),
-        context.signal,
-      ),
+    handler: async (context) => {
+      try {
+        return await runUploadOperation(
+          config.files,
+          context.input.path,
+          (source) => config.upload(source, context),
+          context.signal,
+        );
+      } catch (error) {
+        const managedError = managedFileAppError(error);
+        if (managedError) throw managedError;
+        throw error;
+      }
+    },
   });
 }

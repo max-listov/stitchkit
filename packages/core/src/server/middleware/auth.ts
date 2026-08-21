@@ -3,7 +3,11 @@ import { forbidden, unauthorized } from '../../contract';
 import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
-import { mergeContextContribution } from '../context-contribution';
+import {
+  contextContributionDelta,
+  mergeContextContribution,
+  prepareContextContribution,
+} from '../context-contribution';
 import type { AuthorizationContext, OperationIdentity } from '../types';
 import { parseCookies } from './cookies';
 
@@ -345,14 +349,34 @@ export interface AuthHook {
   (ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void>;
 }
 
+const scopedAuthHookBrand: unique symbol = Symbol('stitchkit.scoped-auth-hook');
+
+interface AuthOwnershipPlan {
+  defaultScope?: string;
+  hook: AuthHook;
+  scopes: ReadonlySet<string>;
+}
+
+const authOwnershipPlans = new WeakMap<AuthHook, AuthOwnershipPlan>();
+
+function createShadowContext(ctx: RuntimeContext): RuntimeContext {
+  const shadow: RuntimeContext = {
+    params: ctx.params,
+    input: ctx.input,
+    source: ctx.source,
+  };
+  Object.defineProperties(shadow, Object.getOwnPropertyDescriptors(ctx));
+  return shadow;
+}
+
 /**
  * An auth hook that carries its derived scope→context map at the type level.
  * The marker property never exists at runtime; it only lets {@link AuthScopes}
  * recover the map.
  */
 export interface ScopedAuthHook<TScopes extends Record<string, object>> extends AuthHook {
-  /** Type-only carrier for {@link AuthScopes}; never present at runtime. */
-  readonly '~scopes'?: TScopes;
+  /** Module-private nominal carrier for {@link AuthScopes}. */
+  readonly [scopedAuthHookBrand]: () => TScopes | undefined;
 }
 
 /**
@@ -366,6 +390,51 @@ export interface ScopedAuthHook<TScopes extends Record<string, object>> extends 
  */
 export type AuthScopes<THook extends ScopedAuthHook<Record<string, object>>> =
   THook extends ScopedAuthHook<infer TScopes> ? TScopes : never;
+
+type ScopedHook = ScopedAuthHook<Record<string, object>>;
+
+type HookScopeMaps<THooks extends readonly ScopedHook[]> = THooks[number] extends infer THook
+  ? THook extends ScopedHook
+    ? AuthScopes<THook>
+    : never
+  : never;
+
+type ContributionsForScope<
+  THooks extends readonly ScopedHook[],
+  TScope extends PropertyKey,
+> = THooks[number] extends infer THook
+  ? THook extends ScopedHook
+    ? TScope extends keyof AuthScopes<THook>
+      ? AuthScopes<THook>[TScope]
+      : never
+    : never
+  : never;
+
+type AnyRequiredKeys<T> = T extends object ? RequiredKeys<T> : never;
+
+type ComposeContributions<T extends object> = [UnionKeys<T>] extends [never]
+  ? object
+  : {
+      [K in AnyRequiredKeys<T>]: UnionValue<T, K>;
+    } & {
+      [K in Exclude<UnionKeys<T>, AnyRequiredKeys<T>>]?: UnionValue<T, K>;
+    };
+
+/** Scope→context map guaranteed by every owner selected for each scope. */
+export type ComposedAuthScopes<THooks extends readonly ScopedHook[]> = {
+  [TScope in UnionKeys<HookScopeMaps<THooks>>]: ComposeContributions<
+    ContributionsForScope<THooks, TScope>
+  >;
+};
+
+export interface ComposeAuthHooksConfig<
+  THooks extends readonly [ScopedHook, ...ScopedHook[]],
+> {
+  /** Canonical hooks to route by their declared rule ownership. */
+  hooks: THooks;
+  /** The only default used by the composite. Must name an owned scope. */
+  defaultScope?: UnionKeys<HookScopeMaps<THooks>>;
+}
 
 /**
  * Build a scope authorization hook.
@@ -441,7 +510,98 @@ export function createAuthHook<
     mergeContextContribution(ctx, result, scope);
   }
 
+  auth[scopedAuthHookBrand] = () => undefined;
+  authOwnershipPlans.set(auth, {
+    defaultScope: config.defaultScope,
+    hook: auth,
+    scopes: new Set(Object.keys(config.rules)),
+  });
   return auth;
+}
+
+/**
+ * Compose independent auth domains without teaching either domain about the
+ * other's identities or scopes. Only owners of the selected scope run. Their
+ * context changes are staged independently and committed atomically after all
+ * owners pass.
+ */
+export function composeAuthHooks<const THooks extends readonly [ScopedHook, ...ScopedHook[]]>(
+  config: ComposeAuthHooksConfig<THooks>,
+): ScopedAuthHook<ComposedAuthScopes<THooks>> {
+  const plans: AuthOwnershipPlan[] = [];
+  for (const hook of config.hooks) {
+    const plan = authOwnershipPlans.get(hook);
+    if (!plan) {
+      throw new TypeError(
+        '[stitchkit] auth: composeAuthHooks accepts only hooks created by createAuthHook or composeAuthHooks',
+      );
+    }
+    if (plan.defaultScope !== undefined && plan.defaultScope !== config.defaultScope) {
+      throw new TypeError(
+        `[stitchkit] auth: child default scope ${JSON.stringify(plan.defaultScope)} must match the composite default scope`,
+      );
+    }
+    plans.push(plan);
+  }
+
+  const defaultScope = config.defaultScope;
+  if (defaultScope !== undefined && !plans.some((plan) => plan.scopes.has(defaultScope))) {
+    throw new TypeError(
+      `[stitchkit] auth: composite default scope ${JSON.stringify(defaultScope)} has no owner`,
+    );
+  }
+
+  const ownedScopes = new Set<string>();
+  for (const plan of plans) {
+    for (const scope of plan.scopes) ownedScopes.add(scope);
+  }
+
+  async function composed(
+    ctx: AuthorizationContext,
+    endpoint: OperationIdentity,
+  ): Promise<void>;
+  async function composed(ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void>;
+  async function composed(ctx: RuntimeContext, endpoint: OperationIdentity): Promise<void> {
+    const scope = endpoint.scope ?? config.defaultScope;
+    if (!scope) return;
+
+    const owners = plans.filter((plan) => plan.scopes.has(scope));
+    if (owners.length === 0) {
+      throw new Error(`[stitchkit] auth: no rule for scope "${scope}"`);
+    }
+
+    const scopedEndpoint: OperationIdentity = { ...endpoint, scope };
+    const contribution: Record<string, unknown> = Object.create(null);
+    const contributionOwners = new Set<string>();
+    for (const owner of owners) {
+      ctx.signal?.throwIfAborted();
+      const shadow = createShadowContext(ctx);
+      await owner.hook(shadow, scopedEndpoint);
+      const ownerContribution = prepareContextContribution(
+        contextContributionDelta(ctx, shadow, scope),
+        scope,
+      );
+      for (const key of Object.keys(ownerContribution)) {
+        if (contributionOwners.has(key)) {
+          throw new TypeError(
+            `[stitchkit] auth: multiple owners contributed context key ${JSON.stringify(key)} for scope ${JSON.stringify(scope)}`,
+          );
+        }
+        contributionOwners.add(key);
+      }
+      Object.assign(contribution, ownerContribution);
+    }
+    ctx.signal?.throwIfAborted();
+    mergeContextContribution(ctx, contribution, scope);
+  }
+
+  composed[scopedAuthHookBrand] = () => undefined;
+  authOwnershipPlans.set(composed, {
+    defaultScope: config.defaultScope,
+    hook: composed,
+    scopes: ownedScopes,
+  });
+  return composed;
 }
 
 // ─── Bearer-token resolver ───────────────────────────

@@ -7,6 +7,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { ManagedFilePathSchema } from '../contract/file-ref';
 import type { ManagedFileBoundary, ManagedFileSource } from '../files/boundary';
 import { isRecord } from '../internal/typed';
+import { normalizeFileToolError } from './managed-file-error';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
 import { runUploadOperation } from './upload-core';
@@ -47,11 +48,9 @@ export function mountUpload(server: McpServer, config: UploadToolConfig): void {
         // text block is always a valid string.
         const uploaded = await runUploadOperation(config.files, path, config.upload);
         return textResult(JSON.stringify(uploaded ?? null, null, 2));
-      } catch (err) {
-        return textResult(
-          `Upload failed: ${err instanceof Error ? err.message : String(err)}`,
-          true,
-        );
+      } catch (error) {
+        const normalized = normalizeFileToolError(error);
+        return textResult(`Upload failed [${normalized.code}]: ${normalized.message}`, true);
       }
     },
   );

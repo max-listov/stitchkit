@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import type { Transport, TransportSource } from '../contract';
-import type { MethodDef, ServiceDef } from '../server/types';
+import type { ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
   executeToolMethod,
@@ -16,8 +16,12 @@ import {
   type ToolResult,
 } from './execute';
 import type { ToolPresentationSchema } from './flatten';
-import { assertToolName, hasUsableChars, toToolName } from './names';
-import { buildToolPresentationSchema } from './presentation';
+import {
+  assertToolExtensionCompatible,
+  type ProjectedContractTool,
+  projectToolSurface,
+  type SurfaceToolExtension,
+} from './internal/surface-projector';
 import { mergeSchemas, rebuildObject } from './schema';
 
 /**
@@ -28,16 +32,8 @@ import { mergeSchemas, rebuildObject } from './schema';
  * `Record<string, unknown>` for the untyped mounts, pinned by `createToolkit`
  * so `resolve` is checked against the app's context shape.
  */
-export interface ToolExtend<
-  TContext extends Record<string, unknown> = Record<string, unknown>,
-> {
-  /** Extra Zod fields added to every (matching) tool's input schema. */
-  schema: Record<string, z.ZodType>;
-  /** Turn the extra arguments into context merged into the handler. */
-  resolve: (args: Record<string, unknown>) => Partial<TContext> | Promise<Partial<TContext>>;
-  /** Limit the extension to specific methods — default: every method. */
-  filter?: (service: ServiceDef, method: MethodDef) => boolean;
-}
+export type ToolExtend<TContext extends Record<string, unknown> = Record<string, unknown>> =
+  SurfaceToolExtension<TContext>;
 
 /** One contract or framework-native operation resolved for mounting as a tool. */
 export interface MountableTool {
@@ -62,12 +58,7 @@ export interface MountableTool {
  */
 function applyExtend(base: z.ZodType, extra: Record<string, z.ZodType>): z.ZodType {
   if (base instanceof z.ZodObject) {
-    const conflicts = Object.keys(extra).filter((key) => key in base.shape);
-    if (conflicts.length > 0) {
-      throw new Error(
-        `Tool extend conflict: ${conflicts.join(', ')} already declared by the contract`,
-      );
-    }
+    assertToolExtensionCompatible(base, extra);
     return rebuildObject(base, { ...extra, ...base.shape });
   }
   // A non-object base (a union / discriminated union) — intersect rather than
@@ -88,6 +79,26 @@ export interface CollectToolsConfig {
   assertNames?: boolean;
 }
 
+/** Add execution-only argument parsing to one canonical contract projection. */
+export function contractToolMountable(
+  projected: ProjectedContractTool,
+  extend?: ToolExtend,
+): MountableTool {
+  const method = projected.source;
+  const baseArgumentSchema = mergeSchemas(method.paramsSchema, method.inputSchema);
+  const argumentSchema =
+    projected.shouldExtend && extend
+      ? applyExtend(baseArgumentSchema, extend.schema)
+      : baseArgumentSchema;
+  return {
+    method,
+    name: projected.name,
+    argumentSchema,
+    presentationSchema: projected.presentationSchema,
+    shouldExtend: projected.shouldExtend,
+  };
+}
+
 /**
  * Walk a service's methods and resolve each one exposed on `transport` to a
  * tool name and schema — the shared front half of `mountMcp` / `mountAgent`.
@@ -99,60 +110,18 @@ export function collectTools(
 ): MountableTool[] {
   const { extend, flattenUnionInput = false, assertNames = true } = config;
   const tools: MountableTool[] = [];
-  for (const [methodName, method] of Object.entries(service.methods)) {
-    // CLI is opt-IN: a method surfaces as a command only when its `expose`
-    // explicitly lists `'CLI'`. The other tool transports are default-on — a
-    // method with no `expose` is on MCP and AGENT — so adding the CLI transport
-    // never silently widens an existing contract's surface.
-    if (transport === 'CLI') {
-      if (!method.expose?.includes('CLI')) continue;
-    } else if (method.expose && !method.expose.includes(transport)) {
-      continue;
-    }
-    if (method.multipart) continue;
-    // `rawBody` exists only on an HTTP request. `implement` forces HTTP
-    // exposure, and this guard keeps a manually assembled ServiceDef honest.
-    if (method.rawBody) continue;
-    // Response metadata belongs to an HTTP response and is forced HTTP-only by
-    // both MethodDef producers. Keep manually assembled services honest too.
-    if (method.responseMeta) continue;
-    // A raw endpoint returns a `Response`. Every tool transport would serialize
-    // that into `{}` and hand the model an empty object as the answer — the
-    // exact failure a consumer hit before this endpoint kind existed. The skip
-    // is load-bearing, not tidiness: without `expose`, MCP and AGENT are on by
-    // default, so a raw endpoint would otherwise mount as a tool. → ADR 0038.
-    if (method.rawResponse) continue;
-
-    const name = method.toolName ?? toToolName(service.name, methodName);
-    // CLI is exempt: `[a-zA-Z0-9_-]{1,64}` is a *provider* rule, and a CLI command
-    // is typed into a shell — there is no provider to reject it. Holding it to the
-    // provider charset would refuse `поиск`, a command that worked. → ADR 0035.
-    if (assertNames && transport !== 'CLI') {
-      // A prefix of only illegal characters normalises to separators, and the
-      // resulting `get_` / `list_` PASSES the charset check while being both
-      // meaningless and identical for every such service — so it is rejected on
-      // its own terms, not by the regex. → ADR 0035.
-      if (!method.toolName && !hasUsableChars(service.name)) {
-        throw new Error(
-          `Service prefix "${service.name}" (method "${methodName}") has no characters usable in a tool name — set an explicit \`toolName\` or rename the prefix`,
-        );
-      }
-      assertToolName(name, service.name, methodName);
-    }
-    const shouldExtend = !!extend && (!extend.filter || extend.filter(service, method));
-    const baseArgumentSchema = mergeSchemas(method.paramsSchema, method.inputSchema);
-    const argumentSchema =
-      shouldExtend && extend
-        ? applyExtend(baseArgumentSchema, extend.schema)
-        : baseArgumentSchema;
-    const presentationSchema = buildToolPresentationSchema({
-      paramsSchema: method.paramsSchema,
-      inputSchema: method.inputSchema,
-      extendSchema: shouldExtend ? extend?.schema : undefined,
+  for (const projected of projectToolSurface(
+    { services: [service] },
+    transport === 'HTTP' ? 'AGENT' : transport,
+    {
+      extend,
       flattenUnionInput,
-      unrepresentable: 'any',
-    });
-    tools.push({ method, name, argumentSchema, presentationSchema, shouldExtend });
+      assertNames,
+      assertUniqueNames: false,
+    },
+  )) {
+    if (projected.kind !== 'contract') continue;
+    tools.push(contractToolMountable(projected, extend));
   }
   return tools;
 }

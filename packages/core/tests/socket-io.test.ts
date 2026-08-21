@@ -2,8 +2,10 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { z } from 'zod';
 import {
+  bindRealtimeClient,
   createRealtimeClient,
   createSocketIOClient,
+  type RealtimeClientTransport,
   type SocketIOClientConfig,
 } from '../src/browser/socket-io';
 import {
@@ -308,6 +310,84 @@ const REALTIME_URL = `http://localhost:${realtimeServer.port}`;
 describe('Zod-first realtime contracts', () => {
   afterAll(() => {
     return realtimeServer.shutdown({ gracePeriodMs: 0 });
+  });
+
+  test('binds validation to an existing transport without owning its lifecycle', async () => {
+    const transport = createSocketIOClient({
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      reconnectOnServerDisconnect: false,
+    });
+    const rejections: string[] = [];
+    const bound = bindRealtimeClient(realtimeContract, transport, {
+      onRejected: ({ event, phase }) => {
+        rejections.push(`${event}:${phase}`);
+      },
+    });
+
+    expect(bound.connected).toBe(false);
+    expect('connect' in bound).toBe(false);
+    await expect(bound.request('ping', { n: 1 }, { timeoutMs: 100 })).rejects.toBeInstanceOf(
+      RealtimeRequestDisconnectedError,
+    );
+
+    const connected = whenConnected(bound);
+    transport.connect();
+    await connected;
+    expect(await bound.request('sum', 2, 3, { timeoutMs: 500 })).toBe(5);
+    await expect(bound.request('slow', { timeoutMs: 20 })).rejects.toBeInstanceOf(
+      RealtimeRequestTimeoutError,
+    );
+    await expect(bound.request('invalidAck', { timeoutMs: 500 })).rejects.toBeInstanceOf(
+      RealtimeRequestInvalidAcknowledgementError,
+    );
+    expect(rejections).toContain('invalidAck:acknowledgement');
+    expect(() => Reflect.apply(bound.emit, bound, ['ready', 'unexpected'])).toThrow();
+
+    let inboundHandled = false;
+    bound.on('pong', () => {
+      inboundHandled = true;
+    });
+    realtimeHandle.io.emit('pong', { n: 'wrong' });
+    await Bun.sleep(20);
+    expect(rejections).toContain('pong:arguments');
+    expect(inboundHandled).toBeFalse();
+
+    await expect(
+      bound.request('disconnectBeforeAck', { timeoutMs: 500 }),
+    ).rejects.toBeInstanceOf(RealtimeRequestDisconnectedError);
+    expect(bound.connected).toBeFalse();
+    transport.disconnect();
+  });
+
+  test('rejects an incomplete existing transport at bind time', () => {
+    expect(() =>
+      Reflect.apply(bindRealtimeClient, undefined, [realtimeContract, { connected: false }]),
+    ).toThrow('does not implement on()');
+  });
+
+  test('preserves the existing transport receiver for connection subscriptions', () => {
+    const listeners = new Set<(connected: boolean, reason?: string) => void>();
+    const transport = {
+      connected: false,
+      on: (_event: string, _handler: (...args: unknown[]) => void) => () => undefined,
+      emit: (_event: string, ..._args: unknown[]) => true,
+      emitWithAck: async (_event: string, _args: unknown[]) => undefined,
+      onConnectionChange(this: RealtimeClientTransport, listener) {
+        expect(this).toBe(transport);
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    } satisfies RealtimeClientTransport;
+
+    const bound = bindRealtimeClient(realtimeContract, transport);
+    const observed: boolean[] = [];
+    const unsubscribe = bound.onConnectionChange((connected) => observed.push(connected));
+    for (const listener of listeners) listener(true);
+    unsubscribe();
+
+    expect(observed).toEqual([true]);
+    expect(listeners.size).toBe(0);
   });
 
   test('validates tuples, acknowledgements, no-payload and binary events', async () => {

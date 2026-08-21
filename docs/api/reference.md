@@ -56,6 +56,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createSocketIOClient` | function | low-level typed Socket.IO transport primitive — [guide](../guide/realtime.md#low-level-transport) |
 | `defineRealtimeContract` | function | Zod-first shared Socket.IO event contract — [guide](../guide/realtime.md#zod-first-event-contract) |
 | `createRealtimeClient` | function | inferred, runtime-validated Socket.IO client — [guide](../guide/realtime.md#client--createrealtimeclient) |
+| `bindRealtimeClient` | function | bind contract validation and typed acknowledgements to an existing Stitchkit client transport without owning its lifecycle |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `SocketIOClient` | _type_ | low-level client handle; `emit` reports disconnected drops and `emitWithAck` exposes the native Promise primitive used by validated `request()` |
@@ -63,6 +64,9 @@ The browser-and-server entrypoint. Re-exports everything from
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
 | `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
+| `BoundRealtimeClient` | _type_ | validated non-owning `on`/`emit`/`request` client with no `connect`/`disconnect` |
+| `RealtimeClientTransport` | _type_ | minimal existing transport capability accepted by `bindRealtimeClient` |
+| `BindRealtimeClientOptions` | _type_ | rejection/logger options for a bound existing transport |
 | `RealtimeAcknowledgedEvent` | _type_ | event-name union restricted to definitions with an `ack` schema |
 | `RealtimeAcknowledgement` | _type_ | validated acknowledgement output inferred from an event definition |
 | `RealtimeRequestArguments` | _type_ | request arguments inferred from an acknowledged event tuple |
@@ -269,6 +273,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAuthHook` | function | one scope gate for HTTP `authorize` and tool `beforeHandle` — [guide](../guide/auth-and-errors.md#createauthhook) |
+| `composeAuthHooks` | function | route multiple canonical auth domains by owned scope and atomically commit their typed contributions |
 | `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
 | `ErrorHookConfig` | _type_ | async observer/renderer config for `createErrorHook` |
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
@@ -288,6 +293,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `RuleScopes` | _type_ | scope→context map derived from a `rules` object; `'public'` fields become optional |
 | `ScopedAuthHook` | _type_ | an auth hook carrying its derived scope map at the type level |
 | `AuthScopes` | _type_ | recover the derived map — `createScopedImplement<AuthScopes<typeof hook>>()` |
+| `ComposeAuthHooksConfig` | _type_ | ordered canonical hooks plus the optional explicit composite default scope |
+| `ComposedAuthScopes` | _type_ | scope→context map derived from every owner in a composed auth hook |
 | `BearerResolverConfig` | _type_ | config for `createBearerResolver` |
 | `JwtPayload` | _type_ | a decoded JWT payload |
 | `SignJwtOptions` | _type_ | options for `signJwt` (expiry, claims) |
@@ -606,6 +613,7 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `ManagedWaitRender` | _type_ | optional managed wait terminal text and failure classification |
 | `UploadToolInputSchema` | constant | fixed `{ path: string }` input schema for `defineUploadTool` |
 | `defineAsyncOperation` | function | runtime-only start/status/wait plus configured cancel/result/artifacts definitions |
+| `defineAsyncOperationContract` | function | define one canonical Zod-first HTTP contract for start/status/wait plus optional capabilities |
 | `bindContractAsyncOperation` | function | bind literal methods from an existing contract without creating another HTTP surface |
 | `createAsyncOperationSnapshotSchema` | function | canonical pending/running/succeeded/failed/cancelled Zod snapshot |
 | `AsyncOperationCancelResultSchema` | constant | validated accepted/already_terminal/rejected cancellation result |
@@ -617,9 +625,18 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `AsyncOperationOutputCapability` | _type_ | optional result/artifact schema plus handler |
 | `RuntimeAsyncOperationConfig` | _type_ | runtime-only descriptor configuration |
 | `RuntimeAsyncOperation` | _type_ | inferred generated definitions and schemas |
+| `AsyncOperationContractConfig` | _type_ | canonical contract config where start returns the operation id |
+| `AsyncOperationContractWithStartOutputConfig` | _type_ | canonical contract config with an application start envelope and typed id extractor |
+| `DefinedAsyncOperationContract` | _type_ | generated contract, capability keys, schemas and parsed adapters |
 | `ContractAsyncOperationConfig` | _type_ | literal contract method binding and handlers |
+| `AdaptedContractAsyncOperationConfig` | _type_ | existing-contract binding with explicit id and per-capability input adapters |
+| `BoundAdaptedContractAsyncOperation` | _type_ | inferred adapted binding with parsed id/input projectors |
+| `AdaptedContractAsyncOperationStartKey` | _type_ | existing-contract keys with a declared start output |
+| `AdaptedContractAsyncOperationFollowKey` | _type_ | existing-contract keys with both input and output schemas |
+| `AdaptedContractAsyncOperationWaitKey` | _type_ | adapted follow-up keys whose output matches the selected status snapshot |
+| `ContractAsyncOperationInputAdapters` | _type_ | guaranteed direct-binding status/wait input adapters plus configured optional capabilities |
 | `ContractAsyncOperationKeys` | _type_ | literal method-key union of a bound contract |
-| `ContractAsyncOperationStartKey` | _type_ | contract keys with a declared output schema, valid for `start` |
+| `ContractAsyncOperationStartKey` | _type_ | direct-binding start keys whose declared ID schema has stable input/output |
 | `ContractAsyncOperationFollowKey` | _type_ | contract keys whose input schema type matches the selected start output |
 | `ContractAsyncOperationWaitKey` | _type_ | follow-up keys whose output schema type also matches the selected status output |
 | `composeToolLifecycle` | function | ordered composition of tool before/after phases |
@@ -702,21 +719,42 @@ handler pipeline without opening a TCP port.
 | `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
 | `HandlerTestClientsConfig` | _type_ | batch helper configuration |
 | `HandlerTestTransportConfig` | _type_ | shared in-process handler, origin, prefix, client defaults and optional server handle |
-| `buildSurfaceManifest` | function | deterministic actual HTTP/tool/CLI/extension topology with versioned schema digests |
+| `buildSurfaceManifest` | function | deterministic manifest v2 with HTTP topology, transport-specific tool projections, named MCP surfaces and realtime schema digests |
 | `assertSurfaceManifestSnapshot` | function | bounded deterministic manifest drift assertion |
-| `assertSurfaceDiscovery` | function | compare real OpenAPI/MCP/Agent/CLI discovery to a manifest |
-| `runSurfaceProbes` | function | execute explicit transport drivers with per-probe setup, teardown, timeout and cancellation |
-| `TransportObservationSchema` | constant | normalized success/validation/domain-error/aborted probe outcome |
+| `assertSurfaceDiscovery` | function | compare real OpenAPI/tool/realtime caller-observed discovery to the exact manifest projection |
+| `runSurfaceProbes` | function | execute explicit transport drivers under one per-scenario setup/invoke/teardown deadline |
+| `defineRealtimeProbe` | function | declare one canonical realtime scenario for a caller-supplied real transport driver |
+| `createRealtimeProbeDriver` | function | bind each scenario to a caller-owned transport and normalize actual event/ack/rejection/disconnect outcomes without lifecycle ownership |
+| `TransportObservationSchema` | constant | normalized HTTP/tool/realtime outcome including rejection fields and handler-call evidence |
+| `RealtimeRejectionObservationSchema` | constant | direction/phase/reason/fault observation for a rejected realtime event |
+| `RealtimeDisconnectObservationSchema` | constant | observed before-invoke versus in-flight disconnect phase |
 | `ConformanceTransport` | _type_ | explicit probe transport union |
 | `RunSurfaceProbesConfig` | _type_ | probes, drivers and diagnostic byte cap |
 | `SurfaceDiscoveryObservation` | _type_ | real OpenAPI/tool/CLI/extension discovery values |
+| `SurfaceToolDiscoveryObservation` | _type_ | transport, optional named surface and caller-observed tool names |
+| `SurfaceRealtimeDiscoveryObservation` | _type_ | caller-observed server→client and client→server event names |
 | `SurfaceProbe` / `SurfaceProbeDriver` | _type_ | one bounded scenario and its consumer-supplied runner |
+| `DefineRealtimeProbeConfig` | _type_ | name, canonical scenario, explicit fixture and expected realtime outcome |
+| `CreateRealtimeProbeDriverConfig` | _type_ | per-scenario foreign-transport binder and optional handler-call counter |
+| `RealtimeProbeAdapter` | _type_ | connected-state observation, scenario invocation and subscription-only cleanup |
+| `RealtimeProbeFixture` / `RealtimeProbeScenario` | _type_ | driver input and supported event/ack/invalid/disconnect/timeout scenario vocabulary |
+| `RealtimeRejectionObservation` | _type_ | parsed structured realtime rejection observation |
+| `RealtimeDisconnectObservation` | _type_ | normalized physical timing of a realtime disconnect |
 | `TransportObservation` | _type_ | validated normalized driver result |
 | `SurfaceManifest` / `SurfaceManifestConfig` | _type_ | deterministic surface snapshot and its inputs |
 | `SurfaceManifestOperation` / `SurfaceManifestOperationSchema` | _type_ / schema | one contract or runtime operation row |
+| `SurfaceManifestTool` / `SurfaceManifestToolSchema` | _type_ / schema | one mounted tool row with advertised input digest |
+| `SurfaceManifestToolSurface` / `SurfaceManifestToolSurfaceSchema` | _type_ / schema | one static transport projection, optionally keyed for a finite MCP surface |
+| `SurfaceManifestRealtimeEvent` / `SurfaceManifestRealtimeEventSchema` | _type_ / schema | one named directional realtime event with input/output args and ack digests |
 | `SurfaceManifestExtension` / `SurfaceManifestExtensionSchema` | _type_ / schema | declared transport extension row |
 | `SurfaceManifestSchema` | schema | complete deterministic manifest schema |
-| `SurfaceRuntimeToolDefinition` | _type_ | peer-free structural runtime-operation subset accepted by manifests |
+| `SurfaceToolDefinition` | _type_ | plain service/runtime selection used by CLI and finite named MCP surfaces |
+| `SurfaceAgentProjection` | _type_ | Agent selection plus its reachable extend/flatten presentation policy |
+| `SurfaceMcpPreparation` | _type_ | one global MCP extend/flatten/schema-validation/multi-round preparation policy |
+| `SurfaceRuntimeToolDefinition` | _type_ | peer-free non-executable runtime-operation descriptor for manifest projection |
+| `SurfaceToolExtension` | _type_ | canonical structural tool extension including schema, resolver and optional filter |
+| `McpSchemaValidationConfig` / `IncompatibleSchemaPolicy` | _type_ | canonical MCP schema-preparation policy used by real mounts and manifests |
+| `SurfaceRealtimeSchemaPairSchema` | schema | input/output digest pair for args or acknowledgements |
 | `SurfaceSchemaDigestsSchema` | schema | params/input/output/multipart digest object |
 | `serializeSurfaceValue` | function | canonical versioned serialization used for deterministic digests |
 
@@ -729,16 +767,16 @@ available from `stitchkit/contract`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createManagedFileBoundary` | function | bind one existing application-owned root for capped reads and atomic writes |
+| `createManagedFileBoundary` | function | bind an application-owned root, optionally creating one final directory under a trusted existing parent |
 | `ManagedFileBoundary` | _type_ | non-reopenable `read`/`write` capability over canonical relative paths |
-| `ManagedFileBoundaryConfig` | _type_ | bound root, finite limits, inspector and cleanup observer |
+| `ManagedFileBoundaryConfig` | _type_ | bound root, optional `createRoot`, finite read/write/inspection limits, inspector and cleanup observer |
 | `ManagedFileRefSchema` / `ManagedFileRef` | schema / _type_ | transport-safe relative path, measured size and optional media metadata |
 | `ManagedFilePathSchema` / `ManagedFilePath` | schema / _type_ | canonical POSIX relative managed-file path |
 | `ManagedFileSource` | _type_ | bounded immutable bytes plus validated ref passed to upload callbacks |
 | `ManagedFileReadOptions` / `ManagedFileWriteOptions` | _type_ | per-operation byte cap, signal and atomic write policy |
-| `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable caller-safe boundary failures |
-| `ManagedFileInspector` | _type_ | bounded-prefix content inspection callback that cannot own path or size |
-| `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector input and normalized metadata-only result |
+| `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable boundary failures; registered `FILE_*` mistakes are caller-safe while `FILE_IO_ERROR` remains internal |
+| `ManagedFileInspector` | _type_ | bounded-prefix read/write inspection callback with a finite cancellation signal that cannot own path or size |
+| `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
 
 ---
 

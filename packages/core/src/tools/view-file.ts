@@ -16,8 +16,10 @@
 import { extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { AppError } from '../contract';
 import { type ManagedFileBoundary, ManagedFileError } from '../files/boundary';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
+import { normalizeFileToolError } from './managed-file-error';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
@@ -124,7 +126,7 @@ async function fetchSource(
       timeoutMs: options.timeoutMs,
       signal: options.signal,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new AppError('VIEW_HTTP_ERROR', `HTTP ${res.status}`, 502);
     const headerMime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
     const mimeType = headerMime || extMime || 'application/octet-stream';
 
@@ -150,14 +152,18 @@ async function fetchSource(
 
   // Local file access is opt-in and owned by one managed boundary.
   if (!options.files) {
-    throw new Error('local file paths are disabled — set files to allow them');
+    throw new AppError(
+      'FILE_INVALID_PATH',
+      'local file paths are disabled — set files to allow them',
+      400,
+    );
   }
   options.signal?.throwIfAborted();
   // Only ever read a media file — never a `config.json` / `.env` / `id_rsa`
   // that happens to sit inside the sandbox. A path with no known media
   // extension is refused before it is touched.
   if (!extMime) {
-    throw new Error('refusing to read a non-media file');
+    throw new AppError('FILE_INSPECTION_REJECTED', 'refusing to read a non-media file', 422);
   }
   try {
     const source = await options.files.read(pathOrUrl, {
@@ -307,7 +313,7 @@ export async function runViewFileOperation(
       content.push(...resolved.content);
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = normalizeFileToolError(error).message;
       errors.push({ path: pathOrUrl, message });
       content.push({ type: 'text', text: `[${pathOrUrl}] Error: ${message}` });
     }

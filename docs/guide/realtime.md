@@ -188,6 +188,24 @@ socket.on('note:created', (note) => { /* typed note */ })
 socket.emit('room:join', 'general', ({ joined }) => { /* typed + validated */ })
 ```
 
+When an application already owns the low-level Stitchkit transport, bind the
+contract without opening a second connection:
+
+```ts
+import { bindRealtimeClient, createSocketIOClient } from 'stitchkit'
+
+const transport = createSocketIOClient({ url: 'https://api.example.com' })
+const events = bindRealtimeClient(realtimeContract, transport, { onRejected })
+
+transport.connect()       // lifecycle stays with the transport owner
+events.on('note:created', handleNote)
+await events.request('room:join', 'general', { timeoutMs: 5_000 })
+```
+
+The bound handle intentionally has no `connect()` or `disconnect()`. Its
+`on`/`emit`/`request`, rejection and timeout semantics are exactly the path used
+by `createRealtimeClient`; only transport construction/lifecycle differs.
+
 ### Request-response over realtime
 
 For an event with an `ack` schema, `request()` is the Promise form of the same
@@ -222,6 +240,7 @@ transport.
 `createSocketIOClient` remains the low-level Socket.IO transport wrapper for
 schema-agnostic infrastructure. Application wire events should use
 `createRealtimeClient`; it adds the shared contract without replacing Socket.IO.
+Use `bindRealtimeClient` when that low-level transport already exists.
 
 ### Durable subscriptions
 

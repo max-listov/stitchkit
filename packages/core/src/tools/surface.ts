@@ -1,12 +1,8 @@
 import type { Transport } from '../contract';
 import type { ServiceDef } from '../server/types';
-import { type CollectToolsConfig, collectTools, type MountableTool } from './mount';
-import { assertUniqueToolName, type ToolNameSurface } from './names';
-import {
-  type RuntimeToolDefinition,
-  runtimeToolMountable,
-  runtimeToolSupports,
-} from './runtime-tool';
+import { type ProjectedTool, projectToolSurface } from './internal/surface-projector';
+import { type CollectToolsConfig, contractToolMountable, type MountableTool } from './mount';
+import { type RuntimeToolDefinition, runtimeToolMountable } from './runtime-tool';
 
 export type ToolSurfaceTransport = Exclude<Transport, 'HTTP'>;
 
@@ -21,6 +17,7 @@ interface CollectedContractTool {
   service: string;
   action: string;
   mountable: MountableTool;
+  projection: Extract<ProjectedTool<RuntimeToolDefinition>, { kind: 'contract' }>;
 }
 
 interface CollectedRuntimeTool {
@@ -29,6 +26,7 @@ interface CollectedRuntimeTool {
   action: string;
   mountable: MountableTool;
   definition: RuntimeToolDefinition;
+  projection: Extract<ProjectedTool<RuntimeToolDefinition>, { kind: 'runtime' }>;
 }
 
 export type CollectedToolSurfaceEntry = CollectedContractTool | CollectedRuntimeTool;
@@ -38,12 +36,6 @@ export interface CollectToolSurfaceConfig extends CollectToolsConfig {
   transport: ToolSurfaceTransport;
   /** Diagnostics disable this so they can report a broken surface. Default: true. */
   assertUniqueNames?: boolean;
-}
-
-function duplicateLabel(transport: ToolSurfaceTransport): ToolNameSurface {
-  if (transport === 'MCP') return 'MCP tool name';
-  if (transport === 'AGENT') return 'agent tool name';
-  return 'CLI command';
 }
 
 /**
@@ -57,39 +49,35 @@ export function collectToolSurface({
   ...collectConfig
 }: CollectToolSurfaceConfig): CollectedToolSurfaceEntry[] {
   const entries: CollectedToolSurfaceEntry[] = [];
-  const names = new Set<string>();
   const append = (entry: CollectedToolSurfaceEntry): void => {
-    if (assertUniqueNames) {
-      assertUniqueToolName(
-        entry.mountable.name,
-        names.has(entry.mountable.name),
-        duplicateLabel(transport),
-      );
-    }
-    names.add(entry.mountable.name);
     entries.push(entry);
   };
 
-  for (const service of surface.services ?? []) {
-    for (const mountable of collectTools(service, transport, collectConfig)) {
+  for (const projected of projectToolSurface<RuntimeToolDefinition>(surface, transport, {
+    extend: collectConfig.extend,
+    flattenUnionInput: collectConfig.flattenUnionInput,
+    assertNames: collectConfig.assertNames,
+    assertUniqueNames,
+  })) {
+    if (projected.kind === 'contract') {
+      const mountable = contractToolMountable(projected, collectConfig.extend);
       append({
         kind: 'contract',
-        service: service.name,
+        service: projected.serviceName,
         action: mountable.method.key,
         mountable,
+        projection: projected,
+      });
+    } else {
+      append({
+        kind: 'runtime',
+        service: projected.serviceName,
+        action: projected.action,
+        mountable: runtimeToolMountable(projected.source, false),
+        definition: projected.source,
+        projection: projected,
       });
     }
-  }
-
-  for (const definition of surface.runtimeTools ?? []) {
-    if (!runtimeToolSupports(definition, transport)) continue;
-    append({
-      kind: 'runtime',
-      service: definition.identity.serviceName,
-      action: definition.identity.action,
-      mountable: runtimeToolMountable(definition, collectConfig.assertNames),
-      definition,
-    });
   }
 
   return entries;

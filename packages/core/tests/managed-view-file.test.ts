@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
-import { createManagedFileBoundary, type ManagedFileBoundary } from '../src/files/boundary';
+import {
+  createManagedFileBoundary,
+  type ManagedFileBoundary,
+  ManagedFileError,
+} from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
 import { defineViewFileTool } from '../src/tools/define-view-file-tool';
 import { buildMcpServer } from '../src/tools/mcp';
@@ -203,6 +207,45 @@ describe('managed view_file definition', () => {
       expect(fetchSignal?.aborted).toBe(true);
     } finally {
       fetchMock.mockRestore();
+    }
+  });
+
+  test('partial failures keep caller input but scrub derived filesystem causes', async () => {
+    const derivedPath = '/srv/private/application-root/image.png';
+    const internalFiles: ManagedFileBoundary = {
+      read: async () => {
+        throw new ManagedFileError('FILE_IO_ERROR', `EACCES ${derivedPath}`);
+      },
+      write: async () => {
+        throw new Error('unused');
+      },
+    };
+    const log = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const internal = await runViewFileOperation('caller-image.png', {
+        files: internalFiles,
+      });
+      expect(internal.errors).toEqual([
+        { path: 'caller-image.png', message: 'Internal server error' },
+      ]);
+      expect(JSON.stringify(internal)).not.toContain(derivedPath);
+      expect(log).toHaveBeenCalled();
+
+      const safeFiles: ManagedFileBoundary = {
+        read: async () => {
+          throw new ManagedFileError('FILE_NOT_FOUND', `missing at ${derivedPath}`);
+        },
+        write: async () => {
+          throw new Error('unused');
+        },
+      };
+      const safe = await runViewFileOperation('caller-image.png', { files: safeFiles });
+      expect(safe.errors).toEqual([
+        { path: 'caller-image.png', message: 'Managed file not found' },
+      ]);
+      expect(JSON.stringify(safe)).not.toContain(derivedPath);
+    } finally {
+      log.mockRestore();
     }
   });
 });

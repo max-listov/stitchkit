@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { RuntimeContext } from '../src/contract';
 import { RUNTIME_CONTEXT_RESERVED_KEYS } from '../src/server/context-contribution';
-import { createAuthHook } from '../src/server/middleware/auth';
+import { composeAuthHooks, createAuthHook } from '../src/server/middleware/auth';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
 
 interface Identity {
@@ -391,5 +391,236 @@ describe('createAuthHook — scoped rule edges', () => {
     const ctx: RuntimeContext = { params: undefined, input: undefined, source: 'http' };
 
     await expect(hook(ctx, endpoint('resource'))).rejects.toThrow('record inspection failed');
+  });
+});
+
+describe('composeAuthHooks', () => {
+  test('dispatches only the owner of a disjoint scope on HTTP and tool contexts', async () => {
+    const calls: string[] = [];
+    const users = createAuthHook({
+      resolve: async () => {
+        calls.push('user:http');
+        return { id: 'http-user' };
+      },
+      resolveFromContext: () => {
+        calls.push('user:tool');
+        return { id: 'tool-user' };
+      },
+      rules: { user: (identity) => ({ userId: identity.id }) },
+    });
+    const services = createAuthHook({
+      resolve: async () => {
+        calls.push('service:http');
+        return { id: 'http-service' };
+      },
+      resolveFromContext: () => {
+        calls.push('service:tool');
+        return { id: 'tool-service' };
+      },
+      rules: { service: (identity) => ({ serviceId: identity.id }) },
+    });
+    const auth = composeAuthHooks({ hooks: [users, services] });
+
+    const http = httpCtx();
+    await auth(http, endpoint('user'));
+    expect(http.userId).toBe('http-user');
+    expect(calls).toEqual(['user:http']);
+
+    const tool = toolCtx();
+    await auth(tool, endpoint('service'));
+    expect(tool.serviceId).toBe('tool-service');
+    expect(calls).toEqual(['user:http', 'service:tool']);
+  });
+
+  test('runs every owner of a shared scope in declaration order and commits once', async () => {
+    const calls: string[] = [];
+    const identity = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: {
+        shared: async (user) => {
+          calls.push('identity');
+          return { userId: user.id };
+        },
+      },
+    });
+    const membership = createAuthHook({
+      resolve: async () => ({ tenantId: 't1' }),
+      rules: {
+        shared: async (tenant) => {
+          calls.push('membership');
+          return { tenantId: tenant.tenantId };
+        },
+      },
+    });
+    const auth = composeAuthHooks({ hooks: [identity, membership] });
+    const ctx = httpCtx();
+
+    await auth(ctx, endpoint('shared'));
+
+    expect(calls).toEqual(['identity', 'membership']);
+    expect(ctx).toMatchObject({ userId: 'u1', tenantId: 't1', source: 'http' });
+  });
+
+  test('fails closed for zero owners, anonymous callers and forbidden owners', async () => {
+    let foreignResolverCalls = 0;
+    const anonymous = createAuthHook({
+      resolve: async () => null,
+      rules: { user: 'authenticated' },
+    });
+    const denied = createAuthHook({
+      resolve: async () => ({ allowed: false }),
+      rules: { shared: (identity) => identity.allowed },
+    });
+    const passing = createAuthHook({
+      resolve: async () => {
+        foreignResolverCalls += 1;
+        return { id: 'u1' };
+      },
+      rules: { shared: () => ({ userId: 'u1' }) },
+    });
+    const auth = composeAuthHooks({ hooks: [anonymous, passing, denied] });
+
+    await expect(auth(httpCtx(), endpoint('foreign'))).rejects.toThrow(
+      'no rule for scope "foreign"',
+    );
+    expect(foreignResolverCalls).toBe(0);
+    await expect(auth(httpCtx(), endpoint('user'))).rejects.toThrow();
+    await expect(auth(httpCtx(), endpoint('shared'))).rejects.toThrow();
+  });
+
+  test('uses only the explicit composite default and validates child defaults', async () => {
+    const first = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { shared: () => ({ userId: 'u1' }) },
+      defaultScope: 'shared',
+    });
+    const second = createAuthHook({
+      resolve: async () => ({ id: 't1' }),
+      rules: { shared: () => ({ tenantId: 't1' }) },
+      defaultScope: 'shared',
+    });
+    const auth = composeAuthHooks({ hooks: [second, first], defaultScope: 'shared' });
+    const ctx = httpCtx();
+
+    await auth(ctx, endpoint());
+    expect(ctx).toMatchObject({ userId: 'u1', tenantId: 't1' });
+
+    expect(() => composeAuthHooks({ hooks: [first] })).toThrow(
+      'child default scope "shared" must match the composite default scope',
+    );
+  });
+
+  test('rejects cross-owner collisions before committing any owner fields', async () => {
+    const first = createAuthHook({
+      resolve: async () => ({ id: 'first' }),
+      rules: { shared: (identity) => ({ actorId: identity.id, first: true }) },
+    });
+    const second = createAuthHook({
+      resolve: async () => ({ id: 'second' }),
+      rules: { shared: (identity) => ({ actorId: identity.id, second: true }) },
+    });
+    const auth = composeAuthHooks({ hooks: [first, second] });
+    const ctx = httpCtx();
+
+    await expect(auth(ctx, endpoint('shared'))).rejects.toThrow(
+      'multiple owners contributed context key "actorId"',
+    );
+    expect(ctx.actorId).toBeUndefined();
+    expect(ctx.first).toBeUndefined();
+    expect(ctx.second).toBeUndefined();
+  });
+
+  test('discards staged fields when a later owner rejects', async () => {
+    const first = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { shared: () => ({ userId: 'u1' }) },
+    });
+    const second = createAuthHook({
+      resolve: async () => ({ allowed: false }),
+      rules: { shared: (identity) => identity.allowed },
+    });
+    const auth = composeAuthHooks({ hooks: [first, second] });
+    const ctx = httpCtx();
+
+    await expect(auth(ctx, endpoint('shared'))).rejects.toThrow();
+    expect(ctx.userId).toBeUndefined();
+  });
+
+  test('validates shared inject writes as contributions on the shadow context', async () => {
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { user: 'authenticated' },
+      inject: (ctx) => {
+        ctx.accepted = true;
+        ctx.source = 'mcp';
+      },
+    });
+    const auth = composeAuthHooks({ hooks: [hook] });
+    const ctx = httpCtx();
+
+    await expect(auth(ctx, endpoint('user'))).rejects.toThrow('reserved key "source"');
+    expect(ctx.source).toBe('http');
+    expect(ctx.accepted).toBeUndefined();
+  });
+
+  test('rejects an accessor staged by an owner without invoking it', async () => {
+    let getterCalls = 0;
+    const hook = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: { user: 'authenticated' },
+      inject: (ctx) => {
+        Object.defineProperty(ctx, 'derived', {
+          enumerable: true,
+          get: () => {
+            getterCalls += 1;
+            return 'secret';
+          },
+        });
+      },
+    });
+    const auth = composeAuthHooks({ hooks: [hook] });
+    const ctx = httpCtx();
+
+    await expect(auth(ctx, endpoint('user'))).rejects.toThrow(
+      'key "derived" must be enumerable data',
+    );
+    expect(getterCalls).toBe(0);
+    expect(ctx.derived).toBeUndefined();
+  });
+
+  test('checks cancellation between owners and drops the completed owner delta', async () => {
+    const abort = new AbortController();
+    let secondCalls = 0;
+    const first = createAuthHook({
+      resolve: async () => ({ id: 'u1' }),
+      rules: {
+        shared: () => {
+          abort.abort(new Error('cancelled between owners'));
+          return { userId: 'u1' };
+        },
+      },
+    });
+    const second = createAuthHook({
+      resolve: async () => ({ id: 't1' }),
+      rules: {
+        shared: () => {
+          secondCalls += 1;
+          return { tenantId: 't1' };
+        },
+      },
+    });
+    const auth = composeAuthHooks({ hooks: [first, second] });
+    const ctx: RuntimeContext = { ...httpCtx(), signal: abort.signal };
+
+    await expect(auth(ctx, endpoint('shared'))).rejects.toThrow('cancelled between owners');
+    expect(secondCalls).toBe(0);
+    expect(ctx.userId).toBeUndefined();
+  });
+
+  test('rejects a non-canonical hook from an untyped caller', () => {
+    const foreign = async (): Promise<void> => undefined;
+    expect(() => Reflect.apply(composeAuthHooks, undefined, [{ hooks: [foreign] }])).toThrow(
+      'accepts only hooks created by createAuthHook or composeAuthHooks',
+    );
   });
 });

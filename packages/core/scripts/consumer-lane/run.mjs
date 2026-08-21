@@ -128,6 +128,32 @@ try {
     delete tsconfig.compilerOptions.paths;
     writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
 
+    if (name === 'minimal') {
+      writeFileSync(
+        join(dir, 'src', 'testing-manifest.ts'),
+        `import { z } from 'zod';
+import {
+  buildSurfaceManifest,
+  type SurfaceRuntimeToolDefinition,
+} from 'stitchkit/testing';
+
+const descriptor = {
+  name: 'jobs_status',
+  description: 'Read job status',
+  identity: { serviceName: 'jobs', action: 'status', method: 'GET' },
+  input: z.object({ id: z.string() }),
+  output: z.object({ state: z.string() }),
+} satisfies SurfaceRuntimeToolDefinition;
+
+const manifest = buildSurfaceManifest({ runtimeTools: [descriptor] });
+if (manifest.toolSurfaces[0]?.tools[0]?.name !== descriptor.name) {
+  throw new Error('peer-free testing manifest projection failed');
+}
+console.log('peer-free testing manifest ok');
+`,
+      );
+    }
+
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
     if (name === 'node' && existsSync(join(dir, 'node_modules', '@types', 'bun'))) {
@@ -186,6 +212,36 @@ try {
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
     if (name === 'minimal') {
+      const testingBundle = join(dir, 'testing-manifest-bundle.js');
+      const testingMetafile = join(dir, 'testing-manifest-metafile.json');
+      step('minimal: bundle testing manifest', () =>
+        run(
+          'bun',
+          [
+            'build',
+            'src/testing-manifest.ts',
+            '--target=bun',
+            '--packages=bundle',
+            `--outfile=${testingBundle}`,
+            `--metafile=${testingMetafile}`,
+          ],
+          dir,
+        ),
+      );
+      const testingInputs = Object.keys(
+        JSON.parse(readFileSync(testingMetafile, 'utf8')).inputs,
+      );
+      const forbiddenTestingInputs = testingInputs.filter(
+        (input) => input.includes('@modelcontextprotocol/') || input.includes('/ai/'),
+      );
+      if (forbiddenTestingInputs.length > 0) {
+        failed = true;
+        console.error(
+          `[consumer-lane] minimal: stitchkit/testing pulled optional tool peers into the bundle: ${forbiddenTestingInputs.join(', ')}`,
+        );
+      }
+      step('minimal: run testing manifest bundle', () => run('bun', [testingBundle], dir));
+
       const remoteBundle = join(dir, 'remote-bundle.js');
       const remoteMetafile = join(dir, 'remote-metafile.json');
       step('minimal: bundle remote entrypoint', () =>

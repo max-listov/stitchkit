@@ -10,6 +10,7 @@ import {
   bindContractAsyncOperation,
   createAsyncOperationSnapshotSchema,
   defineAsyncOperation,
+  defineAsyncOperationContract,
 } from '../src/tools/async-operation';
 import type { RuntimeToolHandlerContext } from '../src/tools/runtime-tool';
 
@@ -342,6 +343,392 @@ describe('async operation protocol', () => {
       }),
     ).toThrow(
       'capability "status" input must reuse the same schema instance as the start output',
+    );
+  });
+
+  test('canonical contract factory declares one complete capability vocabulary', () => {
+    const ResultSchema = z.object({ url: z.url() });
+    const ArtifactsSchema = ManagedFileRefSchema.array();
+    const operation = defineAsyncOperationContract({
+      prefix: 'exports',
+      scope: 'member',
+      description: 'Export a document',
+      startInput: z.object({ format: z.enum(['csv', 'json']) }),
+      id: IdSchema,
+      snapshot: SnapshotSchema,
+      cancel: true,
+      result: ResultSchema,
+      artifacts: ArtifactsSchema,
+      descriptions: { wait: 'Wait for an export' },
+      scopes: { cancel: 'admin' },
+    });
+
+    expect(operation.capabilities).toEqual({
+      start: 'start',
+      status: 'status',
+      wait: 'wait',
+      cancel: 'cancel',
+      result: 'result',
+      artifacts: 'artifacts',
+    });
+    expect(
+      Object.fromEntries(
+        Object.entries(operation.contract.endpoints).map(([key, endpoint]) => [
+          key,
+          [endpoint.method, endpoint.path],
+        ]),
+      ),
+    ).toEqual({
+      start: ['POST', '/'],
+      status: ['POST', '/status'],
+      wait: ['POST', '/wait'],
+      cancel: ['POST', '/cancel'],
+      result: ['POST', '/result'],
+      artifacts: ['POST', '/artifacts'],
+    });
+    expect(operation.contract.endpoints.wait.desc).toBe('Wait for an export');
+    expect(operation.contract.endpoints.cancel.scope).toBe('admin');
+    expect(operation.schemas.id).toBe(IdSchema);
+    expect(operation.schemas.snapshot).toBe(SnapshotSchema);
+    expect(operation.schemas.cancel).toBe(AsyncOperationCancelResultSchema);
+    expect(operation.schemas.result).toBe(ResultSchema);
+    expect(operation.schemas.artifacts).toBe(ArtifactsSchema);
+    expect(operation.adapters.idFromStart({ id: 'job-1' })).toEqual({ id: 'job-1' });
+    expect(operation.adapters.inputFor.result({ id: 'job-1' })).toEqual({ id: 'job-1' });
+  });
+
+  test('direct ID adapters reject same-type transforms that would parse a value twice', () => {
+    const EffectfulIdSchema = z.string().transform((value) => `parsed:${value}`);
+
+    expect(() =>
+      defineAsyncOperationContract({
+        prefix: 'effectful-factory',
+        description: 'Effectful factory',
+        startInput: z.object({}),
+        id: EffectfulIdSchema,
+        snapshot: SnapshotSchema,
+      }),
+    ).toThrow('must use a wire-stable ID schema');
+
+    const effectfulContract = defineContract(
+      { prefix: 'effectful-direct' },
+      {
+        start: {
+          method: 'POST',
+          path: '/',
+          desc: 'Start',
+          output: EffectfulIdSchema,
+        },
+        status: {
+          method: 'POST',
+          path: '/status',
+          desc: 'Status',
+          input: EffectfulIdSchema,
+          output: SnapshotSchema,
+        },
+        wait: {
+          method: 'POST',
+          path: '/wait',
+          desc: 'Wait',
+          input: EffectfulIdSchema,
+          output: SnapshotSchema,
+        },
+      },
+    );
+    expect(() =>
+      Reflect.apply(bindContractAsyncOperation, undefined, [
+        {
+          mode: 'contract-backed',
+          contract: effectfulContract,
+          capabilities: { start: 'start', status: 'status', wait: 'wait' },
+          handlers: {
+            start: () => 'parsed:job-1',
+            status: () => ({ phase: 'pending' }),
+            wait: () => ({ phase: 'succeeded' }),
+          },
+        },
+      ]),
+    ).toThrow('must use a wire-stable ID schema');
+  });
+
+  test('canonical contract factory extracts an id from an application start snapshot', () => {
+    const StartOutputSchema = z.object({ operation: IdSchema, acceptedAt: z.string() });
+    const operation = defineAsyncOperationContract({
+      prefix: 'imports',
+      description: 'Import records',
+      startInput: z.object({ source: z.string() }),
+      startOutput: StartOutputSchema,
+      id: IdSchema,
+      idFromStart: (output) => output.operation,
+      snapshot: SnapshotSchema,
+    });
+
+    expect(operation.schemas.startOutput).toBe(StartOutputSchema);
+    expect(operation.contract.endpoints.start.output).toBe(StartOutputSchema);
+    expect(
+      operation.adapters.idFromStart({
+        operation: { id: 'import-1' },
+        acceptedAt: '2026-08-21T00:00:00Z',
+      }),
+    ).toEqual({ id: 'import-1' });
+    expect('cancel' in operation.capabilities).toBe(false);
+    expect('cancel' in operation.contract.endpoints).toBe(false);
+  });
+
+  test('adapted binding parses a transformed id once and projects its parsed value to wire inputs', () => {
+    const TransformedIdSchema = z.object({ id: z.string().transform(Number) });
+    const StartOutputSchema = z.object({ operationId: z.string() });
+    const FollowInputSchema = z.object({ operationId: z.string() });
+    const contract = defineContract(
+      { prefix: 'transformed-ids' },
+      {
+        start: {
+          method: 'POST',
+          path: '/',
+          desc: 'Start',
+          output: StartOutputSchema,
+        },
+        status: {
+          method: 'POST',
+          path: '/status',
+          desc: 'Status',
+          input: FollowInputSchema,
+          output: SnapshotSchema,
+        },
+        wait: {
+          method: 'POST',
+          path: '/wait',
+          desc: 'Wait',
+          input: FollowInputSchema,
+          output: SnapshotSchema,
+        },
+      },
+    );
+    const bound = Reflect.apply(bindContractAsyncOperation, undefined, [
+      {
+        mode: 'contract-backed',
+        binding: 'adapted',
+        contract,
+        id: TransformedIdSchema,
+        capabilities: { start: 'start', status: 'status', wait: 'wait' },
+        adapters: {
+          idFromStart: (output: { operationId: string }) => ({ id: output.operationId }),
+          inputFor: {
+            status: (id: { id: number }) => ({ operationId: String(id.id) }),
+            wait: (id: { id: number }) => ({ operationId: String(id.id) }),
+          },
+        },
+        handlers: {
+          start: () => ({ operationId: '42' }),
+          status: () => ({ phase: 'pending' }),
+          wait: () => ({ phase: 'succeeded' }),
+        },
+      },
+    ]);
+
+    const id = bound.adapters.idFromStart({ operationId: '42' });
+    expect(id).toEqual({ id: 42 });
+    expect(bound.adapters.inputFor.status(id)).toEqual({ operationId: '42' });
+  });
+
+  test('untyped async-operation configs fail loud on incomplete adapter pairs', () => {
+    expect(() =>
+      Reflect.apply(defineAsyncOperationContract, undefined, [
+        {
+          prefix: 'broken',
+          description: 'Broken',
+          startInput: z.object({}),
+          startOutput: z.object({ operationId: z.string() }),
+          id: IdSchema,
+          snapshot: SnapshotSchema,
+        },
+      ]),
+    ).toThrow('startOutput and idFromStart must be configured together');
+
+    const FollowInputSchema = z.object({ id: z.string() });
+    const contract = defineContract(
+      { prefix: 'missing-adapter' },
+      {
+        start: { method: 'POST', path: '/', desc: 'Start', output: IdSchema },
+        status: {
+          method: 'POST',
+          path: '/status',
+          desc: 'Status',
+          input: FollowInputSchema,
+          output: SnapshotSchema,
+        },
+        wait: {
+          method: 'POST',
+          path: '/wait',
+          desc: 'Wait',
+          input: FollowInputSchema,
+          output: SnapshotSchema,
+        },
+        cancel: {
+          method: 'POST',
+          path: '/cancel',
+          desc: 'Cancel',
+          input: FollowInputSchema,
+          output: AsyncOperationCancelResultSchema,
+        },
+      },
+    );
+    expect(() =>
+      Reflect.apply(bindContractAsyncOperation, undefined, [
+        {
+          mode: 'contract-backed',
+          binding: 'adapted',
+          contract,
+          id: IdSchema,
+          capabilities: { start: 'start', status: 'status', wait: 'wait', cancel: 'cancel' },
+          adapters: {
+            idFromStart: (output: { id: string }) => output,
+            inputFor: {
+              status: (id: { id: string }) => id,
+              wait: (id: { id: string }) => id,
+            },
+          },
+          handlers: {
+            start: () => ({ id: 'one' }),
+            status: () => ({ phase: 'pending' }),
+            wait: () => ({ phase: 'pending' }),
+            cancel: () => ({ outcome: 'accepted' }),
+          },
+        },
+      ]),
+    ).toThrow('capability "cancel" requires an input adapter');
+  });
+
+  test('contract-backed adapters project start snapshots into distinct follow inputs', () => {
+    const StartOutputSchema = z.object({ operation: z.object({ id: z.string() }) });
+    const StatusInputSchema = z.object({
+      operationId: z.string().transform((id) => id.trim()),
+    });
+    const WaitInputSchema = z.object({ lookup: z.object({ id: z.string() }) });
+    const CancelInputSchema = z.object({ id: z.string(), reason: z.string() });
+    const ContractSnapshotSchema = z.object({ phase: z.enum(['pending', 'succeeded']) });
+    const contract = defineContract(
+      { prefix: 'exports' },
+      {
+        start: {
+          method: 'POST',
+          path: '/',
+          desc: 'Start',
+          output: StartOutputSchema,
+        },
+        status: {
+          method: 'POST',
+          path: '/status',
+          desc: 'Status',
+          input: StatusInputSchema,
+          output: ContractSnapshotSchema,
+        },
+        wait: {
+          method: 'POST',
+          path: '/wait',
+          desc: 'Wait',
+          input: WaitInputSchema,
+          output: ContractSnapshotSchema,
+        },
+        cancel: {
+          method: 'POST',
+          path: '/cancel',
+          desc: 'Cancel',
+          input: CancelInputSchema,
+          output: AsyncOperationCancelResultSchema,
+        },
+      },
+    );
+    const bound = bindContractAsyncOperation({
+      mode: 'contract-backed',
+      binding: 'adapted',
+      contract,
+      id: IdSchema,
+      capabilities: { start: 'start', status: 'status', wait: 'wait', cancel: 'cancel' },
+      adapters: {
+        idFromStart: (output: z.output<typeof StartOutputSchema>) => output.operation,
+        inputFor: {
+          status: (id: z.output<typeof IdSchema>) => ({ operationId: ` ${id.id} ` }),
+          wait: (id: z.output<typeof IdSchema>) => ({ lookup: id }),
+          cancel: (id: z.output<typeof IdSchema>) => ({
+            id: id.id,
+            reason: 'caller request',
+          }),
+        },
+      },
+      handlers: {
+        start: () => ({ operation: { id: 'job-1' } }),
+        status: (): z.output<typeof ContractSnapshotSchema> => ({ phase: 'pending' }),
+        wait: (): z.output<typeof ContractSnapshotSchema> => ({ phase: 'succeeded' }),
+        cancel: (): AsyncOperationCancelResult => ({ outcome: 'accepted' }),
+      },
+    });
+
+    const id = bound.adapters.idFromStart({ operation: { id: 'job-1' } });
+    expect(id).toEqual({ id: 'job-1' });
+    expect(bound.adapters.inputFor.status(id)).toEqual({ operationId: 'job-1' });
+    expect(bound.adapters.inputFor.wait(id)).toEqual({ lookup: { id: 'job-1' } });
+    expect(bound.adapters.inputFor.cancel(id)).toEqual({
+      id: 'job-1',
+      reason: 'caller request',
+    });
+    expect(bound.schemas.id).toBe(IdSchema);
+    expect(bound.schemas.snapshot).toBe(ContractSnapshotSchema);
+  });
+
+  test('contract-backed adapter failures name the exact capability boundary', () => {
+    const StartOutputSchema = z.object({ operationId: z.string() });
+    const FollowInputSchema = z.object({ id: z.string().min(3) });
+    const ContractSnapshotSchema = z.object({ phase: z.literal('pending') });
+    const contract = defineContract(
+      { prefix: 'jobs' },
+      {
+        start: {
+          method: 'POST',
+          path: '/',
+          desc: 'Start',
+          output: StartOutputSchema,
+        },
+        status: {
+          method: 'POST',
+          path: '/status',
+          desc: 'Status',
+          input: FollowInputSchema,
+          output: ContractSnapshotSchema,
+        },
+        wait: {
+          method: 'POST',
+          path: '/wait',
+          desc: 'Wait',
+          input: FollowInputSchema,
+          output: ContractSnapshotSchema,
+        },
+      },
+    );
+    const bound = bindContractAsyncOperation({
+      mode: 'contract-backed',
+      binding: 'adapted',
+      contract,
+      id: IdSchema,
+      capabilities: { start: 'start', status: 'status', wait: 'wait' },
+      adapters: {
+        idFromStart: (output: z.output<typeof StartOutputSchema>) => ({
+          id: output.operationId,
+        }),
+        inputFor: {
+          status: () => ({ id: 'x' }),
+          wait: (id: z.output<typeof IdSchema>) => id,
+        },
+      },
+      handlers: {
+        start: () => ({ operationId: 'job-1' }),
+        status: (): z.output<typeof ContractSnapshotSchema> => ({ phase: 'pending' }),
+        wait: (): z.output<typeof ContractSnapshotSchema> => ({ phase: 'pending' }),
+      },
+    });
+
+    expect(() => bound.adapters.inputFor.status({ id: 'job-1' })).toThrow(
+      'capability "status" returned invalid input',
     );
   });
 

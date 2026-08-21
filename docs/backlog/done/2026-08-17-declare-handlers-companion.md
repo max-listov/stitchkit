@@ -22,9 +22,9 @@ related: docs/decisions/0075-per-scope-handler-context.md
 // потребительский transport/define.ts — 8 строк, которые напишет каждый
 export function handlersFor<
   const T extends Record<string, EndpointDef>,
-  TScope extends Extract<keyof GeckoScopes, string>,
+  TScope extends Extract<keyof ApplicationScopes, string>,
 >(_contract: ContractDef<T, TScope>) {
-  return <const H extends ScopedHandlers<T, TScope, GeckoScopes>>(handlers: H): H =>
+  return <const H extends ScopedHandlers<T, TScope, ApplicationScopes>>(handlers: H): H =>
     handlers;
 }
 ```

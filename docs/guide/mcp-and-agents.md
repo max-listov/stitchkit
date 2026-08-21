@@ -885,7 +885,13 @@ import {
 import { createManagedFileBoundary } from 'stitchkit/files'
 import { z } from 'zod'
 
-const files = await createManagedFileBoundary({ root: '/srv/job-media' })
+const files = await createManagedFileBoundary({
+  root: '/srv/job-media',
+  createRoot: true, // creates only this final directory; /srv must already be trusted
+  inspectionTimeoutMs: 15_000,
+  inspect: ({ prefix, name, declaredMediaType, signal }) =>
+    inspectFile(prefix, { name, declaredMediaType, signal }),
+})
 
 const waitForJob = defineWaitTool({
   name: 'wait_for_job',
@@ -992,16 +998,14 @@ const runtimeTools = exportOperation.runtimeTools
 ```
 
 Every follow-up repeats `authorize`; an opaque id is never authority. Aborting
-`wait` only stops waiting and never calls optional domain `cancel`. A
-contract-backed operation uses `bindContractAsyncOperation` with literal methods
-from a dedicated existing contract, so it creates no second HTTP router or
-duplicate schemas. Capability keys are narrowed by schema-compatible TypeScript
-input/output types. At runtime, the binder additionally requires the exact same
-id and snapshot Zod instances; declare each once and reuse it:
+`wait` only stops waiting and never calls optional domain `cancel`.
+
+For a new HTTP surface, derive the canonical capability contract once. The
+factory defines schemas and routes only; the application still supplies normal
+handlers to `implement` and owns the job:
 
 ```ts
-import { defineContract } from 'stitchkit/contract'
-import { bindContractAsyncOperation } from 'stitchkit/tools'
+import { defineAsyncOperationContract } from 'stitchkit/tools'
 import { z } from 'zod'
 
 const operationId = z.object({ id: z.string() })
@@ -1009,37 +1013,81 @@ const operationSnapshot = z.object({
   phase: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
 })
 
-const operations = defineContract(
-  { prefix: 'exports' },
-  {
-    start: {
-      method: 'POST', path: '/', desc: 'Start export',
-      input: z.object({ projectId: z.string() }), output: operationId,
-    },
-    status: {
-      method: 'POST', path: '/status', desc: 'Read export status',
-      input: operationId, output: operationSnapshot,
-    },
-    wait: {
-      method: 'POST', path: '/wait', desc: 'Wait for export',
-      input: operationId, output: operationSnapshot,
-    },
+const operations = defineAsyncOperationContract({
+  prefix: 'exports',
+  scope: 'user',
+  description: 'Export project data',
+  startInput: z.object({ projectId: z.string() }),
+  id: operationId,
+  snapshot: operationSnapshot,
+  cancel: true,
+  result: z.object({ downloadUrl: z.url() }),
+})
+
+// Pass operations.contract and ordinary handlers to implement(...).
+// operations.capabilities/schemas/adapters are the canonical protocol metadata.
+```
+
+If an existing dedicated contract has a different wire shape — for example
+`start` returns a snapshot while follow-ups accept separate envelopes — bind it
+without casts or duplicate endpoints. Inline callbacks are contextually typed;
+every returned id/input is parsed by the destination schema:
+
+```ts
+import { defineContract } from 'stitchkit/contract'
+import { bindContractAsyncOperation } from 'stitchkit/tools'
+
+const startOutput = z.object({ operation: operationId, acceptedAt: z.string() })
+const statusInput = z.object({ operationId: z.string() })
+const waitInput = z.object({ lookup: operationId })
+
+const existing = defineContract({ prefix: 'exports' }, {
+  start: {
+    method: 'POST', path: '/', desc: 'Start export',
+    input: z.object({ projectId: z.string() }), output: startOutput,
   },
-)
+  status: {
+    method: 'POST', path: '/status', desc: 'Read export status',
+    input: statusInput, output: operationSnapshot,
+  },
+  wait: {
+    method: 'POST', path: '/wait', desc: 'Wait for export',
+    input: waitInput, output: operationSnapshot,
+  },
+})
 
 const operationHandlers = {
-  start: () => ({ id: 'example' }),
+  start: () => ({ operation: { id: 'example' }, acceptedAt: new Date().toISOString() }),
   status: (): z.output<typeof operationSnapshot> => ({ phase: 'pending' }),
   wait: (): z.output<typeof operationSnapshot> => ({ phase: 'succeeded' }),
 }
 
 const bound = bindContractAsyncOperation({
   mode: 'contract-backed',
-  contract: operations,
+  binding: 'adapted',
+  contract: existing,
+  id: operationId,
   capabilities: { start: 'start', status: 'status', wait: 'wait' },
+  adapters: {
+    idFromStart: (output) => output.operation,
+    inputFor: {
+      status: (id) => ({ operationId: id.id }),
+      wait: (id) => ({ lookup: id }),
+    },
+  },
   handlers: operationHandlers,
 })
 ```
+
+Direct binding remains the short form when start already returns the id and
+every follow-up reuses that exact schema instance. Its ID schema must be
+wire-stable: input and output types match and parsing has no transform,
+coercion, default or overwrite. This also excludes same-type transforms because
+the direct adapters would parse an already parsed ID again. Use adapted binding
+and explicitly project the parsed ID back into each follow-up input. In both
+modes the binder creates no router;
+it returns the existing contract, handlers and protocol metadata for
+application composition.
 
 ### Explicit raw SDK registration
 

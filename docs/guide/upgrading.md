@@ -48,7 +48,95 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
-## Unreleased migration: peer-free `implementRemote`
+## Released migration: 0.56.0
+
+### Surface manifests are version 2
+
+`operation.tools` could not describe a role-selected MCP surface, a different
+Agent or CLI selection, or an advertised `extend` schema, so projections moved
+out of the canonical operation:
+
+```ts
+// before
+manifest.operations[0].tools.MCP
+// after
+manifest.toolSurfaces.find((s) => s.transport === 'MCP' && s.surface === null)?.tools
+
+// before
+buildSurfaceManifest({ mcpSurfaces: { admin: { services, extend } } })
+// after
+buildSurfaceManifest({ mcpSurfaces: { admin: { services } }, mcpPreparation: { extend } })
+```
+
+A committed snapshot is regenerated once, deliberately: `manifestVersion` is
+`2`, and `ConformanceTransport` gained `REALTIME`, so any exhaustive
+`Record<ConformanceTransport, …>` must handle it.
+
+### `FILE_*` codes joined the error registry
+
+`StitchErrorCode` gained `FILE_INVALID_PATH`, `FILE_OUTSIDE_ROOT`,
+`FILE_NOT_FOUND`, `FILE_NOT_REGULAR`, `FILE_INSPECTION_REJECTED`,
+`FILE_TOO_LARGE` and `FILE_EXISTS`. Only exhaustive maps break:
+
+```ts
+// before — compiled while the registry had no file codes
+const copy: Record<StitchErrorCode, string> = { …, RATE_LIMITED: '…' }
+// after — add the seven managed-file codes (or use Partial<Record<…>>)
+```
+
+Unexpected IO stays scrubbed as `INTERNAL_SERVER_ERROR`: the new codes are the
+caller-safe ones only.
+
+### `ScopedAuthHook` is nominal
+
+A hand-written function shaped like an auth hook is no longer assignable —
+identity now comes from the factory, so scope ownership and the inferred
+context cannot drift apart:
+
+```ts
+// before — a structural stand-in
+const auth: ScopedAuthHook<Scopes> = async (ctx, endpoint) => { … }
+// after — create it, then compose domains
+const auth = createAuthHook({ resolve, rules })
+const composed = composeAuthHooks({ hooks: [auth, billingAuth], defaultScope: 'public' })
+```
+
+### Managed-file inspectors also run on reads
+
+An inspector is no longer write-only, and it has a finite default deadline
+(15 s). Make it read-aware and idempotent — a read carries no
+`declaredMediaType`:
+
+```ts
+// before
+inspect: ({ declaredMediaType }) => inspectDeclaredType(declaredMediaType!)
+// after
+inspect: ({ prefix, declaredMediaType, signal }) =>
+  inspectBytes(prefix, { declaredMediaType, signal })
+```
+
+Set `inspectionTimeoutMs` explicitly when 15 seconds is the wrong budget.
+
+### Direct async-operation binding needs a wire-stable ID
+
+A direct binding reuses the start output as the follow-up wire input, so the ID
+schema must parse to itself (`z.input` equals `z.output`, no transform,
+coercion, default or overwrite). Anything else is parsed twice:
+
+```ts
+// before — a transform silently ran on start and again on every follow-up
+defineAsyncOperationContract({ binding: 'direct', id: z.string().transform(Number) })
+// after — keep the wire shape, adapt explicitly
+defineAsyncOperationContract({
+  binding: 'adapted',
+  id,
+  adapters: { idFromStart, inputFor },
+})
+```
+
+## Released migration: 0.55.0
+
+### Peer-free `implementRemote`
 
 `implementRemote` now has one canonical, optional-peer-free owner. This keeps
 MCP SDK and AI SDK modules out of CLI bundles that only proxy HTTP calls:
@@ -60,7 +148,7 @@ import { implementRemote } from 'stitchkit/tools'
 import { implementRemote } from 'stitchkit/remote'
 ```
 
-## Unreleased migration: managed file boundary and strict auth returns
+### Managed file boundary and strict auth returns
 
 Create one boundary during application bootstrap and pass the capability, never
 a per-call directory or host path:

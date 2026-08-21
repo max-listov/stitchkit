@@ -14,7 +14,7 @@
  */
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +45,24 @@ const { z } = await import('zod');
 
 const fileRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-files-'));
 try {
-  const files = await createManagedFileBoundary({ root: fileRoot, maxReadBytes: 3 });
+  const ownedRoot = join(fileRoot, 'owned');
+  await assert.rejects(createManagedFileBoundary({ root: ownedRoot }), {
+    code: 'FILE_NOT_FOUND',
+  });
+  const files = await createManagedFileBoundary({
+    root: ownedRoot,
+    createRoot: true,
+    maxReadBytes: 3,
+    inspectionBytes: 2,
+    inspect: ({ prefix, name, signal }) => {
+      assert.equal(prefix.byteLength <= 2, true);
+      assert.equal(signal instanceof AbortSignal, true);
+      if (name === 'mutable.bin') prefix[0] = 99;
+      return name === 'existing.bin'
+        ? { mediaType: 'application/smoke', name: 'inspected.bin' }
+        : {};
+    },
+  });
   assert.deepEqual(await files.write('one.bin', new Uint8Array([1, 2, 3])), {
     path: 'one.bin',
     size: 3,
@@ -54,13 +71,32 @@ try {
     code: 'FILE_EXISTS',
   });
   assert.deepEqual(
-    new Uint8Array(await readFile(join(fileRoot, 'one.bin'))),
+    new Uint8Array(await readFile(join(ownedRoot, 'one.bin'))),
     new Uint8Array([1, 2, 3]),
   );
   await files.write('one.bin', new Uint8Array([4, 5]), { replace: true, durable: true });
   assert.deepEqual((await files.read('one.bin')).bytes, new Uint8Array([4, 5]));
-  await writeFile(join(fileRoot, 'large.bin'), new Uint8Array([1, 2, 3, 4]));
+  await writeFile(join(ownedRoot, 'existing.bin'), new Uint8Array([8, 9]));
+  assert.deepEqual((await files.read('existing.bin')).ref, {
+    path: 'existing.bin',
+    size: 2,
+    mediaType: 'application/smoke',
+    name: 'inspected.bin',
+  });
+  await writeFile(join(ownedRoot, 'large.bin'), new Uint8Array([1, 2, 3, 4]));
   await assert.rejects(files.read('large.bin'), { code: 'FILE_TOO_LARGE' });
+  await writeFile(join(ownedRoot, 'mutable.bin'), new Uint8Array([7, 8]));
+  assert.deepEqual((await files.read('mutable.bin')).bytes, new Uint8Array([7, 8]));
+  await writeFile(join(fileRoot, 'secret.bin'), new Uint8Array([9]));
+  await symlink(join(fileRoot, 'secret.bin'), join(ownedRoot, 'outside.bin'));
+  await assert.rejects(files.read('outside.bin'), { code: 'FILE_OUTSIDE_ROOT' });
+  await assert.rejects(files.read('../secret.bin'), { code: 'FILE_INVALID_PATH' });
+  const aborted = new AbortController();
+  aborted.abort(new Error('node smoke abort'));
+  await assert.rejects(
+    files.write('aborted.bin', new Uint8Array([1]), { signal: aborted.signal }),
+    /node smoke abort/,
+  );
   console.log('managed file boundary parity: OK');
 } finally {
   await rm(fileRoot, { recursive: true, force: true });

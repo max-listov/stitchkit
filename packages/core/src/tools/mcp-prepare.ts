@@ -4,15 +4,14 @@ import { redact } from '../observability/sanitize';
 import type { ServiceDef, StitchLogger } from '../server/types';
 import type { ErrorHintFn, ToolResult } from './execute';
 import type { ToolPresentationSchema } from './flatten';
-import { type JsonSchemaIo, toJsonSchema } from './json-schema';
-import { validateMcpRoundPolicy } from './mcp-round';
+import {
+  type McpProjectionPreparationConfig,
+  type McpSchemaValidationConfig,
+  prepareProjectedMcpTools,
+} from './internal/surface-projector';
 import { collectTools, formatToolError, type MountableTool, type ToolExtend } from './mount';
-import { assertUniqueToolName } from './names';
-import { findNonPortableFormats } from './portable-formats';
-import { buildToolPresentationSchema, isObjectPresentationSchema } from './presentation';
 import type { RuntimeToolDefinition } from './runtime-tool';
 import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
-import { findUntypedProperties } from './untyped-properties';
 
 /**
  * What to do when a tool's schema cannot be advertised on the MCP surface — a
@@ -23,21 +22,11 @@ import { findUntypedProperties } from './untyped-properties';
  * - `warn` — log and drop the tool.
  * - `skip` — drop the tool silently.
  */
-export type IncompatibleSchemaPolicy = 'throw' | 'skip' | 'warn';
-
 /** One schema policy shared by validation, mounting and every MCP transport. */
-export interface McpSchemaValidationConfig {
-  /** What to do when a tool schema fails the profile. Default `'throw'`. */
-  policy?: IncompatibleSchemaPolicy;
-  /** Require every advertised input property to carry usable type information. */
-  requireTypedProperties?: boolean;
-  /** Dotted `tool.property` paths deliberately left unconstrained. */
-  allowUntyped?: readonly string[];
-  /** Reject formats outside the portable JSON Schema/AJV baseline. */
-  requirePortableFormats?: boolean;
-  /** Custom formats known to every client used by this server. */
-  allowFormats?: readonly string[];
-}
+export type {
+  IncompatibleSchemaPolicy,
+  McpSchemaValidationConfig,
+} from './internal/surface-projector';
 
 /** Standalone schema-validation input, including the exact surface-shaping options. */
 export interface ValidateMcpSchemasConfig extends McpSchemaValidationConfig {
@@ -93,52 +82,6 @@ export function formatMcpResult(
   };
 }
 
-/** Probe a schema through the canonical converter — `null` if ok, else the error message. */
-function probeSchema(schema: z.ZodType, io: JsonSchemaIo): string | null {
-  try {
-    toJsonSchema(schema, io);
-    return null;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
-  }
-}
-
-/**
- * Resolve a method's `output` to the exact schema MCP advertises. Modern MCP
- * accepts every JSON root type; the official SDK adapts older wire eras.
- */
-function resolveOutputSchema(
-  outputSchema: z.ZodType | undefined,
-): { schema: z.ZodType; mode: Exclude<StructuredMode, 'none'> } | null {
-  if (!outputSchema) return null;
-  return { schema: outputSchema, mode: 'direct' };
-}
-
-/** Apply the incompatible-schema policy to one failure. */
-function reportIncompatible(
-  message: string,
-  policy: IncompatibleSchemaPolicy,
-  logger: StitchLogger | undefined,
-  failures: string[],
-): void {
-  if (policy === 'throw') {
-    failures.push(message);
-  } else if (policy === 'warn') {
-    if (logger) logger.warn(`[stitchkit] ${message}`);
-    else console.warn(`[stitchkit] ${message}`);
-  }
-  // 'skip' — drop the tool silently.
-}
-
-/** Throw the one aggregated build error if any tool was incompatible. */
-function throwIfFailures(failures: string[]): void {
-  if (failures.length > 0) {
-    throw new Error(
-      `[stitchkit] ${failures.length} problem(s) with MCP tool schemas:\n - ${failures.join('\n - ')}`,
-    );
-  }
-}
-
 /** One immutable descriptor cleared to register on any fresh MCP server. */
 export interface PreparedMcpTool {
   mountable: MountableTool;
@@ -149,131 +92,9 @@ export interface PreparedMcpTool {
 
 export type PreparedMcpSurface = readonly PreparedMcpTool[];
 
-export interface McpSurfacePreparationConfig {
+export interface McpSurfacePreparationConfig extends McpProjectionPreparationConfig {
   extend?: ToolExtend;
-  flattenUnionInput?: boolean;
-  schemaValidation?: McpSchemaValidationConfig;
   logger?: StitchLogger;
-  /** Multi-round capability available to this prepared surface. */
-  multiRound?: { stateConfigured: boolean; maxRounds: number };
-}
-
-/**
- * Vet one tool for the MCP surface — cross-service name collision, an
- * object-shaped input, and JSON Schema-compatible input / output. Records any
- * problem through the policy and returns `null` when the tool must be dropped.
- * The shared front half of `mountMcp` and `validateMcpSchemas`, so the two
- * cannot drift.
- */
-function prepareMcpTool(
-  mountable: MountableTool,
-  config: McpSurfacePreparationConfig,
-  validation: McpSchemaValidationConfig,
-  logger: StitchLogger | undefined,
-  failures: string[],
-  seen: Set<string>,
-): PreparedMcpTool | null {
-  const policy = validation.policy ?? 'throw';
-  assertUniqueToolName(mountable.name, seen.has(mountable.name), 'MCP tool name');
-  seen.add(mountable.name);
-
-  if (mountable.method.mcp) {
-    validateMcpRoundPolicy(mountable, mountable.method.mcp, config.multiRound);
-  }
-
-  let inputJsonSchema: ToolPresentationSchema;
-  try {
-    inputJsonSchema = buildToolPresentationSchema({
-      paramsSchema: mountable.method.paramsSchema,
-      inputSchema: mountable.method.inputSchema,
-      extendSchema: mountable.shouldExtend && config.extend ? config.extend.schema : undefined,
-      flattenUnionInput: config.flattenUnionInput,
-      unrepresentable: 'throw',
-    });
-  } catch (err) {
-    reportIncompatible(
-      `MCP tool "${mountable.name}" — input schema is not JSON Schema-compatible: ${err instanceof Error ? err.message : String(err)}`,
-      policy,
-      logger,
-      failures,
-    );
-    return null;
-  }
-
-  if (!isObjectPresentationSchema(inputJsonSchema)) {
-    reportIncompatible(
-      `MCP tool "${mountable.name}" — input must be an object schema; a union, discriminated union or scalar cannot be an MCP tool input (flatten it in the contract, or drop MCP from \`expose\`)`,
-      policy,
-      logger,
-      failures,
-    );
-    return null;
-  }
-
-  if (validation.requireTypedProperties) {
-    const allowed = new Set(validation.allowUntyped ?? []);
-    for (const untyped of findUntypedProperties(inputJsonSchema)) {
-      const path = `${mountable.name}.${untyped.path}`;
-      if (allowed.has(path)) continue;
-      const clue = untyped.description
-        ? ` (only a description: "${untyped.description}")`
-        : '';
-      reportIncompatible(
-        `MCP tool "${mountable.name}" — input property "${untyped.path}" carries no type, enum or $ref${clue}. ` +
-          'A model is given no way to know what to send. Use `z.json()` for an arbitrary JSON value; use `allowUntyped` only when the presentation value is genuinely not representable as JSON Schema.',
-        policy === 'skip' ? 'warn' : policy,
-        logger,
-        failures,
-      );
-    }
-  }
-  if (validation.requirePortableFormats) {
-    for (const finding of findNonPortableFormats(inputJsonSchema, validation.allowFormats)) {
-      reportIncompatible(
-        `MCP tool "${mountable.name}" — input property "${finding.path}" uses non-portable JSON Schema format "${finding.format}". ` +
-          'Use a portable pattern/schema, or list the format in `allowFormats` only when every MCP client supports it.',
-        policy === 'skip' ? 'warn' : policy,
-        logger,
-        failures,
-      );
-    }
-  }
-
-  // Every JSON `output` becomes the tool's `outputSchema` directly. An
-  // incompatible output is reported but the tool still registers, text-only.
-  const resolved = resolveOutputSchema(mountable.method.outputSchema);
-  if (!resolved) return { mountable, inputSchema: inputJsonSchema, outputMode: 'none' };
-
-  const outputError = probeSchema(resolved.schema, 'output');
-  if (outputError) {
-    reportIncompatible(
-      `MCP tool "${mountable.name}" — output schema is not JSON Schema-compatible: ${outputError}`,
-      policy,
-      logger,
-      failures,
-    );
-    return { mountable, inputSchema: inputJsonSchema, outputMode: 'none' };
-  }
-  if (validation.requirePortableFormats) {
-    for (const finding of findNonPortableFormats(
-      toJsonSchema(resolved.schema, 'output'),
-      validation.allowFormats,
-    )) {
-      reportIncompatible(
-        `MCP tool "${mountable.name}" — output property "${finding.path}" uses non-portable JSON Schema format "${finding.format}". ` +
-          'Use a portable pattern/schema, or list the format in `allowFormats` only when every MCP client supports it.',
-        policy === 'skip' ? 'warn' : policy,
-        logger,
-        failures,
-      );
-    }
-  }
-  return {
-    mountable,
-    inputSchema: inputJsonSchema,
-    outputSchema: resolved.schema,
-    outputMode: resolved.mode,
-  };
 }
 
 /**
@@ -294,26 +115,32 @@ export function prepareMcpTools(
   tools: readonly MountableTool[],
   config: McpSurfacePreparationConfig = {},
 ): PreparedMcpSurface {
-  const seen = new Set<string>();
-  const failures: string[] = [];
-  const prepared: PreparedMcpTool[] = [];
-
-  for (const mountable of tools) {
-    const tool = prepareMcpTool(
-      mountable,
-      config,
-      config.schemaValidation ?? {},
-      config.logger,
-      failures,
-      seen,
-    );
-    if (tool) {
-      Object.freeze(tool.mountable);
-      prepared.push(Object.freeze(tool));
-    }
-  }
-
-  throwIfFailures(failures);
+  const prepared = prepareProjectedMcpTools(
+    tools.map((mountable) => ({
+      tool: mountable,
+      name: mountable.name,
+      ...(mountable.method.paramsSchema !== undefined && {
+        paramsSchema: mountable.method.paramsSchema,
+      }),
+      ...(mountable.method.inputSchema !== undefined && {
+        inputSchema: mountable.method.inputSchema,
+      }),
+      ...(mountable.method.outputSchema !== undefined && {
+        outputSchema: mountable.method.outputSchema,
+      }),
+      shouldExtend: mountable.shouldExtend,
+      ...(mountable.method.mcp !== undefined && { mcp: mountable.method.mcp }),
+    })),
+    config,
+  ).map((entry) => {
+    Object.freeze(entry.tool);
+    return Object.freeze({
+      mountable: entry.tool,
+      inputSchema: entry.inputSchema,
+      ...(entry.outputSchema !== undefined && { outputSchema: entry.outputSchema }),
+      outputMode: entry.outputSchema === undefined ? 'none' : 'direct',
+    });
+  });
   return Object.freeze(prepared);
 }
 

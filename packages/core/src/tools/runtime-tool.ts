@@ -11,9 +11,11 @@ import type {
 } from '../contract';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
+import {
+  projectedRuntimeToolSupports,
+  projectRuntimeTool,
+} from './internal/surface-projector';
 import type { MountableTool } from './mount';
-import { assertToolName } from './names';
-import { buildToolPresentationSchema } from './presentation';
 
 export type RuntimeToolTransport = 'MCP' | 'AGENT' | 'CLI';
 
@@ -260,11 +262,7 @@ export function runtimeToolSupports(
   definition: RuntimeToolDefinition,
   transport: RuntimeToolTransport,
 ): boolean {
-  if (definition.transports?.length === 0) {
-    throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
-  }
-  if (!definition.transports) return transport !== 'CLI';
-  return definition.transports.includes(transport);
+  return projectedRuntimeToolSupports(definition, transport);
 }
 
 export function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
@@ -286,13 +284,7 @@ export function runtimeToolMountable(
   definition: RuntimeToolDefinition,
   assertName = true,
 ): MountableTool {
-  if (assertName) {
-    assertToolName(
-      definition.name,
-      definition.identity.serviceName,
-      definition.identity.action,
-    );
-  }
+  const projected = projectRuntimeTool(definition, assertName);
   const method: ToolOperation = {
     ...runtimeToolIdentity(definition),
     inputSchema: definition.input,
@@ -301,12 +293,9 @@ export function runtimeToolMountable(
   };
   return {
     method,
-    name: definition.name,
+    name: projected.name,
     argumentSchema: definition.input,
-    presentationSchema: buildToolPresentationSchema({
-      inputSchema: definition.input,
-      unrepresentable: 'any',
-    }),
+    presentationSchema: projected.presentationSchema,
     shouldExtend: false,
   };
 }

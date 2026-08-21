@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, open, realpath, rename, stat, unlink } from 'node:fs/promises';
+import { link, mkdir, open, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import {
   ManagedFilePathSchema,
@@ -11,7 +11,12 @@ import { isWithinDir } from '../internal/within-dir';
 
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_INSPECTION_BYTES = 64 * 1024;
+const DEFAULT_INSPECTION_TIMEOUT_MS = 15_000;
 const NOFOLLOW_FLAG = constants.O_NOFOLLOW ?? 0;
+const ManagedFileInspectionSchema = ManagedFileRefSchema.pick({
+  mediaType: true,
+  name: true,
+});
 
 export type ManagedFileErrorCode =
   | 'FILE_INVALID_PATH'
@@ -38,23 +43,26 @@ export interface ManagedFileInspectionInput {
   prefix: Uint8Array;
   declaredMediaType?: string;
   name: string;
+  /** Aborts with the caller or the boundary's inspection deadline. */
+  signal: AbortSignal;
 }
 
-export interface ManagedFileInspection {
-  mediaType?: string;
-  name?: string;
-}
+export type ManagedFileInspection = Pick<ManagedFileRef, 'mediaType' | 'name'>;
 
 export type ManagedFileInspector = (
   input: ManagedFileInspectionInput,
 ) => ManagedFileInspection | Promise<ManagedFileInspection>;
 
 export interface ManagedFileBoundaryConfig {
-  /** Existing directory owned exclusively by the application or trusted OS actor. */
+  /** Directory owned exclusively by the application or trusted OS actor. */
   root: string;
+  /** Create the missing final root below an existing trusted parent. Default `false`. */
+  createRoot?: boolean;
   maxReadBytes?: number;
   maxWriteBytes?: number;
   inspectionBytes?: number;
+  /** Maximum time to wait for a content inspector. Default 15 seconds. */
+  inspectionTimeoutMs?: number;
   inspect?: ManagedFileInspector;
   onCleanupError?: (error: unknown) => void;
 }
@@ -113,19 +121,157 @@ function ioError(message: string, error: unknown): ManagedFileError {
   return new ManagedFileError('FILE_IO_ERROR', message, { cause: error });
 }
 
+async function realpathOrNull(path: string, message: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw ioError(message, error);
+  }
+}
+
+async function bindRoot(config: ManagedFileBoundaryConfig): Promise<string> {
+  const requested = resolve(config.root);
+  let canonical = await realpathOrNull(requested, 'failed to resolve managed-file root');
+
+  if (canonical === null && config.createRoot) {
+    const parent = await realpathOrNull(
+      dirname(requested),
+      'failed to resolve managed-file root parent',
+    );
+    if (parent === null) {
+      throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file root parent must exist');
+    }
+    const parentInfo = await stat(parent).catch((error: unknown) => {
+      throw ioError('failed to inspect managed-file root parent', error);
+    });
+    if (!parentInfo.isDirectory()) {
+      throw new ManagedFileError(
+        'FILE_NOT_REGULAR',
+        'managed-file root parent must be a directory',
+      );
+    }
+
+    try {
+      // Deliberately not recursive: ownership only extends to this final directory.
+      await mkdir(requested, { mode: 0o700 });
+    } catch (error) {
+      // Another boundary may have won the same bootstrap race. The canonical
+      // bind and directory check below decide whether that winner is acceptable.
+      if (errorCode(error) !== 'EEXIST') {
+        if (errorCode(error) === 'ENOENT') {
+          throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file root parent must exist');
+        }
+        throw ioError('failed to create managed-file root', error);
+      }
+    }
+    canonical = await realpathOrNull(requested, 'failed to resolve managed-file root');
+  }
+
+  if (canonical === null) {
+    throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file root must exist');
+  }
+  const info = await stat(canonical).catch((error: unknown) => {
+    throw ioError('failed to inspect managed-file root', error);
+  });
+  if (!info.isDirectory()) {
+    throw new ManagedFileError('FILE_NOT_REGULAR', 'managed-file root must be a directory');
+  }
+  return canonical;
+}
+
 async function existingParent(root: string, target: string): Promise<string> {
-  const parent = await realpath(dirname(target)).catch(() => null);
+  const parent = await realpathOrNull(
+    dirname(target),
+    'failed to resolve managed-file parent directory',
+  );
   if (parent === null) {
     throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file parent directory not found');
   }
   if (!isWithinDir(root, parent)) {
     throw new ManagedFileError('FILE_OUTSIDE_ROOT', 'managed-file path escapes its boundary');
   }
-  const info = await stat(parent).catch(() => null);
-  if (!info?.isDirectory()) {
-    throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file parent directory not found');
+  const info = await stat(parent).catch((error: unknown) => {
+    throw ioError('failed to inspect managed-file parent directory', error);
+  });
+  if (!info.isDirectory()) {
+    throw new ManagedFileError('FILE_NOT_REGULAR', 'managed-file parent is not a directory');
   }
   return parent;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
+}
+
+function raceWithSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const settle = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      complete();
+    };
+    const onAbort = (): void => settle(() => rejectPromise(abortReason(signal)));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    operation.then(
+      (value) => settle(() => resolvePromise(value)),
+      (error: unknown) => settle(() => rejectPromise(error)),
+    );
+  });
+}
+
+async function inspectFile(
+  inspector: ManagedFileInspector | undefined,
+  input: Omit<ManagedFileInspectionInput, 'signal'>,
+  timeoutMs: number,
+  outerSignal?: AbortSignal,
+): Promise<ManagedFileInspection> {
+  if (!inspector) return {};
+  outerSignal?.throwIfAborted();
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = outerSignal ? AbortSignal.any([outerSignal, timeoutSignal]) : timeoutSignal;
+  try {
+    const inspected = await raceWithSignal(
+      Promise.resolve().then(() => inspector({ ...input, signal })),
+      signal,
+    );
+    return ManagedFileInspectionSchema.parse(inspected);
+  } catch (error) {
+    if (outerSignal?.aborted) throw abortReason(outerSignal);
+    throw new ManagedFileError(
+      'FILE_INSPECTION_REJECTED',
+      'managed file rejected by inspection',
+      { cause: error },
+    );
+  }
+}
+
+function inspectedRef(
+  path: string,
+  size: number,
+  inspection: ManagedFileInspection,
+  fallback: { mediaType?: string; name?: string } = {},
+): ManagedFileRef {
+  const mediaType = inspection.mediaType ?? fallback.mediaType;
+  const name = inspection.name ?? fallback.name;
+  const parsed = ManagedFileRefSchema.safeParse({
+    path,
+    size,
+    ...(mediaType ? { mediaType } : {}),
+    ...(name ? { name } : {}),
+  });
+  if (!parsed.success) {
+    throw new ManagedFileError(
+      'FILE_INSPECTION_REJECTED',
+      'managed file rejected by inspection',
+      { cause: parsed.error },
+    );
+  }
+  return parsed.data;
 }
 
 async function readHandle(
@@ -230,10 +376,7 @@ async function writeSource(
 export async function createManagedFileBoundary(
   config: ManagedFileBoundaryConfig,
 ): Promise<ManagedFileBoundary> {
-  const root = await realpath(resolve(config.root)).catch(() => null);
-  if (root === null || !(await stat(root).catch(() => null))?.isDirectory()) {
-    throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file root must exist');
-  }
+  const root = await bindRoot(config);
   const maxReadBytes = positiveLimit(config.maxReadBytes, DEFAULT_MAX_BYTES, 'maxReadBytes');
   const maxWriteBytes = positiveLimit(
     config.maxWriteBytes,
@@ -244,6 +387,11 @@ export async function createManagedFileBoundary(
     config.inspectionBytes,
     DEFAULT_INSPECTION_BYTES,
     'inspectionBytes',
+  );
+  const inspectionTimeoutMs = positiveLimit(
+    config.inspectionTimeoutMs,
+    DEFAULT_INSPECTION_TIMEOUT_MS,
+    'inspectionTimeoutMs',
   );
 
   const targetFor = (path: string): { path: string; target: string } => {
@@ -261,7 +409,11 @@ export async function createManagedFileBoundary(
   return {
     async read(path, options = {}) {
       const resolved = targetFor(path);
-      const realTarget = await realpath(resolved.target).catch(() => null);
+      options.signal?.throwIfAborted();
+      const realTarget = await realpathOrNull(
+        resolved.target,
+        'failed to resolve managed file',
+      );
       if (realTarget === null) {
         throw new ManagedFileError('FILE_NOT_FOUND', 'managed file not found');
       }
@@ -280,8 +432,17 @@ export async function createManagedFileBoundary(
           throw new ManagedFileError('FILE_NOT_REGULAR', 'managed path is not a regular file');
         }
         const bytes = await readHandle(handle, maxBytes, options.signal);
+        const inspection = await inspectFile(
+          config.inspect,
+          {
+            prefix: bytes.slice(0, inspectionBytes),
+            name: basename(resolved.path),
+          },
+          inspectionTimeoutMs,
+          options.signal,
+        );
         return {
-          ref: ManagedFileRefSchema.parse({ path: resolved.path, size: bytes.byteLength }),
+          ref: inspectedRef(resolved.path, bytes.byteLength, inspection),
           bytes,
         };
       } catch (error) {
@@ -322,22 +483,16 @@ export async function createManagedFileBoundary(
         await handle.close();
         handle = undefined;
 
-        let inspection: ManagedFileInspection = {};
-        if (config.inspect) {
-          try {
-            inspection = await config.inspect({
-              prefix: written.prefix,
-              declaredMediaType: options.mediaType,
-              name: options.name ?? basename(resolved.path),
-            });
-          } catch (error) {
-            throw new ManagedFileError(
-              'FILE_INSPECTION_REJECTED',
-              'managed file rejected by inspection',
-              { cause: error },
-            );
-          }
-        }
+        const inspection = await inspectFile(
+          config.inspect,
+          {
+            prefix: written.prefix,
+            ...(options.mediaType ? { declaredMediaType: options.mediaType } : {}),
+            name: options.name ?? basename(resolved.path),
+          },
+          inspectionTimeoutMs,
+          options.signal,
+        );
 
         options.signal?.throwIfAborted();
 
@@ -356,15 +511,10 @@ export async function createManagedFileBoundary(
           }
         }
 
-        const mediaType = inspection.mediaType ?? options.mediaType;
-        const name = inspection.name ?? options.name;
-        const ref = ManagedFileRefSchema.parse({
-          path: resolved.path,
-          size,
-          ...(mediaType ? { mediaType } : {}),
-          ...(name ? { name } : {}),
+        return inspectedRef(resolved.path, size, inspection, {
+          mediaType: options.mediaType,
+          name: options.name,
         });
-        return ref;
       } catch (error) {
         if (options.signal?.aborted && error === options.signal.reason) throw error;
         throw ioError('failed to write managed file', error);

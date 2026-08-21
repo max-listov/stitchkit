@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { createContractFactory, defineContract } from '../src/contract';
 import {
   type AuthScopes,
+  composeAuthHooks,
   createAuthHook,
   createScopedImplement,
   createScopedImplementRegistry,
@@ -485,6 +486,50 @@ void directMaybeMixed;
 void maybeMixedResource;
 void maybeOwner;
 void requiredMixedResource;
+
+// ─── Multiple auth domains compose without a manual scope-map intersection ──
+
+const userDomainHook = createAuthHook({
+  resolve: async (): Promise<AuthedUser | null> => null,
+  rules: {
+    user: (user) => ({ userId: user.id }),
+    shared: (user) => ({ userId: user.id, actorKind: 'user' }),
+  },
+});
+const tenantDomainHook = createAuthHook({
+  resolve: async (): Promise<{ tenantId: string } | null> => null,
+  rules: {
+    tenant: (tenant) => ({ tenantId: tenant.tenantId }),
+    shared: (tenant) => ({ tenantId: tenant.tenantId, actorKind: 1 }),
+  },
+});
+const composedDomains = composeAuthHooks({ hooks: [userDomainHook, tenantDomainHook] });
+const implementComposed = createScopedImplement<AuthScopes<typeof composedDomains>>();
+const composedContract = defineContract(
+  { prefix: 'composed', scope: 'shared' },
+  {
+    shared: { method: 'GET', path: '/', desc: 'Shared', output },
+    user: { method: 'GET', path: '/user', desc: 'User', scope: 'user', output },
+    tenant: { method: 'GET', path: '/tenant', desc: 'Tenant', scope: 'tenant', output },
+  },
+);
+
+implementComposed(composedContract, {
+  shared: (ctx) => {
+    const userId: string = ctx.userId;
+    const tenantId: string = ctx.tenantId;
+    const actorKind: string | number = ctx.actorKind;
+    return { ok: Boolean(userId && tenantId && actorKind) };
+  },
+  user: (ctx) => ({ ok: ctx.userId.length > 0 }),
+  tenant: (ctx) => ({ ok: ctx.tenantId.length > 0 }),
+});
+
+// A colliding field stays a useful union instead of becoming `never` through
+// a raw scope-map intersection. Runtime composition rejects two actual writes.
+type SharedActorKind = AuthScopes<typeof composedDomains>['shared']['actorKind'];
+const sharedActorKind: SharedActorKind = flag ? 'user' : 1;
+void sharedActorKind;
 
 // ─── declare: typed handlers without binding — the registry path ─────────────
 

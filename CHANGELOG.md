@@ -15,6 +15,72 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-08-21
+
+### ⚠️ Breaking changes
+
+- **Surface manifests are version 2 and model tool projections separately from
+  canonical operations.** `operation.tools` could not represent role-selected
+  MCP surfaces, different Agent/CLI selections or advertised `extend` schemas.
+  `ConformanceTransport` also adds `REALTIME`, so exhaustive transport records
+  must handle it. The old generic projection types are replaced by reachable
+  transport-specific configuration: one global `SurfaceMcpPreparation`, named
+  plain `SurfaceToolDefinition` selections, `SurfaceAgentProjection`, and a
+  plain CLI selection. The peer-free `SurfaceRuntimeToolDefinition` remains the
+  canonical manifest descriptor.
+  `// before: manifest.operations[0].tools.MCP` →
+  `// after: manifest.toolSurfaces.find((s) => s.transport === 'MCP' && s.surface === null)?.tools`;
+  `// before: mcpSurfaces: { admin: { services, extend } }` →
+  `// after: mcpSurfaces: { admin: { services } }, mcpPreparation: { extend }`.
+- **The framework error-code registry includes safe managed-file failures.**
+  Exhaustive `Record<StitchErrorCode, …>` maps must add `FILE_INVALID_PATH`,
+  `FILE_OUTSIDE_ROOT`, `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
+  `FILE_INSPECTION_REJECTED`, `FILE_TOO_LARGE` and `FILE_EXISTS`. Raw managed
+  download/upload failures now include a stable `[CODE]`; unexpected IO remains
+  scrubbed as `INTERNAL_SERVER_ERROR`.
+- **`ScopedAuthHook` is now a canonical, nominal capability.** Hand-written
+  structural functions are no longer assignable; create hooks with
+  `createAuthHook`, then combine domains with `composeAuthHooks` so runtime scope
+  ownership and inferred context cannot drift.
+- **Managed-file inspectors now run on reads and have a finite default
+  deadline.** Existing write-only inspectors may now see reads without a
+  `declaredMediaType`; make inspection read-aware and idempotent, and set
+  `inspectionTimeoutMs` explicitly when 15 seconds is not the right budget.
+  `// before: inspect: ({ declaredMediaType }) => inspectDeclaredType(declaredMediaType!)` →
+  `// after: inspect: ({ prefix, declaredMediaType, signal }) => inspectBytes(prefix, { declaredMediaType, signal })`.
+- **Direct contract-backed async-operation binding requires a wire-stable ID
+  schema (`z.input` equals `z.output` and parsing has no transform, coercion,
+  default or overwrite).** Even a same-type transform cannot be reused as the
+  follow-up wire input because direct adapters would parse it twice. Use adapted
+  binding with a canonical parsed `id` and explicit `inputFor` adapters.
+  `// before: binding: 'direct' with z.string().transform(Number)` →
+  `// after: binding: 'adapted', id, adapters: { idFromStart, inputFor }`.
+
+### Added
+
+- **Existing-transport realtime binding.** `bindRealtimeClient` adds the same
+  Zod event/ack validation and typed `request()` API to an existing Stitchkit
+  Socket.IO transport without opening or lifecycle-owning another connection.
+  `createRealtimeClient` now composes that one binding path.
+- **Transport-projected and realtime conformance.** Manifest v2 snapshots
+  explicit HTTP/MCP/Agent/CLI topology, finite named MCP surfaces, mounted
+  presentation digests and named realtime contracts. `REALTIME` probes carry
+  structured rejection fields and share one absolute setup/invoke/teardown
+  deadline; fixtures and observed topology remain application-owned.
+- **Multiple auth-domain composition.** `composeAuthHooks` routes only to owners
+  of the selected scope, stages contributions until every owner succeeds,
+  rejects cross-owner field collisions and derives the combined handler context.
+- **Managed-file ownership and read inspection.** `createRoot: true` can create
+  one final owned root below an existing trusted parent. Bounded inspection now
+  applies to reads and writes, receives cancellation plus a finite
+  `inspectionTimeoutMs`, and cannot replace measured path/size.
+- **Canonical async-operation contracts and adapters.**
+  `defineAsyncOperationContract` declares the standard start/status/wait plus
+  optional cancel/result/artifacts HTTP vocabulary from one Zod-first config.
+  Existing contracts with start snapshots or distinct follow-up envelopes bind
+  through typed `idFromStart` and `inputFor` adapters whose outputs are parsed at
+  the named capability boundary.
+
 ## [0.55.0] — 2026-08-20
 
 ### ⚠️ Breaking changes
@@ -44,6 +110,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   error instead of being treated as authorization success.
   `// before: rule: async () => undefined // accidentally passed` →
   `// after: rule: async () => true // explicit pass, or false to deny`.
+- **The low-level `SocketIOClient` structural contract gained required
+  `emitWithAck`.** It is the native acknowledgement capability used by
+  `RealtimeClient.request`; structural mocks/adapters that implement the whole
+  low-level handle must provide it. Prefer narrow `Pick` mocks when only one
+  capability is under test.
+  `// before: const socket: SocketIOClient<S, C> = { connect, disconnect, on, emit, onConnectionChange, connected }` →
+  `// after: const socket: SocketIOClient<S, C> = { connect, disconnect, on, emit, emitWithAck, onConnectionChange, connected }`.
 
 ### Added
 

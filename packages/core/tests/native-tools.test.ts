@@ -3,8 +3,8 @@
  * (ADR 0019) — and the shared `textResult` envelope. Each tool is exercised
  * through a real in-memory `McpServer` ↔ `Client` round-trip so the asserted
  * `content` / `isError` shape is exactly what an MCP client receives. Locks in
- * the error framing (`Wait failed:` / `Download failed:` / `Upload failed:`)
- * that the try/catch boundary owns rather than leaning on the SDK's catch.
+ * the stable error framing/codes and caller-safe scrubbing owned by the native
+ * boundary rather than leaning on the SDK's catch.
  */
 
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -121,7 +121,7 @@ describe('mountUpload', () => {
     await client.close();
   });
 
-  test('a throwing upload is framed "Upload failed:"', async () => {
+  test('an unexpected upload failure is logged and scrubbed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sk-upload-'));
     await writeFile(join(root, 'f'), 'file');
     const files = await createManagedFileBoundary({ root });
@@ -134,11 +134,20 @@ describe('mountUpload', () => {
         },
       }),
     );
-    const result = await client.callTool({ name: 'upload', arguments: { path: 'f' } });
-    expect(isErr(result)).toBe(true);
-    expect(firstText(result)).toContain('Upload failed: disk full');
-    await client.close();
-    await rm(root, { recursive: true, force: true });
+    const log = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const result = await client.callTool({ name: 'upload', arguments: { path: 'f' } });
+      expect(isErr(result)).toBe(true);
+      expect(firstText(result)).toBe(
+        'Upload failed [INTERNAL_SERVER_ERROR]: Internal server error',
+      );
+      expect(firstText(result)).not.toContain('disk full');
+      expect(log).toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      await client.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -159,7 +168,7 @@ describe('mountDownload', () => {
     await client.close();
   });
 
-  test('a throwing resolveUrl is framed "Download failed:"', async () => {
+  test('an unexpected URL resolution failure is logged and scrubbed', async () => {
     const files = await createManagedFileBoundary({ root: tmpdir() });
     const client = await connectWith((s) =>
       mountDownload(s, {
@@ -171,10 +180,19 @@ describe('mountDownload', () => {
         files,
       }),
     );
-    const result = await client.callTool({ name: 'download', arguments: {} });
-    expect(isErr(result)).toBe(true);
-    expect(firstText(result)).toContain('Download failed: no such generation');
-    await client.close();
+    const log = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const result = await client.callTool({ name: 'download', arguments: {} });
+      expect(isErr(result)).toBe(true);
+      expect(firstText(result)).toBe(
+        'Download failed [INTERNAL_SERVER_ERROR]: Internal server error',
+      );
+      expect(firstText(result)).not.toContain('no such generation');
+      expect(log).toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      await client.close();
+    }
   });
 
   test('an HTTP failure keeps the raw mount error prefix exactly once', async () => {
@@ -196,7 +214,7 @@ describe('mountDownload', () => {
         arguments: { url: 'https://93.184.216.34/file.bin' },
       });
       expect(isErr(result)).toBe(true);
-      expect(firstText(result)).toBe('Download failed: HTTP 503');
+      expect(firstText(result)).toBe('Download failed [DOWNLOAD_HTTP_ERROR]: HTTP 503');
       await client.close();
     } finally {
       spy.mockRestore();
