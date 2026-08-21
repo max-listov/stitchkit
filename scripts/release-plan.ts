@@ -22,6 +22,8 @@ export interface ReleaseTagPush {
 export interface PrePushPlan {
   verify: boolean;
   releaseTags: ReleaseTagPush[];
+  /** Local SHAs of the pushed branch tips — where a release commit can sit. */
+  branchHeads: string[];
 }
 
 function preOneMinor(version: string): number | null {
@@ -168,6 +170,7 @@ export function assertVersionCalibre(changelog: string, version: string): void {
 export function classifyPrePush(input: string): PrePushPlan {
   let verify = false;
   const releaseTags = new Map<string, string>();
+  const branchHeads = new Set<string>();
   for (const line of input.split('\n')) {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4) continue;
@@ -177,7 +180,10 @@ export function classifyPrePush(input: string): PrePushPlan {
     // so classifying by it misses exactly those forms.
     const [, localSha, remoteRef] = fields;
     if (!remoteRef || !localSha || ZERO_SHA.test(localSha)) continue;
-    if (remoteRef.startsWith('refs/heads/')) verify = true;
+    if (remoteRef.startsWith('refs/heads/')) {
+      verify = true;
+      branchHeads.add(localSha);
+    }
     if (remoteRef.startsWith('refs/tags/')) {
       const tag = remoteRef.slice('refs/tags/'.length);
       if (tag.startsWith('v') || tag.startsWith('create-stitchkit-v')) {
@@ -190,7 +196,18 @@ export function classifyPrePush(input: string): PrePushPlan {
   return {
     verify,
     releaseTags: [...releaseTags].map(([tag, sha]) => ({ tag, sha })),
+    branchHeads: [...branchHeads],
   };
+}
+
+/**
+ * Whether a pushed commit is the release commit itself. The tag gates check the
+ * exact version; this only needs the shape, because it answers a different
+ * question — is this push the one release preparation, and therefore the last
+ * cheap moment to prove the starter template still builds on HEAD.
+ */
+export function isReleaseCommitSubject(subject: string): boolean {
+  return /^release\((?:core|starter)\):/.test(subject.trim());
 }
 
 /** Fail unless the tag points at the current release head of the default branch. */
@@ -308,6 +325,41 @@ export async function validateReleaseTag(
   return { ...plan, notes };
 }
 
+/**
+ * Whether the packed HEAD starter lane is meaningful right now. Shared by the
+ * CI step and the pre-push gate so both answer from one policy: a hard-cut core
+ * minor legitimately outruns a template that can only pin a published range,
+ * and blocking on that would make a breaking release unshippable.
+ */
+async function starterHeadDecision(root: string): Promise<'run' | 'skip'> {
+  const coreManifest: unknown = JSON.parse(
+    await readFile(join(root, 'packages/core/package.json'), 'utf8'),
+  );
+  const starterManifest: unknown = JSON.parse(
+    await readFile(join(root, 'packages/create-stitchkit/template/package.json'), 'utf8'),
+  );
+  const coreVersion =
+    typeof coreManifest === 'object' && coreManifest !== null
+      ? Reflect.get(coreManifest, 'version')
+      : undefined;
+  const catalog =
+    typeof starterManifest === 'object' && starterManifest !== null
+      ? Reflect.get(starterManifest, 'catalog')
+      : undefined;
+  const starterTarget =
+    typeof catalog === 'object' && catalog !== null
+      ? Reflect.get(catalog, 'stitchkit')
+      : undefined;
+  if (typeof coreVersion !== 'string' || typeof starterTarget !== 'string') {
+    throw new Error('core version and starter catalog.stitchkit must be strings');
+  }
+  const releaseNotes = extractReleaseNotes(
+    await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
+    coreVersion,
+  );
+  return shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes) ? 'run' : 'skip';
+}
+
 function CiRunListSchema(value: unknown): CiRunSummary[] {
   if (!Array.isArray(value)) throw new Error('expected a JSON array of workflow runs');
   return value.map((item) => {
@@ -350,6 +402,15 @@ async function output(command: string[]): Promise<string> {
   const exitCode = await process.exited;
   if (exitCode !== 0) throw new Error(`${command.join(' ')} exited with ${exitCode}`);
   return value.trim();
+}
+
+/** Does any pushed branch tip carry the release commit subject? */
+async function hasReleaseCommit(branchHeads: readonly string[]): Promise<boolean> {
+  for (const sha of branchHeads) {
+    const subject = await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]);
+    if (isReleaseCommitSubject(subject)) return true;
+  }
+  return false;
 }
 
 async function release(target: ReleaseTarget): Promise<void> {
@@ -413,6 +474,20 @@ async function main(): Promise<void> {
       );
     }
     if (plan.verify) await run(['bun', 'run', 'verify']);
+    // A release commit is the last cheap moment to learn that the starter
+    // template no longer builds on HEAD. `verify` runs only the target lane, so
+    // without this the answer arrives from a red CI run on the release commit
+    // itself — the one commit whose run must be green before it is tagged.
+    // Same policy as CI: a hard-cut minor legitimately outruns the template.
+    if (plan.verify && (await hasReleaseCommit(plan.branchHeads))) {
+      if ((await starterHeadDecision(root)) === 'run') {
+        await run(['bun', 'run', 'starter-head-lane']);
+      } else {
+        process.stderr.write(
+          '[release] packed HEAD starter lane skipped for a breaking core release; the template stays unverified against HEAD until the next starter release reconciles it.\n',
+        );
+      }
+    }
     return;
   }
   if (command === 'release') {
@@ -444,34 +519,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'starter-head') {
-    const coreManifest: unknown = JSON.parse(
-      await readFile(join(root, 'packages/core/package.json'), 'utf8'),
-    );
-    const starterManifest: unknown = JSON.parse(
-      await readFile(join(root, 'packages/create-stitchkit/template/package.json'), 'utf8'),
-    );
-    const coreVersion =
-      typeof coreManifest === 'object' && coreManifest !== null
-        ? Reflect.get(coreManifest, 'version')
-        : undefined;
-    const catalog =
-      typeof starterManifest === 'object' && starterManifest !== null
-        ? Reflect.get(starterManifest, 'catalog')
-        : undefined;
-    const starterTarget =
-      typeof catalog === 'object' && catalog !== null
-        ? Reflect.get(catalog, 'stitchkit')
-        : undefined;
-    if (typeof coreVersion !== 'string' || typeof starterTarget !== 'string') {
-      throw new Error('core version and starter catalog.stitchkit must be strings');
-    }
-    const releaseNotes = extractReleaseNotes(
-      await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
-      coreVersion,
-    );
-    process.stdout.write(
-      shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes) ? 'run' : 'skip',
-    );
+    process.stdout.write(await starterHeadDecision(root));
     return;
   }
   throw new Error(

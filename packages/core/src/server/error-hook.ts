@@ -3,11 +3,14 @@
  * envelope shape, `createErrorHook` does the normalisation.
  *
  * Every project writes the same `onError`: turn a thrown value into one wire
- * shape, mapping stitchkit's own error codes to the app's public codes. The
- * exhaustive `codeMap` (`satisfies Record<StitchErrorCode, …>`) is the point —
- * a new `StitchErrorCode` in an upgrade breaks the map at compile time instead
- * of leaking stitchkit's code to the wire. The envelope stays app-owned via
- * `render`, so the core prescribes no domain shape (ADR 0002).
+ * shape, mapping stitchkit's own error codes to the app's public codes. The map
+ * is partial — list the codes you have an opinion about, and an unlisted one
+ * travels as itself, exactly like a code the project threw on its own. A
+ * project whose envelope is a published contract adds `satisfies
+ * Record<StitchErrorCode, …>` to its own map and buys the stricter deal: a code
+ * added by a later release then breaks the build instead of reaching the wire
+ * in stitchkit's spelling. The envelope stays app-owned via `render`, so the
+ * core prescribes no domain shape (ADR 0002).
  *
  * The thrown value is classified through the framework's own `normalizeError`
  * first, so a `ZodError` (invalid input) is an honest `VALIDATION_ERROR` 400 —
@@ -21,8 +24,7 @@
  *     NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
  *     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
  *     INTERNAL_SERVER_ERROR: 'internal',
- *     REALTIME_CONTRACT_VIOLATION: 'internal',
- *   } satisfies Record<StitchErrorCode, string>,
+ *   },
  *   render: (info, ctx) => ({
  *     ok: false,
  *     error: { code: info.code, message: info.message },

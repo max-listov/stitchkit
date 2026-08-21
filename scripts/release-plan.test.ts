@@ -6,6 +6,7 @@ import {
   classifyPrePush,
   decidePublishAction,
   extractReleaseNotes,
+  isReleaseCommitSubject,
   releasedVersionsInOrder,
   releasePlanForTag,
   releaseScopeForTag,
@@ -22,16 +23,22 @@ describe('release plan', () => {
     expect(classifyPrePush(`refs/heads/topic ${SHA} refs/heads/topic ${ZERO}\n`)).toEqual({
       verify: true,
       releaseTags: [],
+      branchHeads: [SHA],
     });
     expect(classifyPrePush(`refs/tags/v1.2.3 ${ZERO} refs/tags/v1.2.3 ${SHA}\n`)).toEqual({
       verify: false,
       releaseTags: [],
+      branchHeads: [],
     });
     expect(
       classifyPrePush(
         `refs/heads/main ${SHA} refs/heads/main ${ZERO}\nrefs/tags/v1.2.3 ${SHA} refs/tags/v1.2.3 ${ZERO}\n`,
       ),
-    ).toEqual({ verify: true, releaseTags: [{ tag: 'v1.2.3', sha: SHA }] });
+    ).toEqual({
+      verify: true,
+      releaseTags: [{ tag: 'v1.2.3', sha: SHA }],
+      branchHeads: [SHA],
+    });
   });
 
   test('classifies by the REMOTE ref: HEAD:master and sha:refs/tags forms are covered', () => {
@@ -40,10 +47,12 @@ describe('release plan', () => {
     expect(classifyPrePush(`HEAD ${SHA} refs/heads/master ${ZERO}\n`)).toEqual({
       verify: true,
       releaseTags: [],
+      branchHeads: [SHA],
     });
     expect(classifyPrePush(`${SHA} ${SHA} refs/tags/v9.9.9 ${ZERO}\n`)).toEqual({
       verify: false,
       releaseTags: [{ tag: 'v9.9.9', sha: SHA }],
+      branchHeads: [],
     });
     expect(
       classifyPrePush(
@@ -52,6 +61,7 @@ describe('release plan', () => {
     ).toEqual({
       verify: true,
       releaseTags: [{ tag: 'create-stitchkit-v1.0.0', sha: SHA }],
+      branchHeads: [SHA],
     });
   });
 
@@ -265,5 +275,30 @@ describe('release plan', () => {
       '- older',
     ].join('\n');
     expect(releasedVersionsInOrder(changelog)).toEqual(['1.2.3', '1.2.2']);
+  });
+  test('a pushed branch tip is reported so a release push can prove the starter on HEAD', () => {
+    // `verify` alone cannot tell WHICH commit is being pushed, and the packed
+    // HEAD starter lane is worth its minutes only on the one release push.
+    const other = '2'.repeat(40);
+    expect(
+      classifyPrePush(
+        `HEAD ${SHA} refs/heads/master ${ZERO}\nHEAD ${other} refs/heads/topic ${ZERO}\n`,
+      ).branchHeads,
+    ).toEqual([SHA, other]);
+    expect(
+      classifyPrePush(`refs/heads/master ${SHA} refs/heads/master ${ZERO}\n`.repeat(2))
+        .branchHeads,
+    ).toEqual([SHA]);
+  });
+
+  test('only a release commit subject opens the extra release-push gate', () => {
+    expect(isReleaseCommitSubject('release(core): cancellations in 0.56.1')).toBe(true);
+    expect(isReleaseCommitSubject('  release(starter): a starter cut in 0.4.0  ')).toBe(true);
+    expect(isReleaseCommitSubject('fix(server): an error code map may be partial')).toBe(
+      false,
+    );
+    expect(isReleaseCommitSubject('release: 0.4.0')).toBe(false);
+    expect(isReleaseCommitSubject('chore: mention release(core): in a body')).toBe(false);
+    expect(isReleaseCommitSubject('')).toBe(false);
   });
 });

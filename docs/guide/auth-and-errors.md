@@ -414,22 +414,36 @@ error round-trips without adding correlation data to the response body.
 ### Stitch codes vs your codes
 
 A `code` is a free string — your app codes (`BOT_NOT_FOUND`, …) are yours and the
-core never models them (ADR 0002). But stitchkit itself emits a fixed set:
+core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`,
-`CONFLICT`, `RATE_LIMITED`, `VALIDATION_ERROR`, `INTERNAL_SERVER_ERROR`. They are
+`CONFLICT`, `RATE_LIMITED`, `VALIDATION_ERROR`, `FILE_INVALID_PATH`,
+`FILE_OUTSIDE_ROOT`, `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
+`FILE_INSPECTION_REJECTED`, `FILE_TOO_LARGE`, `FILE_EXISTS`,
+`REALTIME_CONTRACT_VIOLATION`, `INTERNAL_SERVER_ERROR` — a set that grows in
+ordinary releases, each addition named in the changelog. They are
 published as **`STITCH_ERROR_STATUS`** (the `code → status` map) and
 **`StitchErrorCode`** (its `keyof`), with **`isStitchErrorCode()`** (→ ADR 0026).
 
 If you translate stitch's framework errors into your own wire codes in an
-`onError` hook, key the map by `StitchErrorCode` so it stays exhaustive — a code
-stitch adds or renames becomes a compile error, not a silent `500`:
+`onError` hook, you choose how the set's growth reaches you. Keying the map by
+`StitchErrorCode` makes it exhaustive, so a code stitch adds or renames becomes
+a compile error rather than an unfamiliar code on your wire — worth it when the
+envelope is a published contract, at the cost of an edit on those releases:
 
 ```ts
+// Exhaustive on purpose: the annotation is what turns a new stitch code into a
+// compile error here. Drop it (or use `satisfies` on a partial map) to let an
+// unmapped code travel as itself instead.
 const STITCH_TO_APP: Record<StitchErrorCode, AppCode> = {
   NOT_FOUND: 'NOT_FOUND', METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
   BAD_REQUEST: 'VALIDATION_ERROR', VALIDATION_ERROR: 'VALIDATION_ERROR',
   UNAUTHORIZED: 'UNAUTHORIZED', FORBIDDEN: 'FORBIDDEN', CONFLICT: 'CONFLICT',
   RATE_LIMITED: 'RATE_LIMITED', INTERNAL_SERVER_ERROR: 'INTERNAL_SERVER_ERROR',
+  REALTIME_CONTRACT_VIOLATION: 'INTERNAL_SERVER_ERROR',
+  FILE_INVALID_PATH: 'VALIDATION_ERROR', FILE_OUTSIDE_ROOT: 'VALIDATION_ERROR',
+  FILE_NOT_FOUND: 'NOT_FOUND', FILE_NOT_REGULAR: 'VALIDATION_ERROR',
+  FILE_INSPECTION_REJECTED: 'VALIDATION_ERROR', FILE_TOO_LARGE: 'VALIDATION_ERROR',
+  FILE_EXISTS: 'CONFLICT',
 }
 onError: (ctx, err) => {
   if (AppError.is(err) && isStitchErrorCode(err.code)) {
@@ -505,20 +519,20 @@ codes and schemas remain application-owned; Stitchkit stays domain-free.
 
 ## `createErrorHook`
 
-`createErrorHook` is the code-map above, packaged — you supply the exhaustive
-`codeMap` and the envelope shape, it does the normalisation (including the
+`createErrorHook` is the code-map above, packaged — you supply a `codeMap` and
+the envelope shape, it does the normalisation (including the
 never-leak-an-internal-message rule for a raw throw):
 
 ```ts
 const onError = createErrorHook({
+  // Map the codes you have an opinion about; the rest travel as themselves.
   codeMap: {
     BAD_REQUEST: 'bad_request', VALIDATION_ERROR: 'bad_request',
     UNAUTHORIZED: 'unauthenticated', FORBIDDEN: 'forbidden',
     NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
     INTERNAL_SERVER_ERROR: 'internal',
-    REALTIME_CONTRACT_VIOLATION: 'internal',
-  } satisfies Record<StitchErrorCode, string>,
+  },
   // `ctx` is the request's RuntimeContext — read `ctx.traceId` for a
   // correlation id in the envelope. Declaring it is optional.
   render: (info, ctx) => ({
@@ -531,8 +545,24 @@ const onError = createErrorHook({
 createServer({ services, hooks: { onError } })
 ```
 
-Codes you threw yourself (not stitchkit's) pass through `codeMap` unchanged; the
-`satisfies Record<StitchErrorCode, …>` keeps the map exhaustive across upgrades.
+`codeMap` is partial: map the codes you have an opinion about. A stitchkit code
+you did not list travels as itself — the same thing a code you threw yourself
+always did. That is what keeps a code added by a future release from being a
+compile break for every project that translates codes at all.
+
+One `satisfies` is the **opt-in** to the stricter deal:
+
+```ts
+codeMap: { /* … every code … */ } satisfies Record<StitchErrorCode, string>,
+```
+
+That makes the map exhaustive on your side, so a release that adds a code stops
+your build until you decide what the new code is called on your wire. Take it
+when your envelope is a published contract and a code surfacing in stitchkit's
+spelling would violate it; leave it off when passing one through is fine.
+Neither choice is silent — the changelog names every added code. For a single
+catch-all instead of either, decide it in `render`, where `info.code` is the
+resolved value.
 
 Both `onError` and `render` may be asynchronous and receive the matched endpoint
 as their final argument. The observer is awaited before rendering, so it can
