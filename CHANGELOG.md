@@ -36,6 +36,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   read on mid-upload disconnect instead of hanging or parsing partial JSON.
   Internal `AbortError` values on an active request remain 500s, and `499`
   remains a transport outcome absent from OpenAPI.
+- **`createErrorHook` accepts a partial code map.** `codeMap` was
+  `Record<StitchErrorCode, …>`, so every code a release adds broke compilation
+  for every project that translates codes at all — 0.56.0's seven `FILE_*`
+  codes being the most recent. It is now
+  `Partial<Record<StitchErrorCode, …>>` and an unmapped code travels as itself,
+  the same way a code the project threw on its own always has. Exhaustive maps
+  are unaffected.
 
 ## [0.56.0] — 2026-08-21
 
