@@ -59,7 +59,7 @@ export interface ErrorHookConfig<TWireCode extends string = string> {
    * `satisfies Record<StitchErrorCode, …>` makes a new framework code a compile
    * error here. Codes you threw yourself (not stitchkit's) pass through as-is.
    */
-  codeMap?: Record<StitchErrorCode, TWireCode>;
+  codeMap?: Partial<Record<StitchErrorCode, TWireCode>>;
   /** Build the response body from the resolved error. */
   /**
    * Build the response body from the resolved error. `ctx` is the request's
@@ -96,10 +96,16 @@ export function createErrorHook<TWireCode extends string = string>(
     // with no message leak. Without this a client fault (invalid input) would
     // reach `render` as a raw non-`AppError` and be dressed as a 500.
     const appErr = normalizeError(error);
-    const code =
+    // A map need not be exhaustive: the framework grows `StitchErrorCode` in
+    // ordinary releases, and forcing every consumer to add each new key would
+    // make an added code a compile break for anyone who translates codes at
+    // all. An unmapped code travels as itself — the same thing a code the
+    // project threw on its own already does.
+    const mapped =
       config.codeMap && isStitchErrorCode(appErr.code)
         ? config.codeMap[appErr.code]
-        : appErr.code;
+        : undefined;
+    const code = mapped ?? appErr.code;
     const info: ResolvedError = {
       code,
       status: appErr.status,

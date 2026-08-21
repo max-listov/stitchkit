@@ -1,7 +1,9 @@
-import type { StitchErrorCode } from 'stitchkit';
 import { createErrorHook } from 'stitchkit/server';
 
-const codeMap: Record<StitchErrorCode, string> = {
+// Deliberately not annotated as an exhaustive `Record<StitchErrorCode, …>`:
+// this template compiles against both its pinned Stitchkit target and HEAD, and
+// the code union differs between them. Unlisted codes travel as themselves.
+const codeMap = {
   BAD_REQUEST: 'bad_request',
   VALIDATION_ERROR: 'validation_error',
   UNAUTHORIZED: 'unauthorized',

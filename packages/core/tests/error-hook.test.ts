@@ -209,4 +209,39 @@ describe('createErrorHook', () => {
       error: { code: 'CONFLICT', message: 'original' },
     });
   });
+  test('a partial code map maps what it lists and passes the rest through as itself', async () => {
+    // The framework adds codes in ordinary releases. A map that translates only
+    // the codes a project cares about must keep compiling and keep working, or
+    // every added code would be a breaking change for anyone who maps at all.
+    const handler = createHandler({
+      rawRoutes: [
+        {
+          method: 'GET',
+          path: '/mapped',
+          handler: () => {
+            throw new AppError('CONFLICT', 'thrown', 409);
+          },
+        },
+        {
+          method: 'GET',
+          path: '/unmapped',
+          handler: () => {
+            throw new AppError('FILE_TOO_LARGE', 'thrown', 413);
+          },
+        },
+      ],
+      hooks: {
+        onError: createErrorHook({
+          codeMap: { CONFLICT: 'conflict' },
+          render: (info) => ({ code: info.code }),
+        }),
+      },
+    });
+
+    const mapped = await handler(new Request('http://local/mapped'));
+    const unmapped = await handler(new Request('http://local/unmapped'));
+
+    expect(await mapped.json()).toEqual({ code: 'conflict' });
+    expect(await unmapped.json()).toEqual({ code: 'FILE_TOO_LARGE' });
+  });
 });
