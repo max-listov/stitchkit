@@ -54,11 +54,12 @@ const contract = defineContract(
   },
 );
 
-let requests = 0;
+const requestsByPath = new Map<string, number>();
 const server = Bun.serve({
   port: 0,
-  async fetch() {
-    requests += 1;
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    requestsByPath.set(path, (requestsByPath.get(path) ?? 0) + 1);
     await Bun.sleep(100);
     return Response.json({ ok: true });
   },
@@ -79,6 +80,10 @@ function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
       expect(error.status).toBe(0);
     },
   );
+}
+
+function requestCount(path: string): number {
+  return requestsByPath.get(path) ?? 0;
 }
 
 describe.each([
@@ -107,12 +112,12 @@ describe.each([
 
   test('an already-aborted signal never sends the request', async () => {
     const api = makeClient();
-    const before = requests;
+    const before = requestCount('/slow/ping');
     const controller = new AbortController();
     controller.abort();
     await expectCode(api.ping.withOptions({ signal: controller.signal }), 'REQUEST_ABORTED');
     await Bun.sleep(10);
-    expect(requests).toBe(before);
+    expect(requestCount('/slow/ping')).toBe(before);
   });
 
   test('scoped methods preserve cancellation without sending prefix keys', async () => {
@@ -120,7 +125,7 @@ describe.each([
       pathPrefix: ({ tenantId }) => `tenants/${tenantId}`,
       stripPrefixKeys: ['tenantId'],
     });
-    const before = requests;
+    const before = requestCount('/tenants/tenant-1/slow/create');
     const controller = new AbortController();
     controller.abort();
     await expectCode(
@@ -131,7 +136,7 @@ describe.each([
       'REQUEST_ABORTED',
     );
     await Bun.sleep(10);
-    expect(requests).toBe(before);
+    expect(requestCount('/tenants/tenant-1/slow/create')).toBe(before);
   });
 
   test('ordinary callables ignore foreign callback context completely', async () => {
