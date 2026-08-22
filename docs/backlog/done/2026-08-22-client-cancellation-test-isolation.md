@@ -31,9 +31,10 @@ Cancellation suite сравнивает общий счётчик HTTP-запр�
 
 - [x] `packages/core/tests/client-cancellation.test.ts` — request assertions
       изолированы по pathname вместо общего межтестового счётчика.
-- [x] Регрессия: `packages/core/tests/client-cancellation.test.ts` — `an
-      already-aborted signal never sends the request` и `scoped methods preserve
-      cancellation without sending prefix keys`.
+- [x] Регрессия:
+      `packages/core/tests/client-cancellation.test.ts::an already-aborted signal never sends the request`.
+- [x] Регрессия:
+      `packages/core/tests/client-cancellation.test.ts::scoped methods preserve cancellation without sending prefix keys`.
 - [x] Gates: 50 повторов suite — 600 pass; `bun run verify` — green, включая
       packed Bun/Node consumers и оба starter browser lanes.
 
