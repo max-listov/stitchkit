@@ -591,11 +591,42 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         } else if (part.type === 'reasoning-start') {
           reasoningPartIndex = undefined;
           updateReasoning('', part.providerMetadata);
+          const provider = providerEnvelope(part.providerMetadata);
+          await publish({
+            type: 'reasoning-start',
+            conversationId: run.conversationId,
+            runId: run.id,
+            runtimeEpoch,
+            sequence,
+            ...(provider && { provider }),
+            emittedAt: now().toISOString(),
+          });
         } else if (part.type === 'reasoning-delta') {
           updateReasoning(part.text, part.providerMetadata);
+          const provider = providerEnvelope(part.providerMetadata);
+          await publish({
+            type: 'reasoning-delta',
+            conversationId: run.conversationId,
+            runId: run.id,
+            runtimeEpoch,
+            sequence,
+            textDelta: part.text,
+            ...(provider && { provider }),
+            emittedAt: now().toISOString(),
+          });
         } else if (part.type === 'reasoning-end') {
           updateReasoning('', part.providerMetadata);
           reasoningPartIndex = undefined;
+          const provider = providerEnvelope(part.providerMetadata);
+          await publish({
+            type: 'reasoning-end',
+            conversationId: run.conversationId,
+            runId: run.id,
+            runtimeEpoch,
+            sequence,
+            ...(provider && { provider }),
+            emittedAt: now().toISOString(),
+          });
         } else if (part.type === 'tool-call') {
           const provider = providerEnvelope(part.providerMetadata);
           parts.push(

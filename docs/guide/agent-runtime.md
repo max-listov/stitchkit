@@ -215,6 +215,9 @@ or silently accept an unknown future version.
 
 - `assistant-delta` is transient and ordered by
   `(runId, runtimeEpoch, sequence)`;
+- `reasoning-start`, `reasoning-delta` and `reasoning-end` are transient and
+  ordered by the same identity; delta carries only the current text fragment,
+  while provider metadata stays inside a validated canonical envelope;
 - `assistant-checkpoint` follows a successful checkpoint CAS;
 - `run-state` follows durable queue/acquire/interrupt transitions;
 - `tool-status` is transient lifecycle presentation with JSON-safe input on

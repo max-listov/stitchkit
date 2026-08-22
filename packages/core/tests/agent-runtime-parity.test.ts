@@ -300,6 +300,80 @@ describe('agent runtime mature-consumer parity', () => {
     await runtime.close();
   });
 
+  test('publishes ordered transient reasoning lifecycle with provider metadata', async () => {
+    const providerMetadata = {
+      openrouter: { cacheControl: { type: 'ephemeral' } },
+    };
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'reasoning-start', id: 'reasoning-1', providerMetadata },
+            {
+              type: 'reasoning-delta',
+              id: 'reasoning-1',
+              delta: 'private thought',
+              providerMetadata,
+            },
+            { type: 'reasoning-end', id: 'reasoning-1', providerMetadata },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage,
+            },
+          ],
+        }),
+      }),
+    });
+    const events: AgentRuntimeEvent[] = [];
+    const runtime = createAgentRuntime({
+      protocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
+    });
+
+    const terminal = await submit(runtime).result;
+    const reasoning = events.filter(
+      (event) =>
+        event.type === 'reasoning-start' ||
+        event.type === 'reasoning-delta' ||
+        event.type === 'reasoning-end',
+    );
+    expect(reasoning).toEqual([
+      expect.objectContaining({
+        type: 'reasoning-start',
+        provider: { schemaVersion: 1, provider: 'ai-sdk', data: providerMetadata },
+      }),
+      expect.objectContaining({
+        type: 'reasoning-delta',
+        textDelta: 'private thought',
+        provider: { schemaVersion: 1, provider: 'ai-sdk', data: providerMetadata },
+      }),
+      expect.objectContaining({
+        type: 'reasoning-end',
+        provider: { schemaVersion: 1, provider: 'ai-sdk', data: providerMetadata },
+      }),
+    ]);
+    const sequences = reasoning.map((event) => event.sequence);
+    expect(sequences[1]).toBe((sequences[0] ?? 0) + 1);
+    expect(sequences[2]).toBe((sequences[1] ?? 0) + 1);
+    expect(terminal.message.parts).toContainEqual(
+      expect.objectContaining({ type: 'reasoning', text: 'private thought' }),
+    );
+    expect(events.at(-1)).toEqual(expect.objectContaining({ type: 'terminal' }));
+    await runtime.close();
+  });
+
   test('redacts internal tool failures from application events', async () => {
     const model = new MockLanguageModelV4({
       doStream: async () => ({

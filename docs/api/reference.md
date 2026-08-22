@@ -415,7 +415,7 @@ Server-only optional application runtime. See the
 | `AgentSessionCloseOptions` | _type_ | natural `drainTimeoutMs` followed by shutdown abort and optional bounded `forceTimeoutMs` settlement wait |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
-| `AgentRuntimeEventSchema` | schema | transient delta, durable checkpoint/run-state/tool and terminal event union |
+| `AgentRuntimeEventSchema` | schema | transient text/reasoning/tool lifecycle, durable checkpoint/run-state and terminal event union |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
 ## `stitchkit/agent-runtime/openrouter`

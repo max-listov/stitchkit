@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AgentMessageSchema,
+  AgentProviderEnvelopeSchema,
   AgentRecordIdSchema,
   AgentRecordVersionSchema,
   AgentRunStateSchema,
@@ -19,6 +20,25 @@ export const AgentTransientDeltaEventSchema = EventIdentitySchema.extend({
   runtimeEpoch: z.string().min(1),
   sequence: z.int().nonnegative(),
   textDelta: z.string(),
+});
+
+const AgentTransientReasoningIdentitySchema = EventIdentitySchema.extend({
+  runtimeEpoch: z.string().min(1),
+  sequence: z.int().nonnegative(),
+  provider: AgentProviderEnvelopeSchema.optional(),
+});
+
+export const AgentReasoningStartEventSchema = AgentTransientReasoningIdentitySchema.extend({
+  type: z.literal('reasoning-start'),
+});
+
+export const AgentReasoningDeltaEventSchema = AgentTransientReasoningIdentitySchema.extend({
+  type: z.literal('reasoning-delta'),
+  textDelta: z.string(),
+});
+
+export const AgentReasoningEndEventSchema = AgentTransientReasoningIdentitySchema.extend({
+  type: z.literal('reasoning-end'),
 });
 
 export const AgentCheckpointEventSchema = EventIdentitySchema.extend({
@@ -57,6 +77,9 @@ export const AgentTerminalEventSchema = EventIdentitySchema.extend({
 
 export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
   AgentTransientDeltaEventSchema,
+  AgentReasoningStartEventSchema,
+  AgentReasoningDeltaEventSchema,
+  AgentReasoningEndEventSchema,
   AgentCheckpointEventSchema,
   AgentRunStateEventSchema,
   AgentToolStatusEventSchema,

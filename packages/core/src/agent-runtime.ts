@@ -15,6 +15,9 @@ export {
 } from './agent-runtime/coordinator';
 export {
   AgentCheckpointEventSchema,
+  AgentReasoningDeltaEventSchema,
+  AgentReasoningEndEventSchema,
+  AgentReasoningStartEventSchema,
   AgentRunStateEventSchema,
   type AgentRuntimeEvent,
   AgentRuntimeEventSchema,

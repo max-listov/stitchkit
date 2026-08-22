@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.5] — 2026-08-22
+
+### Added
+
+- **Agent runtime publishers receive ordered live reasoning events.** The managed
+  loop now emits transient `reasoning-start`, `reasoning-delta` and
+  `reasoning-end` events with runtime epoch/sequence identity and an optional
+  validated provider envelope. Applications can preserve live reasoning UI
+  without owning a second stream loop; checkpoints remain the durable source.
+
 ## [0.56.4] — 2026-08-22
 
 ### Fixed
