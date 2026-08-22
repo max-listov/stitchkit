@@ -26,6 +26,22 @@ jobs:
     name: Framework, Node and publication artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -38,6 +54,7 @@ jobs:
       - run: bun run lint
       - run: bun run check
       - run: bun run test
+      - run: bun run test:agent-store-postgres
       - run: bun run build
       - run: bun run smoke:next-ssr
       - run: bun run smoke:node
@@ -127,7 +144,7 @@ jobs:
       - name: Run one isolated starter surface
         run: |
           if [ "$STARTER_LANE_MODE" = "head" ] && [ "$(bun scripts/release-plan.ts starter-head)" = "skip" ]; then
-            echo "Skipping packed HEAD only for the changelog-proven breaking core release bridge; target remains mandatory."
+            echo "Skipping packed HEAD for an exact-version deferred starter review; target remains mandatory and scripts/starter-head-review.json owns the migration debt."
             exit 0
           fi
           bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"

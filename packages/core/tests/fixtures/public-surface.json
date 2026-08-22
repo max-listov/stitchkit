@@ -753,6 +753,7 @@
     "wrapInRequestContext"
   ],
   "stitchkit/testing": [
+    "AgentStoreConformanceConfig",
     "ConformanceTransport",
     "CreateRealtimeProbeDriverConfig",
     "DefineRealtimeProbeConfig",
@@ -804,6 +805,7 @@
     "createHandlerTestClients",
     "createRealtimeProbeDriver",
     "defineRealtimeProbe",
+    "runAgentStoreConformance",
     "runSurfaceProbes",
     "serializeSurfaceValue"
   ],

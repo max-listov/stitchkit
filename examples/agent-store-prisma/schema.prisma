@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AgentRuntimeState {
+  conversationId String @id
+  version        Int
+  payload        String
+}
+
+model AgentRuntimeMessage {
+  conversationId String
+  id             String
+  position       Int
+  active         Boolean @default(true)
+  payload        String
+
+  @@id([conversationId, id])
+}
+
+model AgentRuntimeRecoverableRun {
+  conversationId String
+  runId          String
+  payload        String
+
+  @@id([conversationId, runId])
+  @@index([conversationId, runId])
+}

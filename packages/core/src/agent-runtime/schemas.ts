@@ -101,6 +101,18 @@ export const AgentMessageSchema = z.object({
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
+export const AgentAssistantPlaceholderSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: AgentRecordIdSchema,
+  conversationId: AgentRecordIdSchema,
+  runId: AgentRecordIdSchema,
+  status: z.literal('pending'),
+  createdAt: AgentTimestampSchema,
+  updatedAt: AgentTimestampSchema,
+});
+
+export type AgentAssistantPlaceholder = z.infer<typeof AgentAssistantPlaceholderSchema>;
+
 export const AgentRunStateSchema = z.enum([
   'queued',
   'running',
@@ -174,3 +186,12 @@ export const AgentUsageSchema = z.object({
 });
 
 export type AgentUsage = z.infer<typeof AgentUsageSchema>;
+
+export const AgentRunMetricsSchema = z.object({
+  partial: z.boolean(),
+  usage: AgentUsageSchema.optional(),
+  durationMs: z.number().nonnegative().optional(),
+  ttftMs: z.number().nonnegative().optional(),
+});
+
+export type AgentRunMetrics = z.infer<typeof AgentRunMetricsSchema>;

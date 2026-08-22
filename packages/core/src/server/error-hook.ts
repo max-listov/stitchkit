@@ -5,7 +5,8 @@
  * Every project writes the same `onError`: turn a thrown value into one wire
  * shape, mapping stitchkit's own error codes to the app's public codes. The map
  * is partial — list the codes you have an opinion about, and an unlisted one
- * travels as itself, exactly like a code the project threw on its own. A
+ * travels as itself unless `unmappedCode` supplies one declarative fallback.
+ * Codes the project throws on its own always pass through unchanged. A
  * project whose envelope is a published contract adds `satisfies
  * Record<StitchErrorCode, …>` to its own map and buys the stricter deal: a code
  * added by a later release then breaks the build instead of reaching the wire
@@ -62,6 +63,12 @@ export interface ErrorHookConfig<TWireCode extends string = string> {
    * error here. Codes you threw yourself (not stitchkit's) pass through as-is.
    */
   codeMap?: Partial<Record<StitchErrorCode, TWireCode>>;
+  /**
+   * Wire code for every unmapped stitchkit code, or a resolver for grouping
+   * them. Explicit `codeMap` entries win. Project-owned codes never use this
+   * fallback and continue to pass through unchanged.
+   */
+  unmappedCode?: TWireCode | ((code: StitchErrorCode) => TWireCode);
   /** Build the response body from the resolved error. */
   /**
    * Build the response body from the resolved error. `ctx` is the request's
@@ -99,15 +106,17 @@ export function createErrorHook<TWireCode extends string = string>(
     // reach `render` as a raw non-`AppError` and be dressed as a 500.
     const appErr = normalizeError(error);
     // A map need not be exhaustive: the framework grows `StitchErrorCode` in
-    // ordinary releases, and forcing every consumer to add each new key would
-    // make an added code a compile break for anyone who translates codes at
-    // all. An unmapped code travels as itself — the same thing a code the
-    // project threw on its own already does.
-    const mapped =
-      config.codeMap && isStitchErrorCode(appErr.code)
-        ? config.codeMap[appErr.code]
+    // ordinary releases. The optional fallback handles only that narrowed
+    // framework vocabulary; project codes preserve their existing passthrough.
+    const stitchCode = isStitchErrorCode(appErr.code) ? appErr.code : undefined;
+    const mapped = stitchCode === undefined ? undefined : config.codeMap?.[stitchCode];
+    const fallback =
+      mapped === undefined && stitchCode !== undefined
+        ? typeof config.unmappedCode === 'function'
+          ? config.unmappedCode(stitchCode)
+          : config.unmappedCode
         : undefined;
-    const code = mapped ?? appErr.code;
+    const code = mapped ?? fallback ?? appErr.code;
     const info: ResolvedError = {
       code,
       status: appErr.status,

@@ -100,6 +100,10 @@ export function createHandlerTestClients<
 }
 
 export {
+  type AgentStoreConformanceConfig,
+  runAgentStoreConformance,
+} from './testing/agent-store-conformance';
+export {
   assertSurfaceDiscovery,
   type ConformanceTransport,
   type CreateRealtimeProbeDriverConfig,

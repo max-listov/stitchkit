@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "paths": {
+      "stitchkit/agent-runtime": ["../../packages/core/src/agent-runtime.ts"],
+      "stitchkit/testing": ["../../packages/core/src/testing.ts"]
+    },
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ESNext",
+    "types": ["bun"]
+  },
+  "include": ["adapter.ts", "adapter.test.ts", "generated/**/*.ts"]
+}

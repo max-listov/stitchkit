@@ -1,13 +1,28 @@
 import { z } from 'zod';
 import {
+  AgentAssistantPlaceholderSchema,
   AgentMessageSchema,
   AgentProviderEnvelopeSchema,
   AgentRecordIdSchema,
   AgentRecordVersionSchema,
+  AgentRunMetricsSchema,
+  AgentRunSchema,
   AgentRunStateSchema,
   AgentTerminalReasonSchema,
   AgentTimestampSchema,
 } from './schemas';
+
+export const AgentAdmissionEventSchema = z.object({
+  type: z.literal('admission'),
+  eventId: AgentRecordIdSchema,
+  conversationId: AgentRecordIdSchema,
+  runId: AgentRecordIdSchema,
+  snapshotVersion: AgentRecordVersionSchema,
+  input: AgentMessageSchema,
+  run: AgentRunSchema,
+  assistant: z.union([AgentAssistantPlaceholderSchema, AgentMessageSchema]),
+  emittedAt: AgentTimestampSchema,
+});
 
 const EventIdentitySchema = z.object({
   conversationId: AgentRecordIdSchema,
@@ -46,6 +61,7 @@ export const AgentCheckpointEventSchema = EventIdentitySchema.extend({
   eventId: AgentRecordIdSchema,
   snapshotVersion: AgentRecordVersionSchema,
   message: AgentMessageSchema,
+  metrics: AgentRunMetricsSchema.optional(),
 });
 
 export const AgentRunStateEventSchema = EventIdentitySchema.extend({
@@ -73,9 +89,11 @@ export const AgentTerminalEventSchema = EventIdentitySchema.extend({
   reason: AgentTerminalReasonSchema,
   policyName: z.string().min(1).optional(),
   message: AgentMessageSchema,
+  metrics: AgentRunMetricsSchema.optional(),
 });
 
 export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
+  AgentAdmissionEventSchema,
   AgentTransientDeltaEventSchema,
   AgentReasoningStartEventSchema,
   AgentReasoningDeltaEventSchema,

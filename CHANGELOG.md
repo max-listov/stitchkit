@@ -15,6 +15,44 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.57.0] — 2026-08-22
+
+### ⚠️ Breaking changes
+
+- **Agent-store duplicate results persist the complete admission identity.** Durable
+  `AgentRuntimeStore` implementations must return canonical `input`,
+  `inputMessageId` and `assistantMessageId` beside `runId`; this lets duplicate
+  and coalesced admission receipts project the actual records even after compaction,
+  without rereading adapter internals.
+  `// before: { outcome: 'duplicate', runId, snapshot }` →
+  `// after: { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, snapshot }`.
+- **`AgentRuntimeEvent` adds an `admission` variant and its assistant projection may
+  be terminal.** Exhaustive publisher switches must handle the post-commit event;
+  duplicate submission projects the already persisted assistant message when one
+  exists, rather than inventing a pending placeholder.
+  `// before: switch (event.type) { case 'run-state': ... }` →
+  `// after: switch (event.type) { case 'admission': persistProjection(event); ... }`.
+
+### Added
+
+- **Framework-owned agent persistence reducer.** `createAgentRuntimeStore()` accepts
+  one coherent transaction driver for state load/CAS, canonical history mapping and
+  paged recovery scan. Run transitions, revisions, collision checks, idempotency,
+  coalescing, terminal mapping and compaction stay inside Stitchkit; the memory store
+  uses the same reducer. `runAgentStoreConformance()` is available from
+  `stitchkit/testing`, with an executable Prisma/PostgreSQL reference fixture outside
+  the published package.
+- **Projection-complete admission and recovery.** Admission receipts and post-commit
+  events carry the canonical input, assigned run and pending assistant projection.
+  Checkpoint/terminal events carry provenance-aware partial/final metrics, and
+  `runtime.recover()` performs bounded startup scans with queued-resume/acquired-skip
+  defaults and per-run outcomes.
+
+- **`createErrorHook` can declaratively map unmapped framework codes.** Set
+  `unmappedCode` to one wire-code or a `(code: StitchErrorCode) => wireCode`
+  resolver; explicit `codeMap` entries still win, project-owned codes still
+  pass through unchanged, and omitting the option preserves the prior behavior.
+
 ## [0.56.5] — 2026-08-22
 
 ### Added

@@ -112,6 +112,10 @@ describe('CI release-critical graph', () => {
     expect(starterSection).toContain(
       'bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"',
     );
+    expect(starterSection).toContain('$(bun scripts/release-plan.ts starter-head)');
+    expect(starterSection).toContain(
+      'scripts/starter-head-review.json owns the migration debt',
+    );
   });
 
   test('starter cells use one immutable lockfile-matched browser image', () => {

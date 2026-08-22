@@ -37,21 +37,32 @@ function caretPreOneMinor(range: string): number | null {
 }
 
 /**
- * A hard-cut core minor cannot be consumed by the still-published starter
- * before that core version exists on npm. Keep every ordinary HEAD lane; skip
- * only this explicit, changelog-proven release bridge. Unknown version/range
- * forms fail closed by running the lane.
+ * A hard-cut core minor can temporarily outrun the still-published starter.
+ * That bridge is never implicit: without an exact-version deferred review the
+ * HEAD lane runs and exposes template drift on the SHA that created it.
+ * Unknown version/range/review forms fail closed by running the lane.
  */
 export function shouldRunStarterHeadLane(
   coreVersion: string,
   starterTarget: string,
   releaseNotes: string,
+  review?: unknown,
 ): boolean {
   if (!releaseNotes.includes('### ⚠️ Breaking changes')) return true;
   const coreMinor = preOneMinor(coreVersion);
   const targetMinor = caretPreOneMinor(starterTarget);
   if (coreMinor === null || targetMinor === null) return true;
-  return coreMinor === targetMinor;
+  if (coreMinor === targetMinor) return true;
+  if (typeof review !== 'object' || review === null) return true;
+  const reviewedVersion = Reflect.get(review, 'coreVersion');
+  const outcome = Reflect.get(review, 'outcome');
+  const reason = Reflect.get(review, 'reason');
+  return !(
+    reviewedVersion === coreVersion &&
+    outcome === 'deferred' &&
+    typeof reason === 'string' &&
+    reason.trim().length > 0
+  );
 }
 
 export function releasePlanForTag(tag: string): ReleasePlan {
@@ -326,10 +337,8 @@ export async function validateReleaseTag(
 }
 
 /**
- * Whether the packed HEAD starter lane is meaningful right now. Shared by the
- * CI step and the pre-push gate so both answer from one policy: a hard-cut core
- * minor legitimately outruns a template that can only pin a published range,
- * and blocking on that would make a breaking release unshippable.
+ * Shared CI/pre-push decision. HEAD runs by default; the only skip is an
+ * exact-version, explicitly deferred review of an unaligned hard cut.
  */
 async function starterHeadDecision(root: string): Promise<'run' | 'skip'> {
   const coreManifest: unknown = JSON.parse(
@@ -357,7 +366,14 @@ async function starterHeadDecision(root: string): Promise<'run' | 'skip'> {
     await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
     coreVersion,
   );
-  return shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes) ? 'run' : 'skip';
+  const reviewPath = join(root, 'scripts/starter-head-review.json');
+  const reviewFile = Bun.file(reviewPath);
+  const review: unknown = (await reviewFile.exists())
+    ? JSON.parse(await reviewFile.text())
+    : undefined;
+  return shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes, review)
+    ? 'run'
+    : 'skip';
 }
 
 function CiRunListSchema(value: unknown): CiRunSummary[] {
@@ -478,13 +494,14 @@ async function main(): Promise<void> {
     // template no longer builds on HEAD. `verify` runs only the target lane, so
     // without this the answer arrives from a red CI run on the release commit
     // itself — the one commit whose run must be green before it is tagged.
-    // Same policy as CI: a hard-cut minor legitimately outruns the template.
+    // Same policy as CI: a hard-cut minor may outrun the template only after an
+    // exact-version review records the deferred migration debt.
     if (plan.verify && (await hasReleaseCommit(plan.branchHeads))) {
       if ((await starterHeadDecision(root)) === 'run') {
         await run(['bun', 'run', 'starter-head-lane']);
       } else {
         process.stderr.write(
-          '[release] packed HEAD starter lane skipped for a breaking core release; the template stays unverified against HEAD until the next starter release reconciles it.\n',
+          '[release] skipping packed HEAD for an exact-version deferred starter review; target remains mandatory and scripts/starter-head-review.json owns the migration debt.\n',
         );
       }
     }

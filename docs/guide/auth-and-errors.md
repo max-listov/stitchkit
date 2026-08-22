@@ -525,7 +525,7 @@ never-leak-an-internal-message rule for a raw throw):
 
 ```ts
 const onError = createErrorHook({
-  // Map the codes you have an opinion about; the rest travel as themselves.
+  // Map the codes you have an opinion about.
   codeMap: {
     BAD_REQUEST: 'bad_request', VALIDATION_ERROR: 'bad_request',
     UNAUTHORIZED: 'unauthenticated', FORBIDDEN: 'forbidden',
@@ -533,6 +533,9 @@ const onError = createErrorHook({
     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
     INTERNAL_SERVER_ERROR: 'internal',
   },
+  // Optional: one public vocabulary entry for every other stitchkit code.
+  // A resolver `(code) => ...` is also accepted for grouping code families.
+  unmappedCode: 'framework_error',
   // `ctx` is the request's RuntimeContext — read `ctx.traceId` for a
   // correlation id in the envelope. Declaring it is optional.
   render: (info, ctx) => ({
@@ -545,10 +548,13 @@ const onError = createErrorHook({
 createServer({ services, hooks: { onError } })
 ```
 
-`codeMap` is partial: map the codes you have an opinion about. A stitchkit code
-you did not list travels as itself — the same thing a code you threw yourself
-always did. That is what keeps a code added by a future release from being a
-compile break for every project that translates codes at all.
+`codeMap` is partial: map the codes you have an opinion about. By default a
+stitchkit code you did not list travels as itself. Set `unmappedCode` to one
+wire-code when your public vocabulary has a catch-all, or to a function such as
+`(code) => code.startsWith('FILE_') ? 'storage_error' : 'framework_error'` when
+framework code families need different buckets. An explicit `codeMap` entry
+always wins. Codes your project throws itself do not belong to Stitchkit's
+vocabulary, so they never pass through this fallback and remain unchanged.
 
 One `satisfies` is the **opt-in** to the stricter deal:
 
@@ -560,9 +566,7 @@ That makes the map exhaustive on your side, so a release that adds a code stops
 your build until you decide what the new code is called on your wire. Take it
 when your envelope is a published contract and a code surfacing in stitchkit's
 spelling would violate it; leave it off when passing one through is fine.
-Neither choice is silent — the changelog names every added code. For a single
-catch-all instead of either, decide it in `render`, where `info.code` is the
-resolved value.
+Neither choice is silent — the changelog names every added code.
 
 Both `onError` and `render` may be asynchronous and receive the matched endpoint
 as their final argument. The observer is awaited before rendering, so it can

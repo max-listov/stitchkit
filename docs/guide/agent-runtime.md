@@ -128,7 +128,8 @@ const terminal = await ticket.result
 
 `recordIds` is optional. Supply stable application record IDs when an accepted-response transport must
 return durable placeholders before the run finishes. `ticket.admission` resolves after the store
-acceptance CAS and reports the actually assigned `runId`, `assistantMessageId` and snapshot version.
+acceptance CAS and reports the canonical committed `input`, assigned `run`, a typed `pending`
+assistant projection, compatibility IDs and snapshot version.
 Those assigned IDs can differ from the proposal when an input coalesces into an existing queued
 successor. Reuse the same `inputMessageId` for retries carrying the same idempotency key; input
 identity is caller-stable, while the receipt reports the run/assistant identities that assignment
@@ -136,8 +137,35 @@ may change. Await `admission` first on the immediate accepted-response path. `ti
 remains the signal-only compatibility surface and additionally waits for admission publication.
 
 The in-memory store is a reference adapter and has process-local durability
-only. Production applications implement `AgentRuntimeStore` with their own
-database transaction and, when needed, distributed lease/fencing token.
+only. Production applications normally call `createAgentRuntimeStore()` and
+provide one database transaction driver:
+
+```ts
+const store = createAgentRuntimeStore({
+  transaction: work => db.transaction(tx => work(tx)),
+  state: {
+    load: (tx, conversationId) => loadRuntimeState(tx, conversationId),
+    compareAndSwap: (tx, operation) => casRuntimeState(tx, operation),
+  },
+  history: {
+    load: (tx, conversationId) => loadCanonicalMessages(tx, conversationId),
+    loadById: (tx, identity) => loadActiveOrArchivedMessage(tx, identity),
+    apply: (tx, mutation) => applyCanonicalHistoryMutation(tx, mutation),
+  },
+  scanRecoverable: page => scanRecoverableRuns(page),
+})
+```
+
+The same opaque `tx` reaches state and history callbacks. The adapter maps rows
+and supplies atomicity; Stitchkit owns transition validation and revision
+arithmetic. The executable reference is
+[`examples/agent-store-prisma/adapter.ts`](../../examples/agent-store-prisma/adapter.ts).
+`compareAndSwap` returns either `{ outcome: 'applied' }` or
+`{ outcome: 'conflict', actualVersion }`; on a winning write it also persists the
+framework-provided `recoverable` descriptors in the same transaction. Recovery
+scans that bounded index instead of loading every aggregate. Compaction may hide
+rows from `history.load`, but `history.loadById` must retain canonical admitted
+inputs for durable duplicate receipts.
 
 ## Durable order
 
@@ -179,8 +207,8 @@ hatch.
 
 ## Store operations
 
-An adapter implements the aggregate `AgentRuntimeStore`, not separate message
-and run CRUD stores:
+`AgentRuntimeStore` remains the runtime-facing aggregate. Application adapters
+implement the smaller `AgentRuntimeStoreDriver`, not these eight transitions:
 
 - `acceptInputAndAssignRun`
 - `acquireRun`
@@ -195,13 +223,13 @@ Every mutation carries an expected run revision or snapshot version. Input
 assignment additionally carries an idempotency identity. A conflict is a
 control outcome; stale data is never silently overwritten.
 
-On startup, `scanRecoverable` returns queued/acquired records. `recoverRun`
-may abandon them, or requeue an already acquired run only with explicit
-`replaySafe: true` evidence. The framework never guesses that an external
-side effect is replayable. After an application reconstructs its typed context,
-`runtime.resume({ conversationId, runId, context })` admits that queued record
-through the same acquisition CAS and coordinator lane; it never creates a
-second input message.
+On startup, `runtime.recover({ resolveContext })` consumes bounded lightweight
+pages. Its safe default resumes queued runs and reports acquired or
+`interrupt_requested` runs as skipped. A policy may requeue acquired work only
+with explicit replay-safe evidence, or abandon it only with stale-owner
+evidence. Each attempted run returns its own outcome/error; `pageSize`,
+`maxRuns`, and `signal` bound the pass. `runtime.resume(...)` remains available
+for one known queued record.
 
 Canonical records currently write `schemaVersion: 1`. A durable adapter owns
 read-time migration of older rows: migrate to the current shape at its storage
@@ -213,6 +241,9 @@ or silently accept an unknown future version.
 
 `publish` receives event classes with different guarantees:
 
+- `admission` follows a successful acceptance CAS and carries the same complete
+  projection as `ticket.admission`;
+
 - `assistant-delta` is transient and ordered by
   `(runId, runtimeEpoch, sequence)`;
 - `reasoning-start`, `reasoning-delta` and `reasoning-end` are transient and
@@ -223,6 +254,10 @@ or silently accept an unknown future version.
 - `tool-status` is transient lifecycle presentation with JSON-safe input on
   start and output on completion; internal tool failures remain generic;
 - `terminal` follows the winning terminal CAS.
+
+These are post-commit notifications, not a transactional outbox: a process can
+crash between the database commit and `publish`. Reconnect should load canonical
+state. Exactly-once external delivery remains an application-owned outbox.
 
 A named custom stop condition terminalizes with `policy_stop`; its `policyName`
 is persisted on the run and included in the terminal event/result. `max-steps`

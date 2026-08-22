@@ -48,6 +48,34 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Unreleased migration: complete agent admission identity
+
+Custom `AgentRuntimeStore` adapters must persist and return the input and
+assistant identities associated with an idempotency key:
+
+```ts
+// before
+return { outcome: 'duplicate', runId, snapshot }
+
+// after
+return { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, snapshot }
+```
+
+Prefer replacing the custom aggregate reducer with `createAgentRuntimeStore()`;
+its `AgentStoredState.admissions` record and transaction driver implement this
+contract automatically. `history.loadById()` must retain access to compacted
+admitted inputs so the framework can return the canonical record.
+
+`AgentRuntimeEvent` also adds a post-commit `admission` variant. Add it to any
+exhaustive publisher switch. Its `assistant` is either the pending placeholder
+for a new assignment or the canonical persisted assistant for a duplicate:
+
+```ts
+case 'admission':
+  await persistProductProjection(event.input, event.run, event.assistant)
+  break
+```
+
 ## Released migration: 0.56.0
 
 ### Surface manifests are version 2

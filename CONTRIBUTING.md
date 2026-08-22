@@ -120,11 +120,12 @@ the export honest.
   Stitchkit target only after the target version already exists on npm and both
   starter lanes are green.
 - For a pre-1.0 hard cut, the core release commit keeps the currently published
-  starter source and target together. Exact-SHA CI runs target cells and skips
-  only the provably incompatible HEAD cells when the core changelog marks the
-  release breaking. After npm publication, migrate the starter and advance its
-  catalog in a separate commit; both lanes become mandatory again before any
-  scaffolder release.
+  starter source and target together. Exact-SHA CI always runs target cells and
+  runs HEAD by default. If one source genuinely cannot satisfy both sides, add
+  `scripts/starter-head-review.json` for that exact core version with outcome
+  `deferred` and a non-empty reason; only then may HEAD skip. After npm
+  publication, migrate the starter, advance its catalog and remove the review;
+  both lanes are mandatory before any scaffolder release.
 
 Prepare versions and changelogs in an ordinary commit and wait for the exact-SHA
 branch CI to pass. Then run `bun run release:core` or

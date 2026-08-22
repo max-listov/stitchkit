@@ -24,18 +24,22 @@ import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
 import {
+  type AgentAssistantPlaceholder,
+  AgentAssistantPlaceholderSchema,
   AgentJsonObjectSchema,
   type AgentMessage,
   type AgentMessagePart,
   AgentMessagePartSchema,
   AgentMessageSchema,
   type AgentRun,
+  type AgentRunMetrics,
   AgentRunSchema,
   type AgentSnapshot,
   type AgentTerminalReason,
   type AgentUsage,
 } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
+import type { AgentRecoverableDescriptor } from './store-driver';
 
 export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
@@ -59,8 +63,12 @@ export interface AgentRuntimeRecordIds {
 }
 
 export interface AgentRuntimeAdmission {
+  inputMessageId: string;
   runId: string;
   assistantMessageId: string;
+  input: AgentMessage;
+  run: AgentRun;
+  assistant: AgentAssistantPlaceholder | AgentMessage;
   snapshotVersion: number;
 }
 
@@ -69,6 +77,29 @@ export interface AgentRuntimeRecoveryInput {
   runId: string;
   context: unknown;
   conversationKey?: string;
+}
+
+export type AgentRuntimeRecoveryDecision =
+  | { action: 'resume' }
+  | { action: 'skip' }
+  | { action: 'requeue'; replaySafe: true }
+  | { action: 'abandon'; staleOwner: true };
+
+export interface AgentRuntimeRecoverOptions<CONTEXT> {
+  resolveContext(input: AgentRecoverableDescriptor): CONTEXT | Promise<CONTEXT>;
+  decide?(
+    input: AgentRecoverableDescriptor,
+  ): AgentRuntimeRecoveryDecision | Promise<AgentRuntimeRecoveryDecision>;
+  pageSize?: number;
+  maxRuns?: number;
+  signal?: AbortSignal;
+}
+
+export interface AgentRuntimeRecoveryOutcome {
+  conversationId: string;
+  runId: string;
+  outcome: 'resumed' | 'requeued' | 'abandoned' | 'skipped' | 'failed';
+  error?: unknown;
 }
 
 export interface AgentRuntimeInterruptInput {
@@ -148,9 +179,10 @@ export interface AgentRuntimeResult {
   reason: AgentTerminalReason;
   snapshotVersion: number;
   policyName?: string;
+  metrics?: AgentRunMetrics;
 }
 
-export interface AgentRuntime {
+export interface AgentRuntime<CONTEXT = unknown> {
   submit(input: AgentRuntimeInput): {
     accepted: Promise<void>;
     admission: Promise<AgentRuntimeAdmission>;
@@ -161,6 +193,9 @@ export interface AgentRuntime {
     result: Promise<AgentRuntimeResult>;
   };
   interrupt(input: AgentRuntimeInterruptInput): Promise<AgentStoreMutationResult>;
+  recover(
+    options: AgentRuntimeRecoverOptions<CONTEXT>,
+  ): Promise<readonly AgentRuntimeRecoveryOutcome[]>;
   stop(conversationKey: string, reason?: AgentStopReason): boolean;
   close(options?: AgentSessionCloseOptions): Promise<void>;
 }
@@ -255,7 +290,7 @@ function createIdleDeadline(parent: AbortSignal, timeoutMs: number | undefined) 
 
 export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
-): AgentRuntime {
+): AgentRuntime<CONTEXT> {
   const coordinator = createAgentSessionCoordinator();
   interface RuntimeTicket {
     accepted: Promise<void>;
@@ -470,6 +505,12 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         'assistant checkpoint',
       );
       run = findRun(snapshot.runs, run.id);
+      const checkpointMetrics = {
+        partial: true,
+        durationMs: performance.now() - runStartedAt,
+        ...(usage && { usage }),
+        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+      };
       await publish({
         type: 'assistant-checkpoint',
         eventId: generateId(),
@@ -477,6 +518,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         runId: run.id,
         snapshotVersion: snapshot.version,
         message: assistant,
+        metrics: checkpointMetrics,
         emittedAt: now().toISOString(),
       });
     };
@@ -880,6 +922,12 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       'terminal commit',
     );
     run = findRun(snapshot.runs, run.id);
+    const terminalMetrics = {
+      partial: false,
+      durationMs: performance.now() - runStartedAt,
+      ...(usage && { usage }),
+      ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+    };
     config.observe?.emit({
       schemaVersion: 1,
       eventId: generateId(),
@@ -892,7 +940,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       state: run.state,
       terminalReason,
       ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
-      durationMs: performance.now() - runStartedAt,
+      durationMs: terminalMetrics.durationMs,
       ...(usage && { usage }),
       ...(internalCause !== undefined && { internalCause }),
       ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
@@ -907,6 +955,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       reason: terminalReason,
       ...(terminalPolicyName && { policyName: terminalPolicyName }),
       message: assistant,
+      metrics: terminalMetrics,
       emittedAt: now().toISOString(),
     });
     return {
@@ -914,8 +963,38 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       message: assistant,
       reason: terminalReason,
       snapshotVersion: snapshot.version,
+      metrics: terminalMetrics,
       ...(terminalPolicyName && { policyName: terminalPolicyName }),
     };
+  };
+
+  const resume = (rawInput: AgentRuntimeRecoveryInput) => {
+    const context = config.protocol.parseContext(rawInput.context);
+    const accepted = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<AgentRuntimeResult>();
+    void (async () => {
+      try {
+        const snapshot = await config.store.loadSnapshot(rawInput.conversationId);
+        const recoveredRun = findRun(snapshot.runs, rawInput.runId);
+        if (recoveredRun.state !== 'queued') {
+          throw new Error('Only a queued recovered agent run can be resumed');
+        }
+        accepted.resolve();
+        const ticket = coordinator.submit({
+          key: rawInput.conversationKey ?? rawInput.conversationId,
+          policy: 'queue',
+          create: (signal) => ({
+            runId: recoveredRun.id,
+            execute: () => executeRun({ acceptedRun: recoveredRun, context, signal }),
+          }),
+        });
+        void ticket.result.then(result.resolve, result.reject);
+      } catch (error) {
+        accepted.reject(error);
+        result.reject(error);
+      }
+    })();
+    return { accepted: accepted.promise, result: result.promise };
   };
 
   return {
@@ -1013,10 +1092,52 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               ? acceptance.runId
               : (reservation?.admission.runId ?? runId);
           const acceptedRun = findRun(acceptedSnapshot.runs, assignedRunId);
-          outerAdmission.resolve({
+          const actualInputMessageId =
+            acceptance.outcome === 'duplicate' ? acceptance.inputMessageId : userMessage.id;
+          const acceptedInput =
+            acceptance.outcome === 'duplicate'
+              ? acceptance.input
+              : acceptedSnapshot.messages.find(
+                  (candidate) => candidate.id === actualInputMessageId,
+                );
+          if (!acceptedInput) {
+            throw new AgentRuntimeConflictError('admission input projection');
+          }
+          const assistantPlaceholder = AgentAssistantPlaceholderSchema.parse({
+            schemaVersion: 1,
+            id: acceptedRun.assistantMessageId,
+            conversationId: acceptedRun.conversationId,
             runId: acceptedRun.id,
-            assistantMessageId: acceptedRun.assistantMessageId,
+            status: 'pending',
+            createdAt: acceptedRun.createdAt,
+            updatedAt: acceptedRun.updatedAt,
+          });
+          const acceptedAssistant =
+            acceptance.outcome === 'duplicate'
+              ? (acceptedSnapshot.messages.find(
+                  (candidate) => candidate.id === acceptedRun.assistantMessageId,
+                ) ?? assistantPlaceholder)
+              : assistantPlaceholder;
+          const admission = {
+            inputMessageId: acceptedInput.id,
+            runId: acceptedRun.id,
+            assistantMessageId: assistantPlaceholder.id,
+            input: acceptedInput,
+            run: acceptedRun,
+            assistant: acceptedAssistant,
             snapshotVersion: acceptedSnapshot.version,
+          };
+          outerAdmission.resolve(admission);
+          await publish({
+            type: 'admission',
+            eventId: generateId(),
+            conversationId: acceptedRun.conversationId,
+            runId: acceptedRun.id,
+            snapshotVersion: acceptedSnapshot.version,
+            input: acceptedInput,
+            run: acceptedRun,
+            assistant: acceptedAssistant,
+            emittedAt: now().toISOString(),
           });
           await publish({
             type: 'run-state',
@@ -1119,34 +1240,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       })();
       return publicTicket;
     },
-    resume(rawInput) {
-      const context = config.protocol.parseContext(rawInput.context);
-      const accepted = Promise.withResolvers<void>();
-      const result = Promise.withResolvers<AgentRuntimeResult>();
-      void (async () => {
-        try {
-          const snapshot = await config.store.loadSnapshot(rawInput.conversationId);
-          const recoveredRun = findRun(snapshot.runs, rawInput.runId);
-          if (recoveredRun.state !== 'queued') {
-            throw new Error('Only a queued recovered agent run can be resumed');
-          }
-          accepted.resolve();
-          const ticket = coordinator.submit({
-            key: rawInput.conversationKey ?? rawInput.conversationId,
-            policy: 'queue',
-            create: (signal) => ({
-              runId: recoveredRun.id,
-              execute: () => executeRun({ acceptedRun: recoveredRun, context, signal }),
-            }),
-          });
-          void ticket.result.then(result.resolve, result.reject);
-        } catch (error) {
-          accepted.reject(error);
-          result.reject(error);
-        }
-      })();
-      return { accepted: accepted.promise, result: result.promise };
-    },
+    resume,
     async interrupt(input) {
       const snapshot = await config.store.loadSnapshot(input.conversationId);
       const run = findRun(snapshot.runs, input.runId);
@@ -1169,6 +1263,111 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         coordinator.stop(input.conversationKey ?? input.conversationId, 'user-interrupt');
       }
       return requested;
+    },
+    async recover(options) {
+      if (!config.store.scanRecoverablePage) {
+        throw new Error('The configured agent store does not support bounded recovery scans');
+      }
+      const pageSize = options.pageSize ?? 100;
+      const maxRuns = options.maxRuns ?? 1_000;
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1_000) {
+        throw new TypeError('Recovery pageSize must be an integer between 1 and 1000');
+      }
+      if (!Number.isSafeInteger(maxRuns) || maxRuns < 1) {
+        throw new TypeError('Recovery maxRuns must be a positive safe integer');
+      }
+      const outcomes: AgentRuntimeRecoveryOutcome[] = [];
+      let cursor: string | undefined;
+      while (outcomes.length < maxRuns && !options.signal?.aborted) {
+        const page = await config.store.scanRecoverablePage({
+          ...(cursor && { cursor }),
+          limit: Math.min(pageSize, maxRuns - outcomes.length),
+        });
+        for (const item of page.items) {
+          if (options.signal?.aborted) break;
+          try {
+            if (item.run.state === 'queued') {
+              const snapshot = await config.store.loadSnapshot(item.conversationId);
+              const blockedByAcquiredPredecessor = snapshot.runs.some(
+                (run) =>
+                  run.id !== item.run.id &&
+                  (run.state === 'running' || run.state === 'interrupt_requested'),
+              );
+              if (blockedByAcquiredPredecessor) {
+                outcomes.push({
+                  conversationId: item.conversationId,
+                  runId: item.run.id,
+                  outcome: 'skipped',
+                });
+                continue;
+              }
+            }
+            const decision =
+              (await options.decide?.(item)) ??
+              (item.run.state === 'queued' ? { action: 'resume' } : { action: 'skip' });
+            if (decision.action === 'skip') {
+              outcomes.push({
+                conversationId: item.conversationId,
+                runId: item.run.id,
+                outcome: 'skipped',
+              });
+              continue;
+            }
+            if (decision.action === 'abandon') {
+              const abandoned = await config.store.recoverRun({
+                conversationId: item.conversationId,
+                runId: item.run.id,
+                expectedRevision: item.run.revision,
+                action: 'abandon',
+              });
+              if (abandoned.outcome !== 'applied') {
+                throw new AgentRuntimeConflictError('recovery abandon');
+              }
+              outcomes.push({
+                conversationId: item.conversationId,
+                runId: item.run.id,
+                outcome: 'abandoned',
+              });
+              continue;
+            }
+            if (decision.action === 'requeue') {
+              const requeued = await config.store.recoverRun({
+                conversationId: item.conversationId,
+                runId: item.run.id,
+                expectedRevision: item.run.revision,
+                action: 'requeue',
+                replaySafe: true,
+              });
+              if (requeued.outcome !== 'applied') {
+                throw new AgentRuntimeConflictError('recovery requeue');
+              }
+            }
+            const context = await options.resolveContext(item);
+            const resumed = resume({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              context,
+            });
+            void resumed.result.catch(() => undefined);
+            await resumed.accepted;
+            outcomes.push({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              outcome: decision.action === 'requeue' ? 'requeued' : 'resumed',
+            });
+          } catch (error) {
+            outcomes.push({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              outcome: 'failed',
+              error,
+            });
+          }
+        }
+        cursor = page.nextCursor;
+        if (!cursor || page.items.length === 0) break;
+      }
+      return outcomes;
     },
     stop: (conversationKey, reason) => coordinator.stop(conversationKey, reason),
     close: (options) => coordinator.close(options),

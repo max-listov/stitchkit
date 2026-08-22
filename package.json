@@ -24,6 +24,7 @@
     "consumer-lane": "bun --filter stitchkit consumer-lane",
     "starter-lane": "bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=target --variant=repository --browser=all",
     "starter-head-lane": "bun scripts/starter-lane.ts --mode=head --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=head --variant=repository --browser=all",
+    "test:agent-store-postgres": "bun scripts/agent-store-postgres-lane.ts",
     "starter:dev": "cd packages/create-stitchkit/template && bun run dev",
     "release:core": "bun scripts/release-plan.ts release core",
     "release:starter": "bun scripts/release-plan.ts release create-stitchkit",
@@ -31,8 +32,13 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "@types/bun": "^1.3.14",
+    "@types/pg": "^8.21.0",
     "dotenv": "^17.4.2",
+    "pg": "^8.22.0",
+    "prisma": "^7.9.1",
     "typescript": "^7.0.2"
   }
 }

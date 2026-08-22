@@ -14,6 +14,7 @@ export {
   createAgentSessionCoordinator,
 } from './agent-runtime/coordinator';
 export {
+  AgentAdmissionEventSchema,
   AgentCheckpointEventSchema,
   AgentReasoningDeltaEventSchema,
   AgentReasoningEndEventSchema,
@@ -80,7 +81,10 @@ export {
   type AgentRuntimePrepareStep,
   type AgentRuntimeProtocolInput,
   type AgentRuntimeRecordIds,
+  type AgentRuntimeRecoverOptions,
+  type AgentRuntimeRecoveryDecision,
   type AgentRuntimeRecoveryInput,
+  type AgentRuntimeRecoveryOutcome,
   type AgentRuntimeResult,
   type AgentRuntimeRunContext,
   type AgentRuntimeStopPolicy,
@@ -103,7 +107,6 @@ export {
   CheckpointRunAssistantSchema,
   type CommitRunTerminal,
   CommitRunTerminalSchema,
-  createMemoryAgentRuntimeStore,
   type RecoverAgentRun,
   RecoverAgentRunSchema,
   type ReplaceCompactedRange,
@@ -111,3 +114,19 @@ export {
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
 } from './agent-runtime/store';
+export {
+  type AgentAdmissionIdentity,
+  AgentAdmissionIdentitySchema,
+  type AgentHistoryMutation,
+  AgentHistoryMutationSchema,
+  type AgentRecoverableDescriptor,
+  AgentRecoverableDescriptorSchema,
+  type AgentRecoverablePage,
+  AgentRecoverablePageSchema,
+  type AgentRuntimeStoreDriver,
+  type AgentStoreCompareAndSwapResult,
+  type AgentStoredState,
+  AgentStoredStateSchema,
+  createAgentRuntimeStore,
+  createMemoryAgentRuntimeStore,
+} from './agent-runtime/store-driver';

@@ -275,7 +275,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createAuthHook` | function | one scope gate for HTTP `authorize` and tool `beforeHandle` — [guide](../guide/auth-and-errors.md#createauthhook) |
 | `composeAuthHooks` | function | route multiple canonical auth domains by owned scope and atomically commit their typed contributions |
 | `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
-| `ErrorHookConfig` | _type_ | async observer/renderer config for `createErrorHook` |
+| `ErrorHookConfig` | _type_ | async observer/renderer config with partial `codeMap` and optional typed `unmappedCode` fallback |
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
 | `createBearerResolver` | function | a bearer-token identity resolver |
 | `signJwt` | function | sign an HS256 JWT |
@@ -401,6 +401,10 @@ Server-only optional application runtime. See the
 | `defineAgentProtocol` | function | declare and validate context, input metadata and canonical message parts |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
+| `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
+| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transactional state load/exact-version CAS, active-plus-archived history codec and bounded recoverable-run index scan |
+| `AgentStoredStateSchema` | schema | versioned runs and full idempotency admission identities without duplicated message history |
+| `AgentHistoryMutationSchema` | schema | typed canonical message mutation applied inside the winning state transaction |
 | `RecoverAgentRunSchema` | schema | explicit abandon/requeue recovery decision; acquired runs require replay-safe evidence |
 | `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
 | `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
@@ -411,11 +415,14 @@ Server-only optional application runtime. See the
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
-| `AgentRuntimeAdmission` | _type_ | actual assigned run/assistant identity and snapshot version after durable admission |
+| `AgentRuntimeAdmission` | _type_ | canonical committed input, assigned run, pending assistant projection, compatibility IDs and snapshot version |
+| `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |
+| `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` distinguishes checkpoint from terminal totals |
+| `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with context resolver and explicit evidence policy |
 | `AgentSessionCloseOptions` | _type_ | natural `drainTimeoutMs` followed by shutdown abort and optional bounded `forceTimeoutMs` settlement wait |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
-| `AgentRuntimeEventSchema` | schema | transient text/reasoning/tool lifecycle, durable checkpoint/run-state and terminal event union |
+| `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
 ## `stitchkit/agent-runtime/openrouter`
@@ -753,6 +760,8 @@ handler pipeline without opening a TCP port.
 |--------|------|---------|
 | `createHandlerTestClient` | function | one contract client backed by an in-process `FetchHandler` |
 | `createHandlerTestClients` | function | exact contract-registry batch form |
+| `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
+| `AgentStoreConformanceConfig` | _type_ | factory configuration for running the same contract against a fresh adapter |
 | `HandlerTestClientDefaults` | _type_ | ordinary bare-client defaults with handler-owned `baseUrl` and `fetch` removed |
 | `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
 | `HandlerTestClientsConfig` | _type_ | batch helper configuration |

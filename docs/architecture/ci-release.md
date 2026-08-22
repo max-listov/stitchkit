@@ -59,12 +59,13 @@ native conclusion is already the fail-closed aggregate.
 
 One narrow bridge exists for an intentional pre-1.0 hard cut. When the current
 core release notes contain the exact breaking-changes heading and the canonical
-starter still targets another `^0.minor`, target cells remain mandatory while
-HEAD cells report an explicit skip. A single template cannot compile against
-both sides of the removed API before the new core exists on npm. After core
-publication, the separate starter migration advances its catalog target; the
-predicate becomes aligned and all eight cells are mandatory again. Additive
-releases, unknown range forms and ordinary commits never qualify for the skip.
+starter still targets another `^0.minor`, target cells remain mandatory and HEAD
+still runs by default. A skip requires the exact-version deferred review record
+described below. This makes incompatibility debt visible on the creating SHA
+without forcing the published starter to consume a core version absent from npm.
+After core publication, the separate starter migration advances its catalog
+target and removes the record; all eight cells are mandatory again. Additive
+releases, unknown range forms and ordinary commits never qualify for the bridge.
 
 Superseded branch or pull-request runs are cancelled. Tag publication is a
 separate non-cancellable workflow, so an in-progress npm publication can never
@@ -103,10 +104,26 @@ pinned to a full commit SHA.
 
 `bun run verify` remains the complete local framework gate and composes both
 target starter variants. `bun run starter-head-lane` composes both HEAD variants.
-For an unaligned breaking core release candidate, local `verify` proves the
-still-published target while CI applies the same explicit HEAD bridge described
-above; the migrated HEAD template is validated after the core package becomes
-available and before the starter advances.
+An unaligned breaking core release no longer skips HEAD silently: the packed
+local-core lane runs by default and exposes template drift on the creating SHA.
+When one template source genuinely cannot compile against both the published
+target and the hard-cut HEAD, `scripts/starter-head-review.json` may record the
+bridge explicitly:
+
+```json
+{
+  "coreVersion": "0.57.0",
+  "outcome": "deferred",
+  "reason": "The target lane remains on the published minor until core ships."
+}
+```
+
+Only an exact core version, the literal `deferred` outcome and a non-empty
+reason permit the skip. Missing, stale or unknown records fail closed by running
+HEAD; invalid JSON fails the release-plan command. Target lanes always remain
+mandatory, and HEAD still consumes the locally packed core rather than requiring
+the unpublished version from npm. Remove the record when the starter target is
+advanced.
 For a focused lane, call the executable directly with one explicit combination:
 
 ```bash

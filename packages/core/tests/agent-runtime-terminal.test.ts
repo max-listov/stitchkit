@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  type AgentRuntimeEvent,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
@@ -10,6 +11,7 @@ import {
 describe('agent runtime terminalization', () => {
   test('commits a provider failure when prompt construction fails before streaming', async () => {
     const store = createMemoryAgentRuntimeStore();
+    const events: AgentRuntimeEvent[] = [];
     const failure = new Error('internal provider setup failed');
     const runtime = createAgentRuntime({
       protocol: defineAgentProtocol({
@@ -32,6 +34,9 @@ describe('agent runtime terminalization', () => {
         throw failure;
       },
       tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
       generateId: (() => {
         let id = 0;
         return () => `id-${++id}`;
@@ -56,6 +61,8 @@ describe('agent runtime terminalization', () => {
     expect(snapshot.runs).toHaveLength(1);
     expect(snapshot.runs[0]?.terminalReason).toBe('provider_failure');
     expect(snapshot.messages[0]?.metadata).toEqual({ channel: 'test' });
+    const terminalEvent = events.find((event) => event.type === 'terminal');
+    expect(terminalEvent?.metrics).toMatchObject({ partial: false });
   });
 
   test('coalesces inputs behind an active run into one durable successor', async () => {
@@ -126,6 +133,7 @@ describe('agent runtime terminalization', () => {
 
   test('accepts caller record ids and exposes the assigned admission identity', async () => {
     const store = createMemoryAgentRuntimeStore();
+    const events: AgentRuntimeEvent[] = [];
     const runtime = createAgentRuntime({
       protocol: defineAgentProtocol({
         context: z.object({}),
@@ -147,6 +155,9 @@ describe('agent runtime terminalization', () => {
         throw new Error('stop after admission probe');
       },
       tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
     });
 
     const ticket = runtime.submit({
@@ -163,10 +174,19 @@ describe('agent runtime terminalization', () => {
     });
 
     await ticket.accepted;
-    expect(await ticket.admission).toEqual({
+    expect(await ticket.admission).toMatchObject({
+      inputMessageId: 'product-user-1',
       runId: 'product-run-1',
       assistantMessageId: 'product-assistant-1',
       snapshotVersion: 1,
+      input: { id: 'product-user-1', role: 'user' },
+      run: { id: 'product-run-1', assistantMessageId: 'product-assistant-1' },
+      assistant: { id: 'product-assistant-1', status: 'pending' },
+    });
+    expect(events.find((event) => event.type === 'admission')).toMatchObject({
+      input: { id: 'product-user-1' },
+      run: { id: 'product-run-1' },
+      assistant: { id: 'product-assistant-1', status: 'pending' },
     });
     const snapshot = await store.loadSnapshot('conversation-1');
     expect(snapshot.messages[0]?.id).toBe('product-user-1');
@@ -228,10 +248,17 @@ describe('agent runtime terminalization', () => {
 
     const duplicateAdmission = await duplicate.admission;
     const duplicateSnapshot = await store.loadSnapshot('conversation-1');
-    expect(duplicateAdmission).toEqual({
+    expect(duplicateAdmission).toMatchObject({
+      inputMessageId: 'product-user-1',
       runId: 'product-run-1',
       assistantMessageId: 'product-assistant-1',
       snapshotVersion: duplicateSnapshot.version,
+      input: { id: 'product-user-1', role: 'user' },
+      assistant: {
+        id: 'product-assistant-1',
+        role: 'assistant',
+        status: 'failed',
+      },
     });
     expect((await duplicate.result).run.id).toBe('product-run-1');
   });

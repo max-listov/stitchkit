@@ -2,9 +2,10 @@
 title: "The skipped HEAD starter lane hides template drift until an additive release"
 description: "Пропуск packed HEAD lane на breaking-релизах прячет несмигрированный шаблон: дрейф всплывает через несколько релизов и роняет чужой release run."
 type: task
-status: inbox
+status: done
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-22
+completed: 2026-08-22 19:04 +0000
 related:
   - docs/backlog/done/2026-08-21-release-calibre-and-cancellation-polish.md
 ---
@@ -37,9 +38,41 @@ release run версии `0.56.1`, к содержимому которой пр
 - Существующая защита остаётся: packed HEAD lane по-прежнему не требует от
   опубликованного стартера потреблять ещё не выпущенное ядро.
 
-## Возможные направления
+## План
 
-- Отделить typecheck шаблона против HEAD от полного packed lane: первый дёшев и
-  не требует опубликованного ядра, поэтому пропускать его незачем.
-- Либо на breaking-релизе требовать явного подтверждения, что шаблон осмотрен,
-  вместо молчаливого пропуска.
+- [x] Заменить автоматический breaking skip на fail-closed decision: по
+      умолчанию packed local-HEAD lane запускается.
+- [x] Разрешать bridge skip только по exact-version review record с outcome
+      `deferred` и непустой причиной.
+- [x] Покрыть absent, stale, malformed, compatible и deferred decisions тестами.
+- [x] Синхронизировать CI/pre-push diagnostics и architecture docs.
+- [x] Пройти разрешённые project gates конвейера 0/0.
+
+## Acceptance
+
+- [x] Unaligned breaking release без review record запускает HEAD lane и ловит
+      template drift на создавшем его SHA.
+- [x] Exact-version `deferred` review сохраняет release bridge, явно называет
+      долг и не заставляет published starter потреблять unpublished core.
+- [x] Stale/empty/unknown review fail closed: lane запускается.
+- [x] Additive и aligned releases сохраняют прежнее обязательное поведение.
+- [x] CI и pre-push используют одно решение и одинаково объясняют редкий skip.
+
+## Что сделано
+
+- [x] **Decision:** `scripts/release-plan.ts` запускает HEAD fail-closed и
+      признаёт skip только для exact core version + `deferred` + non-empty
+      reason из `scripts/starter-head-review.json`.
+- [x] **Regression:** `scripts/release-plan.test.ts`, case
+      `an unaligned breaking release runs HEAD unless an exact deferred review exists`,
+      фиксирует absent, exact, stale, empty, unknown, aligned и additive paths.
+- [x] **CI:** `.github/workflows/ci.yml` и
+      `scripts/workflow-permissions.test.ts`, case
+      `the starter matrix contains every mode, variant and browser surface`,
+      сохраняют общий decision command и видимый debt diagnostic.
+- [x] **Architecture:** `docs/decisions/0099-starter-head-skips-require-versioned-review.md`,
+      `docs/decisions/README.md`, `docs/architecture/ci-release.md` и
+      `CONTRIBUTING.md` фиксируют review schema и lifecycle.
+- [x] **Validation:** targeted 42 tests, core/scripts typechecks,
+      `bun run verify` и обе packed local-HEAD variants через
+      `bun run starter-head-lane` завершились с exit 0.

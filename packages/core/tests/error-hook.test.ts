@@ -244,4 +244,36 @@ describe('createErrorHook', () => {
     expect(await mapped.json()).toEqual({ code: 'conflict' });
     expect(await unmapped.json()).toEqual({ code: 'FILE_TOO_LARGE' });
   });
+
+  test('a declarative fallback maps only unmapped stitchkit codes', async () => {
+    const hook = createErrorHook({
+      codeMap: { CONFLICT: 'conflict' },
+      unmappedCode: 'framework_error',
+      render: (info) => ({ code: info.code }),
+    });
+
+    const mapped = await hook(ctx, new AppError('CONFLICT', 'duplicate', 409));
+    const frameworkFallback = await hook(ctx, new AppError('FILE_TOO_LARGE', 'large', 413));
+    const projectCode = await hook(ctx, new AppError('SESSION_GONE', 'gone', 404));
+
+    expect(await mapped?.json()).toEqual({ code: 'conflict' });
+    expect(await frameworkFallback?.json()).toEqual({ code: 'framework_error' });
+    expect(await projectCode?.json()).toEqual({ code: 'SESSION_GONE' });
+  });
+
+  test('an unmapped-code resolver receives a narrowed framework code', async () => {
+    const seen: StitchErrorCode[] = [];
+    const hook = createErrorHook({
+      unmappedCode: (code) => {
+        seen.push(code);
+        return code.startsWith('FILE_') ? 'storage_error' : 'framework_error';
+      },
+      render: (info) => ({ code: info.code }),
+    });
+
+    const response = await hook(ctx, new AppError('FILE_NOT_FOUND', 'gone', 404));
+
+    expect(seen).toEqual(['FILE_NOT_FOUND']);
+    expect(await response?.json()).toEqual({ code: 'storage_error' });
+  });
 });

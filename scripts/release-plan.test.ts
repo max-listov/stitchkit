@@ -162,9 +162,37 @@ describe('release plan', () => {
     expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');
   });
 
-  test('skips HEAD only for an unaligned, changelog-proven breaking core minor', () => {
+  test('an unaligned breaking release runs HEAD unless an exact deferred review exists', () => {
     const breaking = '### ⚠️ Breaking changes\n\n- managed server hard cut';
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(false);
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'deferred',
+        reason: 'The target lane must remain on the published minor until core ships.',
+      }),
+    ).toBe(false);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.48.0',
+        outcome: 'deferred',
+        reason: 'stale review',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'deferred',
+        reason: '   ',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'compatible',
+        reason: 'must prove compatibility by running the lane',
+      }),
+    ).toBe(true);
     expect(shouldRunStarterHeadLane('0.49.0', '^0.49.0', breaking)).toBe(true);
     expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', '### Added\n\n- additive')).toBe(
       true,
