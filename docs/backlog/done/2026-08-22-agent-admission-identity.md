@@ -2,9 +2,10 @@
 title: "Stable agent admission identity"
 description: "Вернуть accepted-response transport фактически назначенные run/assistant IDs без store internals и закрыть identity collisions."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22 17:16 +00:00
 related:
   - docs/backlog/in-progress/2026-08-22-agent-session-coordination.md
 ---
@@ -42,7 +43,7 @@ ticket key допускал collision на произвольных non-empty ID
 - [x] Заменить delimiter key на nested map и internally observe admission rejection.
 - [x] Синхронизировать guide, API reference и changelog.
 - [x] Прогнать targeted regression tests и полный `bun run verify`.
-- [ ] Выпустить patch release и проверить npm/GitHub publication.
+- [x] Выпустить patch release и проверить npm/GitHub publication.
 
 ## Acceptance
 
@@ -81,4 +82,9 @@ Findings уже завершённого раннего review включены 
       smoke, packed consumer и обе target starter lanes зелёные.
 - [x] `CHANGELOG.md`, `docs/guide/agent-runtime.md`, `docs/api/reference.md` и
       public type exports синхронизированы для `0.56.3`.
-- [ ] Publication evidence и release links добавляются после tag workflow.
+- [x] Release commit [`7c34c57`](https://github.com/max-listov/stitchkit/commit/7c34c57590a9f02533095ef168c09abfbe8b3ab0)
+      прошёл [exact-SHA CI](https://github.com/max-listov/stitchkit/actions/runs/32587061800);
+      tag `v0.56.3` указывает на тот же SHA.
+- [x] [Release workflow](https://github.com/max-listov/stitchkit/actions/runs/32587186586)
+      опубликовал `stitchkit@0.56.3` в public npm registry и создал
+      [GitHub Release](https://github.com/max-listov/stitchkit/releases/tag/v0.56.3).
