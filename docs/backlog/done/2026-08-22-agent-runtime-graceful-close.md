@@ -2,9 +2,10 @@
 title: "Graceful agent runtime close"
 description: "Закрыть admission, дать active runs natural drain budget и только затем выполнять bounded shutdown abort."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
   - docs/backlog/in-progress/2026-08-22-agent-session-coordination.md
 ---
@@ -33,7 +34,7 @@ drain, а application shutdown теряет уже принятый model/tool t
 - [x] Покрыть natural drain, forced abort и bounded non-cooperative settlement.
 - [x] Синхронизировать guide, API reference и changelog.
 - [x] Прогнать targeted tests и полный release gate.
-- [ ] Выпустить patch и проверить npm/GitHub publication.
+- [x] Выпустить patch и проверить npm/GitHub publication.
 
 ## Acceptance
 
@@ -69,6 +70,14 @@ drain, а application shutdown теряет уже принятый model/tool t
 
 - [x] `packages/core/tests/agent-runtime-coordinator.test.ts` — 4 pass; полный
       `bun run verify` зелёный, включая packed Bun/Node consumers и starter lanes.
+
+### Release
+
+- [x] Release commit: `aa096c131dbdce310f208acc8d6290a12e7842bd`.
+- [x] Exact-SHA CI: https://github.com/max-listov/stitchkit/actions/runs/32589019001 — success.
+- [x] Release workflow: https://github.com/max-listov/stitchkit/actions/runs/32589372957 — success.
+- [x] GitHub Release: https://github.com/max-listov/stitchkit/releases/tag/v0.56.4.
+- [x] Public registry: `stitchkit@0.56.4` доступен через npm.
 
 ## Конвейер 0/0
 
