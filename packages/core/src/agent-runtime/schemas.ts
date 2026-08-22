@@ -147,6 +147,7 @@ export const AgentRunSchema = z.object({
   state: AgentRunStateSchema,
   revision: AgentRecordVersionSchema,
   ownerId: z.string().min(1).optional(),
+  fencingToken: AgentRecordVersionSchema.optional(),
   terminalReason: AgentTerminalReasonSchema.optional(),
   terminalPolicyName: z.string().min(1).optional(),
   createdAt: AgentTimestampSchema,

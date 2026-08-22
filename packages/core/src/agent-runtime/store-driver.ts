@@ -408,6 +408,7 @@ function reduceStore(
       ...run,
       state: 'running',
       ownerId: operation.input.ownerId,
+      fencingToken: (run.fencingToken ?? 0) + 1,
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
@@ -422,6 +423,7 @@ function reduceStore(
       run.revision !== input.expectedRevision ||
       run.state !== 'running' ||
       run.ownerId !== input.ownerId ||
+      (input.fencingToken !== undefined && run.fencingToken !== input.fencingToken) ||
       input.assistant.runId !== run.id ||
       input.assistant.id !== run.assistantMessageId ||
       input.assistant.conversationId !== run.conversationId ||
@@ -522,6 +524,7 @@ function reduceStore(
       run.revision !== input.expectedRevision ||
       (run.state !== 'running' && run.state !== 'interrupt_requested') ||
       run.ownerId !== input.ownerId ||
+      (input.fencingToken !== undefined && run.fencingToken !== input.fencingToken) ||
       input.assistant.runId !== run.id ||
       input.assistant.id !== run.assistantMessageId ||
       input.assistant.conversationId !== run.conversationId ||

@@ -9,6 +9,47 @@ import {
 } from '../src/agent-runtime';
 
 describe('agent runtime terminalization', () => {
+  test('preflights model capability before durable input admission', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        preflight: () => {
+          throw new Error('required capability unavailable');
+        },
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => ({
+        instructions: '',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+    });
+    const ticket = runtime.submit({
+      conversationId: 'conversation-preflight',
+      idempotencyKey: 'request-preflight',
+      context: {},
+      parts: [{ type: 'text', text: 'hello' }],
+      metadata: {},
+    });
+    void ticket.result.catch(() => undefined);
+    void ticket.admission.catch(() => undefined);
+
+    await expect(ticket.accepted).rejects.toThrow('required capability unavailable');
+    expect((await store.loadSnapshot('conversation-preflight')).messages).toHaveLength(0);
+  });
+
   test('commits a provider failure when prompt construction fails before streaming', async () => {
     const store = createMemoryAgentRuntimeStore();
     const events: AgentRuntimeEvent[] = [];

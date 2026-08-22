@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { createBoundedSinkManager } from '../internal/observability-sink';
+import type { ObservabilitySinkStatus } from '../observability/status';
 import {
   AgentAssistantPlaceholderSchema,
   AgentMessageSchema,
@@ -106,3 +108,121 @@ export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
 
 export type AgentRuntimeEvent = z.infer<typeof AgentRuntimeEventSchema>;
 export type AgentRuntimePublisher = (event: AgentRuntimeEvent) => void | Promise<void>;
+
+export const AgentRuntimeEventCursorSchema = z.object({
+  snapshotVersion: AgentRecordVersionSchema.optional(),
+  durableEventIds: z.array(AgentRecordIdSchema).optional(),
+  runtimeEpoch: z.string().min(1).optional(),
+  sequence: z.int().nonnegative().optional(),
+});
+
+export type AgentRuntimeEventCursor = z.infer<typeof AgentRuntimeEventCursorSchema>;
+
+export interface AgentRuntimeCursorAdvance {
+  status: 'accepted' | 'duplicate' | 'gap';
+  cursor: AgentRuntimeEventCursor;
+}
+
+function isDurableEvent(
+  event: AgentRuntimeEvent,
+): event is Extract<
+  AgentRuntimeEvent,
+  { type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'terminal' }
+> {
+  return (
+    event.type === 'admission' ||
+    event.type === 'assistant-checkpoint' ||
+    event.type === 'run-state' ||
+    event.type === 'terminal'
+  );
+}
+
+/** Detect duplicate or missing delivery so reconnect can reload the durable snapshot. */
+export function advanceAgentRuntimeEventCursor(
+  rawCursor: AgentRuntimeEventCursor,
+  event: AgentRuntimeEvent,
+): AgentRuntimeCursorAdvance {
+  const cursor = AgentRuntimeEventCursorSchema.parse(rawCursor);
+  if (isDurableEvent(event)) {
+    const previous = cursor.snapshotVersion;
+    const durableEventIds =
+      previous === event.snapshotVersion ? (cursor.durableEventIds ?? []) : [];
+    if (
+      (previous !== undefined && event.snapshotVersion < previous) ||
+      durableEventIds.includes(event.eventId)
+    ) {
+      return { status: 'duplicate', cursor };
+    }
+    return {
+      status:
+        previous !== undefined && event.snapshotVersion > previous + 1 ? 'gap' : 'accepted',
+      cursor: {
+        ...cursor,
+        snapshotVersion: event.snapshotVersion,
+        durableEventIds: [...durableEventIds, event.eventId],
+      },
+    };
+  }
+  const previousSequence =
+    cursor.runtimeEpoch === event.runtimeEpoch ? cursor.sequence : undefined;
+  if (previousSequence !== undefined && event.sequence <= previousSequence) {
+    return { status: 'duplicate', cursor };
+  }
+  return {
+    status:
+      previousSequence !== undefined && event.sequence > previousSequence + 1
+        ? 'gap'
+        : 'accepted',
+    cursor: { ...cursor, runtimeEpoch: event.runtimeEpoch, sequence: event.sequence },
+  };
+}
+
+export interface AgentRuntimeEventSinkConfig {
+  write(event: AgentRuntimeEvent): void | Promise<void>;
+  project?(event: AgentRuntimeEvent): AgentRuntimeEvent | undefined;
+  maxPending?: number;
+  onSinkError?(input: { error: unknown; event?: AgentRuntimeEvent }): void | Promise<void>;
+  onDrop?(input: {
+    reason: 'capacity' | 'closed';
+    event: AgentRuntimeEvent;
+    pending: number;
+  }): void | Promise<void>;
+}
+
+export interface AgentRuntimeEventSink {
+  publish: AgentRuntimePublisher;
+  flush(): Promise<void>;
+  getStatus(): ObservabilitySinkStatus;
+  close(): Promise<ObservabilitySinkStatus>;
+}
+
+/** Bounded, failure-isolated transport-neutral delivery lifecycle. */
+export function createAgentRuntimeEventSink(
+  config: AgentRuntimeEventSinkConfig,
+): AgentRuntimeEventSink {
+  const manager = createBoundedSinkManager<AgentRuntimeEvent>({
+    write: config.write,
+    ...(config.maxPending !== undefined && { maxPending: config.maxPending }),
+    ...(config.onSinkError && { onSinkError: config.onSinkError }),
+    ...(config.onDrop && { onDrop: config.onDrop }),
+  });
+  return {
+    publish(rawEvent) {
+      const event = AgentRuntimeEventSchema.parse(rawEvent);
+      const projected = config.project?.(event) ?? (config.project ? undefined : event);
+      if (projected) manager.submit(() => AgentRuntimeEventSchema.parse(projected));
+    },
+    flush: () => manager.flush(),
+    getStatus: () => manager.getStatus(),
+    close: () => manager.close(),
+  };
+}
+
+/** Stable identity for a post-CAS event; safe for outbox/dedup keys. */
+export function agentDurableEventId(
+  type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'terminal',
+  runId: string,
+  snapshotVersion: number,
+): string {
+  return `${runId}:${type}:${snapshotVersion}`;
+}

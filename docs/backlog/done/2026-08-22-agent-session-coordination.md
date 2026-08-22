@@ -2,13 +2,14 @@
 title: "Managed agent sessions, input scheduling and run fencing"
 description: "Объединить durable admission, INTERRUPT/QUEUE, settlement, shutdown и managed side-effect fencing в keyed lifecycle."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-framework.md
-  - docs/backlog/in-progress/2026-08-22-agent-message-history-runtime.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-race-probes.md
+  - docs/backlog/done/2026-08-22-agent-runtime-framework.md
+  - docs/backlog/done/2026-08-22-agent-message-history-runtime.md
+  - docs/backlog/done/2026-08-22-agent-runtime-race-probes.md
 ---
 
 # Managed agent sessions, input scheduling and run fencing
@@ -56,36 +57,36 @@ Successor не допускается между этими точками. V1 s
 
 ## План
 
-- [ ] Зафиксировать transition/action table and linearization points.
+- [x] Зафиксировать transition/action table and linearization points.
 - [x] Спроектировать submit ticket, run handle, batching and lifecycle hooks.
 - [x] Добавить stable caller IDs и фактический admission receipt без зависимости consumer-а от
       store internals или порядка вызовов `generateId()`.
-- [ ] Реализовать execution settlement -> terminal CAS -> ownership release barrier.
-- [ ] Интегрировать pre-tool and pre-publication fence without breaking `mountAgent`.
-- [ ] Определить hung predecessor, shutdown and bounded cleanup policies.
-- [ ] Документировать multi-process lease/CAS and external-effect idempotency boundaries.
-- [ ] Прогнать deterministic race matrix.
+- [x] Реализовать execution settlement -> terminal CAS -> ownership release barrier.
+- [x] Интегрировать pre-tool and pre-publication fence without breaking `mountAgent`.
+- [x] Определить hung predecessor, shutdown and bounded cleanup policies.
+- [x] Документировать multi-process lease/CAS and external-effect idempotency boundaries.
+- [x] Прогнать deterministic race matrix.
 
 ## Acceptance
 
-- [ ] `signal.aborted` никогда не считается settlement.
-- [ ] Successor admission невозможен до выигравшего predecessor terminal CAS.
-- [ ] Superseded run не получает новое managed-tool admission или canonical publication ownership.
-- [ ] Уже начавшийся non-cooperative effect не объявляется отменённым/откаченным framework-ом.
-- [ ] Pending inputs ordered; domain merge не выдумывается framework-ом.
-- [ ] New, duplicate and coalesced submit возвращают одну durable identity; при coalescing receipt
+- [x] `signal.aborted` никогда не считается settlement.
+- [x] Successor admission невозможен до выигравшего predecessor terminal CAS.
+- [x] Superseded run не получает новое managed-tool admission или canonical publication ownership.
+- [x] Уже начавшийся non-cooperative effect не объявляется отменённым/откаченным framework-ом.
+- [x] Pending inputs ordered; domain merge не выдумывается framework-ом.
+- [x] New, duplicate and coalesced submit возвращают одну durable identity; при coalescing receipt
       указывает существующий assigned successor, а не отброшенный proposed run.
-- [ ] Consumer может вернуть accepted user/assistant placeholders до terminal result, не создавая
+- [x] Consumer может вернуть accepted user/assistant placeholders до terminal result, не создавая
       второй coordinator или shadow persistence path.
-- [ ] Hung lane behavior explicit and bounded cleanup does not falsify settlement.
-- [ ] Lane state не удаляется zombie cleanup-ом до actual predecessor settlement.
+- [x] Hung lane behavior explicit and bounded cleanup does not falsify settlement.
+- [x] Lane state не удаляется zombie cleanup-ом до actual predecessor settlement.
 
 ## Конвейер 2/2 с остановкой
 
 - [x] Plan validator 1: input UX, debounce/queue, recovery and shutdown API.
 - [x] Plan validator 2: linearizability, settlement, fencing and multi-process boundary.
-- [ ] Implementation validator 1: public API/runtime integration and deletion proof.
-- [ ] Implementation validator 2: adversarial races, hung predecessor and late effects.
+- [x] Implementation validator 1: public API/runtime integration and deletion proof. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
+- [x] Implementation validator 2: adversarial races, hung predecessor and late effects. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
 
 ## Consumer admission slice
 
@@ -96,3 +97,10 @@ Successor не допускается между этими точками. V1 s
       shared successor identity.
 - [x] `docs/guide/agent-runtime.md`, `docs/api/reference.md` и `CHANGELOG.md` синхронизированы с
       additive public API.
+
+
+## Что сделано
+
+- **Implementation:** `packages/core/src/agent-runtime/coordinator.ts` и `runtime.ts` связывают durable admission, ordered queue/coalescing, interrupt settlement, shutdown drain и terminal CAS.
+- **Регрессия:** `packages/core/tests/agent-runtime-coordinator.test.ts::interrupt requests abort but successor waits for actual settlement`; `packages/core/tests/agent-runtime-coordinator.test.ts::force timeout bounds a non-cooperative active run and closes admission`.
+- **Identity:** `packages/core/tests/agent-runtime-terminal.test.ts::returns the durable admission identity for a duplicate with discarded proposals` подтверждает new/duplicate/coalesced receipt contract.

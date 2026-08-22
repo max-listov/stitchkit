@@ -16,11 +16,25 @@ AI SDK and provider-adapter versions. Public evidence is intentionally
 anonymised: this repository records reproducible mechanisms, not consumer
 identity or business context.
 
-The sample contained a plugin/infra runtime, a service-oriented chat runtime
-and a smaller generation-agent runtime. Selected generic-candidate source was
-roughly ten thousand lines before tests. Whole-folder LOC is not treated as
-removable: domain prompts, tools, persistence mappings and transports stay in
-the applications.
+The sample contained a service-oriented chat runtime (shape A), a durable generation-agent runtime
+(shape B) and a smaller provider/generation runtime (shape C). The pinned evidence was:
+
+| Shape | AI SDK | OpenRouter adapter | Inspected generic-candidate LOC | Structural role |
+|---|---:|---:|---:|---|
+| A | `^7.0.77` | `^3.0.0` | 3,410 | session + prompt + stream + compaction |
+| B | `7.0.65` | `3.0.0` | 1,819 | durable loop + context + delivery + compaction |
+| C | `^7.0.37` | `^3.0.0` | 190 | provider construction + small generation path |
+
+Counts use exact authored symbol groups, not folders. A includes its coordinator, stream processor,
+prompt/result builders, compactor, context-window and provider modules; B includes its session,
+loop, stream handlers, context manager, summary, model and provider modules; C includes generation
+and provider adapters. Tests, generated files, domain tools, transports and product catalogs are
+excluded.
+
+The current framework slice is 4,197 authored source lines, 2,564 source/conformance test lines and
+787 packed-fixture lines. One controlled pilot replaces 2,189 lines of the old agent layer with
+1,554 lines of adapters/domain wiring (net −635); its focused behavioral boundary suite is 4/4.
+This is deletion evidence, not a claim that every application removes the same amount.
 
 ## Evidence matrix
 
@@ -39,6 +53,23 @@ the applications.
 | Observability | usage, cost, TTFT and terminal reasons recur | provenance and terminal identity are explicit | sink and retention stay application-owned | framework event + shared sink lifecycle |
 | Race proof | existing tests cover only fragments and often rely on timing | partial order must be controlled with barriers | live provider is an optional contract probe | internal conformance harness |
 
+## Traceable symbol evidence
+
+| Capability | Shape A evidence | Shape B evidence | Shape C / falsifier |
+|---|---|---|---|
+| Coordination | keyed session run/abort/timeout methods | queued successor/session state | absent: must remain optional |
+| Stream loop | central stream processor and result builder | run loop and stream event handlers | one-shot generation only; no forced loop abstraction |
+| Prompt/context | prompt builder + context-window arithmetic | context manager | absent: domain callback remains valid |
+| Compaction | compactor + threshold config | summary service | absent: `none` lifecycle required |
+| Models/providers | provider factory and catalog boundary | provider/model modules | independent provider factory confirms adapter repetition |
+| Delivery | stable application stream projection | stream event handlers | absent: transport remains consumer-owned |
+| Durable store | manual message/run persistence around session | durable agent records and recovery | absent: memory adapter states its limitation |
+
+The falsification rule was applied per row: a capability was not made mandatory merely because it
+existed in A or B. C is the negative sample that keeps compaction, coordination and delivery
+optional. AI SDK's supported stream/model contracts are the external second source where only one
+consumer shape exercised a part.
+
 ## Rejected ownership
 
 - No framework ORM schema, worker fleet, generic job queue or distributed lock.
@@ -55,3 +86,8 @@ store operations, a coordinator without managed-tool fencing, or streaming
 events without durable snapshot semantics would preserve the same correctness
 gaps in a new package. Those modules remain internal until the packed Bun and
 Node fixtures exercise the coherent path.
+
+The vertical slice is now public and the ownership verdicts remain current. Follow-up evidence
+refined three details: the framework reducer owns transitions behind storage primitives, model
+snapshots have explicit freshness, and delivery exposes stable IDs plus gap detection instead of
+promising process replay.

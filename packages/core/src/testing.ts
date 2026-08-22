@@ -100,6 +100,15 @@ export function createHandlerTestClients<
 }
 
 export {
+  type AgentRaceBarrier,
+  type AgentRaceDriver,
+  type AgentRaceTrace,
+  type AgentRaceTraceEntry,
+  createAgentRaceBarrier,
+  createAgentRaceDriver,
+  createAgentRaceTrace,
+} from './agent-runtime/testing';
+export {
   type AgentStoreConformanceConfig,
   runAgentStoreConformance,
 } from './testing/agent-store-conformance';

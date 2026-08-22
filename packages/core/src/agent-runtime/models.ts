@@ -13,9 +13,19 @@ export const AgentModelDescriptorSchema = z.object({
   capabilities: z.array(AgentModelCapabilitySchema),
   observedAt: z.iso.datetime({ offset: true }).optional(),
   source: z.string().min(1).optional(),
+  availability: z.enum(['available', 'unavailable']).optional(),
 });
 
 export type AgentModelDescriptor = z.infer<typeof AgentModelDescriptorSchema>;
+
+export const AgentModelRegistrySnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  source: z.string().min(1),
+  observedAt: z.iso.datetime({ offset: true }),
+  models: z.record(z.string().min(1), AgentModelDescriptorSchema),
+});
+
+export type AgentModelRegistrySnapshot = z.infer<typeof AgentModelRegistrySnapshotSchema>;
 
 export interface AgentLanguageModelProvider {
   create(modelId: string): LanguageModel;
@@ -25,9 +35,7 @@ export interface AgentLanguageModelProvider {
   }): AgentUsage;
 }
 
-export interface AgentModelDeclaration extends AgentModelDescriptor {
-  provider: string;
-}
+export type AgentModelDeclaration = AgentModelDescriptor;
 
 export interface AgentModelRegistryConfig<
   MODELS extends Record<string, AgentModelDeclaration>,
@@ -46,7 +54,12 @@ export interface AgentModelRegistry<MODEL_KEY extends string> {
   keys(): readonly MODEL_KEY[];
   descriptor(key: MODEL_KEY): AgentModelDescriptor;
   supports(key: MODEL_KEY, capabilities: readonly AgentModelCapability[]): boolean;
+  preflight(
+    key: MODEL_KEY,
+    capabilities?: readonly AgentModelCapability[],
+  ): AgentModelDescriptor;
   resolve(key: MODEL_KEY, capabilities?: readonly AgentModelCapability[]): AgentResolvedModel;
+  snapshot(input: { source: string; observedAt: string }): AgentModelRegistrySnapshot;
 }
 
 export function defineModelRegistry<MODELS extends Record<string, AgentModelDeclaration>>(
@@ -70,15 +83,30 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDecl
     return capabilities.every((capability) => available.has(capability));
   };
 
+  const preflight = (
+    key: ModelKey,
+    required: readonly AgentModelCapability[] = [],
+  ): AgentModelDescriptor => {
+    const selected = descriptor(key);
+    if (selected.availability === 'unavailable') {
+      throw new Error(`Agent model ${key} is unavailable`);
+    }
+    if (!supports(key, required)) {
+      throw new Error(`Agent model ${key} does not satisfy required capabilities`);
+    }
+    if (!config.providers[selected.provider]) {
+      throw new Error(`Unknown agent model provider: ${selected.provider}`);
+    }
+    return selected;
+  };
+
   return {
     keys: () => [...descriptors.keys()],
     descriptor,
     supports,
+    preflight,
     resolve(key, required = []) {
-      const selected = descriptor(key);
-      if (!supports(key, required)) {
-        throw new Error(`Agent model ${key} does not satisfy required capabilities`);
-      }
+      const selected = preflight(key, required);
       const provider = config.providers[selected.provider];
       if (!provider) throw new Error(`Unknown agent model provider: ${selected.provider}`);
       return {
@@ -87,5 +115,35 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDecl
         ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
       };
     },
+    snapshot(input) {
+      return AgentModelRegistrySnapshotSchema.parse({
+        schemaVersion: 1,
+        source: input.source,
+        observedAt: input.observedAt,
+        models: Object.fromEntries(descriptors.entries()),
+      });
+    },
   };
+}
+
+export interface AgentModelSnapshotPolicy {
+  maxAgeMs: number;
+  now?: () => Date;
+}
+
+/** Validate an optional discovery snapshot without making discovery a startup dependency. */
+export function validateAgentModelSnapshot(
+  input: unknown,
+  policy: AgentModelSnapshotPolicy,
+): AgentModelRegistrySnapshot {
+  if (!Number.isSafeInteger(policy.maxAgeMs) || policy.maxAgeMs < 0) {
+    throw new TypeError('maxAgeMs must be a non-negative safe integer');
+  }
+  const snapshot = AgentModelRegistrySnapshotSchema.parse(input);
+  const now = policy.now?.() ?? new Date();
+  const age = now.getTime() - new Date(snapshot.observedAt).getTime();
+  if (age < 0 || age > policy.maxAgeMs) {
+    throw new Error(`Agent model snapshot from ${snapshot.source} is stale`);
+  }
+  return snapshot;
 }

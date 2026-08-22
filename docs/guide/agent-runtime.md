@@ -73,7 +73,10 @@ const prompt = composeAgentPrompt([
 const runtime = createAgentRuntime({
   protocol,
   store: createMemoryAgentRuntimeStore(),
-  models: { resolve: () => models.resolve('fast', ['tools']) },
+  models: {
+    preflight: () => models.preflight('fast', ['tools']),
+    resolve: () => models.resolve('fast', ['tools']),
+  },
   prompt: ({ context, signal, model }) =>
     prompt({
       context,
@@ -223,6 +226,10 @@ Every mutation carries an expected run revision or snapshot version. Input
 assignment additionally carries an idempotency identity. A conflict is a
 control outcome; stale data is never silently overwritten.
 
+Acquisition increments an optional monotonic `fencingToken`. The managed runtime carries it through
+checkpoint/terminal CAS and tool context, so a distributed adapter can reject an old owner even if
+an owner label is reused. Lease expiry and renewal remain application-owned.
+
 On startup, `runtime.recover({ resolveContext })` consumes bounded lightweight
 pages. Its safe default resumes queued runs and reports acquired or
 `interrupt_requested` runs as skipped. A policy may requeue acquired work only
@@ -259,6 +266,12 @@ These are post-commit notifications, not a transactional outbox: a process can
 crash between the database commit and `publish`. Reconnect should load canonical
 state. Exactly-once external delivery remains an application-owned outbox.
 
+Durable event IDs are derived from run, event type and snapshot version. Use
+`advanceAgentRuntimeEventCursor` to classify accepted, duplicate and gap delivery; a gap triggers a
+snapshot reload. `createAgentRuntimeEventSink` adds a bounded failure-isolated lifecycle and typed
+projection/redaction hook. `onPublishError` records direct publisher failures without changing the
+already committed run.
+
 A named custom stop condition terminalizes with `policy_stop`; its `policyName`
 is persisted on the run and included in the terminal event/result. `max-steps`
 is the reserved built-in policy name. `loop.prepareStep` is the controlled AI
@@ -289,6 +302,14 @@ effect must be replay-safe.
 `projectAgentHistory` converts canonical engine records into provider-valid AI
 SDK messages and pairs tool calls/results. Provider-required metadata is kept
 in a versioned opaque envelope and omitted from product delivery by default.
+`projectAgentHistoryDetailed` additionally returns one inspectable decision per canonical record;
+leading assistant records, crash drafts and unmatched tool chronology are never silently passed to
+the provider.
+
+`selectAgentHistory` is the non-destructive context-window selector. It removes only whole oldest
+complete turns, protects system/summary, incomplete and configured recent turns, and reports every
+keep/remove reason with measured/estimated/unavailable token provenance. An oversized protected turn
+returns `oversized`; unavailable accounting returns `unavailable` without invented arithmetic.
 
 `ComposedAgentPrompt.instructions` accepts the AI SDK `Instructions` contract.
 Use `adaptInstructions` when a provider needs metadata on the system message:
@@ -325,19 +346,29 @@ provider system message. The consumer supplies the structured summary schema
 and prompt. Pass `previousSummary` for a direct call, or configure
 `readPreviousSummary` for runtime-managed compaction, to merge and atomically
 replace a leading summary on the next compaction.
+Set `maxAttempts` to allow bounded conflict recovery. Every retry reloads the snapshot, reselects the
+eligible range and recomputes the summary; the stale summary is never retried.
 
 ## Observability
 
 `createAgentObservability` emits a separate operator-only `AgentRunEvent`. It
 reuses the same bounded sink lifecycle as request/tool observability without
 sending new event kinds to existing request sinks. Product events omit provider
-causes; the operator terminal event may include `internalCause`, so its sink
-must use internal retention and redaction policy.
+causes. Operator `internalCause` is also redacted by default; an operator-only sink must explicitly
+set `includeInternalCause` and own its retention policy.
 
 Usage values carry `provider-reported`, `computed`, `estimated` or
 `unavailable` provenance. Cost additionally carries an ISO currency code;
 OpenRouter-reported cost is normalized as USD. Missing values remain absent,
 never zero-filled.
 
-In-memory sink delivery is at-most-once per execution. Stable event IDs allow
-consumer dedupe; cross-crash exactly-once requires a durable outbox.
+The sink deduplicates stable event IDs by default. Cross-crash exactly-once still requires a durable
+outbox.
+
+## Deterministic race and adapter proof
+
+`stitchkit/testing` exports `createAgentRaceBarrier`, `createAgentRaceDriver` and
+`createAgentRaceTrace`. Barriers have bounded teardown, traces assert exact partial order, and the
+helpers are exercised from packed Bun and Node consumers. `runAgentStoreConformance` runs duplicate,
+coalescing, collision, stale checkpoint, replay safety, terminal race, compaction and recovery
+invariants against any fresh durable adapter.

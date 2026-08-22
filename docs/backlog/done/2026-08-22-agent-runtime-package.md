@@ -2,12 +2,13 @@
 title: "Agent runtime entrypoints, docs and release proof"
 description: "Поставить coherent optional runtime surface с isolated peers, packed fixtures и upgrade-grade docs."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-framework.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-product-contract.md
+  - docs/backlog/done/2026-08-22-agent-runtime-framework.md
+  - docs/backlog/done/2026-08-22-agent-runtime-product-contract.md
 ---
 
 # Agent runtime entrypoints, docs and release proof
@@ -37,14 +38,14 @@ Engine уменьшит consumer code только как цельный importa
 - [x] Verify generated llms sources and package contents.
 - [x] Record greenfield wiring/deletion measurement method without private identities.
 - [x] Prepare changelog according to accepted API; release task waits for green gates.
-- [ ] Через local packed package предложить pilot и structurally different migration tasks в
+- [x] Через local packed package предложить pilot и structurally different migration tasks в
   consumer-owned backlogs только с отдельной authority; gaps возвращаются к framework owner.
 
 ## Acceptance
 
 - [x] Base Stitchkit and neutral runtime imports do not resolve provider module.
 - [x] No partial public module ships before its dependent invariants are coherent.
-- [ ] Packed package passes Bun/Node conformance/race lane.
+- [x] Packed package passes Bun/Node conformance/race lane.
 - [x] Fixture wiring contains no copied engine internals.
 - [x] Public artifacts contain no private consumer identity.
 
@@ -52,8 +53,8 @@ Engine уменьшит consumer code только как цельный importa
 
 - [x] Plan validator 1: package ergonomics, docs journey and integration usefulness.
 - [x] Plan validator 2: dependency isolation, release classification and proof strategy.
-- [ ] Implementation validator 1: packed package/API/docs/generated sources.
-- [ ] Implementation validator 2: Bun/Node, optional peers and compatibility gates.
+- [x] Implementation validator 1: packed package/API/docs/generated sources. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
+- [x] Implementation validator 2: Bun/Node, optional peers and compatibility gates. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
 
 ## Проверено
 
@@ -61,4 +62,11 @@ Engine уменьшит consumer code только как цельный importa
   imports every Node entrypoint and runs minimal/full/Node consumers from the tarball.
 - `packages/core/scripts/consumer-lane/fixtures/full/src/agent-runtime-neutral.ts` bundles and executes
   without resolving the isolated provider package.
-- Полный packed conformance/race manifest и consumer-owned migrations остаются открытыми.
+- Packed conformance/race manifest и controlled deletion proof выполнены.
+
+
+## Что сделано
+
+- **Package:** public runtime, isolated provider subpath и race/conformance helpers вошли в exact export snapshot и generated `llms.txt`/`llms-full.txt`.
+- **Регрессия:** `packages/core/tests/reference-coverage.test.ts::every export of stitchkit/agent-runtime is documented`; `packages/core/tests/reference-coverage.test.ts::public surface of stitchkit/testing matches its exact snapshot`.
+- **Packed proof:** `bun run consumer-lane` прошёл minimal/full/Node tarball fixtures, включая public race trace; Node smoke импортировал все entrypoints. Release намеренно не выполнялся.

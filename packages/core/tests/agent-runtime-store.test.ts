@@ -155,11 +155,22 @@ describe('AgentRuntimeStore reference adapter', () => {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    const staleFence = await store.commitRunTerminal({
+      conversationId: 'conversation-1',
+      runId: 'run-1',
+      expectedRevision: current.revision,
+      ownerId: 'runtime-1',
+      fencingToken: (current.fencingToken ?? 0) + 1,
+      assistant,
+      reason: 'success',
+    });
+    expect(staleFence.outcome).toBe('conflict');
     const terminal = await store.commitRunTerminal({
       conversationId: 'conversation-1',
       runId: 'run-1',
       expectedRevision: current.revision,
       ownerId: 'runtime-1',
+      fencingToken: current.fencingToken,
       assistant,
       reason: 'success',
     });

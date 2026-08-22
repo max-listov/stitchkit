@@ -42,6 +42,59 @@ function submit(runtime: ReturnType<typeof createAgentRuntime>) {
 }
 
 describe('agent runtime mature-consumer parity', () => {
+  test('distinguishes empty success from a provider-truncated terminal result', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'finish',
+                finishReason: { unified: 'stop', raw: undefined },
+                usage,
+              },
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'finish',
+                finishReason: { unified: 'length', raw: undefined },
+                usage,
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const runtime = createAgentRuntime({
+      protocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+    });
+    const first = await submit(runtime).result;
+    const second = await runtime.submit({
+      conversationId: 'conversation-2',
+      idempotencyKey: 'input-2',
+      context: {},
+      parts: [{ type: 'text', text: 'hello again' }],
+      metadata: {},
+    }).result;
+    expect(first.reason).toBe('success');
+    expect(first.message.parts).toEqual([]);
+    expect(second.reason).toBe('policy_stop');
+    await runtime.close();
+  });
+
   test('passes structured instructions through the model boundary', async () => {
     const model = new MockLanguageModelV4({
       doStream: async () => ({

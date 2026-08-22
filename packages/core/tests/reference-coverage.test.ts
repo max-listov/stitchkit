@@ -29,6 +29,8 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/cli': 'cli.ts',
   'stitchkit/remote': 'remote.ts',
   'stitchkit/observability': 'observability/index.ts',
+  'stitchkit/agent-runtime': 'agent-runtime.ts',
+  'stitchkit/agent-runtime/openrouter': 'agent-runtime-openrouter.ts',
   'stitchkit/testing': 'testing.ts',
   'stitchkit/files': 'files.ts',
 };

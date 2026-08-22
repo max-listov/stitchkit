@@ -7,7 +7,7 @@ created: 2026-08-22
 updated: 2026-08-22
 completed: 2026-08-22 16:22 +0000
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-consumer-parity.md
+  - docs/backlog/done/2026-08-22-agent-runtime-consumer-parity.md
 ---
 
 # Provider-aware system instructions

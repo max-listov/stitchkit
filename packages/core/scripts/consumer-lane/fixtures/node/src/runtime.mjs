@@ -4,12 +4,17 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createMemoryAgentRuntimeStore } from 'stitchkit/agent-runtime';
 import { defineContract } from 'stitchkit/contract';
 import { implement } from 'stitchkit/server';
+import { createAgentRaceTrace } from 'stitchkit/testing';
 import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
 
 const agentStore = createMemoryAgentRuntimeStore();
 const agentSnapshot = await agentStore.loadSnapshot('packed-node-agent');
 assert.equal(agentSnapshot.version, 0);
+const agentTrace = createAgentRaceTrace();
+agentTrace.record('admission');
+agentTrace.record('terminal');
+agentTrace.assertSequence(['admission', 'terminal']);
 
 const contract = defineContract(
   { prefix: 'node-http', scope: 'public' },

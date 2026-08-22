@@ -15,6 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- **Default history projection now rejects invalid chronology.** Completed assistant records before
+  the first user message and assistant records with unmatched tool calls/results are omitted with an
+  inspectable decision instead of being forwarded to the provider. Opt into the former leading
+  behavior only when the provider contract permits it.
+  `// before: projectAgentHistory(messages)` →
+  `// after: projectAgentHistory(messages, { leadingAssistant: 'allow' })`.
+- **Operator events redact `internalCause` by default.** Raw provider/tool failures now require an
+  explicit operator-only opt-in; product delivery remains redacted.
+  `// before: createAgentObservability({ write })` →
+  `// after: createAgentObservability({ write, includeInternalCause: true })`.
+
+### Added
+
+- **Complete context/model mechanics.** `selectAgentHistory()` performs explainable whole-turn
+  budgeting; detailed history projection reports omissions; model registries expose availability,
+  versioned discovery snapshots and freshness validation; optional runtime model preflight runs
+  before durable input admission.
+- **Bounded compaction, delivery and race contracts.** Compaction conflicts can recompute from a
+  fresh snapshot within `maxAttempts`; durable events have stable IDs and cursor gap detection;
+  bounded event sinks isolate transport failure; `stitchkit/testing` exports named bounded barriers
+  and exact traces exercised by packed Bun/Node consumers.
+- **Distributed fencing refinement.** Run acquisition increments an optional monotonic
+  `fencingToken` carried through managed tool context and checkpoint/terminal CAS without moving
+  lease ownership into core.
+
 ## [0.57.0] — 2026-08-22
 
 ### ⚠️ Breaking changes

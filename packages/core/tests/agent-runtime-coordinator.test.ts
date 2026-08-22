@@ -2,6 +2,41 @@ import { describe, expect, test } from 'bun:test';
 import { createAgentSessionCoordinator } from '../src/agent-runtime';
 
 describe('agent session coordinator', () => {
+  test('preserves pending input order without overlapping the active lane', async () => {
+    const coordinator = createAgentSessionCoordinator();
+    const release = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const submit = (runId: string, wait = false) =>
+      coordinator.submit({
+        key: 'ordered-conversation',
+        policy: 'queue',
+        create: () => ({
+          runId,
+          async execute() {
+            order.push(`${runId}:start`);
+            if (wait) await release.promise;
+            order.push(`${runId}:end`);
+            return runId;
+          },
+        }),
+      });
+    const first = submit('run-1', true);
+    await first.accepted;
+    const second = submit('run-2');
+    const third = submit('run-3');
+    expect(order).toEqual(['run-1:start']);
+    release.resolve();
+    await Promise.all([first.result, second.result, third.result]);
+    expect(order).toEqual([
+      'run-1:start',
+      'run-1:end',
+      'run-2:start',
+      'run-2:end',
+      'run-3:start',
+      'run-3:end',
+    ]);
+  });
+
   test('interrupt requests abort but successor waits for actual settlement', async () => {
     const coordinator = createAgentSessionCoordinator();
     const firstRelease = Promise.withResolvers<void>();

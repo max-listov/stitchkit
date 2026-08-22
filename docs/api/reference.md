@@ -425,6 +425,70 @@ Server-only optional application runtime. See the
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
+### Complete runtime inventory
+
+The entrypoint deliberately exports the schemas beside their inferred types so persistence and
+transport adapters validate the same records. Runtime composition types are `AgentRuntime`,
+`AgentRuntimeConfig`, `AgentRuntimeInput`, `AgentRuntimeProtocolInput`, `AgentRuntimeRunContext`,
+`AgentRuntimeResult`, `AgentRuntimeInterruptInput`, `AgentRuntimeRecoveryInput`,
+`AgentRuntimeRecoveryDecision`, `AgentRuntimeRecoveryOutcome`, `AgentRuntimePublisher`,
+`AgentInputPolicy`, `AgentStopReason`, `AgentCoordinatedRun`, `AgentRunTicket`,
+`AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult` and
+`StructuredCompactionConfig`.
+
+Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentRecordIdSchema`, `AgentRecordVersionSchema`,
+`AgentTimestampSchema`, `AgentJsonObjectSchema`, `AgentProviderEnvelopeSchema`,
+`AgentProviderEnvelope`, `AgentMessagePartSchema`, `AgentMessagePart`, `AgentTextPartSchema`,
+`AgentReasoningPartSchema`, `AgentFilePartSchema`, `AgentSourcePartSchema`,
+`AgentToolCallPartSchema`, `AgentToolResultPartSchema`, `AgentOpaquePartSchema`,
+`AgentControlPartSchema`, `AgentMessageRoleSchema`, `AgentMessageStatusSchema`, `AgentMessage`,
+`AgentAssistantPlaceholderSchema`, `AgentAssistantPlaceholder`, `AgentRunStateSchema`,
+`AgentTerminalReasonSchema`, `AgentTerminalReason`, `AgentRun`, `AgentSnapshot`,
+`AgentUsageValueSchema`, `AgentCostValueSchema`, `AgentUsageSchema`, `AgentUsage` and
+`AgentRunMetrics`.
+
+Store command/result exports are `AcceptInputAndAssignRun`, `AcceptInputAndAssignRunSchema`,
+`AcquireAgentRun`, `AcquireAgentRunSchema`, `CheckpointRunAssistant`,
+`CheckpointRunAssistantSchema`, `CommitRunTerminal`, `CommitRunTerminalSchema`,
+`RequestRunInterrupt`, `RequestRunInterruptSchema`, `RecoverAgentRun`, `ReplaceCompactedRange`,
+`ReplaceCompactedRangeSchema`, `AgentStoreMutationResult`, `AgentStoreMutationResultSchema`,
+`AgentStoreAppliedSchema`, `AgentStoreConflictSchema`, `AgentStoreDuplicateSchema`,
+`AgentStoreNotFoundSchema`, `AgentAdmissionIdentity`, `AgentAdmissionIdentitySchema`,
+`AgentStoredState`, `AgentStoreCompareAndSwapResult`, `AgentHistoryMutation`,
+`AgentRecoverableDescriptor`, `AgentRecoverableDescriptorSchema`, `AgentRecoverablePage` and
+`AgentRecoverablePageSchema`.
+
+History and context-budget exports are `projectAgentHistoryDetailed`,
+`AgentHistoryProjectionDecision`, `AgentHistoryProjectionResult`, `selectAgentHistory`,
+`SelectAgentHistoryOptions`, `AgentHistoryBudgetDecision`, `AgentHistoryBudgetResult`,
+`AgentPromptBudget`, `AgentPromptSection`, `AgentPromptSectionContext`, `AgentTokenCount`,
+`AgentTokenCountSchema`, `ComposeAgentPromptOptions` and `ComposedAgentPrompt`. Whole-turn history
+selection never splits a tool chronology and reports why every canonical record was retained or
+removed.
+
+Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
+`AgentModelCapabilitySchema`, `AgentModelDeclaration`, `AgentModelDescriptor`,
+`AgentModelDescriptorSchema`, `AgentModelRegistry`, `AgentModelRegistryConfig`,
+`AgentModelRegistrySnapshot`, `AgentModelRegistrySnapshotSchema`, `AgentModelSnapshotPolicy`,
+`AgentResolvedModel` and `validateAgentModelSnapshot`. Registry `preflight` validates availability,
+provider and required capabilities without constructing the model; runtime `models.preflight`
+runs before durable admission.
+
+Delivery exports are `AgentAdmissionEventSchema`, `AgentCheckpointEventSchema`,
+`AgentRunStateEventSchema`, `AgentTerminalEventSchema`, `AgentTransientDeltaEventSchema`,
+`AgentReasoningStartEventSchema`, `AgentReasoningDeltaEventSchema`,
+`AgentReasoningEndEventSchema`, `AgentToolStatusEventSchema`, `AgentRuntimeEvent`,
+`AgentRuntimeEventCursor`, `AgentRuntimeEventCursorSchema`, `AgentRuntimeCursorAdvance`,
+`advanceAgentRuntimeEventCursor`, `agentDurableEventId`, `AgentRuntimeEventSink`,
+`AgentRuntimeEventSinkConfig` and `createAgentRuntimeEventSink`. Cursor gaps require a canonical
+snapshot reload; the bounded sink isolates transport failure and supports a typed projection step.
+
+Managed effects and operator telemetry additionally export `AgentToolFenceConfig`,
+`AgentToolFenceContext`, `AgentObservability`, `AgentRunEvent`, `AgentRunEventSchema`,
+`AgentRunSinkConfig`, `AgentRunSinkDrop` and `AgentRunSinkError`. A monotonic run `fencingToken`
+may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
+operator-only observability sink explicitly opts in.
+
 ## `stitchkit/agent-runtime/openrouter`
 
 | Export | Kind | Summary |
@@ -762,6 +826,8 @@ handler pipeline without opening a TCP port.
 | `createHandlerTestClients` | function | exact contract-registry batch form |
 | `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
 | `AgentStoreConformanceConfig` | _type_ | factory configuration for running the same contract against a fresh adapter |
+| `createAgentRaceBarrier` / `createAgentRaceDriver` / `createAgentRaceTrace` | function | bounded named barriers and exact partial-order traces for deterministic runtime race probes |
+| `AgentRaceBarrier` / `AgentRaceDriver` / `AgentRaceTrace` / `AgentRaceTraceEntry` | _type_ | public packed-consumer types for the deterministic race harness |
 | `HandlerTestClientDefaults` | _type_ | ordinary bare-client defaults with handler-owned `baseUrl` and `fetch` removed |
 | `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
 | `HandlerTestClientsConfig` | _type_ | batch helper configuration |

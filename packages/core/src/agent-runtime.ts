@@ -20,16 +20,27 @@ export {
   AgentReasoningEndEventSchema,
   AgentReasoningStartEventSchema,
   AgentRunStateEventSchema,
+  type AgentRuntimeCursorAdvance,
   type AgentRuntimeEvent,
+  type AgentRuntimeEventCursor,
+  AgentRuntimeEventCursorSchema,
   AgentRuntimeEventSchema,
+  type AgentRuntimeEventSink,
+  type AgentRuntimeEventSinkConfig,
   type AgentRuntimePublisher,
   AgentTerminalEventSchema,
   AgentToolStatusEventSchema,
   AgentTransientDeltaEventSchema,
+  advanceAgentRuntimeEventCursor,
+  agentDurableEventId,
+  createAgentRuntimeEventSink,
 } from './agent-runtime/events';
 export {
+  type AgentHistoryProjectionDecision,
   type AgentHistoryProjectionOptions,
+  type AgentHistoryProjectionResult,
   projectAgentHistory,
+  projectAgentHistoryDetailed,
 } from './agent-runtime/history';
 export {
   type AgentToolFenceConfig,
@@ -45,8 +56,12 @@ export {
   AgentModelDescriptorSchema,
   type AgentModelRegistry,
   type AgentModelRegistryConfig,
+  type AgentModelRegistrySnapshot,
+  AgentModelRegistrySnapshotSchema,
+  type AgentModelSnapshotPolicy,
   type AgentResolvedModel,
   defineModelRegistry,
+  validateAgentModelSnapshot,
 } from './agent-runtime/models';
 export {
   type AgentObservability,
@@ -58,6 +73,8 @@ export {
   createAgentObservability,
 } from './agent-runtime/observability';
 export {
+  type AgentHistoryBudgetDecision,
+  type AgentHistoryBudgetResult,
   type AgentPromptBudget,
   type AgentPromptSection,
   type AgentPromptSectionContext,
@@ -66,6 +83,8 @@ export {
   type ComposeAgentPromptOptions,
   type ComposedAgentPrompt,
   composeAgentPrompt,
+  type SelectAgentHistoryOptions,
+  selectAgentHistory,
 } from './agent-runtime/prompt';
 export {
   type AgentProtocol,

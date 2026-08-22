@@ -102,8 +102,79 @@ describe('structured agent compaction', () => {
     const result = await resultPromise;
 
     expect(result.outcome).toBe('conflict');
+    expect(result.attempts).toBe(1);
     const canonical = await store.loadSnapshot('conversation-1');
     expect(canonical.messages.some((message) => message.id === 'summary-1')).toBeFalse();
     expect(canonical.messages).toHaveLength(8);
+  });
+
+  test('recomputes from a fresh snapshot after a CAS conflict within a bounded attempt count', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    await appendCompletedTurn(store, 1);
+    await appendCompletedTurn(store, 2);
+    await appendCompletedTurn(store, 3);
+    const barrier = createAgentRaceBarrier();
+    let summaries = 0;
+    const compact = structuredCompaction({
+      schema: z.object({ summary: z.string() }),
+      keepRecentTurns: 1,
+      maxAttempts: 2,
+      threshold: () => true,
+      async summarize({ eligibleMessages }) {
+        summaries += 1;
+        if (summaries === 1) await barrier.wait();
+        return { summary: eligibleMessages.map((message) => message.id).join(',') };
+      },
+      createSummaryMessage: ({ conversationId, summary }) =>
+        AgentMessageSchema.parse({
+          schemaVersion: 1,
+          id: `summary-${summaries}`,
+          conversationId,
+          role: 'summary',
+          status: 'committed',
+          parts: [{ type: 'text', text: summary.summary }],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+    });
+    const pending = compact({
+      conversationId: 'conversation-1',
+      store,
+      signal: new AbortController().signal,
+    });
+    await barrier.reached;
+    await appendCompletedTurn(store, 4);
+    barrier.release();
+    const result = await pending;
+
+    expect(result.outcome).toBe('applied');
+    expect(result.attempts).toBe(2);
+    expect(summaries).toBe(2);
+    expect(result.snapshot.messages[0]?.id).toBe('summary-2');
+  });
+
+  test('leaves canonical history unchanged when summary construction fails', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    await appendCompletedTurn(store, 1);
+    await appendCompletedTurn(store, 2);
+    const before = await store.loadSnapshot('conversation-1');
+    const compact = structuredCompaction({
+      schema: z.object({ summary: z.string() }),
+      keepRecentTurns: 1,
+      threshold: () => true,
+      summarize: () => Promise.reject(new Error('summary unavailable')),
+      createSummaryMessage: () => {
+        throw new Error('unreachable');
+      },
+    });
+
+    await expect(
+      compact({
+        conversationId: 'conversation-1',
+        store,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('summary unavailable');
+    expect(await store.loadSnapshot('conversation-1')).toEqual(before);
   });
 });

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { AgentMessageSchema, projectAgentHistory } from '../src/agent-runtime';
+import {
+  AgentMessageSchema,
+  projectAgentHistory,
+  projectAgentHistoryDetailed,
+} from '../src/agent-runtime';
 
 describe('agent history projection', () => {
   test('round-trips provider-required tool-call metadata into AI SDK messages', async () => {
@@ -33,8 +37,18 @@ describe('agent history projection', () => {
       createdAt: '2026-08-22T00:00:00.000Z',
       updatedAt: '2026-08-22T00:00:00.000Z',
     });
-    const projected = await projectAgentHistory([message]);
-    expect(projected).toHaveLength(2);
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'user-1',
+      conversationId: 'conversation-1',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'lookup' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    const projected = await projectAgentHistory([user, message]);
+    expect(projected).toHaveLength(3);
     expect(JSON.stringify(projected)).toContain('thought_signature');
   });
 
@@ -70,7 +84,17 @@ describe('agent history projection', () => {
       ],
     });
 
-    const projected = await projectAgentHistory([draft, completed]);
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'user-reasoning',
+      conversationId: 'conversation-1',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'think' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    const projected = await projectAgentHistory([user, draft, completed]);
     const serialized = JSON.stringify(projected);
     expect(serialized).not.toContain('partial');
     expect(serialized).toContain('exact-signature');
@@ -106,5 +130,48 @@ describe('agent history projection', () => {
         },
       ],
     });
+  });
+
+  test('omits leading assistants and unmatched tool calls with inspectable decisions', async () => {
+    const leading = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'leading-assistant',
+      conversationId: 'conversation-1',
+      runId: 'run-leading',
+      role: 'assistant',
+      status: 'completed',
+      parts: [{ type: 'text', text: 'orphan' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'user-tool',
+      conversationId: 'conversation-1',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'call it' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    const incomplete = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'assistant-tool',
+      conversationId: 'conversation-1',
+      runId: 'run-tool',
+      role: 'assistant',
+      status: 'completed',
+      parts: [{ type: 'tool-call', callId: 'call-1', toolName: 'lookup', input: { q: 'x' } }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+
+    const result = await projectAgentHistoryDetailed([leading, user, incomplete]);
+    expect(result.messages).toHaveLength(1);
+    expect(result.decisions).toEqual([
+      { messageId: 'leading-assistant', action: 'omitted', reason: 'leading-assistant' },
+      { messageId: 'user-tool', action: 'projected', reason: 'projected' },
+      { messageId: 'assistant-tool', action: 'omitted', reason: 'incomplete-tool-turn' },
+    ]);
   });
 });

@@ -25,6 +25,7 @@ import { createManagedFileBoundary } from 'stitchkit/files';
 import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement } from 'stitchkit/server';
+import { createAgentRaceTrace } from 'stitchkit/testing';
 import {
   bindStdioProcessSignals,
   buildMcpServer,
@@ -67,6 +68,11 @@ function check(what: string, ok: boolean, detail?: unknown): void {
   failures += 1;
   console.error(`  ✗ ${what}`, detail === undefined ? '' : detail);
 }
+
+const packedRaceTrace = createAgentRaceTrace();
+packedRaceTrace.record('admission');
+packedRaceTrace.record('terminal');
+packedRaceTrace.assertBefore('admission', 'terminal');
 
 const packedApiError = new ApiError(
   'CONFLICT',

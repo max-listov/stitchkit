@@ -8,8 +8,8 @@ updated: 2026-08-22
 completed: 2026-08-22 19:52 +0000
 related:
   - docs/backlog/inbox/2026-08-22-agent-runtime-production-persistence-ergonomics.md
-  - docs/backlog/in-progress/2026-08-22-agent-durable-run-store.md
-  - docs/backlog/in-progress/2026-08-22-agent-message-history-runtime.md
+  - docs/backlog/done/2026-08-22-agent-durable-run-store.md
+  - docs/backlog/done/2026-08-22-agent-message-history-runtime.md
 ---
 
 # Framework-owned agent store reducer and history codec

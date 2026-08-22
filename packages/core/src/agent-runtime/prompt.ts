@@ -1,5 +1,6 @@
 import type { Instructions } from 'ai';
 import { z } from 'zod';
+import type { AgentMessage } from './schemas';
 
 export const AgentTokenCountSchema = z.object({
   value: z.int().nonnegative().optional(),
@@ -34,6 +35,153 @@ export interface ComposedAgentPrompt {
   instructionTokens: AgentTokenCount;
   availableHistoryTokens?: number;
   contextDecision: 'fits' | 'requires-compaction' | 'oversized' | 'unavailable';
+}
+
+export interface AgentHistoryBudgetDecision {
+  messageId: string;
+  action: 'kept' | 'removed';
+  reason:
+    | 'within-budget'
+    | 'protected-system'
+    | 'protected-recent-turn'
+    | 'protected-incomplete-turn'
+    | 'oldest-eligible-turn'
+    | 'token-count-unavailable';
+  tokens: AgentTokenCount;
+}
+
+export interface AgentHistoryBudgetResult {
+  messages: readonly AgentMessage[];
+  decisions: readonly AgentHistoryBudgetDecision[];
+  totalTokens: AgentTokenCount;
+  outcome: 'fits' | 'truncated' | 'oversized' | 'unavailable';
+}
+
+export interface SelectAgentHistoryOptions {
+  messages: readonly AgentMessage[];
+  availableTokens: number;
+  keepRecentTurns?: number;
+  estimateMessage(message: AgentMessage): AgentTokenCount | Promise<AgentTokenCount>;
+}
+
+interface BudgetTurn {
+  messages: readonly AgentMessage[];
+  complete: boolean;
+  protectedSystem: boolean;
+}
+
+function completeTurn(messages: readonly AgentMessage[]): boolean {
+  if (messages[0]?.role !== 'user') return false;
+  const assistant = messages.find((message) => message.role === 'assistant');
+  if (assistant?.status !== 'completed') return false;
+  const calls = new Set(
+    assistant.parts.filter((part) => part.type === 'tool-call').map((part) => part.callId),
+  );
+  const results = new Set(
+    assistant.parts.filter((part) => part.type === 'tool-result').map((part) => part.callId),
+  );
+  return (
+    [...calls].every((callId) => results.has(callId)) &&
+    [...results].every((callId) => calls.has(callId))
+  );
+}
+
+function budgetTurns(messages: readonly AgentMessage[]): BudgetTurn[] {
+  const turns: BudgetTurn[] = [];
+  let current: AgentMessage[] = [];
+  const flush = (): void => {
+    if (current.length === 0) return;
+    turns.push({ messages: current, complete: completeTurn(current), protectedSystem: false });
+    current = [];
+  };
+  for (const message of messages) {
+    if (message.role === 'system' || message.role === 'summary') {
+      flush();
+      turns.push({ messages: [message], complete: true, protectedSystem: true });
+      continue;
+    }
+    if (message.role === 'user') flush();
+    current.push(message);
+  }
+  flush();
+  return turns;
+}
+
+/** Select whole provider-valid turns and explain every retained or removed record. */
+export async function selectAgentHistory(
+  options: SelectAgentHistoryOptions,
+): Promise<AgentHistoryBudgetResult> {
+  if (!Number.isSafeInteger(options.availableTokens) || options.availableTokens < 0) {
+    throw new TypeError('availableTokens must be a non-negative safe integer');
+  }
+  const keepRecentTurns = options.keepRecentTurns ?? 1;
+  if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0) {
+    throw new TypeError('keepRecentTurns must be a non-negative safe integer');
+  }
+  const counts = new Map<string, AgentTokenCount>();
+  let total = 0;
+  let estimated = false;
+  for (const message of options.messages) {
+    const count = AgentTokenCountSchema.parse(await options.estimateMessage(message));
+    counts.set(message.id, count);
+    const value = knownValue(count);
+    if (value === undefined) {
+      return {
+        messages: [...options.messages],
+        decisions: options.messages.map((candidate) => ({
+          messageId: candidate.id,
+          action: 'kept',
+          reason: 'token-count-unavailable',
+          tokens: counts.get(candidate.id) ?? { provenance: 'unavailable' },
+        })),
+        totalTokens: { provenance: 'unavailable' },
+        outcome: 'unavailable',
+      };
+    }
+    total += value;
+    if (count.provenance === 'estimated') estimated = true;
+  }
+  const turns = budgetTurns(options.messages);
+  const completeIndexes = turns
+    .map((turn, index) => ({ turn, index }))
+    .filter(({ turn }) => turn.complete && !turn.protectedSystem)
+    .map(({ index }) => index);
+  const protectedRecent = new Set(completeIndexes.slice(-keepRecentTurns));
+  const removed = new Set<string>();
+  for (let index = 0; index < turns.length && total > options.availableTokens; index += 1) {
+    const turn = turns[index];
+    if (!turn || turn.protectedSystem || !turn.complete || protectedRecent.has(index))
+      continue;
+    for (const message of turn.messages) {
+      removed.add(message.id);
+      total -= knownValue(counts.get(message.id) ?? { provenance: 'unavailable' }) ?? 0;
+    }
+  }
+  const messages = options.messages.filter((message) => !removed.has(message.id));
+  const decisions = options.messages.map((message): AgentHistoryBudgetDecision => {
+    const turnIndex = turns.findIndex((turn) =>
+      turn.messages.some((item) => item.id === message.id),
+    );
+    const turn = turns[turnIndex];
+    let reason: AgentHistoryBudgetDecision['reason'] = 'within-budget';
+    if (removed.has(message.id)) reason = 'oldest-eligible-turn';
+    else if (turn?.protectedSystem) reason = 'protected-system';
+    else if (turn && !turn.complete) reason = 'protected-incomplete-turn';
+    else if (protectedRecent.has(turnIndex)) reason = 'protected-recent-turn';
+    return {
+      messageId: message.id,
+      action: removed.has(message.id) ? 'removed' : 'kept',
+      reason,
+      tokens: counts.get(message.id) ?? { provenance: 'unavailable' },
+    };
+  });
+  return {
+    messages,
+    decisions,
+    totalTokens: { value: total, provenance: estimated ? 'estimated' : 'measured' },
+    outcome:
+      total > options.availableTokens ? 'oversized' : removed.size > 0 ? 'truncated' : 'fits',
+  };
 }
 
 export interface ComposeAgentPromptOptions<CONTEXT> {

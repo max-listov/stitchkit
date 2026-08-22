@@ -7,7 +7,7 @@ created: 2026-08-22
 updated: 2026-08-22
 completed: 2026-08-22 17:16 +00:00
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-session-coordination.md
+  - docs/backlog/done/2026-08-22-agent-session-coordination.md
 ---
 
 # Stable agent admission identity

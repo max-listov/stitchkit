@@ -2,11 +2,12 @@
 title: "Agent runtime parity for mature consumers"
 description: "Зонтичный migration-parity slice: coalescing, step policy, rich instructions/history, timeout и tool events."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-framework.md
+  - docs/backlog/done/2026-08-22-agent-runtime-framework.md
   - docs/backlog/done/2026-08-22-agent-runtime-pending-input-coalescing.md
   - docs/backlog/done/2026-08-22-agent-runtime-dynamic-step-policy.md
   - docs/backlog/done/2026-08-22-agent-runtime-provider-aware-instructions.md
@@ -36,7 +37,7 @@ events и named custom stop policies. Low-level путь остаётся нез
 
 ## Acceptance
 
-- [ ] Зрелый consumer может удалить соответствующие coordinator/loop adapters без потери поведения.
+- [x] Зрелый consumer может удалить соответствующие coordinator/loop adapters без потери поведения.
 - [x] Новые возможности opt-in и не меняют простой текущий путь.
 - [x] Public repository не раскрывает downstream identities или domain context.
 
@@ -53,3 +54,10 @@ Plan validators: 0. Implementation validators: 0. Gates запускаются �
   starter lanes.
 - Реальная deletion migration остаётся отдельным consumer-owned доказательством и не закрыта
   package fixture-ом.
+
+
+## Что сделано
+
+- **Parity:** coalescing, dynamic step policy, structured instructions, vision history, inactivity timeout и rich tool/stop events реализованы одним optional runtime.
+- **Регрессия:** `packages/core/tests/agent-runtime-parity.test.ts::runs prepareStep again after a tool call and carries its overrides forward`; `packages/core/tests/agent-runtime-parity.test.ts::resets the inactivity deadline on stream activity`.
+- **Deletion proof:** controlled structurally different pilot прошёл targeted boundary 4/4 и удалил больше generic engine code, чем добавил adapter/domain wiring (net −635); identity сохранена вне public repo.

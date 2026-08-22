@@ -17,7 +17,11 @@ import {
   type AgentStopReason,
   createAgentSessionCoordinator,
 } from './coordinator';
-import type { AgentRuntimeEvent, AgentRuntimePublisher } from './events';
+import {
+  type AgentRuntimeEvent,
+  type AgentRuntimePublisher,
+  agentDurableEventId,
+} from './events';
 import { type AgentHistoryProjectionOptions, projectAgentHistory } from './history';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
@@ -123,6 +127,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   protocol: AgentRuntimeProtocolInput<CONTEXT>;
   store: AgentRuntimeStore;
   models: {
+    preflight?(input: { context: CONTEXT; conversationId: string }): void | Promise<void>;
     resolve(input: {
       context: CONTEXT;
       conversationId: string;
@@ -158,6 +163,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     unresolvedFile?: AgentHistoryProjectionOptions['unresolvedFile'];
   };
   publish?: AgentRuntimePublisher;
+  onPublishError?(input: { event: AgentRuntimeEvent; error: unknown }): void | Promise<void>;
   observe?: AgentObservability;
   persistGeneratedFile?(
     file: GeneratedFile,
@@ -377,8 +383,13 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   const publish = async (event: AgentRuntimeEvent): Promise<void> => {
     try {
       await config.publish?.(event);
-    } catch {
+    } catch (error) {
       // Product delivery cannot roll back an already committed runtime transition.
+      try {
+        await config.onPublishError?.({ event, error });
+      } catch {
+        // Delivery diagnostics are isolated from the canonical run as well.
+      }
     }
   };
 
@@ -401,7 +412,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     let run = findRun(acquired.runs, input.acceptedRun.id);
     await publish({
       type: 'run-state',
-      eventId: generateId(),
+      eventId: agentDurableEventId('run-state', run.id, acquired.version),
       conversationId: run.conversationId,
       runId: run.id,
       snapshotVersion: acquired.version,
@@ -440,6 +451,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         runId: run.id,
         expectedRevision: run.revision,
         ownerId: runtimeEpoch,
+        ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
         assistant,
       }),
       'assistant draft',
@@ -500,6 +512,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           runId: run.id,
           expectedRevision: run.revision,
           ownerId: runtimeEpoch,
+          ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
           assistant,
         }),
         'assistant checkpoint',
@@ -513,7 +526,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       };
       await publish({
         type: 'assistant-checkpoint',
-        eventId: generateId(),
+        eventId: agentDurableEventId('assistant-checkpoint', run.id, snapshot.version),
         conversationId: run.conversationId,
         runId: run.id,
         snapshotVersion: snapshot.version,
@@ -539,6 +552,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         const current = await config.store.loadSnapshot(run.conversationId);
         const currentRun = current.runs.find((candidate) => candidate.id === run.id);
         if (!currentRun || currentRun.ownerId !== runtimeEpoch) return 'stale_run';
+        if (currentRun.fencingToken !== run.fencingToken) return 'stale_run';
         if (currentRun.state === 'interrupt_requested') return 'run_interrupted';
         if (currentRun.state !== 'running') return 'stale_run';
         return undefined;
@@ -546,6 +560,9 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       const toolFenceLifecycle = createAgentToolFenceLifecycle({
         runId: run.id,
         assertCurrent,
+        context: () => ({
+          ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
+        }),
       });
       const runtimeContext = {
         context: input.context,
@@ -915,6 +932,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         runId: run.id,
         expectedRevision: run.revision,
         ownerId: runtimeEpoch,
+        ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
         assistant,
         reason: terminalReason,
         ...(terminalPolicyName && { policyName: terminalPolicyName }),
@@ -930,7 +948,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     };
     config.observe?.emit({
       schemaVersion: 1,
-      eventId: generateId(),
+      eventId: agentDurableEventId('terminal', run.id, snapshot.version),
       type: 'run-terminal',
       conversationId: run.conversationId,
       runId: run.id,
@@ -948,7 +966,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     });
     await publish({
       type: 'terminal',
-      eventId: generateId(),
+      eventId: agentDurableEventId('terminal', run.id, snapshot.version),
       conversationId: run.conversationId,
       runId: run.id,
       snapshotVersion: snapshot.version,
@@ -1077,6 +1095,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       void (async () => {
         try {
           await previousAcceptance.catch(() => undefined);
+          await config.models.preflight?.({
+            context,
+            conversationId: input.conversationId,
+          });
           const acceptance = await config.store.acceptInputAndAssignRun({
             idempotencyKey: input.idempotencyKey,
             input: userMessage,
@@ -1130,7 +1152,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           outerAdmission.resolve(admission);
           await publish({
             type: 'admission',
-            eventId: generateId(),
+            eventId: agentDurableEventId(
+              'admission',
+              acceptedRun.id,
+              acceptedSnapshot.version,
+            ),
             conversationId: acceptedRun.conversationId,
             runId: acceptedRun.id,
             snapshotVersion: acceptedSnapshot.version,
@@ -1141,7 +1167,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           });
           await publish({
             type: 'run-state',
-            eventId: generateId(),
+            eventId: agentDurableEventId(
+              'run-state',
+              acceptedRun.id,
+              acceptedSnapshot.version,
+            ),
             conversationId: acceptedRun.conversationId,
             runId: acceptedRun.id,
             snapshotVersion: acceptedSnapshot.version,
@@ -1253,7 +1283,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         const interruptedRun = findRun(requested.snapshot.runs, input.runId);
         await publish({
           type: 'run-state',
-          eventId: generateId(),
+          eventId: agentDurableEventId(
+            'run-state',
+            interruptedRun.id,
+            requested.snapshot.version,
+          ),
           conversationId: interruptedRun.conversationId,
           runId: interruptedRun.id,
           snapshotVersion: requested.snapshot.version,

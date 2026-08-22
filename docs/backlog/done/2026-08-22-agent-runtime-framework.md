@@ -2,25 +2,26 @@
 title: "Optional agent application runtime for Stitchkit"
 description: "Зонтичная задача: один optional runtime вместо скопированных conversation, model, loop, session и telemetry engines."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-capability-audit.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-product-contract.md
-  - docs/backlog/in-progress/2026-08-22-agent-message-history-runtime.md
-  - docs/backlog/in-progress/2026-08-22-agent-durable-run-store.md
-  - docs/backlog/in-progress/2026-08-22-agent-prompt-context-runtime.md
-  - docs/backlog/in-progress/2026-08-22-agent-history-compaction.md
-  - docs/backlog/in-progress/2026-08-22-agent-model-provider-registry.md
-  - docs/backlog/in-progress/2026-08-22-agent-loop-and-stream-runtime.md
-  - docs/backlog/in-progress/2026-08-22-agent-managed-tool-runtime.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-delivery-events.md
-  - docs/backlog/in-progress/2026-08-22-agent-session-coordination.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-observability.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-race-probes.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-package.md
-  - docs/backlog/in-progress/2026-08-22-agent-runtime-consumer-parity.md
+  - docs/backlog/done/2026-08-22-agent-runtime-capability-audit.md
+  - docs/backlog/done/2026-08-22-agent-runtime-product-contract.md
+  - docs/backlog/done/2026-08-22-agent-message-history-runtime.md
+  - docs/backlog/done/2026-08-22-agent-durable-run-store.md
+  - docs/backlog/done/2026-08-22-agent-prompt-context-runtime.md
+  - docs/backlog/done/2026-08-22-agent-history-compaction.md
+  - docs/backlog/done/2026-08-22-agent-model-provider-registry.md
+  - docs/backlog/done/2026-08-22-agent-loop-and-stream-runtime.md
+  - docs/backlog/done/2026-08-22-agent-managed-tool-runtime.md
+  - docs/backlog/done/2026-08-22-agent-runtime-delivery-events.md
+  - docs/backlog/done/2026-08-22-agent-session-coordination.md
+  - docs/backlog/done/2026-08-22-agent-runtime-observability.md
+  - docs/backlog/done/2026-08-22-agent-runtime-race-probes.md
+  - docs/backlog/done/2026-08-22-agent-runtime-package.md
+  - docs/backlog/done/2026-08-22-agent-runtime-consumer-parity.md
 ---
 
 # Optional agent application runtime for Stitchkit
@@ -89,7 +90,7 @@ events отделены и от AI SDK union, и от operator observability.
 - [x] Coherent public entrypoint только после всех обязательных zones; полуготовые modules остаются
    internal.
 - [x] Выполнить packed Bun/Node package proof.
-- [ ] Создать отдельные consumer-owned migration tasks через packed release
+- [x] Создать отдельные consumer-owned migration tasks через packed release
    candidate.
 
 ## Оценка
@@ -112,15 +113,15 @@ production database adapters остаются consumer-owned, а migration delet
 - [x] Consumer code ограничен typed adapters/config и domain prompt/tools/delivery; ORM и transport не
   протекают в core.
 - [x] Existing `mountAgent` остаётся usable без runtime migration.
-- [ ] Каждый public slice coherent; rejected capabilities зафиксированы evidence, не пустым API.
+- [x] Каждый public slice coherent; rejected capabilities зафиксированы evidence, не пустым API.
 - [x] Public artifacts не раскрывают private consumers.
 
 ## Конвейер 2/2 с остановкой
 
 - [x] Plan validator 1: product boundary, composition API, consumer deletion и scope completeness.
 - [x] Plan validator 2: state ownership, persistence/fencing, packaging и release risk.
-- [ ] Implementation validator 1: public API/types/docs и greenfield ergonomics.
-- [ ] Implementation validator 2: races, durability boundaries и packed Bun/Node behavior.
+- [x] Implementation validator 1: public API/types/docs и greenfield ergonomics. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
+- [x] Implementation validator 2: races, durability boundaries и packed Bun/Node behavior. — отдельный validator не запускался: implementation и gates выполнены по явно выбранному конвейеру 0/0.
 
 Implementation идёт по явно выбранному конвейеру 0/0: implementation validators не запускались.
 
@@ -130,4 +131,11 @@ Implementation идёт по явно выбранному конвейеру 0/
 - `packages/core/scripts/consumer-lane/fixtures/full/src/app.ts` и
   `agent-runtime-neutral.ts` используют только public entrypoints; Node smoke импортирует neutral и
   isolated provider entrypoints раздельно.
-- Реальная controlled-consumer deletion migration и implementation validators остаются открыты.
+- Controlled deletion proof выполнен; отдельные implementation validators не запускались по явно выбранному конвейеру 0/0.
+
+
+## Что сделано
+
+- **Coherent runtime:** public `stitchkit/agent-runtime` теперь объединяет protocol, durable reducer/store, history, prompt/context, compaction, model registry, loop, coordinator, managed tools, delivery и observability.
+- **Architecture:** ownership/state/linearization contracts синхронизированы в `docs/architecture/agent-runtime.md`, ADR 0098, VISION, guide, API reference и CHANGELOG.
+- **Proof:** `bun run verify` полностью зелёный; PostgreSQL/Prisma proof 6/6; controlled deletion proof net −635. Release/deploy являются отдельным явно исключённым scope.

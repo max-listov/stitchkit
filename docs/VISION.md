@@ -59,10 +59,10 @@ client. One source of truth; the transports cannot drift.
 Pre-1.0 and used by real applications. The shipped surface includes Bun and
 Node HTTP adapters, contract and raw/binary responses, OpenAPI 3.1, typed
 clients, Socket.IO, MCP contract and native tools, MCP Apps resources, agent
-tools, CLI generation and request/tool observability. The optional agent
-application runtime is under active implementation and does not become a
-public package surface until its protocol, persistence and race guarantees form
-one coherent slice.
+tools, CLI generation and request/tool observability. The optional agent application runtime is a
+public server-only package surface. Its protocol, persistence reducer, recovery, race harness and
+packed Bun/Node proof ship as one coherent slice; consumer-owned database, domain and transport
+policy remain outside core.
 
 Breaking changes are still allowed between minor versions, but never silently:
 each one has a mechanical migration in the changelog and is exercised through

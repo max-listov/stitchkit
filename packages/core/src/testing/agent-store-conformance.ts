@@ -183,16 +183,108 @@ export async function runAgentStoreConformance(
   });
   requireOutcome(stale, 'conflict');
 
-  const abandoned = await store.recoverRun({
+  await store
+    .recoverRun({
+      conversationId,
+      runId: running.id,
+      expectedRevision: running.revision,
+      action: 'requeue',
+    })
+    .then(
+      () => {
+        throw new Error('Acquired recovery replayed without explicit safety evidence');
+      },
+      (error) => {
+        if (!(error instanceof TypeError)) throw error;
+      },
+    );
+
+  const checkpoint = await store.checkpointRunAssistant({
     conversationId,
     runId: running.id,
     expectedRevision: running.revision,
+    ownerId: 'conformance-owner',
+    assistant: AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: running.assistantMessageId,
+      conversationId,
+      runId: running.id,
+      role: 'assistant',
+      status: 'streaming',
+      parts: [{ type: 'text', text: 'checkpoint' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:01.000Z',
+    }),
+  });
+  requireOutcome(checkpoint, 'applied');
+  const checkpointedRun = checkpoint.snapshot.runs.find((run) => run.id === running.id);
+  if (!checkpointedRun) throw new Error('Checkpointed run disappeared');
+  const terminalAssistant = AgentMessageSchema.parse({
+    schemaVersion: 1,
+    id: running.assistantMessageId,
+    conversationId,
+    runId: running.id,
+    role: 'assistant',
+    status: 'completed',
+    parts: [{ type: 'text', text: 'done' }],
+    createdAt: '2026-08-22T00:00:00.000Z',
+    updatedAt: '2026-08-22T00:00:02.000Z',
+  });
+  const terminalResults = await Promise.all([
+    store.commitRunTerminal({
+      conversationId,
+      runId: running.id,
+      expectedRevision: checkpointedRun.revision,
+      ownerId: 'conformance-owner',
+      assistant: terminalAssistant,
+      reason: 'success',
+    }),
+    store.commitRunTerminal({
+      conversationId,
+      runId: running.id,
+      expectedRevision: checkpointedRun.revision,
+      ownerId: 'conformance-owner',
+      assistant: terminalAssistant,
+      reason: 'success',
+    }),
+  ]);
+  const terminalOutcomes = terminalResults.map((result) => result.outcome).sort();
+  if (terminalOutcomes.join(',') !== 'applied,conflict') {
+    throw new Error(`Terminal race was not linearized: ${terminalOutcomes.join(',')}`);
+  }
+
+  const recoveryConversationId = `${conversationId}-recovery`;
+  const recoveryInput = userMessage(recoveryConversationId, 'recovery-input');
+  const recoveryRun = queuedRun(recoveryConversationId, recoveryInput.id, 'recovery-run');
+  const recoveryAccepted = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'recovery-request',
+    input: recoveryInput,
+    run: recoveryRun,
+  });
+  requireOutcome(recoveryAccepted, 'applied');
+  const recoveryAssigned = recoveryAccepted.snapshot.runs.find(
+    (run) => run.id === recoveryRun.id,
+  );
+  if (!recoveryAssigned) throw new Error('Recovery run disappeared after admission');
+  const recoveryAcquired = await store.acquireRun({
+    conversationId: recoveryConversationId,
+    runId: recoveryAssigned.id,
+    expectedRevision: recoveryAssigned.revision,
+    ownerId: 'abandoned-owner',
+  });
+  requireOutcome(recoveryAcquired, 'applied');
+  const abandonedRun = recoveryAcquired.snapshot.runs.find((run) => run.id === recoveryRun.id);
+  if (!abandonedRun) throw new Error('Recovery run disappeared after acquisition');
+  const abandoned = await store.recoverRun({
+    conversationId: recoveryConversationId,
+    runId: abandonedRun.id,
+    expectedRevision: abandonedRun.revision,
     action: 'abandon',
   });
   requireOutcome(abandoned, 'applied');
-  const terminalRun = abandoned.snapshot.runs.find((run) => run.id === running.id);
+  const terminalRun = abandoned.snapshot.runs.find((run) => run.id === abandonedRun.id);
   const terminalMessage = abandoned.snapshot.messages.find(
-    (message) => message.id === running.assistantMessageId,
+    (message) => message.id === abandonedRun.assistantMessageId,
   );
   if (terminalRun?.state !== 'abandoned' || terminalMessage?.status !== 'failed') {
     throw new Error('Abandon recovery did not atomically terminalize its assistant record');

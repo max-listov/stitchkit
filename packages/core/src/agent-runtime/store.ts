@@ -52,6 +52,7 @@ export const CheckpointRunAssistantSchema = z.object({
   runId: AgentRecordIdSchema,
   expectedRevision: AgentRecordVersionSchema,
   ownerId: z.string().min(1),
+  fencingToken: AgentRecordVersionSchema.optional(),
   assistant: AgentMessageSchema,
 });
 export const CommitRunTerminalSchema = z.object({
@@ -59,6 +60,7 @@ export const CommitRunTerminalSchema = z.object({
   runId: AgentRecordIdSchema,
   expectedRevision: AgentRecordVersionSchema,
   ownerId: z.string().min(1),
+  fencingToken: AgentRecordVersionSchema.optional(),
   assistant: AgentMessageSchema,
   reason: AgentTerminalReasonSchema,
   policyName: z.string().min(1).optional(),

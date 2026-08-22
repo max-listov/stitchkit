@@ -77,3 +77,8 @@ requires an application-provided lease/outbox and is not implied by the core.
   first version.
 - The new entrypoint is additive. It becomes public only as a coherent package
   slice with Bun and Node packed-consumer proof.
+- The current state/action table and failure guarantees are maintained in
+  [`docs/architecture/agent-runtime.md`](../architecture/agent-runtime.md); API changes update that
+  reference in the same pass.
+- Durable delivery IDs, bounded event cursors/sinks and monotonic fencing tokens refine the original
+  boundary without moving transport, outbox or distributed lease ownership into core.

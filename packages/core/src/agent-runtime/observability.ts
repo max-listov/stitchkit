@@ -48,6 +48,9 @@ export interface AgentRunSinkConfig {
   write(event: AgentRunEvent): void | Promise<void>;
   filter?(event: AgentRunEvent): boolean;
   maxPending?: number;
+  /** Raw internal causes are excluded unless an operator-only sink opts in. */
+  includeInternalCause?: boolean;
+  deduplicate?: boolean;
   onSinkError?(failure: AgentRunSinkError): void | Promise<void>;
   onDrop?(drop: AgentRunSinkDrop): void | Promise<void>;
 }
@@ -72,13 +75,21 @@ export function createAgentObservability(config: AgentRunSinkConfig): AgentObser
     ...(config.onSinkError && { onSinkError: config.onSinkError }),
     ...(config.onDrop && { onDrop: config.onDrop }),
   });
+  const emitted = new Set<string>();
   return {
     rootTrace(parent) {
       const trace = parent ? childSpan(parent) : createTraceContext();
       return trace;
     },
     emit(rawEvent) {
-      manager.submit(() => AgentRunEventSchema.parse(rawEvent));
+      const parsed = AgentRunEventSchema.parse(rawEvent);
+      if ((config.deduplicate ?? true) && emitted.has(parsed.eventId)) return;
+      emitted.add(parsed.eventId);
+      manager.submit(() =>
+        config.includeInternalCause
+          ? parsed
+          : AgentRunEventSchema.omit({ internalCause: true }).parse(parsed),
+      );
     },
     flush: () => manager.flush(),
     getStatus: () => manager.getStatus(),

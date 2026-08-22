@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
-import { composeAgentPrompt, defineModelRegistry } from '../src/agent-runtime';
+import {
+  AgentMessageSchema,
+  composeAgentPrompt,
+  defineModelRegistry,
+  selectAgentHistory,
+  validateAgentModelSnapshot,
+} from '../src/agent-runtime';
 
 describe('agent prompt and model policy', () => {
   test('keeps unavailable estimates unknown and makes oversize policy explicit', async () => {
@@ -88,5 +94,94 @@ describe('agent prompt and model policy', () => {
       content: 'cache me',
       providerOptions: { openrouter: { cacheControl: { type: 'ephemeral' } } },
     });
+  });
+
+  test('removes only whole old turns and explains protected context', async () => {
+    const messages = [
+      AgentMessageSchema.parse({
+        schemaVersion: 1,
+        id: 'system',
+        conversationId: 'conversation-1',
+        role: 'system',
+        status: 'committed',
+        parts: [{ type: 'text', text: 'rules' }],
+        createdAt: '2026-08-22T00:00:00.000Z',
+        updatedAt: '2026-08-22T00:00:00.000Z',
+      }),
+      ...[1, 2].flatMap((index) => [
+        AgentMessageSchema.parse({
+          schemaVersion: 1,
+          id: `user-${index}`,
+          conversationId: 'conversation-1',
+          role: 'user',
+          status: 'committed',
+          parts: [{ type: 'text', text: `question ${index}` }],
+          createdAt: '2026-08-22T00:00:00.000Z',
+          updatedAt: '2026-08-22T00:00:00.000Z',
+        }),
+        AgentMessageSchema.parse({
+          schemaVersion: 1,
+          id: `assistant-${index}`,
+          conversationId: 'conversation-1',
+          runId: `run-${index}`,
+          role: 'assistant',
+          status: 'completed',
+          parts: [{ type: 'text', text: `answer ${index}` }],
+          createdAt: '2026-08-22T00:00:00.000Z',
+          updatedAt: '2026-08-22T00:00:00.000Z',
+        }),
+      ]),
+    ];
+    const selected = await selectAgentHistory({
+      messages,
+      availableTokens: 3,
+      keepRecentTurns: 1,
+      estimateMessage: () => ({ value: 1, provenance: 'measured' }),
+    });
+
+    expect(selected.outcome).toBe('truncated');
+    expect(selected.messages.map((message) => message.id)).toEqual([
+      'system',
+      'user-2',
+      'assistant-2',
+    ]);
+    expect(selected.decisions.find((decision) => decision.messageId === 'user-1')).toEqual({
+      messageId: 'user-1',
+      action: 'removed',
+      reason: 'oldest-eligible-turn',
+      tokens: { value: 1, provenance: 'measured' },
+    });
+  });
+
+  test('publishes versioned model snapshots and rejects stale or unavailable entries', () => {
+    const registry = defineModelRegistry({
+      providers: { test: { create: () => new MockLanguageModelV4() } },
+      models: {
+        removed: {
+          provider: 'test',
+          modelId: 'removed-model',
+          contextWindow: 1_000,
+          capabilities: [],
+          availability: 'unavailable',
+        },
+      },
+    });
+    expect(() => registry.preflight('removed')).toThrow('unavailable');
+    const snapshot = registry.snapshot({
+      source: 'catalog-cache',
+      observedAt: '2026-08-22T00:00:00.000Z',
+    });
+    expect(
+      validateAgentModelSnapshot(snapshot, {
+        maxAgeMs: 60_000,
+        now: () => new Date('2026-08-22T00:00:30.000Z'),
+      }).source,
+    ).toBe('catalog-cache');
+    expect(() =>
+      validateAgentModelSnapshot(snapshot, {
+        maxAgeMs: 1,
+        now: () => new Date('2026-08-22T00:00:30.000Z'),
+      }),
+    ).toThrow('stale');
   });
 });

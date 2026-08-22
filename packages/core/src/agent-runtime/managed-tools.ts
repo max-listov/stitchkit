@@ -11,6 +11,7 @@ export interface AgentToolFenceContext {
   stepId?: string;
   callId?: string;
   idempotencyKey?: string;
+  fencingToken?: number;
 }
 
 export interface AgentToolFenceConfig {
