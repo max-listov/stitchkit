@@ -48,6 +48,19 @@ export interface AgentRuntimeInput {
   context: unknown;
   parts: readonly AgentMessagePart[];
   metadata?: unknown;
+  recordIds?: AgentRuntimeRecordIds;
+}
+
+export interface AgentRuntimeRecordIds {
+  inputMessageId: string;
+  runId: string;
+  assistantMessageId: string;
+}
+
+export interface AgentRuntimeAdmission {
+  runId: string;
+  assistantMessageId: string;
+  snapshotVersion: number;
 }
 
 export interface AgentRuntimeRecoveryInput {
@@ -139,6 +152,7 @@ export interface AgentRuntimeResult {
 export interface AgentRuntime {
   submit(input: AgentRuntimeInput): {
     accepted: Promise<void>;
+    admission: Promise<AgentRuntimeAdmission>;
     result: Promise<AgentRuntimeResult>;
   };
   resume(input: AgentRuntimeRecoveryInput): {
@@ -242,10 +256,12 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
 ): AgentRuntime {
   const coordinator = createAgentSessionCoordinator();
-  const tickets = new Map<
-    string,
-    { accepted: Promise<void>; result: Promise<AgentRuntimeResult> }
-  >();
+  interface RuntimeTicket {
+    accepted: Promise<void>;
+    admission: Promise<AgentRuntimeAdmission>;
+    result: Promise<AgentRuntimeResult>;
+  }
+  const tickets = new Map<string, Map<string, RuntimeTicket>>();
   const generateId = config.generateId ?? (() => crypto.randomUUID());
   const now = config.now ?? (() => new Date());
   const runtimeEpoch = generateId();
@@ -884,8 +900,8 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         ...(metadata !== undefined && { metadata }),
       };
       const context = config.protocol.parseContext(input.context);
-      const ticketKey = `${input.conversationId}\u0000${input.idempotencyKey}`;
-      const existingTicket = tickets.get(ticketKey);
+      const conversationTickets = tickets.get(input.conversationId);
+      const existingTicket = conversationTickets?.get(input.idempotencyKey);
       if (existingTicket) return existingTicket;
       const key = config.runs?.key?.(input) ?? input.conversationId;
       const policy =
@@ -893,9 +909,9 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           ? config.runs.inputPolicy(input)
           : (config.runs?.inputPolicy ?? 'queue');
       const nowIso = now().toISOString();
-      const inputMessageId = generateId();
-      const runId = generateId();
-      const assistantMessageId = generateId();
+      const inputMessageId = rawInput.recordIds?.inputMessageId ?? generateId();
+      const runId = rawInput.recordIds?.runId ?? generateId();
+      const assistantMessageId = rawInput.recordIds?.assistantMessageId ?? generateId();
       const userMessage = AgentMessageSchema.parse({
         schemaVersion: 1,
         id: inputMessageId,
@@ -919,6 +935,8 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         updatedAt: nowIso,
       });
       const outerAccepted = Promise.withResolvers<void>();
+      const outerAdmission = Promise.withResolvers<AgentRuntimeAdmission>();
+      void outerAdmission.promise.catch(() => undefined);
       const outerResult = Promise.withResolvers<AgentRuntimeResult>();
       const reservation = config.runs?.coalescePending
         ? reserveAdmission(key, runId)
@@ -930,12 +948,21 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           .catch(() => undefined)
           .then(() => acceptanceDone.promise);
       }
-      const publicTicket = { accepted: outerAccepted.promise, result: outerResult.promise };
-      tickets.set(ticketKey, publicTicket);
-      void outerResult.promise.then(
-        () => tickets.delete(ticketKey),
-        () => tickets.delete(ticketKey),
-      );
+      const publicTicket = {
+        accepted: outerAccepted.promise,
+        admission: outerAdmission.promise,
+        result: outerResult.promise,
+      };
+      const currentConversationTickets =
+        conversationTickets ?? new Map<string, RuntimeTicket>();
+      currentConversationTickets.set(input.idempotencyKey, publicTicket);
+      if (!conversationTickets) tickets.set(input.conversationId, currentConversationTickets);
+      const forgetTicket = (): void => {
+        if (currentConversationTickets.get(input.idempotencyKey) !== publicTicket) return;
+        currentConversationTickets.delete(input.idempotencyKey);
+        if (currentConversationTickets.size === 0) tickets.delete(input.conversationId);
+      };
+      void outerResult.promise.then(forgetTicket, forgetTicket);
       void (async () => {
         try {
           await previousAcceptance.catch(() => undefined);
@@ -954,6 +981,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               ? acceptance.runId
               : (reservation?.admission.runId ?? runId);
           const acceptedRun = findRun(acceptedSnapshot.runs, assignedRunId);
+          outerAdmission.resolve({
+            runId: acceptedRun.id,
+            assistantMessageId: acceptedRun.assistantMessageId,
+            snapshotVersion: acceptedSnapshot.version,
+          });
           await publish({
             type: 'run-state',
             eventId: generateId(),
@@ -1043,6 +1075,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           }
         } catch (error) {
           outerAccepted.reject(error);
+          outerAdmission.reject(error);
           outerResult.reject(error);
           if (reservation?.shouldSchedule) {
             reservation.admission.completion.reject(error);

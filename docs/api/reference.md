@@ -410,6 +410,8 @@ Server-only optional application runtime. See the
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt lifecycle |
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
+| `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
+| `AgentRuntimeAdmission` | _type_ | actual assigned run/assistant identity and snapshot version after durable admission |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
 | `AgentRuntimeEventSchema` | schema | transient delta, durable checkpoint/run-state/tool and terminal event union |

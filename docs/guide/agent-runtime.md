@@ -114,11 +114,26 @@ const ticket = runtime.submit({
   idempotencyKey: 'request-id',
   context: { userId: 'user-id' },
   parts: [{ type: 'text', text: 'Hello' }],
+  recordIds: {
+    inputMessageId: 'user-message-id',
+    runId: 'run-id',
+    assistantMessageId: 'assistant-message-id',
+  },
 })
 
+const admission = await ticket.admission
 await ticket.accepted
 const terminal = await ticket.result
 ```
+
+`recordIds` is optional. Supply stable application record IDs when an accepted-response transport must
+return durable placeholders before the run finishes. `ticket.admission` resolves after the store
+acceptance CAS and reports the actually assigned `runId`, `assistantMessageId` and snapshot version.
+Those assigned IDs can differ from the proposal when an input coalesces into an existing queued
+successor. Reuse the same `inputMessageId` for retries carrying the same idempotency key; input
+identity is caller-stable, while the receipt reports the run/assistant identities that assignment
+may change. Await `admission` first on the immediate accepted-response path. `ticket.accepted`
+remains the signal-only compatibility surface and additionally waits for admission publication.
 
 The in-memory store is a reference adapter and has process-local durability
 only. Production applications implement `AgentRuntimeStore` with their own

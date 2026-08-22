@@ -20,13 +20,17 @@ function inputMessage(id: string) {
   });
 }
 
-function queuedRun(inputId: string, runId = 'run-1') {
+function queuedRun(
+  inputId: string,
+  runId = 'run-1',
+  assistantMessageId = runId === 'run-1' ? 'assistant-1' : `assistant-${runId}`,
+) {
   return AgentRunSchema.parse({
     schemaVersion: 1,
     id: runId,
     conversationId: 'conversation-1',
     inputMessageIds: [inputId],
-    assistantMessageId: runId === 'run-1' ? 'assistant-1' : `assistant-${runId}`,
+    assistantMessageId,
     state: 'queued',
     revision: 0,
     createdAt: timestamp,
@@ -73,7 +77,7 @@ describe('AgentRuntimeStore reference adapter', () => {
     const coalesced = await store.acceptInputAndAssignRun({
       idempotencyKey: 'request-2',
       input: second,
-      run: queuedRun(second.id, 'unused-run'),
+      run: queuedRun(second.id, 'run-1', 'assistant-1'),
       coalesceIntoRunId: 'run-1',
     });
 
@@ -83,6 +87,47 @@ describe('AgentRuntimeStore reference adapter', () => {
     expect(snapshot.runs).toHaveLength(1);
     expect(snapshot.runs[0]?.inputMessageIds).toEqual(['input-1', 'input-2']);
     expect(snapshot.runs[0]?.revision).toBe(1);
+  });
+
+  test('rejects assistant identities that could overwrite canonical history', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    const first = inputMessage('input-1');
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-1',
+      input: first,
+      run: queuedRun(first.id),
+    });
+
+    const sameAsInput = inputMessage('input-2');
+    await expect(
+      store.acceptInputAndAssignRun({
+        idempotencyKey: 'request-2',
+        input: sameAsInput,
+        run: queuedRun(sameAsInput.id, 'run-2', sameAsInput.id),
+      }),
+    ).rejects.toThrow('valid assignment');
+
+    const existingMessage = inputMessage('input-3');
+    await expect(
+      store.acceptInputAndAssignRun({
+        idempotencyKey: 'request-3',
+        input: existingMessage,
+        run: queuedRun(existingMessage.id, 'run-3', first.id),
+      }),
+    ).rejects.toThrow('valid assignment');
+
+    const existingRunAssistant = inputMessage('input-4');
+    await expect(
+      store.acceptInputAndAssignRun({
+        idempotencyKey: 'request-4',
+        input: existingRunAssistant,
+        run: queuedRun(existingRunAssistant.id, 'run-4', 'assistant-1'),
+      }),
+    ).rejects.toThrow('valid assignment');
+
+    const snapshot = await store.loadSnapshot('conversation-1');
+    expect(snapshot.messages.map((message) => message.id)).toEqual(['input-1']);
+    expect(snapshot.runs.map((run) => run.id)).toEqual(['run-1']);
   });
 
   test('rejects a stale checkpoint and commits terminal state once', async () => {

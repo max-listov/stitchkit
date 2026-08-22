@@ -69,11 +69,13 @@ export {
 } from './agent-runtime/protocol';
 export {
   type AgentRuntime,
+  type AgentRuntimeAdmission,
   type AgentRuntimeConfig,
   type AgentRuntimeInput,
   type AgentRuntimeInterruptInput,
   type AgentRuntimePrepareStep,
   type AgentRuntimeProtocolInput,
+  type AgentRuntimeRecordIds,
   type AgentRuntimeRecoveryInput,
   type AgentRuntimeResult,
   type AgentRuntimeRunContext,

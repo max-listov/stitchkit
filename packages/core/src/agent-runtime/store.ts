@@ -208,23 +208,6 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         };
       }
       if (
-        input.run.conversationId !== input.input.conversationId ||
-        input.run.inputMessageIds.length !== 1 ||
-        input.run.inputMessageIds[0] !== input.input.id ||
-        input.run.state !== 'queued' ||
-        input.run.revision !== 0 ||
-        input.run.ownerId !== undefined ||
-        input.run.terminalReason !== undefined ||
-        input.run.terminalPolicyName !== undefined ||
-        input.input.role !== 'user' ||
-        input.input.status !== 'committed' ||
-        input.input.runId !== undefined ||
-        entry.snapshot.messages.some((message) => message.id === input.input.id) ||
-        entry.snapshot.runs.some((candidate) => candidate.id === input.run.id)
-      ) {
-        throw new TypeError('Input and queued run do not form one valid assignment');
-      }
-      if (
         input.expectedVersion !== undefined &&
         input.expectedVersion !== entry.snapshot.version
       ) {
@@ -242,6 +225,31 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
           coalescedRun.terminalReason !== undefined)
       ) {
         return coalescedRun ? conflict(coalescedRun.revision) : { outcome: 'not_found' };
+      }
+      if (
+        input.run.conversationId !== input.input.conversationId ||
+        input.run.inputMessageIds.length !== 1 ||
+        input.run.inputMessageIds[0] !== input.input.id ||
+        input.run.state !== 'queued' ||
+        input.run.revision !== 0 ||
+        input.run.ownerId !== undefined ||
+        input.run.terminalReason !== undefined ||
+        input.run.terminalPolicyName !== undefined ||
+        input.input.role !== 'user' ||
+        input.input.status !== 'committed' ||
+        input.input.runId !== undefined ||
+        entry.snapshot.messages.some((message) => message.id === input.input.id) ||
+        (!coalescedRun &&
+          (input.run.assistantMessageId === input.input.id ||
+            entry.snapshot.runs.some((candidate) => candidate.id === input.run.id) ||
+            entry.snapshot.runs.some(
+              (candidate) => candidate.assistantMessageId === input.run.assistantMessageId,
+            ) ||
+            entry.snapshot.messages.some(
+              (message) => message.id === input.run.assistantMessageId,
+            )))
+      ) {
+        throw new TypeError('Input and queued run do not form one valid assignment');
       }
       const assignedRun = coalescedRun
         ? AgentRunSchema.parse({

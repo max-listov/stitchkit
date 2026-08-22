@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.3] — 2026-08-22
+
+### Added
+
+- **Agent admission exposes stable application identity.** `runtime.submit({ recordIds })` accepts
+  optional caller-provided input/run/assistant record IDs and its ticket adds an `admission` promise
+  with the actually assigned run, assistant and snapshot identity. Accepted-response transports can
+  return durable placeholders immediately, including the existing successor identity after
+  pending-input coalescing, without observing store internals or predicting `generateId()` order.
+
+### Fixed
+
+- **Agent admission rejects canonical identity collisions.** The reference store refuses a new
+  assistant ID that could overwrite an existing message or another run's assistant, while
+  coalescing ignores the discarded proposal. Runtime ticket deduplication also uses nested identity
+  maps, so arbitrary non-empty conversation and idempotency strings cannot alias each other; the
+  new optional admission promise is internally observed so existing `accepted`/`result` consumers
+  do not gain an unhandled rejection path.
+
 ## [0.56.2] — 2026-08-22
 
 ### Added
