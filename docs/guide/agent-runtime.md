@@ -158,6 +158,20 @@ resolves to the same terminal run. Coalescing never mutates the active run.
 while the predecessor still owns managed callbacks. A hung predecessor blocks
 the lane in the first version.
 
+Shutdown is two-phase when a drain budget is supplied:
+
+```ts
+await runtime.close({ drainTimeoutMs: 30_000, forceTimeoutMs: 5_000 })
+```
+
+`close` first rejects new process-local admissions and gives active runs the
+natural drain budget. Only after that budget expires does it abort them with
+reason `shutdown`; `forceTimeoutMs` bounds the final settlement wait for a
+non-cooperative model or tool. Calling `close()` without `drainTimeoutMs` keeps
+the immediate-shutdown form: abort active runs, then wait for their settlement.
+Durably queued records rejected from the local queue remain recoverable through
+`scanRecoverable`; close never marks them terminal on its own.
+
 Use `await runtime.interrupt({ conversationId, runId })` when the interruption
 must be durable: it first commits `interrupt_requested`, then aborts the local
 coordinator signal. `runtime.stop(key)` is the process-local signal-only escape

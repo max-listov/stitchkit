@@ -13,6 +13,7 @@ import { isToolExecutionControlError, type ToolLifecycle } from '../tools/execut
 import type { AgentCompactionResult } from './compaction';
 import {
   type AgentInputPolicy,
+  type AgentSessionCloseOptions,
   type AgentStopReason,
   createAgentSessionCoordinator,
 } from './coordinator';
@@ -161,7 +162,7 @@ export interface AgentRuntime {
   };
   interrupt(input: AgentRuntimeInterruptInput): Promise<AgentStoreMutationResult>;
   stop(conversationKey: string, reason?: AgentStopReason): boolean;
-  close(options?: { drainTimeoutMs?: number }): Promise<void>;
+  close(options?: AgentSessionCloseOptions): Promise<void>;
 }
 
 class AgentRuntimeConflictError extends Error {

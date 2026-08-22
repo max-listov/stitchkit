@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.4] — 2026-08-22
+
+### Fixed
+
+- **Agent runtime close now drains before forcing shutdown.**
+  `runtime.close({ drainTimeoutMs, forceTimeoutMs })` first closes process-local
+  admission and lets active runs settle naturally for the drain budget. Only an
+  expired drain aborts them with reason `shutdown`; the additive force budget
+  then bounds settlement of a non-cooperative model or tool. Calling `close()`
+  without a drain budget retains immediate abort-and-settle behavior.
+
 ## [0.56.3] — 2026-08-22
 
 ### Added

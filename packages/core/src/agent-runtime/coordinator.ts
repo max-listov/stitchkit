@@ -20,8 +20,13 @@ export interface AgentSessionCoordinator {
     ): AgentCoordinatedRun<RESULT> | Promise<AgentCoordinatedRun<RESULT>>;
   }): AgentRunTicket<RESULT>;
   stop(key: string, reason?: AgentStopReason): boolean;
-  close(options?: { drainTimeoutMs?: number }): Promise<void>;
+  close(options?: AgentSessionCloseOptions): Promise<void>;
   isRunning(key: string): boolean;
+}
+
+export interface AgentSessionCloseOptions {
+  drainTimeoutMs?: number;
+  forceTimeoutMs?: number;
 }
 
 interface PendingRun {
@@ -42,6 +47,18 @@ interface Lane {
 export function createAgentSessionCoordinator(): AgentSessionCoordinator {
   const lanes = new Map<string, Lane>();
   let closed = false;
+
+  const waitWithin = async (settled: Promise<void>, timeoutMs: number): Promise<boolean> => {
+    if (timeoutMs === 0) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    const completed = settled.then(() => true);
+    const result = await Promise.race([completed, timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+    return result;
+  };
 
   const laneFor = (key: string): Lane => {
     const existing = lanes.get(key);
@@ -117,21 +134,29 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
     },
 
     async close(options = {}) {
+      for (const [name, value] of Object.entries(options)) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+          throw new TypeError(`${name} must be a non-negative safe integer`);
+        }
+      }
       closed = true;
       const error = new Error('Agent session coordinator is closed');
       for (const lane of lanes.values()) {
-        lane.active?.controller.abort('shutdown');
         for (const pending of lane.queue.splice(0)) pending.reject(error);
       }
-      const settlements = [...lanes.values()]
-        .map((lane) => lane.active?.settled)
-        .filter((settled) => settled !== undefined);
+      const active = [...lanes.values()]
+        .map((lane) => lane.active)
+        .filter((run) => run !== undefined);
+      const settlements = active.map((run) => run.settled);
       const drain = Promise.all(settlements).then(() => undefined);
+      if (options.drainTimeoutMs !== undefined) {
+        const drained = await waitWithin(drain, options.drainTimeoutMs);
+        if (drained) return;
+      }
+      for (const run of active) run.controller.abort('shutdown');
       if (options.drainTimeoutMs === undefined) return drain;
-      await Promise.race([
-        drain,
-        new Promise<void>((resolve) => setTimeout(resolve, options.drainTimeoutMs)),
-      ]);
+      if (options.forceTimeoutMs === undefined) return;
+      await waitWithin(drain, options.forceTimeoutMs);
     },
 
     isRunning(key) {

@@ -8,6 +8,7 @@ export {
   type AgentCoordinatedRun,
   type AgentInputPolicy,
   type AgentRunTicket,
+  type AgentSessionCloseOptions,
   type AgentSessionCoordinator,
   type AgentStopReason,
   createAgentSessionCoordinator,
