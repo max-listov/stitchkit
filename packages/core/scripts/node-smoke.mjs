@@ -29,6 +29,8 @@ const entrypoints = [
   'stitchkit/remote',
   'stitchkit/node',
   'stitchkit/observability',
+  'stitchkit/agent-runtime',
+  'stitchkit/agent-runtime/openrouter',
   'stitchkit/testing',
   'stitchkit/files',
 ];
@@ -43,7 +45,12 @@ const { bindRealtimeServer, createHandler, createSocketIOServer, implement, serv
 const { createHandlerTestClient } = await import('stitchkit/testing');
 const { createManagedFileBoundary } = await import('stitchkit/files');
 const { createObservability } = await import('stitchkit/observability');
+const { createMemoryAgentRuntimeStore } = await import('stitchkit/agent-runtime');
 const { z } = await import('zod');
+
+const agentStore = createMemoryAgentRuntimeStore();
+const emptyAgentSnapshot = await agentStore.loadSnapshot('node-smoke');
+assert.equal(emptyAgentSnapshot.version, 0);
 
 const fileRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-files-'));
 try {

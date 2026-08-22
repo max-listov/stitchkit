@@ -683,6 +683,10 @@ list.
 
 ## AI agents — `mountAgent`
 
+`mountAgent` remains the low-level path when the application owns its own model
+loop and conversation state. For the optional Stitchkit-owned run/history loop,
+see [Agent application runtime](./agent-runtime.md).
+
 `mountAgent` turns a service into a Vercel AI SDK `ToolSet`, ready for
 `generateText` / `streamText`:
 

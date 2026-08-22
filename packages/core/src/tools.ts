@@ -74,10 +74,12 @@ export type {
   ToolCallContext,
   ToolCallHooks,
   ToolErrorOptions,
+  ToolExecutionControlReason,
   ToolLifecycle,
   ToolOperation,
   ToolResult,
 } from './tools/execute';
+export { isToolExecutionControlError, ToolExecutionControlError } from './tools/execute';
 export {
   flattenToolJsonSchema,
   type ToolPresentationSchema,

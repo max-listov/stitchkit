@@ -21,6 +21,25 @@ export type ToolResult =
 
 type ToolFailure = Extract<ToolResult, { ok: false }>;
 
+export type ToolExecutionControlReason = 'stale_run' | 'run_interrupted';
+
+/** Internal control flow that must never be converted into a model-facing tool failure. */
+export class ToolExecutionControlError extends Error {
+  readonly reason: ToolExecutionControlReason;
+
+  constructor(reason: ToolExecutionControlReason) {
+    super(`Agent tool execution stopped: ${reason}`);
+    this.name = 'ToolExecutionControlError';
+    this.reason = reason;
+  }
+}
+
+export function isToolExecutionControlError(
+  value: unknown,
+): value is ToolExecutionControlError {
+  return value instanceof ToolExecutionControlError;
+}
+
 /**
  * The model-facing failure deliberately omits HTTP status and the raw cause.
  * In-process composition still needs the exact normalized AppError, so retain
@@ -484,6 +503,7 @@ async function runToolMethod(
       (data === undefined || data === null) && !method.outputSchema ? { status: 'ok' } : data;
     return finish({ ok: true, data: output });
   } catch (err) {
+    if (isToolExecutionControlError(err)) throw err;
     // Report the value as thrown BEFORE normalising it: `normalizeError` scrubs
     // anything that is not an `AppError` down to a bare `INTERNAL_SERVER_ERROR`,
     // so this is the last point at which the real cause exists. Guarded — the

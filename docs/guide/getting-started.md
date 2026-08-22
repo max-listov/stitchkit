@@ -37,6 +37,8 @@ keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
 | `stitchkit/remote` | browser **and** server | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/files` | server (Bun or Node) | peer-free managed local-file boundary |
 | `stitchkit/observability` | server | request/tool event projections — `createObservability`, trace context, sanitisation |
+| `stitchkit/agent-runtime` | server | optional durable conversation/run loop, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime/openrouter` | server | isolated OpenRouter language-model adapter |
 | `stitchkit/testing` | tests on Bun or Node | in-process generated clients over a real Fetch handler, without a TCP port |
 | `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
 
@@ -136,6 +138,8 @@ map — feature → packages:
 | `createServer` (Bun) | — (uses `Bun.serve`) |
 | `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
 | MCP / agent tools (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
+| Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
+| OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
 | MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |

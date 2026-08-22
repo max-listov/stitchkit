@@ -303,6 +303,38 @@ console.log('peer-free testing manifest ok');
         );
       }
     }
+
+    if (name === 'full') {
+      const runtimeBundle = join(dir, 'agent-runtime-neutral-bundle.js');
+      const runtimeMetafile = join(dir, 'agent-runtime-neutral-metafile.json');
+      step('full: bundle neutral agent runtime', () =>
+        run(
+          'bun',
+          [
+            'build',
+            'src/agent-runtime-neutral.ts',
+            '--target=bun',
+            '--packages=bundle',
+            `--outfile=${runtimeBundle}`,
+            `--metafile=${runtimeMetafile}`,
+          ],
+          dir,
+        ),
+      );
+      const runtimeInputs = Object.keys(
+        JSON.parse(readFileSync(runtimeMetafile, 'utf8')).inputs,
+      );
+      const leakedProvider = runtimeInputs.find((input) =>
+        input.includes('@openrouter/ai-sdk-provider'),
+      );
+      if (leakedProvider) {
+        failed = true;
+        console.error(
+          `[consumer-lane] full: neutral agent runtime resolved OpenRouter: ${leakedProvider}`,
+        );
+      }
+      step('full: run neutral agent runtime bundle', () => run('bun', [runtimeBundle], dir));
+    }
   }
 
   const unexpected = [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));

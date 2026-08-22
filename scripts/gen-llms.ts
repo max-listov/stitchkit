@@ -46,6 +46,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'MCP & agents',
     'contracts as MCP tools (createMcpHandler) and AI-agent tools (mountAgent); tool lifecycle, extend, identity',
   ],
+  [
+    'agent-runtime.md',
+    'Agent application runtime',
+    'optional durable history, prompt/model composition, stream loop, coordination, fencing and events',
+  ],
   ['cli.md', 'CLI', 'contracts as a command-line program'],
   [
     'realtime.md',

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { createMemoryAgentRuntimeStore } from 'stitchkit/agent-runtime';
 import { defineContract } from 'stitchkit/contract';
 import { implement } from 'stitchkit/server';
 import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
+
+const agentStore = createMemoryAgentRuntimeStore();
+const agentSnapshot = await agentStore.loadSnapshot('packed-node-agent');
+assert.equal(agentSnapshot.version, 0);
 
 const contract = defineContract(
   { prefix: 'node-http', scope: 'public' },

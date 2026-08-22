@@ -11,7 +11,14 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { QueryClient } from '@tanstack/react-query';
+import { MockLanguageModelV4 } from 'ai/test';
 import { ApiError } from 'stitchkit';
+import {
+  createAgentRuntime,
+  createMemoryAgentRuntimeStore,
+  defineAgentProtocol,
+} from 'stitchkit/agent-runtime';
+import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import { defineCliCommand } from 'stitchkit/cli';
 import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createManagedFileBoundary } from 'stitchkit/files';
@@ -68,6 +75,49 @@ const packedApiError = new ApiError(
   undefined,
   undefined,
   'packed-trace-id',
+);
+
+const packedAgentStore = createMemoryAgentRuntimeStore();
+const packedAgentRuntime = createAgentRuntime({
+  protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+  store: packedAgentStore,
+  models: {
+    resolve: () => ({
+      descriptor: {
+        provider: 'packed',
+        modelId: 'packed-model',
+        contextWindow: 1_000,
+        capabilities: [],
+      },
+      model: new MockLanguageModelV4(),
+    }),
+  },
+  prompt: () => {
+    throw new Error('packed pre-stream failure');
+  },
+  tools: () => ({}),
+});
+const packedAgentTicket = packedAgentRuntime.submit({
+  conversationId: 'packed-conversation',
+  idempotencyKey: 'packed-input',
+  context: {},
+  parts: [{ type: 'text', text: 'hello' }],
+});
+await packedAgentTicket.accepted;
+const packedAgentTerminal = await packedAgentTicket.result;
+check(
+  'the packed agent runtime terminalizes a pre-stream failure',
+  packedAgentTerminal.reason === 'provider_failure' &&
+    packedAgentTerminal.run.state === 'failed',
+);
+await packedAgentRuntime.close();
+
+const packedOpenRouter = openRouterProvider({ apiKey: 'packed-no-network-key' });
+const packedOpenRouterModel = packedOpenRouter.create('provider/model');
+check(
+  'the packed isolated OpenRouter adapter constructs a language model',
+  typeof packedOpenRouterModel !== 'string' &&
+    packedOpenRouterModel.modelId === 'provider/model',
 );
 check(
   'the packed root ApiError exposes its response trace id',

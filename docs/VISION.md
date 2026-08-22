@@ -1,10 +1,10 @@
 ---
 title: "stitchkit — Vision"
-description: Contract-first backend framework for Bun and Node. One defineContract() into an HTTP API, MCP tools, AI-agent tools, a CLI and a typed client.
+description: Contract-first backend framework for Bun and Node, with an optional application runtime for tool-using AI agents.
 type: vision
 status: active
 created: 2025-05-01
-updated: 2026-08-07
+updated: 2026-08-22
 ---
 
 # stitchkit
@@ -12,6 +12,12 @@ updated: 2026-08-07
 Contract-first backend framework for Bun and Node.
 
 One `defineContract()` → an HTTP API + MCP tools + AI-agent tools + a CLI + a typed client.
+
+Applications that want Stitchkit to own the conversation mechanics may also opt
+into the server-only agent runtime: durable run transitions, provider-valid
+history, prompt/context composition, model adapters, streaming, managed-tool
+fencing, delivery events and run observability. Applications that already own
+those mechanics continue to use the low-level agent-tool surface directly.
 
 ## The problem
 
@@ -43,13 +49,20 @@ client. One source of truth; the transports cannot drift.
   checks.
 - **Generic by design.** No domain-specific types — apps bring their own
   scopes, contexts and error codes.
+- **Optional application runtime, not a job platform.** Stitchkit may own a
+  tool-using agent's process-local execution protocol and typed persistence
+  boundary. Applications still own their database adapter, distributed lease,
+  domain prompts and tools, transport/UI, and idempotency of external effects.
 
 ## Status
 
 Pre-1.0 and used by real applications. The shipped surface includes Bun and
 Node HTTP adapters, contract and raw/binary responses, OpenAPI 3.1, typed
 clients, Socket.IO, MCP contract and native tools, MCP Apps resources, agent
-tools, CLI generation and request/tool observability.
+tools, CLI generation and request/tool observability. The optional agent
+application runtime is under active implementation and does not become a
+public package surface until its protocol, persistence and race guarantees form
+one coherent slice.
 
 Breaking changes are still allowed between minor versions, but never silently:
 each one has a mechanical migration in the changelog and is exercised through
@@ -63,5 +76,8 @@ the published package before release.
   aligned with the public surface.
 - Grow the packed official starter only where it clarifies already-shipped
   capabilities without moving frontend infrastructure into the framework.
+- Remove copied agent-runtime mechanics from consuming applications through a
+  server-only additive entrypoint, while retaining `mountAgent` as the smaller
+  independent composition path.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).

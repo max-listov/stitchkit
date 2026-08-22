@@ -390,6 +390,38 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 ---
 
+## `stitchkit/agent-runtime`
+
+Server-only optional application runtime. See the
+[agent runtime guide](../guide/agent-runtime.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and terminal publication |
+| `defineAgentProtocol` | function | declare and validate context, input metadata and canonical message parts |
+| `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
+| `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
+| `RecoverAgentRunSchema` | schema | explicit abandon/requeue recovery decision; acquired runs require replay-safe evidence |
+| `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
+| `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
+| `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
+| `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware context budget |
+| `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
+| `createAgentSessionCoordinator` | function | strict process-local queue/interrupt lifecycle |
+| `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
+| `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
+| `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
+| `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
+| `AgentRuntimeEventSchema` | schema | transient delta, durable checkpoint/run-state/tool and terminal event union |
+| `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
+
+## `stitchkit/agent-runtime/openrouter`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `openRouterProvider` | function | isolated `@openrouter/ai-sdk-provider` language-model factory |
+| `OpenRouterProviderSettings` | _type_ | official provider settings accepted by the factory |
+
 ## `stitchkit/observability`
 
 Server-only. The audit layer one level above the raw hooks — W3C trace context,
@@ -563,6 +595,9 @@ payload.
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
+| `ToolExecutionControlReason` | _type_ | internal managed-execution stop reason: stale run or requested interruption |
+| `ToolExecutionControlError` | class | control-flow error used to unwind a superseded managed tool call without presenting it as a model-facing tool failure |
+| `isToolExecutionControlError` | function | narrow an unknown thrown value to the managed execution control error |
 | `ToolOperation` | _type_ | executable path-free operation shape shared by contract and framework-native runners |
 | `ToolCallHooks` | _type_ | object-shaped `beforeToolCall` / `afterToolCall` / `onToolError` observability hooks; the raw thrown value reaches the last two as `error` ([guide](../guide/observability.md#the-cause-behind-a-failed-tool-call)) |
 | `BeforeToolCallOptions` | _type_ | `{ toolName, args, context, endpoint }` passed before execution |

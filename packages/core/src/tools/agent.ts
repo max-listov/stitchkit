@@ -4,6 +4,7 @@ import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
+  isToolExecutionControlError,
   type ToolCallHooks,
   type ToolLifecycle,
   toolResultFromError,
@@ -76,6 +77,7 @@ export function mountAgent(
         if (result.ok) return result.data;
         return formatToolError(result, mountable.name, config.errorHint);
       } catch (err) {
+        if (isToolExecutionControlError(err)) throw err;
         return formatToolError(toolResultFromError(err), mountable.name, config.errorHint);
       }
     };

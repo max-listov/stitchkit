@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.56.2] — 2026-08-22
+
+### Added
+
+- **Optional server-only agent application runtime.**
+  `stitchkit/agent-runtime` composes a Zod-first engine protocol, one aggregate
+  CAS store boundary, provider-valid history, prompt budgets, typed model
+  registry, stream-first AI SDK loop, strict keyed coordination, managed-tool
+  fencing, stable delivery events and agent-run observability. The low-level
+  `mountAgent` path remains independent. OpenRouter integration is isolated at
+  `stitchkit/agent-runtime/openrouter`, so neutral imports do not resolve its
+  optional peer.
+- **Mature-consumer parity policies for the agent runtime.** Pending inputs can
+  coalesce into one durable successor run; `prepareStep`, named custom stop
+  conditions and inactivity timeout are managed by the loop; structured system
+  instructions preserve provider cache metadata; history accepts an async
+  multimodal file resolver; and stable tool events include JSON-safe input and
+  result payloads without exposing internal failures.
+
 ## [0.56.1] — 2026-08-21
 
 ### Added

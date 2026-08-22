@@ -85,11 +85,13 @@ Server code imports server entrypoints:
 import { createServer, createHandler, implement } from 'stitchkit/server'
 import { createSocketIOServer, createAuthHook } from 'stitchkit/server'
 import { createMcpHandler, mountAgent } from 'stitchkit/tools'
+import { createAgentRuntime, defineAgentProtocol } from 'stitchkit/agent-runtime'
 import { implementRemote } from 'stitchkit/remote'
 ```
 
-The root `stitchkit` entrypoint is browser-safe. Server, tool and peer-free
-remote-proxy code live behind `stitchkit/server`, `stitchkit/tools` and
+The root `stitchkit` entrypoint is browser-safe. Server, tool, optional
+AI-SDK-backed agent-runtime and peer-free remote-proxy code live behind
+`stitchkit/server`, `stitchkit/tools`, `stitchkit/agent-runtime` and
 `stitchkit/remote` respectively.
 
 ## Quick Start
@@ -213,6 +215,11 @@ const result = await generateText({ model, tools, prompt: 'Create a user named M
 
 ### 7. WebSocket (Socket.IO)
 
+For applications that want Stitchkit to own durable message/run transitions,
+stream checkpoints, interruption and managed-tool fencing, use the optional
+[`stitchkit/agent-runtime`](docs/guide/agent-runtime.md). `mountAgent` remains
+the smaller application-owned-loop path.
+
 stitchkit's WebSocket layer is Socket.IO — `polling` fallback, heartbeat, acks,
 a mature client. The wrappers cover the boilerplate.
 
@@ -282,6 +289,7 @@ import { parseSSE } from 'stitchkit'           // client: Response → AsyncGene
 | **HTTP Server** | `createServer()` / `createHandler()` — Bun.serve, validation, hooks, raw routes |
 | **MCP Tools** | `createMcpHandler()` / `mountMcp()` — MCP tools from contracts |
 | **Agent Tools** | `mountAgent()` — Vercel AI SDK tools from contracts |
+| **Agent Runtime** | `createAgentRuntime()` — optional durable history, stream loop, coordination and fencing |
 | **Typed Client** | `createClient()` / `createClients()` — typed fetch from contracts |
 | **Cursor Pagination** | `createCursorQuery()` — `react-query-kit` infinite query from a contract method |
 | **WebSocket** | `createSocketIOClient()` / `createSocketIOServer()` — typed Socket.IO wrappers |
@@ -367,7 +375,8 @@ peer — an install pulls in only what the project actually uses.
 | `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools`; SDK v2, protocol `2026-07-28`. |
 | `@modelcontextprotocol/client` | development dependency, optional | Only consumers that run MCP client integration tests or build an MCP host. |
 | `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
-| `ai` | peer, optional | Only `stitchkit/tools` — agent tools (Vercel AI SDK). |
+| `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
+| `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |
 
