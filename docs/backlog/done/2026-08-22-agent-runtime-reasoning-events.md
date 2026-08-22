@@ -2,9 +2,10 @@
 title: "Transient agent reasoning events"
 description: "Публиковать live reasoning lifecycle из managed agent loop без consumer-owned stream loop."
 type: task
-status: in-progress
+status: done
 created: 2026-08-22
 updated: 2026-08-22
+completed: 2026-08-22
 related:
   - docs/backlog/done/2026-08-22-agent-session-coordination.md
 ---
@@ -23,7 +24,7 @@ Managed loop сохраняет reasoning в canonical assistant parts, но pub
 - [x] Передавать JSON-safe provider envelope без раскрытия internal failures.
 - [x] Покрыть порядок, payload и terminal coexistence regression test.
 - [x] Синхронизировать guide, API reference и changelog.
-- [ ] Выпустить patch и проверить GitHub/npm publication.
+- [x] Выпустить patch и проверить GitHub/npm publication.
 
 ## Acceptance
 
@@ -39,6 +40,11 @@ Managed loop сохраняет reasoning в canonical assistant parts, но pub
       `packages/core/tests/agent-runtime-parity.test.ts::publishes ordered transient reasoning lifecycle with provider metadata`.
 - [x] Gates: targeted parity — 7 pass; `bun --filter stitchkit check` — green;
       `bun run verify` — green, включая packed consumers и starter browser lanes.
+- [x] Release commit: `ad5d0683c941e3647ec4d1b75e1fbd4d85ca91fe`.
+- [x] Exact-SHA CI: https://github.com/max-listov/stitchkit/actions/runs/32590260999 — success.
+- [x] Release workflow: https://github.com/max-listov/stitchkit/actions/runs/32590374652 — success.
+- [x] GitHub Release: https://github.com/max-listov/stitchkit/releases/tag/v0.56.5.
+- [x] Public registry: `stitchkit@0.56.5` доступен через npm.
 
 ## Конвейер 0/0
 
