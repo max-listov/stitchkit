@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-08-23
+
 ### ⚠️ Breaking changes
 
 - **Agent runtime drivers now persist a bounded head plus normalized run and admission records.**
