@@ -134,6 +134,32 @@ validation, dry-run, error envelopes and exit mapping, but deliberately have no
 fake service/action/scope/method identity, lifecycle or tool hooks and never
 appear in MCP/Agent manifests.
 
+A native command with a declared output may also own its final terminal
+presentation and successful process status. Both callbacks receive the exact
+Zod output type and run only after output validation; help, dry-run and failed
+validation never invoke them:
+
+```ts
+const doctor = defineCliCommand({
+  name: 'doctor',
+  description: 'Inspect local health',
+  input: z.object({}),
+  output: z.object({ status: z.enum(['ok', 'degraded']) }),
+  handler: () => ({ status: 'degraded' }),
+  present: ({ result, options }) =>
+    options.json ? `${JSON.stringify(result)}\n` : `STATUS ${result.status}\n`,
+  exitCode: (result) => result.status === 'degraded' ? 1 : 0,
+})
+```
+
+`present` returns the exact stdout bytes, which Stitchkit writes once. Without
+it the canonical JSON output is unchanged. `exitCode` classifies a successfully
+validated result and must return an integer in `0..255`; failed `ToolResult`
+envelopes and the application-wide `exitCodes` mapping remain authoritative for
+failures. A throwing callback, invalid status or non-string presenter becomes a
+normalized `INTERNAL_SERVER_ERROR`, never partial success output. Void native
+commands cannot declare either callback.
+
 `--version`, a selected native command and its command help run before
 `resolveAuth`, services, context or runtime-tool factories. Top-level help is
 also credential-free when managed surfaces are static. A dynamic factory must
@@ -160,9 +186,52 @@ string, the schema says what it should be:
 | `z.object({...})`    | `--opts '{"k":"v"}'` (JSON) or `--opts.k v`    |
 | `.optional()` / `.default()` | not required                           |
 
-Positional arguments fill non-boolean fields in declaration order, so
-`myapp generate "a fox"` is `--prompt "a fox"`. A piped value fills the first
-unset field: `echo "a fox" | myapp generate`.
+Without presentation configuration, positional arguments fill non-boolean
+fields in declaration order, so `myapp generate "a fox"` is
+`--prompt "a fox"`. A piped value fills the first required unset field:
+`echo "a fox" | myapp generate`.
+
+For a stable shell grammar, declare the default command, short aliases and the
+exact positional fields on `createCli`:
+
+```ts
+await createCli({
+  name: 'myapp',
+  version: '1.0.0',
+  services,
+  commands: [doctor],
+  defaultCommand: 'logs',
+  optionAliases: {
+    logs: { f: 'follow', n: 'lines' },
+  },
+  positionals: {
+    logs: ['target'],       // `lines` is option-only
+    doctor: [],             // no argv positionals
+  },
+})
+```
+
+Now `myapp`, `myapp --json` and `myapp logs --json` select `logs`;
+`myapp -f -n 100 --target api` maps to
+`logs --follow --lines 100 --target api`. A leading non-option token remains an
+explicit command so typos stay loud rather than becoming ambiguous default
+positionals; use an explicit `myapp logs api` when passing positionals. Leading
+framework globals may precede that explicit command. Top-level `--help`, `-h`
+and `--version` never execute the default, and top-level help marks it.
+
+Aliases are command-local, one ASCII letter and validated against the resolved
+command schema. `-f` / `-f=false` are boolean forms; values accept `-n 100` and
+`-n=100`. Arrays accumulate across short and long forms. `-h` is reserved,
+bundles such as `-fn`, attached values such as `-n100`, `--no-f` and unknown
+short flags are rejected. Canonical `--no-follow` remains available.
+
+`positionals` replaces automatic schema-order selection only for the named
+command. An empty array disables argv positionals. Fields remain available as
+long/short options and stdin still fills the first required unset field with the
+same schema-aware coercion. Unknown, duplicate or boolean targets and a required
+positional after an optional/default positional fail when that command surface
+resolves. Native dispatch retains its lazy credential-free boundary; dynamic
+managed policies validate when their identity-dependent surface resolves.
 
 The advertised schema is never mutated — a CLI call validates against the exact
 same Zod schema an HTTP or MCP call does.
@@ -187,10 +256,12 @@ diagnostics remain ordinary stderr text. This keeps stdout pipeable and
 `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
 …) — override per app with `exitCodes`.
 
-Per-command help derives the positional form from the same schema order as the
-argv parser. For example, a required `action` and optional `profile` render as
+Per-command help derives the positional form from the same resolved policy as
+the argv parser. For example, a required `action` and optional `profile` render as
 `Usage: myapp skill <action> [profile] [--flags]`; the argument table also shows
 `<action> | --action` and `[profile] | --profile`. Boolean fields remain flags.
+Declared aliases render beside their canonical options, for example
+`-n, --lines`.
 
 ## `--wait` — background-friendly generation
 

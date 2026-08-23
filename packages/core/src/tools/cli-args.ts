@@ -46,6 +46,14 @@ export interface ParsedCliArgs {
   options: CliRunOptions;
 }
 
+export interface CliArgvRoute {
+  command?: string;
+  commandArgv: string[];
+  topLevelHelp: boolean;
+  version: boolean;
+  error?: string;
+}
+
 type FieldKind =
   | 'boolean'
   | 'number'
@@ -69,6 +77,124 @@ const NUMERIC_VALUE = /^-(\d+\.?\d*|\.\d+)$/;
 const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help']);
 const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir']);
 export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);
+
+interface CliLongOptionToken {
+  name: string;
+  value?: string;
+  inline: boolean;
+  globalKind?: 'boolean' | 'value';
+}
+
+/** One source of truth for long-option token shape and framework-global ownership. */
+function classifyLongOptionToken(token: string): CliLongOptionToken | undefined {
+  if (!token.startsWith('--') || token === '--') return undefined;
+  const equals = token.indexOf('=');
+  const name = equals >= 0 ? token.slice(2, equals) : token.slice(2);
+  return {
+    name,
+    value: equals >= 0 ? token.slice(equals + 1) : undefined,
+    inline: equals >= 0,
+    globalKind: BOOL_OPTIONS.has(name)
+      ? 'boolean'
+      : VALUE_OPTIONS.has(name)
+        ? 'value'
+        : undefined,
+  };
+}
+
+/**
+ * Select a command without duplicating the framework-global option grammar.
+ * With no default configured this returns the historical first-token routing
+ * byte-for-byte. With a default, recognised leading globals may precede an
+ * explicit command; a remaining option token belongs to the default command.
+ */
+export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRoute {
+  if (defaultCommand === undefined) {
+    const [command, ...commandArgv] = argv;
+    return { command, commandArgv, topLevelHelp: false, version: false };
+  }
+
+  const globals: string[] = [];
+  let index = 0;
+  while (index < argv.length) {
+    const token = argv[index];
+    if (token === undefined) break;
+    if (token === '--') {
+      return {
+        commandArgv: [],
+        topLevelHelp: false,
+        version: false,
+        error: 'A command is required before "--"',
+      };
+    }
+    if (token === '--help' || token === '-h') {
+      return { commandArgv: [], topLevelHelp: true, version: false };
+    }
+    if (token === '--version' || token === 'version') {
+      return { commandArgv: [], topLevelHelp: false, version: true };
+    }
+    if (!token.startsWith('-') || token === '-') {
+      return {
+        command: token,
+        commandArgv: [...globals, ...argv.slice(index + 1)],
+        topLevelHelp: false,
+        version: false,
+      };
+    }
+    if (!token.startsWith('--')) {
+      return {
+        command: defaultCommand,
+        commandArgv: [...globals, ...argv.slice(index)],
+        topLevelHelp: false,
+        version: false,
+      };
+    }
+
+    const option = classifyLongOptionToken(token);
+    if (!option) {
+      return {
+        command: defaultCommand,
+        commandArgv: [...globals, ...argv.slice(index)],
+        topLevelHelp: false,
+        version: false,
+      };
+    }
+    if (option.globalKind === 'boolean') {
+      globals.push(token);
+      index += 1;
+      continue;
+    }
+    if (option.globalKind === 'value') {
+      globals.push(token);
+      if (!option.inline) {
+        const value = argv[index + 1];
+        if (value === '--help' || value === '-h') {
+          return { commandArgv: [], topLevelHelp: true, version: false };
+        }
+        if (value === '--version' || value === 'version') {
+          return { commandArgv: [], topLevelHelp: false, version: true };
+        }
+        if (value !== undefined) globals.push(value);
+        index += value === undefined ? 1 : 2;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+    return {
+      command: defaultCommand,
+      commandArgv: [...globals, ...argv.slice(index)],
+      topLevelHelp: false,
+      version: false,
+    };
+  }
+  return {
+    command: defaultCommand,
+    commandArgv: globals,
+    topLevelHelp: false,
+    version: false,
+  };
+}
 
 export class CliArgumentError extends Error {
   override name = 'CliArgumentError';
@@ -260,7 +386,12 @@ function setNested(target: Record<string, unknown>, path: string[], value: unkno
 export function parseCliArgs(
   argv: string[],
   schema: z.ZodType | undefined,
-  config: { allowUnknown?: boolean; knownFields?: readonly string[] } = {},
+  config: {
+    allowUnknown?: boolean;
+    knownFields?: readonly string[];
+    optionAliases?: ReadonlyMap<string, string>;
+    positionals?: readonly string[];
+  } = {},
 ): ParsedCliArgs {
   const options: CliRunOptions = {
     json: false,
@@ -301,14 +432,36 @@ export function parseCliArgs(
       continue;
     }
     if (!tok.startsWith('--')) {
-      throw new CliArgumentError(`Unknown option "${tok}"`);
+      const match = /^-([A-Za-z])(?:=(.*))?$/.exec(tok);
+      const alias = match?.[1];
+      const field = alias === undefined ? undefined : config.optionAliases?.get(alias);
+      if (!alias || !field) throw new CliArgumentError(`Unknown option "${tok}"`);
+      const inline = match?.[2];
+      const info = fields.get(field);
+      if (info?.kind === 'boolean') {
+        boolFlags.set(field, inline === undefined ? true : parseReservedBool(field, inline));
+        continue;
+      }
+      let value = inline;
+      if (value === undefined) {
+        const next = argv[i + 1];
+        if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
+          value = next;
+          i++;
+        } else {
+          throw new CliArgumentError(`--${field} requires a value`);
+        }
+      }
+      pushFlag(field, value);
+      continue;
     }
-    const eq = tok.indexOf('=');
-    const name = eq >= 0 ? tok.slice(2, eq) : tok.slice(2);
-    let value: string | undefined = eq >= 0 ? tok.slice(eq + 1) : undefined;
+    const option = classifyLongOptionToken(tok);
+    if (!option) throw new CliArgumentError(`Unknown option "${tok}"`);
+    const { name } = option;
+    let { value } = option;
     if (name.length === 0) throw new CliArgumentError('Invalid empty option name');
 
-    if (BOOL_OPTIONS.has(name)) {
+    if (option.globalKind === 'boolean') {
       const enabled = value === undefined ? true : parseReservedBool(name, value);
       if (name === 'dry-run') options.dryRun = enabled;
       else if (name === 'json') options.json = enabled;
@@ -317,13 +470,13 @@ export function parseCliArgs(
       else options.help = enabled;
       continue;
     }
-    if (VALUE_OPTIONS.has(name)) {
+    if (option.globalKind === 'value') {
       const next = argv[i + 1];
       value = value ?? next;
       if (value === undefined || (value.startsWith('-') && !NUMERIC_VALUE.test(value))) {
         throw new CliArgumentError(`--${name} requires a value`);
       }
-      if (eq < 0) i++;
+      if (!option.inline) i++;
       if (name === 'wait-timeout') {
         const timeout = Number(value);
         if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -379,9 +532,12 @@ export function parseCliArgs(
 
   // Positionals fill non-boolean fields in declaration order, skipping any the
   // caller already set with a flag.
-  const fillable = [...fields.entries()]
-    .filter(([, info]) => info.kind !== 'boolean')
-    .map(([name]) => name);
+  const fillable =
+    config.positionals === undefined
+      ? [...fields.entries()]
+          .filter(([, info]) => info.kind !== 'boolean')
+          .map(([name]) => name)
+      : [...config.positionals];
   let pi = 0;
   for (const key of fillable) {
     if (pi >= positionals.length) break;

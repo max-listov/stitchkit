@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- **Concurrent provider completion and durable interrupt no longer strand an active run.** The
+  terminal path now reconciles after every losing CAS while ownership and fencing remain current:
+  it settles from an already-terminal canonical snapshot, or terminalizes a still-owned
+  `interrupt_requested` run as interrupted. Only the execution that applies the terminal mutation
+  publishes terminal delivery and metrics; canonical winners settle losing tickets without a
+  duplicate event. Coalesced successors therefore start after the predecessor settles instead of
+  failing behind a stale revision.
+
+### Added
+
+- **Declarative CLI command presentation policy.** `createCli` now accepts a
+  `defaultCommand`, exact command-local one-letter `optionAliases` and explicit
+  per-command `positionals`. Routing, parsing and generated help share one
+  resolved descriptor across native, contract and runtime commands; omitted
+  policy retains the existing CLI grammar.
+- **Typed native result presentation and successful exit classification.** A
+  `defineCliCommand` with declared output may provide post-validation `present`
+  and `exitCode` callbacks with the exact inferred Zod output type. Invalid or
+  throwing policy becomes a normalized internal failure with no partial success
+  output.
+
 ## [0.59.0] — 2026-08-23
 
 ### ⚠️ Breaking changes

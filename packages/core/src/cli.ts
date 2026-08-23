@@ -33,4 +33,5 @@ export {
   type ExitCodeMap,
   emitResult,
 } from './tools/cli-format';
+export type { CliPresentationPolicyConfig } from './tools/cli-policy';
 export { type CliWaitConfig, type PollParams, pollUntilDone } from './tools/cli-wait';

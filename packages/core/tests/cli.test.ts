@@ -265,6 +265,22 @@ describe('createCli — execution & coercion', () => {
     expect(JSON.parse(out).name).toBe('piped-box');
   });
 
+  test('without positional policy stdin keeps the historical raw-string behavior', async () => {
+    const numeric = defineCliCommand({
+      name: 'numeric_stdin',
+      description: 'No-policy stdin compatibility probe',
+      input: z.object({ count: z.number() }),
+      output: z.object({ count: z.number() }),
+      handler: ({ input }) => input,
+    });
+    const result = await run(['numeric_stdin', '--json'], {
+      commands: [numeric],
+      stdin: async () => '3',
+    });
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.err).error).toBe('VALIDATION_ERROR');
+  });
+
   test('stdin is never read when every unset field is optional', async () => {
     // In an agent's shell stdin is an open pipe with no EOF — a read for an
     // optional field would hang the command forever. The reader must not run.
@@ -632,6 +648,556 @@ describe('createCli — native command composition', () => {
   });
 });
 
+describe('createCli — declarative command presentation policy', () => {
+  const logs = defineCliCommand({
+    name: 'logs',
+    description: 'Read service logs',
+    input: z.object({
+      target: z.string().default('all'),
+      follow: z.boolean().default(false),
+      lines: z.number().default(100),
+      tags: z.array(z.string()).default([]),
+    }),
+    output: z.object({
+      target: z.string(),
+      follow: z.boolean(),
+      lines: z.number(),
+      tags: z.array(z.string()),
+    }),
+    handler: ({ input }) => input,
+  });
+
+  const presentation = {
+    commands: [logs],
+    defaultCommand: 'logs',
+    optionAliases: { logs: { f: 'follow', n: 'lines', t: 'tags' } },
+    positionals: { logs: ['target'] },
+  } satisfies Partial<CliConfig>;
+
+  test('default command composes with global-only argv and explicit routing', async () => {
+    const bare = await run([], presentation);
+    expect(bare.code).toBe(0);
+    expect(JSON.parse(bare.out)).toEqual({
+      target: 'all',
+      follow: false,
+      lines: 100,
+      tags: [],
+    });
+
+    const globalOnly = await run(['--json', '-f'], presentation);
+    expect(globalOnly.code).toBe(0);
+    expect(JSON.parse(globalOnly.out).follow).toBe(true);
+
+    const explicit = await run(['--json', 'logs', 'api', '-n=25'], presentation);
+    expect(explicit.code).toBe(0);
+    expect(JSON.parse(explicit.out)).toMatchObject({ target: 'api', lines: 25 });
+
+    const typo = await run(['--json', 'logz'], presentation);
+    expect(typo.code).toBe(1);
+    expect(typo.err).toContain('Unknown command "logz"');
+
+    for (const argv of [
+      ['--wait-timeout', '30', 'logs', '--help'],
+      ['--output-dir=./out', 'logs', '--help'],
+    ]) {
+      const prefixed = await run(argv, presentation);
+      expect(prefixed.code).toBe(0);
+      expect(prefixed.out).toContain('Usage: widget logs');
+    }
+    const defaultWithValueGlobal = await run(['--output-dir=./out'], presentation);
+    expect(defaultWithValueGlobal.code).toBe(2);
+    expect(defaultWithValueGlobal.err).toContain('not configured for native commands');
+  });
+
+  test('default command preserves top-level help/version precedence without dispatch', async () => {
+    let calls = 0;
+    const counted = defineCliCommand({
+      name: 'counted',
+      description: 'Count dispatches',
+      input: z.object({}),
+      output: z.object({ calls: z.number() }),
+      handler: () => ({ calls: ++calls }),
+    });
+    const config = { commands: [counted], defaultCommand: 'counted' };
+
+    for (const argv of [
+      ['--help'],
+      ['-h'],
+      ['--json', '--help'],
+      ['--json=invalid', '--help'],
+      ['--output-dir', '--help'],
+    ]) {
+      const result = await run(argv, config);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('Usage: widget [command]');
+      expect(result.out).toContain('Count dispatches (default)');
+    }
+    const version = await run(['--json', '--version'], config);
+    expect(version).toEqual({ out: 'widget 1.0.0\n', err: '', code: 0 });
+    expect(calls).toBe(0);
+    const surfaceFreeVersion = await run(['--version'], { defaultCommand: 'missing' });
+    expect(surfaceFreeVersion).toEqual({ out: 'widget 1.0.0\n', err: '', code: 0 });
+
+    const falseHelp = await run(['--help=false', '--json'], config);
+    expect(falseHelp.code).toBe(0);
+    expect(JSON.parse(falseHelp.out).calls).toBe(1);
+
+    const separator = await run(['--'], config);
+    expect(separator.code).toBe(2);
+    expect(separator.err).toContain('A command is required before "--"');
+    const afterSeparator = await run(['--json', '--', '--help'], config);
+    expect(afterSeparator.code).toBe(2);
+    expect(afterSeparator.out).toBe('');
+  });
+
+  test('native default remains credential-free beside dynamic managed surfaces', async () => {
+    const calls: string[] = [];
+    const result = await run(['--json'], {
+      ...presentation,
+      services: () => {
+        calls.push('services');
+        return [service];
+      },
+      runtimeTools: () => {
+        calls.push('runtimeTools');
+        return [];
+      },
+      resolveAuth: () => {
+        calls.push('auth');
+        return { userId: 'u1' };
+      },
+    });
+    expect(result.code).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test('managed commands accept aliases and explicit positionals after surface resolution', async () => {
+    const result = await run(['create_widget', 'alpha', '-n', '3', '--json'], {
+      optionAliases: { create_widget: { n: 'count' } },
+      positionals: { create_widget: ['name'] },
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ id: 'w1', name: 'alpha', count: 3 });
+
+    const defaultManaged = await run(['--json'], { defaultCommand: 'list_widgets' });
+    expect(defaultManaged.code).toBe(0);
+    expect(JSON.parse(defaultManaged.out).items).toEqual(['a', 'b']);
+
+    const runtime = defineRuntimeTool({
+      name: 'runtime_policy',
+      description: 'Exercise resolved runtime CLI policy',
+      identity: { serviceName: 'runtime', action: 'policy', method: 'POST' },
+      input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
+      output: z.object({ target: z.string(), verbose: z.boolean() }),
+      transports: ['CLI'],
+      handler: ({ input }) => input,
+    });
+    const runtimeResult = await run(['-v', '--target', 'packed', '--json'], {
+      services: [],
+      runtimeTools: [runtime],
+      defaultCommand: 'runtime_policy',
+      optionAliases: { runtime_policy: { v: 'verbose' } },
+      positionals: { runtime_policy: ['target'] },
+    });
+    expect(runtimeResult.code).toBe(0);
+    expect(JSON.parse(runtimeResult.out)).toEqual({ target: 'packed', verbose: true });
+  });
+
+  test('dynamic managed policy resolves identity, factories, context and lifecycle once', async () => {
+    const phases: string[] = [];
+    const dynamic = defineRuntimeTool({
+      name: 'dynamic_policy',
+      description: 'Identity-dependent CLI policy probe',
+      identity: { serviceName: 'dynamic', action: 'policy', method: 'POST' },
+      input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
+      output: z.object({ target: z.string(), verbose: z.boolean() }),
+      transports: ['CLI'],
+      handler: ({ input }) => {
+        phases.push('handler');
+        return input;
+      },
+    });
+    const result = await run(['--target', 'packed', '-v', '--json'], {
+      defaultCommand: 'dynamic_policy',
+      optionAliases: { dynamic_policy: { v: 'verbose' } },
+      positionals: { dynamic_policy: ['target'] },
+      resolveAuth: () => {
+        phases.push('auth');
+        return { userId: 'u1' };
+      },
+      services: () => {
+        phases.push('services');
+        return [];
+      },
+      runtimeTools: () => {
+        phases.push('runtimeTools');
+        return [dynamic];
+      },
+      context: () => {
+        phases.push('context');
+        return { requestId: 'r1' };
+      },
+      lifecycle: {
+        beforeHandle: () => {
+          phases.push('lifecycle');
+        },
+      },
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ target: 'packed', verbose: true });
+    expect(phases).toEqual([
+      'auth',
+      'services',
+      'runtimeTools',
+      'context',
+      'lifecycle',
+      'handler',
+    ]);
+
+    await expect(
+      run(['--json'], {
+        defaultCommand: 'identity_missing',
+        resolveAuth: () => ({ userId: 'u1' }),
+        services: () => [],
+      }),
+    ).rejects.toThrow('targets unavailable command "identity_missing"');
+  });
+
+  test('short aliases share canonical duplicate and coercion rules', async () => {
+    const result = await run(
+      ['logs', 'api', '-f=false', '-n', '25', '-t', 'one', '--tags', 'two', '--json'],
+      presentation,
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({
+      target: 'api',
+      follow: false,
+      lines: 25,
+      tags: ['one', 'two'],
+    });
+
+    const duplicate = await run(['logs', '-n', '2', '--lines', '3'], presentation);
+    expect(duplicate.code).toBe(2);
+    expect(duplicate.err).toContain('--lines was passed 2 times');
+
+    const unknown = await run(['-z'], presentation);
+    expect(unknown.code).toBe(2);
+    expect(unknown.err).toContain('Unknown option "-z"');
+    for (const argv of [
+      ['logs', '-fn'],
+      ['logs', '-n100'],
+      ['logs', '-n'],
+      ['logs', '--no-f'],
+    ]) {
+      const invalid = await run(argv, presentation);
+      expect(invalid.code).toBe(2);
+    }
+
+    const structured = defineCliCommand({
+      name: 'structured_alias',
+      description: 'Structured alias coercion probe',
+      input: z.object({
+        mode: z.enum(['fast', 'safe']),
+        config: z.object({ retries: z.number() }),
+      }),
+      output: z.object({ mode: z.enum(['fast', 'safe']), retries: z.number() }),
+      handler: ({ input }) => ({ mode: input.mode, retries: input.config.retries }),
+    });
+    const structuredResult = await run(
+      ['structured_alias', '-m', 'fast', '-c', '{"retries":2}', '--json'],
+      {
+        commands: [structured],
+        optionAliases: { structured_alias: { m: 'mode', c: 'config' } },
+      },
+    );
+    expect(structuredResult.code).toBe(0);
+    expect(JSON.parse(structuredResult.out)).toEqual({ mode: 'fast', retries: 2 });
+    const leaked = await run(['logs', '-m', 'fast'], {
+      ...presentation,
+      commands: [logs, structured],
+      optionAliases: { structured_alias: { m: 'mode' } },
+    });
+    expect(leaked.code).toBe(2);
+    expect(leaked.err).toContain('Unknown option "-m"');
+  });
+
+  test('explicit positionals leave option-only fields to flags and stdin', async () => {
+    const strictLogs = defineCliCommand({
+      name: 'strict_logs',
+      description: 'Read a bounded log stream',
+      input: z.object({ target: z.string(), lines: z.number() }),
+      output: z.object({ target: z.string(), lines: z.number() }),
+      handler: ({ input }) => input,
+    });
+    const config = {
+      commands: [strictLogs],
+      positionals: { strict_logs: ['target'] },
+      stdin: async () => '40',
+    };
+    const result = await run(['strict_logs', 'api', '--json'], config);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ target: 'api', lines: 40 });
+
+    const extra = await run(['strict_logs', 'api', '40'], config);
+    expect(extra.code).toBe(2);
+    expect(extra.err).toContain('Unexpected positional argument "40"');
+
+    const noPositionals = await run(['strict_logs', '--target', 'api', '--json'], {
+      ...config,
+      positionals: { strict_logs: [] },
+    });
+    expect(noPositionals.code).toBe(0);
+    expect(JSON.parse(noPositionals.out)).toEqual({ target: 'api', lines: 40 });
+
+    const OrderedOutput = z.object({
+      first: z.string(),
+      count: z.number(),
+      tags: z.array(z.string()),
+      meta: z.object({ retries: z.number() }),
+    });
+    const ordered = defineCliCommand({
+      name: 'ordered_values',
+      description: 'Several explicit positional values',
+      input: OrderedOutput,
+      output: OrderedOutput,
+      handler: ({ input }) => input,
+    });
+    const orderedResult = await run(
+      ['ordered_values', '--first', 'fixed', '12', '["one","two"]', '{"retries":3}', '--json'],
+      {
+        commands: [ordered],
+        positionals: { ordered_values: ['first', 'count', 'tags', 'meta'] },
+      },
+    );
+    expect(orderedResult.code).toBe(0);
+    expect(JSON.parse(orderedResult.out)).toEqual({
+      first: 'fixed',
+      count: 12,
+      tags: ['one', 'two'],
+      meta: { retries: 3 },
+    });
+  });
+
+  test('command help reflects the exact aliases and positional policy', async () => {
+    const help = await run(['logs', '--help', '-z'], presentation);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('Usage: widget logs [target] [--flags]');
+    expect(help.out).toContain('-n, --lines');
+    expect(help.out).toContain('-f, --follow');
+    expect(help.out).not.toContain('[lines]');
+
+    const noPositionals = await run(['logs', 'api'], {
+      ...presentation,
+      positionals: { logs: [] },
+    });
+    expect(noPositionals.code).toBe(2);
+    expect(noPositionals.err).toContain('Unexpected positional argument "api"');
+  });
+
+  test('invalid command-scoped policies fail at the resolved surface boundary', async () => {
+    await expect(
+      run(['logs'], { commands: [logs], optionAliases: { logs: { h: 'follow' } } }),
+    ).rejects.toThrow('alias "-h" is reserved');
+    await expect(
+      run(['logs'], { commands: [logs], optionAliases: { logs: { 1: 'follow' } } }),
+    ).rejects.toThrow('must be one ASCII letter');
+    await expect(
+      run(['logs'], {
+        commands: [logs],
+        optionAliases: { logs: { f: 'follow', F: 'follow' } },
+      }),
+    ).rejects.toThrow('has multiple aliases');
+    await expect(
+      run(['list_widgets'], {
+        commands: [logs],
+        optionAliases: { missing: { f: 'follow' } },
+      }),
+    ).rejects.toThrow('targets unavailable command "missing"');
+    await expect(
+      run(['logs'], { commands: [logs], positionals: { logs: ['follow'] } }),
+    ).rejects.toThrow('boolean field "follow" cannot be positional');
+    await expect(
+      run(['logs'], { commands: [logs], positionals: { logs: ['target', 'target'] } }),
+    ).rejects.toThrow('repeats positional field "target"');
+    await expect(
+      run(['logs'], { commands: [logs], positionals: { logs: ['missing'] } }),
+    ).rejects.toThrow('positional targets unknown field "missing"');
+    await expect(
+      run(['logs'], {
+        commands: [logs],
+        optionAliases: { logs: { t: 'tags' } },
+        passthrough: { logs: 'tags' },
+      }),
+    ).rejects.toThrow('cannot alias passthrough field "tags"');
+
+    const optionalFirst = defineCliCommand({
+      name: 'ordered',
+      description: 'Invalid positional ordering probe',
+      input: z.object({ optional: z.string().optional(), required: z.string() }),
+      handler: () => undefined,
+    });
+    await expect(
+      run(['ordered'], {
+        commands: [optionalFirst],
+        positionals: { ordered: ['optional', 'required'] },
+      }),
+    ).rejects.toThrow('required positional "required" cannot follow an optional positional');
+
+    for (const name of ['constructor', '__proto__']) {
+      const inheritedName = defineCliCommand({
+        name,
+        description: 'Prototype-sensitive policy lookup probe',
+        input: z.object({ value: z.string().default('ok') }),
+        output: z.object({ value: z.string() }),
+        handler: ({ input }) => input,
+      });
+      const result = await run([name, '--json'], {
+        commands: [inheritedName],
+        optionAliases: {},
+        positionals: {},
+      });
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.out).value).toBe('ok');
+    }
+  });
+});
+
+describe('createCli — native result presentation and exit policy', () => {
+  const StatusOutput = z.object({ status: z.enum(['ok', 'degraded']), checks: z.number() });
+  const status = defineCliCommand({
+    name: 'status',
+    description: 'Show native health',
+    input: z.object({ degraded: z.boolean().default(false) }),
+    output: StatusOutput,
+    handler: ({ input }) =>
+      StatusOutput.parse({ status: input.degraded ? 'degraded' : 'ok', checks: 3 }),
+    present: ({ result, options }) => {
+      if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+        // @ts-expect-error presenter inference is the exact declared Zod output.
+        void result.missing;
+      }
+      return options.json
+        ? `${JSON.stringify(result)}\n`
+        : `STATUS ${result.status} (${result.checks})\n`;
+    },
+    exitCode: (result) => (result.status === 'degraded' ? 1 : 0),
+  });
+
+  test('validated native output can render exact bytes and classify successful exit', async () => {
+    const degraded = await run(['status', '--degraded'], { commands: [status] });
+    expect(degraded).toEqual({ out: 'STATUS degraded (3)\n', err: '', code: 1 });
+
+    const json = await run(['status', '--json'], { commands: [status] });
+    expect(json).toEqual({ out: '{"status":"ok","checks":3}\n', err: '', code: 0 });
+  });
+
+  test('exit policy without a presenter retains canonical JSON output', async () => {
+    const ClassifiedOutput = z.object({ state: z.literal('partial') });
+    const classified = defineCliCommand({
+      name: 'classified',
+      description: 'Classify a valid result',
+      input: z.object({}),
+      output: ClassifiedOutput,
+      handler: () => ClassifiedOutput.parse({ state: 'partial' }),
+      exitCode: () => 7,
+    });
+    const result = await run(['classified', '--json'], { commands: [classified] });
+    expect(JSON.parse(result.out)).toEqual({ state: 'partial' });
+    expect(result.code).toBe(7);
+  });
+
+  test('policy callbacks never run for help, dry-run or failed output validation', async () => {
+    let calls = 0;
+    const guarded = defineCliCommand({
+      name: 'guarded_policy',
+      description: 'Guard policy phases',
+      input: z.object({}),
+      output: z.object({ value: z.number() }),
+      handler: () => ({ value: 1 }),
+      present: ({ result }) => {
+        calls += result.value;
+        return 'done\n';
+      },
+      exitCode: () => {
+        calls += 1;
+        return 0;
+      },
+    });
+    await run(['guarded_policy', '--help'], { commands: [guarded] });
+    await run(['guarded_policy', '--dry-run'], { commands: [guarded] });
+    expect(calls).toBe(0);
+
+    Reflect.set(guarded, 'handler', () => ({ value: 'wrong' }));
+    const invalid = await run(['guarded_policy'], { commands: [guarded] });
+    expect(invalid.code).toBe(1);
+    expect(calls).toBe(0);
+  });
+
+  test('throwing or invalid result policy becomes a normalized internal failure', async () => {
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    const ValidOutput = z.object({ ok: z.literal(true) });
+    const invalidExit = defineCliCommand({
+      name: 'invalid_exit',
+      description: 'Return an invalid process status',
+      input: z.object({}),
+      output: ValidOutput,
+      handler: () => ValidOutput.parse({ ok: true }),
+      exitCode: () => 256,
+    });
+    const exitResult = await run(['invalid_exit', '--json'], { commands: [invalidExit] });
+    expect(exitResult.out).toBe('');
+    expect(exitResult.code).toBe(1);
+    expect(JSON.parse(exitResult.err).error).toBe('INTERNAL_SERVER_ERROR');
+
+    const invalidPresenter = defineCliCommand({
+      name: 'invalid_presenter',
+      description: 'Return invalid presentation bytes',
+      input: z.object({}),
+      output: ValidOutput,
+      handler: () => ValidOutput.parse({ ok: true }),
+      present: () => 'valid',
+    });
+    Reflect.set(invalidPresenter, 'present', () => 42);
+    const presenterResult = await run(['invalid_presenter', '--json'], {
+      commands: [invalidPresenter],
+    });
+    expect(presenterResult.out).toBe('');
+    expect(presenterResult.code).toBe(1);
+    expect(JSON.parse(presenterResult.err).error).toBe('INTERNAL_SERVER_ERROR');
+
+    const ThrowingOutput = z.object({ ok: z.boolean() });
+    const throwing = defineCliCommand({
+      name: 'throwing_presenter',
+      description: 'Throw from presentation policy',
+      input: z.object({}),
+      output: ThrowingOutput,
+      handler: () => ThrowingOutput.parse({ ok: true }),
+      present: () => {
+        throw new Error('private presenter failure');
+      },
+    });
+    const thrownResult = await run(['throwing_presenter', '--json'], {
+      commands: [throwing],
+      exitCodes: { INTERNAL_SERVER_ERROR: 9 },
+    });
+    expect(thrownResult.out).toBe('');
+    expect(thrownResult.code).toBe(9);
+    expect(JSON.parse(thrownResult.err).error).toBe('INTERNAL_SERVER_ERROR');
+    errorSpy.mockRestore();
+  });
+
+  if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
+    defineCliCommand({
+      name: 'invalid_outputless_policy',
+      description: 'Compile-only negative probe',
+      input: z.object({}),
+      handler: () => undefined,
+      // @ts-expect-error outputless native commands cannot declare presentation policy.
+      present: () => 'not allowed',
+    });
+  }
+});
+
 describe('createToolkit — typed context path runs', () => {
   test('toolkit.createCli executes with a typed context factory', async () => {
     const toolkit = createToolkit<{ requestId: string }>();
@@ -686,6 +1252,16 @@ describe('parseCliArgs — unit', () => {
     expect(toolArgs.count).toBe(5);
     expect(toolArgs.active).toBe(true);
     expect(toolArgs.tags).toEqual(['a', 'b']);
+  });
+
+  test('explicit date and bigint positionals reuse scalar coercion', () => {
+    const { toolArgs } = parseCliArgs(
+      ['2026-08-23T00:00:00.000Z', '42'],
+      z.object({ at: z.date(), count: z.bigint() }),
+      { positionals: ['at', 'count'] },
+    );
+    expect(toolArgs.at).toEqual(new Date('2026-08-23T00:00:00.000Z'));
+    expect(toolArgs.count).toBe(42n);
   });
 
   test('--no-flag negates a boolean', () => {

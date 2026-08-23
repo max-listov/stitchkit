@@ -25,11 +25,20 @@ export interface CliCommandDefinitionWithOutput<
   handler: (
     context: CliCommandContext<TInput>,
   ) => z.output<TOutput> | Promise<z.output<TOutput>>;
+  /** Pure post-validation stdout presentation; returned bytes are written verbatim once. */
+  present?: (context: {
+    result: z.output<TOutput>;
+    options: Readonly<CliRunOptions>;
+  }) => string;
+  /** Process exit code for a successfully validated result. */
+  exitCode?: (result: z.output<TOutput>) => number;
 }
 
 export interface CliCommandDefinitionWithoutOutput<TInput extends ZodObject>
   extends CliCommandDefinitionBase<TInput> {
   output?: never;
+  present?: never;
+  exitCode?: never;
   handler: (context: CliCommandContext<TInput>) => void | Promise<void>;
 }
 
@@ -46,6 +55,43 @@ export function defineCliCommand<TInput extends ZodObject>(
 ): CliCommandDefinitionWithoutOutput<TInput>;
 export function defineCliCommand(definition: CliCommandDefinition): CliCommandDefinition {
   return definition;
+}
+
+export interface PreparedCliCommandEmission {
+  result: ToolResult;
+  presentation?: string;
+  successExitCode: number;
+}
+
+/** Apply native-only presentation policy after canonical output validation. */
+export function prepareCliCommandEmission(
+  definition: CliCommandDefinition,
+  result: ToolResult,
+  options: Readonly<CliRunOptions>,
+): PreparedCliCommandEmission {
+  if (!result.ok || definition.output === undefined) {
+    return { result, successExitCode: 0 };
+  }
+  try {
+    const successExitCode = definition.exitCode?.(result.data) ?? 0;
+    if (
+      !Number.isSafeInteger(successExitCode) ||
+      successExitCode < 0 ||
+      successExitCode > 255
+    ) {
+      throw new Error('CLI success exit code must be an integer from 0 to 255');
+    }
+    const presentation = definition.present?.({ result: result.data, options });
+    if (presentation !== undefined && typeof presentation !== 'string') {
+      throw new Error('CLI result presenter must return a string');
+    }
+    return { result, presentation, successExitCode };
+  } catch (error) {
+    return {
+      result: toolResultFromError(new Error('CLI result policy failed', { cause: error })),
+      successExitCode: 0,
+    };
+  }
 }
 
 export function cliCommandPresentationSchema(

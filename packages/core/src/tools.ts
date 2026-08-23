@@ -47,6 +47,7 @@ export {
   defineCliCommand,
 } from './tools/cli-command';
 export type { ExitCodeMap } from './tools/cli-format';
+export type { CliPresentationPolicyConfig } from './tools/cli-policy';
 export type { CliWaitConfig } from './tools/cli-wait';
 export { coerceJsonArgs } from './tools/coerce';
 export {

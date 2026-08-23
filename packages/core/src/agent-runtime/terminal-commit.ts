@@ -1,0 +1,161 @@
+import {
+  type AgentMessage,
+  AgentMessagePartSchema,
+  AgentMessageSchema,
+  type AgentRun,
+  type AgentSnapshot,
+  type AgentTerminalReason,
+} from './schemas';
+import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
+
+export class AgentRuntimeConflictError extends Error {
+  constructor(operation: string) {
+    super(`Agent runtime store conflict during ${operation}`);
+    this.name = 'AgentRuntimeConflictError';
+  }
+}
+
+export function appliedSnapshot(result: AgentStoreMutationResult, operation: string) {
+  if (result.outcome === 'applied' || result.outcome === 'duplicate') return result.snapshot;
+  throw new AgentRuntimeConflictError(operation);
+}
+
+interface TerminalCommitCandidate {
+  run: AgentRun;
+  assistant: AgentMessage;
+  reason: AgentTerminalReason;
+  policyName?: string;
+}
+
+function terminalMessageStatus(reason: AgentTerminalReason): AgentMessage['status'] {
+  if (reason === 'success' || reason === 'policy_stop') return 'completed';
+  if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
+    return 'interrupted';
+  }
+  return 'failed';
+}
+
+export interface AgentTerminalCommitResolution extends TerminalCommitCandidate {
+  snapshot: AgentSnapshot;
+  committedByCaller: boolean;
+}
+
+function canonicalTerminal(
+  snapshot: AgentSnapshot,
+  runId: string,
+  retainedAssistant?: AgentMessage,
+): AgentTerminalCommitResolution | undefined {
+  const run = snapshot.runs.find((candidate) => candidate.id === runId);
+  if (!run?.terminalReason) return undefined;
+  const assistant =
+    snapshot.messages.find((message) => message.id === run.assistantMessageId) ??
+    retainedAssistant;
+  if (
+    snapshot.conversationId !== run.conversationId ||
+    !assistant ||
+    assistant.id !== run.assistantMessageId ||
+    assistant.conversationId !== run.conversationId ||
+    assistant.runId !== run.id ||
+    assistant.role !== 'assistant' ||
+    assistant.status !== terminalMessageStatus(run.terminalReason)
+  ) {
+    throw new AgentRuntimeConflictError('terminal result projection');
+  }
+  return {
+    snapshot,
+    run,
+    assistant,
+    reason: run.terminalReason,
+    committedByCaller: false,
+    ...(run.terminalPolicyName && { policyName: run.terminalPolicyName }),
+  };
+}
+
+function interruptedCandidate(
+  candidate: TerminalCommitCandidate,
+  run: AgentRun,
+  now: () => Date,
+): TerminalCommitCandidate {
+  const hasInterruptControl = candidate.assistant.parts.some(
+    (part) => part.type === 'control' && part.reason === 'run-interrupted',
+  );
+  const parts = hasInterruptControl
+    ? candidate.assistant.parts
+    : [
+        ...candidate.assistant.parts,
+        AgentMessagePartSchema.parse({ type: 'control', reason: 'run-interrupted' }),
+      ];
+  return {
+    run,
+    assistant: AgentMessageSchema.parse({
+      ...candidate.assistant,
+      status: 'interrupted',
+      parts,
+      updatedAt: now().toISOString(),
+    }),
+    reason: 'interrupted',
+  };
+}
+
+function canRetryTerminal(
+  current: AgentRun,
+  previous: AgentRun,
+  runtimeEpoch: string,
+): boolean {
+  return (
+    (current.state === 'running' || current.state === 'interrupt_requested') &&
+    current.ownerId === runtimeEpoch &&
+    current.fencingToken === previous.fencingToken
+  );
+}
+
+export async function commitAgentRunTerminal(input: {
+  store: AgentRuntimeStore;
+  runtimeEpoch: string;
+  candidate: TerminalCommitCandidate;
+  now: () => Date;
+}): Promise<AgentTerminalCommitResolution> {
+  let candidate = input.candidate;
+  while (true) {
+    const committed = await input.store.commitRunTerminal({
+      conversationId: candidate.run.conversationId,
+      runId: candidate.run.id,
+      expectedRevision: candidate.run.revision,
+      ownerId: input.runtimeEpoch,
+      ...(candidate.run.fencingToken !== undefined && {
+        fencingToken: candidate.run.fencingToken,
+      }),
+      assistant: candidate.assistant,
+      reason: candidate.reason,
+      ...(candidate.policyName && { policyName: candidate.policyName }),
+    });
+    if (committed.outcome === 'applied') {
+      const terminal = canonicalTerminal(committed.snapshot, candidate.run.id);
+      if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
+      return { ...terminal, committedByCaller: true };
+    }
+    if (committed.outcome === 'duplicate') {
+      const terminal = canonicalTerminal(
+        committed.snapshot,
+        candidate.run.id,
+        committed.assistant,
+      );
+      if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
+      return terminal;
+    }
+    if (committed.outcome !== 'conflict') {
+      throw new AgentRuntimeConflictError('terminal commit');
+    }
+    const latest = await input.store.loadSnapshot(candidate.run.conversationId);
+    const terminal = canonicalTerminal(latest, candidate.run.id);
+    if (terminal) return terminal;
+    const current = latest.runs.find((run) => run.id === candidate.run.id);
+    if (!current || !canRetryTerminal(current, candidate.run, input.runtimeEpoch)) {
+      throw new AgentRuntimeConflictError('terminal commit');
+    }
+    candidate =
+      current.state === 'interrupt_requested'
+        ? interruptedCandidate(candidate, current, input.now)
+        : { ...candidate, run: current };
+  }
+}

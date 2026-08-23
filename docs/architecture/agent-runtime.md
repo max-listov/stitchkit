@@ -51,6 +51,14 @@ Terminal states are `completed`, `interrupted`, `failed`, `cancelled` and `aband
 therefore blocks its keyed lane until it settles; `close({ forceTimeoutMs })` may bound caller
 waiting but does not pretend the external effect stopped.
 
+Provider completion and durable interrupt may race on the acquired run revision. A losing terminal
+CAS reloads the snapshot: an existing terminal winner is canonical, while a still-owned
+`interrupt_requested` record is retried as `interrupted`; a still-owned `running` record remains
+retriable when unrelated aggregate-head CAS operations move. Any ownership or fencing change fails
+closed. The lane releases only after a terminal outcome is observed. A canonical winner settles
+the losing ticket, but only the execution that applies the terminal mutation emits terminal
+delivery and operator metrics.
+
 ## History and context
 
 Canonical history retains provider envelopes and storage-neutral file references. Projection omits

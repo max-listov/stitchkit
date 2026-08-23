@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createMemoryAgentRuntimeStore } from 'stitchkit/agent-runtime';
+import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract } from 'stitchkit/contract';
 import { implement } from 'stitchkit/server';
 import { createAgentRaceTrace } from 'stitchkit/testing';
@@ -15,6 +16,37 @@ const agentTrace = createAgentRaceTrace();
 agentTrace.record('admission');
 agentTrace.record('terminal');
 agentTrace.assertSequence(['admission', 'terminal']);
+
+const inspect = defineCliCommand({
+  name: 'inspect',
+  description: 'Inspect the packed Node executable',
+  input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
+  output: z.object({ target: z.string(), verbose: z.boolean() }),
+  handler: ({ input }) => input,
+  present: ({ result }) => `inspect:${result.target}:${result.verbose}\n`,
+  exitCode: () => 6,
+});
+let cliOutput = '';
+let cliExit = -1;
+await createCli({
+  name: 'packed-node-cli',
+  version: '1',
+  commands: [inspect],
+  defaultCommand: 'inspect',
+  optionAliases: { inspect: { v: 'verbose' } },
+  positionals: { inspect: ['target'] },
+  argv: ['inspect', 'packed', '-v'],
+  stdout: (text) => {
+    cliOutput += text;
+  },
+  stderr: () => undefined,
+  stdin: async () => null,
+  exit: (code) => {
+    cliExit = code;
+  },
+});
+assert.equal(cliOutput, 'inspect:packed:true\n');
+assert.equal(cliExit, 6);
 
 const contract = defineContract(
   { prefix: 'node-http', scope: 'public' },

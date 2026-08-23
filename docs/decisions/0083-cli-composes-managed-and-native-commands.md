@@ -4,7 +4,7 @@ description: Explicit runtime tools join the canonical CLI runner while binary-o
 type: decision
 status: accepted
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-23
 ---
 
 # ADR 0083 — CLI composes managed and native commands
@@ -55,6 +55,22 @@ discover a possible collision: doing so would violate the credential-free
 startup guarantee. Applications that need eager global collision proof must
 use static surfaces; dynamic names are validated on their managed path.
 
+Command presentation is one CLI-owned policy over the same resolved descriptor,
+not a second command model. `CliConfig` may select a `defaultCommand`, declare
+command-local one-letter option aliases and replace automatic schema-order
+positionals with an exact ordered field list. The router recognises framework
+globals before choosing an explicit/default command; help, parsing and policy
+validation all consume the same resolved descriptor. Native commands keep their
+early credential-free dispatch, while policies for an identity-dependent
+managed surface validate only when that surface resolves.
+
+Validated native output may define a pure `present` callback and a successful
+`exitCode` classifier directly on `defineCliCommand`. Their generic output type
+is preserved from the command's Zod schema. Both run after canonical output
+validation and before emission; they do not run for help, dry-run or failure.
+This keeps executable-specific rendering out of the framework while removing
+application argv routers and post-dispatch process wrappers.
+
 ## Consequences
 
 - Pathless application operations can reuse one managed definition on MCP,
@@ -65,5 +81,9 @@ use static surfaces; dynamic names are validated on their managed path.
   `stitchkit/cli` entrypoint still imports neither MCP nor AI peers.
 - Credential stores, updater protocols, diagnostics and integration installers
   remain application code. Stitchkit owns only their generic command boundary.
+- Applications can delete alias/default argv rewrite layers and implicit
+  positional reducers without moving command semantics into core.
+- Native health/status commands can present shell-native output and meaningful
+  successful exit statuses without bypassing output validation.
 - Multipart contract endpoints remain CLI-invisible. A consumer may implement
   file-oriented behavior as a native or managed pathless command instead.

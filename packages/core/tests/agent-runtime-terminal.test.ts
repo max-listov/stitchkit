@@ -1,12 +1,66 @@
 import { describe, expect, test } from 'bun:test';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  type AgentRunEvent,
   type AgentRuntimeEvent,
+  createAgentObservability,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/agent-runtime';
+
+function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing') {
+  const durable = createMemoryAgentRuntimeStore();
+  let terminalConflictSeen = false;
+  const store: typeof durable = {
+    ...durable,
+    async commitRunTerminal(input) {
+      terminalConflictSeen = true;
+      const snapshot = await durable.loadSnapshot(input.conversationId);
+      return { outcome: 'conflict', actualVersion: snapshot.version };
+    },
+    async loadSnapshot(conversationId) {
+      const snapshot = await durable.loadSnapshot(conversationId);
+      if (!terminalConflictSeen) return snapshot;
+      return {
+        ...snapshot,
+        runs: snapshot.runs.map((run) =>
+          drift === 'owner'
+            ? { ...run, ownerId: 'replacement-runtime' }
+            : { ...run, fencingToken: (run.fencingToken ?? 0) + 1 },
+        ),
+      };
+    },
+  };
+  const runtime = createAgentRuntime({
+    protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+    store,
+    models: {
+      resolve: () => ({
+        descriptor: {
+          provider: 'test',
+          modelId: 'test-model',
+          contextWindow: 1_000,
+          capabilities: [],
+        },
+        model: new MockLanguageModelV4(),
+      }),
+    },
+    prompt: () => {
+      throw new Error('terminalize fixture');
+    },
+    tools: () => ({}),
+  });
+  return runtime.submit({
+    conversationId: `terminal-${drift}-drift`,
+    idempotencyKey: 'input-1',
+    context: {},
+    parts: [{ type: 'text', text: 'hello' }],
+    metadata: {},
+  }).result;
+}
 
 describe('agent runtime terminalization', () => {
   test('preflights model capability before durable input admission', async () => {
@@ -170,6 +224,381 @@ describe('agent runtime terminalization', () => {
     await Promise.all([first.result, second.result, third.result]);
     expect(promptCalls).toBe(2);
     expect((await second.result).run.id).toBe((await third.result).run.id);
+  });
+
+  test('settles an interrupt racing provider completion and runs three coalesced inputs', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const terminalEntered = Promise.withResolvers<void>();
+    const releaseTerminal = Promise.withResolvers<void>();
+    const terminalRetryEntered = Promise.withResolvers<void>();
+    const releaseTerminalRetry = Promise.withResolvers<void>();
+    let terminalCalls = 0;
+    const store: typeof durable = {
+      ...durable,
+      async commitRunTerminal(input) {
+        terminalCalls += 1;
+        if (terminalCalls === 1) {
+          terminalEntered.resolve();
+          await releaseTerminal.promise;
+        }
+        if (terminalCalls === 2) {
+          terminalRetryEntered.resolve();
+          await releaseTerminalRetry.promise;
+          const snapshot = await durable.loadSnapshot(input.conversationId);
+          return { outcome: 'conflict', actualVersion: snapshot.version };
+        }
+        return durable.commitRunTerminal(input);
+      },
+    };
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: {
+                inputTokens: {
+                  total: 1,
+                  noCache: 1,
+                  cacheRead: undefined,
+                  cacheWrite: undefined,
+                },
+                outputTokens: { total: 1, text: 1, reasoning: undefined },
+              },
+            },
+          ],
+        }),
+      }),
+    });
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model,
+        }),
+      },
+      prompt: () => ({
+        instructions: '',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      runs: { coalescePending: true },
+    });
+    const submit = (idempotencyKey: string) =>
+      runtime.submit({
+        conversationId: 'terminal-interrupt-race',
+        idempotencyKey,
+        context: {},
+        parts: [{ type: 'text', text: idempotencyKey }],
+        metadata: {},
+      });
+
+    const first = submit('input-1');
+    await first.accepted;
+    const firstAdmission = await first.admission;
+    await terminalEntered.promise;
+    const interrupted = await runtime.interrupt({
+      conversationId: 'terminal-interrupt-race',
+      runId: firstAdmission.runId,
+    });
+    expect(interrupted.outcome).toBe('applied');
+
+    const successors = [submit('input-2')];
+    await successors[0]?.accepted;
+    releaseTerminal.resolve();
+    await terminalRetryEntered.promise;
+    successors.push(submit('input-3'), submit('input-4'));
+    await Promise.all(successors.slice(1).map((ticket) => ticket.accepted));
+    const successorAdmissions = await Promise.all(
+      successors.map((ticket) => ticket.admission),
+    );
+    expect(new Set(successorAdmissions.map((admission) => admission.runId)).size).toBe(1);
+
+    releaseTerminalRetry.resolve();
+    const predecessor = await first.result;
+    const successorResults = await Promise.all(successors.map((ticket) => ticket.result));
+    expect(predecessor.reason).toBe('interrupted');
+    expect(predecessor.run.state).toBe('interrupted');
+    expect(predecessor.message.status).toBe('interrupted');
+    expect(new Set(successorResults.map((result) => result.run.id)).size).toBe(1);
+    expect(successorResults[0]?.run.inputMessageIds).toHaveLength(3);
+    expect(terminalCalls).toBe(4);
+
+    const snapshot = await store.loadSnapshot('terminal-interrupt-race');
+    expect(snapshot.runs.map((run) => run.state)).toEqual(['interrupted', 'completed']);
+  });
+
+  test('settles from the canonical terminal snapshot when another terminal CAS wins', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const events: AgentRuntimeEvent[] = [];
+    const operatorEvents: AgentRunEvent[] = [];
+    const observability = createAgentObservability({
+      write: (event) => {
+        operatorEvents.push(event);
+      },
+    });
+    let loseFirstTerminalCas = true;
+    const store: typeof durable = {
+      ...durable,
+      async commitRunTerminal(input) {
+        if (!loseFirstTerminalCas) return durable.commitRunTerminal(input);
+        loseFirstTerminalCas = false;
+        const winner = await durable.commitRunTerminal(input);
+        if (winner.outcome !== 'applied') return winner;
+        return { outcome: 'conflict', actualVersion: winner.snapshot.version };
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('terminalize fixture');
+      },
+      tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
+      observe: observability,
+    });
+
+    const result = await runtime.submit({
+      conversationId: 'terminal-cas-winner',
+      idempotencyKey: 'input-1',
+      context: {},
+      parts: [{ type: 'text', text: 'hello' }],
+      metadata: {},
+    }).result;
+
+    expect(result.reason).toBe('provider_failure');
+    expect(result.run.state).toBe('failed');
+    expect(result.message.status).toBe('failed');
+    expect(result.metrics).toBeUndefined();
+    expect(events.filter((event) => event.type === 'terminal')).toHaveLength(0);
+    await observability.flush();
+    expect(operatorEvents.filter((event) => event.type === 'run-terminal')).toHaveLength(0);
+    await observability.close();
+  });
+
+  test('uses a duplicate terminal result as canonical without republishing it', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const events: AgentRuntimeEvent[] = [];
+    const store: typeof durable = {
+      ...durable,
+      async commitRunTerminal(input) {
+        const interruptedAssistant = {
+          ...input.assistant,
+          status: 'interrupted',
+          parts: [{ type: 'control', reason: 'run-interrupted' }],
+        } satisfies typeof input.assistant;
+        const winner = await durable.commitRunTerminal({
+          ...input,
+          assistant: interruptedAssistant,
+          reason: 'interrupted',
+        });
+        if (winner.outcome !== 'applied') return winner;
+        const run = winner.snapshot.runs.find((candidate) => candidate.id === input.runId);
+        const canonicalInput = winner.snapshot.messages.find(
+          (message) => message.role === 'user',
+        );
+        const canonicalAssistant = winner.snapshot.messages.find(
+          (message) => message.id === input.assistant.id,
+        );
+        if (!run || !canonicalInput || !canonicalAssistant)
+          throw new Error('fixture projection missing');
+        const assistant = {
+          ...canonicalAssistant,
+          id: 'non-canonical-retained-assistant',
+        };
+        return {
+          outcome: 'duplicate',
+          input: canonicalInput,
+          inputMessageId: canonicalInput.id,
+          runId: run.id,
+          assistantMessageId: run.assistantMessageId,
+          run,
+          assistant,
+          snapshot: winner.snapshot,
+        };
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('local candidate must lose');
+      },
+      tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
+    });
+
+    const result = await runtime.submit({
+      conversationId: 'terminal-duplicate-winner',
+      idempotencyKey: 'input-1',
+      context: {},
+      parts: [{ type: 'text', text: 'hello' }],
+      metadata: {},
+    }).result;
+
+    expect(result.reason).toBe('interrupted');
+    expect(result.run.state).toBe('interrupted');
+    expect(result.message.id).not.toBe('non-canonical-retained-assistant');
+    expect(result.message.status).toBe('interrupted');
+    expect(result.metrics).toBeUndefined();
+    expect(events.filter((event) => event.type === 'terminal')).toHaveLength(0);
+  });
+
+  test('rejects a malformed retained terminal projection after compaction', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const store: typeof durable = {
+      ...durable,
+      async commitRunTerminal(input) {
+        const winner = await durable.commitRunTerminal(input);
+        if (winner.outcome !== 'applied') return winner;
+        const run = winner.snapshot.runs.find((candidate) => candidate.id === input.runId);
+        const canonicalInput = winner.snapshot.messages.find(
+          (message) => message.role === 'user',
+        );
+        const assistant = winner.snapshot.messages.find(
+          (message) => message.id === input.assistant.id,
+        );
+        if (!run || !canonicalInput || !assistant)
+          throw new Error('fixture projection missing');
+        return {
+          outcome: 'duplicate',
+          input: canonicalInput,
+          inputMessageId: canonicalInput.id,
+          runId: run.id,
+          assistantMessageId: run.assistantMessageId,
+          run,
+          assistant: { ...assistant, status: 'streaming' },
+          snapshot: {
+            ...winner.snapshot,
+            messages: winner.snapshot.messages.filter(
+              (message) => message.id !== run.assistantMessageId,
+            ),
+          },
+        };
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('terminalize fixture');
+      },
+      tools: () => ({}),
+    });
+
+    await expect(
+      runtime.submit({
+        conversationId: 'terminal-malformed-retained-assistant',
+        idempotencyKey: 'input-1',
+        context: {},
+        parts: [{ type: 'text', text: 'hello' }],
+        metadata: {},
+      }).result,
+    ).rejects.toThrow('terminal result projection');
+  });
+
+  test('retries a terminal CAS conflict while ownership remains current', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    let terminalCalls = 0;
+    const store: typeof durable = {
+      ...durable,
+      async commitRunTerminal(input) {
+        terminalCalls += 1;
+        if (terminalCalls > 1) return durable.commitRunTerminal(input);
+        const snapshot = await durable.loadSnapshot(input.conversationId);
+        return { outcome: 'conflict', actualVersion: snapshot.version };
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('terminalize fixture');
+      },
+      tools: () => ({}),
+    });
+
+    const result = await runtime.submit({
+      conversationId: 'terminal-head-cas-conflict',
+      idempotencyKey: 'input-1',
+      context: {},
+      parts: [{ type: 'text', text: 'hello' }],
+      metadata: {},
+    }).result;
+
+    expect(terminalCalls).toBe(2);
+    expect(result.run.state).toBe('failed');
+  });
+
+  test('rejects terminal reconciliation after ownership changes', async () => {
+    await expect(submitAfterTerminalConflictWithOwnershipDrift('owner')).rejects.toThrow(
+      'terminal commit',
+    );
+  });
+
+  test('rejects terminal reconciliation after the fencing token changes', async () => {
+    await expect(submitAfterTerminalConflictWithOwnershipDrift('fencing')).rejects.toThrow(
+      'terminal commit',
+    );
   });
 
   test('accepts caller record ids and exposes the assigned admission identity', async () => {

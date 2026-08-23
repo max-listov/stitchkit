@@ -44,6 +44,11 @@ import {
 } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
 import type { AgentRecoverableDescriptor } from './store-driver';
+import {
+  AgentRuntimeConflictError,
+  appliedSnapshot,
+  commitAgentRunTerminal,
+} from './terminal-commit';
 
 export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
@@ -204,18 +209,6 @@ export interface AgentRuntime<CONTEXT = unknown> {
   ): Promise<readonly AgentRuntimeRecoveryOutcome[]>;
   stop(conversationKey: string, reason?: AgentStopReason): boolean;
   close(options?: AgentSessionCloseOptions): Promise<void>;
-}
-
-class AgentRuntimeConflictError extends Error {
-  constructor(operation: string) {
-    super(`Agent runtime store conflict during ${operation}`);
-    this.name = 'AgentRuntimeConflictError';
-  }
-}
-
-function appliedSnapshot(result: AgentStoreMutationResult, operation: string) {
-  if (result.outcome === 'applied' || result.outcome === 'duplicate') return result.snapshot;
-  throw new AgentRuntimeConflictError(operation);
 }
 
 function findRun(runs: readonly AgentRun[], runId: string): AgentRun {
@@ -926,62 +919,68 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       parts,
       updatedAt: now().toISOString(),
     });
-    snapshot = appliedSnapshot(
-      await config.store.commitRunTerminal({
-        conversationId: run.conversationId,
-        runId: run.id,
-        expectedRevision: run.revision,
-        ownerId: runtimeEpoch,
-        ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
+    const terminal = await commitAgentRunTerminal({
+      store: config.store,
+      runtimeEpoch,
+      candidate: {
+        run,
         assistant,
         reason: terminalReason,
         ...(terminalPolicyName && { policyName: terminalPolicyName }),
-      }),
-      'terminal commit',
-    );
-    run = findRun(snapshot.runs, run.id);
-    const terminalMetrics = {
-      partial: false,
-      durationMs: performance.now() - runStartedAt,
-      ...(usage && { usage }),
-      ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-    };
-    config.observe?.emit({
-      schemaVersion: 1,
-      eventId: agentDurableEventId('terminal', run.id, snapshot.version),
-      type: 'run-terminal',
-      conversationId: run.conversationId,
-      runId: run.id,
-      traceId: trace?.traceId ?? generateId(),
-      spanId: trace?.spanId ?? generateId(),
-      ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
-      state: run.state,
-      terminalReason,
-      ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
-      durationMs: terminalMetrics.durationMs,
-      ...(usage && { usage }),
-      ...(internalCause !== undefined && { internalCause }),
-      ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-      emittedAt: now().toISOString(),
+      },
+      now,
     });
-    await publish({
-      type: 'terminal',
-      eventId: agentDurableEventId('terminal', run.id, snapshot.version),
-      conversationId: run.conversationId,
-      runId: run.id,
-      snapshotVersion: snapshot.version,
-      reason: terminalReason,
-      ...(terminalPolicyName && { policyName: terminalPolicyName }),
-      message: assistant,
-      metrics: terminalMetrics,
-      emittedAt: now().toISOString(),
-    });
+    snapshot = terminal.snapshot;
+    run = terminal.run;
+    assistant = terminal.assistant;
+    terminalReason = terminal.reason;
+    terminalPolicyName = terminal.policyName;
+    const terminalMetrics = terminal.committedByCaller
+      ? {
+          partial: false,
+          durationMs: performance.now() - runStartedAt,
+          ...(usage && { usage }),
+          ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+        }
+      : undefined;
+    if (terminalMetrics) {
+      config.observe?.emit({
+        schemaVersion: 1,
+        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
+        type: 'run-terminal',
+        conversationId: run.conversationId,
+        runId: run.id,
+        traceId: trace?.traceId ?? generateId(),
+        spanId: trace?.spanId ?? generateId(),
+        ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
+        state: run.state,
+        terminalReason,
+        ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
+        durationMs: terminalMetrics.durationMs,
+        ...(usage && { usage }),
+        ...(internalCause !== undefined && { internalCause }),
+        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+        emittedAt: now().toISOString(),
+      });
+      await publish({
+        type: 'terminal',
+        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
+        conversationId: run.conversationId,
+        runId: run.id,
+        snapshotVersion: snapshot.version,
+        reason: terminalReason,
+        ...(terminalPolicyName && { policyName: terminalPolicyName }),
+        message: assistant,
+        metrics: terminalMetrics,
+        emittedAt: now().toISOString(),
+      });
+    }
     return {
       run,
       message: assistant,
       reason: terminalReason,
       snapshotVersion: snapshot.version,
-      metrics: terminalMetrics,
+      ...(terminalMetrics && { metrics: terminalMetrics }),
       ...(terminalPolicyName && { policyName: terminalPolicyName }),
     };
   };

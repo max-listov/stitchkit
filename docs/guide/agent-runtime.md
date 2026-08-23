@@ -216,8 +216,13 @@ Durably queued records rejected from the local queue remain recoverable through
 
 Use `await runtime.interrupt({ conversationId, runId })` when the interruption
 must be durable: it first commits `interrupt_requested`, then aborts the local
-coordinator signal. `runtime.stop(key)` is the process-local signal-only escape
-hatch.
+coordinator signal. If provider completion races that revision change, the terminal path reloads
+the canonical snapshot. An already-terminal winner settles the ticket directly; a still-owned
+`interrupt_requested` run is committed as `interrupted`, and unrelated aggregate-head conflicts
+remain retriable while the run is active with the same owner and fencing token. A stale owner or
+fencing token remains a conflict. Only the execution that applies the terminal mutation emits the
+terminal event and operator metrics; a loser settles from canonical state without republishing it.
+`runtime.stop(key)` is the process-local signal-only escape hatch.
 
 ## Store operations
 

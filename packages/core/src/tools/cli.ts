@@ -32,13 +32,21 @@ import {
   describeSchemaFields,
   parseCliArgs,
   RESERVED_CLI_OPTIONS,
+  routeCliArgv,
 } from './cli-args';
 import {
   type CliCommandDefinition,
   cliCommandPresentationSchema,
   executeCliCommand,
+  prepareCliCommandEmission,
 } from './cli-command';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
+import {
+  applyCliPresentationPolicy,
+  assertCliPoliciesResolved,
+  type CliCommandPresentation,
+  type CliPresentationPolicyConfig,
+} from './cli-policy';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
   type ErrorHintFn,
@@ -61,7 +69,7 @@ export type CliSurfaceSource<TAuth, TValue> =
 export interface CliConfig<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
-> {
+> extends CliPresentationPolicyConfig {
   /** Program name — shown in help and unknown-command messages. */
   name: string;
   /** Program version — printed by `--version`. */
@@ -240,27 +248,24 @@ function collectPassthrough(
   toolArgs[field] = base ? { ...base, ...bag } : bag;
 }
 
-interface CliHelpCommand {
-  description: string;
-  argumentSchema: Parameters<typeof parseCliArgs>[1];
-  presentationSchema: Record<string, unknown>;
-}
-
 function renderTopHelp(
   name: string,
   version: string,
-  commands: Map<string, CliHelpCommand>,
+  commands: Map<string, CliCommandPresentation>,
+  defaultCommand?: string,
 ): string {
   const lines = [
     `${name} ${version}`,
     '',
-    `Usage: ${name} <command> [args] [--flags]`,
+    `Usage: ${name} ${defaultCommand ? '[command]' : '<command>'} [args] [--flags]`,
     '',
     'Commands:',
   ];
   const width = Math.max(0, ...[...commands.keys()].map((key) => key.length));
   for (const [command, descriptor] of commands) {
-    lines.push(`  ${padRight(command, width)}  ${summarize(descriptor.description)}`);
+    lines.push(
+      `  ${padRight(command, width)}  ${summarize(descriptor.description)}${command === defaultCommand ? ' (default)' : ''}`,
+    );
   }
   lines.push('', 'Global options:');
   const optWidth = Math.max(...GLOBAL_OPTIONS.map(([flag]) => flag.length));
@@ -270,12 +275,20 @@ function renderTopHelp(
   return `${lines.join('\n')}\n`;
 }
 
-function renderCommandHelp(name: string, command: string, descriptor: CliHelpCommand): string {
+function renderCommandHelp(
+  name: string,
+  command: string,
+  descriptor: CliCommandPresentation,
+): string {
   const fields = jsonSchemaFields(descriptor.presentationSchema);
   const fieldsByName = new Map(fields.map((field) => [field.name, field]));
   const positionals: JsonSchemaField[] = [];
-  for (const [fieldName, info] of describeSchemaFields(descriptor.argumentSchema)) {
-    if (info.kind === 'boolean') continue;
+  const positionalNames =
+    descriptor.positionals ??
+    [...describeSchemaFields(descriptor.argumentSchema)]
+      .filter(([, info]) => info.kind !== 'boolean')
+      .map(([fieldName]) => fieldName);
+  for (const fieldName of positionalNames) {
     const field = fieldsByName.get(fieldName);
     if (field) positionals.push(field);
   }
@@ -296,10 +309,9 @@ function renderCommandHelp(name: string, command: string, descriptor: CliHelpCom
     const labels = new Map(
       fields.map((field) => {
         const positional = positionalSyntax.get(field.name);
-        return [
-          field.name,
-          positional ? `${positional} | --${field.name}` : `--${field.name}`,
-        ];
+        const alias = descriptor.aliases.get(field.name);
+        const option = alias ? `-${alias}, --${field.name}` : `--${field.name}`;
+        return [field.name, positional ? `${positional} | ${option}` : option];
       }),
     );
     const width = Math.max(...fields.map((field) => labels.get(field.name)?.length ?? 0));
@@ -314,7 +326,9 @@ function renderCommandHelp(name: string, command: string, descriptor: CliHelpCom
   return `${lines.join('\n')}\n`;
 }
 
-function managedDescriptor(tool: MountableTool): CliHelpCommand {
+function managedDescriptor(
+  tool: MountableTool,
+): Omit<CliCommandPresentation, 'aliases' | 'positionals'> {
   return {
     description: tool.method.desc,
     argumentSchema: tool.argumentSchema,
@@ -322,7 +336,9 @@ function managedDescriptor(tool: MountableTool): CliHelpCommand {
   };
 }
 
-function nativeDescriptor(definition: CliCommandDefinition): CliHelpCommand {
+function nativeDescriptor(
+  definition: CliCommandDefinition,
+): Omit<CliCommandPresentation, 'aliases' | 'positionals'> {
   return {
     description: definition.description,
     argumentSchema: definition.input,
@@ -330,7 +346,12 @@ function nativeDescriptor(definition: CliCommandDefinition): CliHelpCommand {
   };
 }
 
-function assertCommandShape(name: string, descriptor: CliHelpCommand, exists: boolean): void {
+function assertCommandShape(
+  name: string,
+  descriptor: CliCommandPresentation,
+  exists: boolean,
+  passthroughField?: string,
+): void {
   assertUniqueToolName(name, exists, 'CLI command');
   if (name === 'help' || name === 'version') {
     throw new Error(`[stitchkit] CLI command "${name}" is reserved`);
@@ -341,6 +362,11 @@ function assertCommandShape(name: string, descriptor: CliHelpCommand, exists: bo
   if (conflicting.length > 0) {
     throw new Error(
       `[stitchkit] CLI command "${name}" declares reserved option field(s): ${conflicting.join(', ')}`,
+    );
+  }
+  if (passthroughField !== undefined && descriptor.aliases.has(passthroughField)) {
+    throw new Error(
+      `[stitchkit] CLI command "${name}" cannot alias passthrough field "${passthroughField}"`,
     );
   }
 }
@@ -356,7 +382,7 @@ type PreparedCliInvocation =
 async function prepareInvocation(
   command: string,
   commandArgv: string[],
-  descriptor: CliHelpCommand,
+  descriptor: CliCommandPresentation,
   config: Pick<CliConfig, 'passthrough'>,
   readStdin: () => Promise<string | null>,
 ): Promise<PreparedCliInvocation> {
@@ -365,6 +391,8 @@ async function prepareInvocation(
     parsed = parseCliArgs(commandArgv, descriptor.argumentSchema, {
       allowUnknown: config.passthrough?.[command] !== undefined,
       knownFields: jsonSchemaFields(descriptor.presentationSchema).map((field) => field.name),
+      optionAliases: new Map([...descriptor.aliases].map(([field, alias]) => [alias, field])),
+      positionals: descriptor.positionals,
     });
   } catch (error) {
     if (!(error instanceof CliArgumentError)) throw error;
@@ -377,7 +405,21 @@ async function prepareInvocation(
   );
   if (firstUnset) {
     const piped = await readStdin();
-    if (piped !== null) toolArgs[firstUnset.name] = piped;
+    if (piped !== null) {
+      if (descriptor.positionals === undefined) {
+        // Preserve the historical no-policy path byte-for-byte: stdin used to
+        // arrive as a raw string and the command schema decided whether it fit.
+        toolArgs[firstUnset.name] = piped;
+      } else {
+        // An explicit positional policy makes option-only fields obey the same
+        // field-aware coercion as their equivalent `--field value` invocation.
+        const stdinArgs = parseCliArgs(
+          [`--${firstUnset.name}`, piped],
+          descriptor.argumentSchema,
+        );
+        toolArgs[firstUnset.name] = stdinArgs.toolArgs[firstUnset.name];
+      }
+    }
   }
 
   const passthroughField = config.passthrough?.[command];
@@ -453,16 +495,30 @@ export async function createCli<
   }
 
   const nativeCommands = new Map<string, CliCommandDefinition>();
-  const nativeHelp = new Map<string, CliHelpCommand>();
+  const nativeHelp = new Map<string, CliCommandPresentation>();
   for (const definition of config.commands ?? []) {
-    const descriptor = nativeDescriptor(definition);
-    assertCommandShape(definition.name, descriptor, nativeCommands.has(definition.name));
+    const descriptor = applyCliPresentationPolicy(
+      definition.name,
+      nativeDescriptor(definition),
+      config,
+    );
+    assertCommandShape(
+      definition.name,
+      descriptor,
+      nativeCommands.has(definition.name),
+      config.passthrough?.[definition.name],
+    );
     nativeCommands.set(definition.name, definition);
     nativeHelp.set(definition.name, descriptor);
   }
 
-  const [command, ...commandArgv] = argv;
-  if (command === '--version' || command === 'version') {
+  const route = routeCliArgv(argv, config.defaultCommand);
+  if (route.error) {
+    stderr(`${route.error}\n`);
+    return exit(2);
+  }
+  const { command, commandArgv } = route;
+  if (route.version || command === '--version' || command === 'version') {
     stdout(`${config.name} ${config.version}\n`);
     return exit(0);
   }
@@ -522,17 +578,24 @@ export async function createCli<
       { stdout, stderr },
       config.coerceJsonArgs ?? true,
     );
-    const exitCode = emitResult(
-      result,
-      { stdout, stderr },
-      {
-        json: options.json,
-        toolName: command,
-        errorHint: config.errorHint,
-        exitCodes: { ...DEFAULT_EXIT_CODES, ...config.exitCodes },
-      },
-    );
-    return exit(exitCode);
+    const emission = prepareCliCommandEmission(native, result, options);
+    let emittedExitCode: number;
+    if (emission.result.ok && emission.presentation !== undefined) {
+      stdout(emission.presentation);
+      emittedExitCode = 0;
+    } else {
+      emittedExitCode = emitResult(
+        emission.result,
+        { stdout, stderr },
+        {
+          json: options.json,
+          toolName: command,
+          errorHint: config.errorHint,
+          exitCodes: { ...DEFAULT_EXIT_CODES, ...config.exitCodes },
+        },
+      );
+    }
+    return exit(emission.result.ok ? emission.successExitCode : emittedExitCode);
   }
 
   let authPromise: Promise<Awaited<TAuth> | undefined> | undefined;
@@ -556,19 +619,33 @@ export async function createCli<
       surface: { services, runtimeTools },
       transport: 'CLI',
     })) {
-      const descriptor = managedDescriptor(mountable);
-      assertCommandShape(mountable.name, descriptor, help.has(mountable.name));
+      const descriptor = applyCliPresentationPolicy(
+        mountable.name,
+        managedDescriptor(mountable),
+        config,
+      );
+      assertCommandShape(
+        mountable.name,
+        descriptor,
+        help.has(mountable.name),
+        config.passthrough?.[mountable.name],
+      );
       tools.set(mountable.name, mountable);
       help.set(mountable.name, descriptor);
     }
+    assertCliPoliciesResolved(help, config);
     return { auth, help, tools };
   };
 
   const topLevelHelp =
-    command === undefined || command === 'help' || command === '--help' || command === '-h';
+    route.topLevelHelp ||
+    command === undefined ||
+    command === 'help' ||
+    command === '--help' ||
+    command === '-h';
   const managed = await buildManagedSurface(!topLevelHelp && !helpRequested);
   if (topLevelHelp) {
-    stdout(renderTopHelp(config.name, config.version, managed.help));
+    stdout(renderTopHelp(config.name, config.version, managed.help, config.defaultCommand));
     return exit(0);
   }
 
@@ -579,7 +656,8 @@ export async function createCli<
     );
     return exit(1);
   }
-  const descriptor = managedDescriptor(tool);
+  const descriptor = managed.help.get(command);
+  if (!descriptor) throw new Error('[stitchkit] managed CLI descriptor invariant failed');
   if (helpRequested) {
     stdout(renderCommandHelp(config.name, command, descriptor));
     return exit(0);

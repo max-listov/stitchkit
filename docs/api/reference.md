@@ -397,7 +397,7 @@ Server-only optional application runtime. See the
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and terminal publication |
+| `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and winner-only terminal publication; reconciles same-owner terminal/interrupt/head CAS races before releasing the lane |
 | `defineAgentProtocol` | function | declare and validate context, input metadata and canonical message parts |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
@@ -602,7 +602,7 @@ payload.
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
-| `defineCliCommand` | function | define one typed CLI-only command with no fake managed-tool identity — [guide](../guide/cli.md#native-binary-commands) (also on `stitchkit/cli`) |
+| `defineCliCommand` | function | define one typed CLI-only command with optional post-validation `present` and successful `exitCode` policy — [guide](../guide/cli.md#native-binary-commands) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
@@ -659,11 +659,12 @@ payload.
 | `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT' \| 'CLI'`; omission still means MCP+Agent only |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
-| `CliConfig` | _type_ | config for `createCli` |
+| `CliConfig` | _type_ | config for `createCli`, including program-level `defaultCommand` selection and command-scoped `optionAliases` / `positionals` policy |
+| `CliPresentationPolicyConfig` | _type_ | reusable default-command, short-alias and explicit-positional policy inherited by `CliConfig` |
 | `CliSurfaceSource` | _type_ | static managed surface or identity-dependent surface factory for `createCli` |
 | `CliCommandDefinition` | _type_ | Zod-first CLI-only command union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
-| `CliCommandDefinitionWithOutput` | _type_ | native command with declared output schema and validated handler result |
+| `CliCommandDefinitionWithOutput` | _type_ | native command with declared output schema, validated handler result and typed optional `present` / `exitCode` callbacks |
 | `CliCommandDefinitionWithoutOutput` | _type_ | void native command with no output schema |
 | `CliCommandContext` | _type_ | parsed native command input, global options and injected writers |
 | `CliWaitConfig` | _type_ | `--wait` polling config |
@@ -927,16 +928,17 @@ SDK nor the `ai` peer.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createCli` | function | build and run a CLI from contracts — [guide](../guide/cli.md) |
-| `defineCliCommand` | function | define one Zod-typed CLI-only executable command |
+| `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
 | `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
 | `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
-| `CliConfig` | _type_ | config for `createCli` |
+| `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `optionAliases` and `positionals` define the shared command presentation policy |
+| `CliPresentationPolicyConfig` | _type_ | shared command presentation-policy subset of `CliConfig` |
 | `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
 | `CliCommandDefinition` | _type_ | native command definition union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
-| `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output |
+| `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output and typed optional `present` / successful `exitCode` callbacks |
 | `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
 | `CliCommandContext` | _type_ | parsed input, global options and stdout/stderr writers |
 | `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, …) |

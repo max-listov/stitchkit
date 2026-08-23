@@ -374,6 +374,8 @@ const packedNativeCommand = defineCliCommand({
   input: z.object({ target: z.string() }),
   output: z.object({ target: z.string() }),
   handler: ({ input }) => input,
+  present: ({ result }) => `doctor:${result.target}\n`,
+  exitCode: (result) => (result.target === 'packed' ? 7 : 0),
 });
 let cliRuntimeOutput = '';
 await createCli({
@@ -393,6 +395,7 @@ check(
   JSON.parse(cliRuntimeOutput).value === 'packed',
 );
 let cliNativeOutput = '';
+let cliNativeExit = -1;
 await createCli({
   name: 'packed-cli',
   version: '1',
@@ -403,15 +406,20 @@ await createCli({
     throw new Error('native dispatch resolved auth');
   },
   commands: [packedNativeCommand],
-  argv: ['doctor', '--target', 'packed', '--json'],
+  defaultCommand: 'doctor',
+  optionAliases: { doctor: { t: 'target' } },
+  positionals: { doctor: [] },
+  argv: ['-t', 'packed'],
   stdout: (text) => {
     cliNativeOutput += text;
   },
-  exit: () => undefined,
+  exit: (code) => {
+    cliNativeExit = code;
+  },
 });
 check(
-  'the packed native CLI command dispatches before auth and managed surfaces',
-  JSON.parse(cliNativeOutput).target === 'packed',
+  'the packed native CLI applies default, alias, presentation and exit policy before auth',
+  cliNativeOutput === 'doctor:packed\n' && cliNativeExit === 7,
 );
 const idleStdioSignals = bindStdioProcessSignals(
   { close: async () => undefined },
