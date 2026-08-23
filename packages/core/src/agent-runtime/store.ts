@@ -24,6 +24,8 @@ export const AgentStoreDuplicateSchema = z.object({
   inputMessageId: AgentRecordIdSchema,
   runId: AgentRecordIdSchema,
   assistantMessageId: AgentRecordIdSchema,
+  run: AgentRunSchema,
+  assistant: AgentMessageSchema.optional(),
   snapshot: AgentSnapshotSchema,
 });
 export const AgentStoreMutationResultSchema = z.discriminatedUnion('outcome', [

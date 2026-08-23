@@ -4,7 +4,7 @@ description: Applications provide one coherent transaction driver; Stitchkit own
 type: decision
 status: accepted
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-08-23
 ---
 
 # ADR 0100 — The agent store reducer owns runtime transitions
@@ -32,8 +32,9 @@ write can commit half a transition.
 - application-row mapping for a typed history mutation;
 - a bounded, paged recoverable-run scan.
 
-The framework stores only version, runs and complete admission identities in
-`AgentStoredState`. Messages remain canonical application rows. A winning CAS
+The original persistence shape stored version, runs and complete admission identities in
+`AgentStoredState`. ADR 0101 replaces that lifetime aggregate with a bounded head and normalized
+records while retaining this reducer ownership. Messages remain canonical application rows. A winning CAS
 and its history mutation execute inside the same transaction callback; an
 exception rolls both back. The driver contains no run-state switch, revision
 arithmetic, coalescing, terminal or collision policy.

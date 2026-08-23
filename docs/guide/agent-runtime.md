@@ -146,29 +146,40 @@ provide one database transaction driver:
 ```ts
 const store = createAgentRuntimeStore({
   transaction: work => db.transaction(tx => work(tx)),
-  state: {
-    load: (tx, conversationId) => loadRuntimeState(tx, conversationId),
-    compareAndSwap: (tx, operation) => casRuntimeState(tx, operation),
+  head: {
+    load: (tx, conversationId) => loadRuntimeHead(tx, conversationId),
+    compareAndSwap: (tx, operation) => casRuntimeHead(tx, operation),
+  },
+  runs: {
+    load: (tx, identity) => loadRun(tx, identity),
+    loadByAssistantMessageId: (tx, identity) => loadRunByAssistant(tx, identity),
+    loadMany: (tx, identities) => loadRuns(tx, identities),
+    listActive: (tx, conversationId) => listActiveRuns(tx, conversationId),
+    save: (tx, record) => saveRun(tx, record),
+  },
+  admissions: {
+    load: (tx, identity) => loadAdmission(tx, identity),
+    loadByInputMessageId: (tx, identity) => loadAdmissionByInput(tx, identity),
+    create: (tx, receipt) => createAdmission(tx, receipt),
   },
   history: {
     load: (tx, conversationId) => loadCanonicalMessages(tx, conversationId),
-    loadById: (tx, identity) => loadActiveOrArchivedMessage(tx, identity),
     apply: (tx, mutation) => applyCanonicalHistoryMutation(tx, mutation),
   },
   scanRecoverable: page => scanRecoverableRuns(page),
 })
 ```
 
-The same opaque `tx` reaches state and history callbacks. The adapter maps rows
+The same opaque `tx` reaches head, run, admission and history callbacks. The adapter maps rows
 and supplies atomicity; Stitchkit owns transition validation and revision
 arithmetic. The executable reference is
 [`examples/agent-store-prisma/adapter.ts`](../../examples/agent-store-prisma/adapter.ts).
 `compareAndSwap` returns either `{ outcome: 'applied' }` or
-`{ outcome: 'conflict', actualVersion }`; on a winning write it also persists the
-framework-provided `recoverable` descriptors in the same transaction. Recovery
-scans that bounded index instead of loading every aggregate. Compaction may hide
-rows from `history.load`, but `history.loadById` must retain canonical admitted
-inputs for durable duplicate receipts.
+`{ outcome: 'conflict', actualVersion }`. The head contains only schema version,
+conversation identity and monotonic version. Runs and admission receipts are normalized records;
+recovery queries active run states directly instead of maintaining a second projection.
+An admission receipt retains its canonical input, and a terminal run retains its canonical
+assistant, so physical product-history compaction cannot break idempotent retries.
 
 ## Durable order
 

@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-08-23
 ---
 
 # Agent application runtime architecture
@@ -18,7 +18,7 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 |---|---|---|
 | Canonical message/run shapes | Stitchkit | Zod schemas in `packages/core/src/agent-runtime/schemas.ts` |
 | Transition validation, revisions, idempotency and compaction replacement | Stitchkit | reducer in `store-driver.ts` |
-| Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` |
+| Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history |
 | Process-local queue, interrupt and settlement | Stitchkit | `coordinator.ts` |
 | Distributed ownership | application adapter | lease plus optional monotonic `fencingToken` persisted with the run |
 | Model allowlist/default | application | registry declarations and selection policy |
@@ -89,7 +89,13 @@ sink explicitly opts in.
 
 ## Recovery and schema evolution
 
-`runtime.recover()` scans a bounded durable index. Queued work resumes only when no acquired
+The durable head contains only conversation identity and a monotonic version. Normalized run rows
+own revision, state, ownership and an optional retained terminal assistant; normalized admission
+receipts own the idempotency key, canonical input and assigned identities. Product history may
+physically delete compacted rows. A duplicate terminal submission is reconstructed from its receipt
+and run record, not from active history.
+
+`runtime.recover()` scans indexed active states in the normalized run store. Queued work resumes only when no acquired
 predecessor blocks it. Acquired work defaults to skip; requeue and abandon require explicit evidence.
 Each run returns its own outcome so one corrupt record does not hide the rest of the pass.
 
@@ -101,7 +107,7 @@ current exported schema, and write only the current version. Unknown future vers
 - Source regression tests cover protocol/store, loop, fencing, coordination, compaction, delivery,
   observability and hostile history.
 - `runAgentStoreConformance` executes the same atomicity/race contract against memory and external
-  transactional adapters.
+  transactional adapters, including duplicate terminal recovery after physical compaction.
 - Public bounded barriers/traces from `stitchkit/testing` run from packed Bun and Node consumers.
 - The official PostgreSQL/Prisma fixture proves duplicate/coalesced admission, stale checkpoint,
-  terminal race, compaction conflict and rollback on real transactions.
+  terminal race, compaction conflict, constant-size heads, normalized recovery and rollback on real transactions.

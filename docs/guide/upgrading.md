@@ -48,33 +48,43 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
-## Unreleased migration: complete agent admission identity
+## Unreleased migration: normalized agent runtime persistence
 
-Custom `AgentRuntimeStore` adapters must persist and return the input and
-assistant identities associated with an idempotency key:
+`AgentRuntimeStoreDriver` no longer reads and rewrites a lifetime `AgentStoredState` JSON
+aggregate. Migrate that row and its recoverable/archive projections once:
+
+1. Copy `conversationId` and `version` into the bounded runtime head.
+2. Write every `AgentStoredState.runs[]` entry as one normalized run record.
+3. Write every `AgentStoredState.admissions[]` entry as one admission receipt and copy its
+   canonical input into that receipt.
+4. For terminal runs, retain the canonical assistant on the run record before deleting any old
+   history/archive rows.
+5. Replace the recoverable projection with an index over normalized run `state`.
+6. Cut the adapter over atomically; there is no compatibility driver or dual-write mode.
 
 ```ts
 // before
-return { outcome: 'duplicate', runId, snapshot }
+createAgentRuntimeStore({
+  state: { load, compareAndSwap },
+  history: { load, loadById, apply },
+  scanRecoverable,
+})
 
 // after
-return { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, snapshot }
+createAgentRuntimeStore({
+  head: { load, compareAndSwap },
+  runs: { load, loadByAssistantMessageId, loadMany, listActive, save },
+  admissions: { load, loadByInputMessageId, create },
+  history: { load, apply },
+  scanRecoverable,
+})
 ```
 
-Prefer replacing the custom aggregate reducer with `createAgentRuntimeStore()`;
-its `AgentStoredState.admissions` record and transaction driver implement this
-contract automatically. `history.loadById()` must retain access to compacted
-admitted inputs so the framework can return the canonical record.
-
-`AgentRuntimeEvent` also adds a post-commit `admission` variant. Add it to any
-exhaustive publisher switch. Its `assistant` is either the pending placeholder
-for a new assignment or the canonical persisted assistant for a duplicate:
-
-```ts
-case 'admission':
-  await persistProductProjection(event.input, event.run, event.assistant)
-  break
-```
+`AgentRuntimeHeadSchema`, `AgentStoredRunSchema` and `AgentAdmissionReceiptSchema` replace
+`AgentStoredStateSchema` and `AgentAdmissionIdentitySchema`. Run
+`runAgentStoreConformance()` against the migrated adapter before switching production traffic.
+If an application implements `AgentRuntimeStore` directly, its duplicate result must also include
+the canonical `run` and the retained `assistant` for a terminal run.
 
 ## Released migration: 0.56.0
 

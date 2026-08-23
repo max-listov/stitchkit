@@ -1113,7 +1113,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             acceptance.outcome === 'duplicate'
               ? acceptance.runId
               : (reservation?.admission.runId ?? runId);
-          const acceptedRun = findRun(acceptedSnapshot.runs, assignedRunId);
+          const acceptedRun =
+            acceptance.outcome === 'duplicate'
+              ? acceptance.run
+              : findRun(acceptedSnapshot.runs, assignedRunId);
           const actualInputMessageId =
             acceptance.outcome === 'duplicate' ? acceptance.inputMessageId : userMessage.id;
           const acceptedInput =
@@ -1136,9 +1139,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           });
           const acceptedAssistant =
             acceptance.outcome === 'duplicate'
-              ? (acceptedSnapshot.messages.find(
-                  (candidate) => candidate.id === acceptedRun.assistantMessageId,
-                ) ?? assistantPlaceholder)
+              ? (acceptance.assistant ?? assistantPlaceholder)
               : assistantPlaceholder;
           const admission = {
             inputMessageId: acceptedInput.id,
@@ -1191,11 +1192,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               }
               return;
             }
-            const message = acceptedSnapshot.messages.find(
-              (candidate) => candidate.id === acceptedRun.assistantMessageId,
-            );
+            const message = acceptance.assistant;
             if (!message) {
-              const error = new Error('Duplicate terminal run has no assistant message');
+              const error = new Error(
+                'Duplicate terminal admission has no retained canonical assistant',
+              );
               outerResult.reject(error);
               if (reservation?.shouldSchedule) {
                 reservation.admission.completion.reject(error);

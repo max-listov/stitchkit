@@ -10,7 +10,32 @@ datasource db {
 model AgentRuntimeState {
   conversationId String @id
   version        Int
-  payload        String
+}
+
+model AgentRuntimeRun {
+  conversationId          String
+  runId                   String
+  assistantMessageId      String
+  state                   String
+  createdAt               DateTime
+  payload                 String
+  terminalAssistantPayload String?
+
+  @@id([conversationId, runId])
+  @@unique([conversationId, assistantMessageId])
+  @@index([state, conversationId, runId])
+}
+
+model AgentRuntimeAdmission {
+  conversationId    String
+  idempotencyKey    String
+  inputMessageId    String
+  runId             String
+  assistantMessageId String
+  inputPayload      String
+
+  @@id([conversationId, idempotencyKey])
+  @@unique([conversationId, inputMessageId])
 }
 
 model AgentRuntimeMessage {
@@ -21,13 +46,4 @@ model AgentRuntimeMessage {
   payload        String
 
   @@id([conversationId, id])
-}
-
-model AgentRuntimeRecoverableRun {
-  conversationId String
-  runId          String
-  payload        String
-
-  @@id([conversationId, runId])
-  @@index([conversationId, runId])
 }

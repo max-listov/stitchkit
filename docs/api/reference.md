@@ -402,8 +402,10 @@ Server-only optional application runtime. See the
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
-| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transactional state load/exact-version CAS, active-plus-archived history codec and bounded recoverable-run index scan |
-| `AgentStoredStateSchema` | schema | versioned runs and full idempotency admission identities without duplicated message history |
+| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history and indexed run recovery |
+| `AgentRuntimeHeadSchema` | schema | constant-size conversation identity plus monotonic runtime version |
+| `AgentStoredRunSchema` | schema | canonical normalized run with an optional retained terminal assistant |
+| `AgentAdmissionReceiptSchema` | schema | durable idempotency receipt with canonical input and assigned run/assistant identities |
 | `AgentHistoryMutationSchema` | schema | typed canonical message mutation applied inside the winning state transaction |
 | `RecoverAgentRunSchema` | schema | explicit abandon/requeue recovery decision; acquired runs require replay-safe evidence |
 | `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
@@ -453,8 +455,8 @@ Store command/result exports are `AcceptInputAndAssignRun`, `AcceptInputAndAssig
 `RequestRunInterrupt`, `RequestRunInterruptSchema`, `RecoverAgentRun`, `ReplaceCompactedRange`,
 `ReplaceCompactedRangeSchema`, `AgentStoreMutationResult`, `AgentStoreMutationResultSchema`,
 `AgentStoreAppliedSchema`, `AgentStoreConflictSchema`, `AgentStoreDuplicateSchema`,
-`AgentStoreNotFoundSchema`, `AgentAdmissionIdentity`, `AgentAdmissionIdentitySchema`,
-`AgentStoredState`, `AgentStoreCompareAndSwapResult`, `AgentHistoryMutation`,
+`AgentStoreNotFoundSchema`, `AgentAdmissionReceipt`, `AgentAdmissionReceiptSchema`,
+`AgentRuntimeHead`, `AgentStoredRun`, `AgentStoreCompareAndSwapResult`, `AgentHistoryMutation`,
 `AgentRecoverableDescriptor`, `AgentRecoverableDescriptorSchema`, `AgentRecoverablePage` and
 `AgentRecoverablePageSchema`.
 

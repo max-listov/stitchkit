@@ -123,7 +123,7 @@ describe('AgentRuntimeStore reference adapter', () => {
         input: existingRunAssistant,
         run: queuedRun(existingRunAssistant.id, 'run-4', 'assistant-1'),
       }),
-    ).rejects.toThrow('valid assignment');
+    ).rejects.toThrow('identit');
 
     const snapshot = await store.loadSnapshot('conversation-1');
     expect(snapshot.messages.map((message) => message.id)).toEqual(['input-1']);

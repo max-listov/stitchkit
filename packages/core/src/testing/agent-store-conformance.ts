@@ -252,6 +252,38 @@ export async function runAgentStoreConformance(
   if (terminalOutcomes.join(',') !== 'applied,conflict') {
     throw new Error(`Terminal race was not linearized: ${terminalOutcomes.join(',')}`);
   }
+  const terminalApplied = terminalResults.find((result) => result.outcome === 'applied');
+  if (terminalApplied?.outcome !== 'applied') {
+    throw new Error('Terminal race produced no applied result');
+  }
+  const compactedTerminal = await store.replaceCompactedRange({
+    conversationId,
+    expectedVersion: terminalApplied.snapshot.version,
+    replacedMessageIds: ['summary-1', terminalAssistant.id],
+    summary: AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'summary-2',
+      conversationId,
+      role: 'summary',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'terminal history' }],
+      createdAt: '2026-08-22T00:00:03.000Z',
+      updatedAt: '2026-08-22T00:00:03.000Z',
+    }),
+  });
+  requireOutcome(compactedTerminal, 'applied');
+  const duplicateTerminal = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'request-1',
+    input: userMessage(conversationId, 'discarded-terminal-input'),
+    run: queuedRun(conversationId, 'discarded-terminal-input', 'discarded-terminal-run'),
+  });
+  requireOutcome(duplicateTerminal, 'duplicate');
+  if (
+    duplicateTerminal.run.terminalReason !== 'success' ||
+    JSON.stringify(duplicateTerminal.assistant) !== JSON.stringify(terminalAssistant)
+  ) {
+    throw new Error('Compaction discarded the canonical duplicate terminal result');
+  }
 
   const recoveryConversationId = `${conversationId}-recovery`;
   const recoveryInput = userMessage(recoveryConversationId, 'recovery-input');

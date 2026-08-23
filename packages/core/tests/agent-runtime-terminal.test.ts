@@ -237,6 +237,7 @@ describe('agent runtime terminalization', () => {
 
   test('returns the durable admission identity for a duplicate with discarded proposals', async () => {
     const store = createMemoryAgentRuntimeStore();
+    const events: AgentRuntimeEvent[] = [];
     const runtime = createAgentRuntime({
       protocol: defineAgentProtocol({
         context: z.object({}),
@@ -258,6 +259,9 @@ describe('agent runtime terminalization', () => {
         throw new Error('stop after admission probe');
       },
       tools: () => ({}),
+      publish: (event) => {
+        events.push(event);
+      },
     });
 
     const first = runtime.submit({
@@ -272,7 +276,24 @@ describe('agent runtime terminalization', () => {
         assistantMessageId: 'product-assistant-1',
       },
     });
-    await first.result;
+    const firstResult = await first.result;
+    const beforeCompaction = await store.loadSnapshot('conversation-1');
+    const compacted = await store.replaceCompactedRange({
+      conversationId: 'conversation-1',
+      expectedVersion: beforeCompaction.version,
+      replacedMessageIds: ['product-user-1', 'product-assistant-1'],
+      summary: {
+        schemaVersion: 1,
+        id: 'summary-1',
+        conversationId: 'conversation-1',
+        role: 'summary',
+        status: 'committed',
+        parts: [{ type: 'text', text: 'compacted' }],
+        createdAt: '2026-08-23T00:00:00.000Z',
+        updatedAt: '2026-08-23T00:00:00.000Z',
+      },
+    });
+    expect(compacted.outcome).toBe('applied');
 
     const duplicate = runtime.submit({
       conversationId: 'conversation-1',
@@ -301,7 +322,66 @@ describe('agent runtime terminalization', () => {
         status: 'failed',
       },
     });
-    expect((await duplicate.result).run.id).toBe('product-run-1');
+    const duplicateResult = await duplicate.result;
+    expect(duplicateResult.run.id).toBe('product-run-1');
+    expect(duplicateResult.message).toEqual(firstResult.message);
+    expect(events.filter((event) => event.type === 'admission').at(-1)).toMatchObject({
+      assistant: {
+        id: 'product-assistant-1',
+        role: 'assistant',
+        status: 'failed',
+      },
+    });
+  });
+
+  test('reports a persistence contract violation when a terminal duplicate lost its assistant', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const store: typeof durable = {
+      ...durable,
+      async acceptInputAndAssignRun(input) {
+        const result = await durable.acceptInputAndAssignRun(input);
+        if (result.outcome !== 'duplicate') return result;
+        const { assistant: _lostAssistant, ...withoutAssistant } = result;
+        return withoutAssistant;
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('terminalize fixture');
+      },
+      tools: () => ({}),
+    });
+    await runtime.submit({
+      conversationId: 'missing-retained-assistant',
+      idempotencyKey: 'request-1',
+      context: {},
+      parts: [{ type: 'text', text: 'first' }],
+      metadata: {},
+    }).result;
+
+    const duplicate = runtime.submit({
+      conversationId: 'missing-retained-assistant',
+      idempotencyKey: 'request-1',
+      context: {},
+      parts: [{ type: 'text', text: 'duplicate' }],
+      metadata: {},
+    });
+    await expect(duplicate.result).rejects.toThrow(
+      'Duplicate terminal admission has no retained canonical assistant',
+    );
   });
 
   test('keeps runtime tickets distinct for delimiter-bearing identities', async () => {

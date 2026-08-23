@@ -14,7 +14,8 @@ const fixture = connectionString
 describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
   beforeEach(async () => {
     await fixture?.prisma.agentRuntimeMessage.deleteMany();
-    await fixture?.prisma.agentRuntimeRecoverableRun.deleteMany();
+    await fixture?.prisma.agentRuntimeAdmission.deleteMany();
+    await fixture?.prisma.agentRuntimeRun.deleteMany();
     await fixture?.prisma.agentRuntimeState.deleteMany();
   });
 
@@ -268,5 +269,119 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       runs: [{ id: 'restart\u0000run' }],
     });
     await restarted.prisma.$disconnect();
+  });
+
+  test('keeps the runtime head constant-size across a long compacted conversation', async () => {
+    if (!fixture) return;
+    const conversationId = 'bounded-conversation';
+    let previousSummaryId: string | undefined;
+    for (let index = 0; index < 64; index += 1) {
+      const createdAt = new Date(Date.UTC(2026, 7, 23, 0, 0, index)).toISOString();
+      const input = AgentMessageSchema.parse({
+        schemaVersion: 1,
+        id: `bounded-input-${index}`,
+        conversationId,
+        role: 'user',
+        status: 'committed',
+        parts: [{ type: 'text', text: `${index}` }],
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const run = AgentRunSchema.parse({
+        schemaVersion: 1,
+        id: `bounded-run-${index}`,
+        conversationId,
+        inputMessageIds: [input.id],
+        assistantMessageId: `bounded-assistant-${index}`,
+        state: 'queued',
+        revision: 0,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const admitted = await fixture.store.acceptInputAndAssignRun({
+        idempotencyKey: `bounded-request-${index}`,
+        input,
+        run,
+      });
+      if (admitted.outcome !== 'applied') throw new Error('bounded admission failed');
+      const acquired = await fixture.store.acquireRun({
+        conversationId,
+        runId: run.id,
+        expectedRevision: 0,
+        ownerId: 'bounded-owner',
+      });
+      if (acquired.outcome !== 'applied') throw new Error('bounded acquisition failed');
+      const terminal = await fixture.store.commitRunTerminal({
+        conversationId,
+        runId: run.id,
+        expectedRevision: 1,
+        ownerId: 'bounded-owner',
+        reason: 'success',
+        assistant: AgentMessageSchema.parse({
+          schemaVersion: 1,
+          id: run.assistantMessageId,
+          conversationId,
+          runId: run.id,
+          role: 'assistant',
+          status: 'completed',
+          parts: [{ type: 'text', text: `done-${index}` }],
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      });
+      if (terminal.outcome !== 'applied') throw new Error('bounded terminal failed');
+      const summaryId = `bounded-summary-${index}`;
+      const compacted = await fixture.store.replaceCompactedRange({
+        conversationId,
+        expectedVersion: terminal.snapshot.version,
+        replacedMessageIds: [
+          ...(previousSummaryId ? [previousSummaryId] : []),
+          input.id,
+          run.assistantMessageId,
+        ],
+        summary: AgentMessageSchema.parse({
+          schemaVersion: 1,
+          id: summaryId,
+          conversationId,
+          role: 'summary',
+          status: 'committed',
+          parts: [{ type: 'text', text: `through-${index}` }],
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      });
+      if (compacted.outcome !== 'applied') throw new Error('bounded compaction failed');
+      previousSummaryId = summaryId;
+    }
+
+    const conversationStorageId = Buffer.from(conversationId, 'utf8').toString('base64url');
+    const [head, runCount, admissionCount, activeHistoryCount, recoverableCount] =
+      await Promise.all([
+        fixture.prisma.agentRuntimeState.findUnique({
+          where: { conversationId: conversationStorageId },
+        }),
+        fixture.prisma.agentRuntimeRun.count({
+          where: { conversationId: conversationStorageId },
+        }),
+        fixture.prisma.agentRuntimeAdmission.count({
+          where: { conversationId: conversationStorageId },
+        }),
+        fixture.prisma.agentRuntimeMessage.count({
+          where: { conversationId: conversationStorageId, active: true },
+        }),
+        fixture.prisma.agentRuntimeRun.count({
+          where: {
+            conversationId: conversationStorageId,
+            state: { in: ['queued', 'running', 'interrupt_requested'] },
+          },
+        }),
+      ]);
+    expect(head).toEqual({ conversationId: conversationStorageId, version: 256 });
+    expect({ runCount, admissionCount, activeHistoryCount, recoverableCount }).toEqual({
+      runCount: 64,
+      admissionCount: 64,
+      activeHistoryCount: 1,
+      recoverableCount: 0,
+    });
   });
 });

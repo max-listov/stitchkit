@@ -1,11 +1,14 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
+  AgentAdmissionReceiptSchema,
   AgentHistoryMutationSchema,
   AgentMessageSchema,
   AgentRecoverableDescriptorSchema,
   AgentRecoverablePageSchema,
+  AgentRunSchema,
+  AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
-  AgentStoredStateSchema,
+  AgentStoredRunSchema,
   createAgentRuntimeStore,
 } from 'stitchkit/agent-runtime';
 import { Prisma, PrismaClient } from './generated/client';
@@ -73,21 +76,26 @@ export function createPrismaAgentStoreFixture(input: {
   };
   const driver: AgentRuntimeStoreDriver<Prisma.TransactionClient> = {
     transaction: runTransaction,
-    state: {
+    head: {
       async load(transaction, conversationId) {
         const row = await transaction.agentRuntimeState.findUnique({
           where: { conversationId: storageId(conversationId) },
         });
-        return row ? AgentStoredStateSchema.parse(decodePayload(row.payload)) : undefined;
+        return row
+          ? AgentRuntimeHeadSchema.parse({
+              schemaVersion: 1,
+              conversationId,
+              version: row.version,
+            })
+          : undefined;
       },
       async compareAndSwap(transaction, operation) {
-        const payload = encodePayload(operation.next);
         const conversationStorageId = storageId(operation.conversationId);
         const affected = await transaction.$executeRaw`
-          INSERT INTO "AgentRuntimeState" ("conversationId", "version", "payload")
-          VALUES (${conversationStorageId}, ${operation.next.version}, ${payload})
+          INSERT INTO "AgentRuntimeState" ("conversationId", "version")
+          VALUES (${conversationStorageId}, ${operation.next.version})
           ON CONFLICT ("conversationId") DO UPDATE
-          SET "version" = EXCLUDED."version", "payload" = EXCLUDED."payload"
+          SET "version" = EXCLUDED."version"
           WHERE "AgentRuntimeState"."version" = ${operation.expectedVersion}
         `;
         if (affected !== 1) {
@@ -97,19 +105,170 @@ export function createPrismaAgentStoreFixture(input: {
           });
           return { outcome: 'conflict', actualVersion: current?.version ?? 0 };
         }
-        await transaction.agentRuntimeRecoverableRun.deleteMany({
-          where: { conversationId: conversationStorageId },
-        });
-        if (operation.recoverable.length > 0) {
-          await transaction.agentRuntimeRecoverableRun.createMany({
-            data: operation.recoverable.map((descriptor) => ({
-              conversationId: storageId(descriptor.conversationId),
-              runId: storageId(descriptor.run.id),
-              payload: encodePayload(descriptor),
-            })),
-          });
-        }
         return { outcome: 'applied' };
+      },
+    },
+    runs: {
+      async load(transaction, input) {
+        const row = await transaction.agentRuntimeRun.findUnique({
+          where: {
+            conversationId_runId: {
+              conversationId: storageId(input.conversationId),
+              runId: storageId(input.runId),
+            },
+          },
+        });
+        return row
+          ? AgentStoredRunSchema.parse({
+              schemaVersion: 1,
+              run: AgentRunSchema.parse(decodePayload(row.payload)),
+              ...(row.terminalAssistantPayload && {
+                terminalAssistant: AgentMessageSchema.parse(
+                  decodePayload(row.terminalAssistantPayload),
+                ),
+              }),
+            })
+          : undefined;
+      },
+      async loadByAssistantMessageId(transaction, input) {
+        const row = await transaction.agentRuntimeRun.findUnique({
+          where: {
+            conversationId_assistantMessageId: {
+              conversationId: storageId(input.conversationId),
+              assistantMessageId: storageId(input.assistantMessageId),
+            },
+          },
+        });
+        return row
+          ? AgentStoredRunSchema.parse({
+              schemaVersion: 1,
+              run: AgentRunSchema.parse(decodePayload(row.payload)),
+              ...(row.terminalAssistantPayload && {
+                terminalAssistant: AgentMessageSchema.parse(
+                  decodePayload(row.terminalAssistantPayload),
+                ),
+              }),
+            })
+          : undefined;
+      },
+      async loadMany(transaction, input) {
+        if (input.runIds.length === 0) return [];
+        const rows = await transaction.agentRuntimeRun.findMany({
+          where: {
+            conversationId: storageId(input.conversationId),
+            runId: { in: input.runIds.map(storageId) },
+          },
+        });
+        return rows.map((row) =>
+          AgentStoredRunSchema.parse({
+            schemaVersion: 1,
+            run: AgentRunSchema.parse(decodePayload(row.payload)),
+            ...(row.terminalAssistantPayload && {
+              terminalAssistant: AgentMessageSchema.parse(
+                decodePayload(row.terminalAssistantPayload),
+              ),
+            }),
+          }),
+        );
+      },
+      async listActive(transaction, conversationId) {
+        const rows = await transaction.agentRuntimeRun.findMany({
+          where: {
+            conversationId: storageId(conversationId),
+            state: { in: ['queued', 'running', 'interrupt_requested'] },
+          },
+        });
+        return rows.map((row) =>
+          AgentStoredRunSchema.parse({
+            schemaVersion: 1,
+            run: AgentRunSchema.parse(decodePayload(row.payload)),
+          }),
+        );
+      },
+      async save(transaction, rawRecord) {
+        const record = AgentStoredRunSchema.parse(rawRecord);
+        const data = {
+          assistantMessageId: storageId(record.run.assistantMessageId),
+          state: record.run.state,
+          createdAt: new Date(record.run.createdAt),
+          payload: encodePayload(record.run),
+          terminalAssistantPayload: record.terminalAssistant
+            ? encodePayload(record.terminalAssistant)
+            : null,
+        };
+        await transaction.agentRuntimeRun.upsert({
+          where: {
+            conversationId_runId: {
+              conversationId: storageId(record.run.conversationId),
+              runId: storageId(record.run.id),
+            },
+          },
+          create: {
+            conversationId: storageId(record.run.conversationId),
+            runId: storageId(record.run.id),
+            ...data,
+          },
+          update: data,
+        });
+      },
+    },
+    admissions: {
+      async load(transaction, input) {
+        const row = await transaction.agentRuntimeAdmission.findUnique({
+          where: {
+            conversationId_idempotencyKey: {
+              conversationId: storageId(input.conversationId),
+              idempotencyKey: storageId(input.idempotencyKey),
+            },
+          },
+        });
+        return row
+          ? AgentAdmissionReceiptSchema.parse({
+              schemaVersion: 1,
+              conversationId: input.conversationId,
+              idempotencyKey: input.idempotencyKey,
+              input: AgentMessageSchema.parse(decodePayload(row.inputPayload)),
+              runId: Buffer.from(row.runId, 'base64url').toString('utf8'),
+              assistantMessageId: Buffer.from(row.assistantMessageId, 'base64url').toString(
+                'utf8',
+              ),
+            })
+          : undefined;
+      },
+      async loadByInputMessageId(transaction, input) {
+        const row = await transaction.agentRuntimeAdmission.findUnique({
+          where: {
+            conversationId_inputMessageId: {
+              conversationId: storageId(input.conversationId),
+              inputMessageId: storageId(input.inputMessageId),
+            },
+          },
+        });
+        return row
+          ? AgentAdmissionReceiptSchema.parse({
+              schemaVersion: 1,
+              conversationId: input.conversationId,
+              idempotencyKey: Buffer.from(row.idempotencyKey, 'base64url').toString('utf8'),
+              input: AgentMessageSchema.parse(decodePayload(row.inputPayload)),
+              runId: Buffer.from(row.runId, 'base64url').toString('utf8'),
+              assistantMessageId: Buffer.from(row.assistantMessageId, 'base64url').toString(
+                'utf8',
+              ),
+            })
+          : undefined;
+      },
+      async create(transaction, rawReceipt) {
+        const receipt = AgentAdmissionReceiptSchema.parse(rawReceipt);
+        await transaction.agentRuntimeAdmission.create({
+          data: {
+            conversationId: storageId(receipt.conversationId),
+            idempotencyKey: storageId(receipt.idempotencyKey),
+            inputMessageId: storageId(receipt.input.id),
+            runId: storageId(receipt.runId),
+            assistantMessageId: storageId(receipt.assistantMessageId),
+            inputPayload: encodePayload(receipt.input),
+          },
+        });
       },
     },
     history: {
@@ -119,17 +278,6 @@ export function createPrismaAgentStoreFixture(input: {
           orderBy: { position: 'asc' },
         });
         return rows.map((row) => AgentMessageSchema.parse(decodePayload(row.payload)));
-      },
-      async loadById(transaction, input) {
-        const row = await transaction.agentRuntimeMessage.findUnique({
-          where: {
-            conversationId_id: {
-              conversationId: storageId(input.conversationId),
-              id: storageId(input.messageId),
-            },
-          },
-        });
-        return row ? AgentMessageSchema.parse(decodePayload(row.payload)) : undefined;
       },
       async apply(transaction, rawMutation) {
         const mutation = AgentHistoryMutationSchema.parse(rawMutation);
@@ -209,29 +357,37 @@ export function createPrismaAgentStoreFixture(input: {
     },
     async scanRecoverable(scan) {
       const cursor = scan.cursor ? parseRecoveryCursor(scan.cursor) : undefined;
-      const rows = await prisma.agentRuntimeRecoverableRun.findMany({
+      const rows = await prisma.agentRuntimeRun.findMany({
         where: cursor
           ? {
+              state: { in: ['queued', 'running', 'interrupt_requested'] },
               OR: [
-                { conversationId: { gt: cursor[0] } },
-                { conversationId: cursor[0], runId: { gt: cursor[1] } },
+                { conversationId: { gt: storageId(cursor[0]) } },
+                {
+                  conversationId: storageId(cursor[0]),
+                  runId: { gt: storageId(cursor[1]) },
+                },
               ],
             }
-          : undefined,
+          : { state: { in: ['queued', 'running', 'interrupt_requested'] } },
         orderBy: [{ conversationId: 'asc' }, { runId: 'asc' }],
         take: scan.limit + 1,
       });
       const hasMore = rows.length > scan.limit;
-      const items = rows
-        .slice(0, scan.limit)
-        .map((row) => AgentRecoverableDescriptorSchema.parse(decodePayload(row.payload)));
+      const items = rows.slice(0, scan.limit).map((row) => {
+        const run = AgentRunSchema.parse(decodePayload(row.payload));
+        return AgentRecoverableDescriptorSchema.parse({
+          conversationId: run.conversationId,
+          run,
+        });
+      });
       const last = items.at(-1);
       const lastRow = rows[Math.min(scan.limit, rows.length) - 1];
       return AgentRecoverablePageSchema.parse({
         items,
         ...(hasMore && last && lastRow
           ? {
-              nextCursor: recoveryCursor(lastRow.conversationId, lastRow.runId),
+              nextCursor: recoveryCursor(last.conversationId, last.run.id),
             }
           : {}),
       });

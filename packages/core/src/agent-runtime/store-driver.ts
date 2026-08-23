@@ -29,23 +29,30 @@ import {
   RequestRunInterruptSchema,
 } from './store';
 
-export const AgentAdmissionIdentitySchema = z.object({
+export const AgentRuntimeHeadSchema = z.object({
+  schemaVersion: z.literal(1),
+  conversationId: AgentRecordIdSchema,
+  version: AgentRecordVersionSchema,
+});
+
+export const AgentStoredRunSchema = z.object({
+  schemaVersion: z.literal(1),
+  run: AgentRunSchema,
+  terminalAssistant: AgentMessageSchema.optional(),
+});
+
+export const AgentAdmissionReceiptSchema = z.object({
+  schemaVersion: z.literal(1),
+  conversationId: AgentRecordIdSchema,
   idempotencyKey: z.string().min(1),
-  inputMessageId: AgentRecordIdSchema,
+  input: AgentMessageSchema,
   runId: AgentRecordIdSchema,
   assistantMessageId: AgentRecordIdSchema,
 });
 
-export const AgentStoredStateSchema = z.object({
-  schemaVersion: z.literal(1),
-  conversationId: AgentRecordIdSchema,
-  version: AgentRecordVersionSchema,
-  runs: z.array(AgentRunSchema),
-  admissions: z.array(AgentAdmissionIdentitySchema),
-});
-
-export type AgentAdmissionIdentity = z.infer<typeof AgentAdmissionIdentitySchema>;
-export type AgentStoredState = z.infer<typeof AgentStoredStateSchema>;
+export type AgentRuntimeHead = z.infer<typeof AgentRuntimeHeadSchema>;
+export type AgentStoredRun = z.infer<typeof AgentStoredRunSchema>;
+export type AgentAdmissionReceipt = z.infer<typeof AgentAdmissionReceiptSchema>;
 
 export const AgentHistoryMutationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('admit'), input: AgentMessageSchema }),
@@ -86,27 +93,52 @@ export type AgentStoreCompareAndSwapResult =
 
 export interface AgentRuntimeStoreDriver<TRANSACTION> {
   transaction<RESULT>(work: (transaction: TRANSACTION) => Promise<RESULT>): Promise<RESULT>;
-  state: {
+  head: {
     load(
       transaction: TRANSACTION,
       conversationId: string,
-    ): Promise<AgentStoredState | undefined>;
+    ): Promise<AgentRuntimeHead | undefined>;
     compareAndSwap(
       transaction: TRANSACTION,
       input: {
         conversationId: string;
         expectedVersion: number;
-        next: AgentStoredState;
-        recoverable: readonly AgentRecoverableDescriptor[];
+        next: AgentRuntimeHead;
       },
     ): Promise<AgentStoreCompareAndSwapResult>;
   };
+  runs: {
+    load(
+      transaction: TRANSACTION,
+      input: { conversationId: string; runId: string },
+    ): Promise<AgentStoredRun | undefined>;
+    loadByAssistantMessageId(
+      transaction: TRANSACTION,
+      input: { conversationId: string; assistantMessageId: string },
+    ): Promise<AgentStoredRun | undefined>;
+    loadMany(
+      transaction: TRANSACTION,
+      input: { conversationId: string; runIds: readonly string[] },
+    ): Promise<readonly AgentStoredRun[]>;
+    listActive(
+      transaction: TRANSACTION,
+      conversationId: string,
+    ): Promise<readonly AgentStoredRun[]>;
+    save(transaction: TRANSACTION, record: AgentStoredRun): Promise<void>;
+  };
+  admissions: {
+    load(
+      transaction: TRANSACTION,
+      input: { conversationId: string; idempotencyKey: string },
+    ): Promise<AgentAdmissionReceipt | undefined>;
+    loadByInputMessageId(
+      transaction: TRANSACTION,
+      input: { conversationId: string; inputMessageId: string },
+    ): Promise<AgentAdmissionReceipt | undefined>;
+    create(transaction: TRANSACTION, receipt: AgentAdmissionReceipt): Promise<void>;
+  };
   history: {
     load(transaction: TRANSACTION, conversationId: string): Promise<readonly AgentMessage[]>;
-    loadById(
-      transaction: TRANSACTION,
-      input: { conversationId: string; messageId: string },
-    ): Promise<AgentMessage | undefined>;
     apply(transaction: TRANSACTION, mutation: AgentHistoryMutation): Promise<void>;
   };
   scanRecoverable(input: { cursor?: string; limit: number }): Promise<AgentRecoverablePage>;
@@ -124,7 +156,8 @@ type StoreOperation =
 interface ReducedApplied {
   outcome: 'applied';
   snapshot: AgentSnapshot;
-  admissions: readonly AgentAdmissionIdentity[];
+  runRecord?: AgentStoredRun;
+  admissionReceipt?: AgentAdmissionReceipt;
   historyMutation?: AgentHistoryMutation;
 }
 
@@ -138,52 +171,71 @@ type ReducedMutation =
       inputMessageId: string;
       runId: string;
       assistantMessageId: string;
+      run: AgentRun;
+      assistant?: AgentMessage;
       snapshot: AgentSnapshot;
     };
 
-function emptyState(conversationId: string): AgentStoredState {
-  return AgentStoredStateSchema.parse({
+function emptyHead(conversationId: string): AgentRuntimeHead {
+  return AgentRuntimeHeadSchema.parse({
     schemaVersion: 1,
     conversationId,
     version: 0,
-    runs: [],
-    admissions: [],
   });
 }
 
 function snapshotOf(
-  state: AgentStoredState,
+  head: AgentRuntimeHead,
   messages: readonly AgentMessage[],
+  records: readonly AgentStoredRun[],
 ): AgentSnapshot {
-  validateAggregate(state, messages);
+  validateSnapshot(head, messages, records);
   return AgentSnapshotSchema.parse({
     schemaVersion: 1,
-    conversationId: state.conversationId,
-    version: state.version,
+    conversationId: head.conversationId,
+    version: head.version,
     messages,
-    runs: state.runs,
+    runs: records
+      .map((record) => record.run)
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      ),
   });
 }
 
-function validateAggregate(state: AgentStoredState, messages: readonly AgentMessage[]): void {
+function validateSnapshot(
+  head: AgentRuntimeHead,
+  messages: readonly AgentMessage[],
+  records: readonly AgentStoredRun[],
+): void {
   const runIds = new Set<string>();
   const assistantIds = new Set<string>();
   const messageIds = new Set<string>();
-  const idempotencyKeys = new Set<string>();
-  const admittedInputIds = new Set<string>();
-  for (const run of state.runs) {
+  for (const record of records) {
+    const run = record.run;
     if (
-      run.conversationId !== state.conversationId ||
+      run.conversationId !== head.conversationId ||
       runIds.has(run.id) ||
       assistantIds.has(run.assistantMessageId)
     ) {
-      throw new TypeError('Stored agent state contains inconsistent run identities');
+      throw new TypeError('Stored agent runs contain inconsistent identities');
+    }
+    if (
+      record.terminalAssistant &&
+      (record.terminalAssistant.id !== run.assistantMessageId ||
+        record.terminalAssistant.conversationId !== run.conversationId ||
+        record.terminalAssistant.runId !== run.id ||
+        record.terminalAssistant.role !== 'assistant' ||
+        run.terminalReason === undefined)
+    ) {
+      throw new TypeError('Retained terminal assistant does not match its run');
     }
     runIds.add(run.id);
     assistantIds.add(run.assistantMessageId);
   }
   for (const message of messages) {
-    if (message.conversationId !== state.conversationId || messageIds.has(message.id)) {
+    if (message.conversationId !== head.conversationId || messageIds.has(message.id)) {
       throw new TypeError('Stored agent history contains inconsistent message identities');
     }
     messageIds.add(message.id);
@@ -191,7 +243,7 @@ function validateAggregate(state: AgentStoredState, messages: readonly AgentMess
       throw new TypeError('Stored history occupies a reserved assistant identity');
     }
     if (message.runId !== undefined) {
-      const run = state.runs.find((candidate) => candidate.id === message.runId);
+      const run = records.find((candidate) => candidate.run.id === message.runId)?.run;
       if (!run || message.role !== 'assistant' || run.assistantMessageId !== message.id) {
         throw new TypeError(
           'Stored assistant history does not match its reserved run identity',
@@ -199,26 +251,6 @@ function validateAggregate(state: AgentStoredState, messages: readonly AgentMess
       }
     }
   }
-  for (const admission of state.admissions) {
-    const run = state.runs.find((candidate) => candidate.id === admission.runId);
-    if (
-      idempotencyKeys.has(admission.idempotencyKey) ||
-      admittedInputIds.has(admission.inputMessageId) ||
-      !run ||
-      run.assistantMessageId !== admission.assistantMessageId ||
-      !run.inputMessageIds.includes(admission.inputMessageId)
-    ) {
-      throw new TypeError('Stored admission identity is inconsistent with its assigned run');
-    }
-    idempotencyKeys.add(admission.idempotencyKey);
-    admittedInputIds.add(admission.inputMessageId);
-  }
-}
-
-function recoverableDescriptors(state: AgentStoredState): AgentRecoverableDescriptor[] {
-  return state.runs
-    .filter((run) => ['queued', 'running', 'interrupt_requested'].includes(run.state))
-    .map((run) => ({ conversationId: state.conversationId, run }));
 }
 
 const RecoverableCursorSchema = z.tuple([AgentRecordIdSchema, AgentRecordIdSchema]);
@@ -273,9 +305,12 @@ function terminalMessageStatus(
 
 function applied(
   current: AgentSnapshot,
-  admissions: readonly AgentAdmissionIdentity[],
   input: { runs?: readonly AgentRun[]; messages?: readonly AgentMessage[] },
-  historyMutation?: AgentHistoryMutation,
+  effects?: {
+    runRecord?: AgentStoredRun;
+    admissionReceipt?: AgentAdmissionReceipt;
+    historyMutation?: AgentHistoryMutation;
+  },
 ): ReducedApplied {
   return {
     outcome: 'applied',
@@ -285,35 +320,15 @@ function applied(
       runs: input.runs ?? current.runs,
       messages: input.messages ?? current.messages,
     }),
-    admissions,
-    ...(historyMutation && { historyMutation }),
+    ...(effects?.runRecord && { runRecord: effects.runRecord }),
+    ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),
+    ...(effects?.historyMutation && { historyMutation: effects.historyMutation }),
   };
 }
 
-function reduceStore(
-  current: AgentSnapshot,
-  currentAdmissions: readonly AgentAdmissionIdentity[],
-  operation: StoreOperation,
-  duplicateInput?: AgentMessage,
-): ReducedMutation {
+function reduceStore(current: AgentSnapshot, operation: StoreOperation): ReducedMutation {
   if (operation.type === 'accept') {
     const input = operation.input;
-    const duplicate = currentAdmissions.find(
-      (candidate) => candidate.idempotencyKey === input.idempotencyKey,
-    );
-    if (duplicate) {
-      if (!duplicateInput) {
-        throw new Error('Duplicate admission input is unavailable from canonical history');
-      }
-      return {
-        outcome: 'duplicate',
-        input: duplicateInput,
-        inputMessageId: duplicate.inputMessageId,
-        runId: duplicate.runId,
-        assistantMessageId: duplicate.assistantMessageId,
-        snapshot: current,
-      };
-    }
     if (input.expectedVersion !== undefined && input.expectedVersion !== current.version) {
       return conflict(current.version);
     }
@@ -362,22 +377,30 @@ function reduceStore(
           updatedAt: new Date().toISOString(),
         })
       : input.run;
-    const admission = AgentAdmissionIdentitySchema.parse({
+    const admissionReceipt = AgentAdmissionReceiptSchema.parse({
+      schemaVersion: 1,
+      conversationId: input.input.conversationId,
       idempotencyKey: input.idempotencyKey,
-      inputMessageId: input.input.id,
+      input: input.input,
       runId: assignedRun.id,
       assistantMessageId: assignedRun.assistantMessageId,
     });
     return applied(
       current,
-      [...currentAdmissions, admission],
       {
         messages: [...current.messages, input.input],
         runs: coalescedRun
           ? replaceRun(current.runs, assignedRun)
           : [...current.runs, assignedRun],
       },
-      { type: 'admit', input: input.input },
+      {
+        runRecord: AgentStoredRunSchema.parse({
+          schemaVersion: 1,
+          run: assignedRun,
+        }),
+        admissionReceipt,
+        historyMutation: { type: 'admit', input: input.input },
+      },
     );
   }
 
@@ -412,9 +435,13 @@ function reduceStore(
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
-    return applied(current, currentAdmissions, {
-      runs: replaceRun(current.runs, next),
-    });
+    return applied(
+      current,
+      { runs: replaceRun(current.runs, next) },
+      {
+        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+      },
+    );
   }
 
   if (operation.type === 'checkpoint' && run) {
@@ -439,12 +466,14 @@ function reduceStore(
     });
     return applied(
       current,
-      currentAdmissions,
       {
         runs: replaceRun(current.runs, next),
         messages: replaceMessage(current.messages, input.assistant),
       },
-      { type: 'upsert-assistant', message: input.assistant },
+      {
+        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+        historyMutation: { type: 'upsert-assistant', message: input.assistant },
+      },
     );
   }
 
@@ -458,9 +487,13 @@ function reduceStore(
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
-    return applied(current, currentAdmissions, {
-      runs: replaceRun(current.runs, next),
-    });
+    return applied(
+      current,
+      { runs: replaceRun(current.runs, next) },
+      {
+        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+      },
+    );
   }
 
   if (operation.type === 'recover' && run) {
@@ -505,17 +538,27 @@ function reduceStore(
       });
       return applied(
         current,
-        currentAdmissions,
         {
           runs: replaceRun(current.runs, next),
           messages: replaceMessage(current.messages, assistant),
         },
-        { type: 'upsert-assistant', message: assistant },
+        {
+          runRecord: AgentStoredRunSchema.parse({
+            schemaVersion: 1,
+            run: next,
+            terminalAssistant: assistant,
+          }),
+          historyMutation: { type: 'upsert-assistant', message: assistant },
+        },
       );
     }
-    return applied(current, currentAdmissions, {
-      runs: replaceRun(current.runs, next),
-    });
+    return applied(
+      current,
+      { runs: replaceRun(current.runs, next) },
+      {
+        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+      },
+    );
   }
 
   if (operation.type === 'terminal' && run) {
@@ -543,12 +586,18 @@ function reduceStore(
     });
     return applied(
       current,
-      currentAdmissions,
       {
         runs: replaceRun(current.runs, next),
         messages: replaceMessage(current.messages, input.assistant),
       },
-      { type: 'upsert-assistant', message: input.assistant },
+      {
+        runRecord: AgentStoredRunSchema.parse({
+          schemaVersion: 1,
+          run: next,
+          terminalAssistant: input.assistant,
+        }),
+        historyMutation: { type: 'upsert-assistant', message: input.assistant },
+      },
     );
   }
 
@@ -583,12 +632,13 @@ function reduceStore(
     ];
     return applied(
       current,
-      currentAdmissions,
       { messages },
       {
-        type: 'replace-compacted-range',
-        replacedMessageIds: input.replacedMessageIds,
-        summary: input.summary,
+        historyMutation: {
+          type: 'replace-compacted-range',
+          replacedMessageIds: input.replacedMessageIds,
+          summary: input.summary,
+        },
       },
     );
   }
@@ -602,66 +652,164 @@ function operationConversationId(operation: StoreOperation): string {
     : operation.input.conversationId;
 }
 
+function mergeRunRecords(...groups: readonly (readonly AgentStoredRun[])[]): AgentStoredRun[] {
+  const records = new Map<string, AgentStoredRun>();
+  for (const group of groups) {
+    for (const rawRecord of group) {
+      const record = AgentStoredRunSchema.parse(rawRecord);
+      const previous = records.get(record.run.id);
+      if (previous && previous.run.assistantMessageId !== record.run.assistantMessageId) {
+        throw new TypeError('Stored agent run identity changed across normalized records');
+      }
+      records.set(record.run.id, record);
+    }
+  }
+  return [...records.values()];
+}
+
+function referencedRunIds(messages: readonly AgentMessage[]): string[] {
+  return [...new Set(messages.flatMap((message) => (message.runId ? [message.runId] : [])))];
+}
+
+function validateAdmissionReceipt(
+  receipt: AgentAdmissionReceipt,
+  record: AgentStoredRun,
+  conversationId: string,
+): void {
+  const input = receipt.input;
+  const run = record.run;
+  if (
+    receipt.conversationId !== conversationId ||
+    input.conversationId !== conversationId ||
+    input.role !== 'user' ||
+    input.status !== 'committed' ||
+    input.runId !== undefined ||
+    receipt.runId !== run.id ||
+    receipt.assistantMessageId !== run.assistantMessageId ||
+    !run.inputMessageIds.includes(input.id)
+  ) {
+    throw new TypeError('Admission receipt does not match its canonical run assignment');
+  }
+}
+
 export function createAgentRuntimeStore<TRANSACTION>(
   driver: AgentRuntimeStoreDriver<TRANSACTION>,
 ): AgentRuntimeStore {
   const loadSnapshot = (conversationId: string): Promise<AgentSnapshot> =>
     driver.transaction(async (transaction) => {
-      const [stored, messages] = await Promise.all([
-        driver.state.load(transaction, conversationId),
+      const [stored, messages, activeRecords] = await Promise.all([
+        driver.head.load(transaction, conversationId),
         driver.history.load(transaction, conversationId),
+        driver.runs.listActive(transaction, conversationId),
       ]);
-      return snapshotOf(stored ?? emptyState(conversationId), messages);
+      const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
+      const referencedRecords = await driver.runs.loadMany(transaction, {
+        conversationId,
+        runIds: referencedRunIds(messages),
+      });
+      return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
     });
 
   const mutate = (operation: StoreOperation): Promise<AgentStoreMutationResult> =>
     driver.transaction(async (transaction) => {
       const conversationId = operationConversationId(operation);
-      const [stored, messages] = await Promise.all([
-        driver.state.load(transaction, conversationId),
-        driver.history.load(transaction, conversationId),
-      ]);
-      const state = AgentStoredStateSchema.parse(stored ?? emptyState(conversationId));
-      const current = snapshotOf(state, messages);
-      const duplicateIdentity =
+      const operationRunId =
         operation.type === 'accept'
-          ? state.admissions.find(
-              (candidate) => candidate.idempotencyKey === operation.input.idempotencyKey,
-            )
-          : undefined;
-      const duplicateInput = duplicateIdentity
-        ? await driver.history.loadById(transaction, {
-            conversationId,
-            messageId: duplicateIdentity.inputMessageId,
-          })
-        : undefined;
-      if (
-        duplicateIdentity &&
-        duplicateInput &&
-        (duplicateInput.id !== duplicateIdentity.inputMessageId ||
-          duplicateInput.conversationId !== conversationId ||
-          duplicateInput.role !== 'user' ||
-          duplicateInput.status !== 'committed' ||
-          duplicateInput.runId !== undefined)
-      ) {
-        throw new TypeError('Canonical duplicate input does not match its admission identity');
+          ? operation.input.coalesceIntoRunId
+          : operation.type === 'compact'
+            ? undefined
+            : operation.input.runId;
+      const [stored, messages, activeRecords, operationRecord, duplicateReceipt] =
+        await Promise.all([
+          driver.head.load(transaction, conversationId),
+          driver.history.load(transaction, conversationId),
+          driver.runs.listActive(transaction, conversationId),
+          operationRunId
+            ? driver.runs.load(transaction, { conversationId, runId: operationRunId })
+            : undefined,
+          operation.type === 'accept'
+            ? driver.admissions.load(transaction, {
+                conversationId,
+                idempotencyKey: operation.input.idempotencyKey,
+              })
+            : undefined,
+        ]);
+      const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
+      const referencedRecords = await driver.runs.loadMany(transaction, {
+        conversationId,
+        runIds: referencedRunIds(messages),
+      });
+      const records = mergeRunRecords(
+        activeRecords,
+        referencedRecords,
+        operationRecord ? [operationRecord] : [],
+      );
+      const current = snapshotOf(head, messages, records);
+      if (duplicateReceipt) {
+        const duplicateRecord = await driver.runs.load(transaction, {
+          conversationId,
+          runId: duplicateReceipt.runId,
+        });
+        if (!duplicateRecord) {
+          throw new TypeError('Admission receipt points to a missing canonical run');
+        }
+        validateAdmissionReceipt(duplicateReceipt, duplicateRecord, conversationId);
+        return {
+          outcome: 'duplicate',
+          input: duplicateReceipt.input,
+          inputMessageId: duplicateReceipt.input.id,
+          runId: duplicateReceipt.runId,
+          assistantMessageId: duplicateReceipt.assistantMessageId,
+          run: duplicateRecord.run,
+          ...(duplicateRecord.terminalAssistant && {
+            assistant: duplicateRecord.terminalAssistant,
+          }),
+          snapshot: snapshotOf(head, messages, mergeRunRecords(records, [duplicateRecord])),
+        };
       }
-      const reduced = reduceStore(current, state.admissions, operation, duplicateInput);
+
+      if (operation.type === 'accept') {
+        const inputCollision = await driver.admissions.loadByInputMessageId(transaction, {
+          conversationId,
+          inputMessageId: operation.input.input.id,
+        });
+        if (inputCollision) {
+          throw new TypeError('Input message identity is already assigned to an admission');
+        }
+        if (!operation.input.coalesceIntoRunId) {
+          const [runCollision, assistantCollision] = await Promise.all([
+            driver.runs.load(transaction, {
+              conversationId,
+              runId: operation.input.run.id,
+            }),
+            driver.runs.loadByAssistantMessageId(transaction, {
+              conversationId,
+              assistantMessageId: operation.input.run.assistantMessageId,
+            }),
+          ]);
+          if (runCollision || assistantCollision) {
+            throw new TypeError('Queued run identities are already reserved');
+          }
+        }
+      }
+
+      const reduced = reduceStore(current, operation);
       if (reduced.outcome !== 'applied') return reduced;
-      const nextState = AgentStoredStateSchema.parse({
+      const nextHead = AgentRuntimeHeadSchema.parse({
         schemaVersion: 1,
         conversationId,
         version: reduced.snapshot.version,
-        runs: reduced.snapshot.runs,
-        admissions: reduced.admissions,
       });
-      const outcome = await driver.state.compareAndSwap(transaction, {
+      const outcome = await driver.head.compareAndSwap(transaction, {
         conversationId,
         expectedVersion: current.version,
-        next: nextState,
-        recoverable: recoverableDescriptors(nextState),
+        next: nextHead,
       });
       if (outcome.outcome === 'conflict') return conflict(outcome.actualVersion);
+      if (reduced.runRecord) await driver.runs.save(transaction, reduced.runRecord);
+      if (reduced.admissionReceipt) {
+        await driver.admissions.create(transaction, reduced.admissionReceipt);
+      }
       if (reduced.historyMutation) {
         await driver.history.apply(transaction, reduced.historyMutation);
       }
@@ -724,16 +872,29 @@ export function createAgentRuntimeStore<TRANSACTION>(
 }
 
 interface MemoryTransaction {
-  states: Map<string, AgentStoredState>;
+  heads: Map<string, AgentRuntimeHead>;
+  runs: Map<string, Map<string, AgentStoredRun>>;
+  admissions: Map<string, Map<string, AgentAdmissionReceipt>>;
   histories: Map<string, AgentMessage[]>;
-  archivedMessages: Map<string, Map<string, AgentMessage>>;
 }
 
-function cloneStateMap(source: ReadonlyMap<string, AgentStoredState>) {
+function cloneHeadMap(source: ReadonlyMap<string, AgentRuntimeHead>) {
   return new Map(
     [...source].map(([key, value]) => [
       key,
-      AgentStoredStateSchema.parse(structuredClone(value)),
+      AgentRuntimeHeadSchema.parse(structuredClone(value)),
+    ]),
+  );
+}
+
+function cloneNestedMap<VALUE>(
+  source: ReadonlyMap<string, ReadonlyMap<string, VALUE>>,
+  clone: (value: VALUE) => VALUE,
+): Map<string, Map<string, VALUE>> {
+  return new Map(
+    [...source].map(([outerKey, values]) => [
+      outerKey,
+      new Map([...values].map(([innerKey, value]) => [innerKey, clone(value)])),
     ]),
   );
 }
@@ -749,9 +910,10 @@ function cloneHistoryMap(source: ReadonlyMap<string, readonly AgentMessage[]>) {
 
 /** In-memory reference adapter backed by the same reducer and driver contract as durable stores. */
 export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
-  let states = new Map<string, AgentStoredState>();
+  let heads = new Map<string, AgentRuntimeHead>();
+  let runs = new Map<string, Map<string, AgentStoredRun>>();
+  let admissions = new Map<string, Map<string, AgentAdmissionReceipt>>();
   let histories = new Map<string, AgentMessage[]>();
-  let archivedMessages = new Map<string, Map<string, AgentMessage>>();
   let transactionTail = Promise.resolve();
 
   const driver: AgentRuntimeStoreDriver<MemoryTransaction> = {
@@ -761,46 +923,113 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       transactionTail = previous.catch(() => undefined).then(() => release.promise);
       await previous.catch(() => undefined);
       const transaction = {
-        states: cloneStateMap(states),
-        histories: cloneHistoryMap(histories),
-        archivedMessages: new Map(
-          [...archivedMessages].map(([conversationId, messages]) => [
-            conversationId,
-            new Map(
-              [...messages].map(([messageId, message]) => [
-                messageId,
-                AgentMessageSchema.parse(structuredClone(message)),
-              ]),
-            ),
-          ]),
+        heads: cloneHeadMap(heads),
+        runs: cloneNestedMap(runs, (record) =>
+          AgentStoredRunSchema.parse(structuredClone(record)),
         ),
+        admissions: cloneNestedMap(admissions, (receipt) =>
+          AgentAdmissionReceiptSchema.parse(structuredClone(receipt)),
+        ),
+        histories: cloneHistoryMap(histories),
       };
       try {
         const result = await work(transaction);
-        states = transaction.states;
+        heads = transaction.heads;
+        runs = transaction.runs;
+        admissions = transaction.admissions;
         histories = transaction.histories;
-        archivedMessages = transaction.archivedMessages;
         return result;
       } finally {
         release.resolve();
       }
     },
-    state: {
+    head: {
       async load(transaction, conversationId) {
-        const state = transaction.states.get(conversationId);
-        return state ? AgentStoredStateSchema.parse(structuredClone(state)) : undefined;
+        const head = transaction.heads.get(conversationId);
+        return head ? AgentRuntimeHeadSchema.parse(structuredClone(head)) : undefined;
       },
       async compareAndSwap(transaction, input) {
-        const current = transaction.states.get(input.conversationId);
+        const current = transaction.heads.get(input.conversationId);
         const actualVersion = current?.version ?? 0;
         if (actualVersion !== input.expectedVersion) {
           return { outcome: 'conflict', actualVersion };
         }
-        transaction.states.set(
+        transaction.heads.set(
           input.conversationId,
-          AgentStoredStateSchema.parse(structuredClone(input.next)),
+          AgentRuntimeHeadSchema.parse(structuredClone(input.next)),
         );
         return { outcome: 'applied' };
+      },
+    },
+    runs: {
+      async load(transaction, input) {
+        const record = transaction.runs.get(input.conversationId)?.get(input.runId);
+        return record ? AgentStoredRunSchema.parse(structuredClone(record)) : undefined;
+      },
+      async loadByAssistantMessageId(transaction, input) {
+        const record = [...(transaction.runs.get(input.conversationId)?.values() ?? [])].find(
+          (candidate) => candidate.run.assistantMessageId === input.assistantMessageId,
+        );
+        return record ? AgentStoredRunSchema.parse(structuredClone(record)) : undefined;
+      },
+      async loadMany(transaction, input) {
+        const records = transaction.runs.get(input.conversationId);
+        return input.runIds.flatMap((runId) => {
+          const record = records?.get(runId);
+          return record ? [AgentStoredRunSchema.parse(structuredClone(record))] : [];
+        });
+      },
+      async listActive(transaction, conversationId) {
+        return [...(transaction.runs.get(conversationId)?.values() ?? [])]
+          .filter((record) =>
+            ['queued', 'running', 'interrupt_requested'].includes(record.run.state),
+          )
+          .map((record) => AgentStoredRunSchema.parse(structuredClone(record)));
+      },
+      async save(transaction, rawRecord) {
+        const record = AgentStoredRunSchema.parse(structuredClone(rawRecord));
+        const conversationRuns = transaction.runs.get(record.run.conversationId) ?? new Map();
+        const collision = [...conversationRuns.values()].find(
+          (candidate) =>
+            candidate.run.id !== record.run.id &&
+            candidate.run.assistantMessageId === record.run.assistantMessageId,
+        );
+        if (collision) throw new TypeError('Assistant message identity is already reserved');
+        conversationRuns.set(record.run.id, record);
+        transaction.runs.set(record.run.conversationId, conversationRuns);
+      },
+    },
+    admissions: {
+      async load(transaction, input) {
+        const receipt = transaction.admissions
+          .get(input.conversationId)
+          ?.get(input.idempotencyKey);
+        return receipt
+          ? AgentAdmissionReceiptSchema.parse(structuredClone(receipt))
+          : undefined;
+      },
+      async loadByInputMessageId(transaction, input) {
+        const receipt = [
+          ...(transaction.admissions.get(input.conversationId)?.values() ?? []),
+        ].find((candidate) => candidate.input.id === input.inputMessageId);
+        return receipt
+          ? AgentAdmissionReceiptSchema.parse(structuredClone(receipt))
+          : undefined;
+      },
+      async create(transaction, rawReceipt) {
+        const receipt = AgentAdmissionReceiptSchema.parse(structuredClone(rawReceipt));
+        const conversationAdmissions =
+          transaction.admissions.get(receipt.conversationId) ?? new Map();
+        if (
+          conversationAdmissions.has(receipt.idempotencyKey) ||
+          [...conversationAdmissions.values()].some(
+            (candidate) => candidate.input.id === receipt.input.id,
+          )
+        ) {
+          throw new TypeError('Admission identity is already reserved');
+        }
+        conversationAdmissions.set(receipt.idempotencyKey, receipt);
+        transaction.admissions.set(receipt.conversationId, conversationAdmissions);
       },
     },
     history: {
@@ -808,15 +1037,6 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         return (transaction.histories.get(conversationId) ?? []).map((message) =>
           AgentMessageSchema.parse(structuredClone(message)),
         );
-      },
-      async loadById(transaction, input) {
-        const active = (transaction.histories.get(input.conversationId) ?? []).find(
-          (message) => message.id === input.messageId,
-        );
-        const message =
-          active ??
-          transaction.archivedMessages.get(input.conversationId)?.get(input.messageId);
-        return message ? AgentMessageSchema.parse(structuredClone(message)) : undefined;
       },
       async apply(transaction, rawMutation) {
         const mutation = AgentHistoryMutationSchema.parse(rawMutation);
@@ -841,11 +1061,6 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
           .filter((index) => index !== undefined);
         const first = positions[0];
         if (first === undefined) throw new Error('Compaction history range disappeared');
-        const archive = transaction.archivedMessages.get(conversationId) ?? new Map();
-        for (const message of current.filter((candidate) => replaced.has(candidate.id))) {
-          archive.set(message.id, AgentMessageSchema.parse(structuredClone(message)));
-        }
-        transaction.archivedMessages.set(conversationId, archive);
         transaction.histories.set(conversationId, [
           ...current.slice(0, first),
           mutation.summary,
@@ -854,11 +1069,13 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       },
     },
     async scanRecoverable(input) {
-      const descriptors = [...states.values()]
-        .flatMap((state) =>
-          state.runs
-            .filter((run) => ['queued', 'running', 'interrupt_requested'].includes(run.state))
-            .map((run) => ({ conversationId: state.conversationId, run })),
+      const descriptors = [...runs]
+        .flatMap(([conversationId, conversationRuns]) =>
+          [...conversationRuns.values()]
+            .filter((record) =>
+              ['queued', 'running', 'interrupt_requested'].includes(record.run.state),
+            )
+            .map((record) => ({ conversationId, run: record.run })),
         )
         .sort(
           (left, right) =>

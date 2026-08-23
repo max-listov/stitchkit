@@ -115,6 +115,7 @@ These records were consolidated from the project's internal design notes on
 | [0098](0098-optional-agent-application-runtime.md) | Agent conversations have one optional application runtime | Accepted — extends 0007, 0012, 0013, 0086, 0087 and narrows 0089 |
 | [0099](0099-starter-head-skips-require-versioned-review.md) | Starter HEAD skips require an exact-version deferred review | Accepted — refines 0061 |
 | [0100](0100-agent-store-reducer-owns-transitions.md) | The agent store reducer owns runtime transitions | Accepted — refines the persistence boundary of 0098 |
+| [0101](0101-normalized-agent-runtime-persistence.md) | Agent runtime persistence is bounded and normalized | Accepted — replaces the aggregate storage shape of 0100 while retaining reducer ownership |
 
 **Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
 kept for history · _Rejected_ — considered, deliberately not done.

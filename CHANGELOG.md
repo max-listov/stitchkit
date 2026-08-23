@@ -15,6 +15,26 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- **Agent runtime drivers now persist a bounded head plus normalized run and admission records.**
+  The lifetime `AgentStoredState` aggregate, `state` driver member, archived-message lookup and
+  synchronized recoverable descriptors are removed. This keeps each CAS constant-size and lets a
+  terminal run retain its canonical assistant independently of product-history compaction.
+  `// before: { state: { load, compareAndSwap }, history: { load, loadById, apply }, scanRecoverable }` →
+  `// after: { head: { load, compareAndSwap }, runs: { load, loadByAssistantMessageId, loadMany, listActive, save }, admissions: { load, loadByInputMessageId, create }, history: { load, apply }, scanRecoverable }`.
+- **Duplicate store results now include the canonical run and optional terminal assistant.** Custom
+  `AgentRuntimeStore` implementations must return the assigned run, and must retain its terminal
+  assistant when the run is terminal.
+  `// before: { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, snapshot }` →
+  `// after: { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, run, assistant, snapshot }`.
+
+### Fixed
+
+- **Duplicate terminal submissions survive physical history compaction.** Durable receipts now
+  return the canonical run and retained terminal assistant, so admission events and ticket results
+  never fall back to a pending placeholder or fail because the product history deleted old rows.
+
 ## [0.58.0] — 2026-08-22
 
 ### ⚠️ Breaking changes
