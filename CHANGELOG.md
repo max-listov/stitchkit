@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.59.4] — 2026-08-24
+
 ### Added
 
 - **Packed-package optional-peer bundle matrix.** The consumer release lane now classifies every
