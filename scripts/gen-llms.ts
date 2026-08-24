@@ -51,6 +51,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'Agent application runtime',
     'optional durable history, prompt/model composition, stream loop, coordination, fencing and events',
   ],
+  [
+    'application-kernel.md',
+    'Managed application kernel',
+    'process-local resources, readiness, admission, schedules, projections and optional provider adapters',
+  ],
   ['cli.md', 'CLI', 'contracts as a command-line program'],
   [
     'realtime.md',

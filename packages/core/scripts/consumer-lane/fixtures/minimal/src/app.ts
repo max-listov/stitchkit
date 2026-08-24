@@ -12,6 +12,13 @@
  *    check that means anything. It was frozen to a literal in every published
  *    copy for the project's whole life and no source test could see it.
  */
+
+import {
+  type ApplicationShutdownResult,
+  createActivityProjection,
+  createApplication,
+  createManagedSchedule,
+} from 'stitchkit/application';
 import { AppError, defineContract, type RuntimeContext } from 'stitchkit/contract';
 import {
   getTraceId,
@@ -163,6 +170,105 @@ const hooks: LifecycleHooks = {
 };
 const event: Partial<RequestEvent> = { method: 'GET' };
 void event;
+
+const managedOrder: string[] = [];
+const activity = createActivityProjection({ id: 'packed', stages: ['work'] });
+const managed = createApplication({
+  id: 'packed-minimal',
+  resources: [
+    {
+      id: 'domain',
+      start: () => void managedOrder.push('start'),
+      close: () => void managedOrder.push('close'),
+    },
+    createManagedSchedule({
+      id: 'maintenance',
+      everyMs: 60_000,
+      run: () => undefined,
+    }),
+  ],
+});
+await managed.start();
+const activityToken = activity.open('work');
+activity.complete(activityToken);
+const managedResult: ApplicationShutdownResult = await managed.shutdown();
+check(
+  'the peer-free application kernel owns lifecycle and schedule cleanup',
+  managedResult.outcome === 'clean' && managedOrder.join(',') === 'start,close',
+  managedResult,
+);
+
+let markReady: () => void = () => undefined;
+const ready = new Promise<void>((resolve) => {
+  markReady = resolve;
+});
+const readinessApp = createApplication({
+  id: 'packed-readiness',
+  resources: [{ id: 'delayed', start: () => ({ ready }) }],
+});
+const readinessStart = readinessApp.start();
+await Promise.resolve();
+check(
+  'the packed kernel does not claim readiness before a required resource',
+  readinessApp.getSnapshot().ready === false,
+  readinessApp.getSnapshot(),
+);
+markReady();
+await readinessStart;
+check(
+  'the packed kernel publishes readiness after the required resource',
+  readinessApp.getSnapshot().ready === true,
+  readinessApp.getSnapshot(),
+);
+await readinessApp.shutdown();
+
+let rolledBack = 0;
+const failedStartApp = createApplication({
+  id: 'packed-startup-failure',
+  resources: [
+    {
+      id: 'partial',
+      start() {
+        throw new Error('packed startup failure');
+      },
+      close: () => {
+        rolledBack += 1;
+      },
+    },
+  ],
+});
+let startupRejected = false;
+try {
+  await failedStartApp.start();
+} catch {
+  startupRejected = true;
+}
+check(
+  'the packed kernel rejects startup and rolls back the attempted resource once',
+  startupRejected && rolledBack === 1 && failedStartApp.getSnapshot().lifecycle === 'failed',
+  failedStartApp.getSnapshot(),
+);
+
+const forcedApp = createApplication({
+  id: 'packed-forced-shutdown',
+  resources: [
+    {
+      id: 'stuck-drain',
+      start: () => undefined,
+      drain: () => new Promise<void>(() => undefined),
+      force: () => undefined,
+    },
+  ],
+});
+await forcedApp.start();
+const forcedResult = await forcedApp.shutdown({ gracePeriodMs: 1, forceTimeoutMs: 50 });
+check(
+  'the packed kernel crosses the forced boundary and reports complete cleanup',
+  forcedResult.outcome === 'forced' &&
+    forcedResult.reason === 'deadline' &&
+    forcedResult.cleanupComplete,
+  forcedResult,
+);
 
 // ── run it, and read what the built package actually printed ─────────────────
 

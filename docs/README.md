@@ -16,14 +16,16 @@ The guide, in reading order:
 3. [HTTP server](./guide/server.md) — `createServer`, hooks, raw routes, primitives.
 4. [Typed client](./guide/client.md) — the client, the React data layer, SSE.
 5. [MCP & agents](./guide/mcp-and-agents.md) — contracts as AI tools.
-6. [CLI](./guide/cli.md) — contracts as a command-line program.
-7. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
-8. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
-9. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
-10. [Testing & deployment](./guide/testing-and-deployment.md).
-11. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
-12. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
-13. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
+6. [Agent runtime](./guide/agent-runtime.md) — durable tool-using agent execution.
+7. [Managed application kernel](./guide/application-kernel.md) — process-local resources, schedules, readiness and drain.
+8. [CLI](./guide/cli.md) — contracts as a command-line program.
+9. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
+10. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
+11. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
+12. [Testing & deployment](./guide/testing-and-deployment.md).
+13. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
+14. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
+15. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 
@@ -61,6 +63,7 @@ docs/
 └── backlog/       task tracking — the "what"
     ├── inbox/     raw ideas, not yet worked out
     ├── planned/   worked out, has a plan, ready to pick up
+    ├── in-progress/ actively being implemented and validated
     └── done/      completed task records
 ```
 

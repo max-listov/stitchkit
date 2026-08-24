@@ -1,0 +1,10 @@
+{
+  "name": "stitchkit-consumer-grammy",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "grammy": "^1.45.1"
+  }
+}

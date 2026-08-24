@@ -13,7 +13,7 @@
  * `check-browser-clean` and `check-env-live` are the same instinct, one scar at
  * a time. This is the net for the next one nobody has thought of.
  *
- * Three fixtures, split by the axes that actually matter — **what a consumer had
+ * Four fixtures, split by the axes that actually matter — **what a consumer had
  * to install**. Every peer except `zod` is optional, so `minimal` (stitchkit +
  * zod) proves the core path needs nothing else, and `full` adds the peers the
  * tool surface requires. Splitting by entrypoint would prove less: one app can
@@ -49,7 +49,7 @@ const ACCEPTED_UNRESOLVED = [
   '@socket.io/component-emitter',
 ];
 
-const FIXTURES = ['minimal', 'full', 'node'];
+const FIXTURES = ['minimal', 'full', 'node', 'grammy'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
 let failed = false;
@@ -160,6 +160,10 @@ console.log('peer-free testing manifest ok');
       failed = true;
       console.error('[consumer-lane] node: unexpectedly installed @types/bun');
     }
+    if (name === 'minimal' && existsSync(join(dir, 'node_modules', 'grammy'))) {
+      failed = true;
+      console.error('[consumer-lane] minimal: unexpectedly installed optional peer grammy');
+    }
 
     // The consumer's default. Any error here is the package's fault, full stop.
     const strict = step(`${name}: typecheck`, () => tsc(dir, []));
@@ -212,6 +216,60 @@ console.log('peer-free testing manifest ok');
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
     if (name === 'minimal') {
+      const applicationBundle = join(dir, 'application-neutral-bundle.js');
+      const applicationMetafile = join(dir, 'application-neutral-metafile.json');
+      step('minimal: bundle neutral application', () =>
+        run(
+          'bun',
+          [
+            'build',
+            'src/application-neutral.ts',
+            '--target=bun',
+            '--packages=bundle',
+            `--outfile=${applicationBundle}`,
+            `--metafile=${applicationMetafile}`,
+          ],
+          dir,
+        ),
+      );
+      const applicationInputs = Object.keys(
+        JSON.parse(readFileSync(applicationMetafile, 'utf8')).inputs,
+      );
+      const leakedGrammy = applicationInputs.find((input) => input.includes('grammy'));
+      if (leakedGrammy) {
+        failed = true;
+        console.error(
+          `[consumer-lane] minimal: neutral application resolved grammY: ${leakedGrammy}`,
+        );
+      }
+      const neutralDeclaration = readFileSync(
+        join(dir, 'node_modules', 'stitchkit', 'dist', 'application.d.ts'),
+        'utf8',
+      );
+      if (
+        neutralDeclaration.includes("from 'grammy'") ||
+        neutralDeclaration.includes('from "grammy"')
+      ) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: neutral application declaration references grammY',
+        );
+      }
+      step('minimal: run neutral application bundle', () =>
+        run('bun', [applicationBundle], dir),
+      );
+
+      const missingGrammyPeer = step('minimal: missing grammY peer', () =>
+        runExpectFailure('node', ['src/missing-grammy-peer.mjs'], dir),
+      );
+      if (!missingGrammyPeer.failed || !missingGrammyPeer.output.includes('grammy')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: the opted-in grammY adapter must name its missing peer',
+          missingGrammyPeer.output,
+        );
+      }
+
       const testingBundle = join(dir, 'testing-manifest-bundle.js');
       const testingMetafile = join(dir, 'testing-manifest-metafile.json');
       step('minimal: bundle testing manifest', () =>
@@ -334,6 +392,19 @@ console.log('peer-free testing manifest ok');
         );
       }
       step('full: run neutral agent runtime bundle', () => run('bun', [runtimeBundle], dir));
+    }
+
+    if (name === 'node') {
+      const output = step('node: real application signal/drain/force', () =>
+        run('node', ['src/application-signal-parent.mjs'], dir),
+      );
+      if (!output.includes('node application signal/drain/force: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] node: application signal path produced no proof',
+          output,
+        );
+      }
     }
   }
 

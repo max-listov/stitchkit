@@ -29,6 +29,8 @@ const entrypoints = [
   'stitchkit/remote',
   'stitchkit/node',
   'stitchkit/observability',
+  'stitchkit/application',
+  'stitchkit/application/grammy',
   'stitchkit/agent-runtime',
   'stitchkit/agent-runtime/openrouter',
   'stitchkit/testing',

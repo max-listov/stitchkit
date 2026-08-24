@@ -84,6 +84,14 @@
       "types": "./dist/agent-runtime-openrouter.d.ts",
       "import": "./dist/agent-runtime-openrouter.js"
     },
+    "./application": {
+      "types": "./dist/application.d.ts",
+      "import": "./dist/application.js"
+    },
+    "./application/grammy": {
+      "types": "./dist/application-grammy.d.ts",
+      "import": "./dist/application-grammy.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
@@ -103,7 +111,7 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts --outdir dist --target node --packages external --splitting --root src",
-    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/application.ts src/application-grammy.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",
     "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs",
@@ -124,6 +132,7 @@
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": ">=5",
     "ai": "^7.0.0",
+    "grammy": "^1.45.1",
     "react": ">=18",
     "react-query-kit": "^3.3.3",
     "socket.io": "^4.8.3",
@@ -154,6 +163,9 @@
       "optional": true
     },
     "ai": {
+      "optional": true
+    },
+    "grammy": {
       "optional": true
     },
     "react": {
@@ -188,6 +200,7 @@
     "@types/react": "^19.2.18",
     "@typescript/typescript6": "^6.0.2",
     "ai": "^7.0.65",
+    "grammy": "^1.45.1",
     "react": "^19.2.8",
     "react-query-kit": "^3.3.4",
     "socket.io": "^4.8.3",

@@ -86,13 +86,50 @@ import { createServer, createHandler, implement } from 'stitchkit/server'
 import { createSocketIOServer, createAuthHook } from 'stitchkit/server'
 import { createMcpHandler, mountAgent } from 'stitchkit/tools'
 import { createAgentRuntime, defineAgentProtocol } from 'stitchkit/agent-runtime'
+import { createApplication, defineManagedResource } from 'stitchkit/application'
 import { implementRemote } from 'stitchkit/remote'
 ```
 
-The root `stitchkit` entrypoint is browser-safe. Server, tool, optional
-AI-SDK-backed agent-runtime and peer-free remote-proxy code live behind
-`stitchkit/server`, `stitchkit/tools`, `stitchkit/agent-runtime` and
-`stitchkit/remote` respectively.
+The root `stitchkit` entrypoint is browser-safe. Server, tool, optional managed
+application, AI-SDK-backed agent-runtime and peer-free remote-proxy code live
+behind `stitchkit/server`, `stitchkit/tools`, `stitchkit/application`,
+`stitchkit/agent-runtime` and `stitchkit/remote` respectively. Optional provider
+adapters are isolated further; importing `stitchkit/application` never resolves
+grammY.
+
+## Managed application kernel
+
+Use [`stitchkit/application`](./docs/guide/application-kernel.md) when several
+process-local resources must start, become ready, drain and stop as one
+application:
+
+```ts
+import {
+  createApplication,
+  createManagedSchedule,
+  managedServerResource,
+} from 'stitchkit/application'
+import { bindProcessSignals } from 'stitchkit/server'
+
+const app = createApplication({
+  id: 'service',
+  resources: [
+    managedServerResource({ id: 'http', server }),
+    createManagedSchedule({
+      id: 'cleanup',
+      everyMs: 60_000,
+      run: ({ signal }) => removeExpiredRecords(signal),
+    }),
+  ],
+})
+
+bindProcessSignals(app)
+await app.start()
+```
+
+The kernel owns dependency ordering, attempted-start rollback, readiness,
+process-local admission, ephemeral schedules and bounded shutdown. It does not
+own durable jobs, provider policy, retries, process restart or deployment.
 
 ## Quick Start
 
@@ -290,6 +327,7 @@ import { parseSSE } from 'stitchkit'           // client: Response → AsyncGene
 | **MCP Tools** | `createMcpHandler()` / `mountMcp()` — MCP tools from contracts |
 | **Agent Tools** | `mountAgent()` — Vercel AI SDK tools from contracts |
 | **Agent Runtime** | `createAgentRuntime()` — optional durable history, stream loop, coordination and fencing |
+| **Application Kernel** | `createApplication()` — optional process-local resources, readiness, schedules and bounded shutdown |
 | **Typed Client** | `createClient()` / `createClients()` — typed fetch from contracts |
 | **Cursor Pagination** | `createCursorQuery()` — `react-query-kit` infinite query from a contract method |
 | **WebSocket** | `createSocketIOClient()` / `createSocketIOServer()` — typed Socket.IO wrappers |
@@ -377,6 +415,7 @@ peer — an install pulls in only what the project actually uses.
 | `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
 | `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
+| `grammy` | peer, optional | Only `stitchkit/application/grammy`; the neutral application kernel does not resolve it. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |
 
@@ -413,6 +452,7 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
   [HTTP server](./docs/guide/server.md) ·
   [typed client](./docs/guide/client.md) ·
   [MCP & agents](./docs/guide/mcp-and-agents.md) ·
+  [application kernel](./docs/guide/application-kernel.md) ·
   [realtime](./docs/guide/realtime.md) ·
   [auth & errors](./docs/guide/auth-and-errors.md) ·
   [testing & deployment](./docs/guide/testing-and-deployment.md) ·

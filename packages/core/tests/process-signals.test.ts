@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   bindProcessSignals,
   type ProcessSignalName,
+  type ProcessSignalsBinding,
   type ProcessSignalsErrorPhase,
+  type ShutdownTarget,
   type SignalSource,
 } from '../src/server/process-signals';
 import type { ShutdownOptions, ShutdownResult } from '../src/server/shutdown';
@@ -94,6 +96,27 @@ function createHandle() {
 }
 
 describe('bindProcessSignals', () => {
+  test('infers a non-HTTP result while keeping the default target source-compatible', async () => {
+    const { source, send } = createSource();
+    const defaultTarget: ShutdownTarget = createHandle().handle;
+    void defaultTarget;
+    const result = { outcome: 'application-clean' };
+    let completed: typeof result | undefined;
+    const target: ShutdownTarget<typeof result> = {
+      shutdown: async () => result,
+    };
+    const binding: ProcessSignalsBinding<typeof result> = bindProcessSignals(target, {
+      signalSource: source,
+      onComplete: (value) => {
+        completed = value;
+      },
+    });
+    send('SIGTERM');
+    await expect(binding.promise).resolves.toEqual(result);
+    await nextTurn();
+    expect(completed).toEqual(result);
+  });
+
   test('forces a shutdown that is already in flight', async () => {
     const { source, send } = createSource();
     const { handle, calls, called, release } = createHandle();

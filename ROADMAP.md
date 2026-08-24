@@ -38,6 +38,24 @@ Until 1.0, a minor release may intentionally break a public API. Every break is
 called out first in the changelog with a before → after migration; no shim or
 silent compatibility path is retained.
 
+## In progress — managed application composition
+
+The additive `stitchkit/application` surface composes process-local resources
+without changing the contract and transport core:
+
+- dependency-validated startup, attempted-start rollback and separate
+  readiness/health truth;
+- admission, drain and reverse-order close under two shared absolute deadlines;
+- post-readiness fixed-rate schedules with explicit overlap policy;
+- bounded latest-value operational snapshots and anonymous activity projection;
+  and
+- provider-neutral core plus isolated optional provider adapters, beginning
+  with `stitchkit/application/grammy`.
+
+The proof is the deletion of application-owned signal, timer, in-flight-counter
+and close-fan-out glue. Durable jobs, retry/recovery, cron/timezone policy,
+provider protocols, process restart and deployment control remain out of scope.
+
 ## Next — toward 1.0
 
 The 1.0 milestone is **API stability**, not new surface. Before it ships:
@@ -66,6 +84,10 @@ Deliberate non-goals — considered and declined, so they are not re-proposed:
   wrapper; the React data layer is `react-query-kit`. → [ADR 0008](./docs/decisions/0008-thin-wrappers.md)
 - **A Deno/Cloudflare runtime.** Bun is first-class, Node ≥ 22 is supported
   via `stitchkit/node`. → [ADR 0013](./docs/decisions/0013-runtime-agnostic-core.md)
+- **A distributed job or deployment framework.** The application kernel owns
+  only one process lifetime. Durable queues, cross-process scheduling, provider
+  workflows and supervisor/process placement remain application or deployment
+  concerns. → [ADR 0102](./docs/decisions/0102-managed-application-kernel.md)
 
 ## Contributing to the roadmap
 

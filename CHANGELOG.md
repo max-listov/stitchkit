@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Provider-neutral managed application kernel.** The server-only
+  `stitchkit/application` entrypoint composes a validated resource graph with
+  attempted-start rollback, separate readiness and health, process-local
+  admission, two-deadline shutdown, post-ready fixed-rate schedules and
+  latest-value operational snapshots. `stitchkit/application/grammy` remains an
+  isolated optional-peer adapter for injected polling and webhook bots; durable
+  jobs, provider policy and deployment stay application-owned.
+
 ## [0.59.1] — 2026-08-23
 
 ### Fixed

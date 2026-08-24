@@ -390,6 +390,92 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 ---
 
+## `stitchkit/application`
+
+Server-only process-local application composition. See the
+[application kernel guide](../guide/application-kernel.md) and
+[architecture](../architecture/application-kernel.md).
+
+### Kernel and resources
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createApplication` | function | compose a validated resource DAG into one non-restartable startup, readiness, admission and shutdown state machine |
+| `defineManagedResource` | function | retain the exact typed resource declaration; every invoked start is rollback-eligible |
+| `managedServerResource` | function | adapt an existing managed server without copying its HTTP/WebSocket shutdown machine |
+| `createApplicationHealthHandler` | function | build a Fetch-clean liveness or readiness response from the sanitized application snapshot |
+| `ApplicationAdmissionError` | class | stable `APPLICATION_NOT_ACCEPTING` rejection from `admission.run(...)` |
+| `ApplicationConfig` / `ApplicationHandle` | _type_ | application declaration and its start/snapshot/subscription/admission/shutdown handle |
+| `ApplicationAdmission` / `ApplicationOperationLease` | _type_ | atomic process-local admission and idempotent release primitive |
+| `ManagedResource` / `ManagedResourceContext` / `ManagedResourceStartResult` | _type_ | resource lifecycle callbacks, shared deadlines, health reporting and separate readiness/completion promises |
+| `ManagedServerResourceConfig` | _type_ | existing managed server, stable ID, dependencies and policy for `managedServerResource` |
+| `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
+
+### Managed schedules
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createManagedSchedule` | function | fixed-rate process-local timer that activates after top-level readiness and participates in drain |
+| `ManagedScheduleOverlapSchema` / `ManagedScheduleOverlap` | schema / _type_ | `skip`, `queue-one` or bounded `parallel` overlap policy |
+| `ManagedScheduleErrorPolicySchema` / `ManagedScheduleErrorPolicy` | schema / _type_ | `continue` or `stop-schedule` after an observed callback failure |
+| `ManagedScheduleDescriptorSchema` / `ManagedScheduleDescriptor` | schema / _type_ | immutable public schedule identity and cadence policy |
+| `ManagedScheduleStatusSchema` / `ManagedScheduleStatus` | schema / _type_ | absolute schedule state, revision, counters and timestamps |
+
+Schedule authoring additionally exports `ManagedSchedule`, `ManagedScheduleConfig`,
+`ManagedScheduleRunContext`, `ManagedScheduleClock` and `ManagedScheduleTimer`.
+The clock exposes monotonic cadence/deadline arithmetic and a wall-clock projection for portable
+status timestamps; it is a deterministic test boundary, not a durable scheduler.
+
+### Application and activity projection
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createActivityProjection` | function | aggregate anonymous process-local activity into declared bounded stages and absolute snapshots |
+| `createApplicationSnapshotSink` | function | latest-value delivery with one write in flight and one replaceable pending revision |
+| `applicationLifecycleEvent` | function | project a sanitized lifecycle fact from a canonical application snapshot |
+| `createApplicationEventSink` | function | bounded failure-isolated lifecycle-event delivery; events are not canonical state |
+| `ActivitySnapshotSchema` / `ActivitySnapshot` | schema / _type_ | epoch, monotonic revision, timestamps, declared stages and aggregate counts |
+| `ApplicationSnapshotSinkStatusSchema` / `ApplicationSnapshotSinkStatus` | schema / _type_ | immutable latest-value sink delivery and coalescing counters |
+| `ApplicationLifecycleEventSchema` / `ApplicationLifecycleEvent` | schema / _type_ | sanitized operator-facing application lifecycle fact |
+
+Activity authoring additionally exports `ActivityId`, `ActivityIdSchema`,
+`ActivityStageId`, `ActivityStageIdSchema`, `ActivityStageSnapshot`,
+`ActivityStageSnapshotSchema`, `ActivityLiveState`, `ActivityLiveStateSchema`,
+`ActivityProjection`, `ActivityProjectionConfig`,
+`ActivityProjectionSubscriberError`, `ActivityToken` and `ActivityTransition`.
+Latest-value delivery exports `ApplicationSnapshotSink`,
+`ApplicationSnapshotSinkConfig`, `ApplicationSnapshotSinkError` and
+`RevisionedApplicationSnapshot`; event delivery exports `ApplicationEventSink`
+and `ApplicationEventSinkConfig`.
+
+### Canonical application records
+
+The entrypoint exports each Zod schema beside its inferred type:
+`ApplicationIdSchema` / `ApplicationId`, `ApplicationLifecycleSchema` /
+`ApplicationLifecycle`, `ApplicationHealthSchema` / `ApplicationHealth`,
+`ManagedResourceStateSchema` / `ManagedResourceState`,
+`ApplicationAdmissionSnapshotSchema` / `ApplicationAdmissionSnapshot`,
+`ManagedResourceSnapshotSchema` / `ManagedResourceSnapshot`,
+`ApplicationSnapshotSchema` / `ApplicationSnapshot`,
+`ApplicationResourceShutdownSchema` / `ApplicationResourceShutdown`, and
+`ApplicationShutdownResultSchema` / `ApplicationShutdownResult`.
+
+## `stitchkit/application/grammy`
+
+Isolated optional-peer lifecycle adapters. Importing `stitchkit/application`
+does not resolve grammY.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `grammyPollingResource` | function | adapt an injected bot's long polling with distinct `onStart` readiness, observed completion and one stop chain |
+| `createGrammyWebhookResource` | function | return a managed resource plus admission-guarded `handleUpdate`; HTTP hosting and webhook registration stay application-owned |
+| `GrammyWebhookUnavailableError` | class | stable `GRAMMY_WEBHOOK_NOT_ACCEPTING` rejection after webhook admission closes |
+| `GrammyPollingResourceConfig` | _type_ | injected bot, polling options, resource graph policy and isolated error observer |
+| `GrammyWebhookResourceConfig` / `GrammyWebhookResource` | _type_ | injected webhook bot declaration and `{ resource, handleUpdate }` handle |
+| `GrammyUpdate` | _type_ | exact update input inferred from the injected grammY bot context |
+
+---
+
 ## `stitchkit/agent-runtime`
 
 Server-only optional application runtime. See the

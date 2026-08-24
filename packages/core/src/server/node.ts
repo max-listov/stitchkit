@@ -1,6 +1,7 @@
 import type { Server as HttpServer, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import { serve } from 'srvx/node';
+import { isFetchBlockedPort } from '../internal/fetch-port';
 import { createHandler } from './create';
 import {
   createServerLifecycle,
@@ -99,17 +100,32 @@ export async function serveNode(config: NodeServerConfig): Promise<NodeServerHan
   const consumerFetch = wrapFetch ? wrapFetch(handler) : handler;
   const fetch = lifecycle.wrapFetch(consumerFetch);
 
-  runtime = serve({ port, hostname, fetch, gracefulShutdown: false });
-  await runtime.ready();
+  // The kernel may assign a WHATWG Fetch-blocked port (4045 is one real
+  // example) even though it is a perfectly valid free TCP port. Reject only
+  // those port-0 allocations before attaching provider lifecycles or exposing
+  // the handle; explicit consumer ports remain consumer-owned configuration.
+  for (;;) {
+    runtime = serve({ port, hostname, fetch, gracefulShutdown: false });
+    await runtime.ready();
 
-  const candidate = runtime.node?.server;
-  if (!candidate || !('maxRequestsPerSocket' in candidate)) {
-    await runtime.close(true);
-    throw new Error(
-      '[stitchkit] serveNode: expected a node:http.Server for the managed lifecycle.',
-    );
+    const candidate = runtime.node?.server;
+    if (!candidate || !('maxRequestsPerSocket' in candidate)) {
+      await runtime.close(true);
+      throw new Error(
+        '[stitchkit] serveNode: expected a node:http.Server for the managed lifecycle.',
+      );
+    }
+
+    const candidateUrl = runtime.url ?? `http://${hostname ?? 'localhost'}:${port}`;
+    const candidatePort = Number(new URL(candidateUrl).port) || port;
+    if (port === 0 && isFetchBlockedPort(candidatePort)) {
+      await runtime.close(true);
+      continue;
+    }
+
+    nodeServer = candidate;
+    break;
   }
-  nodeServer = candidate;
   nodeServer.on('connection', (activeSocket) => {
     sockets.add(activeSocket);
     activeSocket.once('close', () => {

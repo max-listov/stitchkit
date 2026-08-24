@@ -16,7 +16,7 @@ import {
   guardSignalCallback,
   reportSignalError,
 } from './process-signal-common';
-import type { ManagedServerHandle, ShutdownOptions, ShutdownResult } from './shutdown';
+import type { ShutdownOptions, ShutdownResult } from './shutdown';
 import { ShutdownOptionsSchema } from './shutdown';
 
 /**
@@ -37,8 +37,10 @@ export type ProcessSignalName =
   | 'SIGUSR2'
   | 'SIGBREAK';
 
-/** The part of a managed handle this binding uses. */
-export type ShutdownTarget = Pick<ManagedServerHandle<unknown>, 'shutdown'>;
+/** The part of any managed handle this binding uses. */
+export interface ShutdownTarget<TResult = ShutdownResult> {
+  shutdown(options?: ShutdownOptions): Promise<TResult>;
+}
 
 /** Which phase failed, so one `onError` can tell them apart. */
 export type ProcessSignalsErrorPhase = 'prepare' | 'shutdown' | 'complete';
@@ -62,7 +64,7 @@ export interface SignalSource {
   raiseDefault(signal: ProcessSignalName): boolean;
 }
 
-export interface ProcessSignalsOptions {
+export interface ProcessSignalsOptions<TResult = ShutdownResult> {
   /**
    * Defaults to `['SIGINT', 'SIGTERM']`. Duplicates are ignored. Node on Windows
    * cannot listen for `SIGTERM`.
@@ -91,7 +93,7 @@ export interface ProcessSignalsOptions {
    * here. If it throws, `promise` stays resolved — the transport really did shut
    * down — and the failure is reported through `onError('complete', …)`.
    */
-  onComplete?: (result: ShutdownResult) => void | Promise<void>;
+  onComplete?: (result: TResult) => void | Promise<void>;
   /** Reports any phase failure, with the phase that produced it. */
   onError?: (phase: ProcessSignalsErrorPhase, error: unknown) => void;
   /** Runs for every counted signal after the first: one forces, later ones escalate. */
@@ -105,14 +107,14 @@ export interface ProcessSignalsOptions {
   onEscalationBlocked?: (signal: ProcessSignalName) => void;
 }
 
-export interface ProcessSignalsBinding {
+export interface ProcessSignalsBinding<TResult = ShutdownResult> {
   /**
    * Resolves with the shutdown result, or with `undefined` when the binding was
    * closed before any signal arrived. Rejects only when the shutdown itself
    * failed. Already handled internally, so ignoring it never raises
    * `unhandledRejection`.
    */
-  readonly promise: Promise<ShutdownResult | undefined>;
+  readonly promise: Promise<TResult | undefined>;
   /** Remove the listeners. Idempotent. */
   close(): void;
 }
@@ -123,7 +125,7 @@ export interface ProcessSignalsBinding {
  * (its options are parsed once), so its force path would be silently dead while
  * its `promise` resolved with the first chain's result.
  */
-const bound = new WeakSet<ShutdownTarget>();
+const bound = new WeakSet<ShutdownTarget<unknown>>();
 
 /**
  * Bind `signals` to `handle.shutdown()`.
@@ -142,10 +144,10 @@ const bound = new WeakSet<ShutdownTarget>();
  * is supervisor policy (→ ADR 0074). Set `process.exitCode` in `onComplete` /
  * `onError`.
  */
-export function bindProcessSignals(
-  handle: ShutdownTarget,
-  options: ProcessSignalsOptions = {},
-): ProcessSignalsBinding {
+export function bindProcessSignals<TResult = ShutdownResult>(
+  handle: ShutdownTarget<TResult>,
+  options: ProcessSignalsOptions<TResult> = {},
+): ProcessSignalsBinding<TResult> {
   if (bound.has(handle)) {
     throw new Error(
       '[stitchkit] bindProcessSignals: this server is already bound; close the first binding before creating another',
@@ -166,9 +168,9 @@ export function bindProcessSignals(
   let settled = false;
   let closed = false;
 
-  let resolveChain: (result: ShutdownResult | undefined) => void = () => undefined;
+  let resolveChain: (result: TResult | undefined) => void = () => undefined;
   let rejectChain: (error: unknown) => void = () => undefined;
-  const promise = new Promise<ShutdownResult | undefined>((resolve, reject) => {
+  const promise = new Promise<TResult | undefined>((resolve, reject) => {
     resolveChain = resolve;
     rejectChain = reject;
   });
@@ -201,7 +203,7 @@ export function bindProcessSignals(
       reportSignalError('prepare', error, options.onError);
     }
 
-    let result: ShutdownResult;
+    let result: TResult;
     try {
       result = await handle.shutdown({ ...budgets, signal: controller.signal });
     } catch (error) {

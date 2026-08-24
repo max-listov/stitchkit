@@ -1,10 +1,10 @@
 ---
 title: "stitchkit — Vision"
-description: Contract-first backend framework for Bun and Node, with an optional application runtime for tool-using AI agents.
+description: Contract-first backend framework for Bun and Node, with optional process-local application and agent runtimes.
 type: vision
 status: active
 created: 2025-05-01
-updated: 2026-08-22
+updated: 2026-08-23
 ---
 
 # stitchkit
@@ -18,6 +18,11 @@ into the server-only agent runtime: durable run transitions, provider-valid
 history, prompt/context composition, model adapters, streaming, managed-tool
 fencing, delivery events and run observability. Applications that already own
 those mechanics continue to use the low-level agent-tool surface directly.
+
+Applications that repeat dependency-aware startup, readiness, admission,
+periodic timers and ordered shutdown may opt into the server-only managed
+application kernel. It composes resources inside one process; durable work,
+provider policy, process supervision and deployment remain outside Stitchkit.
 
 ## The problem
 
@@ -53,6 +58,10 @@ client. One source of truth; the transports cannot drift.
   tool-using agent's process-local execution protocol and typed persistence
   boundary. Applications still own their database adapter, distributed lease,
   domain prompts and tools, transport/UI, and idempotency of external effects.
+- **Process-local composition, not process management.** The managed application
+  kernel may own resource ordering, readiness, ephemeral schedules, admission
+  and bounded shutdown inside one process. Applications and deployment tooling
+  retain durable jobs, provider protocols, restart policy and process placement.
 
 ## Status
 
@@ -63,6 +72,11 @@ tools, CLI generation and request/tool observability. The optional agent applica
 public server-only package surface. Its protocol, persistence reducer, recovery, race harness and
 packed Bun/Node proof ship as one coherent slice; consumer-owned database, domain and transport
 policy remain outside core.
+
+The additive managed application kernel is the equivalent server-only
+composition surface for ordinary process resources. It builds on the existing
+managed-server and signal primitives without becoming a distributed scheduler,
+provider framework or deployment plane.
 
 Breaking changes are still allowed between minor versions, but never silently:
 each one has a mechanical migration in the changelog and is exercised through
@@ -79,5 +93,8 @@ the published package before release.
 - Remove copied agent-runtime mechanics from consuming applications through a
   server-only additive entrypoint, while retaining `mountAgent` as the smaller
   independent composition path.
+- Remove copied process lifecycle, timer, admission and operational-projection
+  mechanics through an optional provider-neutral application entrypoint, while
+  retaining the lower-level server and signal primitives.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).
