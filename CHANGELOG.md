@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.59.2] — 2026-08-24
+
 ### Added
 
 - **Provider-neutral managed application kernel.** The server-only
@@ -24,6 +26,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   latest-value operational snapshots. `stitchkit/application/grammy` remains an
   isolated optional-peer adapter for injected polling and webhook bots; durable
   jobs, provider policy and deployment stay application-owned.
+
+### Fixed
+
+- **Node port-zero servers no longer expose a Fetch-blocked ephemeral URL.** When the operating
+  system allocates a WHATWG-blocked port such as `4045`, `serveNode({ port: 0 })` closes it and
+  rebinds before attaching provider lifecycles or returning the managed handle. Explicit ports
+  remain application-owned configuration.
 
 ## [0.59.1] — 2026-08-23
 
