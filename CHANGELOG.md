@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.59.3] — 2026-08-24
+
 ### Fixed
 
 - **Bundling peer-free process signal handling no longer requires unused Socket.IO peers.** The
