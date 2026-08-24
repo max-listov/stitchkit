@@ -113,6 +113,24 @@ export {
   runAgentStoreConformance,
 } from './testing/agent-store-conformance';
 export {
+  type ManagedResourceConformanceConfig,
+  type ManagedResourceConformanceControls,
+  ManagedResourceConformanceError,
+  type ManagedResourceConformanceFactoryInput,
+  type ManagedResourceConformanceFixture,
+  type ManagedResourceConformancePhase,
+  ManagedResourceConformancePhaseSchema,
+  type ManagedResourceConformanceScenario,
+  type ManagedResourceConformanceScenarioId,
+  ManagedResourceConformanceScenarioIdSchema,
+  ManagedResourceConformanceScenarioSchema,
+  type ManagedResourceConformanceTraceEntry,
+  ManagedResourceConformanceTraceEntrySchema,
+  type ManagedResourceConformanceTraceOutcome,
+  ManagedResourceConformanceTraceOutcomeSchema,
+  runManagedResourceConformance,
+} from './testing/managed-resource-conformance';
+export {
   assertSurfaceDiscovery,
   type ConformanceTransport,
   type CreateRealtimeProbeDriverConfig,

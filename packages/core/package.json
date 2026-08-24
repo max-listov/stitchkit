@@ -92,6 +92,10 @@
       "types": "./dist/application-grammy.d.ts",
       "import": "./dist/application-grammy.js"
     },
+    "./application/opentelemetry": {
+      "types": "./dist/application-opentelemetry.d.ts",
+      "import": "./dist/application-opentelemetry.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
@@ -111,7 +115,7 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts --outdir dist --target node --packages external --splitting --root src",
-    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/application.ts src/application-grammy.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",
     "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs",
@@ -126,6 +130,7 @@
   "peerDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@opentelemetry/api": "^1.9.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@types/bun": "^1.3.14",
     "@socket.io/bun-engine": "^0.1.1",
@@ -148,6 +153,9 @@
       "optional": true
     },
     "@modelcontextprotocol/server": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
       "optional": true
     },
     "@openrouter/ai-sdk-provider": {
@@ -191,6 +199,7 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@opentelemetry/api": "^1.9.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",

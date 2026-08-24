@@ -18,14 +18,15 @@ The guide, in reading order:
 5. [MCP & agents](./guide/mcp-and-agents.md) — contracts as AI tools.
 6. [Agent runtime](./guide/agent-runtime.md) — durable tool-using agent execution.
 7. [Managed application kernel](./guide/application-kernel.md) — process-local resources, schedules, readiness and drain.
-8. [CLI](./guide/cli.md) — contracts as a command-line program.
-9. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
-10. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
-11. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
-12. [Testing & deployment](./guide/testing-and-deployment.md).
-13. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
-14. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
-15. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
+8. [Application migration recipes](./guide/application-migration-recipes.md) — executable database, poller, queue and operational publishing cutovers.
+9. [CLI](./guide/cli.md) — contracts as a command-line program.
+10. [Realtime](./guide/realtime.md) — Socket.IO and the cache bridge.
+11. [Auth & errors](./guide/auth-and-errors.md) — scopes, auth hooks, the error model.
+12. [Observability](./guide/observability.md) — logging requests and tool calls via hooks.
+13. [Testing & deployment](./guide/testing-and-deployment.md).
+14. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
+15. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
+16. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 

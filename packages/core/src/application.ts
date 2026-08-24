@@ -27,7 +27,11 @@ export {
 export {
   type ApplicationHealthHandlerOptions,
   ApplicationHealthHandlerOptionsSchema,
+  type ApplicationOperationalHandlers,
+  type ApplicationOperationalHandlersOptions,
+  ApplicationOperationalHandlersOptionsSchema,
   createApplicationHealthHandler,
+  createApplicationOperationalHandlers,
 } from './application/health';
 export {
   type ApplicationAdmission,

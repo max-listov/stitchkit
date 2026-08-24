@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Packed-package optional-peer bundle matrix.** The consumer release lane now classifies every
+  public export and mixed-barrel feature by runtime target, installed peers, JavaScript bundle and
+  declaration budgets, execution policy and missing-peer proof. A new export or accidental
+  runtime/type-only peer edge fails with its exact matrix case and package name.
+- **Deterministic managed-resource conformance kit.** `stitchkit/testing` now runs a stable
+  black-box lifecycle matrix against consumer-owned `ManagedResource` adapters, covering startup
+  rollback, readiness/completion wiring, activation, shutdown races and forced cleanup with
+  caller-controlled barriers, required disposal and normalized scenario traces.
+- **Pull-only application operations integration.**
+  `createApplicationOperationalHandlers` composes always-readable status and
+  canonical readiness/liveness handlers. The isolated
+  `stitchkit/application/opentelemetry` entrypoint maps current application,
+  resource, admission, schedule and activity snapshots to fixed observable
+  gauges on an injected Meter, without owning an SDK, exporter, polling loop or
+  replay/delta state.
+- **Executable managed-application migration recipes.** Database partial-start cleanup, observed
+  poller completion, queue admission/drain and latest-value operational publishing now have one
+  checked-in source that is typechecked and executed against the packed public package. The paired
+  guide makes durable claims, transactions, retry/idempotency and provider policy explicitly
+  application-owned.
+
 ## [0.59.3] — 2026-08-24
 
 ### Fixed

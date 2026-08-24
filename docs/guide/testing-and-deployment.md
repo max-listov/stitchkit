@@ -180,6 +180,63 @@ The suite in `packages/core/tests` is the working reference for testing each
 piece. Its size changes with the public surface, so the guide does not pin a
 count that can drift independently from the test runner.
 
+### Managed-resource conformance
+
+Consumer-owned resource adapters can run the framework's deterministic
+lifecycle matrix without importing `bun:test`:
+
+```ts
+import { defineManagedResource } from 'stitchkit/application'
+import { runManagedResourceConformance } from 'stitchkit/testing'
+
+await runManagedResourceConformance({
+  createFixture: ({ controls }) => {
+    const resource = defineManagedResource({
+      id: 'provider-adapter',
+      async start() {
+        await controls.startup
+        return {
+          ready: controls.readiness,
+          completion: controls.completion,
+        }
+      },
+      activate: () => controls.activation,
+      stopAdmission: () => provider.stopAdmission(),
+      drain: () => provider.drain(),
+      close: () => controls.close,
+      force: () => controls.force,
+    })
+    return {
+      resource,
+      dispose: () => provider.releaseFixtureHandles(),
+    }
+  },
+})
+```
+
+The runner creates a fresh fixture for every scenario and controls startup,
+readiness, long-lived completion, activation, close and force settlement. The
+adapter must wire those promises to the corresponding public resource phases;
+`dispose` releases fixture-owned handles even after a failed scenario. Semantic
+ordering uses controlled barriers and shutdown abort, while
+`watchdogTimeoutMs` is only an emergency bound for a broken fixture. An
+explicit `scenarios` subset must contain at least one stable scenario ID.
+
+### Published-package optional-peer matrix
+
+The repository's `consumer-lane` is a release invariant over the package users
+actually install, not the source tree. One declarative matrix classifies every
+public export and relevant mixed-barrel feature by browser/Bun/Node target,
+installed optional peers, runtime bundle inputs, emitted-declaration inputs and
+whether the built artifact can execute. Exact export-map coverage means a new
+subpath fails the gate until its dependency boundary is explicit.
+
+Peer-neutral cases run from a packed minimal install. Provider adapters run only
+with their declared peer family and retain a negative missing-peer proof. A new
+runtime or type-only package outside a case's budget fails with both the case id
+and package name, so an accidental eager import cannot hide behind another
+fixture's transitive dependency.
+
 ## Deployment
 
 ### Build

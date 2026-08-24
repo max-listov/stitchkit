@@ -56,6 +56,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'Managed application kernel',
     'process-local resources, readiness, admission, schedules, projections and optional provider adapters',
   ],
+  [
+    'application-migration-recipes.md',
+    'Application migration recipes',
+    'executable database, poller, queue-consumer and operational publishing cutovers',
+  ],
   ['cli.md', 'CLI', 'contracts as a command-line program'],
   [
     'realtime.md',

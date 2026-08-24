@@ -394,7 +394,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 Server-only process-local application composition. See the
 [application kernel guide](../guide/application-kernel.md) and
-[architecture](../architecture/application-kernel.md).
+[architecture](../architecture/application-kernel.md). Complete consumer
+cutovers are covered by the executable
+[migration recipes](../guide/application-migration-recipes.md).
 
 ### Kernel and resources
 
@@ -404,12 +406,14 @@ Server-only process-local application composition. See the
 | `defineManagedResource` | function | retain the exact typed resource declaration; every invoked start is rollback-eligible |
 | `managedServerResource` | function | adapt an existing managed server without copying its HTTP/WebSocket shutdown machine |
 | `createApplicationHealthHandler` | function | build a Fetch-clean liveness or readiness response from the sanitized application snapshot |
+| `createApplicationOperationalHandlers` | function | compose always-readable status plus the canonical readiness/liveness handlers |
 | `ApplicationAdmissionError` | class | stable `APPLICATION_NOT_ACCEPTING` rejection from `admission.run(...)` |
 | `ApplicationConfig` / `ApplicationHandle` | _type_ | application declaration and its start/snapshot/subscription/admission/shutdown handle |
 | `ApplicationAdmission` / `ApplicationOperationLease` | _type_ | atomic process-local admission and idempotent release primitive |
 | `ManagedResource` / `ManagedResourceContext` / `ManagedResourceStartResult` | _type_ | resource lifecycle callbacks, shared deadlines, health reporting and separate readiness/completion promises |
 | `ManagedServerResourceConfig` | _type_ | existing managed server, stable ID, dependencies and policy for `managedServerResource` |
 | `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
+| `ApplicationOperationalHandlers` / `ApplicationOperationalHandlersOptions` / `ApplicationOperationalHandlersOptionsSchema` | _type_ / schema | conventional status/readiness/liveness route surface and shared retry policy |
 
 ### Managed schedules
 
@@ -473,6 +477,20 @@ does not resolve grammY.
 | `GrammyPollingResourceConfig` | _type_ | injected bot, polling options, resource graph policy and isolated error observer |
 | `GrammyWebhookResourceConfig` / `GrammyWebhookResource` | _type_ | injected webhook bot declaration and `{ resource, handleUpdate }` handle |
 | `GrammyUpdate` | _type_ | exact update input inferred from the injected grammY bot context |
+
+## `stitchkit/application/opentelemetry`
+
+Type-only optional-peer adapter for applications that already own an
+OpenTelemetry SDK and exporter. Its observable gauges pull absolute canonical
+snapshots; the adapter owns no SDK lifecycle, polling or delta state.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createApplicationOpenTelemetry` | function | register fixed observable application, resource, admission, schedule and activity gauges on an injected Meter |
+| `ApplicationOpenTelemetryConfig` | _type_ | injected meter and canonical application/activity/schedule pull sources plus isolated diagnostic hook |
+| `ApplicationOpenTelemetryBinding` | _type_ | idempotent exact callback removal and closed state |
+| `ApplicationTelemetryMeter` | _type_ | minimal structural `Meter.createObservableGauge` boundary compatible with `@opentelemetry/api` |
+| `ApplicationOpenTelemetryCollectionError` | _type_ | isolated instrument-name/error diagnostic without product/provider attributes |
 
 ---
 
@@ -915,6 +933,16 @@ handler pipeline without opening a TCP port.
 | `createHandlerTestClients` | function | exact contract-registry batch form |
 | `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
 | `AgentStoreConformanceConfig` | _type_ | factory configuration for running the same contract against a fresh adapter |
+| `runManagedResourceConformance` | function | run the canonical deterministic lifecycle matrix against a fresh consumer-owned `ManagedResource` fixture; resolves `void` or throws `ManagedResourceConformanceError` with a stable scenario ID and normalized trace |
+| `ManagedResourceConformanceScenarioIdSchema` / `ManagedResourceConformanceScenarioId` | schema / _type_ | stable clean, rollback, readiness/completion, activation, shutdown-race and forced-cleanup scenario vocabulary |
+| `ManagedResourceConformanceScenarioSchema` / `ManagedResourceConformanceScenario` | schema / _type_ | discriminated scenario record including whether the controlled resource is required |
+| `ManagedResourceConformanceTraceEntrySchema` / `ManagedResourceConformanceTraceEntry` | schema / _type_ | sequence-numbered phase/outcome diagnostic without timestamps or generated IDs |
+| `ManagedResourceConformancePhaseSchema` / `ManagedResourceConformancePhase` | schema / _type_ | lifecycle and disposal trace phases |
+| `ManagedResourceConformanceTraceOutcomeSchema` / `ManagedResourceConformanceTraceOutcome` | schema / _type_ | normalized `enter`, `resolve` or `reject` outcome |
+| `ManagedResourceConformanceConfig` | _type_ | fresh-fixture factory, optional scenario subset and emergency watchdog bound |
+| `ManagedResourceConformanceFactoryInput` / `ManagedResourceConformanceControls` | _type_ | current discriminated scenario and caller-controlled startup, readiness, completion, activation, close and force promises |
+| `ManagedResourceConformanceFixture` | _type_ | tested resource plus required bounded disposal callback |
+| `ManagedResourceConformanceError` | class | `MANAGED_RESOURCE_CONFORMANCE_FAILED` diagnostic carrying scenario, expected phase subsequence and observed trace |
 | `createAgentRaceBarrier` / `createAgentRaceDriver` / `createAgentRaceTrace` | function | bounded named barriers and exact partial-order traces for deterministic runtime race probes |
 | `AgentRaceBarrier` / `AgentRaceDriver` / `AgentRaceTrace` / `AgentRaceTraceEntry` | _type_ | public packed-consumer types for the deterministic race harness |
 | `HandlerTestClientDefaults` | _type_ | ordinary bare-client defaults with handler-owned `baseUrl` and `fetch` removed |

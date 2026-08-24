@@ -95,7 +95,7 @@ application, AI-SDK-backed agent-runtime and peer-free remote-proxy code live
 behind `stitchkit/server`, `stitchkit/tools`, `stitchkit/application`,
 `stitchkit/agent-runtime` and `stitchkit/remote` respectively. Optional provider
 adapters are isolated further; importing `stitchkit/application` never resolves
-grammY.
+grammY or OpenTelemetry.
 
 ## Managed application kernel
 
@@ -130,6 +130,11 @@ await app.start()
 The kernel owns dependency ordering, attempted-start rollback, readiness,
 process-local admission, ephemeral schedules and bounded shutdown. It does not
 own durable jobs, provider policy, retries, process restart or deployment.
+`createApplicationOperationalHandlers` projects conventional status/readiness/
+liveness routes from the same snapshot. Applications that already own an
+OpenTelemetry SDK may opt into `stitchkit/application/opentelemetry`; the
+adapter registers pull-only observable gauges on an injected Meter and owns no
+exporter or SDK lifecycle.
 
 ## Quick Start
 
@@ -416,6 +421,7 @@ peer — an install pulls in only what the project actually uses.
 | `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | `grammy` | peer, optional | Only `stitchkit/application/grammy`; the neutral application kernel does not resolve it. |
+| `@opentelemetry/api` | peer, optional | Type-only boundary for `stitchkit/application/opentelemetry`; the adapter has no runtime import and owns no SDK/exporter. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |
 

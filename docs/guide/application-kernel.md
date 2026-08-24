@@ -16,6 +16,10 @@ signal APIs when one managed server is already the complete lifecycle boundary.
 The neutral entrypoint is server-only and works on Bun and Node ≥ 22. It does
 not import provider SDKs.
 
+For complete database, poller, queue-consumer and operational-publisher
+cutovers, continue with the executable
+[application migration recipes](./application-migration-recipes.md).
+
 ## Minimal composition
 
 ```ts
@@ -127,6 +131,58 @@ the resource or process.
 through a Fetch-compatible handler, suitable for a raw route on Bun or Node.
 Product-specific probes may be composed beside it; do not put secrets or raw
 provider failures in the response.
+
+For the conventional three-route surface, reuse the same semantics instead of
+copying them into the application:
+
+```ts
+const operational = createApplicationOperationalHandlers(app)
+
+const rawRoutes = [
+  { method: 'GET', path: '/status', handler: operational.status },
+  { method: 'GET', path: '/ready', handler: operational.readiness },
+  { method: 'GET', path: '/live', handler: operational.liveness },
+]
+```
+
+`status` always returns the current sanitized snapshot with HTTP 200, including
+while starting, draining or stopped. The two probes retain the existing
+readiness/liveness status and `Retry-After` policy.
+
+Applications that already own an OpenTelemetry SDK may inject its `Meter` into
+the isolated adapter:
+
+```ts
+import { createApplicationOpenTelemetry } from 'stitchkit/application/opentelemetry'
+
+const telemetry = createApplicationOpenTelemetry({
+  meter,
+  application: app,
+  activities: [activity],
+  schedules: [schedule],
+})
+
+// During application cleanup:
+telemetry.close()
+```
+
+The adapter registers fixed observable gauges and pulls the latest canonical
+snapshots on every collection. It owns no exporter, SDK lifecycle, cache,
+subscription or polling loop. Attributes are limited to declared application,
+resource, activity, stage and schedule IDs plus bounded framework states;
+epoch, revision, timestamps, failures and product/provider identities are never
+metric attributes. Install `@opentelemetry/api` only when this entrypoint is
+used; the neutral `stitchkit/application` graph remains peer-free.
+
+Every instrument uses unit `1` and reports an absolute current/lifetime value:
+
+| Instruments | Meaning |
+|---|---|
+| `stitchkit.application.lifecycle`, `.ready` | current lifecycle/health fact and readiness |
+| `stitchkit.application.admission.accepting`, `.accepted`, `.completed`, `.pending` | current gate and absolute lifetime admission counts |
+| `stitchkit.application.resource.ready` | readiness for each declared resource with required/state/health attributes |
+| `stitchkit.application.schedule.accepting`, `.active`, `.queued`, `.runs_started`, `.runs_completed`, `.runs_failed`, `.ticks_skipped` | current schedule state and absolute run/tick counts |
+| `stitchkit.application.activity.active`, `.queued`, `.completed`, `.failed` | absolute stage projections for declared activity sources |
 
 ## Admission and graceful shutdown
 

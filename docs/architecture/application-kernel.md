@@ -183,6 +183,19 @@ Lifecycle events are separate sanitized observability facts. They help an
 operator explain transitions, but canonical state is never reconstructed from
 them.
 
+`createApplicationOperationalHandlers` is only a Fetch-clean projection of the
+same application snapshot and probe rules: status remains readable, readiness
+tracks admission-capable readiness and liveness excludes failed/stopped
+lifecycle. It retains no route state.
+
+The isolated `stitchkit/application/opentelemetry` adapter accepts an injected
+Meter and registers observable gauges over absolute values. Each collection
+pulls and validates the current application, activity or schedule snapshot.
+There is no merged envelope, revision cursor, replay cache, exporter, SDK
+lifecycle or polling loop. Callback removal is exact and idempotent. Only
+bounded declared IDs and framework states become attributes; process epochs,
+revisions, timestamps, failures and product/provider identity do not.
+
 ## Optional grammY adapter
 
 Only `stitchkit/application/grammy` resolves grammY. Both factories accept an

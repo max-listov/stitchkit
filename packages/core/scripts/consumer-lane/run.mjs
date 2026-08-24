@@ -13,11 +13,11 @@
  * `check-browser-clean` and `check-env-live` are the same instinct, one scar at
  * a time. This is the net for the next one nobody has thought of.
  *
- * Four fixtures, split by the axes that actually matter — **what a consumer had
- * to install**. Every peer except `zod` is optional, so `minimal` (stitchkit +
- * zod) proves the core path needs nothing else, and `full` adds the peers the
- * tool surface requires. Splitting by entrypoint would prove less: one app can
- * satisfy itself through a transitive import.
+ * Four fixtures are split by the axis that actually matters — **what a consumer
+ * had to install**. The optional-peer matrix then classifies every public export
+ * and mixed-barrel feature by target, installed peers, runtime bundle budget,
+ * declaration budget and execution policy. Adding an export without adding a
+ * matrix row is therefore a release-gate failure rather than an implicit choice.
  *
  * Usage: `bun scripts/consumer-lane/run.mjs` from `packages/core`, after a build.
  */
@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 
 const here = import.meta.dirname;
 const pkgRoot = join(here, '..', '..');
@@ -66,18 +67,6 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-function runExpectFailure(cmd, args, cwd) {
-  try {
-    run(cmd, args, cwd);
-    return { failed: false, output: '' };
-  } catch (error) {
-    return {
-      failed: true,
-      output: `${error.stdout ?? ''}${error.stderr ?? ''}`,
-    };
-  }
-}
-
 /** tsc exits non-zero on errors, so its output arrives via the thrown error. */
 function tsc(cwd, extraArgs) {
   try {
@@ -111,9 +100,11 @@ try {
   }
 
   const unresolved = new Set();
+  const fixtureDirectories = {};
 
   for (const name of FIXTURES) {
     const dir = join(workdir, name);
+    fixtureDirectories[name] = dir;
     cpSync(join(here, 'fixtures', name), dir, { recursive: true });
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
@@ -127,32 +118,6 @@ try {
     const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
     delete tsconfig.compilerOptions.paths;
     writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
-
-    if (name === 'minimal') {
-      writeFileSync(
-        join(dir, 'src', 'testing-manifest.ts'),
-        `import { z } from 'zod';
-import {
-  buildSurfaceManifest,
-  type SurfaceRuntimeToolDefinition,
-} from 'stitchkit/testing';
-
-const descriptor = {
-  name: 'jobs_status',
-  description: 'Read job status',
-  identity: { serviceName: 'jobs', action: 'status', method: 'GET' },
-  input: z.object({ id: z.string() }),
-  output: z.object({ state: z.string() }),
-} satisfies SurfaceRuntimeToolDefinition;
-
-const manifest = buildSurfaceManifest({ runtimeTools: [descriptor] });
-if (manifest.toolSurfaces[0]?.tools[0]?.name !== descriptor.name) {
-  throw new Error('peer-free testing manifest projection failed');
-}
-console.log('peer-free testing manifest ok');
-`,
-      );
-    }
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
@@ -226,227 +191,26 @@ console.log('peer-free testing manifest ok');
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
     if (name === 'minimal') {
-      const applicationBundle = join(dir, 'application-neutral-bundle.js');
-      const applicationMetafile = join(dir, 'application-neutral-metafile.json');
-      step('minimal: bundle neutral application', () =>
-        run(
-          'bun',
-          [
-            'build',
-            'src/application-neutral.ts',
-            '--target=bun',
-            '--packages=bundle',
-            `--outfile=${applicationBundle}`,
-            `--metafile=${applicationMetafile}`,
-          ],
-          dir,
-        ),
+      const conformanceOutput = step('minimal: managed resource conformance', () =>
+        run('bun', ['src/managed-resource-conformance.ts'], dir),
       );
-      const applicationInputs = Object.keys(
-        JSON.parse(readFileSync(applicationMetafile, 'utf8')).inputs,
-      );
-      const leakedGrammy = applicationInputs.find((input) => input.includes('grammy'));
-      if (leakedGrammy) {
+      if (!conformanceOutput.includes('managed resource conformance: ok')) {
         failed = true;
         console.error(
-          `[consumer-lane] minimal: neutral application resolved grammY: ${leakedGrammy}`,
+          '[consumer-lane] minimal: managed resource conformance produced no proof',
+          conformanceOutput,
         );
       }
-      const neutralDeclaration = readFileSync(
-        join(dir, 'node_modules', 'stitchkit', 'dist', 'application.d.ts'),
-        'utf8',
+      const recipesOutput = step('minimal: application migration recipes', () =>
+        run('bun', ['src/application-migration-recipes.ts'], dir),
       );
-      if (
-        neutralDeclaration.includes("from 'grammy'") ||
-        neutralDeclaration.includes('from "grammy"')
-      ) {
+      if (!recipesOutput.includes('application migration recipes: ok')) {
         failed = true;
         console.error(
-          '[consumer-lane] minimal: neutral application declaration references grammY',
+          '[consumer-lane] minimal: application migration recipes produced no proof',
+          recipesOutput,
         );
       }
-      step('minimal: run neutral application bundle', () =>
-        run('bun', [applicationBundle], dir),
-      );
-
-      const serverSignalBundle = join(dir, 'server-signal-bundle.js');
-      const serverSignalMetafile = join(dir, 'server-signal-metafile.json');
-      step('minimal: bundle server signal binding', () =>
-        run(
-          'bun',
-          [
-            'build',
-            'src/server-signal-bundle.ts',
-            '--target=bun',
-            '--packages=bundle',
-            `--outfile=${serverSignalBundle}`,
-            `--metafile=${serverSignalMetafile}`,
-          ],
-          dir,
-        ),
-      );
-      const serverSignalInputs = Object.keys(
-        JSON.parse(readFileSync(serverSignalMetafile, 'utf8')).inputs,
-      );
-      const leakedSocketPeer = serverSignalInputs.find(
-        (input) => input.includes('socket.io') || input.includes('@socket.io/bun-engine'),
-      );
-      if (leakedSocketPeer) {
-        failed = true;
-        console.error(
-          `[consumer-lane] minimal: server signal bundle resolved an unused Socket.IO peer: ${leakedSocketPeer}`,
-        );
-      }
-      step('minimal: run server signal bundle', () => run('bun', [serverSignalBundle], dir));
-
-      const missingSocketPeer = step('minimal: missing Socket.IO peer', () =>
-        runExpectFailure('node', ['src/missing-socket-peer.mjs'], dir),
-      );
-      if (
-        !missingSocketPeer.failed ||
-        !missingSocketPeer.output.includes('createSocketIOServer') ||
-        !missingSocketPeer.output.includes('socket.io')
-      ) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: the opted-in Socket.IO adapter must name its missing peer',
-          missingSocketPeer.output,
-        );
-      }
-
-      const missingGrammyPeer = step('minimal: missing grammY peer', () =>
-        runExpectFailure('node', ['src/missing-grammy-peer.mjs'], dir),
-      );
-      if (!missingGrammyPeer.failed || !missingGrammyPeer.output.includes('grammy')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: the opted-in grammY adapter must name its missing peer',
-          missingGrammyPeer.output,
-        );
-      }
-
-      const testingBundle = join(dir, 'testing-manifest-bundle.js');
-      const testingMetafile = join(dir, 'testing-manifest-metafile.json');
-      step('minimal: bundle testing manifest', () =>
-        run(
-          'bun',
-          [
-            'build',
-            'src/testing-manifest.ts',
-            '--target=bun',
-            '--packages=bundle',
-            `--outfile=${testingBundle}`,
-            `--metafile=${testingMetafile}`,
-          ],
-          dir,
-        ),
-      );
-      const testingInputs = Object.keys(
-        JSON.parse(readFileSync(testingMetafile, 'utf8')).inputs,
-      );
-      const forbiddenTestingInputs = testingInputs.filter(
-        (input) => input.includes('@modelcontextprotocol/') || input.includes('/ai/'),
-      );
-      if (forbiddenTestingInputs.length > 0) {
-        failed = true;
-        console.error(
-          `[consumer-lane] minimal: stitchkit/testing pulled optional tool peers into the bundle: ${forbiddenTestingInputs.join(', ')}`,
-        );
-      }
-      step('minimal: run testing manifest bundle', () => run('bun', [testingBundle], dir));
-
-      const remoteBundle = join(dir, 'remote-bundle.js');
-      const remoteMetafile = join(dir, 'remote-metafile.json');
-      step('minimal: bundle remote entrypoint', () =>
-        run(
-          'bun',
-          [
-            'build',
-            'src/remote-bundle.ts',
-            '--target=bun',
-            '--packages=bundle',
-            `--outfile=${remoteBundle}`,
-            `--metafile=${remoteMetafile}`,
-          ],
-          dir,
-        ),
-      );
-      const remoteInputs = Object.keys(
-        JSON.parse(readFileSync(remoteMetafile, 'utf8')).inputs,
-      );
-      const forbiddenRemoteInputs = remoteInputs.filter(
-        (input) => input.includes('@modelcontextprotocol/') || input.includes('/ai/'),
-      );
-      if (forbiddenRemoteInputs.length > 0) {
-        failed = true;
-        console.error(
-          `[consumer-lane] minimal: stitchkit/remote pulled optional tool peers into the bundle: ${forbiddenRemoteInputs.join(', ')}`,
-        );
-      }
-      step('minimal: run remote bundle', () => run('bun', [remoteBundle], dir));
-
-      const missingToolsPeer = step('minimal: missing tools peer', () =>
-        runExpectFailure('node', ['src/missing-mcp-peer.mjs'], dir),
-      );
-      if (
-        !missingToolsPeer.failed ||
-        !missingToolsPeer.output.includes("Cannot find package 'ai'")
-      ) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: the opted-in tools entry must name its first missing peer',
-          missingToolsPeer.output,
-        );
-      }
-
-      step('minimal: install agent peer for MCP diagnostic', () =>
-        run('bun', ['add', '--no-save', 'ai@^7.0.0'], dir),
-      );
-      const missingMcpPeer = step('minimal: missing MCP peer', () =>
-        runExpectFailure('node', ['src/missing-mcp-peer.mjs'], dir),
-      );
-      if (
-        !missingMcpPeer.failed ||
-        !missingMcpPeer.output.includes('@modelcontextprotocol/server')
-      ) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: stitchkit/tools must name the missing @modelcontextprotocol/server peer',
-          missingMcpPeer.output,
-        );
-      }
-    }
-
-    if (name === 'full') {
-      const runtimeBundle = join(dir, 'agent-runtime-neutral-bundle.js');
-      const runtimeMetafile = join(dir, 'agent-runtime-neutral-metafile.json');
-      step('full: bundle neutral agent runtime', () =>
-        run(
-          'bun',
-          [
-            'build',
-            'src/agent-runtime-neutral.ts',
-            '--target=bun',
-            '--packages=bundle',
-            `--outfile=${runtimeBundle}`,
-            `--metafile=${runtimeMetafile}`,
-          ],
-          dir,
-        ),
-      );
-      const runtimeInputs = Object.keys(
-        JSON.parse(readFileSync(runtimeMetafile, 'utf8')).inputs,
-      );
-      const leakedProvider = runtimeInputs.find((input) =>
-        input.includes('@openrouter/ai-sdk-provider'),
-      );
-      if (leakedProvider) {
-        failed = true;
-        console.error(
-          `[consumer-lane] full: neutral agent runtime resolved OpenRouter: ${leakedProvider}`,
-        );
-      }
-      step('full: run neutral agent runtime bundle', () => run('bun', [runtimeBundle], dir));
     }
 
     if (name === 'node') {
@@ -461,6 +225,13 @@ console.log('peer-free testing manifest ok');
         );
       }
     }
+  }
+
+  try {
+    step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
+  } catch (error) {
+    failed = true;
+    console.error(error instanceof Error ? error.message : error);
   }
 
   const unexpected = [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
