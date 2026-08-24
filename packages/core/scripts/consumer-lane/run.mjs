@@ -164,6 +164,16 @@ console.log('peer-free testing manifest ok');
       failed = true;
       console.error('[consumer-lane] minimal: unexpectedly installed optional peer grammy');
     }
+    if (
+      name === 'minimal' &&
+      (existsSync(join(dir, 'node_modules', 'socket.io')) ||
+        existsSync(join(dir, 'node_modules', '@socket.io', 'bun-engine')))
+    ) {
+      failed = true;
+      console.error(
+        '[consumer-lane] minimal: unexpectedly installed optional Socket.IO peers',
+      );
+    }
 
     // The consumer's default. Any error here is the package's fault, full stop.
     const strict = step(`${name}: typecheck`, () => tsc(dir, []));
@@ -258,6 +268,51 @@ console.log('peer-free testing manifest ok');
       step('minimal: run neutral application bundle', () =>
         run('bun', [applicationBundle], dir),
       );
+
+      const serverSignalBundle = join(dir, 'server-signal-bundle.js');
+      const serverSignalMetafile = join(dir, 'server-signal-metafile.json');
+      step('minimal: bundle server signal binding', () =>
+        run(
+          'bun',
+          [
+            'build',
+            'src/server-signal-bundle.ts',
+            '--target=bun',
+            '--packages=bundle',
+            `--outfile=${serverSignalBundle}`,
+            `--metafile=${serverSignalMetafile}`,
+          ],
+          dir,
+        ),
+      );
+      const serverSignalInputs = Object.keys(
+        JSON.parse(readFileSync(serverSignalMetafile, 'utf8')).inputs,
+      );
+      const leakedSocketPeer = serverSignalInputs.find(
+        (input) => input.includes('socket.io') || input.includes('@socket.io/bun-engine'),
+      );
+      if (leakedSocketPeer) {
+        failed = true;
+        console.error(
+          `[consumer-lane] minimal: server signal bundle resolved an unused Socket.IO peer: ${leakedSocketPeer}`,
+        );
+      }
+      step('minimal: run server signal bundle', () => run('bun', [serverSignalBundle], dir));
+
+      const missingSocketPeer = step('minimal: missing Socket.IO peer', () =>
+        runExpectFailure('node', ['src/missing-socket-peer.mjs'], dir),
+      );
+      if (
+        !missingSocketPeer.failed ||
+        !missingSocketPeer.output.includes('createSocketIOServer') ||
+        !missingSocketPeer.output.includes('socket.io')
+      ) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: the opted-in Socket.IO adapter must name its missing peer',
+          missingSocketPeer.output,
+        );
+      }
 
       const missingGrammyPeer = step('minimal: missing grammY peer', () =>
         runExpectFailure('node', ['src/missing-grammy-peer.mjs'], dir),

@@ -34,6 +34,13 @@ import type { SocketIOHandshakeConfig, SocketIOServerConfig } from './socket-io-
 import type { RawRoute } from './types';
 import { type ComposedLane, webSocketLane } from './websocket';
 
+// Held in variables, not literal dynamic imports, so a consumer bundling an
+// unrelated `stitchkit/server` export does not have to resolve these optional
+// peers. The type-only annotations remain erased; opting into this adapter
+// still loads and validates the peers at runtime.
+const SOCKET_IO_SERVER = 'socket.io';
+const SOCKET_IO_BUN_ENGINE = '@socket.io/bun-engine';
+
 export type {
   SocketIOHandshakeConfig,
   SocketIORequestPolicy,
@@ -239,7 +246,10 @@ export async function createSocketIOServer<
     );
   };
 
-  const { Server } = await importPeer(() => import('socket.io'), 'socket.io');
+  const { Server } = await importPeer(
+    () => import(SOCKET_IO_SERVER).then((module: typeof import('socket.io')) => module),
+    SOCKET_IO_SERVER,
+  );
   const io = new Server<TClientEvents, TServerEvents, DefaultEventsMap, TData>({
     // Passthrough first; the wrapper-owned fields below override any overlap.
     ...config.serverOptions,
@@ -271,8 +281,11 @@ export async function createSocketIOServer<
 
   if (onBun) {
     const { Server: Engine } = await importPeer(
-      () => import('@socket.io/bun-engine'),
-      '@socket.io/bun-engine',
+      () =>
+        import(SOCKET_IO_BUN_ENGINE).then(
+          (module: typeof import('@socket.io/bun-engine')) => module,
+        ),
+      SOCKET_IO_BUN_ENGINE,
     );
     // socket.io forwards engine-level options to the engine only when it creates
     // the engine itself (the Node path). On Bun we build the engine by hand, so

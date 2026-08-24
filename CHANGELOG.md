@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bundling peer-free process signal handling no longer requires unused Socket.IO peers.** The
+  optional `socket.io` and `@socket.io/bun-engine` modules remain runtime-lazy and are now opaque to
+  consumer bundlers, so importing `bindProcessSignals` from `stitchkit/server` works without
+  installing realtime dependencies. Explicit Socket.IO use retains its actionable missing-peer
+  diagnostic.
+
 ## [0.59.2] — 2026-08-24
 
 ### Added
