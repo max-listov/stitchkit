@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import {
   assertNothingSurvives,
   reapOnTermination,
+  reapProcessesUnder,
   stopProcessGroup,
   sweepAbandonedLaneProcesses,
 } from './lane-processes';
@@ -538,6 +539,13 @@ try {
   else await runVariant('repository');
 } finally {
   await reapEverything();
+  // Then everything else still living in this tree: a Prisma engine, a browser
+  // a Playwright run left behind, a helper that outlived the command that
+  // awaited it. Those are the lane's too — CI found one the role groups did not
+  // cover, which is precisely what the assertion below is for.
+  const swept = await reapProcessesUnder(workspace);
+  if (swept > 0)
+    console.log(`[starter-lane] reaped ${swept} process(es) left in its own tree`);
   // Fail-closed. A warning here reads as noise, and "probably fine" is what two
   // and a half hours of runs turned into a host that stopped responding.
   await assertNothingSurvives(workspace);

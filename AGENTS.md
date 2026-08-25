@@ -55,13 +55,15 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - A completed backlog item may claim test coverage only by naming the exact
   test file and test case in its `Что сделано` section.
 - **ALWAYS** run `bun run verify` before pushing. It is the whole gate: lint,
-  typecheck, tests, build, the Next-SSR and Node smokes, the packed consumer
-  lane and both packed starter lanes (which need Playwright browsers and a real
-  PostgreSQL — see `CONTRIBUTING.md`). **CI runs two things `verify` does not**:
-  `test:agent-store-postgres` and the supervised PM2 lane. A change to the agent
-  store or to supervision can be green locally and still turn CI red — which,
-  for a release commit, costs a new release commit (see *Order inside a
-  release*).
+  typecheck, tests, the Postgres agent-store lane, build, the Next-SSR and Node
+  smokes, the packed consumer lane and both packed starter lanes (which need
+  Playwright browsers and a real PostgreSQL — see `CONTRIBUTING.md`). The one
+  thing CI runs that `verify` does not is the **supervised PM2 lane**, because it
+  needs `pm2` on PATH and `verify` must not grow a prerequisite the contributor
+  guide does not list. A change to supervision can therefore be green locally and
+  still turn CI red — which, for a release commit, costs a new release commit
+  (see *Order inside a release*). The agent-store lane used to be in that gap
+  too, until it turned a release run red; it is in `verify` now.
 
 ## Stack
 
@@ -77,7 +79,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 
 ```bash
 bun run dev       # watch-rebuild packages/core/dist
-bun run verify    # lint · check · test · build · next-ssr + node smokes · consumer lane · both starter lanes
+bun run verify    # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
 bun run build     # build dist/ + generate llms.txt
 bun run lint:fix  # auto-fix formatting / safe lint
 ```

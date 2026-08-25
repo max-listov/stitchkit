@@ -22,6 +22,7 @@ import { join, resolve } from 'node:path';
 import {
   assertNothingSurvives,
   reapOnTermination,
+  reapProcessesUnder,
   supervisorPidIn,
   sweepAbandonedLaneProcesses,
 } from './lane-processes';
@@ -306,6 +307,7 @@ const cleanupFailures: unknown[] = [];
 for (const step of [
   shutDownSupervisor,
   async () => database?.dispose(),
+  () => reapProcessesUnder(workspace),
   () => assertNothingSurvives(workspace),
 ]) {
   try {

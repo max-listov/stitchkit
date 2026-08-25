@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   abandonedLaneProcesses,
   assertNothingSurvives,
+  reapProcessesUnder,
   stopProcessGroup,
   supervisorPidIn,
   sweepAbandonedLaneProcesses,
@@ -219,6 +220,42 @@ test.skipIf(!hasProcfs)(
       expect(await supervisorPidIn(home)).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+/**
+ * A lane clears its own tree, not only the groups it spawned.
+ *
+ * The role process groups cover the roles. They do not cover the other things
+ * that run in the same directory — a database engine, a browser a test run left
+ * behind. CI found exactly one such survivor and the fail-closed assertion
+ * reported it, which is the assertion working; this is the sweep that keeps it
+ * from firing on the lane's own leftovers.
+ */
+test.skipIf(!hasProcfs)(
+  'a process living in the lane tree is reaped, not only refused',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+    try {
+      await writeFile(join(directory, 'stray.ts'), 'setInterval(() => {}, 1000);');
+      // Spawned WITHOUT `detached`, exactly like the helper commands a lane runs:
+      // it belongs to no group of its own, so `stopProcessGroup` cannot see it.
+      const stray = Bun.spawn(['bun', 'stray.ts'], {
+        cwd: directory,
+        stdout: 'ignore',
+        stderr: 'ignore',
+      });
+      await settle(() => alive(stray.pid));
+      await expect(assertNothingSurvives(directory)).rejects.toThrow(/still running inside/);
+
+      expect(await reapProcessesUnder(directory)).toBeGreaterThan(0);
+
+      await settle(() => !alive(stray.pid));
+      await expect(assertNothingSurvives(directory)).resolves.toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
   },
   30_000,

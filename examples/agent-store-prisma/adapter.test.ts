@@ -260,7 +260,7 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       }),
     });
     const restarted = createPrismaAgentStoreFixture({ connectionString });
-    const page = await restarted.store.scanRecoverablePage?.({ limit: 1 });
+    const page = await restarted.store.scanRecoverable({ limit: 1 });
     expect(page).toMatchObject({
       items: [{ conversationId, run: { id: 'restart\u0000run', state: 'queued' } }],
     });

@@ -213,6 +213,41 @@ export async function supervisorPidIn(home: string): Promise<number | undefined>
 }
 
 /**
+ * Reap everything still living inside a directory this lane owns.
+ *
+ * The role process groups cover the roles and whatever they forked. They do not
+ * cover the OTHER things a lane runs in the same tree — a Prisma query engine, a
+ * browser left by a Playwright run, a helper that outlived the command that
+ * awaited it. Those are the lane's too, and CI found one: the fail-closed check
+ * below reported a survivor that no local run had.
+ *
+ * So the lane clears its own directory first, politely, and only then asserts.
+ * The assertion stays as the backstop for anything that survives a SIGKILL.
+ */
+export async function reapProcessesUnder(directory: string): Promise<number> {
+  const inside = async (): Promise<number[]> => {
+    const found: number[] = [];
+    for (const pid of await processIds()) {
+      if (pid === process.pid) continue;
+      try {
+        if ((await readlink(`/proc/${pid}/cwd`)).startsWith(directory)) found.push(pid);
+      } catch {
+        // Not ours to inspect.
+      }
+    }
+    return found;
+  };
+
+  const living = await inside();
+  if (living.length === 0) return 0;
+  for (const pid of living) signal(pid, 'SIGTERM');
+  await Bun.sleep(2_000);
+  for (const pid of await inside()) signal(pid, 'SIGKILL');
+  await Bun.sleep(500);
+  return living.length;
+}
+
+/**
  * Refuse to finish while something this lane started is still running.
  *
  * A warning here would be read as noise and the leftovers would keep

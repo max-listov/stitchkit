@@ -18,7 +18,7 @@
     "lint:fix": "biome check --write . && cd packages/create-stitchkit/template && bun run lint:fix",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "verify": "bun run lint && bun run check && bun run test && bun run build && bun run smoke:next-ssr && bun run smoke:node && bun run consumer-lane && bun run starter-lane",
+    "verify": "bun run lint && bun run check && bun run test && bun run test:agent-store-postgres && bun run build && bun run smoke:next-ssr && bun run smoke:node && bun run consumer-lane && bun run starter-lane",
     "smoke:node": "bun --filter stitchkit smoke:node",
     "smoke:next-ssr": "bun --filter stitchkit smoke:next-ssr",
     "consumer-lane": "bun --filter stitchkit consumer-lane",
