@@ -12,6 +12,135 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-25
+
+### Fixed
+
+- **The `Gates` list can be run top to bottom, and it never deploys.** It
+  presented five commands in a row, two of which check a *running* deployment —
+  with nothing in the list that starts one, so on a fresh project `bun run
+  runtime:smoke` failed with a connection reset from inside a check. The answer
+  is not a deploy command: `bun run pm2:prod` applies the declared migrations
+  and reloads the PM2 daemon the developer is running, so a gate list carrying
+  it quietly means "deploy". The runtime gates now run under `bun run
+  acceptance:local`, which creates a deployment of its own — separate
+  `PM2_HOME`, ephemeral ports, its own public-host allowlist, its own
+  database — and destroys it by naming the declared roles. Neither guide says
+  `pm2 delete all` any more: it empties whichever daemon it is pointed at,
+  including applications that have nothing to do with the project.
+- **The acceptance gate writes only to a database of its own.** It inherited
+  `DATABASE_URL`, and the runtime gates write — the repository example's smoke
+  posts `/api/repository/refresh` twice, which upserts. So a command a developer
+  is told to run before handing work off wrote rows into whatever `.env` named.
+  It runs against `ACCEPTANCE_DATABASE_URL`, applies the declared migrations
+  there, and refuses to start when that variable is unset or reuses the
+  deployment's database **name** — with the line to paste in the refusal. The
+  name alone decides, because a hostname is not proof of a different server:
+  `localhost` and `127.0.0.1` are one, and so are two DNS names for the same
+  PostgreSQL. The deployment's URL is not in the harness's child environment at
+  all.
+- **A release will not start an artifact that is not this source's.**
+  `assertBuildArtifacts()` checked that the declared paths exist, and existence
+  is not freshness: `pm2:prod` run without a build applied this source's
+  migrations and started the previous source's `dist` and `.next`, moving the
+  schema ahead of the code in the one direction a code rollback does not undo.
+  `bun run build` now leaves a digest of the source it read, and the release
+  refuses when the tree no longer hashes to it — a digest rather than a
+  timestamp, because a checkout rewrites every mtime and a formatter rewrites
+  some for no change at all. Everything is source unless something names it
+  otherwise, and the something is the **declaration**: the digest skips
+  `build.artifacts`, `node_modules`/`.git`, and runtime state. It no longer
+  skips by kind — every `.md`, every test file, every directory called
+  `generated` — because a project that imports MDX or keeps checked-in source in
+  a directory of that name would have changed its content, kept its digest, and
+  been told a stale artifact was current. `.env` stays out on purpose: a binding
+  is not an input to this build, and hashing it would refuse a correct artifact
+  whenever a deployment edited its own environment.
+- **The shutdown budget is an upper bound again.** `terminationBudgetMs` adds a
+  fixed cleanup allowance to the drain floor and refuses a supervision policy
+  that allows less — but the closes that run after the drain (the MCP session,
+  the database pool) had no deadline of their own, so a hung close ran past the
+  very kill timeout the budget had approved and turned an orderly shutdown into
+  the SIGKILL that runs no cleanup at all. The role's cleanup now shares one
+  bounded budget with the generator, from one constant both read, and names
+  whatever it stopped waiting for — and then **ends the process**. Setting
+  `process.exitCode` only decides the code a process reports when it exits, and
+  a step that ran out of time is usually still holding the handle that stops it
+  from exiting; a close that *threw* is reported with its cause and is no longer
+  counted as a clean shutdown. The shared deadline is measured with
+  `performance.now()` and the clock can no longer be injected: a wall clock
+  stepped backwards widens the very upper bound the supervisor's kill timeout
+  was derived from, and a frozen injected clock hands every step a full budget.
+- **The project declaration stays out of the browser bundle.**
+  `lib/seo/pages.ts` imported `appDeclaration` for one field, and a client
+  component imports that module — so role commands, working directories,
+  artifact and migration paths and every environment variable name travelled
+  into the client graph along with the Zod parser. It reads `appIdentity` now,
+  and a test walks every `'use client'` graph and fails if one reaches the
+  declaration — by resolving each specifier to a file rather than matching a
+  string, so a barrel re-export, a relative path into the config package and a
+  double-quoted import are all caught.
+- **A duplicated host is one address.** The portability check counted the
+  entries of `PUBLIC_WEB_HOSTS` without deduplicating them, so the same host
+  written twice passed as two addresses and the proof compared the deployment
+  with itself.
+- **Every dial in the runtime smoke is bounded.** An endpoint that accepts the
+  connection and never answers used to hang the gate with no output and no
+  deadline instead of failing it.
+- **A build output cannot be published inside the template.** What the scaffolder
+  copies and what npm publishes were two lists that had to agree, and only one of
+  them was consulted when a name was excluded. The exclusions are data now, and a
+  test fails until the package manifest carries the same negation.
+- **A role bound to an IPv6 address gets a readiness URL that parses.**
+  `BIND_HOST=::1` produced `http://::1:3211/health`, which is not an address
+  with a port and which `fetch` refuses — so the wait failed on the spelling
+  rather than on the role. The literal is bracketed.
+- **`bun run dev` and `bun run pm2:prod` report the roles as running only once
+  they answer.** A supervisor returns at the spawn, seconds before a role
+  listens, so both printed their address at a moment when nothing was there and
+  every command after them raced the application they had just started. Both now
+  wait on each role's declared `readinessPath`.
+- **`runtime:smoke` asks the deployment on the addresses it claims.** The
+  portability check carried two fixture hosts of its own, so it only ever passed
+  where somebody had put those exact names into `PUBLIC_WEB_HOSTS` — which only
+  the packed lane had. Everyone else got a bare 500 from a policy working as
+  designed. It now reads `PUBLIC_WEB_HOSTS`, and a deployment with too few
+  addresses to compare is told which line to add instead of being refused a
+  request.
+- **A closed deployment is diagnosed, not reset.** `runtime:smoke` says what is
+  not listening and which command starts it, before the first check runs.
+- **The theme value the toaster reads narrows again.** `@wrksz/themes` 1.2
+  changed `useThemeValue`'s type parameter to describe the map rather than the
+  value, and it now infers `const` — so naming the value union at the call site
+  widened the result to every member of `string` and the generated project
+  stopped type-checking. The call site lets inference do it.
+- **A green `runtime:smoke` prints one line.** The MCP surface check asked the
+  server to list tools even when it advertised no tool capability, which made
+  the vendor client log a debug warning on every successful run. It reads the
+  advertised capability instead.
+
+### Changed
+
+- **Every dependency of the generated project is on its latest release.**
+  Next 16.3.2, `next-intl` 4.13.7, `@tanstack/react-query` 5.102.3,
+  `@tanstack/react-table` 9.1.2, `framer-motion` 13.1.1, `@wrksz/themes` 1.2.0,
+  `shiki` 4.4.3, `sonner` 2.0.8, `ai` 7.0.78, `pg` 8.23.0, Playwright 1.62.1,
+  Biome 2.5.10 and the `@types/*` that go with them. No major crossed; the
+  Stitchkit range is unchanged and still declared once, in the catalog.
+- **The generated project imports the declaration schema instead of mirroring
+  it.** `packages/config/src/declaration.ts` now reads
+  `parseProjectDeclaration` from `stitchkit/declaration`, and the 611-line
+  generated copy — `packages/config/src/project-declaration.generated.ts` — is
+  gone with the script that maintained it. The copy existed only because the
+  entrypoint was not on npm yet; the template's catalog targets `^0.60.0`,
+  which publishes it, so "one schema, three readers" is now literally true.
+  Adopting it is one import and one deletion — see
+  [`UPGRADING.md`](./UPGRADING.md).
+- **`scripts/local-env.ts` reads the identity module, not the declaration.** It
+  needs one slug, and a project scaffolded with `--no-install` renders its
+  `.env` before anything is installed — a script that reaches for the
+  framework's schema to read a name cannot run in that window.
+
 ## [0.4.0] — 2026-08-25
 
 ### ⚠️ Breaking changes

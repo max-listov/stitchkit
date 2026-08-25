@@ -60,6 +60,123 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Released migration: 0.4.1
+
+### a release refuses a stale artifact, and cleanup is bounded
+
+Two changes an existing project should take, both about a shutdown or a start
+that looked safe and was not.
+
+1. **Stamp the build.** Copy `scripts/build-stamp.ts` from a fresh scaffold,
+   append `&& bun scripts/build-stamp.ts` to your root `build` script, add
+   `.build-stamp.json` to `.gitignore`, and call `assertArtifactMatchesSource()`
+   at the end of `assertBuildArtifacts()` in `scripts/release-steps.ts`. Until
+   you do, `bun run pm2:prod` without a build applies your migrations and starts
+   the previous build.
+
+2. **Bound the cleanup, and let it end the process.** Copy
+   `packages/config/src/shutdown.ts` and `packages/backend/src/cleanup.ts`, add
+   the `./shutdown` export to `packages/config/package.json`, and replace the
+   bare `await mcp.close(); await prisma.$disconnect();` in your API role's
+   `onComplete` with `closeWithinBudget([...])` followed by
+   `concludeShutdown(cleanup, result.outcome === 'clean')`. Then have
+   `scripts/declaration.ts` import `FORCE_BUDGET_MS` and `CLEANUP_BUDGET_MS`
+   from the new module instead of declaring its own copies — the number a
+   supervisor is told to allow and the number the role enforces have to be one
+   number. `concludeShutdown` is the half that makes the budget real: setting
+   `process.exitCode` decides the code a process reports *when it exits*, and a
+   step that ran out of time is usually still holding the handle that stops it
+   from exiting at all.
+
+No operator step: nothing about a running machine changes.
+
+### the gate list runs, and never deploys
+
+The `Gates` list in the generated guides presented five commands in a row, two
+of which check a **running** deployment — with nothing in the list that starts
+one. The fix is not to add a deploy command: `bun run pm2:prod` applies your
+declared migrations and reloads the deployment you are running, so a list that
+contains it means "run these before handing work off" quietly says "deploy".
+
+1. **Take `pm2:prod` out of your gate list**, in `README.md` and `AGENTS.md`
+   alike, and delete any advice to run `pm2 delete all` — that empties whichever
+   daemon it is pointed at, including applications with nothing to do with this
+   project.
+
+2. **Add the harness that brings up a deployment of its own.** Copy
+   `scripts/acceptance-local.ts` and `scripts/acceptance-database.ts` from a
+   fresh scaffold and add `"acceptance:local": "bun scripts/acceptance-local.ts"`
+   to your root scripts. It creates and destroys its own deployment — separate
+   `PM2_HOME`, ephemeral ports, its own public-host allowlist — and runs
+   `runtime:smoke` and `e2e` against that.
+
+3. **Give it a database of its own.** Add `ACCEPTANCE_DATABASE_URL` to `.env`
+   and `.env.example`, naming a throwaway database — not the one `DATABASE_URL`
+   names. The runtime gates WRITE (the repository example's smoke posts a
+   refresh, and that upserts), so a harness borrowing `DATABASE_URL` writes rows
+   into whatever your `.env` points at. The harness refuses to start when the
+   variable is unset or names the same database, and prints the line to add.
+
+4. **Wait for readiness before reporting it.** Copy `scripts/readiness.ts` from
+   a fresh scaffold, then in `scripts/dev.ts` and `scripts/release.ts` await
+   `awaitRolesAnswering(declaredRoleReadiness(appDeclaration, environment))`
+   before printing that the roles are running. Until you do, anything you run
+   after `bun run dev` or `bun run pm2:prod` races the roles they started.
+
+5. **Let the smoke read your allowlist.** In `scripts/web-surface-smoke.ts` the
+   portability check named two hosts of its own; take the version that reads
+   `PUBLIC_WEB_HOSTS` and pass it from `scripts/runtime-smoke.ts`. If you kept
+   the old one, your `.env` must claim `alpha.example` and `beta.example:8443`
+   or the check fails on a host your deployment correctly refuses. With the new
+   one, `_env.example` drops those example hosts — the harness supplies its own.
+
+6. **Keep the declaration out of the browser.**
+   `packages/frontend/src/lib/seo/pages.ts` must import `appIdentity` from
+   `@app/config/app-identity` rather than `appDeclaration`: a client component
+   reaches that module, so the whole declaration was going into your browser
+   bundle.
+
+No operator step: nothing about a running machine changes.
+
+### the declaration schema is imported
+
+For a project generated **before** the scaffolder version that drops the schema
+mirror. Nothing in your tree stops working if you skip this — the copy keeps
+parsing. What you lose by skipping is the guarantee: your copy no longer moves
+when the framework's schema does, and nothing tells you.
+
+1. **Point the config package at the framework.** In
+   `packages/config/src/declaration.ts`:
+
+   ```ts
+   // before
+   import { findProjectRole, parseProjectDeclaration } from './project-declaration.generated';
+   // after
+   import { findProjectRole, parseProjectDeclaration } from 'stitchkit/declaration';
+   ```
+
+   Then the same for every `import type { ProjectDeclaration, … }` in
+   `scripts/` — they pointed at the same file.
+
+2. **Declare the dependency.** `packages/config/package.json` gains
+   `"stitchkit": "catalog:"`, and `bun install` refreshes the lockfile.
+
+3. **Delete `packages/config/src/project-declaration.generated.ts`.**
+
+4. **Check your `stitchkit` range.** The entrypoint ships from **0.60.0**. If
+   your catalog targets less than that, raise it first — otherwise the import
+   resolves to nothing.
+
+5. **Read `.env` without the schema.** If your `scripts/local-env.ts` imports
+   `appDeclaration`, switch it to `appIdentity` from
+   `packages/config/src/app-identity.generated`. It needs only the slug, and a
+   project scaffolded with `--no-install` renders `.env` before anything is
+   installed — in that window the framework is not there to import.
+
+No operator step: nothing about a running machine changes.
+
+---
+
 ## Released migration: 0.4.0
 
 ### the project declares itself
