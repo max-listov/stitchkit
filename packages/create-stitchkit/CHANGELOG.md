@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-25
+
 ### ⚠️ Breaking changes
 
 - **The repository example's browser talks to its OWN origin by default.** The

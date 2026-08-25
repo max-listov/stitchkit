@@ -60,12 +60,14 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: the project declares itself
+## Released migration: 0.4.0
+
+### the project declares itself
 
 Everything in this section is for a project generated **before** the scaffolder
 version that introduces `project.json`.
 
-### The declaration replaces `app.config.json`
+#### The declaration replaces `app.config.json`
 
 `app.config.json` said who the project was. `project.json` says what it *is*:
 identity, the roles it runs, what it builds, what it needs before it starts,
@@ -96,7 +98,7 @@ import { appIdentity } from '@app/config/identity';
 import { appIdentity } from '@app/config/app-identity';
 ```
 
-### Operator step: delete the old supervisor processes FIRST
+#### Operator step: delete the old supervisor processes FIRST
 
 PM2 process names now follow the declared role names, so the new supervision
 files start a **new pair beside the old one**. Under `autorestart` both then
@@ -112,7 +114,7 @@ pm2 delete <slug>-backend <slug>-frontend <slug>-backend-dev <slug>-frontend-dev
 `<slug>` is your project's slug — `identity.slug` in `project.json`. Check what
 is actually registered with `pm2 list` first; nothing here is safe to run blind.
 
-### Operator step: the supervisor's patience must cover the whole shutdown
+#### Operator step: the supervisor's patience must cover the whole shutdown
 
 The generated `ecosystem.config.cjs` is now rendered from the declaration, and
 its `kill_timeout` is computed from each role's drain floor plus the force
@@ -127,7 +129,7 @@ Regenerate rather than hand-edit:
 bun run gen:declaration
 ```
 
-### Environment: three variables changed meaning
+#### Environment: three variables changed meaning
 
 ```sh
 # before
@@ -167,7 +169,7 @@ SMOKE_WEB_ORIGIN=http://127.0.0.1:3210
 routing layer makes same-origin requests, and requiring an origin there was
 requiring knowledge of the place.
 
-### The repository example: calls lose their parentheses
+#### The repository example: calls lose their parentheses
 
 Only for a project generated with `--example repository`. The browser now talks
 to its own origin, so the API client is a module constant:
@@ -204,7 +206,7 @@ The cross-origin form moved to `packages/frontend/src/lib/api/cross-origin.ts`
 (previously `lib/api/origin.ts`); `requirePublicApiOrigin` lives there, beside
 `optionalRealtimeOrigin` and `setPublicOrigins`.
 
-### The SEO helpers are async
+#### The SEO helpers are async
 
 They read the public origin from the request, so they cannot be constants.
 TypeScript will **not** catch a missing `await` inside an inferred object
