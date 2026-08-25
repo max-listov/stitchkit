@@ -54,16 +54,21 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   `docs/backlog/inbox/`. See `docs/README.md`.
 - A completed backlog item may claim test coverage only by naming the exact
   test file and test case in its `Что сделано` section.
-- **ALWAYS** run `bun run verify` before pushing. It is the whole gate: lint,
-  typecheck, tests, the Postgres agent-store lane, build, the Next-SSR and Node
-  smokes, the packed consumer lane and both packed starter lanes (which need
-  Playwright browsers and a real PostgreSQL — see `CONTRIBUTING.md`). The one
-  thing CI runs that `verify` does not is the **supervised PM2 lane**, because it
-  needs `pm2` on PATH and `verify` must not grow a prerequisite the contributor
-  guide does not list. A change to supervision can therefore be green locally and
-  still turn CI red — which, for a release commit, costs a new release commit
-  (see *Order inside a release*). The agent-store lane used to be in that gap
-  too, until it turned a release run red; it is in `verify` now.
+- **ALWAYS** run `bun run verify` before a **release commit**, and let the
+  `pre-push` hook decide the rest — see *What runs where* below. `verify` is the
+  whole local gate and it runs **everything CI runs**: lint, typecheck, tests,
+  the Postgres agent-store lane, build, the Next-SSR and Node smokes, the packed
+  consumer lane, the packed starter lanes and the supervised PM2 lane. Its
+  prerequisites are listed in `CONTRIBUTING.md` and all of them arrive with
+  `bun install` except a reachable PostgreSQL and the Playwright browsers.
+
+  There is deliberately **no** gate that runs on CI and not here. Two used to
+  be: the agent-store lane, until it turned a release run red, and the
+  supervised lane, until the supervisor became a pinned devDependency instead of
+  a global install. Both gaps fell on the release commit — the one commit whose
+  red run cannot be repaired in place (see *Order inside a release*) — and
+  `scripts/gate-parity.test.ts` now holds the equivalence mechanically rather
+  than by review.
 
 ## Stack
 
@@ -78,14 +83,67 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 ## Commands
 
 ```bash
-bun run dev       # watch-rebuild packages/core/dist
-bun run verify    # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
-bun run build     # build dist/ + generate llms.txt
-bun run lint:fix  # auto-fix formatting / safe lint
+bun run dev            # watch-rebuild packages/core/dist
+bun run verify         # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
+bun run verify:fast    # lint · check · test — what an ordinary push runs
+bun run build          # build dist/ + generate llms.txt
+bun run lint:fix       # auto-fix formatting / safe lint
+bun run update:starter # move the template's framework range + lockfile together
 ```
 
 The full annotated command list, setup and git hooks are in
 [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+### What runs where
+
+CI runs the **same** work as `verify`, arranged differently: the
+lint/check/test/agent-store/build/smokes/consumer lane in one job, the supervised
+lane in its own, and the starter work sharded across eight (two modes x two
+scaffold variants x two browsers, of which `verify` runs the four target-mode
+ones and the release path adds the rest). It answers in about two and a half minutes because
+those lanes are parallel by nature. One machine walks them in single file and
+takes two to three times longer to reach the same answer.
+
+So the local gate **complements** CI instead of copying it, and `pre-push`
+picks by what a red run would cost on the commit being pushed:
+
+| Push | Local gate | Why |
+| --- | --- | --- |
+| ordinary branch push | `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
+| push carrying the `release(...)` commit | the whole of `verify`, then the packed HEAD lane | a red run here cannot be repaired in place |
+| tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
+
+The release row is the whole argument. `assert-subject` requires a tag to sit
+on a `release(<scope>): … in X.Y.Z` commit and `assert-head` requires that
+commit to be the branch head, so a red run on an already-pushed release commit
+is repaired only by making a **new** release commit. Everywhere else, red is
+two and a half minutes and a fix.
+
+All three profiles — fast, full and the packed HEAD lane — remember the last
+green run **by what they actually checked** (`scripts/gate-memo.ts`): an
+unchanged tree is not gated twice, any edit to any file runs it again, and a
+skip always prints which run answers for it. A green full run also satisfies the
+fast profile, because it ran every fast step.
+
+The key is the working-tree hash plus the toolchain — never a commit, a branch
+or a clock — and for the two profiles that run lanes it also carries what those
+lanes talk to: the PostgreSQL server version and the installed browser set.
+Neither is visible in a tree or a runtime version, so without them a database
+upgrade would leave the memo answering for a run that happened under different
+conditions. Anything that cannot be measured becomes a marker of its own, so the
+failure mode is a redundant full run rather than a skip. The supervisor needs no
+entry: it is a pinned devDependency, so it is already in the tree. The record
+lives in the machine's cache, never in the repository, and the tree hash is
+taken through a scratch `GIT_INDEX_FILE`, so the gate never writes to the
+index.
+
+CI remains the only authority for publication: `select-ci-run` demands a
+successful **push** run for the exact SHA, and nothing local can substitute for
+it.
+
+(ADR 0011 describes an earlier arrangement in which every push ran the whole
+gate. It is a historical record and is not edited; this section is the live
+answer.)
 
 ## Layout
 
@@ -185,7 +243,9 @@ carries the branch and pull-request gate:
   `CHANGELOG.md`, run `bun run verify`, then tag `vX.Y.Z`. CI checks the core
   version, publishes only `stitchkit` and reads the root changelog.
 - **create-stitchkit:** update the template's single `catalog.stitchkit` target
-  and lockfile, pass both `starter-lane` and `starter-head-lane`, bump only
+  and lockfile — `bun run update:starter` moves both and restores every
+  `"stitchkit": "catalog:"` reference a raw `bun update` would dissolve — pass
+  both `starter-lane` and `starter-head-lane`, bump only
   `packages/create-stitchkit/package.json`, roll its own `CHANGELOG.md`, promote
   every `## Unreleased migration:` heading in its own
   `packages/create-stitchkit/UPGRADING.md`, then tag `create-stitchkit-vX.Y.Z`.
@@ -193,7 +253,12 @@ carries the branch and pull-request gate:
 
 The package versions never need to match. A framework release must not silently
 advance or publish the starter; a starter release must target a Stitchkit range
-that already exists on npm.
+that already exists on npm — and its **lockfile must resolve the newest
+published version that range allows**, which is a gate (`scripts/starter-lockfile.ts`),
+not a habit. 0.4.1 shipped a `^0.60.0` range over a lockfile pinning 0.60.0 on
+the day 0.60.1 existed: every manifest read as correct and a real scaffold
+installed the previous framework. The registry is an external dependency of
+that gate, so an unreachable registry is a refusal, never a silent pass.
 
 **Which number moves.** The minor is reserved as the *breaking* signal — that is
 what makes a consumer's caret (`^0.56.0` = `< 0.57.0`) a real gate: crossing it
@@ -223,3 +288,33 @@ If a release commit is already pushed and its run goes red, the fix does not
 become taggable: land the fix, then make a **new** release commit for the same
 version on top of it (or bump the patch), and tag that. Recovering by tagging
 the fix itself is exactly the shape these gates refuse.
+
+**Releasing both packages from one tree.** Two independent tags plus
+`assert-head` means two tags need two branch heads, so the tree has to be split
+into two release commits and the split has to be decided before the first push.
+One rule governs it, and everything else follows:
+
+> **Every pushed commit is a tree that was gated whole.**
+
+Not "every commit contains only its own package's files" — that is the
+plausible-sounding rule, and it is wrong. Splitting a release so the core commit
+carries no starter changes gives a core commit whose *own* tests fail, because
+this repository's gate reads the starter template from the same tree. The unit
+being released is the package version, not the file set.
+
+So:
+
+1. **Make the core release commit first**, carrying everything the tree needs to
+   be green — including starter-template changes, if a core test reads them.
+   Push, wait for green, tag `vX.Y.Z`.
+2. **Make the starter release commit second**, carrying whatever is left. Push,
+   wait for green, tag `create-stitchkit-vA.B.C`.
+
+**A file that belongs to both** — `packages/create-stitchkit/package.json`
+holding a `files` fix the core commit's test needs *and* the starter version
+bump — goes **whole into the earlier commit**. That is not a compromise, it is
+what the gates ask for: `validateReleaseTag` requires the version to be *in the
+tree at the tag*, and `assertReleaseCommitSubject` requires the tagged commit's
+*subject* to name it. Neither requires the bump to be introduced by that commit.
+A starter version that rises one commit early publishes nothing — the tag
+publishes, not the number in the tree.

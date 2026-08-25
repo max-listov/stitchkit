@@ -59,7 +59,9 @@ The browser-and-server entrypoint. Re-exports everything from
 | `bindRealtimeClient` | function | bind contract validation and typed acknowledgements to an existing Stitchkit client transport without owning its lifecycle |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
+| `parseNDJSON` | function | parse an NDJSON `Response`; blank keep-alive lines are skipped — [guide](../guide/client.md#ndjson) |
 | `SocketIOClient` | _type_ | low-level client handle; `emit` reports disconnected drops and `emitWithAck` exposes the native Promise primitive used by validated `request()` |
+| `SocketIOClientPeerLoaders` | _type_ | inject `socket.io-client` so a bundler can put it in a self-contained artifact |
 | `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`, `onConnectError`, `onDroppedEmit`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
@@ -74,6 +76,12 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RealtimeRequestTimeoutError` | class | stable `REALTIME_REQUEST_TIMEOUT` rejection |
 | `RealtimeRequestDisconnectedError` | class | stable `REALTIME_REQUEST_DISCONNECTED` rejection, including an immediate disconnected call |
 | `RealtimeRequestInvalidAcknowledgementError` | class | invalid ack was reported through `onRejected` and the request rejected |
+| `RealtimeRequestRejectedError` | class | the peer refused the frame against its own contract and said so — `reason`, `issues` — instead of leaving the sender to time out ([ADR 0106](../decisions/0106-a-refused-frame-answers-its-sender.md)) |
+| `REALTIME_REJECTION_KEY` | const | the reserved acknowledgement key a refusal travels under |
+| `RealtimeRejectionEnvelope` | _type_ | the wire shape of a refusal |
+| `RealtimeRejectionReport` | _type_ | what the sender is told: event, reason, message, issues |
+| `RealtimeRejectionIssue` | _type_ | one refused field, already flattened (`path: '0.v'`) |
+| `asRealtimeRejection` | function | recognise a refusal in an acknowledgement value, validating it |
 | `RealtimeContract` | _type_ | shared server-to-client and client-to-server event registries |
 | `RealtimeEventRegistry` | _type_ | string-keyed registry of event definitions |
 | `RealtimeEventDefinition` | _type_ | one tuple-shaped event and optional acknowledgement schema |
@@ -87,6 +95,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ValidatedRealtimeSocket` | _type_ | runtime-validating `on`/`emit` surface inferred from registries; `emit` returns "accepted by the transport" (`false` only for a client-side disconnected drop) |
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
+| `ParseNDJSONOptions` | _type_ | options for `parseNDJSON` |
 
 ### Trace (client)
 
@@ -342,6 +351,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `streamSSE` | function | an async generator → SSE `Response` — [guide](../guide/server.md#sse-streaming) |
+| `streamingRoute` | function | a long-lived subscription route: idle timeout, heartbeat, opening flush, cancellation — [guide](../guide/server.md#long-lived-subscriptions) |
+| `ndjsonRoute` | function | `streamingRoute` framed as NDJSON |
+| `sseRoute` | function | `streamingRoute` framed as SSE |
+| `DEFAULT_STREAM_HEARTBEAT_MS` | const | 5000 — deliberately well under Bun's ten-second idle threshold |
 | `parseSSE` | function | parse an SSE `Response` (also on the root entrypoint) |
 | `MultipartLifecycle` | _type_ | request-scoped rollback ownership for accepted streamed handles |
 | `MultipartResult` | _type_ | what `parseMultipart` returns |
@@ -377,6 +390,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `RateLimitConfig` | _type_ | config for `createRateLimiter` |
 | `ClientIpOptions` | _type_ | trusted-proxy config for `extractIp` / `resolveSocketIp` |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
+| `StreamingRouteOptions` | _type_ | options for `streamingRoute` / `ndjsonRoute` / `sseRoute` |
+| `StreamingSourceContext` | _type_ | what a streaming source is given, including the cancellation `signal` |
+| `StreamingFormat` | _type_ | `'ndjson' \| 'sse'` |
 
 ### OpenAPI
 
@@ -407,6 +423,7 @@ cutovers are covered by the executable
 | `ApplicationResourceFailure` | _type_ | one resource failure with the cause its phase label cannot carry — delivered to `onResourceFailure` |
 | `ApplicationResourcePhase` | _type_ | the phase a managed resource failed in — the vocabulary of `ApplicationResourceShutdown.failures` |
 | `ApplicationShutdownOptionsSchema` / `ApplicationShutdownOptions` | schema / _type_ | the two shutdown budgets and an abort signal — without the HTTP-only `retryAfterSeconds` |
+| `ApplicationShutdownBudgetSchema` / `ApplicationShutdownBudget` | schema / _type_ | the same two budgets without a signal — `ApplicationConfig.shutdown`, the default for `shutdown()` and the only budget a failed startup's rollback can read |
 | `ActivityTokenBrand` | const | the brand symbol `ActivityToken` carries, exported so `ActivityProjection` is implementable |
 | `defineManagedResource` | function | retain the exact typed resource declaration; every invoked start is rollback-eligible |
 | `managedServerResource` | function | adapt an existing managed server without copying its HTTP/WebSocket shutdown machine |

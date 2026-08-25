@@ -120,6 +120,8 @@ These records were consolidated from the project's internal design notes on
 | [0103](0103-entrypoints-declare-their-maturity.md) | Every entrypoint declares how settled it is | Accepted — scopes 0098 and 0102 |
 | [0104](0104-the-project-declaration-ships-from-the-framework.md) | The project declaration ships from the framework | Accepted — extends 0002 and 0103, and replaces the `app.config.json` of 0070 |
 | [0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md) | The error-code map is partial, and the registry is complete | Accepted — supersedes the exhaustiveness clause of 0026 |
+| [0106](0106-a-refused-frame-answers-its-sender.md) | A refused realtime frame answers its sender | Accepted — refines the realtime rejection surface of 0008 and keeps identity out of the core per 0002 |
+| [0107](0107-a-rollback-spends-a-declared-budget.md) | A rollback spends a declared budget, and the budget is a bound | Accepted — completes the deadline model of 0102 for the rollback path |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -1,6 +1,9 @@
 #!/bin/sh
-# Classify every ref in this push once. Branch updates run the full repository
-# gate; release tags run only deterministic local metadata preflight. A mixed
-# push does both without repeating the expensive gate.
+# Classify every ref in this push once. Release tags run deterministic local
+# metadata preflight. A branch update runs the local gate chosen by what a red
+# CI run would cost on the commit being pushed: the fast half for an ordinary
+# commit, the whole of `verify` plus the packed HEAD lane for the release
+# commit, whose red run cannot be repaired in place. See AGENTS.md,
+# "What runs where". A mixed push does both without repeating the expensive gate.
 set -e
 exec bun scripts/release-plan.ts pre-push

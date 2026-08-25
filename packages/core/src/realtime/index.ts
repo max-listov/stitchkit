@@ -15,9 +15,17 @@ export {
   type RealtimeRequestArguments,
 } from './contract';
 export {
+  asRealtimeRejection,
+  REALTIME_REJECTION_KEY,
+  type RealtimeRejectionEnvelope,
+  type RealtimeRejectionIssue,
+  type RealtimeRejectionReport,
+} from './rejected-frame';
+export {
   RealtimeRequestDisconnectedError,
   RealtimeRequestInvalidAcknowledgementError,
   type RealtimeRequestOptions,
+  RealtimeRequestRejectedError,
   RealtimeRequestTimeoutError,
 } from './request';
 export type { ValidatedRealtimeSocket } from './socket';

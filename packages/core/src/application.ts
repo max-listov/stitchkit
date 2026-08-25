@@ -42,6 +42,8 @@ export {
   type ApplicationOperationLease,
   type ApplicationResourceFailure,
   type ApplicationResourcePhase,
+  type ApplicationShutdownBudget,
+  ApplicationShutdownBudgetSchema,
   type ApplicationShutdownOptions,
   ApplicationShutdownOptionsSchema,
   createApplication,

@@ -10,6 +10,7 @@ import {
   decidePublishAction,
   extractReleaseNotes,
   isReleaseCommitSubject,
+  localGateProfile,
   MIGRATION_CHANNELS,
   releasedVersionsInOrder,
   releasePlanForTag,
@@ -501,6 +502,34 @@ describe('a migration guide reads newest first', () => {
       expect(versions).toEqual(descending);
     });
   }
+});
+
+describe('the local gate runs where a red CI run cannot be paid for', () => {
+  const branch = { verify: true, releaseTags: [], branchHeads: [SHA] };
+
+  test('an ordinary push runs the fast half', () => {
+    expect(localGateProfile(branch, false)).toBe('fast');
+  });
+
+  test('a push carrying the release commit runs everything', () => {
+    // This is the one commit whose red run cannot be repaired in place: the tag
+    // must sit on a `release(...)` commit AND on the branch head, so a red run
+    // costs a whole new release commit. That asymmetry is the entire argument
+    // for the expensive local gate — not a general distrust of CI.
+    expect(localGateProfile(branch, true)).toBe('full');
+  });
+
+  test('a tag-only push gates on metadata alone', () => {
+    // By the time a tag is pushed its commit already has a green exact-SHA run;
+    // repeating the tree gate here would check a tree CI has already answered
+    // for.
+    expect(
+      localGateProfile(
+        { verify: false, releaseTags: [{ tag: 'v1.0.0', sha: SHA }], branchHeads: [] },
+        false,
+      ),
+    ).toBe('none');
+  });
 });
 
 function comparePreOne(left: string, right: string): number {

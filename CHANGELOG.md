@@ -13,7 +13,205 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
-## [Unreleased]
+## [0.61.0] — 2026-08-25
+
+### ⚠️ Breaking changes
+
+The exported surface is strictly additive; these change what a **running**
+system does between versions, which is what this heading exists for. Migration
+steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **A failed `start()` can now take up to the shutdown budget to reject.** The
+  rollback of a failed startup used to close every resource with a zero budget,
+  so it returned almost at once — by severing requests the server had already
+  accepted. It now spends the application's budget, which means a request that
+  never finishes delays the rejection instead of being killed: with the default
+  30s grace and 5s force, a `start()` that used to reject in milliseconds can
+  take 35 seconds. Nothing else about the failure changed, and with nothing in
+  flight it is still immediate.
+  `// before: createApplication({ id, resources })` →
+  `// after: createApplication({ id, resources, shutdown: { gracePeriodMs: 5_000, forceTimeoutMs: 1_000 } })`
+  — declare a smaller budget if a fast failure matters more than draining. The
+  same field is now also the default for `shutdown()` called with no options.
+
+- **A refused realtime frame now answers its sender.** A frame failing the
+  receiver's `args` schema was dropped where it landed; if the event carries an
+  acknowledgement, the receiver now answers it and the sender's `request()`
+  rejects with `RealtimeRequestRejectedError`. Against an older peer with a
+  contract-first acknowledgement this is strictly better — an immediate
+  `RealtimeRequestInvalidAcknowledgementError` instead of an expired deadline.
+  Against an older peer whose acknowledgement schema validates nothing
+  (`z.unknown()`, a loose object) the refusal is read **as a value**, silently.
+  That last case is why this is marked rather than shipped as a patch: a caret
+  is the only thing that makes upgrading one half of a distributed pair a
+  decision instead of an accident.
+  `// before: ack: z.unknown()` → `// after: ack: z.object({ … })`
+
+- **`reportHealth` called inside `start` is kept instead of discarded.**
+  Becoming ready assigned `healthy` unconditionally, so a resource that reported
+  during `start` was silently reported as fine. Grep for **every** `reportHealth`
+  in a `start` body, not just the `degraded` ones — the old assignment also
+  repaired a pessimistic early `'unhealthy'` that was never corrected.
+  `required` defaults to **`true`** and readiness requires every required
+  resource to be healthy, so a required resource that starts non-healthy now
+  refuses the startup: the invariant working as intended, newly reachable. An
+  **optional** one moves the application aggregate to `degraded`, which can flip
+  a readiness probe.
+  `// before: defineManagedResource({ id, start })` →
+  `// after: defineManagedResource({ id, required: false, start })` for a
+  resource expected to start degraded; report the recovery instead if it was
+  only temporarily unhealthy.
+
+- **`streamSSE`'s `cancel` no longer awaits the generator**, so teardown is
+  unordered relative to request completion. Named here rather than under
+  *Fixed*: a generator releasing a resource in its `finally` used to be
+  guaranteed to have finished before the response settled.
+
+- **`RealtimeRejectedEvent['reason']` gained `'rejected-by-peer'`.** An
+  exhaustive `switch` with an `assertNever` default stops compiling.
+
+- **A `socket.io-client` peer that cannot load no longer kills the process** when
+  `onConnectError` is configured. A handler that logs and moves on now leaves a
+  live process with a client that will never connect, where a supervisor used to
+  restart it.
+
+### Added
+
+- **`ApplicationConfig.shutdown` — the budget an application declares once.**
+  A rollback happens inside `start()`, so there is no call site to pass options
+  to; the budget had to be declared where the application is. It is also the
+  default for `shutdown()` called with no options, so "how long may this
+  application take to stop" is one number rather than two that can disagree.
+  Exported as `ApplicationShutdownBudgetSchema` / `ApplicationShutdownBudget`
+  from `stitchkit/application`.
+
+- **`ndjsonRoute` / `sseRoute` / `streamingRoute` — a long-lived subscription
+  route.** `RawRoute` + `ctx.server` already gave every capability needed to
+  serve a continuing body; the problem was that each such route's author had to
+  independently remember three unrelated things, each of which fails quietly: clear the generic HTTP idle timeout (Bun resets an
+  idle connection after ten seconds, which for a subscription is a healthy
+  connection severed on a schedule), send a heartbeat (proxies do not hold a
+  connection carrying no bytes), and flush the headers at open (a runtime sends
+  nothing until the body produces a byte, so the consumer's `fetch` never
+  returns and "subscribed and silent" becomes indistinguishable from "not
+  answering"). The route does all three, frames NDJSON or SSE from one code path,
+  and cancels the source when the consumer leaves.
+
+  Cancellation is a signal, not just `iterator.return()`: an async generator
+  serialises its requests, so a `return()` issued while a `next()` is in flight
+  is queued behind it — and a subscription is in `next()` almost always. The
+  source is given `context.signal`, aborted the moment the consumer goes away
+  through either route (request abort or stream cancel).
+
+  ```ts
+  ndjsonRoute({
+    path: '/events/subscribe',
+    heartbeatMs: 5_000,
+    source: async function* (request, { signal }) {
+      for await (const event of subscribe({ signal })) yield event
+    },
+  })
+  ```
+
+- **`parseNDJSON`** on the root entrypoint — the client half, in which **blank
+  lines are skipped**. That is the contract rather than a convenience: the
+  keep-alive frame for this framing is an empty line, so writing the rule on
+  both sides stops it being a verbal agreement between two halves of one
+  project.
+
+- **`createSocketIOClient({ peers })` — the client half of peer injection.**
+  0.60.0 gave the server a way to put `socket.io` inside a self-contained
+  artifact; the client had none, and `socket.io-client` is resolved through a
+  variable specifier that no bundler can follow *by construction*. A consumer
+  shipping one file that **dials** a socket — a CLI, an agent, a worker — was
+  left with the workaround that release closed: patching stitchkit's built
+  `dist`. `peers: { client: () => import('socket.io-client') }` puts the literal
+  in the consumer's own source. Omitting it changes nothing.
+
+- **`RealtimeRequestRejectedError` — a schema rejection is now visible to the
+  sender.** A frame that failed the receiver's contract was dropped where it
+  landed: the receiver reported `onRejected` and the sender learned nothing,
+  waiting out its deadline and reporting a timeout. A version skew therefore
+  presented as *healthy machines, unexplained timeouts*, symmetrically and on
+  every plane at once. When the refused event carries an acknowledgement, the
+  refusal now travels back on it and `request()` rejects at once with the
+  reason and the peer's already-flattened issues (`path: '0.v'`), which replaces
+  the documented recipe of inspecting a `ZodError`'s internals. The back-channel
+  is the callback that is on the wire, so a **sender-first rollout** — the
+  sender's contract has gained an acknowledgement and the receiver's has not —
+  is answered rather than timed out. The issue list is capped where the envelope
+  is built, and `reason` is a string so a later release's reason still reads as a
+  refusal. On a bare `emit(event, …, callback)` a refusal reaches `onRejected`
+  and not the callback; `request()` is the path that rejects. → ADR 0106
+
+  **Talking to a peer that predates this**: it parses the envelope with its own
+  `ack` schema. A contract-first acknowledgement (a `z.object`) rejects it, so
+  the older peer raises `RealtimeRequestInvalidAcknowledgementError` at once
+  instead of timing out. An older peer whose acknowledgement schema validates
+  nothing (`z.unknown()`, a loose object) would instead read the refusal as a
+  value — the one pairing where this is a step sideways, named in ADR 0106.
+
+### Fixed
+
+- **`managedServerResource` could not shut a server down at all**, and
+  `retryAfterSeconds` was the same defect one field over.
+  `ManagedResourceContext.now()` is `performance.now()`, so every budget the
+  adapter derived from it was fractional, and `ShutdownOptionsSchema` declares
+  `gracePeriodMs`/`forceTimeoutMs` as integers and validates its input. The
+  server therefore refused every call the adapter made, in every phase: the
+  application always finished `forced` without once stopping the server
+  properly, and the reason was visible only to a consumer who had wired
+  `onResourceFailure`. Budgets are now whole milliseconds, rounded down —
+  a budget is a promise about time that remains.
+
+- **Rolling back a failed startup is a shutdown, not an abort.** The rollback
+  called each resource's `close` with no deadlines at all, so an adapter's
+  honest arithmetic produced `{ gracePeriodMs: 0, forceTimeoutMs: 0 }` — an
+  immediate hard abort of requests already in flight, on a path nobody chose to
+  be on. It cost three things, not one: the request died at the socket rather
+  than being answered; the rollback itself then failed, because
+  `withTimeout(forceStop(), 0)` cannot succeed; and that failure *replaced the
+  diagnosis*, so `start()` rejected with an `AggregateError` reading "startup
+  and rollback failed" and the resource that actually broke was one entry down.
+  The rollback now spends the application's declared budget, and the startup
+  cause is again what `start()` rejects with.
+
+- **A rollback is now bounded, not merely budgeted.** `closeAttempted` awaited
+  each `close` with nothing watching the clock, so a resource whose `close`
+  never returned — a poller awaiting its own completion, a consumer resource
+  with a hung upstream — kept a failed startup from ever reporting why it
+  failed. The budget is now enforced: an unfinished `close` is abandoned when it
+  runs out and reported as a `close` failure, with the startup error preserved
+  as the `AggregateError`'s `cause`.
+
+- **`managedServerResource` no longer reads an absent deadline as a spent one.**
+  `ManagedResourceContext` declares `deadlineAt` and `forceDeadlineAt` optional,
+  so absence is a legal input — the conformance kit builds such contexts, and so
+  may a consumer. The adapter collapsed it into `now`, producing a zero budget;
+  it now omits the field and lets `ShutdownOptionsSchema` apply the defaults it
+  already carries.
+
+- **The refusal when an application is not ready after startup names the
+  resource.** It said "a required resource lost readiness during startup",
+  which is a false lead for a resource that never had it.
+
+- **A `socket.io-client` peer that cannot load no longer takes the process
+  down.** The load failure was an unhandled rejection, so a missing peer killed
+  the process at the first `connect()` — with no way for the caller to catch,
+  retry or report it. It is now delivered to `onConnectError` with
+  `terminal: true`, and the client resets its connection intent so a later
+  `connect()` can start a fresh attempt. With no `onConnectError` the failure is
+  still re-thrown, so nothing becomes silent. A load that fails while a
+  `disconnect()`/`connect()` races it is now reported once rather than twice.
+
+- **`streamSSE`'s `cancel` no longer waits on the generator it is cancelling.**
+  An async generator serialises its requests, so a `return()` issued while a
+  `next()` is in flight is queued behind it — awaiting it made cancellation wait
+  for the very value the departed consumer was no longer there to receive. The
+  generator is still asked to finish; the cancel no longer hangs on the answer.
+  A source that *waits* rather than produces belongs in `streamingRoute`, which
+  hands it an abort signal. (The ordering consequence is under **Breaking
+  changes** above.)
 
 ## [0.60.1] — 2026-08-25
 
@@ -3704,7 +3902,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.60.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/max-listov/stitchkit/compare/v0.60.1...v0.61.0
 [0.60.1]: https://github.com/max-listov/stitchkit/compare/v0.60.0...v0.60.1
 [0.60.0]: https://github.com/max-listov/stitchkit/compare/v0.59.4...v0.60.0
 [0.59.4]: https://github.com/max-listov/stitchkit/compare/v0.59.3...v0.59.4

@@ -59,36 +59,64 @@ const realtimeContract = defineRealtimeContract({
 })
 ```
 
-The original `z.ZodError` is retained as `RealtimeRejectedEvent.error.cause`.
-Because event arguments are a tuple, the first payload's `v` path is
-`[0, 'v']` (not `['v']`):
+A frame that fails this check is **refused, and the sender is told so** — when
+the event has an acknowledgement. `request()` rejects with
+`RealtimeRequestRejectedError`, immediately, carrying the peer's own issues:
 
 ```ts
-import type { RealtimeRejectedEvent } from 'stitchkit'
-import { z } from 'zod'
+import { RealtimeRequestRejectedError } from 'stitchkit'
 
-function isProtocolGenerationMismatch(rejected: RealtimeRejectedEvent): boolean {
-  const cause = rejected.error.cause
-  if (!(cause instanceof z.ZodError)) return false
-  const first = cause.issues[0]
-  return first?.code === 'invalid_value'
-    && first.path.length === 2
-    && first.path[0] === 0
-    && first.path[1] === 'v'
+try {
+  await socket.request('replicate', message, { timeoutMs: 5_000 })
+} catch (error) {
+  if (error instanceof RealtimeRequestRejectedError) {
+    // reason: 'invalid-arguments'; issues: [{ path: '0.v', code: 'invalid_value', … }]
+    if (error.issues?.some((issue) => issue.path === '0.v')) schedulePeerUpgrade()
+    else reportMalformedRealtimePayload(error)
+  }
 }
-
-const socket = createRealtimeClient(realtimeContract, {
-  url,
-  onRejected: (rejected) => {
-    if (isProtocolGenerationMismatch(rejected)) schedulePeerUpgrade()
-    else reportMalformedRealtimePayload(rejected)
-  },
-})
 ```
 
-A generation mismatch means “upgrade the peer”; another schema rejection means
-“fix the producer or payload”. This stays an application convention, not a core
-API: only the application knows which field denotes protocol compatibility.
+`path` is `'0.v'` and not `'v'` because event arguments are a tuple: index `0`
+is the first payload. The issues are already flattened by Stitchkit's own
+normaliser, so telling "wrong generation" from "malformed payload" is one
+comparison rather than an inspection of a `ZodError`'s internals.
+
+The receiving side still reports it locally through `onRejected` — a refusal is
+now visible on **both** ends rather than only where it happened.
+
+**Two limits, both real.** A **fire-and-forget** event has no acknowledgement
+channel, so its refusal stays local: the sender learns nothing, and no
+convention in the payload can change that. And an event the receiver's contract
+does not contain has no listener at all, so there is nothing on that side to
+answer with — adding an event is not a change a generation field can announce.
+
+### Where protocol identity belongs
+
+For a distributed pair whose planes are mostly fire-and-forget, compare
+identity **at the handshake** instead, where a mismatch is refused before the
+first frame is interpreted and both ends see it at once. The typed handshake is
+already the place:
+
+```ts
+const handshake = {
+  schema: z.object({ token: z.string(), protocol: z.string() }),
+  verify: (auth) => {
+    if (auth.protocol !== PROTOCOL_IDENTITY) return null   // refused, with a reason
+    return { subject: verifyToken(auth.token) }
+  },
+}
+```
+
+The client sends it as `auth`, and a rejection reaches `onConnectError` with
+`terminal: true` — distinguishable in a log from a bad token, so a half-rolled
+deployment reads as a half-rolled deployment and not as an access problem.
+
+What that identity *is* remains the application's decision — a build version, a
+contract hash, a protocol generation. Stitchkit does not compare it for you
+(→ ADR 0002); it gives the place where the comparison happens before any frame
+is interpreted, and it makes the per-frame alternative honest by letting its
+refusals be seen.
 
 ## Server — `createSocketIOServer`
 

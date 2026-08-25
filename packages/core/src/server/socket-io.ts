@@ -28,6 +28,7 @@ import type {
   Socket as SocketIOSocket,
 } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
+import { isModuleNotFound } from '../internal/optional-peer';
 import { transportResult } from '../internal/typed';
 import type { BunServer } from './bun';
 import type { SocketIOHandshakeConfig, SocketIOServerConfig } from './socket-io-config';
@@ -97,18 +98,6 @@ const noop = (): void => {
 };
 
 /** True when an import failed because the module is simply not installed. */
-function isModuleNotFound(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const code = 'code' in err ? err.code : undefined;
-  const message = 'message' in err && typeof err.message === 'string' ? err.message : '';
-  return (
-    code === 'ERR_MODULE_NOT_FOUND' ||
-    code === 'MODULE_NOT_FOUND' ||
-    message.includes('Cannot find module') ||
-    message.includes('Cannot find package')
-  );
-}
-
 /**
  * Load an optional peer, turning a missing-module failure into an actionable
  * error that names the package and the install command — instead of a bare

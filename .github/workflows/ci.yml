@@ -109,13 +109,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
+      # The supervisor is a pinned devDependency, so it arrives with this
+      # install — the lane still runs the generated project's own `pm2:prod`
+      # through the REAL supervisor, at a version this repository chose rather
+      # than whatever npm serves during the run. A live install here would put a
+      # third-party publication on the release-critical path, which is the same
+      # reason the Playwright image is pinned by digest and Bun by tarball hash.
       - run: bun install --frozen-lockfile --ignore-scripts
-      # The lane runs the generated project's own `pm2:prod`, so PM2 has to be
-      # a real executable on PATH — it is the subject of the check, not a stand-in.
-      - name: Install the supervisor
-        run: |
-          bun add --global pm2
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - run: bun run supervised-lane
 
   starter:

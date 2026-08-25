@@ -845,6 +845,7 @@ focused helper — not a sub-framework.
 |--------|------|
 | `serveFile()` | serve a file with `Range` / `304` / `HEAD` (media seeking) |
 | `streamSSE()` | turn an `AsyncGenerator` into a Server-Sent-Events `Response` |
+| `ndjsonRoute()` / `sseRoute()` | a **long-lived** subscription route, with the whole checklist |
 | `parseMultipart()` | parse a typed buffered/streaming multipart descriptor |
 | `createRateLimiter()` | per-key token-bucket rate limiting |
 | `createCache()` + `cacheHeaders()` | in-memory TTL cache; `Cache-Control` builder |
@@ -869,6 +870,64 @@ stream: () => streamSSE(tokens()),    // → a text/event-stream Response
 ```
 
 The client side is [`parseSSE`](./client.md#sse).
+
+`streamSSE` is for a stream that **finishes** — a completion, a job's output.
+For one that stays open, see below.
+
+### Long-lived subscriptions
+
+`streamSSE` assumes the generator keeps producing. A **subscription** is the
+opposite: silence is its normal state, and three unrelated things have to be
+right or it breaks without saying anything. (Measured: with a heartbeat under
+the threshold, either of the first two alone keeps an in-process connection
+alive — the first earns its place against what a heartbeat cannot reach, an
+intermediary applying its own idle rule.)
+
+1. **The generic idle timeout has to go.** Without `server.timeout(req, 0)` Bun
+   resets the connection after ten seconds — a healthy connection severed on a
+   schedule, precisely because the subscriber had nothing to be told.
+2. **Something has to be on the wire.** Even with the timeout gone,
+   intermediate proxies are under no obligation to hold a connection carrying no
+   bytes.
+3. **The headers have to leave at open.** A runtime sends nothing until the body
+   produces a byte, so the consumer's `fetch` does not return. "Subscribed and
+   silent" then looks exactly like "not answering", and there is nothing to
+   inspect because there is no response yet.
+
+`ndjsonRoute` / `sseRoute` do all three, and close the source when the consumer
+goes away:
+
+```ts
+import { ndjsonRoute } from 'stitchkit/server'
+
+const events = ndjsonRoute({
+  path: '/events/subscribe',
+  heartbeatMs: 5_000,                       // default; keep it well under 10s
+  source: async function* (request, { signal }) {
+    for await (const event of subscribe({ signal })) yield event
+  },
+})
+
+createServer({ port: 3000, rawRoutes: [events] })
+```
+
+The client half is [`parseNDJSON`](./client.md#ndjson) — and the keep-alive
+frame is an **empty line**, so "blank lines are skipped" is part of the
+documented contract rather than an agreement between two halves of one project.
+`sseRoute` frames the same source as SSE and is read by `parseSSE` unchanged.
+
+**Honour `context.signal`.** It is the one part the route cannot do for you, and
+the reason is worth knowing: an async generator serialises its requests, so
+`iterator.return()` issued while a `next()` is in flight is *queued behind it*.
+A subscription is in `next()` almost always, so the close would wait for an
+event that may never come. The signal is aborted the moment the consumer
+disconnects — through either route, a request abort or a stream cancel — and a
+source that waits on it stops at once. (`iterator.return()` is still called; it
+closes a source suspended at a `yield`.)
+
+A failure part-way through arrives as a final frame carrying the framework
+error envelope, normalised — once the headers are gone there is no status left
+to send, and an internal message must not reach the wire raw.
 
 ### Multipart
 

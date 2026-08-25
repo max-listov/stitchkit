@@ -73,7 +73,13 @@ export interface RealtimeRejectedEvent {
     | 'unknown-event'
     | 'invalid-arguments'
     | 'invalid-acknowledgement-value'
-    | 'missing-acknowledgement';
+    | 'missing-acknowledgement'
+    /**
+     * The PEER refused our frame against its own copy of the contract, and
+     * said so. Reported on the sender, where a silent drop used to leave
+     * nothing but an expiring deadline.
+     */
+    | 'rejected-by-peer';
   fault: 'peer' | 'local';
   error: AppError<'REALTIME_CONTRACT_VIOLATION'>;
 }

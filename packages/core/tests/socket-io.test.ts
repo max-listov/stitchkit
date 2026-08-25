@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { z } from 'zod';
 import {
@@ -1142,6 +1142,134 @@ describe('Socket.IO sticky events (retain)', () => {
       late.push(data);
     });
     expect(late).toEqual([]);
+    client.disconnect();
+  });
+});
+
+describe('the client half of peer injection', () => {
+  /**
+   * The mirror of the server block below, and the same argument.
+   *
+   * `socket.io-client` is resolved through a variable specifier, so no bundler
+   * can follow it BY CONSTRUCTION. A consumer shipping one self-contained
+   * artifact — a CLI, an agent, a daemon that DIALS a socket rather than
+   * accepting connections — therefore could not get the package into the file,
+   * and learned about it at the first `connect()`. The server got a way back in
+   * 0.60.0; without this the same consumer still had to patch stitchkit's built
+   * `dist`, which is the dead end that release closed.
+   */
+  // A server of its own: the shared one above is shut down by its describe's
+  // `afterAll`, which has already run by the time this block starts.
+  let peerServer: ReturnType<typeof createServer>;
+  let peerUrl = '';
+  beforeAll(async () => {
+    const handle = await createSocketIOServer<ServerEvents, ClientEvents>({
+      cors: { origin: '*' },
+    });
+    handle.io.on('connection', (connection) => {
+      connection.on('ping', (data) => connection.emit('pong', { n: data.n + 1 }));
+    });
+    peerServer = createServer({ port: 0, socket: handle });
+    peerUrl = `http://localhost:${peerServer.port}`;
+  });
+  afterAll(() => peerServer.shutdown({ gracePeriodMs: 0 }));
+
+  test('an injected loader is the one that is used, and it really connects', async () => {
+    let calls = 0;
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: peerUrl,
+      transports: ['websocket'],
+      peers: {
+        client: async () => {
+          calls += 1;
+          return await import('socket.io-client');
+        },
+      },
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await within(connected, 'injected-loader connect');
+    // Not merely "the loader ran": the socket built from what it returned
+    // completes a round trip. A loader that resolved to the wrong module would
+    // pass a call-count assertion and fail here.
+    const pong = new Promise<{ n: number }>((resolve) => {
+      client.on('pong', resolve);
+    });
+    client.emit('ping', { n: 41 });
+    expect(await within(pong, 'injected-loader pong')).toEqual({ n: 42 });
+    expect(calls).toBe(1);
+    client.disconnect();
+  });
+
+  test('a loader whose package is absent from the artifact reaches onConnectError', async () => {
+    // Two things at once, and the second is why this is a fix and not only a
+    // feature. The advice differs from the default path's, because the fixes
+    // differ — telling someone to install a package on the machine is the wrong
+    // answer for an artifact that was supposed to carry it. And the failure
+    // ARRIVES somewhere: it used to be an unhandled rejection that took the
+    // process down, leaving the caller nothing to catch, retry or report.
+    const errors: { message: string; terminal: boolean }[] = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: peerUrl,
+      peers: {
+        client: () => Promise.reject(new Error("Cannot find package 'socket.io-client'")),
+      },
+      onConnectError: (error) =>
+        errors.push({ message: error.message, terminal: error.terminal }),
+    });
+    client.connect();
+    await Bun.sleep(50);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.terminal).toBe(true);
+    expect(errors[0]?.message).toContain('through the loader passed in `peers`');
+    expect(errors[0]?.message).toContain('the artifact does not contain it');
+    expect(errors[0]?.message).not.toContain('bun add');
+    // The attempt is over, so a later connect() may start a fresh one rather
+    // than finding a client that believes it is already connecting.
+    expect(client.connected).toBe(false);
+  });
+
+  test('a loader that returns the wrong module is refused by name', async () => {
+    const errors: string[] = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: peerUrl,
+      // The likely slip: handing back a default export or a namespace with no
+      // `io`. Without this it fails much later as `io is not a function`.
+      peers: { client: () => Promise.resolve({ io: undefined as never }) },
+      onConnectError: (error) => errors.push(error.message),
+    });
+    client.connect();
+    await Bun.sleep(50);
+    expect(errors[0]).toContain('did not return the "socket.io-client" module');
+  });
+
+  test('an error that is not a missing module is passed through untouched', async () => {
+    // A loader that throws for its own reasons must not be reported as a
+    // packaging problem — that would send the reader after the wrong thing.
+    const errors: string[] = [];
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: peerUrl,
+      peers: { client: () => Promise.reject(new Error('the loader itself is broken')) },
+      onConnectError: (error) => errors.push(error.message),
+    });
+    client.connect();
+    await Bun.sleep(50);
+    expect(errors).toEqual(['the loader itself is broken']);
+  });
+
+  test('omitting peers changes nothing — the lazy default still connects', async () => {
+    // The additive half of the promise: a project that never heard of `peers`
+    // behaves exactly as it did, and one that never opens a socket still never
+    // loads the package.
+    const client = createSocketIOClient<ServerEvents, ClientEvents>({
+      url: peerUrl,
+      transports: ['websocket'],
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await within(connected, 'default-path connect');
+    expect(client.connected).toBe(true);
     client.disconnect();
   });
 });

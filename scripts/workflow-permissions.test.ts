@@ -113,7 +113,11 @@ describe('CI release-critical graph', () => {
     // proves one run; this job is what makes the class of check repeatable.
     const supervised = supervisedSection();
     expect(supervised).toContain('- run: bun run supervised-lane');
-    expect(supervised).toContain('bun add --global pm2');
+    // The supervisor is pinned in this repository's own lockfile rather than
+    // installed live during the run: a third-party publication must not be able
+    // to redden a release commit for reasons unrelated to it.
+    expect(supervised).not.toContain('bun add --global pm2');
+    expect(supervised).toContain('bun install --frozen-lockfile');
     expect(supervised).toContain('STARTER_TEST_DATABASE_ADMIN_URL:');
     expect(supervised).toContain('image: postgres:18-alpine');
   });

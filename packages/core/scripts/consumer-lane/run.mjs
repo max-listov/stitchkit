@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
+import { runSelfContainedSocketClientProof } from './self-contained-socket-client.mjs';
 
 const here = import.meta.dirname;
 const pkgRoot = join(here, '..', '..');
@@ -60,6 +61,14 @@ const timings = [];
 function step(label, fn) {
   const started = Date.now();
   const result = fn();
+  timings.push([label, Date.now() - started]);
+  return result;
+}
+
+/** `step`, for a proof that has to wait on a real process. */
+async function asyncStep(label, fn) {
+  const started = Date.now();
+  const result = await fn();
   timings.push([label, Date.now() - started]);
   return result;
 }
@@ -235,6 +244,19 @@ try {
           recipesOutput,
         );
       }
+      // A long-lived response is served and read from `dist`, through the
+      // `exports` map, with every type named on purpose. The in-repo suite
+      // structurally cannot see either half.
+      const streamingOutput = step('minimal: long-lived streaming subscription', () =>
+        run('bun', ['src/streaming-subscription.ts'], dir),
+      );
+      if (!streamingOutput.includes('streaming subscription: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: streaming subscription produced no proof',
+          streamingOutput,
+        );
+      }
     }
 
     if (name === 'node') {
@@ -261,6 +283,15 @@ try {
   try {
     step('self-contained socket artifact', () =>
       runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
+    );
+  } catch (error) {
+    failed = true;
+    console.error(error instanceof Error ? error.message : error);
+  }
+
+  try {
+    await asyncStep('self-contained socket client artifact', () =>
+      runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
     );
   } catch (error) {
     failed = true;

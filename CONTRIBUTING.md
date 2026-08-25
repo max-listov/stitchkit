@@ -37,12 +37,49 @@ bun run consumer-lane  # install the packed tarball into a fixture app and use i
 bun run starter-lane       # both scaffold variants against the published Stitchkit target
 bun run starter-head-lane  # both scaffold variants against packed framework HEAD
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
-bun run verify    # all framework and packed-consumer gates
+bun run verify    # every gate CI runs, including the supervised PM2 lane
+bun run verify:fast    # lint + check + test, the part that is faster to learn locally
+bun run update:starter # move the template's framework range and lockfile together
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
 
-`bun run verify` must be green before a change is opened as a PR — CI runs the
-same suite, and the `pre-push` hook runs `verify` automatically.
+`bun run verify` needs three things beyond Bun, and only the first two have to
+be arranged by hand: a reachable **PostgreSQL** named by
+`STARTER_TEST_DATABASE_ADMIN_URL`, the **Playwright browsers**
+(`bun x playwright install`), and the **supervisor** — which is a pinned
+devDependency, so `bun install` is all it takes. `bun run verify:fast` needs
+none of them.
+
+`bun run verify` must be green before a **release commit**. For an ordinary
+change, the `pre-push` hook runs `verify:fast` and CI runs the whole matrix —
+it is a superset of `verify`, sharded across ten runners, and it answers faster
+than one machine walking the same lanes in single file. The reasoning and the
+per-push table are in [`AGENTS.md`](./AGENTS.md#what-runs-where).
+
+The gate remembers its last green run by working-tree content, so a push whose
+tree is unchanged is not gated twice; any edit to any file runs it again, and a
+skip prints which run answers for it. **The memo is consulted only under
+`--if-changed`, which is what `pre-push` passes** — typing `bun run verify` or
+`bun run verify:fast` yourself always runs every step, which is what you want
+from a command you invoked on purpose. The memo lives in the machine's cache
+(`$XDG_CACHE_HOME/stitchkit/green-gates.json`, or `~/.cache/stitchkit/…` when
+that variable is unset); deleting it makes the next push run in full.
+
+### Updating the template's dependencies
+
+Use `bun run update:starter`, not a raw `bun update`. The template's Stitchkit
+range lives in exactly one place — the root `catalog` block — and `bun update`
+rewrites every `"stitchkit": "catalog:"` reference into the literal range it
+resolved, six manifests at once under `--latest`. A gate catches that, but a
+full lane later. The command sets the range from the registry, restores the
+references, re-checks the invariant on the spot and prints every resolution that
+moved, including ones you did not ask for.
+
+```bash
+bun run update:starter              # move stitchkit to the newest published version
+bun run update:starter zod          # update named packages instead
+bun run update:starter --latest zod # ...across ranges
+```
 
 ### The consumer lane
 
@@ -147,11 +184,17 @@ root `prepare` script):
   Backticked spans and fenced blocks are exempt — there the sequence is being
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
-  tag first, then `verify` once for a code/branch push. The preflight checks the
+  tag first, then picks the local gate by what a red CI run would cost on the
+  commit being pushed: `verify:fast` for an ordinary branch push, the whole of
+  `verify` plus the packed HEAD lane for a push carrying the `release(...)`
+  commit, nothing further for a tag-only push. The table and the reasoning are
+  in [`AGENTS.md`](./AGENTS.md#what-runs-where). The preflight checks the
   package version, the release notes, the calibre (a `### ⚠️ Breaking changes`
   section may not ride a patch bump), the presence of the matching
   `## Released migration: X.Y.Z` in the upgrade guide for a breaking core
-  release, and the `release(<scope>): … in X.Y.Z` subject of the pushed SHA.
+  release, the `release(<scope>): … in X.Y.Z` subject of the pushed SHA, and —
+  for a scaffolder tag only — that the template lockfile resolves the newest
+  published framework version its own range allows.
   Deletion-only pushes run no build.
 
 Wire them manually with `git config core.hooksPath .githooks`. Bypass once with

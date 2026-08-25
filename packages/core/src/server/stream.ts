@@ -29,9 +29,17 @@ export function streamSSE(generator: AsyncGenerator<unknown>): Response {
         controller.close();
       }
     },
-    async cancel() {
+    cancel() {
       cancelled = true;
-      await generator.return(undefined);
+      // Not awaited, and that is the point. An async generator serialises its
+      // requests: a `return()` issued while a `next()` is in flight is queued
+      // behind it, so awaiting here makes cancellation wait on the very value
+      // the departed consumer was waiting for. The generator is still asked to
+      // finish; the cancel simply no longer hangs on the answer.
+      //
+      // For a source that may WAIT rather than produce — a subscription — use
+      // `streamingRoute`, which gives it an abort signal it can honour.
+      void generator.return(undefined).catch(() => undefined);
     },
   });
 

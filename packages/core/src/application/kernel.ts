@@ -26,6 +26,30 @@ interface ResourceRecord {
   readonly entry: ResolvedManagedResource;
   state: ManagedResourceState;
   health: ApplicationHealth;
+  /**
+   * Whether the resource itself has said something about its health.
+   *
+   * Becoming ready used to assign `healthy` unconditionally, which threw away
+   * whatever `reportHealth` had been told during `start`. It was hard to notice
+   * because the guide's own minimal example reports `healthy` — the same value
+   * that overwrote it — so the example appeared to work and taught the habit.
+   * For a resource that starts DEGRADED on purpose (up, but still dialling
+   * something external) the report vanished and the resource looked healthy
+   * from outside: an API that accepts a value and silently discards it, which
+   * is the worst shape a failure can take.
+   */
+  healthReported: boolean;
+  /**
+   * Whether this resource was healthy at any point.
+   *
+   * The discriminator the two refusal messages need, and neither
+   * `healthReported` nor "health before activation" is it: both are true of a
+   * database that started fine and then dropped, and of a resource that
+   * deliberately started degraded. Telling the first "put it behind
+   * `required: false`" is the worst possible advice, and telling the second it
+   * "lost readiness" points at something that never happened.
+   */
+  everHealthy: boolean;
   attempted: boolean;
   activated: boolean;
   closeInvoked: boolean;
@@ -81,9 +105,33 @@ export const ApplicationShutdownOptionsSchema = ShutdownOptionsSchema.pick({
 });
 export type ApplicationShutdownOptions = z.input<typeof ApplicationShutdownOptionsSchema>;
 
+/**
+ * The budget this application spends on stopping — and the one thing a failed
+ * startup's rollback had no way to know.
+ *
+ * A rollback happens inside `start()`, so there is no call for a caller to pass
+ * options to. The budget therefore has to be declared where the application is,
+ * and once it is declared there it is also the sensible default for
+ * `shutdown()` with no options: one number for "how long this application may
+ * take to stop", not two that can disagree.
+ *
+ * `signal` is deliberately absent. A budget is a property of the application; a
+ * signal belongs to the one call that carries it.
+ */
+export const ApplicationShutdownBudgetSchema = ShutdownOptionsSchema.pick({
+  gracePeriodMs: true,
+  forceTimeoutMs: true,
+});
+export type ApplicationShutdownBudget = z.input<typeof ApplicationShutdownBudgetSchema>;
+
 export interface ApplicationConfig {
   readonly id: string;
   readonly resources?: readonly ManagedResource[];
+  /**
+   * How long stopping may take — for `shutdown()` called with no options, and
+   * for the rollback of a failed `start()`, which has no other way to be told.
+   */
+  readonly shutdown?: ApplicationShutdownBudget;
   readonly onSnapshot?: (snapshot: ApplicationSnapshot) => void | Promise<void>;
   /**
    * Observe why a phase failed.
@@ -175,6 +223,7 @@ async function untilDeadline<T>(
 export function createApplication(config: ApplicationConfig): ApplicationHandle {
   const id = ApplicationIdSchema.parse(config.id);
   const ordered = resolveResourceGraph(config.resources ?? []);
+  const shutdownBudget = ApplicationShutdownBudgetSchema.parse(config.shutdown ?? {});
   const reverse = [...ordered].reverse();
   const reportFailure = (
     resourceId: string,
@@ -201,6 +250,8 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       entry,
       state: 'registered',
       health: 'unknown',
+      healthReported: false,
+      everHealthy: false,
       attempted: false,
       activated: false,
       closeInvoked: false,
@@ -309,6 +360,8 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     reportHealth(health) {
       if (record.state === 'stopped') return;
       record.health = health;
+      record.healthReported = true;
+      if (health === 'healthy') record.everHealthy = true;
       accepting = activationComplete && !shutdownRequested && isReady();
       publish();
     },
@@ -340,13 +393,85 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
 
   const closeAttempted = async (): Promise<unknown[]> => {
     const errors: unknown[] = [];
+    // Rolling back a failed startup is not a full shutdown — it runs `close`
+    // and only `close`, one phase of five — but it is still a stopping path,
+    // and it needs the deadlines every other stopping path gets. Without them a resource reading
+    // `deadlineAt` sees nothing, and the honest arithmetic — `now - now` — comes
+    // out as ZERO: `managedServerResource` then handed its server
+    // `{ gracePeriodMs: 0, forceTimeoutMs: 0 }`, an immediate hard abort of
+    // requests already in flight, on a path nobody chose to be on.
+    //
+    // The absence of a deadline means "none was given", not "no time". So the
+    // rollback spends the application's declared budget — the same one
+    // `shutdown()` spends — and the ceiling costs nothing when there is nothing
+    // to drain: a grace period is a deadline, not a sleep, and `shutdown`
+    // returns as soon as the last request finishes. What it DOES cost is a
+    // failed startup with a request that never finishes: that used to be
+    // reported in milliseconds and now waits out the budget. An application
+    // that would rather hear about a broken start immediately says so —
+    // `createApplication({ shutdown: { gracePeriodMs: 0 } })` — which is also
+    // the only way this bound is testable in less than the budget.
+    const rollbackStartedAt = performance.now();
+    const rollbackDeadlineAt = rollbackStartedAt + shutdownBudget.gracePeriodMs;
+    const rollbackForceDeadlineAt = rollbackDeadlineAt + shutdownBudget.forceTimeoutMs;
+    // And ENFORCED, not merely handed out. A deadline a loop does not watch is a
+    // number, not a bound: `close` is the only phase a rollback runs, nothing
+    // wraps it, and a resource whose `close` never returns — a poller awaiting
+    // its own completion, a consumer resource with a hung upstream — stopped a
+    // failed startup from ever reporting why it failed. Passing budgets without
+    // this timer would have moved that hang from "forever" to "forever", while
+    // reading as if it were fixed.
+    const rollbackAbort = new AbortController();
+    const rollbackTimer = setTimeout(
+      () => rollbackAbort.abort(),
+      Math.max(0, rollbackForceDeadlineAt - performance.now()),
+    );
+    try {
+      await closeEachAttempted(rollbackAbort.signal, errors, {
+        deadlineAt: rollbackDeadlineAt,
+        forceDeadlineAt: rollbackForceDeadlineAt,
+      });
+    } finally {
+      clearTimeout(rollbackTimer);
+    }
+    return errors;
+  };
+
+  /** The reverse-order `close` sweep a rollback runs, bounded by `signal`. */
+  const closeEachAttempted = async (
+    bound: AbortSignal,
+    errors: unknown[],
+    deadlines: { deadlineAt: number; forceDeadlineAt: number },
+  ): Promise<void> => {
     for (const entry of reverse) {
       const record = records.get(entry.id);
       if (!record?.attempted || record.closed) continue;
       record.state = 'stopping';
       try {
         record.closeInvoked = true;
-        await entry.resource.close?.(contextFor(record, { signal: startupAbort.signal }));
+        const settled = await untilDeadline(
+          Promise.resolve(
+            entry.resource.close?.(
+              contextFor(record, { signal: startupAbort.signal, ...deadlines }),
+            ),
+          ),
+          bound,
+        );
+        if (!settled.settled) {
+          // The budget ran out with this resource still closing. Reported as a
+          // close failure, because that is what it is — and the startup cause
+          // stays the `cause` of the AggregateError either way.
+          record.failures.push('close');
+          record.state = 'failed';
+          const timedOut = new Error(
+            `[stitchkit] resource "${entry.id}" did not finish closing during rollback`,
+          );
+          reportFailure(entry.id, 'close', timedOut);
+          errors.push(timedOut);
+          publish();
+          break;
+        }
+        if (settled.error !== undefined) throw settled.error;
         record.closed = true;
         record.state = 'stopped';
       } catch (error) {
@@ -361,7 +486,6 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       }
       publish();
     }
-    return errors;
   };
 
   const runStart = async (): Promise<ApplicationSnapshot> => {
@@ -440,7 +564,13 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             throw new ApplicationStartupInterruptedError();
           }
           record.state = 'ready';
-          record.health = 'healthy';
+          // Only when the resource said nothing. A resource that reported its
+          // own health during `start` has already answered this question, and
+          // the answer is more specific than the default.
+          if (!record.healthReported) {
+            record.health = 'healthy';
+            record.everHealthy = true;
+          }
           publish();
         } catch (error) {
           // A shutdown arriving mid-startup does not make the resource's own
@@ -494,14 +624,29 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
           continue;
         }
         try {
+          // The check still fires for every required resource that is not ready
+          // and healthy after activating — that is what pushes the phase onto
+          // `failures`, calls `onResourceFailure`, and stops the cascade before
+          // the next resource's `activate` arms a schedule or opens a long
+          // poll. Loosening it to "lost it" alone kept the startup failing (the
+          // final readiness gate still refuses) but reported no phase for it and
+          // let every downstream activation run first.
+          //
+          // Only the WORDING depends on history: this test read "lost
+          // readiness" when becoming ready assigned `healthy` unconditionally,
+          // and a resource that reported `degraded` during `start` would
+          // otherwise be told it lost something it never had.
           await entry.resource.activate?.(contextFor(record));
           if (shutdownRequested || startupAbort.signal.aborted) {
             throw new ApplicationStartupInterruptedError();
           }
           record.activated = true;
           if (entry.required && (record.state !== 'ready' || record.health !== 'healthy')) {
+            const observed = `${record.state}/${record.health}`;
             throw new Error(
-              `[stitchkit] required resource "${entry.id}" lost readiness during activation`,
+              record.everHealthy
+                ? `[stitchkit] required resource "${entry.id}" lost readiness during activation (${observed})`
+                : `[stitchkit] required resource "${entry.id}" is not healthy (${observed}). A required resource must be healthy for the application to be ready; a resource that is expected to start degraded belongs behind \`required: false\`.`,
             );
           }
         } catch (error) {
@@ -522,7 +667,40 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         throw new ApplicationStartupInterruptedError();
       }
       if (!isReady()) {
-        throw new Error('[stitchkit] a required resource lost readiness during startup');
+        // Named, and described for what it is. "Lost readiness" was the only
+        // way to get here while becoming ready assigned `healthy`
+        // unconditionally; a resource that reports its own health can now
+        // arrive here having never been healthy, and a message about losing
+        // something is then a false lead.
+        //
+        // The advice is branched for the same reason, in the other direction:
+        // telling the operator of a database that just dropped to put it behind
+        // `required: false` is the worst possible suggestion. `everHealthy` is
+        // the fact that separates the two: it says whether the resource ever
+        // had the state it is now missing.
+        const blocking = [...records.values()]
+          .filter(
+            (record) =>
+              record.entry.required &&
+              (record.state !== 'ready' || record.health !== 'healthy'),
+          )
+          .map((record) => `${record.entry.id} (${record.state}/${record.health})`);
+        // Cannot be empty today — `isReady()` being false means the same
+        // predicate matches at least one required record — but a message that
+        // renders as "required resources ." if that stops holding is a
+        // formatting assumption, not a fact.
+        if (blocking.length === 0) blocking.push('(none identified)');
+        const chosen = [...records.values()].some(
+          (record) =>
+            record.entry.required && record.health !== 'healthy' && !record.everHealthy,
+        );
+        throw new Error(
+          `[stitchkit] the application is not ready after startup — required ${blocking.length === 1 ? 'resource' : 'resources'} ${blocking.join(', ')}. A required resource must be healthy for the application to be ready; ${
+            chosen
+              ? 'a resource that is expected to start degraded belongs behind `required: false`.'
+              : 'this one was healthy and stopped being so — read `onResourceFailure` for the cause.'
+          }`,
+        );
       }
       activationComplete = true;
       accepting = isReady();
@@ -603,7 +781,14 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     options?: ApplicationShutdownOptions,
   ): Promise<ApplicationShutdownResult> => {
     if (shutdownPromise) return shutdownPromise;
-    const parsed = ApplicationShutdownOptionsSchema.parse(options ?? {});
+    // The call's options win field by field; whatever it leaves out falls back
+    // to the application's declared budget, then to the schema's defaults.
+    const requested = options ?? {};
+    const parsed = ApplicationShutdownOptionsSchema.parse({
+      gracePeriodMs: requested.gracePeriodMs ?? shutdownBudget.gracePeriodMs,
+      forceTimeoutMs: requested.forceTimeoutMs ?? shutdownBudget.forceTimeoutMs,
+      ...(requested.signal !== undefined && { signal: requested.signal }),
+    });
     const startedAt = performance.now();
     const graceDeadlineAt = startedAt + parsed.gracePeriodMs;
     const forceDeadlineAt = graceDeadlineAt + parsed.forceTimeoutMs;

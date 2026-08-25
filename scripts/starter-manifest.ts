@@ -127,3 +127,74 @@ export async function assertCatalogIsTheOnlyStitchkitRange(root: string): Promis
     }
   }
 }
+
+/** The four sections a template manifest may name `stitchkit` in directly. */
+const RESTORABLE_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+  'peerDependencies',
+  'optionalDependencies',
+] as const;
+
+export interface RestoredReference {
+  manifest: string;
+  section: string;
+  was: string;
+}
+
+/**
+ * Put every dissolved `"stitchkit": "catalog:"` reference back.
+ *
+ * `bun update` rewrites a catalog reference into the literal range it resolved
+ * to — `--latest` did it in all six manifests at once. The invariant survives
+ * because a gate catches it, but the gate is a full lane away and the repair is
+ * a manual revert nobody thinks to make. Restoring it where the damage happens
+ * is what turns a papercut into a non-event.
+ *
+ * Only the four plain sections are restored. A nested `overrides` pin is not a
+ * dissolved reference, it is a second opinion about the range, and rewriting it
+ * would hide a decision instead of surfacing it — that one is left for
+ * `assertCatalogIsTheOnlyStitchkitRange` to refuse by name.
+ */
+export async function restoreCatalogReferences(root: string): Promise<RestoredReference[]> {
+  const manifests = ['package.json'];
+  try {
+    for (const entry of await readdir(join(root, 'packages'))) {
+      manifests.push(join('packages', entry, 'package.json'));
+    }
+  } catch {
+    // A tree with no `packages/` directory is repaired at its root alone.
+  }
+  // Every manifest is read AND parsed before any of them is written. A syntax
+  // error found halfway through used to abort with the range already bumped,
+  // the lockfile already rewritten and the references still dissolved — and the
+  // command's whole promise is that the invariant is checked at the command
+  // rather than a lane away, which a half-applied repair is the opposite of.
+  const parsed: { relative: string; path: string; manifest: object }[] = [];
+  for (const relative of manifests) {
+    const path = join(root, relative);
+    let source: string;
+    try {
+      source = await readFile(path, 'utf8');
+    } catch {
+      continue;
+    }
+    parsed.push({ relative, path, manifest: parseManifest(source, path) });
+  }
+
+  const restored: RestoredReference[] = [];
+  for (const { relative, path, manifest } of parsed) {
+    let changed = false;
+    for (const section of RESTORABLE_SECTIONS) {
+      const block = Reflect.get(manifest, section);
+      if (typeof block !== 'object' || block === null) continue;
+      const range = Reflect.get(block, 'stitchkit');
+      if (typeof range !== 'string' || range === 'catalog:') continue;
+      Reflect.set(block, 'stitchkit', 'catalog:');
+      restored.push({ manifest: relative, section, was: range });
+      changed = true;
+    }
+    if (changed) await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  return restored;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import type { RealtimeRejectedEvent } from '../src/realtime';
-import { realtimeContractViolation } from '../src/realtime/rejection';
+import { zodIssues } from '../src/internal/errors';
+import type { RealtimeRejectionIssue } from '../src/realtime';
 
 const ReplicationArguments = z.tuple([
   z.object({
@@ -10,43 +10,46 @@ const ReplicationArguments = z.tuple([
   }),
 ]);
 
-// Kept byte-for-byte equivalent to the guide recipe: this test is the proof
-// that its Zod issue path matches Stitchkit's tuple-shaped event contract.
-function isProtocolGenerationMismatch(rejected: RealtimeRejectedEvent): boolean {
-  const cause = rejected.error.cause;
-  if (!(cause instanceof z.ZodError)) return false;
-  const first = cause.issues[0];
-  return (
-    first?.code === 'invalid_value' &&
-    first.path.length === 2 &&
-    first.path[0] === 0 &&
-    first.path[1] === 'v'
-  );
+/**
+ * Kept equivalent to the guide recipe, which changed shape for a reason.
+ *
+ * It used to inspect a `ZodError`'s internals — issue code, path length, path
+ * elements — three conditions about somebody else's object shape for a fact
+ * that is binary. Two of those conditions were about Zod, not about the
+ * protocol, and a Zod release could have moved either. The refusal now travels
+ * to the sender with its issues already flattened, so the whole recipe is one
+ * comparison against a dotted path.
+ */
+function isProtocolGenerationMismatch(issues: RealtimeRejectionIssue[] | undefined): boolean {
+  return issues?.some((issue) => issue.path === '0.v') ?? false;
 }
 
-function rejected(value: unknown): RealtimeRejectedEvent {
+/** The issues a peer would send back for this payload. */
+function issuesFor(value: unknown): RealtimeRejectionIssue[] {
   const parsed = ReplicationArguments.safeParse([value]);
   if (parsed.success) throw new Error('fixture must be rejected');
-  return realtimeContractViolation({
-    event: 'replicated',
-    direction: 'client-inbound',
-    phase: 'arguments',
-    reason: 'invalid-arguments',
-    fault: 'peer',
-    cause: parsed.error,
-  });
+  return zodIssues(parsed.error);
 }
 
 describe('realtime protocol-generation documentation recipe', () => {
+  test('the first payload generation is the tuple path `0.v`', () => {
+    // The tuple index is the part everyone gets wrong: event arguments are a
+    // tuple, so the first payload's `v` is `0.v` and never `v`.
+    expect(issuesFor({ v: 1, item: { v: 3, id: 'one' } })).toEqual([
+      { path: '0.v', code: 'invalid_value', message: 'Invalid input: expected 2' },
+    ]);
+  });
+
   test('classifies only the first payload generation literal mismatch', () => {
     expect(
-      isProtocolGenerationMismatch(rejected({ v: 1, item: { v: 3, id: 'one' } })),
+      isProtocolGenerationMismatch(issuesFor({ v: 1, item: { v: 3, id: 'one' } })),
     ).toBeTrue();
     expect(
-      isProtocolGenerationMismatch(rejected({ v: 2, item: { v: 'bad', id: 'one' } })),
+      isProtocolGenerationMismatch(issuesFor({ v: 2, item: { v: 'bad', id: 'one' } })),
     ).toBeFalse();
     expect(
-      isProtocolGenerationMismatch(rejected({ v: 2, item: { v: 3, id: 99 } })),
+      isProtocolGenerationMismatch(issuesFor({ v: 2, item: { v: 3, id: 99 } })),
     ).toBeFalse();
+    expect(isProtocolGenerationMismatch(undefined)).toBeFalse();
   });
 });

@@ -21,6 +21,7 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 import type { EventsMap } from '@socket.io/component-emitter';
+import { isModuleNotFound } from '../internal/optional-peer';
 import type { StitchLogger } from '../logger';
 import type {
   RealtimeAcknowledgedEvent,
@@ -58,9 +59,51 @@ type ClientSocket = ReturnType<IoFn>;
 // `check-browser-clean`). A non-literal specifier stays a native `import()`.
 const SOCKET_IO_CLIENT = 'socket.io-client';
 
-// The peer module, loaded once and shared by every client. Failure clears the
-// cache so a later `connect()` can retry, and reports the missing peer clearly
-// (the same courtesy `stitchkit/server` gives for its Socket.IO server peer).
+/**
+ * How this project loads the optional Socket.IO **client** peer.
+ *
+ * The mirror of `SocketIOPeerLoaders` on the server, and for the same reason.
+ * The specifier above is a variable, so no bundler can follow it — by
+ * construction, not by accident. A consumer who ships one self-contained file
+ * to a machine with no `node_modules` therefore had no way to get
+ * `socket.io-client` into the artifact, and learned about it at the first
+ * `connect()` rather than at build time. The only workaround was patching
+ * stitchkit's built `dist`, which breaks whenever its internal layout moves —
+ * exactly the dead end the server half was added to close.
+ *
+ * Passing a loader puts the literal in the CONSUMER's source, where their own
+ * bundler sees it statically and includes the package:
+ *
+ * ```ts
+ * createSocketIOClient({
+ *   url,
+ *   peers: { client: () => import('socket.io-client') },
+ * })
+ * ```
+ *
+ * A function rather than an already-resolved module, so laziness is unchanged:
+ * a project that never opens a socket still never loads it.
+ */
+export interface SocketIOClientPeerLoaders {
+  /**
+   * `() => import('socket.io-client')`.
+   *
+   * Typed as `unknown` and shape-checked where it is used — the same reason
+   * `SocketIOPeerLoaders.bunEngine` is. The root `stitchkit` entry is the
+   * browser-safe one, and its declarations must not name `socket.io-client`:
+   * a consumer who imports `createClient` and never opens a socket would then
+   * need the package installed just to TYPECHECK, which the consumer-lane peer
+   * budget refuses by name. The loader is still written the obvious way; only
+   * the type of what it returns is checked at the boundary rather than here,
+   * and a loader that returns the wrong module is refused by name at runtime.
+   */
+  client?: () => Promise<unknown>;
+}
+
+// The peer module, loaded once and shared by every client that does NOT inject
+// a loader. Failure clears the cache so a later `connect()` can retry, and
+// reports the missing peer clearly (the same courtesy `stitchkit/server` gives
+// for its Socket.IO server peer).
 let ioLoader: Promise<IoFn> | null = null;
 function loadIo(): Promise<IoFn> {
   if (!ioLoader) {
@@ -69,13 +112,75 @@ function loadIo(): Promise<IoFn> {
       (cause) => {
         ioLoader = null;
         throw new Error(
-          'stitchkit: createSocketIOClient needs the "socket.io-client" peer — install it (e.g. `bun add socket.io-client`).',
+          'stitchkit: createSocketIOClient needs the "socket.io-client" peer — install it (e.g. `bun add socket.io-client`). Shipping one self-contained artifact instead? Pass `peers: { client: () => import(\'socket.io-client\') }` so your bundler puts it inside.',
           { cause },
         );
       },
     );
   }
   return ioLoader;
+}
+
+/**
+ * The one boundary where the injected module regains its type.
+ *
+ * `io` is a callable with properties, so the check is "callable" — anything
+ * stricter would refuse a legitimate module and anything looser would let a
+ * namespace object through to fail later as `io is not a function`.
+ */
+function isIoModule(module: unknown): module is { io: IoFn } {
+  if (typeof module !== 'object' || module === null) return false;
+  return typeof Reflect.get(module, 'io') === 'function';
+}
+
+/**
+ * One client's way of getting to `io`, memoised.
+ *
+ * An injected loader is never put in the module-level cache: two clients in one
+ * process may legitimately be built by different bundles, and one of them
+ * winning a shared slot would decide which module the other uses.
+ */
+function createIoResolver(injected: SocketIOClientPeerLoaders['client']): () => Promise<IoFn> {
+  if (!injected) return loadIo;
+  let pending: Promise<IoFn> | null = null;
+  return () => {
+    if (!pending) {
+      pending = injected().then(
+        (module: unknown) => {
+          // Refused by name rather than failing later as `io is not a function`
+          // — the loader is consumer-written and the likely slip is returning
+          // the default export or a namespace that has no `io`. This is also
+          // the boundary where the module regains its type, since the loader
+          // is declared `() => Promise<unknown>` to keep `socket.io-client`
+          // out of the browser entry's declarations.
+          const io = isIoModule(module) ? module.io : null;
+          if (!io) {
+            pending = null;
+            throw new Error(
+              'stitchkit: the loader passed in `peers.client` did not return the "socket.io-client" module — it must resolve to the module itself, as `() => import(\'socket.io-client\')`.',
+            );
+          }
+          return io;
+        },
+        (cause: unknown) => {
+          pending = null;
+          // Only a MISSING MODULE is re-explained. A loader that throws for its
+          // own reasons is not a packaging problem, and reporting it as one
+          // sends the reader after the wrong thing.
+          if (!isModuleNotFound(cause)) throw cause;
+          // A different fix from the default path: an injected loader failing
+          // means the BUNDLE does not contain the package, and installing
+          // something on the machine is the wrong answer for an artifact meant
+          // to be self-contained.
+          throw new Error(
+            'stitchkit: createSocketIOClient could not load "socket.io-client" through the loader passed in `peers` — the artifact does not contain it. Check that the loader is a literal `import(\'socket.io-client\')` your bundler can follow, and that "socket.io-client" is a dependency of the package being bundled.',
+            { cause },
+          );
+        },
+      );
+    }
+    return pending;
+  };
 }
 
 /**
@@ -189,6 +294,13 @@ export interface SocketIOClientConfig<TServerEvents extends SocketEventMap = Soc
    * arguments. The drop itself is also reported by `emit` returning `false`.
    */
   onDroppedEmit?: (dropped: { event: string; args: unknown[] }) => void;
+  /**
+   * How to load the optional `socket.io-client` peer. Omit it and the peer is
+   * resolved lazily, exactly as before — this exists for a consumer who ships
+   * one self-contained artifact and needs the specifier to be a literal their
+   * own bundler can follow. → `SocketIOClientPeerLoaders`
+   */
+  peers?: SocketIOClientPeerLoaders;
 }
 
 export interface SocketIOClient<
@@ -403,10 +515,19 @@ export function createSocketIOClient<
   // conditional-typed API that cannot be forwarded through a generic wrapper;
   // the default-typed socket lets the delegation stay cast-free.
   let socket: ClientSocket | null = null;
+  const resolveIo = createIoResolver(config.peers?.client);
   // Whether a connection is wanted right now — the source of truth the async
   // peer load reconciles against. `connect()` sets it, `disconnect()` clears it;
   // if a disconnect races the load, the resolved `io` is discarded.
   let desiredConnected = false;
+  // Whether a peer load is in flight. Separate from `desiredConnected`, because
+  // `disconnect()` clears that while the load is still running: a
+  // `connect() → disconnect() → connect()` sequence then saw "not connecting,
+  // no socket" and attached a SECOND handler to the same pending promise, so one
+  // failure was reported twice — `onConnectError` fired twice, or, with no hook,
+  // threw twice. The success side was already idempotent (`openSocket` re-checks
+  // intent); this is its missing counterpart.
+  let loadingPeer = false;
   // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingRequestDisconnects = new Set<() => void>();
@@ -502,6 +623,36 @@ export function createSocketIOClient<
     socket.connect();
   }
 
+  /**
+   * A peer that will not load is a TERMINAL connection failure, and it is
+   * reported as one.
+   *
+   * It used to be an unhandled rejection: `connect()` fired the load and
+   * nothing was listening on the failure path, so a missing `socket.io-client`
+   * took the process down at the first connect. The message was already the
+   * right one — the loader has wrapped the cause in an explanatory error for a
+   * long time — but an unhandled rejection is not something a caller can act
+   * on, retry, or report: the only outcome available was the process dying.
+   * For the self-contained-artifact consumer this adapter's `peers` option
+   * exists for, that is the worst possible moment to have no choices.
+   *
+   * With no `onConnectError` the failure is still re-thrown, so a project that
+   * asked for nothing keeps today's loud behaviour instead of a silent
+   * never-connecting client.
+   */
+  function reportPeerFailure(error: unknown): void {
+    // Cleared first: the attempt is over either way, and a later `connect()`
+    // must be able to start a fresh one (the same reset a terminal
+    // `connect_error` performs).
+    desiredConnected = false;
+    if (!config.onConnectError) throw error;
+    config.onConnectError({
+      message: error instanceof Error ? error.message : String(error),
+      data: error,
+      terminal: true,
+    });
+  }
+
   return {
     get connected() {
       return socket?.connected ?? false;
@@ -520,7 +671,18 @@ export function createSocketIOClient<
       // build; `emit` in this window drops — returns `false` and fires
       // `onDroppedEmit`), so callers see no difference beyond the connection
       // opening asynchronously, as it always did.
-      void loadIo().then(openSocket);
+      if (loadingPeer) return;
+      loadingPeer = true;
+      void resolveIo().then(
+        (io) => {
+          loadingPeer = false;
+          openSocket(io);
+        },
+        (error: unknown) => {
+          loadingPeer = false;
+          reportPeerFailure(error);
+        },
+      );
     },
 
     disconnect() {

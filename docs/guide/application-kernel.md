@@ -128,6 +128,71 @@ may retain lifecycle `ready`, but snapshot health is `degraded`, never
 
 Readiness is not hidden polling. A resource reports health changes through its
 lifecycle context; the application decides when a database/provider probe runs.
+
+**A `reportHealth` call inside `start` is kept.** A resource that says nothing
+is assumed healthy once it is ready; one that reports its own health has already
+answered the question, and the answer stands. (It used to be overwritten — and
+the example above hides that, because `healthy` is the same value that
+overwrote it.)
+
+**A resource is required unless you write `required: false`.** That default is
+what makes the next sentence bite.
+
+**Readiness requires every required resource to be healthy**, so "ready but
+degraded" is unreachable for a required resource by construction: an
+application whose required resource reports anything but `healthy` refuses to
+start, and says which resource and in what state. The refusal distinguishes the
+two ways to get there — a resource that was never healthy is pointed at
+`required: false`; one that was healthy and stopped is pointed at
+`onResourceFailure`. A resource that is *expected* to start
+degraded — up, but still dialling something external — belongs behind
+`required: false`, where it keeps its own health and does not gate the
+application:
+
+```ts
+defineManagedResource({
+  id: 'dialling',
+  required: false,
+  start: ({ reportHealth }) => { reportHealth('degraded') },
+})
+```
+
+An optional resource reporting non-healthy does not gate readiness, but it does
+move the application **aggregate** to `degraded` — which a readiness endpoint
+mapping `degraded` to non-200 will notice.
+
+If startup fails, every resource that was already started is closed in reverse
+order. The rollback runs **one** phase — `close` — not the five a real shutdown
+runs, and `close` receives the same deadlines a shutdown would give it, so a
+server drains what is in flight instead of aborting it.
+
+Those deadlines come from the application's declared budget, and it is worth
+knowing what they cost. With nothing in flight the rollback returns at once: a
+grace period is a ceiling, not a sleep. With something in flight it waits for
+it — that is the point — and with something that **never finishes**, a hung
+upstream or a client that ignores a close frame, it waits out the whole budget
+before forcing. Under the default 30s+5s that turns a failed `start()` that used
+to reject in milliseconds into one that can take 35 seconds to reject.
+
+An application that would rather hear about a broken start immediately says so,
+in the one place both stopping paths read:
+
+```ts
+createApplication({
+  id: 'app',
+  resources,
+  // Applies to `shutdown()` called with no options AND to the rollback of a
+  // failed `start()`, which has no call site of its own to be told.
+  shutdown: { gracePeriodMs: 5_000, forceTimeoutMs: 1_000 },
+})
+```
+
+The budget is a real bound, not just a number handed to each resource: a `close`
+that never returns is abandoned when the budget runs out, reported as a `close`
+failure, and the startup error stays the `cause` of the `AggregateError` that
+`start()` rejects with. Without that, one unresponsive resource could keep a
+failed startup from ever reporting why it failed.
+
 A required long-lived completion that rejects after startup makes readiness
 false and health unhealthy. Stitchkit records the failure but does not restart
 the resource or process.

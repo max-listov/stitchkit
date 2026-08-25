@@ -129,6 +129,28 @@ if (swept > 0) {
 
 const workspace = await mkdtemp(join(tmpdir(), 'supervised-lane-'));
 const pm2Home = join(workspace, 'pm2');
+
+/**
+ * The environment every child of this lane runs in.
+ *
+ * `PM2_HOME` points at a temporary directory so the lane never touches a
+ * developer's own PM2, and the workspace `node_modules/.bin` is prepended so
+ * `pm2` resolves to the version this repository PINS rather than to whatever
+ * happens to be installed globally.
+ *
+ * The pin is the point. This lane used to require a global `pm2`, which kept it
+ * out of `verify` — it was the one gate a release commit could not see locally,
+ * and the release commit is the one whose red CI run cannot be repaired in
+ * place. A pinned devDependency arrives with the `bun install` every
+ * contributor already runs, so the prerequisite is not documented, it is gone.
+ * It also takes a live `npm install` off the release-critical path, the same
+ * reason the Playwright image is pinned by digest and Bun by tarball hash.
+ */
+function laneEnvironment(): Record<string, string | undefined> {
+  const bin = join(repositoryRoot, 'node_modules', '.bin');
+  const path = Bun.env.PATH ? `${bin}:${Bun.env.PATH}` : bin;
+  return { ...Bun.env, PATH: path, PM2_HOME: pm2Home };
+}
 // The directory name becomes the project's identity slug, and the slug becomes
 // the supervised process names — which is one of the things this lane checks.
 const generated = join(workspace, 'supervised-lane');
@@ -140,7 +162,7 @@ let laneFailure: { error: unknown } | undefined;
 const shutDownSupervisor = async (): Promise<void> => {
   if (!daemonStarted) return;
   daemonStarted = false;
-  const env: Record<string, string | undefined> = { ...Bun.env, PM2_HOME: pm2Home };
+  const env = laneEnvironment();
   // `delete` before `kill`, and never `save`: this daemon is the lane's own,
   // and its resurrect list must not outlive it.
   //
@@ -178,9 +200,9 @@ const shutDownSupervisor = async (): Promise<void> => {
 reapOnTermination(shutDownSupervisor);
 
 try {
-  if (!Bun.which('pm2')) {
+  if (!Bun.which('pm2', { PATH: laneEnvironment().PATH })) {
     throw new Error(
-      'pm2 is not on PATH. This lane runs the generated supervision files through the real supervisor; install it with `bun add --global pm2`.',
+      'pm2 is not resolvable. This lane runs the generated supervision files through the REAL supervisor, and the supervisor is a pinned devDependency of this repository — run `bun install`.',
     );
   }
 
@@ -188,7 +210,7 @@ try {
   // admin URL, so this lane needs no second way to be configured.
   database = await createStarterLaneDatabase('target');
 
-  const env: Record<string, string | undefined> = { ...Bun.env, PM2_HOME: pm2Home };
+  const env = laneEnvironment();
 
   await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot, env);
   await run(

@@ -39,13 +39,19 @@ export type {
   SocketEventMap,
   SocketIOClient,
   SocketIOClientConfig,
+  SocketIOClientPeerLoaders,
 } from './browser/socket-io';
 export {
   bindRealtimeClient,
   createRealtimeClient,
   createSocketIOClient,
 } from './browser/socket-io';
-export { type ParseSSEOptions, parseSSE } from './browser/stream';
+export {
+  type ParseNDJSONOptions,
+  type ParseSSEOptions,
+  parseNDJSON,
+  parseSSE,
+} from './browser/stream';
 export * from './contract';
 export type { StitchLogger } from './logger';
 // W3C trace helpers — browser-safe (Web Crypto only), shared with the server's

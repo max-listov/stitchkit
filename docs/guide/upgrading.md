@@ -54,6 +54,143 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.61.0
+
+Three behaviour changes between versions. None moves an export — the surface is
+strictly additive — and all three change what a running system does, which is
+what this heading is for.
+
+### A failed `start()` now drains before it rejects
+
+The rollback of a failed startup used to close every resource with a zero
+budget: it returned almost at once, by severing requests the server had already
+accepted. It now spends the application's shutdown budget, so a request already
+in flight is answered rather than killed.
+
+**What to check.** Nothing, if a failed startup has nothing in flight — the
+rollback still returns immediately. The case to think about is a request that
+never finishes: a hung upstream, a client ignoring a close frame, a streaming
+subscription. Under the default 30s grace and 5s force, a `start()` that used to
+reject in milliseconds can now take 35 seconds to reject.
+
+If a fast failure matters more than draining — a supervisor waiting to restart,
+a boot check in CI — declare a smaller budget. The same field is the default for
+`shutdown()` with no options, so this is one decision, not two:
+
+```ts
+// before
+createApplication({ id: 'app', resources })
+
+// after
+createApplication({
+  id: 'app',
+  resources,
+  shutdown: { gracePeriodMs: 5_000, forceTimeoutMs: 1_000 },
+})
+```
+
+The budget is a real bound: a `close` that never returns is abandoned when it
+runs out and reported as a `close` failure, and the startup error remains the
+`cause` of the `AggregateError` `start()` rejects with. → ADR 0107
+
+### A refused realtime frame now answers its sender
+
+A frame that fails the receiver's `args` schema used to be dropped where it
+landed. If the event carries an acknowledgement, the receiver now answers it
+with a reserved envelope and the sender's `request()` rejects at once with
+`RealtimeRequestRejectedError`. → ADR 0106
+
+**What to check before you upgrade one half of a distributed pair.** Look at the
+`ack` schemas on the OLDER peer:
+
+```ts
+// safe: a contract-first acknowledgement refuses the envelope, so the older
+// peer raises RealtimeRequestInvalidAcknowledgementError at once instead of
+// waiting out its deadline. Different error, still an error, and sooner.
+ack: z.object({ stored: z.boolean() })
+
+// NOT safe: a schema that validates nothing accepts the refusal AS A VALUE.
+// The older peer reads a refusal as a successful acknowledgement — silently.
+ack: z.unknown()
+ack: z.looseObject({})
+```
+
+If any acknowledgement on the older side is permissive, tighten it before the
+rollout, or upgrade both halves together.
+
+Also: the receiver now invokes the peer's raw acknowledgement callback for a
+refused frame, including when the peer is a plain Socket.IO client. That
+callback previously could not run on a refused frame and now can.
+
+`RealtimeRejectedEvent['reason']` gained `'rejected-by-peer'`. If you `switch`
+over it exhaustively with an `assertNever` default, that stops compiling — add
+the case.
+
+### Two smaller behaviour changes, easy to miss
+
+**`streamSSE`'s `cancel` no longer awaits the generator.** Teardown is now
+unordered relative to request completion. If your generator releases a resource
+in `return()`/`finally` — a temp file, a pooled connection — and anything
+downstream assumed that had finished by the time the response settled, it no
+longer has. Release in the generator's own `finally` and do not depend on the
+ordering.
+
+**A `socket.io-client` peer that cannot load no longer kills the process.** With
+`onConnectError` configured, the failure is delivered there with
+`terminal: true` instead of crashing. If your handler logs and moves on, you now
+have a live process whose client will never connect, where a supervisor used to
+restart it. Treat `terminal: true` as fatal if that is what you want.
+
+### `reportHealth` inside `start` is no longer discarded
+
+Becoming ready assigned `healthy` unconditionally, throwing away whatever a
+resource reported during `start`. It is now kept, and only a resource that
+reported nothing is assumed healthy.
+
+**How to find what this touches:** grep your `start` bodies for **every**
+`reportHealth` call, not only the ones reporting `degraded`. The old
+unconditional assignment was also a repair — a resource that reported
+`'unhealthy'` early in `start` and never corrected itself was quietly fixed up
+on the way to ready.
+
+Two cases, and they need opposite fixes.
+
+**1. A resource that is genuinely expected to start degraded** — up, but still
+dialling something external. `required` defaults to **`true`**, and readiness
+requires every required resource to be healthy, so such a resource now refuses
+the whole startup where before its report vanished. That is the invariant
+working as intended; what changed is that it can be reached. Say what it is:
+
+```ts
+// before: started, and its report was discarded
+defineManagedResource({ id: 'dialling', start: ({ reportHealth }) => reportHealth('degraded') })
+
+// after: says what it is, and does not gate the application
+defineManagedResource({ id: 'dialling', required: false, start: ({ reportHealth }) => reportHealth('degraded') })
+```
+
+**2. A resource that reported `'unhealthy'` early and became healthy later** —
+a pessimistic report before a connection settled. Here `required: false` is the
+**wrong** fix: it would hide a real failure. Report the recovery instead:
+
+```ts
+start: async ({ reportHealth }) => {
+  reportHealth('unhealthy')
+  await connect()
+  reportHealth('healthy')   // ← previously unnecessary; now it is the fix
+}
+```
+
+**Also check your health endpoint.** An **optional** resource reporting
+non-healthy during `start` now moves the application aggregate to `degraded`,
+where before it stayed `healthy`. A readiness probe that maps `degraded` to a
+non-200 will flip on upgrade — and a supervisor that restarts on that will loop.
+
+The refusals now say which of the two happened: a resource that was never
+healthy is told it "is not healthy" and pointed at `required: false`; one that
+was healthy and stopped is told it "lost readiness" and pointed at
+`onResourceFailure`.
+
 ## Released migration: 0.60.0
 
 ### close() says what it achieved

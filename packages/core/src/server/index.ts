@@ -173,6 +173,15 @@ export type {
 } from './socket-io';
 export { createSocketIOServer, socketIoLane } from './socket-io';
 export { type ParseSSEOptions, parseSSE, streamSSE } from './stream';
+export {
+  DEFAULT_STREAM_HEARTBEAT_MS,
+  ndjsonRoute,
+  type StreamingFormat,
+  type StreamingRouteOptions,
+  type StreamingSourceContext,
+  sseRoute,
+  streamingRoute,
+} from './streaming-route';
 export type {
   AuthorizationContext,
   EffectiveScope,

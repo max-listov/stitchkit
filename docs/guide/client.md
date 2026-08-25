@@ -456,4 +456,39 @@ for await (const event of parseSSE(res)) {
 }
 ```
 
-The server side is [`streamSSE`](./server.md#sse-streaming).
+The server side is [`streamSSE`](./server.md#sse-streaming), or
+[`sseRoute`](./server.md#long-lived-subscriptions) for a subscription that stays
+open.
+
+## NDJSON
+
+`parseNDJSON` reads a newline-delimited JSON body — the client half of
+[`ndjsonRoute`](./server.md#long-lived-subscriptions):
+
+```ts
+import { parseNDJSON } from 'stitchkit'
+
+const subscription = new AbortController()
+const res = await fetch('/api/events/subscribe', { signal: subscription.signal })
+for await (const event of parseNDJSON(res)) {
+  console.log(event)
+}
+
+// ...to unsubscribe:
+subscription.abort()
+```
+
+**Use the `AbortController` for a subscription.** Leaving the loop with `break`
+cancels the body, and on a stream that ends that is enough — but it is not a
+reliable way to tell the *server* you are gone: measured against Bun today, the
+source stayed alive for seconds after a client-side cancel. Aborting the request
+reaches [`context.signal`](./server.md#long-lived-subscriptions) on the other
+end at once, which is what actually ends the work.
+
+**Blank lines are skipped**, and that is the contract rather than a
+convenience: a long-lived stream must send something while it is idle or
+intermediaries drop it, and an empty line is the natural pulse for this framing.
+Writing the rule down on both sides is what stops it being a verbal agreement —
+the server's keep-alive and the reader's skip are one decision with two
+implementations. A frame that is not valid JSON goes to `onParseError` rather
+than throwing, so one bad line does not end the subscription.

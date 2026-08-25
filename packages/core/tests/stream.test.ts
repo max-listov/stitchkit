@@ -111,3 +111,39 @@ describe('SSE streaming', () => {
     server.stop();
   });
 });
+
+describe('cancelling an SSE stream does not wait on the generator', () => {
+  test('cancel settles even when the generator is parked on a value that never comes', async () => {
+    // An async generator serialises its requests: a `return()` issued while a
+    // `next()` is in flight is queued behind it. `cancel` used to await that
+    // return, so cancelling waited for the very value the departed consumer was
+    // no longer there to receive — for a source that waits rather than produces,
+    // forever.
+    let closed = false;
+    async function* parked(): AsyncGenerator<unknown> {
+      try {
+        yield 'first';
+        await new Promise<never>(() => undefined);
+      } finally {
+        closed = true;
+      }
+    }
+    const response = streamSSE(parked());
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    if (!reader) return;
+
+    // Drain the first frame so the generator is inside the endless await.
+    expect((await reader.read()).done).toBe(false);
+
+    const settled = await Promise.race([
+      reader.cancel().then(() => 'cancelled'),
+      Bun.sleep(2_000).then(() => 'hung'),
+    ]);
+    expect(settled).toBe('cancelled');
+    // And the ask still happened — it is simply not waited on. A generator
+    // parked on a value nobody will send cannot run its own `finally`, which is
+    // exactly why the cancel must not depend on it.
+    expect(closed).toBe(false);
+  }, 15_000);
+});

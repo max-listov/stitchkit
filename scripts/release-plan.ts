@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assertStarterLockfileIsCurrent, type FetchLike } from './starter-lockfile';
 
 const ZERO_SHA = /^0+$/;
 
@@ -334,6 +335,34 @@ export function isReleaseCommitSubject(subject: string): boolean {
   return /^release\((?:core|starter)\):/.test(subject.trim());
 }
 
+/** What the local gate runs for one push. */
+export type LocalGateProfile = 'none' | 'fast' | 'full';
+
+/**
+ * Which local gate a push earns — and the reasoning is entirely about what a
+ * RED CI run costs on the commit being pushed.
+ *
+ * For an ordinary commit it costs two and a half minutes and a follow-up push.
+ * For a release commit it cannot be paid at all: `assert-subject` requires the
+ * tag to sit on a `release(...)` commit and `assert-head` requires that commit
+ * to be the branch head, so a red run on a pushed release commit is repaired
+ * only by making a NEW release commit. That asymmetry, not a general distrust
+ * of CI, is what the expensive local gate buys — so it runs exactly where the
+ * asymmetry is.
+ *
+ * The fast profile is not a weaker copy of CI. It is the part that is genuinely
+ * faster to learn locally: lint, types and unit tests answer in well under a
+ * minute, where the packed lanes are parallel by nature and slower here than on
+ * ten runners. → `AGENTS.md`, "What runs where".
+ */
+export function localGateProfile(
+  plan: PrePushPlan,
+  pushesReleaseCommit: boolean,
+): LocalGateProfile {
+  if (!plan.verify) return 'none';
+  return pushesReleaseCommit ? 'full' : 'fast';
+}
+
 /** Fail unless the tag points at the current release head of the default branch. */
 export function assertTagOnReleaseHead(tagSha: string, remoteHeadSha: string): void {
   if (!tagSha || !remoteHeadSha || tagSha !== remoteHeadSha) {
@@ -420,9 +449,22 @@ export function decidePublishAction(
   throw new Error('version already exists on npm with a DIFFERENT tarball — refusing');
 }
 
+/**
+ * How the release-metadata gate reaches the registry.
+ *
+ * Injectable so the WIRING can be checked without a network — which is the half
+ * that unit-testing `assertLockfileResolvesNewest` never covered. The two facts
+ * worth proving are that a starter tag reaches the registry and that a core tag
+ * does not, and neither is visible from the pieces.
+ */
+export interface ValidateReleaseTagOptions {
+  fetch?: FetchLike;
+}
+
 export async function validateReleaseTag(
   root: string,
   tag: string,
+  options: ValidateReleaseTagOptions = {},
 ): Promise<ReleasePlan & { notes: string }> {
   const plan = releasePlanForTag(tag);
   const manifest: unknown = JSON.parse(
@@ -457,6 +499,13 @@ export async function validateReleaseTag(
     notes,
     channel,
   );
+  // A starter release is the range AND the lockfile. Only the release channel
+  // checks this: outside a release a lockfile lagging its range is ordinary and
+  // legitimate, and gating it there would turn every framework publication into
+  // a template chore.
+  if (plan.target === 'create-stitchkit') {
+    await assertStarterLockfileIsCurrent(root, options.fetch);
+  }
   return { ...plan, notes };
 }
 
@@ -613,16 +662,24 @@ async function main(): Promise<void> {
         releaseScopeForTag(tag),
       );
     }
-    if (plan.verify) await run(['bun', 'run', 'verify']);
-    // A release commit is the last cheap moment to learn that the starter
-    // template no longer builds on HEAD. `verify` runs only the target lane, so
-    // without this the answer arrives from a red CI run on the release commit
-    // itself — the one commit whose run must be green before it is tagged.
-    // Same policy as CI: a hard-cut minor may outrun the template only after an
-    // exact-version review records the deferred migration debt.
-    if (plan.verify && (await hasReleaseCommit(plan.branchHeads))) {
+    const pushesReleaseCommit = plan.verify && (await hasReleaseCommit(plan.branchHeads));
+    const profile = localGateProfile(plan, pushesReleaseCommit);
+    if (profile === 'fast') {
+      process.stderr.write(
+        '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',
+      );
+      await run(['bun', 'scripts/verify.ts', '--fast', '--if-changed']);
+    }
+    if (profile === 'full') {
+      await run(['bun', 'scripts/verify.ts', '--if-changed']);
+      // A release commit is the last cheap moment to learn that the starter
+      // template no longer builds on HEAD. `verify` runs only the target lane,
+      // so without this the answer arrives from a red CI run on the release
+      // commit itself — the one commit whose run must be green before it is
+      // tagged. Same policy as CI: a hard-cut minor may outrun the template
+      // only after an exact-version review records the deferred migration debt.
       if ((await starterHeadDecision(root)) === 'run') {
-        await run(['bun', 'run', 'starter-head-lane']);
+        await run(['bun', 'scripts/verify.ts', '--head', '--if-changed']);
       } else {
         process.stderr.write(
           '[release] skipping packed HEAD for an exact-version deferred starter review; target remains mandatory and scripts/starter-head-review.json owns the migration debt.\n',
