@@ -11,7 +11,11 @@ import {
 import { findNeutralIdentity } from './neutral-identity';
 import { createStarterLaneDatabase } from './starter-database';
 import { parseStarterLaneOptions } from './starter-lane-options';
-import { readStarterStitchkitTarget, writeStarterStitchkitTarget } from './starter-manifest';
+import {
+  assertCatalogIsTheOnlyStitchkitRange,
+  readStarterStitchkitTarget,
+  writeStarterStitchkitTarget,
+} from './starter-manifest';
 
 function parseIdentityAllowlist(value: unknown): string[] {
   if (typeof value !== 'object' || value === null) {
@@ -89,7 +93,14 @@ async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promis
     [rootManifest, '"@modelcontextprotocol/client": "^2.0.0"'],
     [backendManifest, '"@modelcontextprotocol/server": "^2.0.0"'],
     [backend, 'createMcpHttpRoute'],
-    [backend, 'await mcp.close()'],
+    // The session is closed on shutdown — the invariant is the close, not the
+    // spelling of it. It used to read `await mcp.close()`, which the role now
+    // deliberately does NOT write: an unbounded await there could run past the
+    // very kill timeout the declared budget tells a supervisor to allow. That
+    // the close is bounded is checked in the generated project's own suite
+    // (`scripts/shutdown-budget.test.ts`); that it happens at all is checked
+    // here.
+    [backend, 'mcp.close()'],
     [surfaceConformance, "from '@modelcontextprotocol/client'"],
     [surfaceConformance, "pin: '2026-07-28'"],
   ];
@@ -240,6 +251,7 @@ try {
   );
   for (const forbiddenPath of [
     'package/template/.env',
+    'package/template/.build-stamp.json',
     'package/template/test-results/',
     'package/template/packages/frontend/.next/',
     'package/template/packages/backend/dist/',
@@ -313,16 +325,12 @@ try {
         `Generated ${variant} tree carries the neutral template identity:\n${neutralOffenders.join('\n')}`,
       );
     }
-    for (const packagePath of [
-      'packages/backend/package.json',
-      'packages/frontend/package.json',
-      'packages/shared/package.json',
-    ]) {
-      const fullPath = join(generated, packagePath);
-      const source = await readFile(fullPath, 'utf8');
-      if (!source.includes('"stitchkit": "catalog:"')) {
-        throw new Error(`${variant} ${packagePath} does not reference the starter catalog`);
-      }
+    try {
+      await assertCatalogIsTheOnlyStitchkitRange(generated);
+    } catch (error) {
+      throw new Error(
+        `${variant} generated tree: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     if (coreTarball) {
@@ -336,6 +344,8 @@ try {
     if (example === 'repository' && !githubApiUrl) {
       throw new Error('Repository starter lane requires its GitHub fixture');
     }
+    // Boxed, so a thrown `undefined` is still recorded as a failure.
+    let laneFailure: { error: unknown } | undefined;
     try {
       const webPort = freePort();
       const apiPort = freePort();
@@ -352,7 +362,9 @@ try {
         `SMOKE_API_ORIGIN=${apiOrigin}`,
         `SMOKE_WEB_ORIGIN=${webOrigin}`,
         // The hosts this deployment answers for. The portability smoke proves one
-        // artifact serves several — within the policy, not for any header.
+        // artifact serves several — within the policy, not for any header. It
+        // READS this list rather than carrying hosts of its own, so these two
+        // names are the deployment's choice and nothing has to agree with them.
         `PUBLIC_WEB_HOSTS=127.0.0.1:${webPort},alpha.example,beta.example:8443`,
         'LOG_FORMAT=json',
       ];
@@ -529,9 +541,29 @@ try {
       console.log(
         `Packed ${variant} starter ${mode}/${browser} lane passed with stitchkit ${installedVersion} (${mode === 'target' ? templateTarget : 'local HEAD'}) across DB, HTTP, OpenAPI, Socket.IO, MCP, CLI and its selected browser surface`,
       );
-    } finally {
-      await githubFixture?.stop(true);
-      await database.dispose();
+    } catch (error) {
+      laneFailure = { error };
+    }
+
+    // Cleanup that is allowed to FAIL, and a `finally` that throws discards
+    // whatever the lane was already failing on — the same shape, and the same
+    // reason, as `supervised-lane.ts`. Disposing a database can fail on its
+    // own (a full disk once made `pg_terminate_backend` return 1), and when it
+    // does that is a fact worth reporting, not one worth reporting INSTEAD of
+    // the check that actually broke.
+    const cleanupFailures: unknown[] = [];
+    for (const step of [() => githubFixture?.stop(true), () => database.dispose()]) {
+      try {
+        await step();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+
+    const failures = [...(laneFailure ? [laneFailure.error] : []), ...cleanupFailures];
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'The starter lane failed, and so did its cleanup');
     }
   }
 

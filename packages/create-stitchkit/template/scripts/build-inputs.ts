@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { ProjectDeclaration } from 'stitchkit/declaration';
 import { appDeclaration } from '../packages/config/src/declaration';
-import type { ProjectDeclaration } from '../packages/config/src/project-declaration.generated';
 
 const root = resolve(import.meta.dir, '..');
 
@@ -20,8 +20,9 @@ const root = resolve(import.meta.dir, '..');
  * runtime (the default, and what this template does), read a frozen export
  * whose digest is declared here, or generate the bytes as a release step. This
  * file owns the second one. It is deliberately a no-op for a project that
- * declares no inputs — absent means "this build reads no data", which is an
- * answer, not a gap.
+ * declares no inputs — absent means "this build reads no DECLARED data", which
+ * is an answer rather than a gap. It is the author's statement, not a traced
+ * fact: nothing here sandboxes the build to see what it really opened.
  */
 export function assertDeclaredBuildInputs(
   declaration: ProjectDeclaration = appDeclaration,

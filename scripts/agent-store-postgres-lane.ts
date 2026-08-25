@@ -13,6 +13,8 @@ async function run(command: string[], databaseUrl: string): Promise<void> {
 }
 
 const database = await createStarterLaneDatabase('agent_store');
+// Boxed, so a thrown `undefined` is still recorded as a failure.
+let laneFailure: { error: unknown } | undefined;
 try {
   await run(
     ['bunx', 'prisma', 'generate', '--config', 'examples/agent-store-prisma/prisma.config.ts'],
@@ -34,6 +36,20 @@ try {
     database.url,
   );
   await run(['bun', 'test', 'examples/agent-store-prisma/adapter.test.ts'], database.url);
-} finally {
+} catch (error) {
+  laneFailure = { error };
+}
+
+// Disposing can fail on its own, and that is worth reporting — but never
+// INSTEAD of the failure the lane already has. A `finally` that throws would
+// discard it.
+const failures: unknown[] = laneFailure ? [laneFailure.error] : [];
+try {
   await database.dispose();
+} catch (error) {
+  failures.push(error);
+}
+if (failures.length === 1) throw failures[0];
+if (failures.length > 1) {
+  throw new AggregateError(failures, 'The agent-store lane failed, and so did its cleanup');
 }

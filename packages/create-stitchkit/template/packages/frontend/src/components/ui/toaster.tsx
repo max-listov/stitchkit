@@ -38,7 +38,10 @@ export const toast = {
 };
 
 export function Toaster() {
-  const theme = useThemeValue<'light' | 'dark' | 'system'>({
+  // No explicit type argument: since @wrksz/themes 1.2 the parameter describes
+  // the MAP, not the value, and it infers `const` — so naming the value union
+  // here made the result every member of `string` instead of narrowing it.
+  const theme = useThemeValue({
     light: 'light',
     dark: 'dark',
     default: 'system',

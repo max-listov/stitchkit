@@ -185,12 +185,45 @@ function emptyHead(conversationId: string): AgentRuntimeHead {
   });
 }
 
+/**
+ * Where a run sits in the conversation's own history — the position of the
+ * earliest message it owns.
+ *
+ * Runs the history cannot place (every message of theirs compacted away) get
+ * no position, and keep whatever order their timestamps give them.
+ */
+function historyPositions(messages: readonly AgentMessage[]): (run: AgentRun) => number {
+  const positions = new Map<string, number>();
+  messages.forEach((message, index) => {
+    if (!positions.has(message.id)) positions.set(message.id, index);
+  });
+  return (run) => {
+    let earliest = Number.MAX_SAFE_INTEGER;
+    for (const id of [...run.inputMessageIds, run.assistantMessageId]) {
+      const position = positions.get(id);
+      if (position !== undefined && position < earliest) earliest = position;
+    }
+    return earliest;
+  };
+}
+
 function snapshotOf(
   head: AgentRuntimeHead,
   messages: readonly AgentMessage[],
   records: readonly AgentStoredRun[],
 ): AgentSnapshot {
   validateSnapshot(head, messages, records);
+  // `createdAt` first, then history, then the identifier.
+  //
+  // The middle key is not decoration. Two runs of one conversation are
+  // routinely created inside the same millisecond — a successor coalescing
+  // behind an active run always is — and an ISO timestamp cannot separate
+  // them. Breaking that tie on a random UUID is a coin toss wearing the shape
+  // of an order: it put a correct runtime behind a red release gate, because a
+  // test read position 1 as "the successor" and half the time got the run it
+  // was queued behind. History is the causal record the runtime already keeps
+  // in order for the prompt, so it is what decides.
+  const positionOf = historyPositions(messages);
   return AgentSnapshotSchema.parse({
     schemaVersion: 1,
     conversationId: head.conversationId,
@@ -200,7 +233,9 @@ function snapshotOf(
       .map((record) => record.run)
       .sort(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          left.createdAt.localeCompare(right.createdAt) ||
+          positionOf(left) - positionOf(right) ||
+          left.id.localeCompare(right.id),
       ),
   });
 }

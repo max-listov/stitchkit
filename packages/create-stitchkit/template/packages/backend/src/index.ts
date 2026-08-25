@@ -8,6 +8,7 @@ import {
   openApiRoute,
 } from 'stitchkit/server';
 import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools';
+import { closeWithinBudget, concludeShutdown } from './cleanup';
 import { prisma } from './lib/db';
 import { createSurface } from './surface';
 import { onError } from './transport/errors';
@@ -60,15 +61,23 @@ async function main(): Promise<void> {
     // before sending SIGKILL, or the drain never finishes.
     shutdown: { gracePeriodMs: apiRole.drainFloorMs },
     onComplete: async (result) => {
-      await mcp.close();
-      await prisma.$disconnect();
+      // Bounded on purpose. The supervisor's kill timeout is derived from this
+      // budget, so a close that hangs past it turns an orderly shutdown into a
+      // SIGKILL — the one ending that runs no cleanup at all.
+      const cleanup = await closeWithinBudget([
+        { name: 'MCP', close: () => mcp.close() },
+        { name: 'database', close: () => prisma.$disconnect() },
+      ]);
       // Say how the drain ended. Without this an operator sees a process that
       // vanished and an exit code, and cannot tell a clean drain from one the
       // deadline or a second signal cut short.
       console.log(
         `Shutdown ${result.outcome}${result.reason ? ` (${result.reason})` : ''} in ${result.durationMs}ms — ${result.completedRequests} requests completed, ${result.abortedRequests} aborted, ${result.forcedWebSockets} sockets forced`,
       );
-      process.exitCode = result.outcome === 'clean' ? 0 : 1;
+      // Sets the code, reports any close that threw, and — if a step is still
+      // holding something — ends the process here rather than waiting for a
+      // handle that already missed its deadline. Nothing follows it.
+      concludeShutdown(cleanup, result.outcome === 'clean');
     },
     onError: (phase, error) => {
       console.error(`Shutdown failed during ${phase}`, error);

@@ -1,5 +1,5 @@
+import { findProjectRole, parseProjectDeclaration } from 'stitchkit/declaration';
 import source from '../../../project.json' with { type: 'json' };
-import { findProjectRole, parseProjectDeclaration } from './project-declaration.generated';
 
 /**
  * What this repository says about itself — the one machine-readable statement

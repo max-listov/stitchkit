@@ -128,10 +128,12 @@ if (error instanceof AgentRuntimeConflictError) …
 `ActivityTokenBrand` is exported, so `ActivityProjection` can be implemented by
 a test double. `STITCH_ERROR_STATUS` gained `APPLICATION_NOT_ACCEPTING` (503) —
 only an exhaustive `satisfies Record<StitchErrorCode, …>` map stops compiling,
-and the fix is one line. `GRAMMY_WEBHOOK_NOT_ACCEPTING` is deliberately *not*
-registered: the registry belongs to the generic core, and a provider name has no
-place in a union every consumer imports. It travels as itself through a partial
-`codeMap`.
+and the fix is one line. (`GRAMMY_WEBHOOK_NOT_ACCEPTING` joined it in 0.60.1,
+under the same rule — see ADR 0105. This section briefly said the opposite: that
+an adapter's code stays out of the registry. It does not, and leaving it out was
+the worse of the two, because `isStitchErrorCode` then answered `false` and the
+code reached the wire spelled stitchkit's way, past both `codeMap` and
+`unmappedCode`.)
 
 `application.shutdown()` no longer accepts `retryAfterSeconds`. Delete it from
 the call — the kernel never read it. If you meant the HTTP `Retry-After` a
@@ -627,58 +629,6 @@ The Node-shaped callback is gone, and the policy is now composed with shutdown
 admission on both runtimes: a handshake arriving during drain is refused for
 you.
 
-## Released migration: 0.46.0
-
-### `REALTIME_CONTRACT_VIOLATION` joined the error registry
-
-Realtime contract failures use the framework error model instead of a bare
-`ZodError`, so an exhaustive map stops compiling until the code is added:
-
-```ts
-// before
-{ …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>
-// after
-{ …, INTERNAL_SERVER_ERROR: 'internal', REALTIME_CONTRACT_VIOLATION: 'internal' } satisfies Record<StitchErrorCode, string>
-```
-
-Only an exhaustive map breaks. Since 0.56.1 `codeMap` itself is partial, so a
-map without the `satisfies` keeps compiling and lets the code travel as itself.
-
-### `RealtimeRejectedEvent.error` is an `AppError`
-
-```ts
-// before
-onRejected: ({ error }) => error.issues
-// after
-onRejected: ({ error }) => error.details?.issues   // the ZodError moves to error.cause
-```
-
-The envelope gained `reason` and `fault`. The consequence worth checking: code
-reading `.issues` directly does not fail to compile if the handler is loosely
-typed — it silently reads `undefined`. Grep for `.issues` on rejection handlers.
-
-### CLI construction refuses reserved names
-
-A contract field or tool named `json`, `wait`, `quiet`, `dry-run`, `help`,
-`version`, `wait-timeout` or `output-dir` now **throws while the CLI is built**,
-instead of being silently shadowed:
-
-```ts
-// before: app schedule_job --wait 2h  → {"path":"2h"}, exit 0
-// after:  building a CLI over a contract with a "wait" field throws
-```
-
-This one fires at startup, not at call time, so an application shipping such a
-field crashes on boot after the upgrade. That is deliberate — the old behaviour
-corrupted arguments silently — but it means the upgrade is not safe to deploy
-without building the CLI once locally.
-
-### `createToolLogger` writes to stderr
-
-stdout is the JSON-RPC channel of a stdio MCP server, and the previous
-`console.info` default corrupted it. Pass `log` to redirect if your process
-collected tool logs from stdout.
-
 ## Released migration: 0.48.0
 
 ### Typed-client request options move to `.withOptions`
@@ -803,6 +753,58 @@ contract shape.
 6. `bun run check` green → runtime smoke → done. New surfaces
    (`STITCH_ERROR_STATUS`, `serveFile`, `scopePrefixes`, `afterToolCall`'s
    `MethodDef`, `maxUploadBytes`) are available to adopt, not required.
+
+## Released migration: 0.46.0
+
+### `REALTIME_CONTRACT_VIOLATION` joined the error registry
+
+Realtime contract failures use the framework error model instead of a bare
+`ZodError`, so an exhaustive map stops compiling until the code is added:
+
+```ts
+// before
+{ …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>
+// after
+{ …, INTERNAL_SERVER_ERROR: 'internal', REALTIME_CONTRACT_VIOLATION: 'internal' } satisfies Record<StitchErrorCode, string>
+```
+
+Only an exhaustive map breaks. Since 0.56.1 `codeMap` itself is partial, so a
+map without the `satisfies` keeps compiling and lets the code travel as itself.
+
+### `RealtimeRejectedEvent.error` is an `AppError`
+
+```ts
+// before
+onRejected: ({ error }) => error.issues
+// after
+onRejected: ({ error }) => error.details?.issues   // the ZodError moves to error.cause
+```
+
+The envelope gained `reason` and `fault`. The consequence worth checking: code
+reading `.issues` directly does not fail to compile if the handler is loosely
+typed — it silently reads `undefined`. Grep for `.issues` on rejection handlers.
+
+### CLI construction refuses reserved names
+
+A contract field or tool named `json`, `wait`, `quiet`, `dry-run`, `help`,
+`version`, `wait-timeout` or `output-dir` now **throws while the CLI is built**,
+instead of being silently shadowed:
+
+```ts
+// before: app schedule_job --wait 2h  → {"path":"2h"}, exit 0
+// after:  building a CLI over a contract with a "wait" field throws
+```
+
+This one fires at startup, not at call time, so an application shipping such a
+field crashes on boot after the upgrade. That is deliberate — the old behaviour
+corrupted arguments silently — but it means the upgrade is not safe to deploy
+without building the CLI once locally.
+
+### `createToolLogger` writes to stderr
+
+stdout is the JSON-RPC channel of a stdio MCP server, and the previous
+`console.info` default corrupted it. Pass `log` to redirect if your process
+collected tool logs from stdout.
 
 ## Released migration: 0.44.0
 

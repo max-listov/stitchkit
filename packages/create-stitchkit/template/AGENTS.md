@@ -19,10 +19,11 @@ framework source repository.
   by machine — the scaffolder stamps the identity, `bun run gen:declaration`
   derives `env.variables` — so the formatter leaves it alone and
   `scripts/declaration.test.ts` is what checks it.
-- Three files are generated from it and must not be hand-edited:
-  `ecosystem.config.cjs`, `ecosystem.dev.config.cjs` and the `env.variables`
-  block of `project.json`. Run `bun run gen:declaration` after changing a role. It holds
-  nothing that differs between two deployments; those are named there by
+- Four things are generated from it and must not be hand-edited:
+  `ecosystem.config.cjs`, `ecosystem.dev.config.cjs`,
+  `packages/config/src/app-identity.generated.ts` and the `env.variables` block
+  of `project.json`. Run `bun run gen:declaration` after changing a role. It
+  holds nothing that differs between two deployments; those are named there by
   variable and supplied by the place.
 
 Dependencies point inward: frontend/backend → shared; backend → db/config.
@@ -58,6 +59,15 @@ vertical path. Before handing work off, run:
 bun run check
 bun run test
 bun run build
-bun run runtime:smoke
+bun run acceptance:local
 ```
+
+`acceptance:local` is part of the list because `runtime:smoke` and `e2e` check a
+running deployment: it creates one of its own — separate PM2 home, ephemeral
+ports, and its own database from `ACCEPTANCE_DATABASE_URL` — runs both against
+it, and destroys it. The separate database is not tidiness: the gates write, so
+one borrowing `DATABASE_URL` writes rows wherever `.env` points. **Never put
+`pm2:prod` in this list.** It applies the declared migrations to *your* database
+and reloads the running deployment; deploying is its own command, asked for on
+purpose, and no gate performs it.
 

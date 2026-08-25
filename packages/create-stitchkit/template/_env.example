@@ -1,5 +1,9 @@
 NODE_ENV=development
 DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter
+# The throwaway database `bun run acceptance:local` creates and writes to. The
+# runtime gates WRITE, so they get one of their own: the harness refuses to
+# start if this is unset or names the database above.
+ACCEPTANCE_DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter_acceptance
 # 0.0.0.0 exposes the app to every network interface — opt in consciously.
 BIND_HOST=127.0.0.1
 API_PORT=3211
@@ -9,6 +13,10 @@ SMOKE_WEB_ORIGIN=http://127.0.0.1:3210
 # Hosts this deployment answers for, comma-separated. One built artifact can
 # serve several addresses; a forwarded host outside this list is refused rather
 # than believed. Leave unset and set PUBLIC_WEB_ORIGIN instead for a single one.
+#
+# `bun run acceptance:local` supplies its own list to the deployment it creates,
+# so the addresses the portability check needs are not policy this project
+# carries. List here only the hosts this deployment really answers for.
 PUBLIC_WEB_HOSTS=127.0.0.1:3210
 LOG_FORMAT=pretty
 # CORS_ORIGIN is only needed for a genuinely cross-origin browser.

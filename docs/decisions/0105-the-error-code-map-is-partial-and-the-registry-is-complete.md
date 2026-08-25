@@ -47,11 +47,22 @@ complete.**
   the managed runtime-tool codes that reach a caller through a tool result
   rather than an HTTP response. They are still codes stitchkit authored, and
   remapping them is exactly what the registry is for.
+- **Including the codes of adapters stitchkit ships for optional peers** —
+  `GRAMMY_WEBHOOK_NOT_ACCEPTING` is in the registry. ADR 0002 keeps a *domain
+  model* out of the core; the registry is not one. It is the list of codes this
+  framework authors, and its only consumer-facing use is deciding what each one
+  looks like on someone's wire. Leaving an adapter's code out does not keep a
+  provider name out of a consumer's concern: it makes `isStitchErrorCode`
+  answer `false`, so `createErrorHook` skips `codeMap` *and* `unmappedCode` and
+  the code reaches the wire spelled `GRAMMY_WEBHOOK_NOT_ACCEPTING` — more
+  visible out than in, and unmappable besides.
 - Completeness is held by a check, not by review:
   `packages/core/tests/error-registry-completeness.test.ts` scans every
-  `new AppError('CODE'` in `packages/core/src` and fails on one the registry does
-  not carry. It found `OPERATION_NOT_SUCCEEDED`, which a manual audit of the same
-  question had missed.
+  `new AppError('CODE'` in `packages/core/src` — and every `super('CODE'` inside
+  a class that extends it, which is how the two branded adapter errors are
+  written — and fails on one the registry does not carry. It found
+  `OPERATION_NOT_SUCCEEDED`, which a manual audit of the same question had
+  missed.
 - The one place that *should* break on a new code is the framework's own
   fixture: `packages/core/tests/error-hook.test.ts` keeps
   `satisfies Record<StitchErrorCode, string>`, so adding a code without deciding

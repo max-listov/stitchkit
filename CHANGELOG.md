@@ -15,6 +15,53 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.60.1] — 2026-08-25
+
+### Fixed
+
+- **`close()` waits for the admissions already inside it.** The closed-check
+  stopped what had not started, but a submission that had passed it and was
+  inside `acceptInputAndAssignRun` owned no coordinator lane yet — so the close
+  drained the coordinator, found nothing, answered `settled: true, remaining:
+  0`, and the store then committed a queued run for it. Durable work with no
+  executor, announced as a clean shutdown. `close()` now waits for every
+  in-flight admission to either refuse before the durable write or hand off to
+  the coordinator, inside the same budget the caller gave; an admission that
+  never hands off is counted in `remaining` rather than lost.
+- **An admission refusal reaches the caller as itself.**
+  `ApplicationAdmissionError` and `GrammyWebhookUnavailableError` extended plain
+  `Error` while carrying a `code` field, and `normalizeError` starts with
+  `AppError.is(err)` — so both arrived as `INTERNAL_SERVER_ERROR` / 500, the
+  declared 503 never left the process, and `createErrorHook`'s `codeMap` and
+  `unmappedCode` never saw the code. Both are branded `AppError`s now, and
+  `GRAMMY_WEBHOOK_NOT_ACCEPTING` joins the registry beside
+  `APPLICATION_NOT_ACCEPTING` — a decision ADR 0105 now states for adapter codes
+  in general, replacing a comment beside the class that claimed the opposite.
+- **`recover()` writes nothing after `close()` has answered.** The closed-check
+  ran on entry and again per page, and both are before `decide()` — the
+  caller's own callback, which is where a close fits. A close arriving inside it
+  found no coordinator lane and no in-flight admission, reported a settled
+  shutdown, and `recoverRun` then committed. Recovery's mutating slice is inside
+  the same admission barrier as `submit()` and `resume()` now: a close stops the
+  scan mid-page, and it does not return while an item is still writing.
+- **`close()` refuses an impossible budget without closing anything.**
+  Validation lived in the coordinator, one await past the point where the
+  runtime had already stopped admitting work — so `close({ forceTimeoutMs: NaN
+  })` left a caller holding a `TypeError` *and* a closed runtime. The budgets
+  are checked first, and what a close spends waiting is measured on a monotonic
+  clock instead of the runtime's semantic `now`, which a caller may pin to a
+  fixed instant.
+- **A run's idle deadline is disposed on every path.** It was disposed after the
+  `try/catch`, and the `catch` does its own I/O — a `loadSnapshot` that threw
+  there left the timer armed for the life of the process.
+- **A conversation snapshot orders its runs by history, not by a coin toss.**
+  `runs` was sorted by `createdAt` and, on a tie, by the run identifier — but a
+  successor coalescing behind an active run is created inside the same
+  millisecond as it, and the identifier is random. Half the time the snapshot
+  listed the successor first. Runs that share a timestamp are now separated by
+  the position of the earliest message they own, so position carries meaning
+  and a reader may rely on it.
+
 ## [0.60.0] — 2026-08-25
 
 ### ⚠️ Breaking changes
@@ -3657,7 +3704,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.60.1...HEAD
+[0.60.1]: https://github.com/max-listov/stitchkit/compare/v0.60.0...v0.60.1
 [0.60.0]: https://github.com/max-listov/stitchkit/compare/v0.59.4...v0.60.0
 [0.59.4]: https://github.com/max-listov/stitchkit/compare/v0.59.3...v0.59.4
 [0.59.3]: https://github.com/max-listov/stitchkit/compare/v0.59.2...v0.59.3

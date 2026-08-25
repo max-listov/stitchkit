@@ -9,14 +9,17 @@ before it starts, and the environment variables a deployment must supply.
 The declaration is true **with no machine in existence**. A field you cannot
 fill in without knowing where the code will run is a *binding*, not a
 declaration: ports, hosts, addresses, machine paths and supervision policy are
-named there by variable and never by value, and the schema has nowhere to put
-them. Change the slug, display name, version or description there and package
+named there by variable and never by value. The schema has no field that asks
+for one, so nothing in it ever requires a value of the place; where a value
+could still be written into a free-text field, a filter refuses the known
+shapes of a machine name. Change the slug, display name, version or description there and package
 names, process names, MCP/OpenAPI identity, UI copy and SEO follow.
 
-Three files are **generated** from it — `ecosystem.config.cjs`,
-`ecosystem.dev.config.cjs` and the `env.variables` block of the declaration
-itself. Run `bun run gen:declaration` after changing a role; the test suite
-refuses a stale copy.
+Four things are **generated** from it — `ecosystem.config.cjs`,
+`ecosystem.dev.config.cjs`, `packages/config/src/app-identity.generated.ts` and
+the `env.variables` block of the declaration itself. Run
+`bun run gen:declaration` after changing a role; the test suite refuses a stale
+copy.
 
 ## Start
 
@@ -87,9 +90,44 @@ Unsupported browsers and users requesting reduced motion switch immediately.
 bun run check
 bun run test
 bun run build
-bun run runtime:smoke
-bun run e2e
+bun run acceptance:local
 ```
+
+Top to bottom, in one terminal, and none of it touches a deployment. They
+assume your development database is already set up — see [Start](#start).
+
+`acceptance:local` is the last one because `runtime:smoke` and `e2e` check a
+**running** deployment rather than a source tree — so it creates one and
+destroys it: its own PM2 home, ephemeral ports, its own public-host allowlist,
+and a stop that names the roles the declaration declares. It reloads nothing
+you are running.
+
+It also brings its own database, `ACCEPTANCE_DATABASE_URL`, and applies this
+project's migrations to that — not to yours. The gates WRITE (the repository
+example's smoke posts a refresh, and that upserts), so borrowing `DATABASE_URL`
+would make a gate a writer in whatever database your `.env` names. It refuses to
+start when the variable is unset or names the same database, and says what to
+add. It needs `pm2` (see [Requirements](#requirements)).
+
+Deploying is a separate, deliberate command — `bun run pm2:prod` under
+[Production](#production) — and it is not a gate.
+
+To run the two runtime gates against a deployment that already exists somewhere,
+point `SMOKE_API_ORIGIN` / `SMOKE_WEB_ORIGIN` at it and call `bun run
+runtime:smoke` / `bun run e2e` directly. `runtime:smoke` asks the web role to
+answer as two of the addresses `PUBLIC_WEB_HOSTS` claims, to prove one artifact
+serves many; a deployment claiming fewer than two addresses besides the one
+being dialled is told exactly what to add rather than failing on a refused host.
+
+## Requirements
+
+- **Bun** and **Node ≥ 22**.
+- **PostgreSQL** — external infrastructure, in development and production
+  alike. This project owns its schema and migrations, never the database
+  process.
+- **PM2** on `PATH` (`bun add --global pm2`) for `bun run dev`,
+  `bun run acceptance:local` and `bun run pm2:prod`.
+- **Playwright browsers** (`bunx playwright install`) for `bun run e2e`.
 
 ## Production
 

@@ -124,10 +124,11 @@ See [`decisions/README.md`](./decisions/README.md) for the ADR format and index.
 title: Short title
 description: One sentence — what this is and why
 type: task
-status: inbox | planned | in-progress | done
+status: inbox | planned | in-progress | icebox | done
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 completed: YYYY-MM-DD   # done only
+defrost: what brings it back   # icebox only
 ---
 ```
 

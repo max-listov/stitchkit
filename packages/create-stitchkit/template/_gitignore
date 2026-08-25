@@ -3,6 +3,7 @@ dist/
 .next/
 next-env.d.ts
 .env
+.build-stamp.json
 coverage/
 *.log
 packages/db/src/generated/

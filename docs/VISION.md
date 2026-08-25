@@ -4,7 +4,7 @@ description: Contract-first backend framework for Bun and Node, with optional pr
 type: vision
 status: active
 created: 2025-05-01
-updated: 2026-08-23
+updated: 2026-08-25
 ---
 
 # stitchkit
@@ -85,9 +85,12 @@ A project also describes itself once. `stitchkit/declaration` ships the project
 declaration — identity, roles, build, runtime requirements, release steps and
 the names of the variables a deployment supplies — so the project, the
 scaffolder and whatever binds an artifact into a deployment read one versioned
-schema instead of three copies. Its boundary is enforced by shape: there is
-nowhere in it to put a port, a host, an address, a machine path or a
-supervision policy, because none of those are true of the code.
+schema instead of three copies. Its boundary is held by two different things,
+and only one of them is a guarantee: **structure** — the schema has no field
+for a port, a host, an address, a machine path or a supervision policy, so
+nothing in it ever *requires* one — and **hygiene**, a filter that refuses the
+known shapes of a machine name where a value could still be smuggled in. The
+first cannot be worked around; the second catches what it recognises.
 
 The additive managed application kernel is the equivalent server-only
 composition surface for ordinary process resources. It builds on the existing

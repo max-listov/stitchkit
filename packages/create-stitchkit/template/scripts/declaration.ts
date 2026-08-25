@@ -1,11 +1,12 @@
 import { resolve } from 'node:path';
-import { z } from 'zod';
-import { appDeclaration } from '../packages/config/src/declaration';
 import type {
   ProjectDeclaration,
   ProjectEnvVariable,
   ProjectRole,
-} from '../packages/config/src/project-declaration.generated';
+} from 'stitchkit/declaration';
+import { z } from 'zod';
+import { appDeclaration } from '../packages/config/src/declaration';
+import * as shutdownBudgets from '../packages/config/src/shutdown';
 import { applicationVariables } from '../packages/config/src/variables';
 
 /**
@@ -52,12 +53,14 @@ export const LOCAL_SUPERVISION: SupervisionPolicy = {
  * the earlier check, comparing against the floor only, reported that supervision
  * "allows the full shutdown" while 15s + 5s met a 20s kill timeout exactly.
  */
-const FORCE_BUDGET_MS = 5_000;
-const CLEANUP_MARGIN_MS = 5_000;
+// Imported, not restated: the role enforces these, and a number in two places
+// is two numbers that can disagree — which is exactly how a 15s drain met a
+// 20s kill timeout.
+const { FORCE_BUDGET_MS, CLEANUP_BUDGET_MS } = shutdownBudgets;
 
 /** The shortest time a supervisor may allow this role and still see it finish. */
 export function terminationBudgetMs(role: ProjectRole): number {
-  return role.drainFloorMs + FORCE_BUDGET_MS + CLEANUP_MARGIN_MS;
+  return role.drainFloorMs + FORCE_BUDGET_MS + CLEANUP_BUDGET_MS;
 }
 
 /**
@@ -165,7 +168,7 @@ export function assertSupervisionAllowsShutdown(
     const budget = terminationBudgetMs(role);
     if (budget > killTimeoutMs) {
       throw new Error(
-        `Role "${role.name}" needs up to ${budget}ms to finish shutting down (${role.drainFloorMs}ms drain + ${FORCE_BUDGET_MS}ms force + ${CLEANUP_MARGIN_MS}ms cleanup) but supervision allows ${killTimeoutMs}ms — it would be killed mid-shutdown.`,
+        `Role "${role.name}" needs up to ${budget}ms to finish shutting down (${role.drainFloorMs}ms drain + ${FORCE_BUDGET_MS}ms force + ${CLEANUP_BUDGET_MS}ms cleanup) but supervision allows ${killTimeoutMs}ms — it would be killed mid-shutdown.`,
       );
     }
   }

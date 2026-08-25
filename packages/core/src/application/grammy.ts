@@ -1,4 +1,5 @@
 import { type Bot, Context, type PollingOptions, type WebhookReplyEnvelope } from 'grammy';
+import { AppError } from '../contract/errors';
 import { defineManagedResource, type ManagedResource } from './resource';
 
 if (typeof Context !== 'function') {
@@ -116,16 +117,24 @@ export interface GrammyWebhookResource<C extends Context> {
 }
 
 /**
- * Deliberately NOT in `STITCH_ERROR_STATUS`: that registry is the generic core's
- * (→ ADR 0002), and a provider name has no place in a union every consumer
- * imports. This code travels as itself through a partial `codeMap`, exactly the
- * way a code the project threw does.
+ * In `STITCH_ERROR_STATUS`, like every other code the framework throws
+ * (→ ADR 0105), and branded for the same reason as `ApplicationAdmissionError`.
+ *
+ * The registry is not a domain vocabulary, so ADR 0002 does not exempt this: it
+ * is the list of codes stitchkit itself authors, and the only thing a consumer
+ * does with it is decide what each one looks like on their wire. Leaving an
+ * adapter's code out does not keep a provider name out of a consumer's
+ * concern — it means `isStitchErrorCode` answers `false`, `createErrorHook`
+ * skips both `codeMap` and `unmappedCode`, and the code reaches the wire in
+ * stitchkit's spelling. The name is more visible left out than in.
  */
-export class GrammyWebhookUnavailableError extends Error {
-  readonly code = 'GRAMMY_WEBHOOK_NOT_ACCEPTING';
-
+export class GrammyWebhookUnavailableError extends AppError<'GRAMMY_WEBHOOK_NOT_ACCEPTING'> {
   constructor() {
-    super('grammY webhook resource is not accepting updates');
+    super(
+      'GRAMMY_WEBHOOK_NOT_ACCEPTING',
+      'grammY webhook resource is not accepting updates',
+      503,
+    );
     this.name = 'GrammyWebhookUnavailableError';
   }
 }

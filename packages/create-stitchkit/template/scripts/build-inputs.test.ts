@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProjectDeclaration } from 'stitchkit/declaration';
 import { appDeclaration } from '../packages/config/src/declaration';
-import type { ProjectDeclaration } from '../packages/config/src/project-declaration.generated';
 import { assertDeclaredBuildInputs } from './build-inputs';
 
 function digestOf(text: string): string {

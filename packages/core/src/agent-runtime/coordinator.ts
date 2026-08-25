@@ -24,6 +24,23 @@ export interface AgentSessionCoordinator {
   isRunning(key: string): boolean;
 }
 
+/**
+ * The one rule for close budgets, so it can be applied before state changes.
+ *
+ * It used to live inside `close()` here and nowhere else, which meant the
+ * runtime's own `close()` — which shuts admission first and only then delegates
+ * — refused a bad budget *after* it had stopped admitting work: an exception
+ * and a closed runtime, from a call that never legally started. Exported so the
+ * check happens where nothing has been changed yet.
+ */
+export function assertCloseBudgets(options: AgentSessionCloseOptions): void {
+  for (const [name, value] of Object.entries(options)) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+      throw new TypeError(`${name} must be a non-negative safe integer`);
+    }
+  }
+}
+
 export interface AgentSessionCloseOptions {
   /**
    * How long active runs may settle on their own before they are aborted.
@@ -169,11 +186,7 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
     },
 
     async close(options = {}) {
-      for (const [name, value] of Object.entries(options)) {
-        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
-          throw new TypeError(`${name} must be a non-negative safe integer`);
-        }
-      }
+      assertCloseBudgets(options);
       closed = true;
       const error = new Error('Agent session coordinator is closed');
       for (const lane of lanes.values()) {

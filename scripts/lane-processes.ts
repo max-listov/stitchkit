@@ -144,15 +144,39 @@ export async function stopProcessGroup(
   } catch {
     signal(child.pid, 'SIGTERM');
   }
-  const forced = setTimeout(() => {
+  const force = (): void => {
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch {
       signal(child.pid, 'SIGKILL');
     }
-  }, forceAfterMs);
+  };
+  const forced = setTimeout(force, forceAfterMs);
   await child.exited.catch(() => undefined);
   clearTimeout(forced);
+  // The LEADER exiting is not the group ending. Cancelling the force there —
+  // which is what this used to do — cancels it in exactly the case it exists
+  // for: a descendant that ignored SIGTERM and outlived the process that
+  // started it. So the group is asked about, and forced if it is still there.
+  const deadline = Date.now() + forceAfterMs;
+  while (groupIsAlive(child.pid)) {
+    if (Date.now() >= deadline) {
+      force();
+      break;
+    }
+    await Bun.sleep(50);
+  }
+}
+
+/** Whether anything is still in this process group. */
+function groupIsAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the group exists and is not ours to signal — still alive.
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
 }
 
 /**

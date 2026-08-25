@@ -4,6 +4,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { GrammyWebhookUnavailableError } from '../src/application/grammy';
+import { ApplicationAdmissionError } from '../src/application/kernel';
 import { AppError, type RuntimeContext, type StitchErrorCode } from '../src/contract';
 import { createErrorHook, createHandler } from '../src/server';
 import type { MethodDef } from '../src/server/types';
@@ -32,6 +34,7 @@ const onError = createErrorHook({
     DOWNLOAD_NOT_FOUND: 'not_found',
     VIEW_HTTP_ERROR: 'upstream',
     OPERATION_NOT_SUCCEEDED: 'conflict',
+    GRAMMY_WEBHOOK_NOT_ACCEPTING: 'unavailable',
     INTERNAL_SERVER_ERROR: 'internal',
     // `satisfies Record<StitchErrorCode, …>` HERE on purpose: this fixture is
     // the one place that should notice a new framework code, so adding one
@@ -52,6 +55,29 @@ const endpoint: MethodDef = {
   desc: 'Probe error handling',
   handler: () => undefined,
 };
+
+describe('an admission refusal travels as itself', () => {
+  // Not registry membership — TRANSPORT. Both classes used to extend plain
+  // `Error` while carrying a `code` field, and `normalizeError` starts with
+  // `AppError.is(err)`: they arrived as INTERNAL_SERVER_ERROR / 500, the
+  // declared 503 never left the process, and `codeMap` never saw the code. A
+  // registry entry could not have shown that, because the registry and
+  // `normalizeError` were only ever checked apart.
+  test('the application kernel refusal arrives as 503 with its mapped code', async () => {
+    const res = await onError(ctx, new ApplicationAdmissionError());
+    expect(res?.status).toBe(503);
+    expect(await res?.json()).toEqual({
+      ok: false,
+      error: { code: 'unavailable', message: 'Application is not accepting new operations' },
+    });
+  });
+
+  test('the grammY webhook refusal arrives as 503 with its mapped code', async () => {
+    const res = await onError(ctx, new GrammyWebhookUnavailableError());
+    expect(res?.status).toBe(503);
+    expect(await res?.json()).toMatchObject({ error: { code: 'unavailable' } });
+  });
+});
 
 describe('createErrorHook', () => {
   test('remaps a stitchkit code to the app wire code and keeps the status', async () => {

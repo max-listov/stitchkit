@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   assertMigrationSection,
   assertReleaseCommitSubject,
@@ -482,3 +484,27 @@ describe('a gate that cannot check refuses instead of passing', () => {
     );
   });
 });
+
+describe('a migration guide reads newest first', () => {
+  // A reader is told to read every section in a range. `0.49.0 → 0.46.0 →
+  // 0.48.0 → 0.47.0` gives them that range shuffled, and the two sections most
+  // likely to be misplaced are the two most recently appended — which is what
+  // happened.
+  for (const [target, channel] of Object.entries(MIGRATION_CHANNELS)) {
+    test(`${target}: sections descend by version`, () => {
+      const guide = readFileSync(resolve(import.meta.dir, '..', channel.guidePath), 'utf8');
+      const versions = [
+        ...guide.matchAll(/^## Released migration: (\d+\.\d+\.\d+)\s*$/gm),
+      ].map((match) => match[1] ?? '');
+      expect(versions.length).toBeGreaterThan(0);
+      const descending = [...versions].sort((left, right) => comparePreOne(right, left));
+      expect(versions).toEqual(descending);
+    });
+  }
+});
+
+function comparePreOne(left: string, right: string): number {
+  const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
+  const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);
+  return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
+}

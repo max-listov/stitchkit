@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { ProjectDeclaration } from 'stitchkit/declaration';
 import { appDeclaration } from '../packages/config/src/declaration';
-import type { ProjectDeclaration } from '../packages/config/src/project-declaration.generated';
+import { assertArtifactMatchesSource } from './build-stamp';
 import { inheritToolingEnvironment } from './tooling-env';
 
 const root = resolve(import.meta.dir, '..');
@@ -87,6 +88,9 @@ export function assertBuildArtifacts(declaration: ProjectDeclaration = appDeclar
       `Missing build artifacts: ${missing.join(', ')} — run \`${formatCommand(build.command)}\` first.`,
     );
   }
+  // Present is not current. Without this, a release applies THIS source's
+  // migrations and then starts the previous source's artifact.
+  assertArtifactMatchesSource(root);
 }
 
 export async function runDeclaredReleaseSteps(

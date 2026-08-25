@@ -1,6 +1,7 @@
 import { RepositorySnapshotSchema, repositoryRealtimeContract } from '@app/shared';
 import { createRealtimeClient, defineRealtimeContract } from 'stitchkit';
 import { z } from 'zod';
+import { assertDeploymentIsAnswering } from './deployment-preflight';
 import { defineSurfaceProbe, runSurfaceConformance } from './surface-conformance';
 import { loadToolingEnv } from './tooling-env';
 import { assertArtifactIsPlacementFree, assertPublicWebSurface } from './web-surface-smoke';
@@ -8,8 +9,16 @@ import { assertArtifactIsPlacementFree, assertPublicWebSurface } from './web-sur
 const toolingEnv = loadToolingEnv();
 const apiOrigin = toolingEnv.SMOKE_API_ORIGIN;
 
+await assertDeploymentIsAnswering({
+  'the API role': apiOrigin,
+  'the web role': toolingEnv.SMOKE_WEB_ORIGIN,
+});
+
 async function json(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`${apiOrigin}${path}`, init);
+  const response = await fetch(`${apiOrigin}${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!response.ok)
     throw new Error(`${init?.method ?? 'GET'} ${path} returned ${response.status}`);
   return response.json();
@@ -185,7 +194,10 @@ await runSurfaceConformance({
 }
 
 await assertPublicWebSurface(toolingEnv.SMOKE_WEB_ORIGIN);
-await assertArtifactIsPlacementFree(toolingEnv.SMOKE_WEB_ORIGIN);
+await assertArtifactIsPlacementFree(toolingEnv.SMOKE_WEB_ORIGIN, {
+  origin: toolingEnv.PUBLIC_WEB_ORIGIN,
+  hosts: toolingEnv.PUBLIC_WEB_HOSTS,
+});
 
 console.log(
   'Runtime HTTP (same-origin and direct), OpenAPI, Socket.IO, MCP and public web smoke passed',

@@ -89,6 +89,32 @@ describe('AgentRuntimeStore reference adapter', () => {
     expect(snapshot.runs[0]?.revision).toBe(1);
   });
 
+  test('orders runs of one millisecond by history, not by identifier', async () => {
+    // Every run here shares a timestamp, which is not a contrivance: a
+    // successor coalescing behind an active run is created inside the same
+    // millisecond as it, and an ISO timestamp has nothing finer. The
+    // identifiers are chosen to sort the wrong way round, so a snapshot that
+    // falls back to them returns the newer run first.
+    const store = createMemoryAgentRuntimeStore();
+    const earlier = inputMessage('input-1');
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-1',
+      input: earlier,
+      run: queuedRun(earlier.id, 'run-z'),
+    });
+
+    const later = inputMessage('input-2');
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-2',
+      input: later,
+      run: queuedRun(later.id, 'run-a'),
+    });
+
+    const snapshot = await store.loadSnapshot('conversation-1');
+    expect(snapshot.messages.map((message) => message.id)).toEqual(['input-1', 'input-2']);
+    expect(snapshot.runs.map((run) => run.id)).toEqual(['run-z', 'run-a']);
+  });
+
   test('rejects assistant identities that could overwrite canonical history', async () => {
     const store = createMemoryAgentRuntimeStore();
     const first = inputMessage('input-1');

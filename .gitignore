@@ -14,14 +14,26 @@ packages/core/llms.txt
 packages/core/llms-full.txt
 packages/create-stitchkit/template/packages/db/src/generated/
 
+# What the template's OWN dev workspace produces when it is worked in.
+#
+# `packages/create-stitchkit/template` is a real project: `bun run build`,
+# `bun run e2e` and `bun run acceptance:local` run there and write output into
+# it. The rules that would hide that output live in the template's `_gitignore`,
+# which git in THIS repository never reads — the file is only named `.gitignore`
+# after a project is generated from it. So every one of those rules has to exist
+# here too, and `scripts/tree-artifacts.test.ts` fails if one does not.
+.build-stamp.json
+playwright-report
+test-results
+
 # code coverage
 coverage
 *.lcov
 
 # logs
 logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # dotenv environment variable files
 .env

@@ -14,6 +14,7 @@ import {
   type AgentSessionCloseOptions,
   type AgentSessionCloseResult,
   type AgentStopReason,
+  assertCloseBudgets,
   createAgentSessionCoordinator,
 } from './coordinator';
 import {
@@ -284,6 +285,63 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   let admissionClosed = false;
   const closedError = (): Error =>
     new Error('[stitchkit] agent runtime is closed and admits no further work');
+
+  /**
+   * Admissions that are PAST the gate and not yet handed to the coordinator.
+   *
+   * The gate above stops what has not started. This holds what already has, and
+   * without it the gate is only half a close: a submission that passed the
+   * check and is inside `acceptInputAndAssignRun` owns no coordinator lane yet,
+   * so a `close()` that drains only the coordinator finds nothing, reports
+   * `settled: true, remaining: 0`, and the store then commits a queued run for
+   * it. The run lands with nothing to execute it — the exact state close exists
+   * to prevent, reached through the door marked closed.
+   *
+   * An entry is released the moment the admission reaches one side or the
+   * other: a refusal before the durable write, or a handoff the coordinator's
+   * own drain now owns. It is never held for the length of a run.
+   */
+  const admissionsInFlight = new Set<PromiseWithResolvers<void>>();
+  const beginAdmission = (): (() => void) => {
+    const handoff = Promise.withResolvers<void>();
+    admissionsInFlight.add(handoff);
+    return () => {
+      if (admissionsInFlight.delete(handoff)) handoff.resolve();
+    };
+  };
+
+  /**
+   * Wait for those admissions, and say how many never arrived.
+   *
+   * Bounded by the SAME budget the caller gave, not a second one beside it:
+   * whatever this spends is taken off what the coordinator is then allowed to
+   * spend, so "every combination is bounded" survives the extra wait.
+   */
+  const drainAdmissions = async (budgetMs: number | undefined): Promise<number> => {
+    const pending = [...admissionsInFlight].map((handoff) => handoff.promise);
+    if (pending.length === 0) return 0;
+    let stranded = pending.length;
+    const settled = Promise.all(
+      pending.map((promise) =>
+        promise.then(() => {
+          stranded -= 1;
+        }),
+      ),
+    );
+    if (budgetMs === undefined) {
+      await settled;
+      return 0;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, budgetMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    return stranded;
+  };
   const refuse = <T>(): { accepted: Promise<void>; result: Promise<T> } => {
     const error = closedError();
     const accepted = Promise.reject<void>(error);
@@ -299,6 +357,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     const context = config.protocol.parseContext(rawInput.context);
     const accepted = Promise.withResolvers<void>();
     const result = Promise.withResolvers<AgentRuntimeResult>();
+    const handedOff = beginAdmission();
     void (async () => {
       try {
         const snapshot = await config.store.loadSnapshot(rawInput.conversationId);
@@ -315,10 +374,13 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             execute: () => executeRun({ acceptedRun: recoveredRun, context, signal }),
           }),
         });
+        void ticket.accepted.catch(() => undefined);
         void ticket.result.then(result.resolve, result.reject);
       } catch (error) {
         accepted.reject(error);
         result.reject(error);
+      } finally {
+        handedOff();
       }
     })();
     return { accepted: accepted.promise, result: result.promise };
@@ -407,6 +469,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         if (currentConversationTickets.size === 0) tickets.delete(input.conversationId);
       };
       void outerResult.promise.then(forgetTicket, forgetTicket);
+      const handedOff = beginAdmission();
       void (async () => {
         try {
           await previousAcceptance.catch(() => undefined);
@@ -558,6 +621,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               };
             },
           });
+          // A close that already spent its budget rejects this handoff, and a
+          // rejection nobody observes becomes an unhandled one. The result is
+          // reported through `outerResult` below; this is only the guard.
+          void ticket.accepted.catch(() => undefined);
           if (reservation) {
             void ticket.result.then(
               reservation.admission.completion.resolve,
@@ -586,6 +653,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           }
         } finally {
           acceptanceDone.resolve();
+          handedOff();
         }
       })();
       return publicTicket;
@@ -637,6 +705,19 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         });
         for (const item of page.items) {
           if (options.signal?.aborted) break;
+          // Per ITEM, not per page: a close arriving in the middle of a page
+          // used to leave the rest of it to be recovered afterwards.
+          if (admissionClosed) break;
+          // One item's mutating slice, inside the same barrier admission uses.
+          //
+          // The gate at the top of `recover` and the one in the loop condition
+          // stop what has not started; neither stops what is between
+          // `decide()` and the durable write it leads to. A close arriving
+          // inside that user callback used to return `settled: true` and then
+          // watch `recoverRun` commit — a write after the runtime said it had
+          // stopped writing. Held until the item reaches `resume`, which owns
+          // the handoff from there.
+          const handedOff = beginAdmission();
           try {
             if (item.run.state === 'queued') {
               const snapshot = await config.store.loadSnapshot(item.conversationId);
@@ -657,6 +738,9 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             const decision =
               (await options.decide?.(item)) ??
               (item.run.state === 'queued' ? { action: 'resume' } : { action: 'skip' });
+            // Re-read AFTER the callback: this is the last point before the
+            // first durable write, and the callback is where a close fits.
+            if (admissionClosed) throw closedError();
             if (decision.action === 'skip') {
               outcomes.push({
                 conversationId: item.conversationId,
@@ -714,6 +798,8 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               outcome: 'failed',
               error,
             });
+          } finally {
+            handedOff();
           }
         }
         cursor = page.nextCursor;
@@ -722,11 +808,37 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       return outcomes;
     },
     stop: (conversationKey, reason) => coordinator.stop(conversationKey, reason),
-    close: (options) => {
+    close: async (options = {}) => {
+      // BEFORE the flag. A budget that is not a budget used to be discovered by
+      // the coordinator, one await later — leaving a runtime that had stopped
+      // admitting work and a caller holding a TypeError, with no way to undo
+      // either. A refused call changes nothing.
+      assertCloseBudgets(options);
       // Set before anything is awaited, so no admission can slip past while the
       // active runs are being drained.
       admissionClosed = true;
-      return coordinator.close(options);
+      // Then wait for the ones already inside. Whatever this spends is taken
+      // off the coordinator's budget rather than added to it.
+      //
+      // Measured monotonically, not with `config.now`: that clock is the
+      // runtime's SEMANTIC one — a caller may set it to a fixed instant for
+      // deterministic timestamps, and a wall clock steps backwards on its own.
+      // Either makes the subtraction below meaningless.
+      const startedAt = performance.now();
+      const stranded = await drainAdmissions(options.forceTimeoutMs);
+      const spent = Math.max(0, Math.round(performance.now() - startedAt));
+      const remainingBudget = (value: number | undefined): number | undefined =>
+        value === undefined ? undefined : Math.max(0, value - spent);
+      const grace = remainingBudget(options.gracePeriodMs);
+      const force = remainingBudget(options.forceTimeoutMs);
+      const result = await coordinator.close({
+        ...(grace !== undefined && { gracePeriodMs: grace }),
+        ...(force !== undefined && { forceTimeoutMs: force }),
+      });
+      // An admission that never handed off is work this close is walking away
+      // from just as surely as an unfinished run, and it is counted as such.
+      if (stranded === 0) return result;
+      return { settled: false, timedOut: true, remaining: result.remaining + stranded };
     },
   };
 }

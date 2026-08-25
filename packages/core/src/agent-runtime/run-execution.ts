@@ -589,8 +589,12 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       } else {
         terminalReason = 'provider_failure';
       }
+    } finally {
+      // In a `finally` because the `catch` above does its own I/O: a
+      // `loadSnapshot` that throws used to skip this line and leave the idle
+      // timer armed for the rest of the process's life.
+      idleDeadline.dispose();
     }
-    idleDeadline.dispose();
 
     assistant = AgentMessageSchema.parse({
       ...assistant,

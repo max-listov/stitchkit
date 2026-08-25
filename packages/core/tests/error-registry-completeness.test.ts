@@ -27,6 +27,16 @@ test('every code the framework throws is in the registry', async () => {
       const code = match[1];
       if (code) thrown.add(code);
     }
+    // A SUBCLASS of AppError names its code through `super(...)`, which the
+    // pattern above cannot see — and that is exactly how two admission codes
+    // reached the wire unregistered. The scan follows the code, not one way of
+    // writing it.
+    if (/extends AppError</.test(source)) {
+      for (const match of source.matchAll(/super\(\s*'([A-Z][A-Z0-9_]*)'/g)) {
+        const code = match[1];
+        if (code) thrown.add(code);
+      }
+    }
   }
 
   expect(thrown.size).toBeGreaterThan(10);

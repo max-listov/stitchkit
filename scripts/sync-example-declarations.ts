@@ -8,8 +8,7 @@
  *
  * Kept by hand, that file drifts the moment a role changes in the template, and
  * the drift only surfaces in the packed lane minutes into a run. So it is
- * generated, like the schema mirror and the supervision files, and the gate
- * refuses a stale copy.
+ * generated, like the supervision files, and the gate refuses a stale copy.
  *
  * The derivation itself is the TEMPLATE's — `renderEnvVariables` — rather than a
  * second implementation here. One rule for what a variable's shape is, wherever

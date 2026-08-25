@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { appDeclaration } from '../packages/config/src/declaration';
 import { ensureLocalEnvironment } from './local-env';
+import { awaitRolesAnswering, declaredRoleReadiness } from './readiness';
 import { runDeclaredReleaseSteps } from './release-steps';
 import { inheritToolingEnvironment } from './tooling-env';
 
@@ -121,11 +122,12 @@ if (import.meta.main) {
   await runDevelopment();
 
   const environment = await developmentEnvironment();
+  const roles = declaredRoleReadiness(appDeclaration, environment);
+  // Reported only once it is TRUE. The supervisor returns at the spawn, and a
+  // development build needs seconds after that before it listens — so the line
+  // below used to be printed at a moment when nothing answered, and the next
+  // command in the gate list got a connection reset.
+  await awaitRolesAnswering(roles);
   console.log(`${appDeclaration.identity.name} development processes are running`);
-  for (const role of appDeclaration.roles) {
-    if (!role.listener) continue;
-    const port = environment[role.listener.portVariable];
-    const readiness = role.listener.readinessPath;
-    console.log(`${role.name}: http://${environment.BIND_HOST}:${port}${readiness}`);
-  }
+  for (const role of roles) console.log(`${role.name}: ${role.url}`);
 }

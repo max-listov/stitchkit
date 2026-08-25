@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import {
   PROJECT_DECLARATION_SCHEMA_VERSION,
   parseProjectDeclaration,
 } from '../../core/src/declaration';
 import { APP_IDENTITY_PATH, renderAppIdentityModule } from '../src/identity';
-import { isTemplateSourcePathIncluded, scaffoldProject } from '../src/scaffold';
+import {
+  IGNORED_DIRECTORIES,
+  IGNORED_FILE_NAMES,
+  IGNORED_FILE_SUFFIXES,
+  isTemplateSourcePathIncluded,
+  scaffoldProject,
+} from '../src/scaffold';
 
 const created: string[] = [];
 
@@ -237,7 +243,11 @@ describe('scaffoldProject', () => {
       'utf8',
     );
 
-    expect(webPackage).toContain('"@wrksz/themes": "^1.1.0"');
+    // The dependency, not the release of it: this test is about there being ONE
+    // theme implementation, and pinning the exact range here turned every
+    // routine dependency refresh into a failing assertion about something the
+    // test does not check.
+    expect(webPackage).toMatch(/"@wrksz\/themes":\s*"\^\d+\.\d+\.\d+"/);
     expect(webPackage).not.toContain(['next', 'themes'].join('-'));
     expect(layout).toContain("from '@wrksz/themes/next'");
     expect(transition).toContain('document.startViewTransition(updateTheme)');
@@ -439,6 +449,12 @@ describe('scaffoldProject', () => {
     await scaffoldProject(templateRoot, destination);
     // The scaffolder ships NO `.env` at all — `env:ensure` renders it from
     // `.env.example` with the destination identity on first run.
+    //
+    // Nothing is installed here, and that is the second thing this checks:
+    // `--no-install` is a supported way to scaffold, so the script that
+    // renders `.env` may not reach for anything a `bun install` would have
+    // brought. It stopped being able to the moment it imported the parsed
+    // declaration instead of the identity module.
     expect(await Bun.file(join(destination, '.env')).exists()).toBe(false);
     const process = Bun.spawn(['bun', 'run', 'env:ensure'], {
       cwd: destination,
@@ -492,6 +508,40 @@ describe('scaffoldProject', () => {
     expect(isTemplateSourcePathIncluded('packages/frontend/next-env.d.ts')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/backend/dist/index.js')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/db/src/generated/client.ts')).toBeFalse();
+    // A build stamp reached the template once, from a `bun run build` in its own
+    // dev workspace, and nothing stopped it: every generated project would have
+    // carried a stamp of source it was never built from.
+    expect(isTemplateSourcePathIncluded('.build-stamp.json')).toBeFalse();
+  });
+
+  test('what the copy excludes, the published package excludes too', async () => {
+    // Two consumers, one rule. `bun pm pack` never calls the filter above — it
+    // reads `files` — so excluding a name from the copy and forgetting the
+    // manifest publishes it anyway. That is not hypothetical: the build stamp
+    // was excluded here, and the packed template carried it on the next run.
+    const manifest: unknown = JSON.parse(
+      await readFile(resolve(import.meta.dir, '../package.json'), 'utf8'),
+    );
+    const files =
+      typeof manifest === 'object' && manifest !== null ? Reflect.get(manifest, 'files') : [];
+    const negations = new Set(Array.isArray(files) ? files : []);
+
+    const missing: string[] = [];
+    for (const tree of ['template', 'examples']) {
+      for (const directory of IGNORED_DIRECTORIES) {
+        const pattern = `!${tree}/**/${directory}/**`;
+        if (!negations.has(pattern)) missing.push(pattern);
+      }
+      for (const name of IGNORED_FILE_NAMES) {
+        const pattern = `!${tree}/**/${name}`;
+        if (!negations.has(pattern)) missing.push(pattern);
+      }
+      for (const suffix of IGNORED_FILE_SUFFIXES) {
+        const pattern = `!${tree}/**/*${suffix}`;
+        if (!negations.has(pattern)) missing.push(pattern);
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   test('rejects a non-empty destination', async () => {

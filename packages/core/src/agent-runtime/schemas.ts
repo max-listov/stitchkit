@@ -169,7 +169,17 @@ export const AgentSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   conversationId: AgentRecordIdSchema,
   version: AgentRecordVersionSchema,
+  /** In history order, oldest first. */
   messages: z.array(AgentMessageSchema),
+  /**
+   * Oldest first — by creation time, and within one millisecond by the
+   * position of the earliest message the run owns.
+   *
+   * The second key exists because the first cannot separate a successor from
+   * the run it queues behind: coalescing creates both inside one millisecond,
+   * and an ISO timestamp has nothing finer. Position therefore carries
+   * meaning, and a reader may rely on it.
+   */
   runs: z.array(AgentRunSchema),
 });
 

@@ -39,7 +39,18 @@ const TEMPLATE_RENAMES = new Map([
 
 const RootManifestSchema = z.looseObject({ name: z.string().min(1) });
 
-const IGNORED_DIRECTORIES = new Set([
+/**
+ * What never travels — as data, because two consumers read it.
+ *
+ * Copying is one of them; **packing** is the other, and it does not run this
+ * function at all: `bun pm pack` reads the `files` field of
+ * `create-stitchkit/package.json`. A name excluded here and forgotten there is
+ * still published, which is exactly how `.build-stamp.json` — a build output
+ * that is only true where its build ran — reached the packed template after
+ * being excluded from the copy. `tests/scaffold.test.ts` holds the two lists
+ * together, so an addition here fails until the manifest carries it too.
+ */
+export const IGNORED_DIRECTORIES = new Set([
   '.next',
   'coverage',
   'dist',
@@ -47,6 +58,12 @@ const IGNORED_DIRECTORIES = new Set([
   'playwright-report',
   'test-results',
 ]);
+
+/** Whole file names that are output, not source. */
+export const IGNORED_FILE_NAMES = new Set(['.env', '.build-stamp.json', 'next-env.d.ts']);
+
+/** Suffixes with the same meaning. */
+export const IGNORED_FILE_SUFFIXES = ['.log', '.tsbuildinfo'];
 
 export function isTemplateSourcePathIncluded(sourcePath: string): boolean {
   const normalized = sourcePath.replaceAll('\\', '/').replace(/^\.\//, '');
@@ -61,12 +78,8 @@ export function isTemplateSourcePathIncluded(sourcePath: string): boolean {
     return false;
 
   const name = basename(normalized);
-  return (
-    name !== '.env' &&
-    name !== 'next-env.d.ts' &&
-    !name.endsWith('.log') &&
-    !name.endsWith('.tsbuildinfo')
-  );
+  if (IGNORED_FILE_NAMES.has(name)) return false;
+  return !IGNORED_FILE_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
 function shouldIncludeTemplatePath(templateDirectory: string, sourcePath: string): boolean {

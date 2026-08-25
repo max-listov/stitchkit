@@ -133,6 +133,7 @@ export const STITCH_ERROR_STATUS = {
   FILE_EXISTS: 409,
   REALTIME_CONTRACT_VIOLATION: 500,
   APPLICATION_NOT_ACCEPTING: 503,
+  GRAMMY_WEBHOOK_NOT_ACCEPTING: 503,
   // Managed runtime tools (→ ADR 0081, 0082). They reach a caller through a
   // tool result rather than an HTTP response, but they are still codes the
   // FRAMEWORK throws — and while they were missing here `isStitchErrorCode`

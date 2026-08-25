@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { AppError } from '../contract/errors';
 import { ShutdownOptionsSchema } from '../server/shutdown';
 import { type ResolvedManagedResource, resolveResourceGraph } from './graph';
 import type {
@@ -128,11 +129,19 @@ export interface ApplicationHandle {
   shutdown(options?: ApplicationShutdownOptions): Promise<ApplicationShutdownResult>;
 }
 
-export class ApplicationAdmissionError extends Error {
-  readonly code = 'APPLICATION_NOT_ACCEPTING';
-
+/**
+ * An `AppError`, not an `Error` with a `code` field on it.
+ *
+ * The difference is the whole point of the class: `normalizeError` starts with
+ * `AppError.is(err)`, and a plain `Error` — however carefully it names its own
+ * code — falls through to the generic branch and reaches the caller as
+ * `INTERNAL_SERVER_ERROR` / 500. So the declared 503 never left the process,
+ * `createErrorHook({ unmappedCode })` never saw the code, and a registry entry
+ * proved only that the code existed, never that it travelled.
+ */
+export class ApplicationAdmissionError extends AppError<'APPLICATION_NOT_ACCEPTING'> {
   constructor() {
-    super('Application is not accepting new operations');
+    super('APPLICATION_NOT_ACCEPTING', 'Application is not accepting new operations', 503);
     this.name = 'ApplicationAdmissionError';
   }
 }

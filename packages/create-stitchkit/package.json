@@ -1,6 +1,6 @@
 {
   "name": "create-stitchkit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Create a production-shaped Stitchkit application",
   "license": "MIT",
   "author": "Max Listov <maxlistov@gmail.com>",
@@ -18,6 +18,7 @@
     "template/**/*",
     "examples/**/*",
     "!template/**/.env",
+    "!template/**/.build-stamp.json",
     "!template/**/node_modules/**",
     "!template/**/.next/**",
     "!template/**/dist/**",
@@ -29,6 +30,7 @@
     "!template/**/*.tsbuildinfo",
     "!template/**/coverage/**",
     "!examples/**/.env",
+    "!examples/**/.build-stamp.json",
     "!examples/**/node_modules/**",
     "!examples/**/.next/**",
     "!examples/**/dist/**",
@@ -57,7 +59,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14",
+    "@types/bun": "^1.4.0",
     "typescript": "^7.0.2"
   },
   "engines": {

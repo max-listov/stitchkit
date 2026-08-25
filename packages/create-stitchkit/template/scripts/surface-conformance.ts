@@ -46,7 +46,7 @@ interface SurfaceConformanceOptions {
 }
 
 async function readJson(url: string): Promise<unknown> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`GET ${url} returned ${response.status}`);
   return response.json();
 }
@@ -94,6 +94,13 @@ export async function discoverMcpTools(
   const transport = new StreamableHTTPClientTransport(new URL(`${apiOrigin}/mcp`));
   try {
     await client.connect(transport);
+    // Ask the server what it HAS before asking it to list it. A server exposing
+    // no MCP tool advertises no `tools` capability, and calling `listTools()`
+    // anyway makes the vendor client log a debug line — noise printed on every
+    // green run of a gate whose whole output is one line — to return the empty
+    // list the capability already stated. The absence is still observed here,
+    // and a manifest that claims an MCP tool still fails against it.
+    if (!client.getServerCapabilities()?.tools) return [];
     return (await client.listTools()).tools.map((tool) => tool.name);
   } finally {
     await client.close();

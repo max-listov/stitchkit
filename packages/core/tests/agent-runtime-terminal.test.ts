@@ -219,7 +219,19 @@ describe('agent runtime terminalization', () => {
 
     const queued = await store.loadSnapshot('conversation-1');
     expect(queued.runs).toHaveLength(2);
-    expect(queued.runs[1]?.inputMessageIds).toHaveLength(2);
+    // By identity, not by position. Reading position 1 as "the successor" is
+    // what made this test fail a release gate on a runtime that was doing
+    // exactly the right thing: both runs are created inside one millisecond,
+    // so the tie fell to a random identifier and half the time named the
+    // active run instead.
+    const successor = queued.runs.find((run) => run.id === secondAdmission.runId);
+    expect(successor?.inputMessageIds).toHaveLength(2);
+    expect(successor?.state).toBe('queued');
+    // And the order the snapshot promises is checked as its own statement.
+    expect(queued.runs.map((run) => run.id)).toEqual([
+      (await first.admission).runId,
+      secondAdmission.runId,
+    ]);
     releasePrompt.resolve();
     await Promise.all([first.result, second.result, third.result]);
     expect(promptCalls).toBe(2);
