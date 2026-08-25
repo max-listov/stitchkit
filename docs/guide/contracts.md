@@ -175,12 +175,13 @@ With this policy, omitting `expose` materializes `['HTTP']` on the returned
 endpoint. MCP, Agent and CLI then require an explicit endpoint array. The plain
 factory and `defineContract` keep the default-on behaviour above.
 
-Tool transports (`MCP`, `AGENT`) skip three kinds of endpoint automatically:
-`multipart` (a file upload is not a tool call) and
+Tool transports (`MCP`, `AGENT`) skip four kinds of endpoint automatically:
+`multipart` (a file upload is not a tool call),
 [`rawResponse`](./server.md#raw-response-endpoints) (its answer is bytes, which
-a tool result cannot carry — it would serialize to `{}`), plus
+a tool result cannot carry — it would serialize to `{}`),
 [`responseMeta`](./server.md#typed-json-response-metadata) (outbound HTTP
-headers have no meaning on a tool call).
+headers have no meaning on a tool call) and `rawBody` (HTTP-only by
+construction).
 
 ## `toolName`
 
@@ -195,11 +196,13 @@ derivation from the method key + prefix (`users` + `create` ⇒ `create_user`,
 **Every tool name — derived or explicit — must match `[a-zA-Z0-9_-]` and be at
 most 64 characters**, the character class every major provider accepts.
 
-Note the two classes differ. What is *accepted* includes the hyphen; what
-derivation *keeps* does not — a derived name normalises everything outside
-`[a-zA-Z0-9_]` to `_`, the hyphen included, so `bot-status` + `get` ⇒
-`get_bot_status` and `admin/analytics` + `get` ⇒ `get_admin_analytics`. A hyphen
-survives only in an explicit `toolName`, which is taken verbatim.
+Derivation normalises **per half**, and the halves differ (→ ADR 0035). The
+*service* half collapses everything outside `[a-zA-Z0-9_]` to `_`, hyphen
+included: `bot-status` + `get` ⇒ `get_bot_status`, `admin/analytics` + `get` ⇒
+`get_admin_analytics`. The *method* half keeps its hyphen and normalises only
+what no provider accepts (`[^a-zA-Z0-9_-]`), because a hyphenated method key has
+always shipped a legal name that a client config may already pin: `notes` +
+`get-user` ⇒ `get-user_notes`. An explicit `toolName` is taken verbatim.
 
 A prefix with *no* usable character at all (`'///'`, `'_'`, a fully non-ASCII
 prefix) and any explicit `toolName` outside the accepted class **throw at

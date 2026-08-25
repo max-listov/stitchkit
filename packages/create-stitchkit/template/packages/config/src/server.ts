@@ -1,27 +1,18 @@
 import path from 'node:path';
 import { createEnv } from '@t3-oss/env-core';
 import { config } from 'dotenv';
-import { z } from 'zod';
-import { featureServerSchema } from './features';
+import { applicationVariables } from './variables';
 
 config({ path: path.resolve(import.meta.dirname, '../../../.env'), quiet: true });
 
+/**
+ * The API role's view of the environment: every declared variable.
+ *
+ * The variables themselves are declared once in `variables.ts` — this module
+ * only says which of them this role validates, and where the file is read from.
+ */
 export const env = createEnv({
-  server: {
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-    DATABASE_URL: z.url(),
-    // Loopback by default — exposing the app to the network is an explicit
-    // opt-in (`BIND_HOST=0.0.0.0`), never something a forgotten edit causes.
-    BIND_HOST: z.string().min(1).default('127.0.0.1'),
-    API_PORT: z.coerce.number().int().positive(),
-    WEB_PORT: z.coerce.number().int().positive(),
-    NEXT_PUBLIC_API_URL: z.url(),
-    INTERNAL_API_URL: z.url(),
-    NEXT_PUBLIC_WEB_URL: z.url(),
-    LOG_FORMAT: z.enum(['pretty', 'json']).default('pretty'),
-    CORS_ORIGIN: z.url(),
-    ...featureServerSchema,
-  },
+  server: applicationVariables,
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
 });

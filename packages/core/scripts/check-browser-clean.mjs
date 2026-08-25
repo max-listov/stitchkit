@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const DIST = new URL('../dist/', import.meta.url);
-const ENTRIES = ['index.js', 'react.js', 'contract/index.js'];
+const ENTRIES = ['index.js', 'react.js', 'contract/index.js', 'declaration.js'];
 const IMPORT_RE = /(?:import|from)\s*["'](\.\.?\/[^"']+)["']/g;
 const NODE_RE = /["'](node:[a-z/_]+)["']/g;
 // Peers that must never be *statically* reachable from a browser-safe entry —

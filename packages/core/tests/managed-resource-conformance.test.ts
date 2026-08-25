@@ -142,7 +142,7 @@ describe('runManagedResourceConformance', () => {
   });
 
   test('rejects an explicitly empty scenario selection', async () => {
-    expect(
+    await expect(
       runManagedResourceConformance({
         createFixture: conformingFixture,
         scenarios: [],

@@ -52,8 +52,16 @@ export function isStitchErrorCode(code: string): code is StitchErrorCode
   fallback).
 - The **mapping** stitch-code → app-code stays the consumer's job (it is domain —
   the app decides `BAD_REQUEST` → `VALIDATION_ERROR`). stitch only provides the
-  stable, typed source so a consumer's map is `Record<StitchErrorCode, AppCode>`
-  — a missing or renamed code becomes a **TypeScript error**, not a silent 500.
+  stable, typed source so a consumer's map is keyed by `StitchErrorCode`.
+
+  > **Superseded in part by [ADR 0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md).**
+  > This clause originally read "a consumer's map is
+  > `Record<StitchErrorCode, AppCode>` — a missing or renamed code becomes a
+  > **TypeScript error**, not a silent 500". That has the wrong sign: the code
+  > set grows in ordinary releases, so an exhaustive map breaks a consumer's
+  > build on an **additive** one. `codeMap` became `Partial` in 0.56.1 and an
+  > omitted code falls through to `unmappedCode`. Everything else in this ADR
+  > stands.
 
 ADR 0002 still holds: app codes remain free strings the core never sees; this
 registry is only the codes stitchkit *itself* authors.

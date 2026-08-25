@@ -68,7 +68,8 @@ describe('parseByteRange', () => {
 
 describe('weakETag', () => {
   test('deterministic, weak, hex-encoded size + mtime', () => {
-    expect(weakETag(1000, 1_700_000_000_000)).toBe(weakETag(1000, 1_700_000_000_000));
+    // No self-comparison: a pure one-liner equals itself in every possible
+    // implementation. The exact output two lines down is what pins it.
     expect(weakETag(1000, 1_700_000_000_000)).toStartWith('W/"');
     expect(weakETag(10, 16)).toBe('W/"a-10"');
   });

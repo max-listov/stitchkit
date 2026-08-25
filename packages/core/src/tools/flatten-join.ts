@@ -84,7 +84,8 @@ function stableJson(value: unknown): string {
     .join(',')}}`;
 }
 
-function stringValues(schema: ToolPresentationSchema): string[] | null {
+/** The string members of a `const`/`enum`, or `null` when any member is not one. */
+export function stringValues(schema: ToolPresentationSchema): string[] | null {
   if (typeof schema.const === 'string') return [schema.const];
   if (!Array.isArray(schema.enum)) return null;
   const values = schema.enum.filter((value): value is string => typeof value === 'string');

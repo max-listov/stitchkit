@@ -3,10 +3,10 @@ import { createRealtimeClient, defineRealtimeContract } from 'stitchkit';
 import { z } from 'zod';
 import { defineSurfaceProbe, runSurfaceConformance } from './surface-conformance';
 import { loadToolingEnv } from './tooling-env';
-import { assertPublicWebSurface } from './web-surface-smoke';
+import { assertArtifactIsPlacementFree, assertPublicWebSurface } from './web-surface-smoke';
 
 const toolingEnv = loadToolingEnv();
-const apiOrigin = toolingEnv.NEXT_PUBLIC_API_URL;
+const apiOrigin = toolingEnv.SMOKE_API_ORIGIN;
 
 async function json(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(`${apiOrigin}${path}`, init);
@@ -155,7 +155,7 @@ await runSurfaceConformance({
   });
   if (
     corsResponse.headers.get('access-control-allow-origin') !==
-    new URL(toolingEnv.NEXT_PUBLIC_WEB_URL).origin
+    new URL(toolingEnv.SMOKE_WEB_ORIGIN).origin
   ) {
     throw new Error('API CORS origin differs from the configured web origin');
   }
@@ -167,6 +167,26 @@ await runSurfaceConformance({
   }
 }
 
-await assertPublicWebSurface(toolingEnv.NEXT_PUBLIC_WEB_URL);
+{
+  // THE DEFAULT PATH, end to end: the browser's own origin answers `/api/…`
+  // because the web role forwards it. This is what makes the example's client a
+  // module constant, so it is checked rather than described.
+  const proxied = await fetch(`${toolingEnv.SMOKE_WEB_ORIGIN}/api/repository`);
+  if (!proxied.ok) {
+    throw new Error(
+      `The web role did not forward /api/repository (${proxied.status}) — the same-origin default is broken`,
+    );
+  }
+  const sameOrigin = RepositorySnapshotSchema.parse(await proxied.json());
+  const direct = RepositorySnapshotSchema.parse(await json('/api/repository/'));
+  if (sameOrigin.fullName !== direct.fullName) {
+    throw new Error("the forwarded answer differs from the API role's own");
+  }
+}
 
-console.log('Runtime HTTP, OpenAPI, Socket.IO, MCP and public web smoke passed');
+await assertPublicWebSurface(toolingEnv.SMOKE_WEB_ORIGIN);
+await assertArtifactIsPlacementFree(toolingEnv.SMOKE_WEB_ORIGIN);
+
+console.log(
+  'Runtime HTTP (same-origin and direct), OpenAPI, Socket.IO, MCP and public web smoke passed',
+);

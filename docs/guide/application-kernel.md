@@ -9,6 +9,11 @@ updated: 2026-08-23
 
 # Managed application kernel
 
+> **Maturity: evolving.** This surface is still finding its shape and may be
+> redefined in any minor release — always with a `### ⚠️ Breaking changes` entry
+> and a migration section, never silently. The server, contract and client
+> surfaces it composes are stable.
+
 Use `stitchkit/application` when several process-local resources must become
 ready and shut down as one application. Keep using the lower-level server and
 signal APIs when one managed server is already the complete lifecycle boundary.
@@ -127,10 +132,35 @@ A required long-lived completion that rejects after startup makes readiness
 false and health unhealthy. Stitchkit records the failure but does not restart
 the resource or process.
 
-`createApplicationHealthHandler` exposes the neutral lifecycle/health snapshot
+`ApplicationResourceShutdown.failures` names the phase that failed — `start`,
+`ready`, `completion`, `admission`, `drain`, `close`, `force` — and nothing
+else. To learn *why*, pass `onResourceFailure`:
+
+```ts
+createApplication({
+  id: 'app',
+  resources,
+  onResourceFailure: ({ resourceId, phase, error }) => {
+    log.error({ resourceId, phase, err: error }, 'managed resource failed')
+  },
+})
+```
+
+It fires for every phase, including the one place the cause would otherwise be
+lost entirely: an **optional** resource failing to start. A required one
+rethrows, so its cause reaches you anyway; an optional one is swallowed on
+purpose, because the application keeps running. A throwing observer cannot
+break the lifecycle it observes.
+
+`createApplicationHealthHandler` publishes an `ApplicationStatusProjection`
 through a Fetch-compatible handler, suitable for a raw route on Bun or Node.
-Product-specific probes may be composed beside it; do not put secrets or raw
-provider failures in the response.
+The projection carries the verdict — the application's own `id`, `lifecycle`,
+`health`, `ready`, `capturedAt` and resource **counts** — and never the internal
+topology: no per-resource ids, no `dependsOn` edges, no process `epoch`, no
+admission counters.
+Those stay in `getSnapshot()`, which never leaves the process, and in whatever
+telemetry you wire to it. Product-specific probes may be composed beside it; do
+not put secrets or raw provider failures in the response.
 
 For the conventional three-route surface, reuse the same semantics instead of
 copying them into the application:
@@ -145,8 +175,11 @@ const rawRoutes = [
 ]
 ```
 
-`status` always returns the current sanitized snapshot with HTTP 200, including
-while starting, draining or stopped. The two probes retain the existing
+`status` always returns the current published projection with HTTP 200,
+including while starting, draining or stopped. To read the full snapshot — every
+resource, its dependency edges and the live counters — call `app.getSnapshot()`
+in-process; there is no option that publishes it over HTTP, because these routes
+are meant to be reachable. The two probes retain the existing
 readiness/liveness status and `Retry-After` policy.
 
 Applications that already own an OpenTelemetry SDK may inject its `Meter` into

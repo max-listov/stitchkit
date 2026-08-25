@@ -26,6 +26,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
+import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
 
 const here = import.meta.dirname;
 const pkgRoot = join(here, '..', '..');
@@ -67,13 +68,36 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** tsc exits non-zero on errors, so its output arrives via the thrown error. */
+/**
+ * `tsc` exits non-zero on errors, so its output arrives via the thrown error —
+ * and an empty string is this lane's signal for "clean".
+ *
+ * Which is why a failure to RUN must not produce one. `execFileSync` throws the
+ * same shape whether the compiler reported diagnostics, the binary was missing
+ * or the child was killed:
+ *
+ *   missing binary  → { status: null, signal: null,      stdout: undefined }
+ *   SIGKILLed child → { status: null, signal: 'SIGKILL', stdout: '' }
+ *
+ * Both joined to `''` and the lane printed "the published package works for a
+ * consumer" — for every fixture, for both the strict typecheck and the
+ * declaration check. A `tsc` that the OOM killer takes in a constrained CI
+ * container is exactly that, and this lane exists to catch the class of thing
+ * that hides behind a green run.
+ */
 function tsc(cwd, extraArgs) {
   try {
     run('bunx', ['tsc', '--noEmit', '-p', 'tsconfig.json', ...extraArgs], cwd);
     return '';
   } catch (err) {
-    return `${err.stdout ?? ''}${err.stderr ?? ''}`;
+    const output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+    // A real diagnostic run: the compiler ran, exited non-zero and said why.
+    if (typeof err.status === 'number' && output.trim()) return output;
+    const why =
+      err.signal !== null && err.signal !== undefined
+        ? `killed by ${err.signal}`
+        : `did not run (${err.code ?? err.message ?? 'unknown failure'})`;
+    return `[consumer-lane] tsc ${why} in ${cwd} — a typecheck that did not happen is not a passing typecheck\n${output}`;
   }
 }
 
@@ -229,6 +253,15 @@ try {
 
   try {
     step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
+  } catch (error) {
+    failed = true;
+    console.error(error instanceof Error ? error.message : error);
+  }
+
+  try {
+    step('self-contained socket artifact', () =>
+      runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
+    );
   } catch (error) {
     failed = true;
     console.error(error instanceof Error ? error.message : error);

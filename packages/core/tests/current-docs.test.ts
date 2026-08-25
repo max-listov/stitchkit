@@ -55,3 +55,19 @@ describe('current-facing documentation', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The package README is a MIRROR of the root one, and mirrors get checked.
+ *
+ * `prepack` copies the root README into the package on every publish, so the
+ * checked-in copy is generated content that happens to be tracked — and unlike
+ * its two siblings from the same `prepack` (`llms.txt`, `llms-full.txt`, both
+ * gitignored) nothing noticed when it drifted. CI compares only the PACKED copy,
+ * which is produced from the root moments earlier and therefore always agrees;
+ * the tracked one could sit stale indefinitely.
+ */
+test('the package README mirrors the root one byte for byte', () => {
+  const source = readFileSync(join(root, 'README.md'), 'utf8');
+  const mirrored = readFileSync(join(root, 'packages/core/README.md'), 'utf8');
+  expect(mirrored).toBe(source);
+});

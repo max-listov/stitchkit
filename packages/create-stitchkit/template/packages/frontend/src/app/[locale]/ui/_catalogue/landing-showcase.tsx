@@ -1,6 +1,6 @@
 'use client';
 
-import { appIdentity } from '@app/config/identity';
+import { appIdentity } from '@app/config/app-identity';
 import { IconArrowRight, IconBraces, IconDatabase, IconWorld } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { BrandMark } from '@/components/brand-mark';

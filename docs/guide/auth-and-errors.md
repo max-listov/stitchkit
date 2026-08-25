@@ -419,10 +419,18 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `CONFLICT`, `RATE_LIMITED`, `VALIDATION_ERROR`, `FILE_INVALID_PATH`,
 `FILE_OUTSIDE_ROOT`, `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
 `FILE_INSPECTION_REJECTED`, `FILE_TOO_LARGE`, `FILE_EXISTS`,
-`REALTIME_CONTRACT_VIOLATION`, `INTERNAL_SERVER_ERROR` — a set that grows in
+`REALTIME_CONTRACT_VIOLATION`, `APPLICATION_NOT_ACCEPTING`, `WAIT_TIMEOUT`,
+`WAIT_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
+`OPERATION_NOT_SUCCEEDED`, `INTERNAL_SERVER_ERROR` — a set that grows in
 ordinary releases, each addition named in the changelog. They are
 published as **`STITCH_ERROR_STATUS`** (the `code → status` map) and
 **`StitchErrorCode`** (its `keyof`), with **`isStitchErrorCode()`** (→ ADR 0026).
+
+> This list is enumerated here for reading, and the enumeration is what goes
+> stale — it once dropped `APPLICATION_NOT_ACCEPTING`, which made the map below
+> stop compiling. `Object.keys(STITCH_ERROR_STATUS)` is the answer that cannot;
+> `packages/core/tests/error-registry-completeness.test.ts` keeps the registry
+> itself complete against the source.
 
 If you translate stitch's framework errors into your own wire codes in an
 `onError` hook, you choose how the set's growth reaches you. Keying the map by
@@ -434,7 +442,10 @@ envelope is a published contract, at the cost of an edit on those releases:
 // Exhaustive on purpose: the annotation is what turns a new stitch code into a
 // compile error here. Drop it (or use `satisfies` on a partial map) to let an
 // unmapped code travel as itself instead.
-const STITCH_TO_APP: Record<StitchErrorCode, AppCode> = {
+// `Partial`, not an exhaustive `Record`: the set grows in ordinary releases, and
+// a map written exhaustively stops compiling on every addition. Codes you leave
+// out fall through to `unmappedCode`.
+const STITCH_TO_APP: Partial<Record<StitchErrorCode, AppCode>> = {
   NOT_FOUND: 'NOT_FOUND', METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
   BAD_REQUEST: 'VALIDATION_ERROR', VALIDATION_ERROR: 'VALIDATION_ERROR',
   UNAUTHORIZED: 'UNAUTHORIZED', FORBIDDEN: 'FORBIDDEN', CONFLICT: 'CONFLICT',

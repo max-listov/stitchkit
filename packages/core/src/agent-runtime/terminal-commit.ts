@@ -7,6 +7,7 @@ import {
   type AgentTerminalReason,
 } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
+import { assistantStatus } from './terminal-status';
 
 export class AgentRuntimeConflictError extends Error {
   constructor(operation: string) {
@@ -25,14 +26,6 @@ interface TerminalCommitCandidate {
   assistant: AgentMessage;
   reason: AgentTerminalReason;
   policyName?: string;
-}
-
-function terminalMessageStatus(reason: AgentTerminalReason): AgentMessage['status'] {
-  if (reason === 'success' || reason === 'policy_stop') return 'completed';
-  if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
-    return 'interrupted';
-  }
-  return 'failed';
 }
 
 export interface AgentTerminalCommitResolution extends TerminalCommitCandidate {
@@ -57,7 +50,7 @@ function canonicalTerminal(
     assistant.conversationId !== run.conversationId ||
     assistant.runId !== run.id ||
     assistant.role !== 'assistant' ||
-    assistant.status !== terminalMessageStatus(run.terminalReason)
+    assistant.status !== assistantStatus(run.terminalReason)
   ) {
     throw new AgentRuntimeConflictError('terminal result projection');
   }

@@ -115,6 +115,12 @@ export interface GrammyWebhookResource<C extends Context> {
   ): Promise<void>;
 }
 
+/**
+ * Deliberately NOT in `STITCH_ERROR_STATUS`: that registry is the generic core's
+ * (→ ADR 0002), and a provider name has no place in a union every consumer
+ * imports. This code travels as itself through a partial `codeMap`, exactly the
+ * way a code the project threw does.
+ */
 export class GrammyWebhookUnavailableError extends Error {
   readonly code = 'GRAMMY_WEBHOOK_NOT_ACCEPTING';
 

@@ -10,9 +10,9 @@
     "check": "bun --filter stitchkit check && bun --filter create-stitchkit check && bun run check:template && bun run check:scripts",
     "check:template": "cd packages/create-stitchkit/template && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
-    "test": "bun --filter stitchkit test && bun --filter create-stitchkit test && bun test scripts/*.test.ts",
+    "test": "bun --filter stitchkit test && bun --filter create-stitchkit test && bun test scripts/*.test.ts && bun run test:template",
     "gen:llms": "bun scripts/gen-llms.ts",
-    "build": "bun run gen:llms && bun --filter stitchkit build && bun --filter create-stitchkit build",
+    "build": "bun run gen:llms && bun run gen:template-declaration && bun run gen:example-declarations && bun --filter stitchkit build && bun --filter create-stitchkit build",
     "lint": "biome check --error-on-warnings . && bun run lint:template",
     "lint:template": "cd packages/create-stitchkit/template && bun run lint",
     "lint:fix": "biome check --write . && cd packages/create-stitchkit/template && bun run lint:fix",
@@ -28,7 +28,11 @@
     "starter:dev": "cd packages/create-stitchkit/template && bun run dev",
     "release:core": "bun scripts/release-plan.ts release core",
     "release:starter": "bun scripts/release-plan.ts release create-stitchkit",
-    "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms"
+    "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms",
+    "gen:template-declaration": "bun scripts/sync-template-declaration.ts",
+    "test:template": "cd packages/create-stitchkit/template && bun test scripts",
+    "gen:example-declarations": "bun scripts/sync-example-declarations.ts",
+    "supervised-lane": "bun scripts/supervised-lane.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

@@ -47,7 +47,10 @@ describe('ApiError.is — brand-based, cross-chunk safe', () => {
 
   test('the brand does not leak into JSON / keys', () => {
     const error = new ApiError('X', 400);
-    expect(Object.keys(error)).not.toContain(BRAND);
+    // `Object.keys` returns string keys only, so it can never contain a symbol
+    // — that half was unfalsifiable. The brand must be present as a symbol and
+    // absent from serialisation.
+    expect(Object.getOwnPropertySymbols(error)).toContain(BRAND);
     expect(JSON.stringify(error)).not.toContain('stitchkit.ApiError');
   });
 });
@@ -129,6 +132,6 @@ describe('implementRemote error conversion', () => {
     const service = implementRemote(contract, throwingHttp(raw));
     const handler = service.methods.get?.handler;
     if (!handler) throw new Error('handler missing');
-    expect(handler(ctx)).rejects.toBe(raw);
+    await expect(handler(ctx)).rejects.toBe(raw);
   });
 });

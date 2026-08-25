@@ -111,7 +111,7 @@ export function prepareMcpSurface(
 }
 
 /** Prepare already-resolved tool operations through the canonical MCP schema profile. */
-export function prepareMcpTools(
+function prepareMcpTools(
   tools: readonly MountableTool[],
   config: McpSurfacePreparationConfig = {},
 ): PreparedMcpSurface {

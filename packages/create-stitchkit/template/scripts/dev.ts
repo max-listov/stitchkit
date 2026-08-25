@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { appIdentity } from '../packages/config/src/identity';
+import { appDeclaration } from '../packages/config/src/declaration';
 import { ensureLocalEnvironment } from './local-env';
+import { runDeclaredReleaseSteps } from './release-steps';
 import { inheritToolingEnvironment } from './tooling-env';
 
 const root = resolve(import.meta.dir, '..');
@@ -28,7 +29,11 @@ export async function runDevelopment(environment?: Record<string, string>): Prom
     );
   }
   await assertPortsAvailable(environmentForRun);
-  await run(['bun', 'run', 'db:setup'], environmentForRun);
+  // The generated client is a BUILD artifact; applying migrations is a RELEASE
+  // step the declaration owns. Development runs the same release step as
+  // production, so the two paths cannot drift on what 'up to date' means.
+  await run(['bun', 'run', 'db:generate'], environmentForRun);
+  await runDeclaredReleaseSteps(environmentForRun);
   await run(
     ['pm2', 'startOrReload', 'ecosystem.dev.config.cjs', '--update-env'],
     environmentForRun,
@@ -42,10 +47,17 @@ export async function runDevelopment(environment?: Record<string, string>): Prom
  */
 async function assertPortsAvailable(environment: Record<string, string>): Promise<void> {
   const registered = await registeredPm2Names();
-  const managed = [`${appIdentity.slug}-backend-dev`, `${appIdentity.slug}-frontend-dev`];
+  const managed = appDeclaration.roles.map(
+    (role) => `${appDeclaration.identity.slug}-${role.name}-dev`,
+  );
   if (managed.some((name) => registered.has(name))) return;
-  assertPortFree(Number(environment.API_PORT), 'API_PORT');
-  assertPortFree(Number(environment.WEB_PORT), 'WEB_PORT');
+  // Which ports to probe comes from the declaration, not from a second list
+  // of variable names here: a new role is covered by declaring it.
+  for (const role of appDeclaration.roles) {
+    if (!role.listener) continue;
+    const variable = role.listener.portVariable;
+    assertPortFree(Number(environment[variable]), variable);
+  }
 }
 
 async function registeredPm2Names(): Promise<Set<string>> {
@@ -74,7 +86,7 @@ function assertPortFree(port: number, variable: string): void {
     listener.stop(true);
   } catch {
     throw new Error(
-      `Port ${port} (${variable}) is already in use by another process. Pick a free port in .env and update the URLs that embed it.`,
+      `Port ${port} (${variable}) is already in use by another process. Pick a free port in .env and update the SMOKE_* origins that embed it.`,
     );
   }
 }
@@ -83,28 +95,37 @@ function assertToolAvailable(command: string, instruction: string): void {
   if (!Bun.which(command)) throw new Error(`${command} is required. ${instruction}`);
 }
 
+/**
+ * The validated environment the development processes run with.
+ *
+ * Every variable the DECLARATION names, and no hand-written list beside it: a
+ * list here went stale the moment a variable was added, and a role declaring a
+ * port whose name was missing got `Number(undefined)` — reported as
+ * `Port NaN (WORKER_PORT) is already in use`, which is a false diagnosis of a
+ * real mistake.
+ */
 export async function developmentEnvironment(
   overrides: Record<string, string> = {},
 ): Promise<Record<string, string>> {
   const { env } = await import('../packages/config/src/server');
-  return {
-    DATABASE_URL: env.DATABASE_URL,
-    BIND_HOST: env.BIND_HOST,
-    API_PORT: String(env.API_PORT),
-    WEB_PORT: String(env.WEB_PORT),
-    CORS_ORIGIN: env.CORS_ORIGIN,
-    NEXT_PUBLIC_API_URL: env.NEXT_PUBLIC_API_URL,
-    NEXT_PUBLIC_WEB_URL: env.NEXT_PUBLIC_WEB_URL,
-    INTERNAL_API_URL: env.INTERNAL_API_URL,
-    ...overrides,
-  };
+  const validated: Record<string, unknown> = env;
+  const declared: Record<string, string> = {};
+  for (const variable of appDeclaration.env.variables) {
+    const value = validated[variable.name];
+    if (value !== undefined) declared[variable.name] = String(value);
+  }
+  return { ...declared, ...overrides };
 }
 
 if (import.meta.main) {
   await runDevelopment();
 
   const environment = await developmentEnvironment();
-  console.log(`${appIdentity.name} development processes are running`);
-  console.log(`Web: ${environment.NEXT_PUBLIC_WEB_URL}/en`);
-  console.log(`API: ${environment.NEXT_PUBLIC_API_URL}`);
+  console.log(`${appDeclaration.identity.name} development processes are running`);
+  for (const role of appDeclaration.roles) {
+    if (!role.listener) continue;
+    const port = environment[role.listener.portVariable];
+    const readiness = role.listener.readinessPath;
+    console.log(`${role.name}: http://${environment.BIND_HOST}:${port}${readiness}`);
+  }
 }

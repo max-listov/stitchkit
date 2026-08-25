@@ -1,5 +1,22 @@
 const PARAM_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/**
+ * Join route parts into one absolute path, tolerating stray slashes on either
+ * side of every part.
+ *
+ * One home rather than three. The router, the OpenAPI generator and the surface
+ * manifest each carried a byte-identical copy, and a route path that all three
+ * must agree on is exactly the thing that must not be computed three ways.
+ */
+export function joinRoutePath(...parts: Array<string | undefined>): string {
+  const joined = parts
+    .filter((part): part is string => Boolean(part))
+    .map((part) => part.replace(/^\/+|\/+$/g, ''))
+    .filter(Boolean)
+    .join('/');
+  return `/${joined}`;
+}
+
 export interface TrailingWildcard {
   name: string;
   segmentIndex: number;

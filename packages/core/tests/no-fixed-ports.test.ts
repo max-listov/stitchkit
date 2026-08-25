@@ -19,9 +19,21 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { Glob } from 'bun';
 
-const ROOTS = [`${import.meta.dir}`, `${import.meta.dir}/../scripts`];
+// The repository ROOT `scripts/` too, not only the package's own. That is where
+// the starter and supervised lanes bind, and the title said "scripts/" while
+// meaning one of the two directories with that name.
+const ROOTS = [
+  `${import.meta.dir}`,
+  `${import.meta.dir}/../scripts`,
+  `${import.meta.dir}/../../../scripts`,
+];
 
 /** `port: 4000` / `const PORT = 4000` / a URL with a literal port. */
+// Deliberately NOT `127.0.0.1:NNNN`. Widening it there was tried and reverted:
+// it matched OAuth redirect-URI fixtures and a PostgreSQL admin URL, neither of
+// which is a bind. The subject of this gate is a server that binds a port, and
+// broadening it into "any literal address" makes it a different, noisier check
+// that its own title does not describe.
 const FIXED_PORT =
   /\bport:\s*[1-9]\d{2,4}\b|\bPORT[A-Z_]*\s*=\s*[1-9]\d{2,4}\b|localhost:[1-9]\d{2,4}\b/;
 

@@ -50,4 +50,33 @@ describe('managed agent tool fence', () => {
     );
     expect(settled).toBe(0);
   });
+  test('a cooperative call returns its result and settles the fence', async () => {
+    // Only the refusal branch was exercised, with `expect(settled).toBe(0)` —
+    // so `afterHandle` returning the result and calling `onSettled` could be
+    // deleted whole and the suite stayed green.
+    let settled = 0;
+    const lifecycle = createAgentToolFenceLifecycle({
+      runId: 'run-2',
+      context: () => ({ callId: 'call-2', fencingToken: 7 }),
+      assertCurrent: () => undefined,
+      onSettled: () => {
+        settled += 1;
+      },
+    });
+    const before = lifecycle.beforeHandle;
+    const after = lifecycle.afterHandle;
+    if (!before || !after) throw new Error('fence lifecycle incomplete');
+    const context = { source: 'agent', params: undefined, input: undefined };
+    const endpoint = {
+      serviceName: 'service',
+      key: 'action',
+      method: 'POST',
+      desc: 'action',
+    } satisfies Parameters<NonNullable<typeof before>>[1];
+
+    await before(context, endpoint);
+    const result = { ok: true };
+    expect(await after(context, result, endpoint)).toBe(result);
+    expect(settled).toBe(1);
+  });
 });

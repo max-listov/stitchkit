@@ -9,7 +9,11 @@
       "!!playwright-report",
       "!!test-results",
       "!!packages/frontend/next-env.d.ts",
-      "!!packages/frontend/public"
+      "!!packages/frontend/public",
+      "!!project.json",
+      "!!ecosystem.config.cjs",
+      "!!ecosystem.dev.config.cjs",
+      "!!packages/config/src/app-identity.generated.ts"
     ]
   },
   "formatter": {

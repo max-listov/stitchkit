@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "kind": "application",
+  "identity": {
+    "slug": "stitchkit-starter",
+    "name": "Stitchkit Starter",
+    "version": "0.1.0",
+    "description": {
+      "en": "Stitchkit Starter is a production application built with Stitchkit.",
+      "ru": "Stitchkit Starter — production-приложение на Stitchkit."
+    }
+  },
+  "roles": [
+    {
+      "name": "api",
+      "workingDirectory": "packages/backend",
+      "commands": {
+        "development": {
+          "executable": "bun",
+          "args": [
+            "--watch",
+            "src/index.ts"
+          ]
+        },
+        "production": {
+          "executable": "bun",
+          "args": [
+            "dist/index.js"
+          ]
+        }
+      },
+      "listener": {
+        "portVariable": "API_PORT",
+        "bindVariable": "BIND_HOST",
+        "readinessPath": "/health"
+      },
+      "drainFloorMs": 15000
+    },
+    {
+      "name": "web",
+      "workingDirectory": "packages/frontend",
+      "commands": {
+        "development": {
+          "executable": "bun",
+          "args": [
+            "scripts/serve.ts",
+            "development"
+          ]
+        },
+        "production": {
+          "executable": "bun",
+          "args": [
+            "scripts/serve.ts",
+            "production"
+          ]
+        }
+      },
+      "listener": {
+        "portVariable": "WEB_PORT",
+        "bindVariable": "BIND_HOST",
+        "readinessPath": "/"
+      },
+      "drainFloorMs": 5000
+    }
+  ],
+  "build": {
+    "command": {
+      "executable": "bun",
+      "args": [
+        "run",
+        "build"
+      ]
+    },
+    "artifacts": [
+      "packages/backend/dist",
+      "packages/frontend/.next",
+      "packages/db/src/generated"
+    ]
+  },
+  "requires": [
+    {
+      "name": "postgres",
+      "phases": [
+        "release",
+        "start"
+      ]
+    }
+  ],
+  "release": {
+    "migrations": {
+      "engine": "prisma",
+      "root": "packages/db/migrations",
+      "lockfile": "packages/db/migrations/migration_lock.toml"
+    }
+  },
+  "env": {
+    "variables": [
+      {
+        "name": "API_PORT",
+        "shape": "integer",
+        "required": true
+      },
+      {
+        "name": "BIND_HOST",
+        "shape": "string",
+        "required": false
+      },
+      {
+        "name": "CORS_ORIGIN",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "DATABASE_URL",
+        "shape": "url",
+        "required": true
+      },
+      {
+        "name": "INTERNAL_API_URL",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "LOG_FORMAT",
+        "shape": "enum",
+        "required": false,
+        "members": [
+          "pretty",
+          "json"
+        ]
+      },
+      {
+        "name": "NODE_ENV",
+        "shape": "enum",
+        "required": false,
+        "members": [
+          "development",
+          "test",
+          "production"
+        ]
+      },
+      {
+        "name": "PUBLIC_API_ORIGIN",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "PUBLIC_REALTIME_ORIGIN",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "PUBLIC_WEB_HOSTS",
+        "shape": "string",
+        "required": false
+      },
+      {
+        "name": "PUBLIC_WEB_ORIGIN",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "WEB_PORT",
+        "shape": "integer",
+        "required": true
+      }
+    ]
+  }
+}

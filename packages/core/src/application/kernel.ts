@@ -1,4 +1,4 @@
-import type { ShutdownOptions } from '../server/shutdown';
+import type { z } from 'zod';
 import { ShutdownOptionsSchema } from '../server/shutdown';
 import { type ResolvedManagedResource, resolveResourceGraph } from './graph';
 import type {
@@ -18,7 +18,8 @@ import {
   type ManagedResourceState,
 } from './schemas';
 
-type ResourceFailure = ApplicationResourceShutdown['failures'][number];
+/** The phase a managed resource failed in — the vocabulary of `failures`. */
+export type ApplicationResourcePhase = ApplicationResourceShutdown['failures'][number];
 
 interface ResourceRecord {
   readonly entry: ResolvedManagedResource;
@@ -29,7 +30,7 @@ interface ResourceRecord {
   closeInvoked: boolean;
   closed: boolean;
   runtime?: ManagedResourceStartResult;
-  failures: ResourceFailure[];
+  failures: ApplicationResourcePhase[];
 }
 
 class ResourceCompletionBeforeReadyError extends Error {
@@ -41,10 +42,71 @@ class ResourceCompletionBeforeReadyError extends Error {
   }
 }
 
+/**
+ * The kernel interrupting its own startup because a shutdown overtook it.
+ *
+ * Distinguished from a resource's error by type rather than by message, so the
+ * failure observer can stay silent for it: nothing failed here, and reporting
+ * it would bury the one failure that did. Everything else thrown out of a
+ * startup phase is the resource's own and is reported.
+ */
+class ApplicationStartupInterruptedError extends Error {
+  constructor() {
+    super('[stitchkit] application startup interrupted by shutdown');
+    this.name = 'ApplicationStartupInterruptedError';
+  }
+}
+
+/** One resource failure with the cause the phase label cannot carry. */
+export interface ApplicationResourceFailure {
+  readonly resourceId: string;
+  readonly phase: ApplicationResourcePhase;
+  /** The value the resource actually threw or rejected with. */
+  readonly error: unknown;
+}
+
+/**
+ * The budgets an application shutdown accepts.
+ *
+ * The same two names the server and the agent runtime use, and only those:
+ * `retryAfterSeconds` is an HTTP response concern that belongs to the managed
+ * server resource, and accepting it here typed and validated an option nothing
+ * in the kernel ever read.
+ */
+export const ApplicationShutdownOptionsSchema = ShutdownOptionsSchema.pick({
+  gracePeriodMs: true,
+  forceTimeoutMs: true,
+  signal: true,
+});
+export type ApplicationShutdownOptions = z.input<typeof ApplicationShutdownOptionsSchema>;
+
 export interface ApplicationConfig {
   readonly id: string;
   readonly resources?: readonly ManagedResource[];
   readonly onSnapshot?: (snapshot: ApplicationSnapshot) => void | Promise<void>;
+  /**
+   * Observe why a phase failed.
+   *
+   * `ApplicationResourceShutdown.failures` names the phase and nothing else, so
+   * an operator reading it learns that `drain` failed and has no way to learn
+   * why. The published response stays a verdict — this is the internal half of
+   * the same rule: outward a generic answer, inward everything.
+   *
+   * Called for every failure of a resource's OWN code, in every phase:
+   * `start`, `ready`, `completion`, `admission`, `drain`, `close` — including
+   * the `close` that runs while rolling a failed startup back — and `force`.
+   * It is NOT called for the kernel's own interruption of a startup that a
+   * shutdown overtook: nothing failed there, and reporting it would bury the
+   * one failure that did.
+   *
+   * A throwing observer cannot break the lifecycle it observes, and neither can
+   * a REJECTING one: an `async` observer type-checks against a `void` return,
+   * and its rejected promise is invisible to a synchronous `try/catch` around
+   * the call. Returning a promise is therefore part of the signature, and the
+   * kernel isolates it — it does not await it, so an observer cannot slow a
+   * shutdown down either.
+   */
+  readonly onResourceFailure?: (failure: ApplicationResourceFailure) => void | Promise<void>;
 }
 
 export interface ApplicationOperationLease {
@@ -63,7 +125,7 @@ export interface ApplicationHandle {
   start(): Promise<ApplicationSnapshot>;
   getSnapshot(): ApplicationSnapshot;
   subscribe(listener: (snapshot: ApplicationSnapshot) => void): () => void;
-  shutdown(options?: ShutdownOptions): Promise<ApplicationShutdownResult>;
+  shutdown(options?: ApplicationShutdownOptions): Promise<ApplicationShutdownResult>;
 }
 
 export class ApplicationAdmissionError extends Error {
@@ -105,6 +167,25 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
   const id = ApplicationIdSchema.parse(config.id);
   const ordered = resolveResourceGraph(config.resources ?? []);
   const reverse = [...ordered].reverse();
+  const reportFailure = (
+    resourceId: string,
+    phase: ApplicationResourcePhase,
+    error: unknown,
+  ): void => {
+    if (!config.onResourceFailure) return;
+    try {
+      // The returned value is isolated, not awaited: an `async` observer's
+      // rejection is invisible to this `try/catch`, and awaiting it would let a
+      // slow observer extend a shutdown it only watches.
+      void Promise.resolve(config.onResourceFailure({ resourceId, phase, error })).catch(
+        () => undefined,
+      );
+    } catch {
+      // A diagnostic observer cannot break the lifecycle it observes — the same
+      // rule the snapshot listeners follow.
+    }
+  };
+
   const records = new Map<string, ResourceRecord>();
   for (const entry of ordered) {
     records.set(entry.id, {
@@ -224,9 +305,24 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     },
   });
 
-  const markLateCompletion = (record: ResourceRecord, failure: boolean): void => {
+  /**
+   * A long-lived resource that ended AFTER it was ready.
+   *
+   * `failure` used to be a boolean, and the value the resource rejected with —
+   * in scope at the call site — was dropped on the floor. So a poller, a queue
+   * consumer or a bot that died an hour after `start()` recorded the phase and
+   * nothing else, while the documented contract said every failure of a
+   * resource's own code reports its cause. The phase label is the half an
+   * operator already has; the cause is the half they need.
+   *
+   * `undefined` means the resource simply finished, which is not a failure.
+   */
+  const markLateCompletion = (record: ResourceRecord, failure?: { error: unknown }): void => {
     if (shutdownRequested || record.state === 'stopping' || record.state === 'stopped') return;
-    if (failure) record.failures.push('completion');
+    if (failure) {
+      record.failures.push('completion');
+      reportFailure(record.entry.id, 'completion', failure.error);
+    }
     record.state = 'failed';
     record.health = 'unhealthy';
     accepting = activationComplete && isReady();
@@ -247,6 +343,11 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       } catch (error) {
         record.failures.push('close');
         record.state = 'failed';
+        // Rolling a failed startup back is still the resource's own `close`
+        // throwing. It was the one path that recorded the phase and dropped the
+        // cause, which is exactly the half an operator needs: the startup error
+        // is already in hand, and this says what went wrong cleaning up after it.
+        reportFailure(entry.id, 'close', error);
         errors.push(error);
       }
       publish();
@@ -261,7 +362,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     try {
       for (const entry of ordered) {
         if (shutdownRequested || startupAbort.signal.aborted) {
-          throw new Error('[stitchkit] application startup interrupted by shutdown');
+          throw new ApplicationStartupInterruptedError();
         }
         const record = records.get(entry.id);
         if (!record) throw new Error('Managed resource record disappeared');
@@ -288,7 +389,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             contextFor(record, { signal: startupAbort.signal }),
           );
           if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new Error('[stitchkit] application startup interrupted by shutdown');
+            throw new ApplicationStartupInterruptedError();
           }
           if (isStartResult(started)) {
             record.runtime = started;
@@ -298,12 +399,12 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             const completion = started.completion?.then(
               () => {
                 completionSettled = true;
-                if (resourceReady) markLateCompletion(record, false);
+                if (resourceReady) markLateCompletion(record);
               },
               (error: unknown) => {
                 completionSettled = true;
                 completionFailure = error;
-                if (resourceReady) markLateCompletion(record, true);
+                if (resourceReady) markLateCompletion(record, { error });
               },
             );
             if (started.ready && completion) {
@@ -327,24 +428,35 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             }
           }
           if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new Error('[stitchkit] application startup interrupted by shutdown');
+            throw new ApplicationStartupInterruptedError();
           }
           record.state = 'ready';
           record.health = 'healthy';
           publish();
         } catch (error) {
-          if (shutdownRequested || startupAbort.signal.aborted) throw error;
-          record.failures.push(
-            error instanceof ResourceCompletionBeforeReadyError
-              ? 'completion'
-              : record.runtime?.ready
-                ? 'ready'
-                : 'start',
-          );
-          record.state = 'failed';
-          record.health = 'unhealthy';
-          publish();
-          if (entry.required) throw error;
+          // A shutdown arriving mid-startup does not make the resource's own
+          // error stop being one. Only the kernel's own interruption is silent
+          // here; anything the resource threw is recorded and reported, and
+          // then re-thrown because the startup is over either way.
+          const interrupted = shutdownRequested || startupAbort.signal.aborted;
+          if (!(error instanceof ApplicationStartupInterruptedError)) {
+            record.failures.push(
+              error instanceof ResourceCompletionBeforeReadyError
+                ? 'completion'
+                : record.runtime?.ready
+                  ? 'ready'
+                  : 'start',
+            );
+            record.state = 'failed';
+            record.health = 'unhealthy';
+            reportFailure(
+              entry.id,
+              record.failures[record.failures.length - 1] ?? 'start',
+              error,
+            );
+            publish();
+          }
+          if (interrupted || entry.required) throw error;
         }
       }
 
@@ -352,7 +464,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       publish();
       for (const entry of ordered) {
         if (shutdownRequested || startupAbort.signal.aborted) {
-          throw new Error('[stitchkit] application startup interrupted by shutdown');
+          throw new ApplicationStartupInterruptedError();
         }
         const record = records.get(entry.id);
         if (record?.state !== 'ready') continue;
@@ -375,7 +487,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         try {
           await entry.resource.activate?.(contextFor(record));
           if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new Error('[stitchkit] application startup interrupted by shutdown');
+            throw new ApplicationStartupInterruptedError();
           }
           record.activated = true;
           if (entry.required && (record.state !== 'ready' || record.health !== 'healthy')) {
@@ -384,16 +496,21 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             );
           }
         } catch (error) {
-          if (shutdownRequested || startupAbort.signal.aborted) throw error;
-          record.failures.push('start');
-          record.state = 'failed';
-          record.health = 'unhealthy';
-          publish();
-          if (entry.required) throw error;
+          // Same rule as the phase above: only the kernel's own interruption is
+          // silent, and a resource that threw while activating is reported.
+          const interrupted = shutdownRequested || startupAbort.signal.aborted;
+          if (!(error instanceof ApplicationStartupInterruptedError)) {
+            record.failures.push('start');
+            record.state = 'failed';
+            record.health = 'unhealthy';
+            reportFailure(entry.id, 'start', error);
+            publish();
+          }
+          if (interrupted || entry.required) throw error;
         }
       }
       if (shutdownRequested) {
-        throw new Error('[stitchkit] application startup interrupted by shutdown');
+        throw new ApplicationStartupInterruptedError();
       }
       if (!isReady()) {
         throw new Error('[stitchkit] a required resource lost readiness during startup');
@@ -473,9 +590,11 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     return new Promise((resolve) => pendingWaiters.add(resolve));
   };
 
-  const shutdown = (options?: ShutdownOptions): Promise<ApplicationShutdownResult> => {
+  const shutdown = (
+    options?: ApplicationShutdownOptions,
+  ): Promise<ApplicationShutdownResult> => {
     if (shutdownPromise) return shutdownPromise;
-    const parsed = ShutdownOptionsSchema.parse(options ?? {});
+    const parsed = ApplicationShutdownOptionsSchema.parse(options ?? {});
     const startedAt = performance.now();
     const graceDeadlineAt = startedAt + parsed.gracePeriodMs;
     const forceDeadlineAt = graceDeadlineAt + parsed.forceTimeoutMs;
@@ -530,8 +649,9 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
           );
           if (!result.settled) break;
           if (result.error !== undefined) throw result.error;
-        } catch {
+        } catch (error) {
           record.failures.push('admission');
+          reportFailure(entry.id, 'admission', error);
           gracefulFailed = true;
           lifetimeAbort.abort();
         }
@@ -558,8 +678,9 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
             break;
           }
           if (drained.error !== undefined) throw drained.error;
-        } catch {
+        } catch (error) {
           record.failures.push('drain');
+          reportFailure(entry.id, 'drain', error);
           gracefulFailed = true;
           lifetimeAbort.abort();
           break;
@@ -586,8 +707,9 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
           record.closed = true;
           record.state = 'stopped';
           publish();
-        } catch {
+        } catch (error) {
           record.failures.push('close');
+          reportFailure(entry.id, 'close', error);
           record.state = 'failed';
           gracefulFailed = true;
           lifetimeAbort.abort();
@@ -635,7 +757,18 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
                   ),
                 );
               } else if (entry.resource.close) {
+                // Its `close` was already invoked and has not settled. There is
+                // nothing left to call, so the record ends in `force-failed` —
+                // and used to end there with no cause at all, which reads as an
+                // unexplained failure rather than the timeout it is.
                 record.failures.push('force');
+                reportFailure(
+                  entry.id,
+                  'force',
+                  new Error(
+                    `[stitchkit] resource "${entry.id}" was already closing and did not settle before the force deadline`,
+                  ),
+                );
                 return;
               }
               const forced = await untilDeadline(
@@ -644,12 +777,20 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
               );
               if (!forced.settled || forced.error !== undefined) {
                 record.failures.push('force');
+                reportFailure(
+                  entry.id,
+                  'force',
+                  forced.settled
+                    ? forced.error
+                    : new Error('[stitchkit] forced cleanup did not settle in time'),
+                );
                 return;
               }
               record.closed = true;
               record.state = 'stopped';
-            } catch {
+            } catch (error) {
               record.failures.push('force');
+              reportFailure(entry.id, 'force', error);
             }
           }),
         );

@@ -5,10 +5,9 @@ import { notFound } from 'next/navigation';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import type { ReactNode } from 'react';
-import { env } from '@/env';
 import { LocaleSchema } from '@/i18n/locales';
 import { routing } from '@/i18n/routing';
-import { createPageMetadata } from '@/lib/seo/metadata';
+import { createPageMetadata, siteMetadataBase } from '@/lib/seo/metadata';
 import { SITE_NAME } from '@/lib/seo/pages';
 import { Providers } from '@/providers';
 import { themeProviderConfig } from '@/theme/config';
@@ -21,12 +20,14 @@ const montserrat = Montserrat({
   display: 'swap',
 });
 
-export const metadata: Metadata = {
-  metadataBase: new URL(env.NEXT_PUBLIC_WEB_URL),
-  ...createPageMetadata('home', 'en'),
-  title: SITE_NAME,
-  icons: { icon: [{ url: '/favicon/mascot-stitch.png', type: 'image/png' }] },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    metadataBase: await siteMetadataBase(),
+    ...(await createPageMetadata('home', 'en')),
+    title: SITE_NAME,
+    icons: { icon: [{ url: '/favicon/mascot-stitch.png', type: 'image/png' }] },
+  };
+}
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));

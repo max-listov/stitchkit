@@ -32,6 +32,13 @@ const EventIdentitySchema = z.object({
   emittedAt: AgentTimestampSchema,
 });
 
+/**
+ * `runtimeEpoch` is one identity generated per `createAgentRuntime()`. It is the
+ * same value the store holds as `AgentRun.ownerId`; each name states the role it
+ * plays where it appears. A changed epoch on the same conversation means the
+ * runtime restarted, which is how a consumer detects a gap in a transient
+ * stream that durable checkpoints would not show.
+ */
 export const AgentTransientDeltaEventSchema = EventIdentitySchema.extend({
   type: z.literal('assistant-delta'),
   runtimeEpoch: z.string().min(1),

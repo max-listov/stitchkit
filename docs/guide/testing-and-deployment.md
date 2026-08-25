@@ -237,6 +237,41 @@ runtime or type-only package outside a case's budget fails with both the case id
 and package name, so an accidental eager import cannot hide behind another
 fixture's transitive dependency.
 
+Beside the matrix, one case is about the ARTIFACT rather than the inventory: a
+program that injects the Socket.IO peer loaders is bundled and started in a
+directory with no `node_modules`, under Node and under Bun with auto-install
+off. It is checked as a pair — the same program without the loaders must fail
+there — because a positive result alone would only show that the machine
+running the check happens to have the package, which is precisely how this class
+of defect stays invisible in development.
+
+### Shipping one self-contained artifact
+
+Stitchkit resolves the optional Socket.IO peers through a variable, so a
+consumer bundling an unrelated `stitchkit/server` export never has to resolve
+them. A bundler cannot follow that, which matters if you ship **one file** to a
+machine with no `node_modules`: the package never enters the artifact and the
+failure arrives at start-up, not at build time.
+
+Pass the loaders, and the literal lives in your source where your bundler sees
+it:
+
+```ts
+const socket = await createSocketIOServer({
+  cors: { origin: env.CORS_ORIGIN },
+  peers: {
+    server: () => import('socket.io'),
+    // Bun only — on Node the engine is never asked for, and bundling a
+    // Bun-only package for Node asks the bundler to carry `bun:` imports.
+    bunEngine: () => import('@socket.io/bun-engine'),
+  },
+})
+```
+
+Omit `peers` and nothing changes: the peers stay lazy and are resolved from the
+machine. Both peers must be listed as dependencies of the package you bundle,
+because they now genuinely are.
+
 ## Deployment
 
 ### Build
@@ -379,6 +414,43 @@ The server owns HTTP/Socket.IO transport resources. MCP, databases, queues and
 domain run-state remain application resources and close explicitly after server
 drain. Do not call `runtime.stop()` or `socket.io.close()` in parallel with
 `shutdown()`.
+
+### Let the supervisor start the role, not a launcher
+
+A shutdown chain treats a **second** signal as "stop waiting, force it now".
+That is deliberate — it is how an operator escalates. It also means an extra
+process between the supervisor and your role can escalate for you, by
+accident.
+
+Point the supervisor at the process that serves, not at a script runner that
+starts it:
+
+```js
+// supervisor entry — the role's own process
+script: 'bun', args: ['dist/index.js']
+
+// NOT this: a launcher in between
+script: 'bun', args: ['run', 'start']
+```
+
+Measured under PM2 with the launcher form: the stop signal reaches both
+processes, the launcher forwards its copy, and the server sees two presses in
+two turns. A declared 15 s grace period ended in 1.3 ms with
+`outcome: "forced"`, `reason: "signal"` — no requests drained, and the only
+visible trace was a non-zero exit code. With the direct form, the same stop is
+`outcome: "clean"`.
+
+A workspace-filtering launcher (`bun run --filter <pkg> start`) fails harder:
+the signal never reaches the role at all, so no shutdown runs and the process
+is torn down when the launcher dies.
+
+Two habits make this visible instead of silent:
+
+- log the outcome in `onComplete`, not just the exit code —
+  `result.outcome`, `result.reason` and `result.durationMs` are the difference
+  between "drained" and "was cut off";
+- keep the supervisor's kill timeout **at or above** the grace period you
+  declared, so a slow drain is not racing its own supervisor.
 
 ### Stdio process signals
 

@@ -242,10 +242,18 @@ want the row to say something other than what the framework derived (a domain
 code, a curated message, structured issues). The framework writes only when the
 context carries nothing yet, so your value always wins.
 
-**Endpoint identity is automatic.** The framework writes the matched operation's
-`(serviceName, action)` into the context at route-match, *before* validation — so
-`event.serviceName` / `event.action` are present on every event, including a
-pre-handler 400. Nothing to wire.
+**Endpoint identity is automatic — for contract operations.** The framework
+writes the matched operation's `(serviceName, action)` into the context at
+route-match, *before* validation, so both are present on every event for a
+request that matched a contract route, including a pre-handler 400. Nothing to
+wire.
+
+They are **absent** on events that never reached a contract route: a raw route
+(`openApiRoute`, an MCP mount, any `rawRoutes` entry), a request short-circuited
+by `onRequest`, and an unmatched 404 or 405. Both fields are optional in
+`RequestEvent` for exactly that reason — a sink with a `NOT NULL` column on
+either, or a dashboard grouping by `(serviceName, action)`, has to allow for
+it.
 
 When failure attribution itself is asynchronous, use `createErrorHook`'s
 `onError(error, info, ctx, endpoint)` observer. The framework awaits it before
@@ -397,7 +405,9 @@ A payload goes into an audit row only after `sanitizePayload`:
 - **secret-named keys are masked** — a key whose words include a secret term is
   redacted (`password`, `sessionToken`, `X-Api-Key`, `authorization`, `cookie`,
   …), while identifiers that merely contain one (`authorId`, `sessionCount`,
-  `tokenizer`) survive;
+  `tokenizer`) survive. This applies wherever a key exists — an object field and
+  a `Map` entry alike, at any depth. A `Set` member has no key, so nothing there
+  is masked by name;
 - **binary blobs** (`Uint8Array`, `Blob`, `FormData`) collapse to metadata —
   never the bytes;
 - the result is **capped** — anything over the byte limit becomes a preview.

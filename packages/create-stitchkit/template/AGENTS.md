@@ -12,8 +12,18 @@ framework source repository.
   owns application policy. Routes remain thin transport boundaries.
 - `packages/frontend` owns Next.js pages, typed clients, query/mutation hooks and
   cache reactions.
-- `packages/config/src/server.ts` is the only server environment boundary.
-  `app.config.json` is the only application identity boundary.
+- `packages/config/src/variables.ts` is the only declaration of an environment
+  variable. `server.ts` and `frontend/src/env.ts` are projections of it, and
+  the declaration's `env.variables` is derived from it — never restated.
+- `project.json` is the only place this project describes itself. It is written
+  by machine — the scaffolder stamps the identity, `bun run gen:declaration`
+  derives `env.variables` — so the formatter leaves it alone and
+  `scripts/declaration.test.ts` is what checks it.
+- Three files are generated from it and must not be hand-edited:
+  `ecosystem.config.cjs`, `ecosystem.dev.config.cjs` and the `env.variables`
+  block of `project.json`. Run `bun run gen:declaration` after changing a role. It holds
+  nothing that differs between two deployments; those are named there by
+  variable and supplied by the place.
 
 Dependencies point inward: frontend/backend → shared; backend → db/config.
 Shared never imports an application runtime package.

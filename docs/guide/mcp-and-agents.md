@@ -22,8 +22,10 @@ By default every endpoint is a tool on every transport. `expose` narrows it:
 { method: 'GET', path: '/lookup', desc: 'Look up a price', expose: ['MCP'] }     // MCP tool only
 ```
 
-Two kinds of endpoint are **never** tools, whatever `expose` says: a `multipart`
-upload (not a tool call), and a
+Four kinds of endpoint are **never** tools, whatever `expose` says: a
+`multipart` upload (not a tool call), a `rawBody` endpoint (HTTP-only by
+construction), a [`responseMeta`](./server.md#typed-json-response-metadata)
+endpoint (outbound HTTP headers mean nothing on a tool call), and a
 [`rawResponse`](./server.md#raw-response-endpoints) endpoint (its answer is
 bytes — a tool result cannot carry them, and it would reach the model as `{}`).
 Pin the full list with `listToolNames` in a snapshot test.
@@ -31,10 +33,12 @@ Pin the full list with `listToolNames` in a snapshot test.
 `desc` is the tool description the model reads — write it for the model, not
 just for a human. The tool name defaults
 to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
-`get_widget`); set `toolName` for an explicit one. Derivation normalises every
-character outside `[a-zA-Z0-9_]` to `_` — the hyphen included, so `bot-status`
-derives `get_bot_status` — while a name is *accepted* if it matches
-`[a-zA-Z0-9_-]`, so a hyphen survives in an explicit `toolName`. A name that
+`get_widget`); set `toolName` for an explicit one. Derivation normalises **per half**
+(→ ADR 0035): the service half turns everything outside `[a-zA-Z0-9_]` into `_`,
+hyphen included (`bot-status` ⇒ `get_bot_status`), while the method half keeps
+its hyphen (`get-user` ⇒ `get-user_notes`) because such a name has always been
+legal and may already be pinned in a client config. A name is *accepted* if it
+matches `[a-zA-Z0-9_-]`. A name that
 still cannot be delivered (illegal explicit `toolName`, over 64 characters, or a
 prefix with no usable character) throws at mount rather than at the first model
 call —

@@ -240,6 +240,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'declaration',
+    subpath: './declaration',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/declaration', 'ProjectDeclarationSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'node-signals',
     subpath: './node',
     fixture: 'node',
@@ -307,13 +318,27 @@ function resolveDeclaration(fromFile, specifier) {
   );
 }
 
+/**
+ * Strip comments before looking for imports.
+ *
+ * The scanner reads raw `.d.ts` text, so a JSDoc example showing
+ * `import('@socket.io/bun-engine')` was counted as a real dependency of a
+ * declaration that must stay Bun-free — a false positive that pressures the
+ * author to document the API worse. Only unambiguous comment forms are
+ * removed: block comments, which is what JSDoc always is, and line comments
+ * that begin a line. Neither can swallow an import statement.
+ */
+function withoutComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
 function declarationPackages(entryFile) {
   const packages = new Set();
   const visited = new Set();
   const visit = (file) => {
     if (visited.has(file)) return;
     visited.add(file);
-    const source = readFileSync(file, 'utf8');
+    const source = withoutComments(readFileSync(file, 'utf8'));
     const imports = source.matchAll(/(?:\bfrom\s*|\bimport\s*\()\s*['"]([^'"]+)['"]/g);
     for (const match of imports) {
       const specifier = match[1];

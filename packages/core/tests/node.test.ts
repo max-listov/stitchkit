@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
-import { isFetchBlockedPort } from '../src/internal/fetch-port';
 import { implement } from '../src/server/implement';
 import { serveNode } from '../src/server/node';
 
@@ -46,11 +45,6 @@ const base = `http://localhost:${server.port}`;
 afterAll(() => server.shutdown({ gracePeriodMs: 0 }));
 
 describe('serveNode', () => {
-  test('recognizes ports that Fetch blocks before network I/O', () => {
-    expect(isFetchBlockedPort(4045)).toBe(true);
-    expect(isFetchBlockedPort(4046)).toBe(false);
-  });
-
   test('GET returns JSON', async () => {
     const res = await fetch(`${base}/api/ping`);
     expect(res.status).toBe(200);

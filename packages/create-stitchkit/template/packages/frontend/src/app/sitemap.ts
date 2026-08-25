@@ -1,22 +1,10 @@
 import type { MetadataRoute } from 'next';
-import { locales } from '@/i18n/locales';
-import { absoluteSiteUrl } from '@/lib/seo/metadata';
-import { localizedPagePath, publicPageIds } from '@/lib/seo/pages';
+import { sitemapForOrigin } from '@/lib/seo/metadata';
+import { requestOrigin } from '@/lib/seo/request-origin';
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  return publicPageIds.flatMap((pageId) =>
-    locales.map((locale) => ({
-      url: absoluteSiteUrl(localizedPagePath(pageId, locale)),
-      changeFrequency: pageId === 'home' ? 'weekly' : 'monthly',
-      priority: pageId === 'home' ? 1 : 0.7,
-      alternates: {
-        languages: Object.fromEntries(
-          locales.map((availableLocale) => [
-            availableLocale,
-            absoluteSiteUrl(localizedPagePath(pageId, availableLocale)),
-          ]),
-        ),
-      },
-    })),
-  );
+// Dynamic on purpose (see robots.ts): the URLs are a function of the origin
+// this response is served on, and that is not known until the request arrives.
+// The entries themselves are built once per origin, not once per request.
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  return sitemapForOrigin(await requestOrigin());
 }

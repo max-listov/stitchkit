@@ -27,6 +27,7 @@ The guide, in reading order:
 14. [Multi-tenant / resource-scoped paths](./guide/multi-tenant.md) — a `/tenants/:id/…` scenario, end-to-end.
 15. [Upgrading](./guide/upgrading.md) — moving a project across versions; how breaking changes are marked.
 16. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
+17. [Project declaration](./guide/declaration.md) — the optional statement a repository makes about itself, and the boundary that keeps a place out of it.
 
 ### API reference — [`api/reference.md`](./api/reference.md)
 
@@ -65,14 +66,17 @@ docs/
     ├── inbox/     raw ideas, not yet worked out
     ├── planned/   worked out, has a plan, ready to pick up
     ├── in-progress/ actively being implemented and validated
+    ├── icebox/    consciously frozen, each with a concrete defrost trigger
     └── done/      completed task records
 ```
 
 ### The backlog flow
 
 ```
-idea ─▶ inbox/ ─▶ planned/ ─▶ done/
-                        │
+idea ─▶ inbox/ ─▶ planned/ ─▶ in-progress/ ─▶ done/
+                        │            │
+                        └──▶ icebox/ ┘  (frozen; `defrost:` says when it returns)
+                                     │
    architectural decision ─▶ decisions/ (a new ADR file)
    released change        ─▶ CHANGELOG.md (repo root)
 ```
@@ -80,7 +84,12 @@ idea ─▶ inbox/ ─▶ planned/ ─▶ done/
 - **New idea** → a file in `inbox/`. One idea, one file.
 - **Worked out, has a plan** → `git mv` it to `planned/`.
 - **Being implemented** → it may move to an `in-progress/` folder while active.
-- **Finished** → `git mv` to `done/` and add a `## What was done` section.
+- **Finished** → `git mv` to `done/` and add a `## Что сделано` section — the
+  heading the records actually use, grouped by affected layer, every item
+  pointing at a file or other inspectable evidence.
+- **Consciously frozen** → `git mv` to `icebox/` with a `defrost:` field naming
+  the concrete event or date that brings it back. Not a place for things merely
+  not started.
 - **An architectural decision** taken along the way → also a new ADR section in
   `decisions/`.
 - **A shipped, user-visible change** → a line in the root `CHANGELOG.md`.
@@ -122,5 +131,7 @@ completed: YYYY-MM-DD   # done only
 ---
 ```
 
-ADRs use a lighter header (a `Status` and `Date` line) — see the sections in
-`decisions/`.
+ADRs carry the same YAML frontmatter with `type: decision` and a `status:` of
+`accepted`, `active`, `superseded` or `rejected`. Some older ones additionally
+open with a `- **Status:**` bullet; new ones do not need it. The index and the
+status legend are in [`decisions/README.md`](./decisions/README.md).

@@ -52,7 +52,13 @@ export type ActivitySnapshot = z.infer<typeof ActivitySnapshotSchema>;
 export const ActivityLiveStateSchema = z.enum(['active', 'queued']);
 export type ActivityLiveState = z.infer<typeof ActivityLiveStateSchema>;
 
-const ActivityTokenBrand: unique symbol = Symbol('stitchkit.application.activity');
+/**
+ * Exported because `ActivityToken` is part of a public interface a consumer must
+ * be able to implement — a test double, a decorator. A brand nobody outside the
+ * module can spell makes `ActivityProjection` unimplementable, which is a
+ * stronger guarantee than intended.
+ */
+export const ActivityTokenBrand: unique symbol = Symbol('stitchkit.application.activity');
 export interface ActivityToken {
   readonly [ActivityTokenBrand]: true;
 }

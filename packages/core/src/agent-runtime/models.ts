@@ -35,10 +35,8 @@ export interface AgentLanguageModelProvider {
   }): AgentUsage;
 }
 
-export type AgentModelDeclaration = AgentModelDescriptor;
-
 export interface AgentModelRegistryConfig<
-  MODELS extends Record<string, AgentModelDeclaration>,
+  MODELS extends Record<string, AgentModelDescriptor>,
 > {
   models: MODELS;
   providers: Readonly<Record<string, AgentLanguageModelProvider>>;
@@ -62,7 +60,7 @@ export interface AgentModelRegistry<MODEL_KEY extends string> {
   snapshot(input: { source: string; observedAt: string }): AgentModelRegistrySnapshot;
 }
 
-export function defineModelRegistry<MODELS extends Record<string, AgentModelDeclaration>>(
+export function defineModelRegistry<MODELS extends Record<string, AgentModelDescriptor>>(
   config: AgentModelRegistryConfig<MODELS>,
 ): AgentModelRegistry<Extract<keyof MODELS, string>> {
   type ModelKey = Extract<keyof MODELS, string>;

@@ -206,3 +206,51 @@ describe('measureSize', () => {
     expect(m.responseBytes).toBeGreaterThan(0);
   });
 });
+
+describe('a secret is masked by its key wherever the key exists', () => {
+  /**
+   * The masker redacts by key name, and a `Map` has keys — but its branch
+   * walked both halves and never asked. So the exact payload that was masked as
+   * a plain object went into the audit row in cleartext as a `Map`, which is
+   * what `Headers` naturally becomes.
+   */
+  test('a Map entry is masked by its key, like the identical object field', () => {
+    const secret = 'Bearer sk-live-abc123';
+    const asObject = JSON.stringify(sanitizePayload({ headers: { authorization: secret } }));
+    const asMap = JSON.stringify(
+      sanitizePayload({ headers: new Map([['authorization', secret]]) }),
+    );
+
+    expect(asObject).not.toContain(secret);
+    expect(asMap).not.toContain(secret);
+    expect(asMap).toContain('[redacted]');
+    // The KEY survives — an operator still sees which header was present.
+    expect(asMap).toContain('authorization');
+  });
+
+  test('nesting does not reopen it', () => {
+    const secret = 'sk-live-nested';
+    const payload = {
+      outer: new Map<string, unknown>([
+        ['safe', { inner: new Map([['x-api-key', secret]]) }],
+        ['cookie', secret],
+      ]),
+    };
+    expect(JSON.stringify(sanitizePayload(payload))).not.toContain(secret);
+  });
+
+  test('a non-sensitive Map entry is still readable', () => {
+    const rendered = JSON.stringify(
+      sanitizePayload({ headers: new Map([['content-type', 'application/json']]) }),
+    );
+    expect(rendered).toContain('application/json');
+  });
+
+  test('a Set member is NOT masked, and that is the documented limit', () => {
+    // A Set has no key, and this masker redacts by key name. Pinned so the
+    // limit is a decision someone can read rather than a gap someone assumes
+    // is covered.
+    const rendered = JSON.stringify(sanitizePayload({ h: new Set(['Bearer sk-live-abc']) }));
+    expect(rendered).toContain('Bearer sk-live-abc');
+  });
+});

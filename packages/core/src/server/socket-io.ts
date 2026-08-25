@@ -38,11 +38,17 @@ import { type ComposedLane, webSocketLane } from './websocket';
 // unrelated `stitchkit/server` export does not have to resolve these optional
 // peers. The type-only annotations remain erased; opting into this adapter
 // still loads and validates the peers at runtime.
+//
+// The other direction is `config.peers`: a consumer who DOES use this adapter
+// and ships one self-contained file passes literal dynamic imports from their
+// own source, where their bundler can see them. A variable is unfollowable by
+// construction, which is the whole reason the escape hatch exists.
 const SOCKET_IO_SERVER = 'socket.io';
 const SOCKET_IO_BUN_ENGINE = '@socket.io/bun-engine';
 
 export type {
   SocketIOHandshakeConfig,
+  SocketIOPeerLoaders,
   SocketIORequestPolicy,
   SocketIOServerConfig,
 } from './socket-io-config';
@@ -108,18 +114,46 @@ function isModuleNotFound(err: unknown): boolean {
  * error that names the package and the install command — instead of a bare
  * `Cannot find module` surfacing from a dynamic import at bootstrap.
  */
-async function importPeer<T>(load: () => Promise<T>, pkg: string): Promise<T> {
+async function importPeer<T>(
+  load: () => Promise<T>,
+  pkg: string,
+  injected: boolean,
+): Promise<T> {
   try {
     return await load();
   } catch (err) {
     if (isModuleNotFound(err)) {
+      // The advice differs by how the peer was asked for, because the two
+      // failures have different fixes. A default (lazy) load failing means the
+      // package is not on the machine. An INJECTED loader failing means the
+      // bundle did not include it after all — installing something on the
+      // machine is the wrong answer for an artifact meant to be self-contained.
       throw new Error(
-        `[stitchkit] createSocketIOServer needs the optional peer "${pkg}" — install it: bun add ${pkg}`,
+        injected
+          ? `[stitchkit] createSocketIOServer could not load the optional peer "${pkg}" through the loader passed in \`peers\` — the artifact does not contain it. Check that the loader is a literal \`import('${pkg}')\` your bundler can follow, and that "${pkg}" is a dependency of the package being bundled.`
+          : `[stitchkit] createSocketIOServer needs the optional peer "${pkg}" — install it: bun add ${pkg}. Shipping one self-contained artifact instead? Pass \`peers: { … }\` so your bundler puts it inside.`,
         { cause: err },
       );
     }
     throw err;
   }
+}
+
+/**
+ * The one boundary where the Bun engine module regains its type.
+ *
+ * The loader is declared `() => Promise<unknown>` in the runtime-neutral config
+ * so a Bun-only type never reaches a Node consumer's declarations. Here — on
+ * the Bun path, in the module that already imports those types — the shape this
+ * adapter actually uses is checked, and a loader that returned something else
+ * is refused by name instead of failing later as `Engine is not a constructor`.
+ */
+function isBunEngineModule(value: unknown): value is { Server: typeof BunEngine } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'Server') === 'function'
+  );
 }
 
 /**
@@ -210,11 +244,15 @@ export async function createSocketIOServer<
   const transports = config.transports ?? (onBun ? ['websocket', 'polling'] : ['websocket']);
   const pingTimeout = config.pingTimeout ?? 20_000;
   const pingInterval = config.pingInterval ?? 10_000;
-  const cors = {
-    origin: config.cors.origin,
-    credentials: config.cors.credentials ?? true,
-    methods: ['GET', 'POST'],
-  };
+  // Absent `cors` means same-origin: no headers are emitted at all, rather
+  // than an empty allow-list that would read as "configured, allows nothing".
+  const cors = config.cors
+    ? {
+        origin: config.cors.origin,
+        credentials: config.cors.credentials ?? true,
+        methods: ['GET', 'POST'],
+      }
+    : undefined;
   let accepting = true;
   let attached = false;
   let closePromise: Promise<void> | undefined;
@@ -246,9 +284,12 @@ export async function createSocketIOServer<
     );
   };
 
+  const injectedServer = config.peers?.server;
   const { Server } = await importPeer(
-    () => import(SOCKET_IO_SERVER).then((module: typeof import('socket.io')) => module),
+    injectedServer ??
+      (() => import(SOCKET_IO_SERVER).then((module: typeof import('socket.io')) => module)),
     SOCKET_IO_SERVER,
+    injectedServer !== undefined,
   );
   const io = new Server<TClientEvents, TServerEvents, DefaultEventsMap, TData>({
     // Passthrough first; the wrapper-owned fields below override any overlap.
@@ -280,13 +321,22 @@ export async function createSocketIOServer<
   };
 
   if (onBun) {
-    const { Server: Engine } = await importPeer(
-      () =>
-        import(SOCKET_IO_BUN_ENGINE).then(
-          (module: typeof import('@socket.io/bun-engine')) => module,
-        ),
+    const injectedEngine = config.peers?.bunEngine;
+    const engineModule = await importPeer(
+      injectedEngine ??
+        (() =>
+          import(SOCKET_IO_BUN_ENGINE).then(
+            (module: typeof import('@socket.io/bun-engine')) => module,
+          )),
       SOCKET_IO_BUN_ENGINE,
+      injectedEngine !== undefined,
     );
+    if (!isBunEngineModule(engineModule)) {
+      throw new Error(
+        `[stitchkit] the loader passed in \`peers.bunEngine\` did not return the "${SOCKET_IO_BUN_ENGINE}" module — it must resolve to the module itself, as \`() => import('${SOCKET_IO_BUN_ENGINE}')\`.`,
+      );
+    }
+    const { Server: Engine } = engineModule;
     // socket.io forwards engine-level options to the engine only when it creates
     // the engine itself (the Node path). On Bun we build the engine by hand, so
     // they must be passed explicitly — otherwise `maxHttpBufferSize`, the ping

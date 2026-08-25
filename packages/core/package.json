@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.59.4",
+  "version": "0.60.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -104,6 +104,10 @@
       "types": "./dist/files.d.ts",
       "import": "./dist/files.js"
     },
+    "./declaration": {
+      "types": "./dist/declaration.d.ts",
+      "import": "./dist/declaration.js"
+    },
     "./node": {
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
@@ -114,7 +118,7 @@
   },
   "scripts": {
     "check": "bun x tsc --noEmit",
-    "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts src/declaration.ts --outdir dist --target node --packages external --splitting --root src",
     "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly",

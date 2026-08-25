@@ -70,6 +70,11 @@ describe('workflow publish rights', () => {
 });
 
 describe('CI release-critical graph', () => {
+  const coreSection = () => ci.slice(ci.indexOf('  core:'), ci.indexOf('  supervised:'));
+  const supervisedSection = () =>
+    ci.slice(ci.indexOf('  supervised:'), ci.indexOf('  starter:'));
+  const starterSection = () => ci.slice(ci.indexOf('  starter:'));
+
   test('cancels superseded branch and pull-request runs', () => {
     const topLevel = ci.slice(0, ci.indexOf('jobs:'));
     expect(topLevel).toContain(
@@ -78,20 +83,18 @@ describe('CI release-critical graph', () => {
     expect(topLevel).toContain('cancel-in-progress: true');
   });
 
-  test('the combined framework/Node gate and starter cells have no heavy-job dependency', () => {
-    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
-    const starterSection = ci.slice(ci.indexOf('  starter:'));
-    for (const section of [coreSection, starterSection]) {
+  test('every job runs on its own, with no heavy-job dependency between them', () => {
+    for (const section of [coreSection(), supervisedSection(), starterSection()]) {
       expect(section).not.toMatch(/^\s+needs:/m);
     }
   });
 
-  test('the graph fits nine runners without dropping the runtime consumer gates', () => {
+  test('the graph is three job definitions and keeps the runtime consumer gates', () => {
     const jobsSection = ci.slice(ci.indexOf('jobs:'));
-    expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(2);
+    expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(3);
     expect(ci).not.toContain('\n  node-smoke:');
 
-    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
+    const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  supervised:'));
     expect(coreSection).toContain(
       'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38',
     );
@@ -101,6 +104,18 @@ describe('CI release-critical graph', () => {
     expect(coreSection).toContain('- run: bun run smoke:node');
     expect(coreSection).toContain('- run: bun run consumer-lane');
     expect(ci.match(/- run: bun run build\n/g)).toHaveLength(1);
+  });
+
+  test("a real supervisor runs in CI, not only on somebody's machine", () => {
+    // Every supervised defect this repository has shipped was found by running
+    // it: a launcher duplicating the stop signal, a kill timeout below the
+    // drain budget, a rename leaving two pairs on one port. A personal run
+    // proves one run; this job is what makes the class of check repeatable.
+    const supervised = supervisedSection();
+    expect(supervised).toContain('- run: bun run supervised-lane');
+    expect(supervised).toContain('bun add --global pm2');
+    expect(supervised).toContain('STARTER_TEST_DATABASE_ADMIN_URL:');
+    expect(supervised).toContain('image: postgres:18-alpine');
   });
 
   test('the starter matrix contains every mode, variant and browser surface', () => {

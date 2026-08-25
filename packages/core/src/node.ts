@@ -71,6 +71,7 @@ export {
   createNodeSocketIOServer as createSocketIOServer,
   type NodeSocketIOServerHandle as SocketIOServerHandle,
   type SocketIOHandshakeConfig,
+  type SocketIOPeerLoaders,
   type SocketIORequestPolicy,
   type SocketIOServerConfig,
 } from './server/socket-io-node';

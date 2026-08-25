@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/server.ts",
-    "./identity": "./src/identity.ts"
+    "./variables": "./src/variables.ts",
+    "./declaration": "./src/declaration.ts",
+    "./app-identity": "./src/app-identity.generated.ts"
   },
   "scripts": {
     "check": "bun x tsc --noEmit",

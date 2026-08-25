@@ -1,5 +1,5 @@
 import { env } from '@app/config';
-import { appIdentity } from '@app/config/identity';
+import { appDeclaration } from '@app/config/declaration';
 import { RepositoryVisibility } from '@app/db';
 import type { RepositorySnapshot } from '@app/shared';
 import { z } from 'zod';
@@ -81,7 +81,7 @@ const snapshotStore: RepositorySnapshotStore = {
 function githubHeaders(): Headers {
   const headers = new Headers({
     Accept: 'application/vnd.github+json',
-    'User-Agent': appIdentity.slug,
+    'User-Agent': appDeclaration.identity.slug,
     'X-GitHub-Api-Version': '2026-03-10',
   });
   if (env.GITHUB_TOKEN) headers.set('Authorization', `Bearer ${env.GITHUB_TOKEN}`);

@@ -143,40 +143,31 @@ export function createBoundedSinkManager<EVENT>(
     flush() {
       return awaitGeneration(sequence);
     },
-    getStatus() {
-      return ObservabilitySinkStatusSchema.parse({
-        capacity: maxPending,
-        received,
-        accepted,
-        filtered,
-        completed,
-        dropped,
-        failed,
-        preparationFailed,
-        preparing: preparing.size,
-        pending: writes.size,
-        closed,
-      });
-    },
+    getStatus,
     close() {
       if (closePromise) return closePromise;
       closed = true;
-      closePromise = awaitGeneration(sequence).then(() =>
-        ObservabilitySinkStatusSchema.parse({
-          capacity: maxPending,
-          received,
-          accepted,
-          filtered,
-          completed,
-          dropped,
-          failed,
-          preparationFailed,
-          preparing: preparing.size,
-          pending: writes.size,
-          closed,
-        }),
-      );
+      // The SAME snapshot function, not a second copy of the same eleven-field
+      // literal: as two, a new counter appeared in whichever one its author was
+      // looking at, and the other kept reporting the old shape.
+      closePromise = awaitGeneration(sequence).then(getStatus);
       return closePromise;
     },
   };
+
+  function getStatus() {
+    return ObservabilitySinkStatusSchema.parse({
+      capacity: maxPending,
+      received,
+      accepted,
+      filtered,
+      completed,
+      dropped,
+      failed,
+      preparationFailed,
+      preparing: preparing.size,
+      pending: writes.size,
+      closed,
+    });
+  }
 }

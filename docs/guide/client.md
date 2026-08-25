@@ -41,14 +41,21 @@ without repeating transport configuration.
 `headers` as a function is the hook for runtime tokens — a bearer token or any
 short-lived credential — re-evaluated on every request.
 
-Expected 401 policy is explicit and contract-driven. Select individual
-operations with `contractEndpointMatchers(contract, ['login'])`, or omit the
-second argument to select every HTTP operation in that contract. Pass the same
+Expected 401 policy is explicit and contract-driven. Name the operations you
+mean with `contractEndpointMatchers(contract, ['login'])`, or omit the second
+argument to select every HTTP operation in that contract. Pass the same
 `ContractClientConfig` as the typed client when routes use a static or dynamic
 `pathPrefix`; dynamic matchers require `stripPrefixKeys`, so the helper can
-compile the prefix structure without a concrete tenant id. Matching is exact by
-path segments, including params and trailing wildcards — a shared prefix never
-suppresses a neighbouring protected endpoint.
+compile the prefix structure without a concrete tenant id.
+
+**Matching is by PATH, not by operation.** Each named operation compiles to its
+path pattern, matched exactly by segments including params and trailing
+wildcards — so a shared *prefix* never suppresses a neighbour, but two
+operations on the **same path** are one matcher. If `login` is `POST /session`
+and `session` is `GET /session`, naming `login` suppresses the expected-401
+signal for both, and a real expired session stops raising `unauthorized`. Give
+an operation you must distinguish a path of its own, or narrow the policy with
+your own `(pathname) => boolean`.
 
 ### Unix domain sockets
 

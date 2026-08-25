@@ -6,6 +6,13 @@ export interface AgentHistoryProjectionOptions {
     part: Extract<AgentMessagePart, { type: 'file' }>,
     message: AgentMessage,
   ): FilePart['data'] | Promise<FilePart['data']>;
+  /**
+   * What to send when a file part has no resolver. Default `omit`.
+   *
+   * `text` renders a describing placeholder — filename or media type — never
+   * the storage reference: that string is an address inside the application's
+   * infrastructure and this content travels to the model provider.
+   */
   unresolvedFile?: 'text' | 'omit' | 'error';
   leadingAssistant?: 'omit' | 'allow' | 'error';
   incompleteToolTurn?: 'omit' | 'error';
@@ -59,12 +66,21 @@ async function userMessage(
       });
       continue;
     }
-    const fallback = options.unresolvedFile ?? 'text';
+    const fallback = options.unresolvedFile ?? 'omit';
     if (fallback === 'error') {
+      // Thrown into the application's own process, so it names the reference:
+      // inward we owe the operator everything. The provider never sees it.
       throw new Error(`No history file resolver configured for ${part.reference}`);
     }
     if (fallback === 'text') {
-      content.push({ type: 'text', text: `[attachment: ${part.reference}]` });
+      // `part.reference` is an address in the application's storage — an object
+      // key or a path. It identifies our infrastructure, and this string is
+      // sent upstream, so the placeholder describes the attachment instead.
+      const described = part.filename ?? part.mediaType;
+      content.push({
+        type: 'text',
+        text: described ? `[attachment: ${described}]` : '[attachment]',
+      });
     }
   }
   if (content.length === 0) return undefined;

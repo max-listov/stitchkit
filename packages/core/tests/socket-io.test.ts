@@ -17,6 +17,7 @@ import {
 import { type BunServer, createServer } from '../src/server/bun';
 import { bindRealtimeServer, type RealtimeServerConnection } from '../src/server/realtime';
 import { createSocketIOServer, socketIoLane } from '../src/server/socket-io';
+import type { SocketIOServerConfig } from '../src/server/socket-io-config';
 import type { RawRoute } from '../src/server/types';
 import { composeWebSocketHandlers, webSocketLane } from '../src/server/websocket';
 
@@ -642,6 +643,38 @@ describe('Socket.IO ServerOptions passthrough', () => {
   });
 });
 
+// ─── CORS is optional (same-origin needs no allow-list) ─────────────────────
+
+describe('Socket.IO CORS', () => {
+  async function handshake(config: SocketIOServerConfig): Promise<Headers> {
+    const handle = await createSocketIOServer<ServerEvents, ClientEvents>(config);
+    const server = createServer({ port: 0, socket: handle });
+    const response = await fetch(
+      `http://localhost:${server.port}/socket.io/?EIO=4&transport=polling`,
+      { headers: { origin: 'https://app.example' } },
+    );
+    await response.arrayBuffer();
+    await handle.close();
+    await server.shutdown();
+    return response.headers;
+  }
+
+  test('omitting cors emits no allow-list at all — same-origin only', async () => {
+    // A repository reached on its own origin cannot name a foreign one without
+    // knowing where it will run. Absent must mean "no CORS headers", not "an
+    // empty allow-list" — a browser elsewhere is refused, one here is not.
+    const headers = await handshake({});
+    expect(headers.get('access-control-allow-origin')).toBeNull();
+    expect(headers.get('access-control-allow-credentials')).toBeNull();
+  });
+
+  test('a supplied origin is still allowed, with credentials defaulted on', async () => {
+    const headers = await handshake({ cors: { origin: 'https://app.example' } });
+    expect(headers.get('access-control-allow-origin')).toBe('https://app.example');
+    expect(headers.get('access-control-allow-credentials')).toBe('true');
+  });
+});
+
 // ─── Handshake auth (token / query / headers) ───────────────────────────────
 
 interface Identity {
@@ -1110,5 +1143,63 @@ describe('Socket.IO sticky events (retain)', () => {
     });
     expect(late).toEqual([]);
     client.disconnect();
+  });
+});
+
+describe('optional peers can be handed to the adapter', () => {
+  /**
+   * The escape hatch, and what it costs to get wrong.
+   *
+   * Peers are resolved through a VARIABLE so a consumer bundling an unrelated
+   * `stitchkit/server` export never resolves them — which also means no bundler
+   * can follow them, so a consumer shipping one self-contained file had no way
+   * to get them into the artifact. The loaders are that way back. The lane
+   * proves the artifact really starts without `node_modules`; these prove the
+   * adapter honours what it was handed, and says something useful when it was
+   * handed nonsense.
+   */
+  test('an injected loader is the one that is used', async () => {
+    let calls = 0;
+    const handle = await createSocketIOServer({
+      cors: { origin: '*' },
+      peers: {
+        server: async () => {
+          calls += 1;
+          return await import('socket.io');
+        },
+      },
+    });
+    expect(calls).toBe(1);
+    expect(typeof handle.io.emit).toBe('function');
+    await handle.close();
+  });
+
+  test('a loader whose package is absent from the artifact gets the right advice', async () => {
+    // The two failures have DIFFERENT fixes, which is why the message differs.
+    // Telling someone to install a package on the machine is the wrong answer
+    // for an artifact that was supposed to carry it, and it sends them looking
+    // in the wrong place. (The default path's own message is exercised where it
+    // can be — the consumer lane's missing-peer fixture, with nothing installed.)
+    const failure = await createSocketIOServer({
+      cors: { origin: '*' },
+      peers: { server: () => Promise.reject(new Error("Cannot find package 'socket.io'")) },
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = failure instanceof Error ? failure.message : '';
+    expect(message).toContain('through the loader passed in `peers`');
+    expect(message).toContain('the artifact does not contain it');
+    expect(message).not.toContain('bun add');
+  });
+
+  test('an error that is not a missing module is passed through untouched', async () => {
+    // A loader that throws for its own reasons must not be reported as a
+    // packaging problem — that would send the reader after the wrong thing.
+    await expect(
+      createSocketIOServer({
+        cors: { origin: '*' },
+        peers: { server: () => Promise.reject(new Error('the loader itself is broken')) },
+      }),
+    ).rejects.toThrow('the loader itself is broken');
   });
 });

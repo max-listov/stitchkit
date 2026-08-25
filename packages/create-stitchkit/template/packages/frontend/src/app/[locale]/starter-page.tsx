@@ -56,7 +56,7 @@ const architecture = [
   },
 ];
 
-export function StarterPage({
+export async function StarterPage({
   applicationName,
   applicationDescription,
   heroTitle,
@@ -70,7 +70,7 @@ export function StarterPage({
     name: SITE_NAME,
     applicationCategory: 'DeveloperApplication',
     operatingSystem: 'Web',
-    url: absoluteSiteUrl(`/${locale}`),
+    url: await absoluteSiteUrl(`/${locale}`),
     description: homeSeo.description,
   };
 

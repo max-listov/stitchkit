@@ -1,7 +1,6 @@
 import path from 'node:path';
 import type { NextConfig } from 'next';
 import createNextIntlPlugin from 'next-intl/plugin';
-import { env } from './src/env';
 
 const config: NextConfig = {
   agentRules: false,
@@ -11,7 +10,9 @@ const config: NextConfig = {
   turbopack: {
     root: path.resolve(import.meta.dirname, '../..'),
   },
-  allowedDevOrigins: [new URL(env.NEXT_PUBLIC_WEB_URL).hostname],
+  // Development only, and deliberately not derived from a public address:
+  // reading one here would pull a value of the place into the build.
+  allowedDevOrigins: ['127.0.0.1', 'localhost'],
   images: { remotePatterns: [] },
 };
 

@@ -1,8 +1,8 @@
-import { appIdentity } from '@app/config/identity';
+import { appDeclaration } from '@app/config/declaration';
 import { z } from 'zod';
 import type { AppLocale } from '@/i18n/locales';
 
-export const SITE_NAME = appIdentity.name;
+export const SITE_NAME = appDeclaration.identity.name;
 export const StoryIdSchema = z.enum(['components', 'themes', 'blocks']);
 export type StoryId = z.infer<typeof StoryIdSchema>;
 

@@ -70,7 +70,13 @@ optional peers, migration path and packed consumer behavior are proven together.
       snapshot for both `stitchkit/application` entrypoints; their expected names are recorded in
       `packages/core/tests/fixtures/public-surface.json`.
 - [x] Регрессия: packages/core/tests/application-kernel.test.ts::validates the whole graph before side effects; packages/core/tests/application-grammy.test.ts::polling readiness comes from onStart and shutdown awaits the retained completion.
-- [x] Регрессия: packages/core/tests/node.test.ts::recognizes ports that Fetch blocks before network I/O; packages/core/tests/no-fixed-ports.test.ts::every server in tests/ and scripts/ uses port 0.
+- [x] Регрессия: packages/core/tests/node-port-rebind.test.ts::a Fetch-blocked ephemeral allocation is rebound before the handle is exposed; packages/core/tests/no-fixed-ports.test.ts::every server in tests/ and scripts/ uses port 0.
+      <!-- Corrected 2026-08-24: the original attestation named
+      `node.test.ts::recognizes ports that Fetch blocks before network I/O`,
+      which asserted `isFetchBlockedPort(4045)` against the lookup table it
+      imported — it could not fail if the rebind loop were deleted, so it did
+      not regress this claim. That test has been removed and replaced by a
+      deterministic one; only this reference was rewritten. -->
 - [x] `bun run verify` completed with exit `0`: 1532 core tests, 24 scaffolder tests, 40 repository
       script tests, build, Next SSR, Node HTTP/Socket.IO smoke, all packed consumer lanes and both
       starter browser matrices were green. No Git index, commit, push, tag, publish or deploy action

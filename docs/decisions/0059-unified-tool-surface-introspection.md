@@ -10,7 +10,7 @@ updated: 2026-08-08
 # ADR 0059 — Unified tool-surface introspection
 
 - **Status:** Accepted — extends the shared runner of
-  [ADR 0014](0014-tool-context-and-mcp-native-output.md), the name guarantees of
+  [ADR 0014](0014-tool-http-parity.md), the name guarantees of
   [ADR 0035](0035-tool-name-derivation-and-validation.md), the presentation
   document of [ADR 0050](0050-presentation-schema-is-not-a-parser.md), and the
   pathless operations of [ADR 0055](0055-runtime-tools-share-one-neutral-operation.md)

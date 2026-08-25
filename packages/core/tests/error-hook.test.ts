@@ -26,7 +26,17 @@ const onError = createErrorHook({
     FILE_TOO_LARGE: 'too_large',
     FILE_EXISTS: 'conflict',
     REALTIME_CONTRACT_VIOLATION: 'internal',
+    APPLICATION_NOT_ACCEPTING: 'unavailable',
+    WAIT_TIMEOUT: 'timeout',
+    WAIT_FAILED: 'conflict',
+    DOWNLOAD_NOT_FOUND: 'not_found',
+    VIEW_HTTP_ERROR: 'upstream',
+    OPERATION_NOT_SUCCEEDED: 'conflict',
     INTERNAL_SERVER_ERROR: 'internal',
+    // `satisfies Record<StitchErrorCode, …>` HERE on purpose: this fixture is
+    // the one place that should notice a new framework code, so adding one
+    // without deciding its wire spelling fails the build. The public `codeMap`
+    // stays `Partial` — a consumer must not break on an additive release.
   } satisfies Record<StitchErrorCode, string>,
   render: (info) => ({ ok: false, error: { code: info.code, message: info.message } }),
 });

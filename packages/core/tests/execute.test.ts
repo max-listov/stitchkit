@@ -277,29 +277,31 @@ describe('executeToolMethod', () => {
     expect(calls).toEqual(['before:my_tool', 'after:my_tool:true']);
   });
 
-  test('each hook exposes its named public options type', () => {
-    const hooks: ToolCallHooks = {
-      beforeToolCall: ({ toolName, args, context, endpoint }: BeforeToolCallOptions) => {
-        expect([toolName, args, context, endpoint]).toHaveLength(4);
-      },
-      afterToolCall: ({
-        toolName,
-        args,
-        result,
-        durationMs,
-        context,
-        endpoint,
-        error,
-      }: AfterToolCallOptions) => {
-        expect([toolName, args, result, durationMs, context, endpoint, error]).toHaveLength(7);
-      },
-      onToolError: ({ toolName, error, context, endpoint }: ToolErrorOptions) => {
-        expect([toolName, error, context, endpoint]).toHaveLength(4);
-      },
-    };
-
-    expect(hooks).toBeDefined();
-  });
+  // The named public option types, checked by the COMPILER.
+  //
+  // This was a `test()` whose body built a `hooks` literal, never invoked it,
+  // and asserted `expect(hooks).toBeDefined()` — the three inner assertions
+  // could not run, and each was `expect([a,b,c,d]).toHaveLength(4)` on an array
+  // the line itself constructed. Nothing about it was a runtime check. What
+  // does the work is the annotation: if `BeforeToolCallOptions` stopped
+  // carrying `endpoint`, `bun run check` fails here.
+  const _namedOptionTypes: ToolCallHooks = {
+    beforeToolCall: ({ toolName, args, context, endpoint }: BeforeToolCallOptions) =>
+      void [toolName, args, context, endpoint],
+    afterToolCall: ({
+      toolName,
+      args,
+      result,
+      durationMs,
+      context,
+      endpoint,
+      error,
+    }: AfterToolCallOptions) =>
+      void [toolName, args, result, durationMs, context, endpoint, error],
+    onToolError: ({ toolName, error, context, endpoint }: ToolErrorOptions) =>
+      void [toolName, error, context, endpoint],
+  };
+  void _namedOptionTypes;
 
   test('beforeToolCall / afterToolCall receive the operation identity', async () => {
     let before: OperationIdentity | undefined;

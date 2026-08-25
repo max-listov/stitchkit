@@ -9,6 +9,7 @@ export {
   type AgentInputPolicy,
   type AgentRunTicket,
   type AgentSessionCloseOptions,
+  type AgentSessionCloseResult,
   type AgentSessionCoordinator,
   type AgentStopReason,
   createAgentSessionCoordinator,
@@ -51,7 +52,6 @@ export {
   type AgentLanguageModelProvider,
   type AgentModelCapability,
   AgentModelCapabilitySchema,
-  type AgentModelDeclaration,
   type AgentModelDescriptor,
   AgentModelDescriptorSchema,
   type AgentModelRegistry,
@@ -104,11 +104,11 @@ export {
   type AgentRuntimeRecoveryDecision,
   type AgentRuntimeRecoveryInput,
   type AgentRuntimeRecoveryOutcome,
-  type AgentRuntimeResult,
   type AgentRuntimeRunContext,
   type AgentRuntimeStopPolicy,
   createAgentRuntime,
 } from './agent-runtime/runtime';
+export type { AgentRuntimeResult } from './agent-runtime/runtime-result';
 export * from './agent-runtime/schemas';
 export {
   type AcceptInputAndAssignRun,
@@ -151,3 +151,4 @@ export {
   createAgentRuntimeStore,
   createMemoryAgentRuntimeStore,
 } from './agent-runtime/store-driver';
+export { AgentRuntimeConflictError } from './agent-runtime/terminal-commit';

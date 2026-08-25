@@ -71,6 +71,63 @@ export const ApplicationSnapshotSchema = z
   .readonly();
 export type ApplicationSnapshot = z.infer<typeof ApplicationSnapshotSchema>;
 
+/**
+ * What a probe or a status endpoint may publish.
+ *
+ * The internal snapshot names every resource and its `dependsOn` edges — the
+ * application's dependency graph — plus the process epoch and live traffic
+ * counters. That is the right shape for `getSnapshot()` and for telemetry, and
+ * the wrong shape for a URL: these handlers are meant to be mounted publicly,
+ * and an orchestrator needs a verdict, not our topology.
+ *
+ * `degraded` and `failed` counts keep the verdict actionable without saying
+ * which resource: an operator reading a probe learns that something is wrong
+ * and reaches for `getSnapshot()`, which never left the process.
+ */
+export const ApplicationStatusProjectionSchema = z
+  .object({
+    id: ApplicationIdSchema,
+    lifecycle: ApplicationLifecycleSchema,
+    health: ApplicationHealthSchema,
+    ready: z.boolean(),
+    capturedAt: z.string().datetime({ offset: true }),
+    resources: z
+      .object({
+        total: NonNegativeIntegerSchema,
+        ready: NonNegativeIntegerSchema,
+        degraded: NonNegativeIntegerSchema,
+        failed: NonNegativeIntegerSchema,
+      })
+      .readonly(),
+  })
+  .readonly();
+export type ApplicationStatusProjection = z.infer<typeof ApplicationStatusProjectionSchema>;
+
+/** Project the internal snapshot onto what an endpoint may publish. */
+export function projectApplicationStatus(
+  snapshot: ApplicationSnapshot,
+): ApplicationStatusProjection {
+  let ready = 0;
+  let degraded = 0;
+  let failed = 0;
+  for (const resource of snapshot.resources) {
+    if (resource.ready) ready += 1;
+    if (resource.health === 'degraded') degraded += 1;
+    // `failed` is a lifecycle state, not a health value: a resource can be
+    // unhealthy while still running, and failed while its last health reading
+    // was stale. Count the state, which is the one an operator acts on.
+    if (resource.state === 'failed') failed += 1;
+  }
+  return {
+    id: snapshot.id,
+    lifecycle: snapshot.lifecycle,
+    health: snapshot.health,
+    ready: snapshot.ready,
+    capturedAt: snapshot.capturedAt,
+    resources: { total: snapshot.resources.length, ready, degraded, failed },
+  };
+}
+
 export const ApplicationResourceShutdownSchema = z
   .object({
     id: ApplicationIdSchema,

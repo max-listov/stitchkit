@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appIdentity } from '../packages/config/src/identity';
+import { appDeclaration } from '../packages/config/src/declaration';
 import { ensureLocalEnvironment } from './local-env';
 
 describe('ensureLocalEnvironment', () => {
@@ -19,7 +19,7 @@ describe('ensureLocalEnvironment', () => {
       // substitution is proven end-to-end by the starter lane on a renamed
       // scaffold; here we prove the file is created from the example with the
       // identity-derived database name in place.
-      const databaseName = appIdentity.slug.replaceAll('-', '_');
+      const databaseName = appDeclaration.identity.slug.replaceAll('-', '_');
       expect(created).toContain(`5432/${databaseName}`);
 
       // Idempotency — a developer's local credentials survive every dev run.

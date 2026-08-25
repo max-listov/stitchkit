@@ -1,10 +1,10 @@
-import { appIdentity } from '@app/config/identity';
+import { appDeclaration } from '@app/config/declaration';
 import { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
 import { LocaleSchema } from '@/i18n/locales';
-import { createServerRepositoryApi } from '@/lib/api/client';
 import { useRepository } from '@/lib/api/queries';
+import { createServerRepositoryApi } from '@/lib/api/server-client';
 import { getQueryClient } from '@/lib/query-client';
 import { createPageMetadata } from '@/lib/seo/metadata';
 import { StarterPage } from './starter-page';
@@ -34,8 +34,8 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
       <StarterPage
-        applicationName={appIdentity.name}
-        applicationDescription={appIdentity.description[appLocale]}
+        applicationName={appDeclaration.identity.name}
+        applicationDescription={appDeclaration.identity.description[appLocale]}
         heroTitle={t('heroTitle')}
         catalogueLabel={t('ui')}
         locale={appLocale}

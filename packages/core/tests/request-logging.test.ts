@@ -99,10 +99,25 @@ describe('logging config — shape and semantics', () => {
   });
 
   test('`logging: false` stays off', async () => {
-    const lines: Line[] = [];
-    const handler = handlerWith(false);
-    await handler(new Request('http://x/items'));
-    expect(lines).toEqual([]);
+    // Observed where the output actually goes. With no `logger` the built-in
+    // formatter writes to the console, so that is the only place emptiness can
+    // be seen — the earlier version declared a `lines` sink, never wired it to
+    // the handler, and asserted it was empty, which is true of every possible
+    // implementation including one that logs every request.
+    const original = console.log;
+    const written: string[] = [];
+    console.log = (...args: unknown[]) => void written.push(args.join(' '));
+    try {
+      await handlerWith(false)(new Request('http://x/items'));
+      expect(written).toEqual([]);
+
+      // The control: the same request under `logging: {}` DOES write, so the
+      // emptiness above is the setting rather than the observation point.
+      await handlerWith({})(new Request('http://x/items'));
+      expect(written.some((line) => line.includes('/items'))).toBe(true);
+    } finally {
+      console.log = original;
+    }
   });
 
   test('a typed StitchLogger is rejected by the compiler, not at runtime', () => {

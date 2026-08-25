@@ -15,7 +15,7 @@ export function objectShapeKeys(schema?: z.ZodType): string[] {
 export type KeyPolicy = z.core.$ZodType | undefined;
 
 /** The key policy of an object schema. */
-export function keyPolicyOf(schema: z.ZodObject): KeyPolicy {
+function keyPolicyOf(schema: z.ZodObject): KeyPolicy {
   return schema.def.catchall;
 }
 
@@ -43,10 +43,7 @@ export function rebuildObject(
 }
 
 /** Apply a key policy to a freshly built object, degrading what JSON Schema cannot carry. */
-export function withKeyPolicy(
-  object: z.ZodObject<z.ZodRawShape>,
-  policy: KeyPolicy,
-): z.ZodObject {
+function withKeyPolicy(object: z.ZodObject<z.ZodRawShape>, policy: KeyPolicy): z.ZodObject {
   if (policy === undefined) return object;
   return object.catchall(representable(policy));
 }

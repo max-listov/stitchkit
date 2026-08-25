@@ -165,6 +165,7 @@ export {
 } from './shutdown';
 export type {
   SocketIOHandshakeConfig,
+  SocketIOPeerLoaders,
   SocketIORequestPolicy,
   SocketIOServerConfig,
   SocketIOServerHandle,

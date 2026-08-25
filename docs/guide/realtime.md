@@ -129,6 +129,12 @@ createServer({
 realtime.emit('note:created', note)
 ```
 
+`socket.io` and, on Bun, `@socket.io/bun-engine` are optional peers, resolved
+lazily so a project that never opens a socket does not have to install them. If
+you ship **one self-contained file** to a machine with no `node_modules`, tell
+the framework how to load them so your bundler can put them inside — see
+[shipping one self-contained artifact](./testing-and-deployment.md#shipping-one-self-contained-artifact).
+
 The canonical room-broadcast example below is executed by the test suite. Its
 body is kept byte-identical to `packages/core/examples/realtime-room.ts`.
 
@@ -163,6 +169,12 @@ await createSocketIOServer({
   serverOptions: { maxHttpBufferSize: 5 * 1024 * 1024 }, // 5 MB
 })
 ```
+
+`cors` is **optional**. Omit it when the browser reaches this server on its
+own origin — Socket.IO then emits no CORS headers, which is same-origin only.
+Supply it only for a genuinely cross-origin browser: naming a foreign origin is
+naming where the code will run, and a repository that does not have to know
+should not say.
 
 The wrapper-owned fields (`cors` / `path` / `transports` / `ping*` /
 `allowRequest`) take

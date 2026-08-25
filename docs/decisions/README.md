@@ -84,7 +84,7 @@ These records were consolidated from the project's internal design notes on
 | [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications |
 | [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies |
 | [0069](0069-realtime-contracts-validate-without-owning-delivery.md) | Realtime contracts validate without owning delivery | Accepted — extends 0008; 0020 remains orthogonal |
-| [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066 |
+| [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066; the file it names became the project declaration in 0104 |
 | [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams |
 | [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks |
 | [0073](0073-client-request-options-are-not-callback-context.md) | Client request options are not callback context | Accepted — extends 0005, 0008 and 0025 |
@@ -117,6 +117,10 @@ These records were consolidated from the project's internal design notes on
 | [0100](0100-agent-store-reducer-owns-transitions.md) | The agent store reducer owns runtime transitions | Accepted — refines the persistence boundary of 0098 |
 | [0101](0101-normalized-agent-runtime-persistence.md) | Agent runtime persistence is bounded and normalized | Accepted — replaces the aggregate storage shape of 0100 while retaining reducer ownership |
 | [0102](0102-managed-application-kernel.md) | Application composition is process-local and provider-neutral | Accepted — extends 0008, 0012, 0013, 0076, 0089 and 0098 |
+| [0103](0103-entrypoints-declare-their-maturity.md) | Every entrypoint declares how settled it is | Accepted — scopes 0098 and 0102 |
+| [0104](0104-the-project-declaration-ships-from-the-framework.md) | The project declaration ships from the framework | Accepted — extends 0002 and 0103, and replaces the `app.config.json` of 0070 |
+| [0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md) | The error-code map is partial, and the registry is complete | Accepted — supersedes the exhaustiveness clause of 0026 |
 
-**Statuses:** _Accepted_ — in effect · _Superseded_ — replaced by a later ADR,
-kept for history · _Rejected_ — considered, deliberately not done.
+**Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
+`active` is what the later files happened to use) · _Superseded_ — replaced by a
+later ADR, kept for history · _Rejected_ — considered, deliberately not done.

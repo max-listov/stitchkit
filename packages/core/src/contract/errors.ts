@@ -132,6 +132,18 @@ export const STITCH_ERROR_STATUS = {
   FILE_TOO_LARGE: 413,
   FILE_EXISTS: 409,
   REALTIME_CONTRACT_VIOLATION: 500,
+  APPLICATION_NOT_ACCEPTING: 503,
+  // Managed runtime tools (→ ADR 0081, 0082). They reach a caller through a
+  // tool result rather than an HTTP response, but they are still codes the
+  // FRAMEWORK throws — and while they were missing here `isStitchErrorCode`
+  // answered `false` for them, so both `codeMap` and the `unmappedCode`
+  // resolver skipped them and the code travelled to the wire in stitchkit's
+  // spelling. "Map every framework code to my vocabulary" silently missed four.
+  WAIT_TIMEOUT: 408,
+  WAIT_FAILED: 409,
+  DOWNLOAD_NOT_FOUND: 404,
+  VIEW_HTTP_ERROR: 502,
+  OPERATION_NOT_SUCCEEDED: 409,
   INTERNAL_SERVER_ERROR: 500,
 } satisfies Record<string, number>;
 

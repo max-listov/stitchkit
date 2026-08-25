@@ -7,6 +7,20 @@ created: 2026-08-10
 updated: 2026-08-10
 ---
 
+> **Superseded in part by [ADR 0104](0104-the-project-declaration-ships-from-the-framework.md).**
+> The single validated config this ADR introduces is still the design; the file
+> is now `project.json`, it carries the whole project declaration rather than
+> identity alone, and its schema ships from the framework instead of being
+> declared per project. Everything below about *deriving* identity from one
+> place remains in force.
+
+> **Superseded in part by [ADR 0104](0104-the-project-declaration-ships-from-the-framework.md).**
+> The single validated config this ADR introduces is still the design; the file
+> is now `project.json`, it carries the whole project declaration rather than
+> identity alone, and its schema ships from the framework instead of being
+> declared per project. Everything below about *deriving* identity from one
+> place remains in force.
+
 # ADR 0070 — Scaffold identity is derived from one config
 
 - **Status:** Accepted — supersedes the no-rewrite clause of

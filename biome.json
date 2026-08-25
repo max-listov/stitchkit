@@ -11,16 +11,14 @@
       "**",
       "!**/node_modules",
       "!**/dist",
-      "!**/build",
       "!**/.next",
       "!**/coverage",
       "!**/*.min.js",
       "!**/*.wasm",
       "!**/next-env.d.ts",
       "!**/generated",
-      "!**/_deprecated",
-      "!**/prisma-json.d.ts",
-      "!!packages/create-stitchkit/template"
+      "!!packages/create-stitchkit/template",
+      "!!packages/create-stitchkit/examples/*/project.json"
     ]
   },
   "formatter": {

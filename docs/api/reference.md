@@ -326,6 +326,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `RealtimeServerHandle` | _type_ | minimal Socket.IO server handle accepted by `bindRealtimeServer`; carries the handshake identity type through to `connection.raw.data` |
 | `SocketIORequestPolicy` | _type_ | runtime-neutral async-capable Web `Request` handshake admission policy |
 | `SocketIOServerConfig` | _type_ | config for `createSocketIOServer`; `handshake` is the typed identity gate — [guide](../guide/realtime.md#handshake-auth--cookie-or-token) |
+| `SocketIOPeerLoaders` | _type_ | `peers: { server, bunEngine }` — literal dynamic imports written in YOUR source, so a bundler puts the optional peers inside a self-contained artifact. Omit for the lazy default |
 | `SocketIOHandshakeConfig` | _type_ | the `handshake` gate — Zod `schema` over `handshake.auth` plus optional async `verify`; the result lands typed in `socket.data` |
 | `SocketIOServerHandle` | _type_ | typed Socket.IO server plus Bun mount fields and idempotent lifecycle |
 | `SocketIOServerLifecycle` | _type_ | non-generic Bun mount/shutdown portion accepted by `createServer` |
@@ -403,6 +404,10 @@ cutovers are covered by the executable
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createApplication` | function | compose a validated resource DAG into one non-restartable startup, readiness, admission and shutdown state machine |
+| `ApplicationResourceFailure` | _type_ | one resource failure with the cause its phase label cannot carry — delivered to `onResourceFailure` |
+| `ApplicationResourcePhase` | _type_ | the phase a managed resource failed in — the vocabulary of `ApplicationResourceShutdown.failures` |
+| `ApplicationShutdownOptionsSchema` / `ApplicationShutdownOptions` | schema / _type_ | the two shutdown budgets and an abort signal — without the HTTP-only `retryAfterSeconds` |
+| `ActivityTokenBrand` | const | the brand symbol `ActivityToken` carries, exported so `ActivityProjection` is implementable |
 | `defineManagedResource` | function | retain the exact typed resource declaration; every invoked start is rollback-eligible |
 | `managedServerResource` | function | adapt an existing managed server without copying its HTTP/WebSocket shutdown machine |
 | `createApplicationHealthHandler` | function | build a Fetch-clean liveness or readiness response from the sanitized application snapshot |
@@ -461,6 +466,9 @@ The entrypoint exports each Zod schema beside its inferred type:
 `ApplicationAdmissionSnapshotSchema` / `ApplicationAdmissionSnapshot`,
 `ManagedResourceSnapshotSchema` / `ManagedResourceSnapshot`,
 `ApplicationSnapshotSchema` / `ApplicationSnapshot`,
+`ApplicationStatusProjectionSchema` / `ApplicationStatusProjection` with
+`projectApplicationStatus` — what a status or probe endpoint may publish, and
+the function that derives it from a snapshot,
 `ApplicationResourceShutdownSchema` / `ApplicationResourceShutdown`, and
 `ApplicationShutdownResultSchema` / `ApplicationShutdownResult`.
 
@@ -525,7 +533,9 @@ Server-only optional application runtime. See the
 | `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |
 | `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` distinguishes checkpoint from terminal totals |
 | `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with context resolver and explicit evidence policy |
-| `AgentSessionCloseOptions` | _type_ | natural `drainTimeoutMs` followed by shutdown abort and optional bounded `forceTimeoutMs` settlement wait |
+| `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
+| `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
+| `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
@@ -573,7 +583,7 @@ selection never splits a tool chronology and reports why every canonical record 
 removed.
 
 Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
-`AgentModelCapabilitySchema`, `AgentModelDeclaration`, `AgentModelDescriptor`,
+`AgentModelCapabilitySchema`, `AgentModelDescriptor`,
 `AgentModelDescriptorSchema`, `AgentModelRegistry`, `AgentModelRegistryConfig`,
 `AgentModelRegistrySnapshot`, `AgentModelRegistrySnapshotSchema`, `AgentModelSnapshotPolicy`,
 `AgentResolvedModel` and `validateAgentModelSnapshot`. Registry `preflight` validates availability,
@@ -1010,6 +1020,75 @@ available from `stitchkit/contract`.
 
 ---
 
+## `stitchkit/declaration`
+
+Zod-only, dependency-free. The **project declaration**: the single
+machine-readable statement a repository makes about itself, read by the project,
+by the scaffolder that writes the first copy, and by whatever builds a source and
+binds the artifact into a deployment. It ships from the framework so those
+readers cannot hold different copies of the same schema.
+
+**Declaring yourself is optional.** A project with no `project.json` is a
+complete project: nothing else in the framework imports this entrypoint, no
+build, test or start path looks for a declaration, and its absence is never an
+error or a warning.
+
+The rule the schema exists to hold: **a declaration must be complete and
+meaningful when no machine exists**. A field that cannot be filled in without
+knowing where the code will run is a binding supplied by the deployment, not a
+declaration made by the repository.
+
+**Structure is the guarantee**: nothing here requires a value of the place. A
+command is `executable` plus an `args` array, no part may be an absolute path or
+carry an inline value (`--port=8080` must be `['--port', '8080']`), paths are
+repository-relative, bindings are named by variable and never valued, and a
+listener's variables must exist in `env.variables` with matching shapes.
+
+**Hygiene is the filter**: every remaining free string is checked against
+`namesAMachine` — a scheme, a protocol-relative host, an absolute or
+home-relative path, a Windows drive, a `host:port` pair, a bare IPv4 literal —
+and a number after a port flag is refused. It catches known shapes; it is not a
+secret scanner, and a secret or hostname written as a plain argument passes.
+
+Unknown keys are **refused**, not stripped. A key one reader does not recognise
+is a disagreement between programs that never meet, and discarding it silently
+is how a partially understood declaration becomes a running, wrong deployment.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `ProjectDeclarationSchema` / `ProjectDeclaration` | schema / _type_ | the declaration: `schemaVersion`, `kind`, `identity`, `roles`, `build`, `requires`, `release`, `env` |
+| `parseProjectDeclaration` | function | parse a declaration, refusing an unrecognised `schemaVersion` **before** any field is read |
+| `PROJECT_DECLARATION_SCHEMA_VERSION` | constant | the declaration format this build understands — the number a reader refuses on |
+| `namesAMachine` | function | why a string names a particular machine, or `undefined` — the one predicate every free string is checked against |
+| `findProjectRole` | function | the role with a given name, or `undefined` |
+| `ProjectIdentitySchema` / `ProjectIdentity` | schema / _type_ | `slug`, `name`, `version` and a per-locale `description` |
+| `ProjectRoleSchema` / `ProjectRole` | schema / _type_ | one runnable role: a `workingDirectory` inside the source, per-mode `commands`, an optional `listener`, and `drainFloorMs` |
+| `ProjectCommandSchema` / `ProjectCommand` | schema / _type_ | `executable` plus `args` — argv, never a shell string |
+| `ProjectRoleCommandSchema` / `ProjectRoleCommand` | schema / _type_ | a command run under a supervisor: additionally never a script runner, because a launcher duplicates the shutdown signal |
+| `ProjectListenerSchema` | schema | `portVariable`, `bindVariable` and `readinessPath` — **absent means the role has no listener at all** |
+| `ProjectRunModeSchema` | schema | the run modes a role declares commands for |
+| `ProjectBuildSchema` | schema | build `command`, the set of `artifacts` it produces — more than one path is normal — and any declared data `inputs` |
+| `ProjectBuildInputSchema` / `ProjectBuildInput` | schema / _type_ | data the build may read: a `name`, a frozen export `path` inside the source, and the `sha256:` `digest` that pins its bytes. **Absent `inputs` means the build reads no data** — an answer, not a gap |
+| `ProjectRequirementSchema` / `ProjectRequirementPhaseSchema` | schema | something the code needs but does not provide, and the `phases` — `release`, `start` — it is needed in |
+| `ProjectReleaseSchema` / `ProjectMigrationsSchema` | schema | what must happen once before roles start; migrations are declared as `engine`, `root` and `lockfile` — **bytes, not a command to run** |
+| `ProjectEnvVariableSchema` / `ProjectEnvVariable` / `ProjectEnvShapeSchema` | schema / _type_ | a variable a deployment must supply: `name`, `shape`, `required`, and `members` for an enum |
+| `ProjectSlugSchema` | schema | lowercase hyphen-separated identity everything else is named after |
+| `ProjectDescriptionSchema` | schema | description per locale tag |
+| `RepositoryPathSchema` | schema | a path inside the source — absolute, `..`, `~` and Windows paths are refused |
+| `BindingVariableSchema` | schema | the NAME of an environment variable a deployment fills in |
+
+Version handling is **fail-closed**: an unrecognised `schemaVersion` is refused,
+never assumed compatible, and refused before any field is read so a newer
+declaration reports as a version this build cannot serve rather than as a list of
+unrecognised keys.
+
+To compose a stricter declaration, build on the exported member schemas — for
+example `ProjectDeclarationSchema.safeExtend({ identity: … })`, which keeps the
+boundary refinements in force. `ProjectDescriptionSchema` is a record, so narrow
+it by replacing the field rather than extending it.
+
+---
+
 ## `stitchkit/node`
 
 Server-only, for Node ≥ 22 (Bun uses `stitchkit/server`). The runtime-agnostic
@@ -1028,7 +1107,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `NodeRuntimeServer` | _type_ | concrete `srvx/node` runtime escape hatch |
 | `NodeSocketLifecycle` | _type_ | Bun-free Socket.IO lifecycle accepted by `serveNode` |
 | `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
-| `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config and Bun-free Node handle with `io`, `attach` and lifecycle |
+| `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOPeerLoaders` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config, optional-peer loaders and the Bun-free Node handle with `io`, `attach` and lifecycle |
 | `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---

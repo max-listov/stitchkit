@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  assertMigrationSection,
   assertReleaseCommitSubject,
   assertTagOnReleaseHead,
   assertVersionCalibre,
@@ -7,6 +8,7 @@ import {
   decidePublishAction,
   extractReleaseNotes,
   isReleaseCommitSubject,
+  MIGRATION_CHANNELS,
   releasedVersionsInOrder,
   releasePlanForTag,
   releaseScopeForTag,
@@ -328,5 +330,155 @@ describe('release plan', () => {
     expect(isReleaseCommitSubject('release: 0.4.0')).toBe(false);
     expect(isReleaseCommitSubject('chore: mention release(core): in a body')).toBe(false);
     expect(isReleaseCommitSubject('')).toBe(false);
+  });
+  test('a breaking release must carry the migration section that explains it', () => {
+    const notes = `${BREAKING}\n\n- **\`createHandler\` no longer accepts \`foo\`** — it moved.`;
+    const guide = '# Upgrading\n\n## Released migration: 0.56.0\n\n- old\n';
+
+    expect(() => assertMigrationSection(guide, '0.57.0', notes)).toThrow(
+      /must carry "## Released migration: 0\.57\.0"/,
+    );
+    expect(() =>
+      assertMigrationSection(
+        `${guide}\n## Released migration: 0.57.0\n\n- new\n`,
+        '0.57.0',
+        notes,
+      ),
+    ).not.toThrow();
+  });
+
+  test('an unpromoted heading does not satisfy the gate — that is the failure it exists for', () => {
+    // 0.57.0's migration was written under `Unreleased migration`, never
+    // promoted, and overwritten by the next author. The slug is irrelevant to
+    // the gate: only the promoted heading counts.
+    const notes = `${BREAKING}\n\n- something broke`;
+    const guide = '## Unreleased migration: complete agent admission identity\n\n- text\n';
+    expect(() => assertMigrationSection(guide, '0.57.0', notes)).toThrow(
+      /Promote the "## Unreleased migration/,
+    );
+  });
+
+  test('additive releases and versions below the floor pass without a section', () => {
+    const additive = '### Added\n\n- an option nobody must adopt.';
+    const breaking = `${BREAKING}\n\n- something broke`;
+    expect(() => assertMigrationSection('', '0.59.0', additive)).not.toThrow();
+    expect(() => assertMigrationSection('', '0.43.0', breaking)).not.toThrow();
+    expect(() => assertMigrationSection('', '0.44.0', breaking)).toThrow();
+  });
+
+  test('a migration heading inside a fenced example does not satisfy the gate', () => {
+    const notes = `${BREAKING}\n\n- something broke`;
+    const guide = [
+      '# Upgrading',
+      '',
+      '```md',
+      '## Released migration: 0.57.0',
+      '```',
+      '',
+    ].join('\n');
+    expect(() => assertMigrationSection(guide, '0.57.0', notes)).toThrow();
+  });
+});
+
+test('a release that promotes one migration section but leaves five queued is refused', () => {
+  // The half-satisfied shape: the gate proves a heading exists, and a release
+  // with six queued sections passes it by promoting the first. The leftovers
+  // are then overwritten by the next author, which is the 0.57.0 failure.
+  const notes = '### ⚠️ Breaking changes\n- something broke';
+  const promoted = [
+    '## Released migration: 0.60.0',
+    'text',
+    '## Unreleased migration: still queued',
+    'text',
+  ].join('\n');
+
+  expect(() =>
+    assertMigrationSection('## Released migration: 0.60.0', '0.60.0', notes),
+  ).not.toThrow();
+  expect(() => assertMigrationSection(promoted, '0.60.0', notes)).toThrow(/still carries 1/);
+});
+
+test('a queued heading inside a fenced block is documentation, not a queue entry', () => {
+  const notes = '### ⚠️ Breaking changes\n- something broke';
+  const fence = '```';
+  const guide = [
+    '## Released migration: 0.60.0',
+    fence,
+    '## Unreleased migration: <slug>',
+    fence,
+  ].join('\n');
+
+  expect(() => assertMigrationSection(guide, '0.60.0', notes)).not.toThrow();
+});
+
+describe('the scaffolder has a migration channel of its own', () => {
+  const breaking =
+    '### ⚠️ Breaking changes\n\n- **`app.config.json` is now `project.json`.**\n';
+
+  test('a breaking starter release without a promoted section is refused, by its own path', () => {
+    expect(() =>
+      assertMigrationSection('', '0.4.0', breaking, MIGRATION_CHANNELS['create-stitchkit']),
+    ).toThrow(
+      /packages\/create-stitchkit\/UPGRADING\.md must carry "## Released migration: 0\.4\.0"/,
+    );
+  });
+
+  test('the starter floor is its own — an older breaking release is not made retroactive', () => {
+    // The channel starts at 0.4.0. Demanding sections for releases that shipped
+    // before it existed produces documents nobody wrote for a reader nobody had.
+    expect(() =>
+      assertMigrationSection('', '0.3.3', breaking, MIGRATION_CHANNELS['create-stitchkit']),
+    ).not.toThrow();
+  });
+
+  test('a promoted section satisfies it, and a leftover queued one does not', () => {
+    const promoted = '## Released migration: 0.4.0\n\n### the project declares itself\n';
+    expect(() =>
+      assertMigrationSection(
+        promoted,
+        '0.4.0',
+        breaking,
+        MIGRATION_CHANNELS['create-stitchkit'],
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertMigrationSection(
+        `${promoted}\n## Unreleased migration: something else\n`,
+        '0.4.0',
+        breaking,
+        MIGRATION_CHANNELS['create-stitchkit'],
+      ),
+    ).toThrow(/packages\/create-stitchkit\/UPGRADING\.md still carries 1/);
+  });
+
+  test('the two channels do not share a guide', () => {
+    expect(MIGRATION_CHANNELS.core.guidePath).not.toBe(
+      MIGRATION_CHANNELS['create-stitchkit'].guidePath,
+    );
+  });
+});
+
+describe('a gate that cannot check refuses instead of passing', () => {
+  const breaking = '### ⚠️ Breaking changes';
+
+  test('a version with notes but no plain release heading is refused', () => {
+    // `extractReleaseNotes` accepts any escaped version, so a pre-release
+    // spelling produced notes while `releasedVersionsInOrder` (plain x.y.z
+    // only) did not list it — and the calibre gate returned without checking,
+    // for exactly the shape most likely to carry an unreviewed break.
+    const changelog = [
+      '## [0.56.1-rc.1]',
+      '',
+      breaking,
+      '',
+      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
+      '',
+      '## [0.56.0]',
+      '- the previous release',
+    ].join('\n');
+
+    expect(() => assertVersionCalibre(changelog, '0.56.1-rc.1')).toThrow(
+      /carries release notes but no "## \[0\.56\.1-rc\.1\]" heading/,
+    );
   });
 });

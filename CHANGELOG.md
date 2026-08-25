@@ -15,6 +15,175 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-08-25
+
+### ⚠️ Breaking changes
+
+- **`AgentRuntime.close()` returns what it achieved instead of `void`.** Its
+  documented contract held three claims that cannot all be true at once —
+  "every combination is bounded", "omit `forceTimeoutMs` and it waits for
+  settlement", and "`close()` never returns while a run is still in flight".
+  Without a force budget the wait is unbounded; with one, returning while a run
+  is in flight is exactly what the budget is for. The result now says which side
+  of that trade the caller got: `{ settled, timedOut, remaining }`. Code that
+  ignores the value is unaffected.
+  `// before: await runtime.close({ forceTimeoutMs: 5_000 })  // "never returns while a run is in flight"` →
+  `// after:  const { settled, remaining } = await runtime.close({ forceTimeoutMs: 5_000 })`
+- **Application status and probe endpoints publish a projection, not the raw
+  snapshot.** `createApplicationHealthHandler` and
+  `createApplicationOperationalHandlers` returned the full `ApplicationSnapshot`,
+  which names every resource, its `dependsOn` edges, the process `epoch` and live
+  admission counters — on handlers the guide documents for public mounting. They
+  now return `ApplicationStatusProjection`: `lifecycle`, `health`, `ready`,
+  `id`, `capturedAt` and resource counts. The full snapshot stays available
+  in-process.
+  `// before: (await fetch('/status').then((r) => r.json())).resources[0].dependsOn` →
+  `// after:  app.getSnapshot().resources[0].dependsOn`
+- **`AgentRuntimeStore.scanRecoverable` is one bounded page, and it is the only
+  scan.** The interface demanded a mandatory unbounded
+  `scanRecoverable(): Promise<AgentSnapshot[]>` the runtime never called, while
+  the bounded `scanRecoverablePage?` that `recover()` actually needs was
+  optional — so a store written straight from the interface threw
+  `'The configured agent store does not support bounded recovery scans'` at
+  startup. One member now carries the bounded signature the driver already used.
+  `// before: { scanRecoverable: () => allSnapshots(), scanRecoverablePage: (page) => …  }` →
+  `// after:  { scanRecoverable: (page) => … }`
+- **`unresolvedFile` defaults to `omit`, and `text` no longer sends the storage
+  reference.** The default rendered `[attachment: <reference>]` into the message
+  sent to the model provider, where `reference` is an address in the
+  application's own storage — an object key or a path. The placeholder now
+  describes the attachment by filename or media type.
+  `// before: history: {} → provider sees "[attachment: s3://bucket/tenant/42/file.pdf]"` →
+  `// after:  history: { unresolvedFile: 'text' } → provider sees "[attachment: file.pdf]"`
+- **`runtime.close()` uses the shared shutdown vocabulary, and every combination
+  of budgets is bounded.** `drainTimeoutMs` is now `gracePeriodMs` — on
+  `AgentSessionCloseOptions` as well, so a consumer holding a coordinator
+  directly gets the same rename — the name the
+  server and the application kernel already use for the same budget. Two
+  semantics were also wrong: `close({ drainTimeoutMs })` without a force budget
+  aborted and returned *without* awaiting settlement — a weaker guarantee than
+  passing nothing — and `close({ forceTimeoutMs })` without a drain budget never
+  read the force budget at all. Both now behave as their names say. (**Superseded
+  in this release:** the sentence that once stood here — "`close()` now never
+  returns while a run is in flight" — was never true with a force budget, which
+  exists precisely to stop waiting. `close()` reports what it achieved instead;
+  see the breaking entry above.)
+  `// before: runtime.close({ drainTimeoutMs: 30_000, forceTimeoutMs: 5_000 })` →
+  `// after:  runtime.close({ gracePeriodMs: 30_000, forceTimeoutMs: 5_000 })`
+- **`STITCH_ERROR_STATUS` gained `APPLICATION_NOT_ACCEPTING` (503).** The kernel
+  emitted this code with no entry in the registry, so `isStitchErrorCode()`
+  denied it and the `unmappedCode` resolver could not see it. Only an exhaustive
+  `satisfies Record<StitchErrorCode, …>` map breaks.
+  `// before: { …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>` →
+  `// after:  { …, APPLICATION_NOT_ACCEPTING: 'unavailable' } satisfies Record<StitchErrorCode, string>`
+- **`AgentModelDeclaration` is removed — use `AgentModelDescriptor`.** It was a
+  bare alias of the same type, so one concept carried two exported names: the
+  registry constraint said `AgentModelDeclaration` while `registry.descriptor()`
+  returned `AgentModelDescriptor`.
+  `// before: defineModelRegistry<Record<string, AgentModelDeclaration>>({ … })` →
+  `// after:  defineModelRegistry<Record<string, AgentModelDescriptor>>({ … })`
+- **`application.shutdown()` no longer accepts `retryAfterSeconds`.** It is an
+  HTTP response concern owned by the managed server resource; the kernel typed,
+  validated and then ignored it.
+  `// before: app.shutdown({ gracePeriodMs: 0, retryAfterSeconds: 30 })` →
+  `// after:  app.shutdown({ gracePeriodMs: 0 })  // managedServerResource({ retryAfterSeconds })`
+
+### Added
+
+- **`AgentRuntimeConflictError` is exported.** It is thrown from `submit()`,
+  `resume()`, `recover()` and terminal commit, and could previously only be
+  identified by comparing `error.name` to a string.
+- **`ActivityTokenBrand` is exported**, so `ActivityProjection` can be
+  implemented outside the module that declares it.
+- **Every entrypoint declares its maturity.** The getting-started table now
+  carries a `Maturity` column — `stable` or `evolving` — and a check refuses a
+  published export that has no row or no level. `declaration`, `agent-runtime` and
+  `application` are declared evolving (→ ADR 0103).
+- **Agent event deduplication is bounded.** The set of already-emitted event ids
+  never forgot, so a runtime executing indefinitely grew for the life of the
+  process. It now keeps a fixed window.
+- **`createApplication({ onResourceFailure })`.** Every failure of a resource's
+  own code reports the value it actually threw — `start`, `ready`, `completion`,
+  `admission`, `drain`, `close` including the close that runs while rolling a
+  failed startup back, and `force` including a resource whose close was already
+  invoked and never settled. Previously the kernel caught and discarded the
+  cause on several of those, so an operator saw the phase label and nothing
+  else. The kernel interrupting its own startup because a shutdown overtook it
+  is deliberately NOT reported: nothing failed there, and reporting it buries
+  the failure that did. The observer may be `async` — its return type is
+  `void | Promise<void>` and a rejection is isolated, where before an `async`
+  observer type-checked against `void` and its rejected promise escaped the
+  synchronous `try/catch` around the call. A throwing observer cannot break the
+  lifecycle it observes, and neither can a slow one: the kernel does not await
+  it.
+- **`STITCH_ERROR_STATUS` carries every code the framework throws** (→ ADR 0105).
+  Five were missing — `WAIT_TIMEOUT`, `WAIT_FAILED`, `DOWNLOAD_NOT_FOUND`,
+  `VIEW_HTTP_ERROR`, `OPERATION_NOT_SUCCEEDED` — so `isStitchErrorCode` answered
+  `false` for them and `createErrorHook` skipped both the `codeMap` lookup and
+  the `unmappedCode` fallback: the code reached the wire in stitchkit's spelling
+  as though the project had thrown it, and a consumer who had mapped "every
+  framework code" was silently missing five. Completeness is now held by a check
+  over the source rather than by review, which is how the fifth was found. This
+  widens `StitchErrorCode`; `codeMap` is `Partial`, so nothing has to move —
+  unless you wrote `satisfies Record<StitchErrorCode, …>` yourself, which now
+  asks you for five more entries.
+- **`createSocketIOServer({ peers })` — ship the Socket.IO peers inside one
+  artifact.** They are resolved through a variable so a consumer bundling an
+  unrelated `stitchkit/server` export never has to resolve them, and no bundler
+  can follow that. There was no way back: a consumer who uses this adapter and
+  ships a single self-contained file to a machine with no `node_modules` got
+  `needs the optional peer "socket.io"` at START-UP, and the only workaround was
+  patching stitchkit's built `dist` — which broke whenever the internal layout
+  moved. Passing `peers: { server: () => import('socket.io'), bunEngine: () =>
+  import('@socket.io/bun-engine') }` puts the literal in the consumer's own
+  source, where their bundler sees it. Omitting it changes nothing. Proved as a
+  pair in the consumer lane: the injected artifact starts in a directory with no
+  `node_modules` under Node and under Bun with auto-install off, and the same
+  program without the loaders must fail there.
+- **Declared build inputs — the third kind of thing a build reads.** The
+  boundary rule separates code from the values of a place; data read while
+  building is neither, and a build that reads it undeclared is a function of
+  whichever machine happened to have the database. `build.inputs` names a frozen
+  export inside the source and pins its bytes with a `sha256:` digest. Absent
+  `inputs` means the build reads no data — an answer, not a gap. The other two
+  legitimate answers need no field: render at runtime, or generate the bytes as
+  a release step.
+- **`stitchkit/declaration` — the project declaration schema** (→ ADR 0104). One
+  versioned Zod schema for what a repository says about itself, shipped from the
+  framework so the project, the scaffolder and whatever binds an artifact into a
+  deployment cannot hold different copies of it. `parseProjectDeclaration` refuses
+  an unrecognised `schemaVersion` **before** reading any field, so a reader that
+  is too old fails closed instead of interpreting a declaration partially.
+
+  It carries `kind`, `identity`, `roles`, `build`, `requires`, `release` and
+  `env`. The boundary rule is held by **structure**: there is nowhere in the
+  schema that a port, a host, an absolute URL, a machine path, a routing rule or
+  a supervision policy must go. A binding is named by the variable that will
+  carry it and never valued; a build artefact is a path inside the source; a
+  command is argv, no part of which may be an absolute path or carry an inline
+  value, and a listener's variables must exist in `env.variables` with matching
+  shapes. Every remaining free string is filtered through `namesAMachine` — that
+  half is hygiene for known shapes, not a proof: a secret or a hostname written
+  as a plain argument is indistinguishable from any other argument, and this is
+  not a secret scanner. A role may declare **no listener at all**
+  (a queue consumer, a bot, a scheduler), readiness belongs to a role rather than
+  to the application, and `drainFloorMs` states how long the *code* needs to
+  drain so a supervisor can be checked against it rather than trusted. Migrations
+  are declared as bytes — `engine`, `root`, `lockfile` — not as a command to run,
+  leaving the admission decision with the side that can see the deployment.
+
+  A project narrows the schema with `safeExtend`, which keeps those checks in
+  force. Unknown keys are **refused**, not stripped: a key one reader does not
+  recognise is a disagreement between programs that never meet, and discarding
+  it silently is how a partially understood declaration becomes a running,
+  wrong deployment. `namesAMachine` is exported so a consumer can apply the same
+  test. The entrypoint is **evolving**.
+- **`createSocketIOServer({ cors })` is optional.** Omitted, Socket.IO emits no
+  CORS headers at all — same-origin only, the safe default and one a repository
+  can hold without knowing where it will run. Requiring an allow-list forced
+  every project to name a foreign origin, which is a value of the place, not of
+  the code. A cross-origin browser still passes `cors` exactly as before.
+
 ## [0.59.4] — 2026-08-24
 
 ### Added
@@ -3488,7 +3657,33 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/max-listov/stitchkit/compare/v0.59.4...v0.60.0
+[0.59.4]: https://github.com/max-listov/stitchkit/compare/v0.59.3...v0.59.4
+[0.59.3]: https://github.com/max-listov/stitchkit/compare/v0.59.2...v0.59.3
+[0.59.2]: https://github.com/max-listov/stitchkit/compare/v0.59.1...v0.59.2
+[0.59.1]: https://github.com/max-listov/stitchkit/compare/v0.59.0...v0.59.1
+[0.59.0]: https://github.com/max-listov/stitchkit/compare/v0.58.0...v0.59.0
+[0.58.0]: https://github.com/max-listov/stitchkit/compare/v0.57.0...v0.58.0
+[0.57.0]: https://github.com/max-listov/stitchkit/compare/v0.56.5...v0.57.0
+[0.56.5]: https://github.com/max-listov/stitchkit/compare/v0.56.4...v0.56.5
+[0.56.4]: https://github.com/max-listov/stitchkit/compare/v0.56.3...v0.56.4
+[0.56.3]: https://github.com/max-listov/stitchkit/compare/v0.56.2...v0.56.3
+[0.56.2]: https://github.com/max-listov/stitchkit/compare/v0.56.1...v0.56.2
+[0.56.1]: https://github.com/max-listov/stitchkit/compare/v0.56.0...v0.56.1
+[0.56.0]: https://github.com/max-listov/stitchkit/compare/v0.55.0...v0.56.0
+[0.55.0]: https://github.com/max-listov/stitchkit/compare/v0.54.0...v0.55.0
+[0.54.0]: https://github.com/max-listov/stitchkit/compare/v0.53.2...v0.54.0
+[0.53.2]: https://github.com/max-listov/stitchkit/compare/v0.53.1...v0.53.2
+[0.53.1]: https://github.com/max-listov/stitchkit/compare/v0.53.0...v0.53.1
+[0.53.0]: https://github.com/max-listov/stitchkit/compare/v0.52.0...v0.53.0
+[0.52.0]: https://github.com/max-listov/stitchkit/compare/v0.51.0...v0.52.0
+[0.51.0]: https://github.com/max-listov/stitchkit/compare/v0.50.0...v0.51.0
+[0.50.0]: https://github.com/max-listov/stitchkit/compare/v0.49.2...v0.50.0
+[0.49.2]: https://github.com/max-listov/stitchkit/compare/v0.49.1...v0.49.2
+[0.49.1]: https://github.com/max-listov/stitchkit/compare/v0.49.0...v0.49.1
+[0.49.0]: https://github.com/max-listov/stitchkit/compare/v0.48.1...v0.49.0
+[0.48.1]: https://github.com/max-listov/stitchkit/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/max-listov/stitchkit/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/max-listov/stitchkit/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/max-listov/stitchkit/compare/v0.45.0...v0.46.0

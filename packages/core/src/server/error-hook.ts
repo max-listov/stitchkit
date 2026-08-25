@@ -58,9 +58,16 @@ export interface ResolvedError {
 /** Config for `createErrorHook`. */
 export interface ErrorHookConfig<TWireCode extends string = string> {
   /**
-   * Remap stitchkit's own error codes to your public wire codes. Exhaustive —
-   * `satisfies Record<StitchErrorCode, …>` makes a new framework code a compile
-   * error here. Codes you threw yourself (not stitchkit's) pass through as-is.
+   * Remap stitchkit's own error codes to your public wire codes.
+   *
+   * **Partial on purpose.** It once said "Exhaustive — `satisfies
+   * Record<StitchErrorCode, …>` makes a new framework code a compile error
+   * here", which stopped being true in 0.56.1 and kept shipping in the `.d.ts`
+   * for a consumer to read on hover. The set grows in ordinary releases, so an
+   * exhaustive map would break every consumer on an additive one; a code you
+   * leave out falls through to `unmappedCode`. → ADR 0105
+   *
+   * Codes you threw yourself (not stitchkit's) pass through as-is.
    */
   codeMap?: Partial<Record<StitchErrorCode, TWireCode>>;
   /**

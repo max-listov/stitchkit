@@ -1,14 +1,16 @@
 ---
 title: "ADR 0034 — The advertised tool schema carries each object's key policy"
 type: decision
-status: accepted
+status: superseded
 created: 2026-08-03
 updated: 2026-08-03
 ---
 
 # ADR 0034 — The advertised tool schema carries each object's key policy
 
-- **Status:** Accepted — supersedes the "advertised-only" premise of
+- **Status:** Superseded by [ADR 0050](0050-executable-tool-surface-conformance.md)
+  — its executable-advertised-schema premise no longer holds. Originally accepted,
+  superseding the "advertised-only" premise of
   [ADR 0031](0031-deep-union-flatten.md) and [ADR 0033](0033-sound-flatten-collisions.md)
   (specifically 0033's *Alternatives → hard-reject `.strict()` variants* and the
   `.strict()`/`catchall` line of its *Known residual*).

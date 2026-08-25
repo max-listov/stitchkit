@@ -7,6 +7,7 @@ import type { SocketIOServerConfig } from './socket-io-config';
 
 export type {
   SocketIOHandshakeConfig,
+  SocketIOPeerLoaders,
   SocketIORequestPolicy,
   SocketIOServerConfig,
 } from './socket-io-config';

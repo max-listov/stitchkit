@@ -38,8 +38,11 @@ export const DEFAULT_CORS_ALLOW_HEADERS =
  * These are headers the server already chose to send; exposing them reveals
  * nothing new. Opt out with `exposeHeaders: []`.
  *
- * `X-Request-Id` is the trace id every response carries — the id a browser
- * client needs to quote in a bug report and the one a reverse proxy logs.
+ * `X-Request-Id` is the trace id a response carries whenever its headers can be
+ * written — the id a browser client quotes in a bug report and the one a reverse
+ * proxy logs. Not *every* response: `create.ts` skips the write on immutable
+ * headers rather than throwing, which a redirect built by `Response.redirect`
+ * has, so a client correlating by this header loses the trace across one.
  * Note the deliberate asymmetry with {@link DEFAULT_CORS_ALLOW_HEADERS}:
  * inbound the id may arrive as `X-Trace-Id`, outbound it is always
  * `X-Request-Id` — one name on the wire out, no alias.

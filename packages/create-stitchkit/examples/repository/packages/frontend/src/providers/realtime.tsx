@@ -5,11 +5,13 @@ import { repositoryBridge, repositorySocket } from '@/lib/realtime/repository';
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    repositorySocket.connect();
-    repositoryBridge.connect();
+    const socket = repositorySocket();
+    const bridge = repositoryBridge();
+    socket.connect();
+    bridge.connect();
     return () => {
-      repositoryBridge.disconnect();
-      repositorySocket.disconnect();
+      bridge.disconnect();
+      socket.disconnect();
     };
   }, []);
   return children;

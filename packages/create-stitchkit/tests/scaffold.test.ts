@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import {
+  PROJECT_DECLARATION_SCHEMA_VERSION,
+  parseProjectDeclaration,
+} from '../../core/src/declaration';
+import { APP_IDENTITY_PATH, renderAppIdentityModule } from '../src/identity';
 import { isTemplateSourcePathIncluded, scaffoldProject } from '../src/scaffold';
 
 const created: string[] = [];
@@ -12,6 +17,36 @@ afterEach(async () => {
     created.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
 });
+
+/**
+ * The smallest declaration a template can carry. The scaffolder rewrites its
+ * identity and refuses a template that has none — a project with no declaration
+ * is not something a deployment can read.
+ */
+const MINIMAL_DECLARATION = {
+  schemaVersion: PROJECT_DECLARATION_SCHEMA_VERSION,
+  kind: 'application',
+  identity: {
+    slug: 'stitchkit-starter',
+    name: 'Stitchkit Starter',
+    version: '0.1.0',
+    description: { en: 'A starter.' },
+  },
+  roles: [
+    {
+      name: 'api',
+      workingDirectory: 'packages/backend',
+      commands: {
+        development: { executable: 'bun', args: ['--watch', 'src/index.ts'] },
+        production: { executable: 'bun', args: ['dist/index.js'] },
+      },
+      drainFloorMs: 1000,
+    },
+  ],
+  requires: [],
+  release: {},
+  env: { variables: [] },
+};
 
 describe('scaffoldProject', () => {
   test('ships one neutral domain-free packages-only application', async () => {
@@ -61,11 +96,18 @@ describe('scaffoldProject', () => {
     const environmentExample = await readFile(join(destination, '.env.example'), 'utf8');
     expect(environmentExample).toContain('CORS_ORIGIN=http://127.0.0.1:3210');
     expect(environmentExample).toContain('GITHUB_REPOSITORY=max-listov/stitchkit');
-    const serverConfig = await readFile(
-      join(destination, 'packages/config/src/server.ts'),
+    // The example extends the environment through the one declaration of it,
+    // and the declaration a deployment reads picks the extension up on its own.
+    const variables = await readFile(
+      join(destination, 'packages/config/src/variables.ts'),
       'utf8',
     );
-    expect(serverConfig).toContain('featureServerSchema');
+    expect(variables).toContain('featureServerSchema');
+    const features = await readFile(
+      join(destination, 'packages/config/src/features.ts'),
+      'utf8',
+    );
+    expect(features).toContain('GITHUB_REPOSITORY');
     expect(await readFile(join(destination, 'scripts/runtime-smoke.ts'), 'utf8')).toContain(
       'runSurfaceConformance',
     );
@@ -79,7 +121,13 @@ describe('scaffoldProject', () => {
 
     await scaffoldProject(templateRoot, destination, { displayName: 'Talk Control Console' });
 
-    expect(JSON.parse(await readFile(join(destination, 'app.config.json'), 'utf8'))).toEqual({
+    const declaration = parseProjectDeclaration(
+      JSON.parse(await readFile(join(destination, 'project.json'), 'utf8')),
+    );
+    // Parsed with the framework schema, not just compared: the scaffolder must
+    // write something the reader that never sees this tree will accept. → ADR 0104
+    expect(declaration.schemaVersion).toBe(PROJECT_DECLARATION_SCHEMA_VERSION);
+    expect(declaration.identity).toEqual({
       slug: 'talk-control',
       name: 'Talk Control Console',
       version: '0.1.0',
@@ -88,6 +136,16 @@ describe('scaffoldProject', () => {
         ru: 'Talk Control Console — production-приложение на Stitchkit.',
       },
     });
+    // Everything that is true of the CODE travels unchanged from the template.
+    expect(declaration.roles.map((role) => role.name)).toEqual(['api', 'web']);
+    expect(declaration.release.migrations?.engine).toBe('prisma');
+
+    // The client-safe identity module is DERIVED from the declaration, so it is
+    // stamped in the same pass — otherwise a generated project ships the neutral
+    // template's name and fails its own generator check.
+    const identityModule = await readFile(join(destination, APP_IDENTITY_PATH), 'utf8');
+    expect(identityModule).toBe(renderAppIdentityModule(declaration.identity));
+    expect(identityModule).toContain('talk-control');
     expect(JSON.parse(await readFile(join(destination, 'package.json'), 'utf8')).name).toBe(
       'talk-control',
     );
@@ -118,9 +176,33 @@ describe('scaffoldProject', () => {
 
       expect(guidance).toContain('packages/shared/src/schemas/status.ts');
       expect(guidance).toContain('defineSurfaceProbe');
-      expect(guidance).not.toMatch(/Capetown|Gecko|ML Stack|\/home\/|\/Users\//i);
+      // Absolute machine paths and the maintainer's publishing commands are
+      // classes, so they can be named.
+      expect(guidance).not.toMatch(/\/home\/|\/Users\/|[A-Za-z]:[\\/]/);
       expect(guidance).not.toContain('npm publish');
       expect(guidance).not.toContain('git tag');
+
+      // Another project's vocabulary is checked STRUCTURALLY, not by listing
+      // names. Writing the names of private projects into a public repository —
+      // even inside a test that forbids them — is the leak the rule exists to
+      // prevent, and a fixed list only ever catches the three somebody thought
+      // of. Every word of the generated guidance must come from the template or
+      // from this project's own identity; anything else arrived by accident.
+      const templateGuidance = `${await readFile(join(templateRoot, 'AGENTS.md'), 'utf8')}\n${await readFile(join(templateRoot, 'docs/ADDING_A_FEATURE.md'), 'utf8')}`;
+      const words = (text: string): string[] => text.match(/[A-Za-z][\w-]*/g) ?? [];
+      const fromTemplate = new Set(words(templateGuidance));
+      const identity = parseProjectDeclaration(
+        JSON.parse(await readFile(join(destination, 'project.json'), 'utf8')),
+      ).identity;
+      const ownIdentity = new Set([
+        ...words(identity.name),
+        ...words(identity.slug),
+        ...Object.values(identity.description).flatMap(words),
+      ]);
+      const foreign = [...new Set(words(guidance))].filter(
+        (word) => !fromTemplate.has(word) && !ownIdentity.has(word),
+      );
+      expect(foreign).toEqual([]);
     }
   });
 
@@ -195,42 +277,42 @@ describe('scaffoldProject', () => {
     expect(browserMetadata).not.toContain('request.get(');
   });
 
-  test('runs PM2 apps from their package directories', async () => {
+  test('runs PM2 apps from their own directories, with no launcher in between', async () => {
     const templateRoot = join(import.meta.dir, '..', 'template');
     for (const configName of ['ecosystem.dev.config.cjs', 'ecosystem.config.cjs']) {
-      const config = await readFile(join(templateRoot, configName), 'utf8');
-      expect(config).toContain("cwd: path.join(__dirname, 'packages/backend')");
-      expect(config).toContain("cwd: path.join(__dirname, 'packages/frontend')");
-      expect(config).not.toContain('cwd: __dirname');
-      expect(config).not.toContain('--filter @app/');
-      expect(config).not.toContain("script: 'bun'");
-      expect(config).not.toContain("args: 'run ");
+      const file = await readFile(join(templateRoot, configName), 'utf8');
+      // Assertions read the CODE, not the prose explaining it — the comments in
+      // this generated file deliberately name the shape they rule out.
+      const config = file
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('//'))
+        .join('\n');
+      // Each role runs where it lives. A workspace filter would insert a
+      // launcher process, and SIGTERM sent to a launcher never reaches the
+      // role behind it — the drain simply would not run. Proved in the
+      // template's own scripts/supervision-signal.test.ts.
+      expect(config).toContain('cwd: path.join(__dirname, "packages/backend")');
+      expect(config).toContain('cwd: path.join(__dirname, "packages/frontend")');
+      expect(config).not.toContain('--filter');
+      // And no launcher of any kind: a supervisor that starts a script runner
+      // instead of the role makes the role receive the stop signal twice, and
+      // the second press forces the shutdown before the declared drain runs.
+      expect(config).not.toMatch(/args: \["run"/);
+
+      // No binding value and no argv invented by the supervisor: the role
+      // reads its port and interface from the environment inside its own
+      // command, so a deployment only ever sets variables.
+      expect(config).not.toContain('--port');
+      expect(config).not.toContain('--hostname');
+      expect(config).not.toContain('0.0.0.0');
+      expect(config).not.toContain('127.0.0.1');
+
+      expect(file).toStartWith('// GENERATED FILE — do not edit.');
     }
 
-    // The bind address is env-driven with a loopback default — a hardcoded
-    // `0.0.0.0` anywhere in a process launcher is the regression this pins.
-    for (const configName of ['ecosystem.dev.config.cjs', 'ecosystem.config.cjs']) {
-      const config = await readFile(join(templateRoot, configName), 'utf8');
-      expect(config).not.toContain("'0.0.0.0'");
-      expect(config).toContain("process.env.BIND_HOST ?? '127.0.0.1'");
-    }
     expect(
       await readFile(join(templateRoot, 'packages/backend/src/index.ts'), 'utf8'),
     ).toContain('hostname: env.BIND_HOST');
-    expect(await readFile(join(templateRoot, '_env.example'), 'utf8')).toContain(
-      'BIND_HOST=127.0.0.1',
-    );
-
-    const developmentConfig = await readFile(
-      join(templateRoot, 'ecosystem.dev.config.cjs'),
-      'utf8',
-    );
-    expect(developmentConfig).toContain("script: 'src/index.ts'");
-    expect(developmentConfig).toContain("interpreter_args: '--watch'");
-    expect(developmentConfig).toContain("script: 'node_modules/.bin/next'");
-    expect(developmentConfig).toContain("const frontendArgs = [\n  'dev',");
-    expect(developmentConfig).toContain('args: frontendArgs');
-    expect(developmentConfig.match(/autorestart: true/g)).toHaveLength(2);
   });
 
   test('every executable template TypeScript file is covered by its package tsconfig', async () => {
@@ -302,7 +384,16 @@ describe('scaffoldProject', () => {
     const environment = await readFile(join(templateRoot, '_env.example'), 'utf8');
 
     expect(rootManifest).toContain('"db:setup": "bun run db:generate && bun run db:deploy"');
-    expect(developmentScript).toContain("await run(['bun', 'run', 'db:setup']");
+    // Development applies migrations through the DECLARED release step, the
+    // same one production runs, so the two paths cannot drift on what
+    // "up to date" means. The generated client stays a build artifact.
+    expect(developmentScript).toContain("await run(['bun', 'run', 'db:generate']");
+    expect(developmentScript).toContain('await runDeclaredReleaseSteps(environmentForRun)');
+    const releaseScript = await readFile(
+      join(templateRoot, 'scripts/release-steps.ts'),
+      'utf8',
+    );
+    expect(releaseScript).toContain("prisma: ['bun', 'run', 'db:deploy']");
     expect(`${rootManifest}${developmentScript}${environment}`).not.toContain('docker');
     expect(environment).toContain('DATABASE_URL=postgresql://');
     expect(environment).not.toContain('COMPOSE_PROJECT_NAME');
@@ -318,11 +409,11 @@ describe('scaffoldProject', () => {
     const destination = join(await mkdtemp(join(tmpdir(), 'stitchkit-target-')), 'app');
     created.push(template, destination);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
-    await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
-      join(template, '_env'),
-      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+      join(template, 'project.json'),
+      `${JSON.stringify(MINIMAL_DECLARATION, undefined, 2)}\n`,
     );
+    await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
       join(template, '_env.example'),
       'DATABASE_URL=postgresql://db/stitchkit_starter\n',
@@ -363,11 +454,11 @@ describe('scaffoldProject', () => {
     const destination = join(await mkdtemp(join(tmpdir(), 'stitchkit-target-')), 'app');
     created.push(template, destination);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
-    await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
-      join(template, '_env'),
-      'DATABASE_URL=postgresql://db/stitchkit_starter\n',
+      join(template, 'project.json'),
+      `${JSON.stringify(MINIMAL_DECLARATION, undefined, 2)}\n`,
     );
+    await writeFile(join(template, 'bun.lock'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
       join(template, '_env.example'),
       'DATABASE_URL=postgresql://db/stitchkit_starter\n',

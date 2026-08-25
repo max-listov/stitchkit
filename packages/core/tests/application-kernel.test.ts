@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { AgentRuntimeConflictError } from '../src/agent-runtime';
+import { type ActivityToken, ActivityTokenBrand } from '../src/application/activity';
+import type { ApplicationResourceFailure } from '../src/application/kernel';
 import { ApplicationAdmissionError, createApplication } from '../src/application/kernel';
 import type { ManagedResourceContext } from '../src/application/resource';
+import { defineManagedResource } from '../src/application/resource';
 import { managedServerResource } from '../src/application/server-resource';
+import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
 import type {
   ManagedServerHandle,
   ShutdownOptions,
@@ -580,7 +585,15 @@ describe('managed application kernel', () => {
     expect(contexts).toHaveLength(2);
     expect(contexts[0]?.deadlineAt).toBe(contexts[1]?.deadlineAt);
     expect(contexts[0]?.forceDeadlineAt).toBe(contexts[1]?.forceDeadlineAt);
-    expect((contexts[0]?.forceDeadlineAt ?? 0) - (contexts[0]?.deadlineAt ?? 0)).toBe(100);
+    // Deadlines are derived from `performance.now()`, so they are fractional and
+    // the difference is exact only to floating-point precision: asserting
+    // `toBe(100)` failed on roughly four runs in ten with 99.99999999999997.
+    // The property under test is additivity, and this still pins it — an
+    // absolute force deadline would be off by the whole grace period.
+    expect((contexts[0]?.forceDeadlineAt ?? 0) - (contexts[0]?.deadlineAt ?? 0)).toBeCloseTo(
+      100,
+      6,
+    );
     releaseForces();
     await expect(shuttingDown).resolves.toMatchObject({
       outcome: 'forced',
@@ -771,4 +784,430 @@ describe('managed application kernel', () => {
     await shuttingDown;
     expect(calls).toHaveLength(1);
   });
+});
+
+/**
+ * Every phase, named — not a count of events.
+ *
+ * The previous version of this test built one application with three faulty
+ * resources and asserted `seen.length > 0`. It passed while most phases
+ * reported nothing, because a shutdown SHORT-CIRCUITS: the first failure sets
+ * `gracefulFailed` and the drain and close loops never run. So the check has to
+ * be one application per phase, each asserting the exact resource, the exact
+ * phase and the exact cause.
+ */
+describe('every failing phase reports the cause the phase label cannot carry', () => {
+  interface PhaseCase {
+    phase: ApplicationResourceFailure['phase'];
+    message: string;
+    build: (
+      observe: (failure: ApplicationResourceFailure) => void,
+    ) => ReturnType<typeof createApplication>;
+    run: (app: ReturnType<typeof createApplication>) => Promise<void>;
+  }
+
+  const swallow = async (work: Promise<unknown>): Promise<void> => {
+    await work.catch(() => undefined);
+  };
+
+  const CASES: PhaseCase[] = [
+    {
+      phase: 'start',
+      message: 'start exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-start',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => {
+                throw new Error('start exploded');
+              },
+            }),
+          ],
+        }),
+      run: (app) => swallow(app.start()),
+    },
+    {
+      phase: 'ready',
+      message: 'ready exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-ready',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => ({ ready: Promise.reject(new Error('ready exploded')) }),
+            }),
+          ],
+        }),
+      run: (app) => swallow(app.start()),
+    },
+    {
+      phase: 'completion',
+      // The kernel wraps the rejection so the phase is carried by the TYPE, not
+      // by the resource's own message; `cause` keeps what the resource threw.
+      message: '[stitchkit] resource "faulty" completed before reaching readiness',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-completion',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => ({
+                ready: new Promise<void>(() => undefined),
+                completion: Promise.reject(new Error('the worker exited')),
+              }),
+            }),
+          ],
+        }),
+      run: (app) => swallow(app.start()),
+    },
+    {
+      phase: 'close',
+      message: 'rollback close exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-rollback-close',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              close: () => {
+                throw new Error('rollback close exploded');
+              },
+            }),
+            defineManagedResource({
+              id: 'later',
+              start: () => {
+                throw new Error('later start exploded');
+              },
+            }),
+          ],
+        }),
+      // The startup fails at `later`, so the kernel rolls `faulty` back — and
+      // that rollback close is the path that used to record the phase and drop
+      // the cause entirely.
+      run: (app) => swallow(app.start()),
+    },
+    {
+      phase: 'admission',
+      message: 'admission exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-admission',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              stopAdmission: () => {
+                throw new Error('admission exploded');
+              },
+            }),
+          ],
+        }),
+      run: async (app) => {
+        await app.start();
+        await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+      },
+    },
+    {
+      phase: 'drain',
+      message: 'drain exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-drain',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              drain: () => {
+                throw new Error('drain exploded');
+              },
+            }),
+          ],
+        }),
+      run: async (app) => {
+        await app.start();
+        await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+      },
+    },
+    {
+      phase: 'close',
+      message: 'close exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-close',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              close: () => {
+                throw new Error('close exploded');
+              },
+            }),
+          ],
+        }),
+      run: async (app) => {
+        await app.start();
+        await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+      },
+    },
+    {
+      phase: 'force',
+      // A resource whose `close` was already invoked and never settled. There
+      // is nothing left to call, so it ends `force-failed` — and used to end
+      // there with no cause at all, which reads as an unexplained failure
+      // rather than the timeout it is.
+      message:
+        '[stitchkit] resource "faulty" was already closing and did not settle before the force deadline',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-force-stalled-close',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              close: () => new Promise<void>(() => undefined),
+            }),
+          ],
+        }),
+      run: async (app) => {
+        await app.start();
+        await app.shutdown({ gracePeriodMs: 20, forceTimeoutMs: 20 });
+      },
+    },
+    {
+      phase: 'force',
+      message: 'force exploded',
+      build: (observe) =>
+        createApplication({
+          id: 'phase-force',
+          onResourceFailure: observe,
+          resources: [
+            defineManagedResource({
+              id: 'faulty',
+              start: () => undefined,
+              drain: () => {
+                throw new Error('drain exploded');
+              },
+              force: () => {
+                throw new Error('force exploded');
+              },
+            }),
+          ],
+        }),
+      run: async (app) => {
+        await app.start();
+        await app.shutdown({ gracePeriodMs: 20, forceTimeoutMs: 50 });
+      },
+    },
+  ];
+
+  for (const testCase of CASES) {
+    test(`${testCase.phase}: ${testCase.message}`, async () => {
+      const seen: ApplicationResourceFailure[] = [];
+      const app = testCase.build((failure) => void seen.push(failure));
+      await testCase.run(app);
+
+      const matched = seen.filter(
+        (failure) =>
+          failure.phase === testCase.phase &&
+          failure.error instanceof Error &&
+          failure.error.message === testCase.message,
+      );
+      expect({ phase: testCase.phase, reported: matched.length }).toEqual({
+        phase: testCase.phase,
+        reported: 1,
+      });
+      expect(matched[0]?.resourceId).toBe('faulty');
+    });
+  }
+
+  test('a long-lived resource that fails AFTER start() reports its cause', async () => {
+    // The phase this table originally missed, and the reason it missed it: the
+    // failure arrives through a promise rejection handler rather than a `catch`,
+    // so an audit that walked `catch` blocks against `reportFailure` could not
+    // see it. A poller that dies an hour after startup is the ordinary case.
+    const seen: ApplicationResourceFailure[] = [];
+    const completion = Promise.withResolvers<void>();
+    const app = createApplication({
+      id: 'phase-late-completion',
+      onResourceFailure: (failure) => void seen.push(failure),
+      resources: [
+        defineManagedResource({
+          id: 'faulty',
+          start: () => ({ ready: Promise.resolve(), completion: completion.promise }),
+        }),
+      ],
+    });
+
+    await app.start();
+    expect(app.getSnapshot().lifecycle).toBe('ready');
+    expect(seen).toEqual([]);
+
+    completion.reject(new Error('the poller died'));
+    await Bun.sleep(10);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.resourceId).toBe('faulty');
+    expect(seen[0]?.phase).toBe('completion');
+    expect(seen[0]?.error instanceof Error && seen[0].error.message).toBe('the poller died');
+    expect(app.getSnapshot().health).toBe('unhealthy');
+    await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+  });
+
+  test('a long-lived resource that simply finishes is not reported as a failure', async () => {
+    const seen: ApplicationResourceFailure[] = [];
+    const completion = Promise.withResolvers<void>();
+    const app = createApplication({
+      id: 'phase-late-completion-clean',
+      onResourceFailure: (failure) => void seen.push(failure),
+      resources: [
+        defineManagedResource({
+          id: 'faulty',
+          start: () => ({ ready: Promise.resolve(), completion: completion.promise }),
+        }),
+      ],
+    });
+
+    await app.start();
+    completion.resolve();
+    await Bun.sleep(10);
+
+    expect(seen).toEqual([]);
+    await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+  });
+
+  test('a shutdown that overtakes a startup is not reported as a resource failure', async () => {
+    // The kernel interrupting itself is not a resource throwing. Reporting it
+    // would bury the failure that mattered under one the operator cannot act on.
+    const seen: ApplicationResourceFailure[] = [];
+    const app = createApplication({
+      id: 'phase-interrupted',
+      onResourceFailure: (failure) => void seen.push(failure),
+      resources: [
+        defineManagedResource({
+          id: 'slow',
+          start: async () => {
+            await Bun.sleep(50);
+          },
+        }),
+      ],
+    });
+
+    const starting = app.start().catch(() => undefined);
+    await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+    await starting;
+
+    expect(
+      seen.filter((failure) => /interrupted by shutdown/.test(String(failure.error))),
+    ).toEqual([]);
+  });
+
+  test('an async observer that rejects cannot break the lifecycle it observes', async () => {
+    // `(failure) => void` accepted an `async` observer, and its rejected promise
+    // was invisible to the synchronous try/catch around the call — an unhandled
+    // rejection during a shutdown, from the one callback that exists to make
+    // failures visible.
+    const app = createApplication({
+      id: 'async-observer',
+      onResourceFailure: async () => {
+        await Bun.sleep(0);
+        throw new Error('observer exploded');
+      },
+      resources: [
+        defineManagedResource({
+          id: 'faulty',
+          start: () => undefined,
+          close: () => {
+            throw new Error('close exploded');
+          },
+        }),
+      ],
+    });
+
+    await app.start();
+    const result = await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+    expect(result.outcome).toBe('forced');
+    await Bun.sleep(10);
+  });
+});
+
+test('an optional resource failing to start does not lose its cause', async () => {
+  const seen: ApplicationResourceFailure[] = [];
+  const app = createApplication({
+    id: 'optional-cause',
+    onResourceFailure: (failure) => void seen.push(failure),
+    resources: [
+      defineManagedResource({
+        id: 'optional',
+        required: false,
+        start: () => {
+          throw new Error('optional start exploded');
+        },
+      }),
+    ],
+  });
+
+  // A required resource rethrows, so its cause always survives. An optional one
+  // is swallowed by design — the application keeps running — which is exactly
+  // why the cause has to leave through this channel instead.
+  await app.start();
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.resourceId).toBe('optional');
+  expect(seen[0]?.phase).toBe('start');
+  const cause = seen[0]?.error;
+  expect(cause instanceof Error && cause.message).toBe('optional start exploded');
+  await app.shutdown();
+});
+
+test('a throwing failure observer cannot break the shutdown it observes', async () => {
+  const app = createApplication({
+    id: 'hostile-observer',
+    onResourceFailure: () => {
+      throw new Error('observer exploded');
+    },
+    resources: [
+      defineManagedResource({
+        id: 'faulty',
+        required: false,
+        start: () => {
+          throw new Error('start exploded');
+        },
+      }),
+    ],
+  });
+
+  await app.start();
+  expect((await app.shutdown()).outcome).toBeString();
+});
+
+test('the public surface can be used from outside the module that declares it', async () => {
+  // Each of these was reachable only by name: the error class was thrown from
+  // public paths and exported nowhere, the brand made a public interface
+  // unimplementable, and the shutdown options accepted an HTTP field the kernel
+  // never read.
+  expect(isStitchErrorCode('APPLICATION_NOT_ACCEPTING')).toBe(true);
+  expect(STITCH_ERROR_STATUS.APPLICATION_NOT_ACCEPTING).toBe(503);
+
+  const conflict = new AgentRuntimeConflictError('probe');
+  expect(conflict instanceof AgentRuntimeConflictError).toBe(true);
+
+  // A hand-written projection compiles because the brand is reachable.
+  const token: ActivityToken = { [ActivityTokenBrand]: true };
+  expect(token[ActivityTokenBrand]).toBe(true);
+
+  const app = createApplication({ id: 'surface' });
+  await app.start();
+  // @ts-expect-error `retryAfterSeconds` belongs to the managed server resource.
+  await app.shutdown({ gracePeriodMs: 0, retryAfterSeconds: 30 });
 });

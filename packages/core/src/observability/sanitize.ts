@@ -110,7 +110,9 @@ const DEFAULT_MAX_DEPTH = 20;
 const MASK = '[redacted]';
 
 /**
- * Deep-copy `value` into a JSON-safe shape: secret-named keys masked, binary
+ * Deep-copy `value` into a JSON-safe shape: secret-named keys masked wherever
+ * a key exists — object fields and `Map` entries alike, at any depth; a `Set`
+ * member has no key and is therefore not masked, binary
  * blobs reduced to `{ _type, size }` metadata, branches past `maxDepth`
  * truncated. Always returns a `JsonValue` — safe to store directly.
  */
@@ -150,9 +152,15 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
     if (input instanceof Map) {
       if (ancestors.has(input)) return '[circular]';
       ancestors.add(input);
+      // A Map HAS keys, so the same rule that masks `{ authorization: … }` has
+      // to reach `new Map([['authorization', …]])`. It did not: this branch
+      // walked both halves and never asked `isSensitive`, so a handler that
+      // collected request headers into a Map — the shape `Headers` naturally
+      // becomes — wrote the bearer token into the audit row in cleartext while
+      // the identical plain object was masked.
       const result = [...input.entries()].map(([key, value]) => [
         walk(key, depth + 1),
-        walk(value, depth + 1),
+        typeof key === 'string' && isSensitive(key) ? MASK : walk(value, depth + 1),
       ]);
       ancestors.delete(input);
       return { _type: 'map', entries: result };
@@ -160,6 +168,10 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
     if (input instanceof Set) {
       if (ancestors.has(input)) return '[circular]';
       ancestors.add(input);
+      // No masking here, and it is not an oversight: a Set has no key, and this
+      // masker redacts by KEY NAME. A secret held as a bare Set member is
+      // indistinguishable from any other string — the same limit the rest of
+      // this module states, said where someone would look for it.
       const values = [...input].map((item) => walk(item, depth + 1));
       ancestors.delete(input);
       return { _type: 'set', values };

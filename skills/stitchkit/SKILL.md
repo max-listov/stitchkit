@@ -1,6 +1,6 @@
 ---
 name: stitchkit
-description: Build or change a backend with stitchkit — the contract-first framework where one defineContract() becomes an HTTP API, MCP tools, AI-agent tools, a CLI and a typed client. Use this whenever working in a project that depends on stitchkit: defining or editing a contract, implementing handlers, exposing endpoints as MCP or agent tools, wiring the typed client or the React data layer, Socket.IO realtime, auth/scopes, the error model, file/multipart serving, or deploying on Bun/Node. Use it even when the user just says "add an endpoint", "wire up the API", "expose this as an MCP tool", "make a typed client", or mentions defineContract / createServer / createClient / createMcpHandler / implement — even if they don't say "stitchkit". Do NOT use it for modifying the stitchkit framework's own source (that's AGENTS.md in the stitchkit repo).
+description: Build or change a backend with stitchkit — the contract-first framework where one defineContract() becomes an HTTP API, MCP tools, AI-agent tools, a CLI and a typed client. Use this whenever working in a project that depends on stitchkit: defining or editing a contract, implementing handlers, exposing endpoints as MCP or agent tools, wiring the typed client or the React data layer, Socket.IO realtime, auth/scopes, the error model, file/multipart serving, the optional durable agent runtime (`stitchkit/agent-runtime`), the optional managed application kernel (`stitchkit/application`), or deploying on Bun/Node. Use it even when the user just says "add an endpoint", "wire up the API", "expose this as an MCP tool", "make a typed client", or mentions defineContract / createServer / createClient / createMcpHandler / implement — even if they don't say "stitchkit". Do NOT use it for modifying the stitchkit framework's own source (that's AGENTS.md in the stitchkit repo).
 ---
 
 # Building with stitchkit
@@ -58,9 +58,10 @@ Work in this order; each step links a contract field to a transport.
   every transport at once — don't re-check auth per handler. For resource-scoped
   APIs, `scopePrefixes` maps a scope to a URL prefix.
 - **Tool names**: a tool name must match `[a-zA-Z0-9_-]`, ≤64 chars. Derivation
-  normalises everything outside `[a-zA-Z0-9_]` to `_` — hyphen included, so
-  `bot-status` ⇒ `get_bot_status`; a hyphen survives only in an explicit
-  `toolName`. A name that still cannot be delivered throws at mount.
+  normalises **per half**: the service half turns everything outside
+  `[a-zA-Z0-9_]` into `_` (`bot-status` ⇒ `get_bot_status`), the method half
+  keeps its hyphen (`get-user` ⇒ `get-user_notes`). An explicit `toolName` is
+  verbatim. A name that still cannot be delivered throws at mount.
 - **One error model.** Throw `AppError` (`badRequest`, `notFound`, …). It renders
   the same envelope on HTTP and as a tool error, and the client parses it back
   into `ApiError`. To map stitch's own framework codes to your app codes, key off
@@ -76,18 +77,16 @@ Work in this order; each step links a contract field to a transport.
 
 `ky` is bundled. Everything else is an optional peer your app installs:
 
-| Feature | Install |
-|---------|---------|
-| validation (always) | `zod` |
-| `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
-| MCP server/tools | `@modelcontextprotocol/server` |
-| MCP host/client tests | `@modelcontextprotocol/client` |
-| MCP Apps | `@modelcontextprotocol/ext-apps` |
-| agent tools | `ai` |
-| React data layer | `@tanstack/react-query` `react-query-kit` |
-| Socket.IO server on Bun | `socket.io` `@socket.io/bun-engine` |
-| Socket.IO server on Node | `socket.io` |
-| Socket.IO client | `socket.io-client` |
+`zod` is needed for anything. **The full feature → package table lives in the
+getting-started guide** (`llms-full.txt`, *Optional peer dependencies*) — it is
+not restated here, because a second copy is a copy that drifts: the two that
+existed had already lost `srvx` from one and `@socket.io/component-emitter` from
+both. Read it there; the four that come up most:
+
+- `serveNode` on Node ≥ 22 → `srvx`
+- MCP / agent tools → `@modelcontextprotocol/server`, `ai`
+- Socket.IO server → `socket.io`, plus `@socket.io/bun-engine` on Bun
+- React data layer → `@tanstack/react-query`, `react-query-kit`
 
 ## Task → which doc section
 
@@ -103,7 +102,17 @@ Work in this order; each step links a contract field to a transport.
 | request/tool-call logging, trace context, audit | Observability |
 | testing, deploy on Bun/Node | Testing & deployment |
 | `/tenants/:id/…` multi-tenant wiring end-to-end | Multi-tenant |
+| durable agent runs, history, models, fencing, recovery | Agent runtime |
+| process-local resources, readiness, admission, schedules, shutdown | Managed application kernel |
+| cutting an existing poller, queue or DB bootstrap over to the kernel | Application migration recipes |
 | moving across stitchkit versions | Upgrading |
+| what a repository says about itself: identity, roles, build, release steps, the names of the values a deployment supplies | Project declaration |
+
+Three of those surfaces are declared **evolving** — `stitchkit/declaration`,
+`stitchkit/agent-runtime` and `stitchkit/application` may be redefined in any minor, always with a marked
+breaking change and a migration section. Everything else in the table above is
+stable. See the Entrypoints table in the getting-started guide for the full
+list; read `Upgrading` before crossing a minor on either.
 
 When in doubt, open `llms.txt`, pick the page, read that section of
 `llms-full.txt` in full, then write the code.

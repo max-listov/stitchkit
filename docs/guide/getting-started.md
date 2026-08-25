@@ -23,24 +23,36 @@ realtime, `@tanstack/react-query` + `react-query-kit` for React). See
 
 ## Entrypoints
 
-stitchkit ships eleven entrypoints. Each is import-safe for one environment —
-keeping server-only code (`Bun.serve`, the MCP SDK) out of browser bundles.
+Every entrypoint is import-safe for one environment — keeping server-only code
+(`Bun.serve`, the MCP SDK) out of browser bundles.
 
-| Import | Use in | Holds |
-|--------|--------|-------|
-| `stitchkit` | browser **and** server | `defineContract`, `createClient`, `createHttpClient`, `createSocketIOClient`, `parseSSE`, the error model |
-| `stitchkit/contract` | browser **and** server | the contract layer alone — `defineContract`, errors, pagination |
-| `stitchkit/server` | server (Bun) | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
-| `stitchkit/node` | server (Node ≥ 22) | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
-| `stitchkit/tools` | server | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
-| `stitchkit/cli` | server | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
-| `stitchkit/remote` | browser **and** server | peer-free `implementRemote` for thin HTTP proxy processes |
-| `stitchkit/files` | server (Bun or Node) | peer-free managed local-file boundary |
-| `stitchkit/observability` | server | request/tool event projections — `createObservability`, trace context, sanitisation |
-| `stitchkit/agent-runtime` | server | optional durable conversation/run loop, history, models, prompts, fencing and events |
-| `stitchkit/agent-runtime/openrouter` | server | isolated OpenRouter language-model adapter |
-| `stitchkit/testing` | tests on Bun or Node | in-process generated clients over a real Fetch handler, without a TCP port |
-| `stitchkit/react` | browser | `createCursorQuery`, `createCacheBridge` |
+Each also declares how settled it is. **Stable** means the shape changes rarely
+and only with a reason worth a migration. **Evolving** means the shape is still
+being found and may be redefined in any minor — always with a
+`### ⚠️ Breaking changes` entry and a migration section, never silently. Both
+are legitimate choices; the difference is how often you should expect to read
+the changelog. Moving an entrypoint from evolving to stable is a decision on its
+own, recorded as an ADR.
+
+| Import | Use in | Maturity | Holds |
+|--------|--------|----------|-------|
+| `stitchkit` | browser **and** server | stable | `defineContract`, `createClient`, `createHttpClient`, `createSocketIOClient`, `parseSSE`, the error model |
+| `stitchkit/contract` | browser **and** server | stable | the contract layer alone — `defineContract`, errors, pagination |
+| `stitchkit/server` | server (Bun) | stable | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
+| `stitchkit/node` | server (Node ≥ 22) | stable | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
+| `stitchkit/tools` | server | stable | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
+| `stitchkit/cli` | server | stable | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
+| `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
+| `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
+| `stitchkit/observability` | server | stable | request/tool event projections — `createObservability`, trace context, sanitisation |
+| `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the store and managed-resource conformance kits |
+| `stitchkit/declaration` | build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
+| `stitchkit/react` | browser | stable | `createCursorQuery`, `createCacheBridge` |
+| `stitchkit/agent-runtime` | server | evolving | optional durable conversation/run loop, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
+| `stitchkit/application` | server | evolving | managed resource graph, readiness, admission, schedules and bounded shutdown |
+| `stitchkit/application/grammy` | server | evolving | isolated grammY polling and webhook lifecycle adapters |
+| `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server
 code adds `stitchkit/server` (or `stitchkit/node` on Node) and opts into
@@ -145,7 +157,9 @@ map — feature → packages:
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
-| Socket.IO client | `socket.io-client` |
+| Socket.IO client | `socket.io-client` (brings `@socket.io/component-emitter`, which the browser declarations reference for types only) |
+| grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
+| OpenTelemetry gauges (`stitchkit/application/opentelemetry`) | `@opentelemetry/api` |
 
 ```bash
 bun add socket.io @socket.io/bun-engine    # e.g. the Socket.IO server on Bun

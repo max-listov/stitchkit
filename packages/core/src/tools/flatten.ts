@@ -1,5 +1,5 @@
 import { isRecord } from '../internal/typed';
-import { mergePropertySchemas, type VariantProperty } from './flatten-join';
+import { mergePropertySchemas, stringValues, type VariantProperty } from './flatten-join';
 
 export type ToolPresentationSchema = Record<string, unknown>;
 
@@ -16,13 +16,6 @@ function rebuild(value: unknown): unknown {
   const node: ToolPresentationSchema = {};
   for (const [key, child] of Object.entries(value)) node[key] = rebuild(child);
   return flattenNode(node);
-}
-
-function stringValues(schema: ToolPresentationSchema): string[] | null {
-  if (typeof schema.const === 'string') return [schema.const];
-  if (!Array.isArray(schema.enum)) return null;
-  const values = schema.enum.filter((value): value is string => typeof value === 'string');
-  return values.length === schema.enum.length ? values : null;
 }
 
 function objectVariants(node: ToolPresentationSchema): ToolPresentationSchema[] | null {

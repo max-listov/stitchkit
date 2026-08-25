@@ -9,6 +9,11 @@ updated: 2026-08-22
 
 # Agent application runtime
 
+> **Maturity: evolving.** This surface is still finding its shape and may be
+> redefined in any minor release — always with a `### ⚠️ Breaking changes` entry
+> and a migration section, never silently. If your application already owns the
+> conversation loop, `mountAgent` from `stitchkit/tools` is the stable path.
+
 `stitchkit/agent-runtime` is the server-only, opinionated layer above
 `mountAgent`. Use it when the application wants Stitchkit to own conversation
 mechanics: durable acceptance, history projection, the AI SDK stream loop,
@@ -200,17 +205,38 @@ resolves to the same terminal run. Coalescing never mutates the active run.
 while the predecessor still owns managed callbacks. A hung predecessor blocks
 the lane in the first version.
 
-Shutdown is two-phase when a drain budget is supplied:
+Shutdown is two-phase, and both budgets carry the names they carry everywhere
+else in Stitchkit:
 
 ```ts
-await runtime.close({ drainTimeoutMs: 30_000, forceTimeoutMs: 5_000 })
+const closed = await runtime.close({ gracePeriodMs: 30_000, forceTimeoutMs: 5_000 })
+if (!closed.settled) {
+  console.warn(`exiting with ${closed.remaining} run(s) still in flight`)
+}
 ```
 
-`close` first rejects new process-local admissions and gives active runs the
-natural drain budget. Only after that budget expires does it abort them with
-reason `shutdown`; `forceTimeoutMs` bounds the final settlement wait for a
-non-cooperative model or tool. Calling `close()` without `drainTimeoutMs` keeps
-the immediate-shutdown form: abort active runs, then wait for their settlement.
+`close` first rejects new process-local admissions and gives active runs
+`gracePeriodMs` to finish on their own. Only after that budget expires does it
+abort them with reason `shutdown`; `forceTimeoutMs` then bounds the settlement
+wait for a non-cooperative model or tool, measured from the abort — the two
+budgets add up rather than overlapping.
+
+**`close()` reports what it achieved rather than promising an outcome it cannot
+reach.** The result is `{ settled, timedOut, remaining }`: `settled` when every
+in-flight run finished, `timedOut` with a `remaining` count when the force
+budget expired first. There is no combination of budgets that is both bounded
+and guaranteed to leave nothing in flight — that is the trade the budgets exist
+to make, and the result is where you read which side of it you got:
+
+| budgets | behaviour | can return with a run in flight |
+|---------|-----------|---------------------------------|
+| neither | aborts immediately, waits for settlement | no — unbounded wait |
+| `gracePeriodMs` only | waits, aborts, then waits for settlement | no — unbounded wait |
+| `forceTimeoutMs` only | aborts immediately, waits at most that long | **yes** — `timedOut` |
+| both | waits, aborts, waits at most that long | **yes** — `timedOut` |
+
+A caller that wants the old shape still writes `await runtime.close(…)` and
+ignores the result. A caller deciding whether to exit the process reads it.
 Durably queued records rejected from the local queue remain recoverable through
 `scanRecoverable`; close never marks them terminal on its own.
 
@@ -227,7 +253,7 @@ terminal event and operator metrics; a loser settles from canonical state withou
 ## Store operations
 
 `AgentRuntimeStore` remains the runtime-facing aggregate. Application adapters
-implement the smaller `AgentRuntimeStoreDriver`, not these eight transitions:
+implement the smaller `AgentRuntimeStoreDriver` rather than these nine members:
 
 - `acceptInputAndAssignRun`
 - `acquireRun`
@@ -236,7 +262,10 @@ implement the smaller `AgentRuntimeStoreDriver`, not these eight transitions:
 - `recoverRun`
 - `commitRunTerminal`
 - `replaceCompactedRange`
-- `loadSnapshot` and `scanRecoverable`
+- `loadSnapshot`
+- `scanRecoverable` — one **bounded page** of recoverable runs; `recover()`
+  calls this and nothing else, so an adapter that implements the interface has
+  everything recovery needs
 
 Every mutation carries an expected run revision or snapshot version. Input
 assignment additionally carries an idempotency identity. A conflict is a
@@ -348,9 +377,13 @@ base64 blobs into the neutral history store.
 
 To send a stored attachment back to a multimodal model, configure
 `history.resolveFile`. It maps the neutral file reference to AI SDK file data
-(URL, bytes, provider reference or text). Without a resolver the explicit
-`unresolvedFile` policy is `text` by default; choose `omit` or `error` when a
-placeholder would be incorrect.
+(URL, bytes, provider reference or text). Without a resolver the
+`unresolvedFile` policy applies, and it is **`omit`** by default: the file part
+simply does not reach the provider. Choose `text` for a describing placeholder —
+the filename or media type, never the storage reference, because that string is
+an address inside your infrastructure and this content travels upstream — or
+`error` to fail loudly. The `error` message does name the reference: it is
+thrown into your process, where you are owed the whole story.
 
 ## Compaction
 

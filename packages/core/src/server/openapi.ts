@@ -12,7 +12,7 @@
  */
 
 import { inputIsQuery } from '../internal/http-input';
-import { parseTrailingWildcard } from '../internal/route-pattern';
+import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import { jsonSchemaFields, toJsonSchema } from '../tools/json-schema';
 import type { MethodDef, RawRoute, ServiceDef } from './types';
@@ -74,15 +74,6 @@ const ERROR_ENVELOPE_SCHEMA: Record<string, unknown> = {
   },
   required: ['error'],
 };
-
-function joinPath(...parts: Array<string | undefined>): string {
-  const joined = parts
-    .filter((p): p is string => Boolean(p))
-    .map((part) => part.replace(/^\/+|\/+$/g, ''))
-    .filter(Boolean)
-    .join('/');
-  return `/${joined}`;
-}
 
 /** `:param` → `{param}` for OpenAPI path templating. */
 function toOpenApiPath(path: string): string {
@@ -154,13 +145,13 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       // would leak into the shared section.
       if (config.includeMethod && !config.includeMethod(method)) continue;
 
-      const servicePath = joinPath(
+      const servicePath = joinRoutePath(
         '/',
         service.prefix,
         method.path === '/' ? '' : method.path,
       );
       const fullPath = toOpenApiPath(
-        pathPrefix ? joinPath(pathPrefix, servicePath) : servicePath,
+        pathPrefix ? joinRoutePath(pathPrefix, servicePath) : servicePath,
       );
 
       const parameters: Array<Record<string, unknown>> = [];

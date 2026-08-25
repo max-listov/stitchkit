@@ -7,12 +7,13 @@ const rootFiles = ['playwright.config.ts', 'ecosystem.config.cjs', 'ecosystem.de
 const processEnvMarker = ['process', 'env'].join('.');
 const replacedThemePackage = ['next', 'themes'].join('-');
 const generatedDirectories = new Set(['.git', '.next', 'dist', 'node_modules']);
+// The supervision files used to read the environment directly to build an argv
+// for the web role. They no longer do — a role reads its own bindings — so they
+// are no longer environment boundaries, and this list is smaller by two.
 const processEnvBoundaries = new Set([
   'packages/frontend/src/env.ts',
   'packages/config/src/server.ts',
   'scripts/tooling-env.ts',
-  'ecosystem.config.cjs',
-  'ecosystem.dev.config.cjs',
 ]);
 
 function lineAt(source: string, offset: number): number {
@@ -52,6 +53,21 @@ function inspect(path: string, source: string): string[] {
         failures.push(
           `${path}: server-only dependency ${dependency} crossed the browser boundary`,
         );
+        // Two separate reasons meet on this line, and the second one is the
+        // quiet one. Shipping a database client to the browser is the obvious
+        // failure; the other is that a route reaching a data source makes the
+        // BUILD depend on data — bytes that are neither code nor a binding, so
+        // the artifact stops being a function of the source and starts being a
+        // function of whichever machine had the database. Three answers are
+        // legitimate, chosen per route: render at runtime (what this template
+        // does), declare a frozen export as `build.inputs` in `project.json`
+        // and let `scripts/build-inputs.ts` pin its digest, or generate the
+        // bytes as a release step.
+        if (path.startsWith('packages/frontend/src/app/')) {
+          failures.push(
+            `${path}: a route reading data makes the build depend on it — render at runtime, declare the export in build.inputs, or generate it as a release step`,
+          );
+        }
       }
     }
   }

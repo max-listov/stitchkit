@@ -19,7 +19,7 @@ The core is shipped and hardened through real consumers:
   [OpenAPI 3.1 generation](./docs/guide/server.md#openapi) and a typed client
   derived from the same contracts.
 - **MCP & agents** — contract tools, framework-owned multimodal native tools,
-  stateless and stateful HTTP modes, stdio, MCP Apps resources, portable-schema
+  stateless HTTP, stdio, MCP Apps resources, portable-schema
   validation and `mountAgent()`.
 - **CLI** — contract operations exposed as typed commands, including file and
   wait helpers.
@@ -34,11 +34,29 @@ The core is shipped and hardened through real consumers:
   smoke tests and
   [packed minimal/full/Node consumer lanes](./docs/backlog/done/2026-08-06-the-published-package-is-tested-as-a-consumer-uses-it.md).
 
+Shipped and **evolving** — released, used, and still finding its shape. Each may
+be redefined in a minor, always with a marked breaking change and a migration
+section (see [Entrypoints](./docs/guide/getting-started.md#entrypoints)):
+
+- **Agent runtime** — `stitchkit/agent-runtime`: durable run admission with
+  idempotency and coalescing, normalized persistence behind one CAS boundary,
+  provider-valid history and compaction, prompt and model registries, the
+  stream loop, managed-tool fencing, recovery and run observability. The
+  isolated OpenRouter adapter lives at `stitchkit/agent-runtime/openrouter`.
+- **Application kernel** — `stitchkit/application`: see the section below.
+- **Project declaration** — `stitchkit/declaration`: one versioned schema for
+  what a repository says about itself — identity, roles, build (including any
+  declared data inputs), runtime requirements, release steps and the names of
+  the variables a deployment supplies. Its boundary is enforced by shape: there
+  is nowhere in it to put a port, a host, an address, a machine path or a
+  supervision policy. **Declaring is optional** — a project with no
+  `project.json` is complete, and nothing else in the framework reads one.
+
 Until 1.0, a minor release may intentionally break a public API. Every break is
 called out first in the changelog with a before → after migration; no shim or
 silent compatibility path is retained.
 
-## In progress — managed application composition
+## Shipped and evolving — managed application composition
 
 The additive `stitchkit/application` surface composes process-local resources
 without changing the contract and transport core:

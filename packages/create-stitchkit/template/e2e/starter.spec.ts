@@ -1,4 +1,4 @@
-import { appIdentity } from '@app/config/identity';
+import { appDeclaration } from '@app/config/declaration';
 import { systemContract } from '@app/shared';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
@@ -21,7 +21,7 @@ test('calls the live backend through the typed contract client', async () => {
   const client = createClient(
     systemContract,
     createHttpClient({
-      baseUrl: `${toolingEnv.NEXT_PUBLIC_API_URL}/api`,
+      baseUrl: `${toolingEnv.SMOKE_API_ORIGIN}/api`,
       credentials: 'omit',
     }),
   );
@@ -31,7 +31,7 @@ test('calls the live backend through the typed contract client', async () => {
 
 test('publishes complete page metadata', async ({ page }) => {
   await page.goto('/en/ui/themes');
-  await expect(page).toHaveTitle(`Theme system · ${appIdentity.name}`);
+  await expect(page).toHaveTitle(`Theme system · ${appDeclaration.identity.name}`);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
     /\/en\/ui\/themes$/,
@@ -42,9 +42,7 @@ test('publishes complete page metadata', async ({ page }) => {
   );
 
   const imageUrl = await page.locator('meta[property="og:image"]').getAttribute('content');
-  expect(imageUrl).toBe(
-    new URL('/api/og/en/themes', toolingEnv.NEXT_PUBLIC_WEB_URL).toString(),
-  );
+  expect(imageUrl).toBe(new URL('/api/og/en/themes', toolingEnv.SMOKE_WEB_ORIGIN).toString());
 });
 
 test('switches catalogue sections and component tabs', async ({ page }) => {
@@ -217,7 +215,7 @@ test('provides a server-first synchronized theme system', async ({
   await page.getByRole('button', { name: 'System', exact: true }).click();
   await expect(page.getByTestId('theme-state-selected')).toContainText('system');
   const themeCookie = (await context.cookies()).find(
-    (cookie) => cookie.name === `${appIdentity.slug}-theme`,
+    (cookie) => cookie.name === `${appDeclaration.identity.slug}-theme`,
   );
   expect(themeCookie?.value).toBe('system');
   await page.reload();

@@ -16,7 +16,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { locale, story } = await params;
   if (!isStoryId(story)) notFound();
-  return createPageMetadata(story, LocaleSchema.parse(locale));
+  return await createPageMetadata(story, LocaleSchema.parse(locale));
 }
 
 export default async function UiStoryPage({

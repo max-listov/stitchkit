@@ -36,7 +36,38 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/application/opentelemetry': 'application-opentelemetry.ts',
   'stitchkit/testing': 'testing.ts',
   'stitchkit/files': 'files.ts',
+  'stitchkit/declaration': 'declaration.ts',
 };
+
+describe('the published entrypoint list is one list', () => {
+  // Three drifts are possible and none of them fails a build: an export added
+  // to package.json and nowhere else, an entrypoint missing from the map this
+  // file walks, and a row in the guide that never got a maturity. Each one is
+  // invisible to review and cheap to catch here.
+  const packageJson: unknown = JSON.parse(readFileSync(join(SRC, '../package.json'), 'utf8'));
+  const published = Object.keys((packageJson as { exports: Record<string, unknown> }).exports)
+    .filter((key) => key.startsWith('.'))
+    .map((key) => (key === '.' ? 'stitchkit' : `stitchkit/${key.slice(2)}`));
+
+  test('every published export is covered by the reference walk', () => {
+    expect(published.filter((entry) => !(entry in ENTRYPOINTS))).toEqual([]);
+    expect(Object.keys(ENTRYPOINTS).filter((entry) => !published.includes(entry))).toEqual([]);
+  });
+
+  test('every published export has a guide row that declares its maturity', () => {
+    const guide = readFileSync(join(SRC, '../../../docs/guide/getting-started.md'), 'utf8');
+    const rows = new Map(
+      [...guide.matchAll(/^\| `(stitchkit(?:\/[\w-]+)*)` \|([^\n]*)$/gm)].map((row) => [
+        row[1] ?? '',
+        row[2] ?? '',
+      ]),
+    );
+    expect(published.filter((entry) => !rows.has(entry))).toEqual([]);
+    expect(
+      published.filter((entry) => !/\b(stable|evolving)\b/.test(rows.get(entry) ?? '')),
+    ).toEqual([]);
+  });
+});
 
 const entryFiles = Object.values(ENTRYPOINTS).map((file) => join(SRC, file));
 const program = ts.createProgram(entryFiles, {

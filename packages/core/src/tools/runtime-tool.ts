@@ -11,10 +11,7 @@ import type {
 } from '../contract';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
-import {
-  projectedRuntimeToolSupports,
-  projectRuntimeTool,
-} from './internal/surface-projector';
+import { projectRuntimeTool } from './internal/surface-projector';
 import type { MountableTool } from './mount';
 
 export type RuntimeToolTransport = 'MCP' | 'AGENT' | 'CLI';
@@ -258,14 +255,7 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
   return { define };
 }
 
-export function runtimeToolSupports(
-  definition: RuntimeToolDefinition,
-  transport: RuntimeToolTransport,
-): boolean {
-  return projectedRuntimeToolSupports(definition, transport);
-}
-
-export function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
+function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
   return {
     method: definition.identity.method,
     desc: definition.description,

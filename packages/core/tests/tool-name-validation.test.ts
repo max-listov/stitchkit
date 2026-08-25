@@ -101,11 +101,6 @@ describe('toToolName — singularize applies to the last segment', () => {
       expect(toToolName(prefix, method)).toBe(expected);
     });
   }
-
-  test('an unprefixed exception still works', () => {
-    expect(toToolName('analytics', 'get')).toBe('get_analytics');
-    expect(toToolName('status', 'get')).toBe('get_status');
-  });
 });
 
 describe('mount-time assertion', () => {

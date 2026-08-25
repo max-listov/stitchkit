@@ -20,13 +20,48 @@ export interface AgentSessionCoordinator {
     ): AgentCoordinatedRun<RESULT> | Promise<AgentCoordinatedRun<RESULT>>;
   }): AgentRunTicket<RESULT>;
   stop(key: string, reason?: AgentStopReason): boolean;
-  close(options?: AgentSessionCloseOptions): Promise<void>;
+  close(options?: AgentSessionCloseOptions): Promise<AgentSessionCloseResult>;
   isRunning(key: string): boolean;
 }
 
 export interface AgentSessionCloseOptions {
-  drainTimeoutMs?: number;
+  /**
+   * How long active runs may settle on their own before they are aborted.
+   *
+   * Same name and meaning as `ShutdownOptions.gracePeriodMs` on the server and
+   * the application kernel; the default differs by surface and this one has
+   * none — omitted means abort immediately, which is the behaviour `close()`
+   * has always had.
+   */
+  gracePeriodMs?: number;
+  /**
+   * How long settlement may take *after* the abort, measured from the moment
+   * the grace period ends. Omitted means wait for settlement without a bound.
+   */
   forceTimeoutMs?: number;
+}
+
+/**
+ * What `close()` actually achieved.
+ *
+ * The alternative was a `Promise<void>` and three claims in prose that cannot
+ * all hold: "every combination is bounded", "omit `forceTimeoutMs` and it waits
+ * for settlement", and "`close()` never returns while a run is still in
+ * flight". Without a force budget the wait is unbounded; with one, returning
+ * while a run is in flight is exactly what the budget is FOR. No implementation
+ * satisfies all three, so the contract says what happens instead of promising
+ * what cannot.
+ *
+ * A caller that only wants the old behaviour still writes `await close(…)` and
+ * ignores the result; a caller that has to decide whether to exit reads it.
+ */
+export interface AgentSessionCloseResult {
+  /** Every run that was in flight finished. `remaining` is then zero. */
+  readonly settled: boolean;
+  /** The force budget expired first. Mutually exclusive with `settled`. */
+  readonly timedOut: boolean;
+  /** Runs still in flight when `close()` returned. */
+  readonly remaining: number;
 }
 
 interface PendingRun {
@@ -148,15 +183,42 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
         .map((lane) => lane.active)
         .filter((run) => run !== undefined);
       const settlements = active.map((run) => run.settled);
-      const drain = Promise.all(settlements).then(() => undefined);
-      if (options.drainTimeoutMs !== undefined) {
-        const drained = await waitWithin(drain, options.drainTimeoutMs);
-        if (drained) return;
+      // Counted rather than inferred: on a force timeout the caller needs to
+      // know HOW MANY runs it is walking away from, and `Promise.all` losing
+      // the race says only that at least one did not finish.
+      const outstanding = new Set(settlements);
+      for (const settled of settlements) {
+        void settled.then(() => {
+          outstanding.delete(settled);
+        });
       }
+      const drain = Promise.all(settlements).then(() => undefined);
+      const finished = (): AgentSessionCloseResult => ({
+        settled: outstanding.size === 0,
+        timedOut: outstanding.size > 0,
+        remaining: outstanding.size,
+      });
+
+      // Grace: let active runs finish on their own. Everything settled inside
+      // the budget means there is nothing to force.
+      if (
+        options.gracePeriodMs !== undefined &&
+        (await waitWithin(drain, options.gracePeriodMs))
+      ) {
+        return finished();
+      }
+
       for (const run of active) run.controller.abort('shutdown');
-      if (options.drainTimeoutMs === undefined) return drain;
-      if (options.forceTimeoutMs === undefined) return;
+
+      // Force: bound how long settlement may take after the abort. No budget
+      // means wait for it — the only combination in which `close()` cannot
+      // return with a run still in flight.
+      if (options.forceTimeoutMs === undefined) {
+        await drain;
+        return finished();
+      }
       await waitWithin(drain, options.forceTimeoutMs);
+      return finished();
     },
 
     isRunning(key) {

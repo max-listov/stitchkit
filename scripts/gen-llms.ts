@@ -97,6 +97,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'Upgrading',
     'moving a project across stitchkit versions; how breaking changes are marked',
   ],
+  [
+    'declaration.md',
+    'Project declaration',
+    'the optional machine-readable statement a repository makes about itself — identity, roles, build, requirements, release steps and the names of the values a deployment supplies',
+  ],
 ];
 const API: [file: string, title: string, desc: string] = [
   'reference.md',

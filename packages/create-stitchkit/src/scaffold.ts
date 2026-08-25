@@ -2,7 +2,12 @@ import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, parse, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { createApplicationIdentity } from './identity';
+import {
+  APP_IDENTITY_PATH,
+  createApplicationIdentity,
+  renderAppIdentityModule,
+  withIdentity,
+} from './identity';
 
 const TEXT_EXTENSIONS = new Set([
   '.cjs',
@@ -152,7 +157,7 @@ async function collectMaterialisedFiles(
   }
 }
 
-export async function materialiseTemplateFiles(
+async function materialiseTemplateFiles(
   templateDirectory: string,
 ): Promise<MaterialisedTemplateFile[]> {
   const files: MaterialisedTemplateFile[] = [];
@@ -200,10 +205,19 @@ export async function scaffoldProject(
         await materialiseTemplateFiles(options.overlayDirectory),
       );
     }
-    await writeFile(
-      join(resolvedDestination, 'app.config.json'),
-      `${JSON.stringify(identity, undefined, 2)}\n`,
+    // The declaration travels with the template; only its identity is this
+    // project's. Rewriting the whole file here would make the scaffolder a
+    // second author of roles, build and release steps.
+    const declarationPath = join(resolvedDestination, 'project.json');
+    const declaration = withIdentity(
+      JSON.parse(await readFile(declarationPath, 'utf8')),
+      identity,
     );
+    await writeFile(declarationPath, `${JSON.stringify(declaration, undefined, 2)}\n`);
+    // Derived from the declaration, so it is stamped in the same pass.
+    const identityPath = join(resolvedDestination, APP_IDENTITY_PATH);
+    await mkdir(dirname(identityPath), { recursive: true });
+    await writeFile(identityPath, renderAppIdentityModule(declaration.identity));
     const manifestPath = join(resolvedDestination, 'package.json');
     const manifest = RootManifestSchema.parse(
       JSON.parse(await readFile(manifestPath, 'utf8')),

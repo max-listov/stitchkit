@@ -1,3 +1,24 @@
+# The web role reaches the API role internally, and forwards the browser's
+# same-origin `/api/…` calls to it. This one is required.
+INTERNAL_API_URL=http://127.0.0.1:3211
+
+# The realtime socket, and ONLY it. A WebSocket upgrade does not survive the
+# route handler that forwards `/api`, so two roles on two loopback ports must
+# name the socket's origin even though their HTTP is already same-origin.
+# Behind one routing layer that forwards `/socket.io`, leave this unset.
+PUBLIC_REALTIME_ORIGIN=http://127.0.0.1:3211
+
+# The browser origin the API role admits — for HTTP and for the realtime
+# handshake alike. Needed here because the socket above is cross-origin.
+CORS_ORIGIN=http://127.0.0.1:3210
+
+# THE CROSS-ORIGIN HTTP VARIANT — unset, and unnecessary for this example.
+# Set it only for a frontend that dials the API role itself instead of calling
+# its own `/api`: separate hostnames with nothing in front of them. Setting it
+# changes nothing on its own; switching is one import in
+# packages/frontend/src/lib/api/queries.ts. See lib/api/cross-origin.ts.
+# PUBLIC_API_ORIGIN=https://api.example
+
 GITHUB_REPOSITORY=max-listov/stitchkit
 GITHUB_CACHE_TTL_SECONDS=900
 # Optional. Defaults to the public GitHub API and supports GitHub Enterprise.

@@ -6,7 +6,7 @@ import { createSystemService } from './transport/system-service';
 
 export async function createSurface() {
   const socket = await createSocketIOServer({
-    cors: { origin: env.CORS_ORIGIN },
+    cors: { origin: env.CORS_ORIGIN ?? [] },
   });
   const realtime = bindRealtimeServer(repositoryRealtimeContract, socket);
   const repositoryService = createRepositoryService((snapshot) =>

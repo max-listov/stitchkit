@@ -255,12 +255,12 @@ const tools = mountAgent(service, { context: { userId: 'agent-1' } })
 const result = await generateText({ model, tools, prompt: 'Create a user named Max' })
 ```
 
-### 7. WebSocket (Socket.IO)
-
 For applications that want Stitchkit to own durable message/run transitions,
 stream checkpoints, interruption and managed-tool fencing, use the optional
 [`stitchkit/agent-runtime`](docs/guide/agent-runtime.md). `mountAgent` remains
 the smaller application-owned-loop path.
+
+### 7. WebSocket (Socket.IO)
 
 stitchkit's WebSocket layer is Socket.IO — `polling` fallback, heartbeat, acks,
 a mature client. The wrappers cover the boilerplate.
@@ -423,7 +423,9 @@ peer — an install pulls in only what the project actually uses.
 | `grammy` | peer, optional | Only `stitchkit/application/grammy`; the neutral application kernel does not resolve it. |
 | `@opentelemetry/api` | peer, optional | Type-only boundary for `stitchkit/application/opentelemetry`; the adapter has no runtime import and owns no SDK/exporter. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
-| `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. |
+| `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. `@socket.io/bun-engine` is Bun-only; shipping one self-contained artifact? Hand the loaders to `createSocketIOServer({ peers })`. |
+| `@socket.io/component-emitter` | peer, optional, **types only** | Referenced by the browser Socket.IO declarations. Arrives with `socket.io-client`; nothing imports it at runtime. |
+| `srvx` | peer, optional | Only `serveNode` — the Node ≥ 22 HTTP adapter. Bun uses `Bun.serve` and needs nothing. |
 
 **Why peers, not bundled.** A peer is resolved once, by your app — framework and
 app code share a single instance. Bundled copies would double `zod`, split the
@@ -458,7 +460,9 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
   [HTTP server](./docs/guide/server.md) ·
   [typed client](./docs/guide/client.md) ·
   [MCP & agents](./docs/guide/mcp-and-agents.md) ·
+  [agent runtime](./docs/guide/agent-runtime.md) ·
   [application kernel](./docs/guide/application-kernel.md) ·
+  [application migration recipes](./docs/guide/application-migration-recipes.md) ·
   [realtime](./docs/guide/realtime.md) ·
   [auth & errors](./docs/guide/auth-and-errors.md) ·
   [testing & deployment](./docs/guide/testing-and-deployment.md) ·

@@ -1,6 +1,12 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import {
+  assertNothingSurvives,
+  reapOnTermination,
+  stopProcessGroup,
+  sweepAbandonedLaneProcesses,
+} from './lane-processes';
 import { findNeutralIdentity } from './neutral-identity';
 import { createStarterLaneDatabase } from './starter-database';
 import { parseStarterLaneOptions } from './starter-lane-options';
@@ -190,7 +196,25 @@ async function waitFor(
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+// Sweep BEFORE starting anything. A predecessor that was SIGKILLed — by a
+// person, by a supervisor, by the OOM killer — ran no handler at all, and this
+// is the only thing that stops its roles outliving one further run.
+const swept = await sweepAbandonedLaneProcesses();
+if (swept > 0) {
+  console.log(`[starter-lane] reaped ${swept} process(es) abandoned by an earlier run`);
+}
+
 const workspace = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+
+let roles: Array<{ pid: number; exited: Promise<number> }> = [];
+const reapEverything = async (): Promise<void> => {
+  await Promise.allSettled(roles.map((role) => stopProcessGroup(role)));
+  roles = [];
+};
+// A `finally` covers a throw and nothing else. An interrupted lane is exactly
+// the run that leaves the most behind, so the same cleanup runs on a signal.
+reapOnTermination(reapEverything);
+
 try {
   const packed = join(workspace, 'packed');
   const runner = join(workspace, 'runner');
@@ -321,14 +345,24 @@ try {
         `DATABASE_URL=${database.url}`,
         `API_PORT=${apiPort}`,
         `WEB_PORT=${webPort}`,
-        `NEXT_PUBLIC_API_URL=${apiOrigin}`,
         `INTERNAL_API_URL=${apiOrigin}`,
-        `NEXT_PUBLIC_WEB_URL=${webOrigin}`,
-        `CORS_ORIGIN=${webOrigin}`,
+        // The deployment the smoke dials. Bound to a place on purpose — and named
+        // so that no build substitutes it into an artifact.
+        `SMOKE_API_ORIGIN=${apiOrigin}`,
+        `SMOKE_WEB_ORIGIN=${webOrigin}`,
+        // The hosts this deployment answers for. The portability smoke proves one
+        // artifact serves several — within the policy, not for any header.
+        `PUBLIC_WEB_HOSTS=127.0.0.1:${webPort},alpha.example,beta.example:8443`,
         'LOG_FORMAT=json',
       ];
       if (example === 'repository') {
         environmentLines.push(
+          // HTTP is already same-origin here — the web role forwards `/api`.
+          // The SOCKET cannot be forwarded by a route handler, so this lane,
+          // which runs the two roles on two ports with nothing in front of
+          // them, names the socket's origin and admits the browser for it.
+          `PUBLIC_REALTIME_ORIGIN=${apiOrigin}`,
+          `CORS_ORIGIN=${webOrigin}`,
           `GITHUB_API_URL=${githubApiUrl}`,
           'GITHUB_REPOSITORY=max-listov/stitchkit',
           'GITHUB_CACHE_TTL_SECONDS=900',
@@ -343,13 +377,15 @@ try {
         DATABASE_URL: database.url,
         API_PORT: String(apiPort),
         WEB_PORT: String(webPort),
-        NEXT_PUBLIC_API_URL: apiOrigin,
         INTERNAL_API_URL: apiOrigin,
-        NEXT_PUBLIC_WEB_URL: webOrigin,
-        CORS_ORIGIN: webOrigin,
+        SMOKE_API_ORIGIN: apiOrigin,
+        SMOKE_WEB_ORIGIN: webOrigin,
+        PUBLIC_WEB_HOSTS: `127.0.0.1:${webPort},alpha.example,beta.example:8443`,
         PLAYWRIGHT_BASE_URL: webOrigin,
         LOG_FORMAT: 'json',
         ...(example === 'repository' && {
+          PUBLIC_REALTIME_ORIGIN: apiOrigin,
+          CORS_ORIGIN: webOrigin,
           GITHUB_API_URL: githubApiUrl,
           GITHUB_REPOSITORY: 'max-listov/stitchkit',
           GITHUB_CACHE_TTL_SECONDS: '900',
@@ -386,7 +422,18 @@ try {
       }
       await run(['bun', 'run', 'check'], generated, { env });
       await run(['bun', 'run', 'test'], generated, { env });
-      await run(['bun', 'run', 'build'], generated, { env });
+      // The build runs against a database address that ACCEPTS NOTHING.
+      //
+      // Data read while building is the third kind of input — neither code nor
+      // a binding — and a build that reads it is a function of whichever
+      // machine happened to have the database. Reading the routes proves
+      // nothing here: the dependency arrives transitively, through a helper
+      // imported by a component imported by a page. Pointing the build at a
+      // closed port is the only check that covers every path at once, and it
+      // fails loudly the moment a prerender starts dialling.
+      await run(['bun', 'run', 'build'], generated, {
+        env: { ...env, DATABASE_URL: `postgresql://nobody@127.0.0.1:${freePort()}/absent` },
+      });
       await run(['bun', 'run', 'lint'], generated, { env });
 
       // Second-developer scenario: a fresh clone carries no `.env`. Both the
@@ -420,18 +467,28 @@ try {
       let web: ReturnType<typeof Bun.spawn> | undefined;
       try {
         await run(['bun', 'run', 'db:setup'], generated, { env });
+        // `detached` makes each role a process-group LEADER, so one signal
+        // reaches the role and the `bun run` launcher in front of it. Killing
+        // the child alone leaves the role running with a deleted working
+        // directory — 101 of those accumulated on a shared host in one evening.
         api = Bun.spawn(['bun', 'run', 'start:api'], {
           cwd: generated,
           env,
+          detached: true,
           stdout: 'inherit',
           stderr: 'inherit',
         });
+        roles = [api];
         web = Bun.spawn(['bun', 'run', 'start:web'], {
           cwd: generated,
           env,
+          detached: true,
           stdout: 'inherit',
           stderr: 'inherit',
         });
+        roles = [api, web];
+        // Registered one at a time, before the next spawn: a signal arriving in
+        // between must still find the role that already exists.
         await Promise.all([
           waitFor(`${apiOrigin}/health`, 'starter API', api),
           waitFor(`${webOrigin}/en`, 'starter web', web),
@@ -464,9 +521,8 @@ try {
               : [];
         await run(['bun', 'run', 'e2e', ...browserProjects], generated, { env });
       } finally {
-        api?.kill('SIGTERM');
-        web?.kill('SIGTERM');
-        await Promise.allSettled([api?.exited, web?.exited]);
+        roles = [];
+        await Promise.allSettled([api && stopProcessGroup(api), web && stopProcessGroup(web)]);
       }
 
       console.log(
@@ -481,5 +537,9 @@ try {
   if (selectedVariant === 'blank') await runVariant();
   else await runVariant('repository');
 } finally {
+  await reapEverything();
+  // Fail-closed. A warning here reads as noise, and "probably fine" is what two
+  // and a half hours of runs turned into a host that stopped responding.
+  await assertNothingSurvives(workspace);
   await rm(workspace, { recursive: true, force: true });
 }

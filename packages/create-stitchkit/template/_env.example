@@ -4,8 +4,12 @@ DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter
 BIND_HOST=127.0.0.1
 API_PORT=3211
 WEB_PORT=3210
-NEXT_PUBLIC_API_URL=http://127.0.0.1:3211
-INTERNAL_API_URL=http://127.0.0.1:3211
-NEXT_PUBLIC_WEB_URL=http://127.0.0.1:3210
+SMOKE_API_ORIGIN=http://127.0.0.1:3211
+SMOKE_WEB_ORIGIN=http://127.0.0.1:3210
+# Hosts this deployment answers for, comma-separated. One built artifact can
+# serve several addresses; a forwarded host outside this list is refused rather
+# than believed. Leave unset and set PUBLIC_WEB_ORIGIN instead for a single one.
+PUBLIC_WEB_HOSTS=127.0.0.1:3210
 LOG_FORMAT=pretty
-CORS_ORIGIN=http://127.0.0.1:3210
+# CORS_ORIGIN is only needed for a genuinely cross-origin browser.
+# CORS_ORIGIN=http://127.0.0.1:3210

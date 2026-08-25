@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ApplicationHandle } from './kernel';
+import { projectApplicationStatus } from './schemas';
 
 export const ApplicationHealthHandlerOptionsSchema = z.object({
   kind: z.enum(['liveness', 'readiness']),
@@ -17,13 +18,20 @@ export type ApplicationOperationalHandlersOptions = z.input<
 >;
 
 export interface ApplicationOperationalHandlers {
-  /** Always-readable canonical application snapshot. */
+  /** Always-readable published projection of the application snapshot. */
   status(): Response;
   readiness(): Response;
   liveness(): Response;
 }
 
-/** Fetch-clean liveness/readiness response with only the sanitized application snapshot. */
+/**
+ * Fetch-clean liveness/readiness response carrying the published projection.
+ *
+ * Never the raw snapshot: it names every resource, its `dependsOn` edges, the
+ * process epoch and live admission counters, and these handlers are documented
+ * for public mounting. The full snapshot stays available in-process through
+ * `getSnapshot()`.
+ */
 export function createApplicationHealthHandler(
   application: Pick<ApplicationHandle, 'getSnapshot'>,
   options: ApplicationHealthHandlerOptions,
@@ -35,7 +43,7 @@ export function createApplicationHealthHandler(
       parsed.kind === 'readiness'
         ? snapshot.ready
         : snapshot.lifecycle !== 'failed' && snapshot.lifecycle !== 'stopped';
-    return Response.json(snapshot, {
+    return Response.json(projectApplicationStatus(snapshot), {
       status: healthy ? 200 : 503,
       ...(healthy ? {} : { headers: { 'Retry-After': String(parsed.retryAfterSeconds) } }),
     });
@@ -49,7 +57,7 @@ export function createApplicationOperationalHandlers(
 ): ApplicationOperationalHandlers {
   const parsed = ApplicationOperationalHandlersOptionsSchema.parse(options);
   return {
-    status: () => Response.json(application.getSnapshot()),
+    status: () => Response.json(projectApplicationStatus(application.getSnapshot())),
     readiness: createApplicationHealthHandler(application, {
       kind: 'readiness',
       retryAfterSeconds: parsed.retryAfterSeconds,

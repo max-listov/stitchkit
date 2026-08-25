@@ -40,7 +40,14 @@ describe('AppError.is — brand-based, cross-chunk safe', () => {
   test('the brand does not leak into JSON / keys', () => {
     const err = new AppError('X', 'm', 400, { field: 'a' });
     expect(JSON.stringify(err.toJSON())).not.toContain('stitchkit.AppError');
-    expect(Object.keys(err)).not.toContain('Symbol(stitchkit.AppError)');
+    // The brand is a symbol, so `Object.keys` can never contain it for ANY
+    // implementation — the old assertion was unfalsifiable. What is worth
+    // pinning is that the brand exists as a symbol and stays out of enumeration.
+    expect(Object.getOwnPropertySymbols(err).map(String)).toContain(
+      'Symbol(stitchkit.AppError)',
+    );
+    // …and it stays out of the serialised shape a client ever sees.
+    expect(JSON.stringify(err)).not.toContain('stitchkit.AppError');
   });
 
   test('tool-path: a branded error keeps its own code, not INTERNAL_SERVER_ERROR', () => {
@@ -57,7 +64,11 @@ describe('AppError.is — brand-based, cross-chunk safe', () => {
 
     try {
       badRequest('bad', { field: 'x' });
+      // Reached only if `badRequest` stopped throwing, which the catch below
+      // would otherwise hide behind a green test.
+      throw new Error('expected badRequest to throw');
     } catch (e) {
+      if (e instanceof Error && e.message === 'expected badRequest to throw') throw e;
       expect(toolResultFromError(e).code).toBe('BAD_REQUEST');
     }
   });

@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
 
-import { appIdentity } from '@app/config/identity';
+import { appDeclaration } from '@app/config/declaration';
 import { createCli } from 'stitchkit/cli';
 import { createSurface } from './surface';
 
 const { services, socket } = await createSurface();
 
 try {
-  await createCli({ name: appIdentity.slug, version: appIdentity.version, services });
+  await createCli({
+    name: appDeclaration.identity.slug,
+    version: appDeclaration.identity.version,
+    services,
+  });
 } finally {
   await socket.close();
 }

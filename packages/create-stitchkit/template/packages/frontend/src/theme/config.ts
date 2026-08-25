@@ -1,4 +1,4 @@
-import { appIdentity } from '@app/config/identity';
+import { appIdentity } from '@app/config/app-identity';
 import type { ThemeProviderProps } from '@wrksz/themes/next';
 
 export type AppTheme = 'light' | 'dark';

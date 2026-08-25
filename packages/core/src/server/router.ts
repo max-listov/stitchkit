@@ -2,7 +2,7 @@
  * Route matching — contract route table (build / match / validate) and the
  * raw-route matcher. The handler pipeline lives in `create.ts`.
  */
-import { parseTrailingWildcard } from '../internal/route-pattern';
+import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import type { LifecycleHooks, MethodDef, RawRoute, ServiceDef } from './types';
 
 /** A service mounted under a path prefix, carrying optional group hooks. */
@@ -37,15 +37,6 @@ export interface RouteMatch {
   method: MethodDef;
   pathParams: Record<string, string>;
   groupHooks?: LifecycleHooks;
-}
-
-function joinPath(...parts: string[]): string {
-  const joined = parts
-    .filter(Boolean)
-    .map((part) => part.replace(/^\/+|\/+$/g, ''))
-    .filter(Boolean)
-    .join('/');
-  return `/${joined}`;
 }
 
 /** One segmentation rule shared by contract matching, raw matching and validation. */
@@ -151,12 +142,12 @@ export function buildRouteMap(groups: NormalizedGroup[]): RouteMap {
     for (const [, method] of Object.entries(service.methods)) {
       if (method.expose && !method.expose.includes('HTTP')) continue;
 
-      const servicePath = joinPath(
+      const servicePath = joinRoutePath(
         '/',
         service.prefix,
         method.path === '/' ? '' : method.path,
       );
-      const fullPath = prefix ? joinPath(prefix, servicePath) : servicePath;
+      const fullPath = prefix ? joinRoutePath(prefix, servicePath) : servicePath;
       const segments = routeSegments(fullPath);
 
       const entries = map.get(method.method) ?? [];

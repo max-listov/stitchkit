@@ -91,7 +91,7 @@ means changing the one `catalog.stitchkit` range, refreshing the template lock,
 passing both lanes and releasing `create-stitchkit` separately.
 
 `bun run starter:dev` runs `packages/create-stitchkit/template` itself. The command
-creates the ignored local `.env` from `_env` on first use, applies migrations to
+creates the ignored local `.env` from `_env.example` on first use, applies migrations to
 the configured external PostgreSQL database, and launches the backend and frontend
 as direct PM2 processes.
 Bun watch mode and Next.js provide normal hot reload from the authored files; there
@@ -99,7 +99,7 @@ is no generated preview tree or reconciliation process. Stable development ports
 are Web `3210` and API `3211`; `DATABASE_URL` owns the database location.
 
 The template is intentionally a neutral application named `stitchkit-starter`.
-Scaffolding writes one validated `app.config.json` and structurally updates only
+Scaffolding writes one validated `project.json` and structurally updates only
 the root package manifest; runtime-visible identity derives from that config.
 The disposable `starter-lane` remains the authoritative test of the exact
 post-scaffold product and allocates isolated ports and a uniquely named database
@@ -147,10 +147,12 @@ root `prepare` script):
   Backticked spans and fenced blocks are exempt — there the sequence is being
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
-  tag first (version, notes, calibre — a `### ⚠️ Breaking changes` section may
-  not ride a patch bump — and the `release(<scope>): … in X.Y.Z` subject of the
-  pushed SHA), then `verify` once for a code/branch push. Deletion-only pushes
-  run no build.
+  tag first, then `verify` once for a code/branch push. The preflight checks the
+  package version, the release notes, the calibre (a `### ⚠️ Breaking changes`
+  section may not ride a patch bump), the presence of the matching
+  `## Released migration: X.Y.Z` in the upgrade guide for a breaking core
+  release, and the `release(<scope>): … in X.Y.Z` subject of the pushed SHA.
+  Deletion-only pushes run no build.
 
 Wire them manually with `git config core.hooksPath .githooks`. Bypass once with
 Git's own `--no-verify` only for exceptional local diagnosis; it is not part of

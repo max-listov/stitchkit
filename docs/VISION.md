@@ -62,6 +62,14 @@ client. One source of truth; the transports cannot drift.
   kernel may own resource ordering, readiness, ephemeral schedules, admission
   and bounded shutdown inside one process. Applications and deployment tooling
   retain durable jobs, provider protocols, restart policy and process placement.
+- **Every entrypoint says how settled it is.** The contract, HTTP, client, tool,
+  CLI, observability and testing surfaces are **stable**: they change rarely and
+  only for a reason worth a migration. The declaration, the agent runtime and the application
+  kernel are **evolving**: their shape is still being found and may be redefined
+  in any minor, always with a marked breaking change and a migration section,
+  never silently. Both are legitimate to build on — the declaration exists so
+  the choice is informed rather than discovered. Promoting a surface from
+  evolving to stable is its own decision, recorded as an ADR.
 
 ## Status
 
@@ -72,6 +80,14 @@ tools, CLI generation and request/tool observability. The optional agent applica
 public server-only package surface. Its protocol, persistence reducer, recovery, race harness and
 packed Bun/Node proof ship as one coherent slice; consumer-owned database, domain and transport
 policy remain outside core.
+
+A project also describes itself once. `stitchkit/declaration` ships the project
+declaration — identity, roles, build, runtime requirements, release steps and
+the names of the variables a deployment supplies — so the project, the
+scaffolder and whatever binds an artifact into a deployment read one versioned
+schema instead of three copies. Its boundary is enforced by shape: there is
+nowhere in it to put a port, a host, an address, a machine path or a
+supervision policy, because none of those are true of the code.
 
 The additive managed application kernel is the equivalent server-only
 composition surface for ordinary process resources. It builds on the existing

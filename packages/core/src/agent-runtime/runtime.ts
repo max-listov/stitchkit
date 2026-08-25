@@ -1,19 +1,18 @@
-import {
-  type GeneratedFile,
-  type LanguageModelUsage,
-  type ModelMessage,
-  type PrepareStepFunction,
-  type StopCondition,
-  stepCountIs,
-  streamText,
-  type ToolSet,
+import type {
+  GeneratedFile,
+  ModelMessage,
+  PrepareStepFunction,
+  StopCondition,
+  ToolSet,
 } from 'ai';
-import { z } from 'zod';
-import { isToolExecutionControlError, type ToolLifecycle } from '../tools/execute';
+import type { z } from 'zod';
+import type { ToolLifecycle } from '../tools/execute';
+import { createRuntimeAdmissionLanes } from './admission-lanes';
 import type { AgentCompactionResult } from './compaction';
 import {
   type AgentInputPolicy,
   type AgentSessionCloseOptions,
+  type AgentSessionCloseResult,
   type AgentStopReason,
   createAgentSessionCoordinator,
 } from './coordinator';
@@ -22,33 +21,27 @@ import {
   type AgentRuntimePublisher,
   agentDurableEventId,
 } from './events';
-import { type AgentHistoryProjectionOptions, projectAgentHistory } from './history';
-import { createAgentToolFenceLifecycle } from './managed-tools';
+import type { AgentHistoryProjectionOptions } from './history';
 import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
+import { createRunExecutor } from './run-execution';
+import { findRun } from './runtime-internals';
+import type { AgentRuntimeResult } from './runtime-result';
 import {
   type AgentAssistantPlaceholder,
   AgentAssistantPlaceholderSchema,
-  AgentJsonObjectSchema,
+  type AgentJsonObjectSchema,
   type AgentMessage,
   type AgentMessagePart,
-  AgentMessagePartSchema,
   AgentMessageSchema,
   type AgentRun,
-  type AgentRunMetrics,
   AgentRunSchema,
   type AgentSnapshot,
-  type AgentTerminalReason,
-  type AgentUsage,
 } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
 import type { AgentRecoverableDescriptor } from './store-driver';
-import {
-  AgentRuntimeConflictError,
-  appliedSnapshot,
-  commitAgentRunTerminal,
-} from './terminal-commit';
+import { AgentRuntimeConflictError, appliedSnapshot } from './terminal-commit';
 
 export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
@@ -184,15 +177,6 @@ export interface AgentRuntimeStopPolicy<TOOLS extends ToolSet = ToolSet> {
   when: StopCondition<TOOLS>;
 }
 
-export interface AgentRuntimeResult {
-  run: AgentRun;
-  message: AgentMessage;
-  reason: AgentTerminalReason;
-  snapshotVersion: number;
-  policyName?: string;
-  metrics?: AgentRunMetrics;
-}
-
 export interface AgentRuntime<CONTEXT = unknown> {
   submit(input: AgentRuntimeInput): {
     accepted: Promise<void>;
@@ -208,83 +192,15 @@ export interface AgentRuntime<CONTEXT = unknown> {
     options: AgentRuntimeRecoverOptions<CONTEXT>,
   ): Promise<readonly AgentRuntimeRecoveryOutcome[]>;
   stop(conversationKey: string, reason?: AgentStopReason): boolean;
-  close(options?: AgentSessionCloseOptions): Promise<void>;
-}
-
-function findRun(runs: readonly AgentRun[], runId: string): AgentRun {
-  const run = runs.find((candidate) => candidate.id === runId);
-  if (!run) throw new AgentRuntimeConflictError('run lookup');
-  return run;
-}
-
-function jsonValue(value: unknown): z.infer<ReturnType<typeof z.json>> {
-  const parsed = z.json().safeParse(value);
-  return parsed.success ? parsed.data : { message: 'Non-JSON tool output omitted' };
-}
-
-function providerEnvelope(value: unknown) {
-  const parsed = AgentJsonObjectSchema.safeParse(value);
-  if (!parsed.success) return undefined;
-  return { schemaVersion: 1, provider: 'ai-sdk', data: parsed.data };
-}
-
-function appendText(parts: AgentMessagePart[], text: string): void {
-  const previous = parts.at(-1);
-  if (previous?.type === 'text') {
-    const next = AgentMessagePartSchema.parse({ ...previous, text: previous.text + text });
-    parts.splice(parts.length - 1, 1, next);
-    return;
-  }
-  parts.push(AgentMessagePartSchema.parse({ type: 'text', text }));
-}
-
-function assistantStatus(reason: AgentTerminalReason): AgentMessage['status'] {
-  if (reason === 'success' || reason === 'policy_stop') return 'completed';
-  if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
-    return 'interrupted';
-  }
-  return 'failed';
-}
-
-function abortTerminalReason(signal: AbortSignal): AgentTerminalReason {
-  if (signal.reason === 'shutdown') return 'shutdown';
-  if (signal.reason === 'timeout') return 'timeout';
-  return 'interrupted';
-}
-
-function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
-  const reported = (tokens: number | undefined): AgentUsage['inputTokens'] =>
-    tokens === undefined
-      ? { provenance: 'unavailable' }
-      : { value: tokens, provenance: 'provider-reported' };
-  return {
-    inputTokens: reported(value.inputTokens),
-    outputTokens: reported(value.outputTokens),
-    reasoningTokens: reported(value.outputTokenDetails.reasoningTokens),
-    cacheReadTokens: reported(value.inputTokenDetails.cacheReadTokens),
-    cacheWriteTokens: reported(value.inputTokenDetails.cacheWriteTokens),
-  };
-}
-
-function createIdleDeadline(parent: AbortSignal, timeoutMs: number | undefined) {
-  if (timeoutMs === undefined) {
-    const noop = (): void => undefined;
-    return { signal: parent, touch: noop, dispose: noop };
-  }
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const touch = (): void => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
-  };
-  touch();
-  return {
-    signal: AbortSignal.any([parent, controller.signal]),
-    touch,
-    dispose() {
-      if (timer !== undefined) clearTimeout(timer);
-    },
-  };
+  /**
+   * Stop accepting local work and wind down what is running.
+   *
+   * The result says what happened rather than implying it: `settled` when every
+   * in-flight run finished, `timedOut` with `remaining` when the force budget
+   * expired first. Only omitting `forceTimeoutMs` guarantees no run is still in
+   * flight on return — naming one is a decision to stop waiting.
+   */
+  close(options?: AgentSessionCloseOptions): Promise<AgentSessionCloseResult>;
 }
 
 export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
@@ -300,56 +216,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   const generateId = config.generateId ?? (() => crypto.randomUUID());
   const now = config.now ?? (() => new Date());
   const runtimeEpoch = generateId();
-  interface RuntimeAdmission {
-    runId: string;
-    completion: {
-      promise: Promise<AgentRuntimeResult>;
-      resolve(value: AgentRuntimeResult | PromiseLike<AgentRuntimeResult>): void;
-      reject(reason?: unknown): void;
-    };
-  }
-  interface RuntimeAdmissionLane {
-    head?: RuntimeAdmission;
-    pending?: RuntimeAdmission;
-    acceptanceTail: Promise<void>;
-  }
-  const admissionLanes = new Map<string, RuntimeAdmissionLane>();
-  const reserveAdmission = (key: string, runId: string) => {
-    const existing = admissionLanes.get(key);
-    const lane: RuntimeAdmissionLane = existing ?? { acceptanceTail: Promise.resolve() };
-    if (!existing) admissionLanes.set(key, lane);
-    if (!lane.head) {
-      const admission = { runId, completion: Promise.withResolvers<AgentRuntimeResult>() };
-      void admission.completion.promise.catch(() => undefined);
-      lane.head = admission;
-      return { lane, admission, shouldSchedule: true };
-    }
-    if (!lane.pending) {
-      const admission = { runId, completion: Promise.withResolvers<AgentRuntimeResult>() };
-      void admission.completion.promise.catch(() => undefined);
-      lane.pending = admission;
-      return { lane, admission, shouldSchedule: true };
-    }
-    return { lane, admission: lane.pending, shouldSchedule: false };
-  };
-  const settleAdmission = (key: string, admission: RuntimeAdmission): void => {
-    const lane = admissionLanes.get(key);
-    if (!lane) return;
-    if (lane.head?.runId === admission.runId) {
-      lane.head = lane.pending;
-      lane.pending = undefined;
-    } else if (lane.pending?.runId === admission.runId) {
-      lane.pending = undefined;
-    }
-    if (!lane.head && !lane.pending) admissionLanes.delete(key);
-  };
-  const waitForAdmissionAcceptances = async (lane: RuntimeAdmissionLane): Promise<void> => {
-    while (true) {
-      const tail = lane.acceptanceTail;
-      await tail.catch(() => undefined);
-      if (tail === lane.acceptanceTail) return;
-    }
-  };
+  const admissionLanes = createRuntimeAdmissionLanes();
+  const reserveAdmission = admissionLanes.reserve;
+  const settleAdmission = admissionLanes.settle;
+  const waitForAdmissionAcceptances = admissionLanes.waitForAcceptances;
   const checkpointEveryEvents = config.loop?.checkpointEveryEvents ?? 20;
   const maxSteps = config.loop?.maxSteps ?? 50;
   const idleTimeoutMs = config.loop?.idleTimeoutMs;
@@ -386,606 +256,46 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     }
   };
 
-  const executeRun = async (input: {
-    acceptedRun: AgentRun;
-    context: CONTEXT;
-    signal: AbortSignal;
-  }): Promise<AgentRuntimeResult> => {
-    const queuedSnapshot = await config.store.loadSnapshot(input.acceptedRun.conversationId);
-    const queuedRun = findRun(queuedSnapshot.runs, input.acceptedRun.id);
-    const acquired = appliedSnapshot(
-      await config.store.acquireRun({
-        conversationId: queuedRun.conversationId,
-        runId: queuedRun.id,
-        expectedRevision: queuedRun.revision,
-        ownerId: runtimeEpoch,
-      }),
-      'run acquisition',
-    );
-    let run = findRun(acquired.runs, input.acceptedRun.id);
-    await publish({
-      type: 'run-state',
-      eventId: agentDurableEventId('run-state', run.id, acquired.version),
-      conversationId: run.conversationId,
-      runId: run.id,
-      snapshotVersion: acquired.version,
-      state: run.state,
-      emittedAt: now().toISOString(),
-    });
-    const trace = config.observe?.rootTrace();
-    const runStartedAt = performance.now();
-    config.observe?.emit({
-      schemaVersion: 1,
-      eventId: generateId(),
-      type: 'run-started',
-      conversationId: run.conversationId,
-      runId: run.id,
-      traceId: trace?.traceId ?? generateId(),
-      spanId: trace?.spanId ?? generateId(),
-      ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
-      state: run.state,
-      queueWaitMs: Math.max(0, now().getTime() - new Date(run.createdAt).getTime()),
-      emittedAt: now().toISOString(),
-    });
-    let assistant = AgentMessageSchema.parse({
-      schemaVersion: 1,
-      id: run.assistantMessageId,
-      conversationId: run.conversationId,
-      runId: run.id,
-      role: 'assistant',
-      status: 'streaming',
-      parts: [],
-      createdAt: now().toISOString(),
-      updatedAt: now().toISOString(),
-    });
-    let snapshot = appliedSnapshot(
-      await config.store.checkpointRunAssistant({
-        conversationId: run.conversationId,
-        runId: run.id,
-        expectedRevision: run.revision,
-        ownerId: runtimeEpoch,
-        ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
-        assistant,
-      }),
-      'assistant draft',
-    );
-    run = findRun(snapshot.runs, run.id);
+  const executeRun = createRunExecutor<CONTEXT, TOOLS>({
+    config,
+    publish,
+    runtimeEpoch,
+    generateId,
+    now,
+    checkpointEveryEvents,
+    maxSteps,
+    ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+  });
 
-    const parts: AgentMessagePart[] = [];
-    let eventCount = 0;
-    let sequence = 0;
-    let terminalReason: AgentTerminalReason = 'success';
-    let usage: AgentUsage | undefined;
-    let step = 0;
-    let selectedModel: AgentResolvedModel | undefined;
-    let internalCause: unknown;
-    let reasoningPartIndex: number | undefined;
-    let firstOutputAt: number | undefined;
-    let terminalPolicyName: string | undefined;
-    const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs);
-    const executionSignal = idleDeadline.signal;
-
-    const updateReasoning = (text: string, metadata?: unknown): void => {
-      const provider = providerEnvelope(metadata);
-      if (reasoningPartIndex === undefined) {
-        reasoningPartIndex = parts.length;
-        parts.push(
-          AgentMessagePartSchema.parse({
-            type: 'reasoning',
-            text,
-            ...(provider && { provider }),
-          }),
-        );
-        return;
-      }
-      const current = parts[reasoningPartIndex];
-      if (current?.type !== 'reasoning') {
-        throw new AgentRuntimeConflictError('reasoning accumulator');
-      }
-      parts.splice(
-        reasoningPartIndex,
-        1,
-        AgentMessagePartSchema.parse({
-          ...current,
-          text: current.text + text,
-          ...(provider && { provider }),
-        }),
-      );
-    };
-
-    const checkpoint = async (): Promise<void> => {
-      assistant = AgentMessageSchema.parse({
-        ...assistant,
-        parts,
-        updatedAt: now().toISOString(),
-      });
-      snapshot = appliedSnapshot(
-        await config.store.checkpointRunAssistant({
-          conversationId: run.conversationId,
-          runId: run.id,
-          expectedRevision: run.revision,
-          ownerId: runtimeEpoch,
-          ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
-          assistant,
-        }),
-        'assistant checkpoint',
-      );
-      run = findRun(snapshot.runs, run.id);
-      const checkpointMetrics = {
-        partial: true,
-        durationMs: performance.now() - runStartedAt,
-        ...(usage && { usage }),
-        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-      };
-      await publish({
-        type: 'assistant-checkpoint',
-        eventId: agentDurableEventId('assistant-checkpoint', run.id, snapshot.version),
-        conversationId: run.conversationId,
-        runId: run.id,
-        snapshotVersion: snapshot.version,
-        message: assistant,
-        metrics: checkpointMetrics,
-        emittedAt: now().toISOString(),
-      });
-    };
-
-    try {
-      if (config.history?.compact) {
-        const compacted = await config.history.compact({
-          conversationId: run.conversationId,
-          store: config.store,
-          signal: executionSignal,
-        });
-        snapshot = compacted.snapshot;
-        run = findRun(snapshot.runs, run.id);
-      }
-
-      const assertCurrent = async (): Promise<'stale_run' | 'run_interrupted' | undefined> => {
-        if (executionSignal.aborted) return 'run_interrupted';
-        const current = await config.store.loadSnapshot(run.conversationId);
-        const currentRun = current.runs.find((candidate) => candidate.id === run.id);
-        if (!currentRun || currentRun.ownerId !== runtimeEpoch) return 'stale_run';
-        if (currentRun.fencingToken !== run.fencingToken) return 'stale_run';
-        if (currentRun.state === 'interrupt_requested') return 'run_interrupted';
-        if (currentRun.state !== 'running') return 'stale_run';
-        return undefined;
-      };
-      const toolFenceLifecycle = createAgentToolFenceLifecycle({
-        runId: run.id,
-        assertCurrent,
-        context: () => ({
-          ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
-        }),
-      });
-      const runtimeContext = {
-        context: input.context,
-        run,
-        signal: executionSignal,
-        toolFenceLifecycle,
-      };
-      selectedModel = await config.models.resolve({
-        context: input.context,
-        conversationId: run.conversationId,
-      });
-      const [prompt, tools] = await Promise.all([
-        config.prompt({
-          context: input.context,
-          signal: executionSignal,
-          model: selectedModel,
-          snapshot,
-        }),
-        config.tools(runtimeContext),
-      ]);
-      if (prompt.contextDecision === 'oversized') {
-        throw new Error('Agent context exceeds the configured model budget');
-      }
-      if (prompt.contextDecision === 'requires-compaction') {
-        throw new Error('Agent context still exceeds the model budget after compaction');
-      }
-      const history = await (config.history?.project
-        ? config.history.project(snapshot.messages)
-        : projectAgentHistory(snapshot.messages, {
-            ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
-            ...(config.history?.unresolvedFile && {
-              unresolvedFile: config.history.unresolvedFile,
-            }),
-          }));
-      const maxStepCondition = stepCountIs(maxSteps);
-      const stopConditions: StopCondition<TOOLS>[] = [
-        async (options) => {
-          const stopped = await maxStepCondition(options);
-          if (stopped && terminalPolicyName === undefined) terminalPolicyName = 'max-steps';
-          return stopped;
-        },
-      ];
-      for (const policy of config.loop?.stopPolicies ?? []) {
-        stopConditions.push(async (options) => {
-          const stopped = await policy.when(options);
-          if (stopped && terminalPolicyName === undefined) terminalPolicyName = policy.name;
-          return stopped;
-        });
-      }
-      const result = streamText<TOOLS>({
-        model: selectedModel.model,
-        tools,
-        instructions: prompt.instructions,
-        messages: history,
-        abortSignal: executionSignal,
-        maxRetries: 0,
-        stopWhen: stopConditions,
-        ...(config.loop?.prepareStep && {
-          prepareStep: (options) =>
-            config.loop?.prepareStep?.({ ...options, ...runtimeContext }),
-        }),
-      });
-
-      for await (const part of result.stream) {
-        idleDeadline.touch();
-        eventCount += 1;
-        sequence += 1;
-        if (
-          firstOutputAt === undefined &&
-          ['text-delta', 'reasoning-delta', 'tool-call', 'file', 'source'].includes(part.type)
-        ) {
-          firstOutputAt = performance.now();
-        }
-        if (part.type === 'text-delta') {
-          appendText(parts, part.text);
-          await publish({
-            type: 'assistant-delta',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            textDelta: part.text,
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-start') {
-          reasoningPartIndex = undefined;
-          updateReasoning('', part.providerMetadata);
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-start',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-delta') {
-          updateReasoning(part.text, part.providerMetadata);
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-delta',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            textDelta: part.text,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-end') {
-          updateReasoning('', part.providerMetadata);
-          reasoningPartIndex = undefined;
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-end',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-call') {
-          const provider = providerEnvelope(part.providerMetadata);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-call',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              input: jsonValue(part.input),
-              ...(provider && { provider }),
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'started',
-            input: jsonValue(part.input),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-result') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              outcome: 'success',
-              output: jsonValue(part.output),
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'completed',
-            output: jsonValue(part.output),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-error') {
-          internalCause = part.error;
-          if (isToolExecutionControlError(part.error)) {
-            await publish({
-              type: 'tool-status',
-              conversationId: run.conversationId,
-              runId: run.id,
-              runtimeEpoch,
-              sequence,
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              status: 'interrupted',
-              emittedAt: now().toISOString(),
-            });
-            throw part.error;
-          }
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              outcome: 'error',
-              output: { message: 'Tool execution failed' },
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'failed',
-            output: { message: 'Tool execution failed' },
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-output-denied') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              outcome: 'error',
-              output: { message: 'Tool output denied' },
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'failed',
-            output: { message: 'Tool output denied' },
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'source') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'source',
-              sourceId: part.id,
-              ...(part.sourceType === 'url' && { url: part.url }),
-              ...(part.title && { title: part.title }),
-            }),
-          );
-        } else if (part.type === 'file' && config.persistGeneratedFile) {
-          const persisted = await config.persistGeneratedFile(part.file);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'file',
-              mediaType: part.file.mediaType,
-              reference: persisted.reference,
-              ...(persisted.filename && { filename: persisted.filename }),
-            }),
-          );
-        } else if (part.type === 'file') {
-          throw new Error('persistGeneratedFile is required for generated file output');
-        } else if (part.type === 'reasoning-file' && config.persistGeneratedFile) {
-          const persisted = await config.persistGeneratedFile(part.file);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'file',
-              mediaType: part.file.mediaType,
-              reference: persisted.reference,
-              ...(persisted.filename && { filename: persisted.filename }),
-            }),
-          );
-        } else if (part.type === 'reasoning-file') {
-          throw new Error('persistGeneratedFile is required for generated reasoning files');
-        } else if (
-          part.type === 'tool-approval-request' ||
-          part.type === 'tool-approval-response'
-        ) {
-          throw new Error('Durable tool approval/resume is outside this runtime version');
-        } else if (part.type === 'custom') {
-          const provider = providerEnvelope(part.providerMetadata);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'provider',
-              envelope: {
-                schemaVersion: 1,
-                provider: 'ai-sdk-custom',
-                data: { kind: part.kind, ...(provider && { provider: provider.data }) },
-              },
-            }),
-          );
-        } else if (part.type === 'raw') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'provider',
-              envelope: {
-                schemaVersion: 1,
-                provider: 'ai-sdk-raw',
-                data: { value: jsonValue(part.rawValue) },
-              },
-            }),
-          );
-        } else if (part.type === 'abort') {
-          terminalReason = 'interrupted';
-        } else if (part.type === 'error') {
-          terminalReason = 'provider_failure';
-          internalCause = part.error;
-        } else if (part.type === 'finish-step') {
-          const stepTrace = trace ? config.observe?.rootTrace(trace) : undefined;
-          const stepUsage =
-            selectedModel.normalizeUsage?.({
-              usage: part.usage,
-              providerMetadata: part.providerMetadata,
-            }) ?? normalizeSdkUsage(part.usage);
-          usage = stepUsage;
-          config.observe?.emit({
-            schemaVersion: 1,
-            eventId: generateId(),
-            type: 'step-finished',
-            conversationId: run.conversationId,
-            runId: run.id,
-            traceId: stepTrace?.traceId ?? trace?.traceId ?? generateId(),
-            spanId: stepTrace?.spanId ?? generateId(),
-            ...(stepTrace?.parentSpanId && { parentSpanId: stepTrace.parentSpanId }),
-            state: run.state,
-            modelId: selectedModel.descriptor.modelId,
-            step,
-            usage: stepUsage,
-            emittedAt: now().toISOString(),
-          });
-          step += 1;
-        } else if (part.type === 'finish' && part.finishReason !== 'stop') {
-          terminalReason = 'policy_stop';
-        }
-        if (part.type === 'finish') {
-          const aggregate = normalizeSdkUsage(part.totalUsage);
-          usage = { ...aggregate, ...(usage?.cost && { cost: usage.cost }) };
-        }
-        if (eventCount % checkpointEveryEvents === 0) await checkpoint();
-      }
-      if (terminalPolicyName !== undefined) terminalReason = 'policy_stop';
-      if (executionSignal.aborted) terminalReason = abortTerminalReason(executionSignal);
-    } catch (error) {
-      internalCause = error;
-      const latest = await config.store.loadSnapshot(run.conversationId);
-      const latestRun = latest.runs.find((candidate) => candidate.id === run.id);
-      const durableInterrupt =
-        latestRun?.ownerId === runtimeEpoch && latestRun.state === 'interrupt_requested';
-      if (durableInterrupt && latestRun) {
-        snapshot = latest;
-        run = latestRun;
-      }
-      if (isToolExecutionControlError(error) || executionSignal.aborted || durableInterrupt) {
-        terminalReason = executionSignal.aborted
-          ? abortTerminalReason(executionSignal)
-          : 'interrupted';
-        parts.push(
-          AgentMessagePartSchema.parse({
-            type: 'control',
-            reason:
-              isToolExecutionControlError(error) && error.reason === 'stale_run'
-                ? 'stale-run'
-                : 'run-interrupted',
-          }),
-        );
-      } else {
-        terminalReason = 'provider_failure';
-      }
-    }
-    idleDeadline.dispose();
-
-    assistant = AgentMessageSchema.parse({
-      ...assistant,
-      status: assistantStatus(terminalReason),
-      parts,
-      updatedAt: now().toISOString(),
-    });
-    const terminal = await commitAgentRunTerminal({
-      store: config.store,
-      runtimeEpoch,
-      candidate: {
-        run,
-        assistant,
-        reason: terminalReason,
-        ...(terminalPolicyName && { policyName: terminalPolicyName }),
-      },
-      now,
-    });
-    snapshot = terminal.snapshot;
-    run = terminal.run;
-    assistant = terminal.assistant;
-    terminalReason = terminal.reason;
-    terminalPolicyName = terminal.policyName;
-    const terminalMetrics = terminal.committedByCaller
-      ? {
-          partial: false,
-          durationMs: performance.now() - runStartedAt,
-          ...(usage && { usage }),
-          ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-        }
-      : undefined;
-    if (terminalMetrics) {
-      config.observe?.emit({
-        schemaVersion: 1,
-        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
-        type: 'run-terminal',
-        conversationId: run.conversationId,
-        runId: run.id,
-        traceId: trace?.traceId ?? generateId(),
-        spanId: trace?.spanId ?? generateId(),
-        ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
-        state: run.state,
-        terminalReason,
-        ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
-        durationMs: terminalMetrics.durationMs,
-        ...(usage && { usage }),
-        ...(internalCause !== undefined && { internalCause }),
-        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-        emittedAt: now().toISOString(),
-      });
-      await publish({
-        type: 'terminal',
-        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
-        conversationId: run.conversationId,
-        runId: run.id,
-        snapshotVersion: snapshot.version,
-        reason: terminalReason,
-        ...(terminalPolicyName && { policyName: terminalPolicyName }),
-        message: assistant,
-        metrics: terminalMetrics,
-        emittedAt: now().toISOString(),
-      });
-    }
-    return {
-      run,
-      message: assistant,
-      reason: terminalReason,
-      snapshotVersion: snapshot.version,
-      ...(terminalMetrics && { metrics: terminalMetrics }),
-      ...(terminalPolicyName && { policyName: terminalPolicyName }),
-    };
+  /**
+   * Admission belongs to the RUNTIME, not only to the coordinator.
+   *
+   * `close()` used to delegate straight to `coordinator.close()`, which refuses to
+   * *execute* — and by the time it refuses, `submit()` has already run preflight,
+   * written a durable input and a queued run to the store, and resolved
+   * `accepted`. The result is exactly the state the close exists to prevent:
+   * durable work with no executor, indistinguishable from a crash.
+   *
+   * So the gate is checked twice, and the second one is the load-bearing half: a
+   * close that arrives while a preflight is in flight must still stop the write
+   * that follows it. Before the store call the answer is a clean refusal; after
+   * it there is nothing to refuse, and the coordinator's own drain owns the run.
+   */
+  let admissionClosed = false;
+  const closedError = (): Error =>
+    new Error('[stitchkit] agent runtime is closed and admits no further work');
+  const refuse = <T>(): { accepted: Promise<void>; result: Promise<T> } => {
+    const error = closedError();
+    const accepted = Promise.reject<void>(error);
+    const result = Promise.reject<T>(error);
+    // Rejections a caller may legitimately ignore must not become unhandled.
+    void accepted.catch(() => undefined);
+    void result.catch(() => undefined);
+    return { accepted, result };
   };
 
   const resume = (rawInput: AgentRuntimeRecoveryInput) => {
+    if (admissionClosed) return refuse<AgentRuntimeResult>();
     const context = config.protocol.parseContext(rawInput.context);
     const accepted = Promise.withResolvers<void>();
     const result = Promise.withResolvers<AgentRuntimeResult>();
@@ -1016,6 +326,12 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
 
   return {
     submit(rawInput) {
+      if (admissionClosed) {
+        const refused = refuse<AgentRuntimeResult>();
+        const admission = Promise.reject<AgentRuntimeAdmission>(closedError());
+        void admission.catch(() => undefined);
+        return { ...refused, admission };
+      }
       const metadata =
         rawInput.metadata === undefined
           ? undefined
@@ -1098,6 +414,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             context,
             conversationId: input.conversationId,
           });
+          // Re-checked HERE, not only at the entry: preflight is a network call
+          // to a provider, and a close arriving inside it would otherwise be
+          // followed by this write.
+          if (admissionClosed) throw closedError();
           const acceptance = await config.store.acceptInputAndAssignRun({
             idempotencyKey: input.idempotencyKey,
             input: userMessage,
@@ -1299,9 +619,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       return requested;
     },
     async recover(options) {
-      if (!config.store.scanRecoverablePage) {
-        throw new Error('The configured agent store does not support bounded recovery scans');
-      }
+      if (admissionClosed) throw closedError();
       const pageSize = options.pageSize ?? 100;
       const maxRuns = options.maxRuns ?? 1_000;
       if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1_000) {
@@ -1312,8 +630,8 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       }
       const outcomes: AgentRuntimeRecoveryOutcome[] = [];
       let cursor: string | undefined;
-      while (outcomes.length < maxRuns && !options.signal?.aborted) {
-        const page = await config.store.scanRecoverablePage({
+      while (outcomes.length < maxRuns && !options.signal?.aborted && !admissionClosed) {
+        const page = await config.store.scanRecoverable({
           ...(cursor && { cursor }),
           limit: Math.min(pageSize, maxRuns - outcomes.length),
         });
@@ -1404,6 +722,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       return outcomes;
     },
     stop: (conversationKey, reason) => coordinator.stop(conversationKey, reason),
-    close: (options) => coordinator.close(options),
+    close: (options) => {
+      // Set before anything is awaited, so no admission can slip past while the
+      // active runs are being drained.
+      admissionClosed = true;
+      return coordinator.close(options);
+    },
   };
 }

@@ -146,6 +146,15 @@ export const AgentRunSchema = z.object({
   assistantMessageId: AgentRecordIdSchema,
   state: AgentRunStateSchema,
   revision: AgentRecordVersionSchema,
+  /**
+   * Which runtime instance holds this run.
+   *
+   * The same value a runtime publishes as `runtimeEpoch` on its events — one
+   * identity generated per `createAgentRuntime()`, named for its role in each
+   * place: on a run it answers "who owns this", on an event "which runtime
+   * produced this". Fencing compares the two: `run.ownerId !== runtimeEpoch`
+   * means another instance took the run over.
+   */
   ownerId: z.string().min(1).optional(),
   fencingToken: AgentRecordVersionSchema.optional(),
   terminalReason: AgentTerminalReasonSchema.optional(),

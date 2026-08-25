@@ -130,6 +130,26 @@ export function extractReleaseNotes(changelog: string, version: string): string 
   return notes;
 }
 
+/** The exact heading that marks a release as breaking. */
+const BREAKING_HEADING = /^### \s*\u26a0\ufe0f?\s*Breaking changes/m;
+
+/**
+ * Whether a heading occurs outside every fenced block — the same rule
+ * `extractReleaseNotes` applies, because a heading inside an example is
+ * documentation, not structure.
+ */
+function headingOutsideFences(document: string, heading: RegExp): boolean {
+  let inFence = false;
+  for (const line of document.split('\n')) {
+    if (/^(`{3,}|~{3,})/.test(line.trim())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && heading.test(line)) return true;
+  }
+  return false;
+}
+
 /**
  * Released versions in changelog order, newest first. Fence-aware for the same
  * reason `extractReleaseNotes` is: a `## [x.y.z]` inside an example block is
@@ -158,13 +178,106 @@ export function releasedVersionsInOrder(changelog: string): string[] {
  * outcome the policy exists to prevent. The reverse (additive shipped as a
  * minor) only costs an upgrade nobody needed, so it is not gated.
  */
+/**
+ * A migration channel: where a package's upgrade guide lives, and the oldest
+ * version it holds an individual section for.
+ *
+ * Both packages have one, and for the same reason. The changelog says WHAT
+ * changed; the guide says what else stops working because of it, which is the
+ * half an agent moving a frozen consumer needs. A generated project is a
+ * consumer too — its operator steps (delete these supervisor processes, rename
+ * these variables) were being written into the starter changelog, where the
+ * next release overwrites them.
+ *
+ * The floors differ because the channels started at different times. Breaking
+ * releases below a floor are covered by the summary sections at the end of the
+ * guide, so the gate starts there instead of demanding retroactive sections
+ * nobody will read.
+ */
+export interface MigrationChannel {
+  guidePath: string;
+  floor: string;
+}
+
+export const MIGRATION_CHANNELS: Record<ReleaseTarget, MigrationChannel> = {
+  core: { guidePath: 'docs/guide/upgrading.md', floor: '0.44.0' },
+  'create-stitchkit': { guidePath: 'packages/create-stitchkit/UPGRADING.md', floor: '0.4.0' },
+};
+
+function comparePreOneVersions(left: string, right: string): number {
+  const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
+  const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);
+  if (leftMajor !== rightMajor) return leftMajor - rightMajor;
+  if (leftMinor !== rightMinor) return leftMinor - rightMinor;
+  return leftPatch - rightPatch;
+}
+
+/**
+ * A breaking release must carry the section that explains it.
+ *
+ * The changelog says WHAT changed in one mechanical line per item; the upgrade
+ * guide says what else stops compiling because of it, which is the half an
+ * agent moving a frozen consumer actually needs. That half was written twice
+ * and lost twice: an author writes it under `## Unreleased migration:`, the
+ * release commit does not promote it, and the next author reuses the heading.
+ * Promotion is what this gate makes non-optional.
+ */
+export function assertMigrationSection(
+  guide: string,
+  version: string,
+  releaseNotes: string,
+  channel: MigrationChannel = MIGRATION_CHANNELS.core,
+): void {
+  if (!BREAKING_HEADING.test(releaseNotes)) return;
+  if (comparePreOneVersions(version, channel.floor) < 0) return;
+
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const heading = new RegExp(`^## Released migration: ${escaped}\\s*$`, 'm');
+  if (!headingOutsideFences(guide, heading)) {
+    throw new Error(
+      `${version} carries a "### ⚠️ Breaking changes" section, so ${channel.guidePath} must carry "## Released migration: ${version}". Promote the "## Unreleased migration: …" heading that describes it in this release commit — an unpromoted section is overwritten by the next breaking change.`,
+    );
+  }
+
+  // Proving that ONE heading was promoted is half the check. A release with six
+  // queued sections satisfies it by promoting the first and forgetting five, and
+  // the leftovers are then overwritten by the next author — which is exactly the
+  // 0.57.0 failure this gate exists for. The queue has to be empty.
+  const queued = countUnreleasedMigrations(guide);
+  if (queued > 0) {
+    throw new Error(
+      `${channel.guidePath} still carries ${queued} "## Unreleased migration: …" section${queued === 1 ? '' : 's'} after releasing ${version}. Promote every one of them — a section left queued is overwritten by the next breaking change and lost.`,
+    );
+  }
+}
+
+/** Queued migration headings outside fenced blocks. */
+function countUnreleasedMigrations(guide: string): number {
+  let fenced = false;
+  let seen = 0;
+  for (const line of guide.split('\n')) {
+    if (line.startsWith('```')) fenced = !fenced;
+    else if (!fenced && line.startsWith('## Unreleased migration:')) seen += 1;
+  }
+  return seen;
+}
+
 export function assertVersionCalibre(changelog: string, version: string): void {
   const notes = extractReleaseNotes(changelog, version);
-  if (!/^### \s*\u26a0\ufe0f?\s*Breaking changes/m.test(notes)) return;
+  if (!BREAKING_HEADING.test(notes)) return;
 
   const released = releasedVersionsInOrder(changelog);
   const index = released.indexOf(version);
-  const previous = index === -1 ? undefined : released[index + 1];
+  if (index === -1) {
+    // The version has release notes (`extractReleaseNotes` found them) but no
+    // `## [x.y.z]` heading — a pre-release spelling like `## [0.56.1-rc.1]`.
+    // Returning here skipped the breaking-as-patch gate entirely for exactly
+    // the shape most likely to carry an unreviewed break.
+    throw new Error(
+      `${version} carries release notes but no "## [${version}]" heading in the changelog, so its calibre cannot be checked. Release headings are plain x.y.z.`,
+    );
+  }
+  const previous = released[index + 1];
   if (previous === undefined) return;
 
   const current = version.split('.').map(Number);
@@ -333,6 +446,17 @@ export async function validateReleaseTag(
   const changelog = await readFile(join(root, plan.changelog), 'utf8');
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
+  // Both packages, each through its own channel. The scaffolder's guide is for
+  // the operator of a GENERATED project — the steps a new version needs before
+  // it will start — which is a different reader from the framework's, and a
+  // reason for a second guide rather than an argument against one.
+  const channel = MIGRATION_CHANNELS[plan.target];
+  assertMigrationSection(
+    await readFile(join(root, channel.guidePath), 'utf8'),
+    plan.version,
+    notes,
+    channel,
+  );
   return { ...plan, notes };
 }
 

@@ -13,6 +13,7 @@ export {
   type ActivityStageSnapshot,
   ActivityStageSnapshotSchema,
   type ActivityToken,
+  ActivityTokenBrand,
   type ActivityTransition,
   createActivityProjection,
 } from './application/activity';
@@ -39,6 +40,10 @@ export {
   type ApplicationConfig,
   type ApplicationHandle,
   type ApplicationOperationLease,
+  type ApplicationResourceFailure,
+  type ApplicationResourcePhase,
+  type ApplicationShutdownOptions,
+  ApplicationShutdownOptionsSchema,
   createApplication,
 } from './application/kernel';
 export {
@@ -87,10 +92,13 @@ export {
   ApplicationShutdownResultSchema,
   type ApplicationSnapshot,
   ApplicationSnapshotSchema,
+  type ApplicationStatusProjection,
+  ApplicationStatusProjectionSchema,
   type ManagedResourceSnapshot,
   ManagedResourceSnapshotSchema,
   type ManagedResourceState,
   ManagedResourceStateSchema,
+  projectApplicationStatus,
 } from './application/schemas';
 export {
   type ManagedServerResourceConfig,

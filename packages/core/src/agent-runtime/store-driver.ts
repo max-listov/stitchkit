@@ -28,6 +28,7 @@ import {
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
 } from './store';
+import { assistantStatus } from './terminal-status';
 
 export const AgentRuntimeHeadSchema = z.object({
   schemaVersion: z.literal(1),
@@ -290,16 +291,6 @@ function terminalState(reason: z.infer<typeof AgentTerminalReasonSchema>): Agent
     return 'cancelled';
   }
   if (reason === 'abandoned') return 'abandoned';
-  return 'failed';
-}
-
-function terminalMessageStatus(
-  reason: z.infer<typeof AgentTerminalReasonSchema>,
-): AgentMessage['status'] {
-  if (reason === 'success' || reason === 'policy_stop') return 'completed';
-  if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
-    return 'interrupted';
-  }
   return 'failed';
 }
 
@@ -572,7 +563,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       input.assistant.id !== run.assistantMessageId ||
       input.assistant.conversationId !== run.conversationId ||
       input.assistant.role !== 'assistant' ||
-      input.assistant.status !== terminalMessageStatus(input.reason)
+      input.assistant.status !== assistantStatus(input.reason)
     ) {
       return conflict(run.revision);
     }
@@ -844,27 +835,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
         type: 'compact',
         input: ReplaceCompactedRangeSchema.parse(input),
       }),
-    async scanRecoverable() {
-      const snapshots: AgentSnapshot[] = [];
-      const seenConversationIds = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        const page = AgentRecoverablePageSchema.parse(
-          await driver.scanRecoverable({
-            ...(cursor && { cursor }),
-            limit: 100,
-          }),
-        );
-        const conversationIds = [
-          ...new Set(page.items.map((item) => item.conversationId)),
-        ].filter((conversationId) => !seenConversationIds.has(conversationId));
-        for (const conversationId of conversationIds) seenConversationIds.add(conversationId);
-        snapshots.push(...(await Promise.all(conversationIds.map(loadSnapshot))));
-        cursor = page.nextCursor;
-      } while (cursor !== undefined);
-      return snapshots;
-    },
-    async scanRecoverablePage(input) {
+    async scanRecoverable(input) {
       const parsed = AgentRecoverableScanInputSchema.parse(input);
       return AgentRecoverablePageSchema.parse(await driver.scanRecoverable(parsed));
     },

@@ -39,6 +39,12 @@ current one *up to* your target, and apply each snippet.
    change at each call site. There are no deprecation shims to lean on; the old
    shape is gone, so every site must move.
 
+   Then read this file's **`## Released migration: X.Y.Z`** section for each of
+   those versions. That is the half the changelog does not carry: what else
+   stops working because of the change, and what changes *silently* rather than
+   at compile time — projected history returning fewer messages, a dashboard
+   field going blank. `bun run check` in step 6 cannot see either.
+
 5. **Bump and install.** `bun add stitchkit@<target>` (or update the range), then
    `bun install`. Note the caret: `^0.7.0` is `< 0.8.0`, so crossing a breaking
    minor is always an explicit version bump, never automatic.
@@ -48,7 +54,193 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
-## Unreleased migration: normalized agent runtime persistence
+## Released migration: 0.60.0
+
+### close() says what it achieved
+
+`AgentRuntime.close()` returned `Promise<void>` and its contract promised three
+things that cannot hold together. It now returns
+`{ settled, timedOut, remaining }`.
+
+Nothing breaks if you ignore the value:
+
+```ts
+await runtime.close({ gracePeriodMs: 30_000, forceTimeoutMs: 5_000 })
+```
+
+What DOES change is any code that relied on the old sentence "`close()` never
+returns while a run is still in flight" while naming a `forceTimeoutMs`. That
+was never true — the force budget exists precisely to stop waiting — so if your
+process exits straight after `close()`, read the result:
+
+```ts
+const closed = await runtime.close({ gracePeriodMs: 30_000, forceTimeoutMs: 5_000 })
+if (!closed.settled) {
+  // `closed.remaining` runs were still in flight. They stay recoverable
+  // through `scanRecoverable`; close never marks them terminal on its own.
+  logger.warn({ remaining: closed.remaining }, 'exiting with runs in flight')
+}
+```
+
+If you want the old guarantee, omit `forceTimeoutMs`: that is the one
+combination in which `close()` cannot return with a run in flight — and its wait
+is unbounded, which is the trade.
+
+A TypeScript consumer that wrote `const done: void = await runtime.close()` is
+the only shape that stops compiling.
+
+### one name per concept
+
+`AgentModelDeclaration` was a bare alias of `AgentModelDescriptor`, so the same
+type reached consumers under two exported names:
+
+```ts
+// before
+defineModelRegistry<Record<string, AgentModelDeclaration>>({ … })
+// after
+defineModelRegistry<Record<string, AgentModelDescriptor>>({ … })
+```
+
+A find-and-replace covers it; there is no behavioural change. Kept name is
+`AgentModelDescriptor`, the one paired with `AgentModelDescriptorSchema` and
+returned by `registry.descriptor()`.
+
+Two names that look like the same case and are **not** being merged:
+`SocketEventMap` aliases Socket.IO's `EventsMap` so a vendor's name stays out of
+our signatures, and `AgentRun.ownerId` holds the same value a runtime publishes
+as `runtimeEpoch` on its events. The latter is one identity in two roles — "who
+owns this run" and "which runtime emitted this event" — and both declarations
+now say so. Renaming either would make the fencing comparison read worse.
+
+### a reachable public surface
+
+Three exports that the public API required and did not provide, plus one option
+it accepted and ignored.
+
+```ts
+// before — identified by string, because the class was exported nowhere
+if (error instanceof Error && error.name === 'AgentRuntimeConflictError') …
+// after
+import { AgentRuntimeConflictError } from 'stitchkit/agent-runtime'
+if (error instanceof AgentRuntimeConflictError) …
+```
+
+`ActivityTokenBrand` is exported, so `ActivityProjection` can be implemented by
+a test double. `STITCH_ERROR_STATUS` gained `APPLICATION_NOT_ACCEPTING` (503) —
+only an exhaustive `satisfies Record<StitchErrorCode, …>` map stops compiling,
+and the fix is one line. `GRAMMY_WEBHOOK_NOT_ACCEPTING` is deliberately *not*
+registered: the registry belongs to the generic core, and a provider name has no
+place in a union every consumer imports. It travels as itself through a partial
+`codeMap`.
+
+`application.shutdown()` no longer accepts `retryAfterSeconds`. Delete it from
+the call — the kernel never read it. If you meant the HTTP `Retry-After` a
+draining server sends, that lives on `managedServerResource({ retryAfterSeconds })`,
+where it always did the work.
+
+### one shutdown vocabulary
+
+```ts
+// before
+await runtime.close({ drainTimeoutMs: 30_000, forceTimeoutMs: 5_000 })
+// after
+await runtime.close({ gracePeriodMs: 30_000, forceTimeoutMs: 5_000 })
+```
+
+The rename is mechanical. The behaviour change under it is not, and it is the
+reason the rename waited: two combinations were traps.
+`close({ drainTimeoutMs })` with no force budget aborted the runs and returned
+**without waiting for them to settle** — so naming a budget gave a weaker
+guarantee than naming none — and `close({ forceTimeoutMs })` with no drain
+budget never read the force budget, leaving an unbounded wait. Both now behave
+as their names say.
+
+> **Superseded.** This section once ended "and `close()` never returns while a
+> run is in flight". That was never true with a force budget — the budget exists
+> to stop waiting — and `close()` now returns `{ settled, timedOut, remaining }`
+> instead of promising it. See *Released migration: 0.60.0 → close() says what
+> it achieved*, above.
+
+If your shutdown path measured how long `close()` took, expect it to take
+longer in exactly the case where it used to return early — that is the fix, not
+a regression. Defaults stay per-surface: `ShutdownOptions.gracePeriodMs`
+defaults to 30 seconds, and the runtime's omitted budget still means "abort
+immediately", the behaviour `close()` has always had.
+
+### unresolved attachments are omitted
+
+`history.unresolvedFile` defaulted to `text`, and the placeholder it produced
+carried the storage reference:
+
+```ts
+// before — the provider received your object key
+// "[attachment: s3://bucket/tenants/42/invoice.pdf]"
+history: {}
+// after — omitted entirely by default; ask for a placeholder explicitly
+history: { unresolvedFile: 'text' }   // "[attachment: invoice.pdf]"
+```
+
+Two things to check. If a prompt relied on the model seeing *something* where an
+unresolved file was, set `unresolvedFile: 'text'` — behaviour otherwise changes
+silently, since an omitted part produces no error. And if any stored transcript
+or provider log contains the old placeholder, it contains your storage layout;
+treat those as disclosed. The `error` policy still names the reference, because
+it is thrown into your process rather than sent upstream.
+
+### one bounded recoverable scan
+
+`AgentRuntimeStore` had two scans: a mandatory unbounded one and an optional
+paged one. The runtime only ever called the optional one, so implementing the
+interface as written produced a store that threw on its first `recover()`:
+
+```ts
+// before — the mandatory member was dead, the needed one was optional
+{
+  scanRecoverable: () => loadEveryRecoverableSnapshot(),
+  scanRecoverablePage: ({ cursor, limit }) => page(cursor, limit),
+}
+// after — one member, the bounded signature the driver already used
+{ scanRecoverable: ({ cursor, limit }) => page(cursor, limit) }
+```
+
+Delete the unbounded implementation rather than porting it: loading every
+recoverable conversation to start is the shape 0.59.0 and ADR 0101 moved away
+from, and nothing calls it now. If you built on `createAgentRuntimeStore()` you
+have nothing to do **if you only pass it to the runtime** — it implements the
+bounded page for you from the same driver member. If you CALL it yourself, the
+member changed shape: `scanRecoverable()` took no argument and returned
+snapshots; it now takes `{ cursor?, limit }` — `limit` is required — and returns
+one page of descriptors.
+```ts
+// before: const stale = await store.scanRecoverable()
+// after:  const { items, nextCursor } = await store.scanRecoverable({ limit: 100 })
+```
+
+### published application status
+
+`createApplicationHealthHandler` and `createApplicationOperationalHandlers` no
+longer serialise the whole `ApplicationSnapshot`. They publish
+`ApplicationStatusProjection` — the verdict plus resource counts:
+
+```ts
+// before — the response named every resource and its dependency edges
+const { resources } = await fetch('/status').then((r) => r.json())
+resources[0].dependsOn
+// after — the topology is read in-process, where it always belonged
+app.getSnapshot().resources[0].dependsOn
+```
+
+The consequence to check is not compilation — it is whatever already consumes
+these routes. A dashboard that drew the dependency graph from `/status`, or an
+alert keyed on `admission.pending`, goes blank rather than red: the fields are
+absent, not zero. Both are available from `getSnapshot()`, so the fix is to read
+them in the process that owns the application and publish them on a channel you
+control. If a route was reachable from outside your network, treat the previous
+payload as disclosed and rotate nothing but assume the topology is known.
+
+## Released migration: 0.59.0
+
+### Normalized agent runtime persistence
 
 `AgentRuntimeStoreDriver` no longer reads and rewrites a lifetime `AgentStoredState` JSON
 aggregate. Migrate that row and its recoverable/archive projections once:
@@ -85,6 +277,85 @@ createAgentRuntimeStore({
 `runAgentStoreConformance()` against the migrated adapter before switching production traffic.
 If an application implements `AgentRuntimeStore` directly, its duplicate result must also include
 the canonical `run` and the retained `assistant` for a terminal run.
+
+## Released migration: 0.58.0
+
+### The default history projection rejects invalid chronology
+
+`projectAgentHistory` no longer forwards records a provider contract cannot
+accept. A completed assistant record before the first user message, and an
+assistant record whose tool calls have no matching results, are omitted with an
+inspectable decision instead of being sent upstream:
+
+```ts
+// before — a leading assistant record was forwarded as-is
+projectAgentHistory(messages)
+// after — opt in explicitly, and only where the provider contract permits it
+projectAgentHistory(messages, { leadingAssistant: 'allow' })
+```
+
+Two consequences the changelog does not spell out. First, the projection can now
+return **fewer** messages than the history holds, so any assertion or metric
+that compared projected length against stored length will move; read the
+detailed projection instead — it reports what was omitted and why, which is the
+supported way to see the difference. Second, the omission is silent to the
+provider but not to you: if a conversation suddenly loses its leading context,
+the decision record is where that shows up, not the transcript.
+
+### Operator events redact `internalCause` by default
+
+Raw provider and tool failures no longer travel in operator events unless the
+sink asks for them:
+
+```ts
+// before — internalCause was present
+createAgentObservability({ write })
+// after — an explicit operator-only opt-in
+createAgentObservability({ write, includeInternalCause: true })
+```
+
+The consequence to check before upgrading: any dashboard, alert or log
+processor keyed on `internalCause` goes blind the moment you upgrade, and it
+goes blind quietly — the field is absent, not empty. Set the flag on the
+operator sink you own. Product delivery stays redacted regardless of the flag;
+this option cannot widen what reaches a user.
+
+## Released migration: 0.57.0
+
+### Duplicate admission results carry the complete identity
+
+Custom `AgentRuntimeStore` adapters must persist and return the input and
+assistant identities associated with an idempotency key:
+
+```ts
+// before
+return { outcome: 'duplicate', runId, snapshot }
+
+// after
+return { outcome: 'duplicate', input, inputMessageId, runId, assistantMessageId, snapshot }
+```
+
+Prefer replacing the custom aggregate reducer with `createAgentRuntimeStore()`;
+its admission record and transaction driver implement this contract
+automatically. Historical note: 0.59.0 reshaped this driver again, so an adapter
+crossing both versions should read that section first and migrate once.
+
+### `AgentRuntimeEvent` adds a post-commit `admission` variant
+
+Add it to any exhaustive publisher switch. Its `assistant` is either the pending
+placeholder for a new assignment or the canonical persisted assistant for a
+duplicate:
+
+```ts
+case 'admission':
+  await persistProductProjection(event.input, event.run, event.assistant)
+  break
+```
+
+The consequence for an exhaustive switch written without a `default` branch is a
+compile error, which is the point. The consequence for a switch that *has* a
+`default` is worse and silent: post-commit admissions fall into it and are
+projected as an unknown event. Grep for publisher switches before upgrading.
 
 ## Released migration: 0.56.0
 
@@ -297,6 +568,116 @@ export const implementFor = createScopedImplement<{
 `'public'` must be a key (a contract with no `scope` is `'public'`). Write
 endpoints inline in the contract literal: an endpoint hoisted into a variable
 widens its `scope` to `string` and is reported as undeclared.
+
+## Released migration: 0.49.0
+
+### The server handle became managed
+
+`createServer()` and `serveNode()` return a handle that owns admission, HTTP
+drain, realtime closure and one deadline-bounded runtime stop:
+
+```ts
+// before
+server.stop()
+await socket.io.close()
+// after
+await server.shutdown({ gracePeriodMs: 30_000 })
+```
+
+The runtime-specific instance stays reachable at `.runtime`, so an escape hatch
+you already rely on does not disappear — but code that closed transports itself,
+in its own order, is now racing the handle. Delete the manual closes rather than
+keeping both; the handle's result tells you what it drained and what it forced.
+
+### Socket.IO mounts through the whole handle
+
+```ts
+// before
+createServer({ websocket: socket.websocket, rawRoutes: [socket.route] })
+// after
+createServer({ socket })
+```
+
+One owner for the route, the WebSocket attachment and the closure. For a raw Bun
+lane, keep the composed `websocket` handler and pass `socket` beside it.
+
+### Bun native `routes` are gone
+
+Native routes run before the Fetch handler, so they bypassed managed admission —
+which means they also bypassed shutdown, logging and observability, and that is
+why they had to go rather than be wired up:
+
+```ts
+// before
+createServer({ routes: { '/health': () => Response.json({ ok: true }) } })
+// after
+createServer({ rawRoutes: [{ method: 'GET', path: '/health', handler: () => Response.json({ ok: true }) }] })
+```
+
+### The handshake policy takes a Web `Request`
+
+```ts
+// before
+createSocketIOServer({ serverOptions: { allowRequest: (req, done) => done(null, allowed(req)) } })
+// after
+createSocketIOServer({ allowRequest: (request) => allowed(request) })
+```
+
+The Node-shaped callback is gone, and the policy is now composed with shutdown
+admission on both runtimes: a handshake arriving during drain is refused for
+you.
+
+## Released migration: 0.46.0
+
+### `REALTIME_CONTRACT_VIOLATION` joined the error registry
+
+Realtime contract failures use the framework error model instead of a bare
+`ZodError`, so an exhaustive map stops compiling until the code is added:
+
+```ts
+// before
+{ …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>
+// after
+{ …, INTERNAL_SERVER_ERROR: 'internal', REALTIME_CONTRACT_VIOLATION: 'internal' } satisfies Record<StitchErrorCode, string>
+```
+
+Only an exhaustive map breaks. Since 0.56.1 `codeMap` itself is partial, so a
+map without the `satisfies` keeps compiling and lets the code travel as itself.
+
+### `RealtimeRejectedEvent.error` is an `AppError`
+
+```ts
+// before
+onRejected: ({ error }) => error.issues
+// after
+onRejected: ({ error }) => error.details?.issues   // the ZodError moves to error.cause
+```
+
+The envelope gained `reason` and `fault`. The consequence worth checking: code
+reading `.issues` directly does not fail to compile if the handler is loosely
+typed — it silently reads `undefined`. Grep for `.issues` on rejection handlers.
+
+### CLI construction refuses reserved names
+
+A contract field or tool named `json`, `wait`, `quiet`, `dry-run`, `help`,
+`version`, `wait-timeout` or `output-dir` now **throws while the CLI is built**,
+instead of being silently shadowed:
+
+```ts
+// before: app schedule_job --wait 2h  → {"path":"2h"}, exit 0
+// after:  building a CLI over a contract with a "wait" field throws
+```
+
+This one fires at startup, not at call time, so an application shipping such a
+field crashes on boot after the upgrade. That is deliberate — the old behaviour
+corrupted arguments silently — but it means the upgrade is not safe to deploy
+without building the CLI once locally.
+
+### `createToolLogger` writes to stderr
+
+stdout is the JSON-RPC channel of a stdio MCP server, and the previous
+`console.info` default corrupted it. Pass `log` to redirect if your process
+collected tool logs from stdout.
 
 ## Released migration: 0.48.0
 
@@ -1116,3 +1497,23 @@ You are on the other side of this flow — see
 [`AGENTS.md` → Breaking changes & migration](../../AGENTS.md). In short: it is
 allowed; write the `### ⚠️ Breaking changes` block with a before → after snippet,
 bump the minor (pre-1.0), and migrate the controlled consumers in the same pass.
+
+### Where the migration section goes while the version has no number
+
+Write it here, immediately under the flow above, as
+**`## Unreleased migration: <short slug>`**. The slug matters: several unreleased
+migrations may sit side by side, and each one belongs to whoever wrote it. Do
+**not** reuse an existing `Unreleased migration` heading for a different change —
+that is how the 0.57.0 migration was lost, overwritten by the next author before
+anyone promoted it.
+
+At release, the release commit promotes every `Unreleased migration` heading into
+one `## Released migration: X.Y.Z`, each former heading becoming a `###`
+subsection under it. This is the same move the changelog makes when `[Unreleased]`
+becomes `## [X.Y.Z]`, and it happens in the same commit.
+
+A release carrying `### ⚠️ Breaking changes` and no matching
+`## Released migration: X.Y.Z` is refused by `bun scripts/release-plan.ts` — in
+`pre-push` and again in the publishing workflow. The check starts at `0.44.0`;
+breaking versions older than that are covered by the summary sections near the
+end of this file.

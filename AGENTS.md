@@ -27,17 +27,24 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - **NEVER** ship a competing WebSocket or hook engine — wrap Socket.IO
   (`createSocketIOClient` / `createSocketIOServer`) and `react-query-kit`
   (`createCursorQuery`). → ADR 0008
-- **NEVER** write `as` casts in business logic. The only casts that ship are a
-  handful at documented **boundary** sites — the loose↔typed bridges in
-  `internal/typed.ts`, and adapters over untyped external emitters (Socket.IO,
-  the event bus, the cache bridge) — each carrying a comment that justifies it.
-  A new cast anywhere else means the types are broken upstream; fix them there.
-  → ADR 0003
+- **NEVER** write `as` casts in business logic. A cast that ships is a
+  **boundary**: the loose↔typed bridges in `internal/typed.ts`, adapters over
+  untyped external emitters (Socket.IO, the event bus, the cache bridge), and
+  the generic bridges in `browser/client.ts` where a scoped client surface is
+  rebuilt from a wider one. Each must carry a comment saying why. A new cast
+  anywhere else means the types are broken upstream; fix them there. Nothing
+  enforces this mechanically — it is a review rule over a small, countable set
+  (thirteen in `packages/core/src`), not a gate. → ADR 0003
 - **ALWAYS** keep the core Web Fetch-clean — `createHandler` takes
   `HandlerConfig` (no Bun types). Bun APIs live only in `createServer` and
   `stitchkit/server`. → ADR 0013
 - **ALWAYS** Zod-first — a schema is the source of truth, types come from
   `z.infer`. Never hand-write a duplicate type.
+- **NEVER** make the project declaration a condition — of a build, a test, a
+  start path or a check. A project with no `project.json` is a complete
+  project; `stitchkit/declaration` is a leaf nothing else in the core imports,
+  and `packages/core/tests/project-declaration.test.ts` keeps it one. A
+  repository only one tool can bring up is a fork, not a dependency. → ADR 0104
 - **ALWAYS** keep the core generic — no domain model. Scopes are free strings,
   there is no billing, `source` is transport-only. → ADR 0002
 - Transport and hooks use `RuntimeContext` (loose); handlers use
@@ -47,8 +54,14 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   `docs/backlog/inbox/`. See `docs/README.md`.
 - A completed backlog item may claim test coverage only by naming the exact
   test file and test case in its `Что сделано` section.
-- **ALWAYS** run `bun run verify` before pushing — lint, typecheck, tests,
-  build and the Node smoke test must all be green.
+- **ALWAYS** run `bun run verify` before pushing. It is the whole gate: lint,
+  typecheck, tests, build, the Next-SSR and Node smokes, the packed consumer
+  lane and both packed starter lanes (which need Playwright browsers and a real
+  PostgreSQL — see `CONTRIBUTING.md`). **CI runs two things `verify` does not**:
+  `test:agent-store-postgres` and the supervised PM2 lane. A change to the agent
+  store or to supervision can be green locally and still turn CI red — which,
+  for a release commit, costs a new release commit (see *Order inside a
+  release*).
 
 ## Stack
 
@@ -56,15 +69,15 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   via `stitchkit/node` (→ ADR 0013).
 - **Zod** — validation. **`ky`** — HTTP client (the only runtime dependency).
 - Optional peers: `@modelcontextprotocol/server`, `@modelcontextprotocol/ext-apps`,
-  `ai`, `srvx`, `socket.io` /
+  `ai`, `@openrouter/ai-sdk-provider`, `srvx`, `socket.io` /
   `socket.io-client` / `@socket.io/bun-engine`, `@tanstack/react-query`,
-  `react-query-kit`.
+  `react-query-kit`, `grammy`, `@opentelemetry/api`.
 
 ## Commands
 
 ```bash
 bun run dev       # watch-rebuild packages/core/dist
-bun run verify    # lint + typecheck + test + build + node smoke + consumer lane — the gate
+bun run verify    # lint · check · test · build · next-ssr + node smokes · consumer lane · both starter lanes
 bun run build     # build dist/ + generate llms.txt
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
@@ -81,11 +94,20 @@ packages/core/src/
 ├── browser/    createClient, createHttpClient, createSocketIOClient
 ├── react/      createCursorQuery, createCacheBridge
 ├── tools/      createMcpHandler/mountMcp, mountAgent, execute
+├── agent-runtime/  durable runs, history, prompts, models, fencing (evolving)
+├── application/    resource graph, readiness, admission, schedules (evolving)
+├── realtime/   typed Socket.IO contracts and rejection reporting
+├── observability/  request/tool events, sanitising, trace context
+├── files/      managed file boundary, byte ranges, inspection
+├── testing/    in-process client, surface manifest, conformance kits
 └── internal/   error normalization, typed helpers
 ```
 
 Entrypoints: `stitchkit` (browser-safe) · `/server` · `/node` · `/tools` ·
-`/cli` · `/react` · `/contract` · `/observability`. The user guide is in
+`/cli` · `/react` · `/contract` · `/observability` · `/remote` · `/files` ·
+`/testing` · `/declaration` · `/agent-runtime` (+`/openrouter`) · `/application`
+(+`/grammy`, `/opentelemetry`). `/declaration`, `/agent-runtime` and
+`/application` are declared **evolving** (→ ADR 0103). The user guide is in
 `docs/guide/`, the full public API in `docs/api/reference.md`. The consumer
 entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by
 `bun run gen:llms` (runs in `build`) — edit the docs, not the generated files.
@@ -142,21 +164,30 @@ return shape, changed default, stricter validation):
 
 4. The **upgrade flow** an agent follows to move a consumer across versions lives
    in [`docs/guide/upgrading.md`](docs/guide/upgrading.md) — keep it in sync if
-   this convention changes.
+   this convention changes. A generated project is a consumer too, and has its
+   own channel: [`packages/create-stitchkit/UPGRADING.md`](packages/create-stitchkit/UPGRADING.md).
+   That is where a scaffolder release's **operator** steps go — delete these
+   supervisor processes, rename these variables — because a changelog entry
+   carrying them is overwritten by the next release. Both channels are held by
+   the same gate in `scripts/release-plan.ts`: a `### ⚠️ Breaking changes`
+   section with no promoted `## Released migration: X.Y.Z` in that package's
+   guide is refused.
 
 ## Releasing
 
 Tag-driven and independent (npm via OIDC trusted publishing + GitHub Releases).
-Full flow lives in the `.github/workflows/ci.yml` header:
+The tag flow lives in the `.github/workflows/release.yml` header; `ci.yml`
+carries the branch and pull-request gate:
 
 - **stitchkit:** bump only `packages/core/package.json`, roll the root
   `CHANGELOG.md`, run `bun run verify`, then tag `vX.Y.Z`. CI checks the core
   version, publishes only `stitchkit` and reads the root changelog.
 - **create-stitchkit:** update the template's single `catalog.stitchkit` target
   and lockfile, pass both `starter-lane` and `starter-head-lane`, bump only
-  `packages/create-stitchkit/package.json`, roll its own `CHANGELOG.md`, then tag
-  `create-stitchkit-vX.Y.Z`. CI checks the scaffolder version and publishes only
-  `create-stitchkit`.
+  `packages/create-stitchkit/package.json`, roll its own `CHANGELOG.md`, promote
+  every `## Unreleased migration:` heading in its own
+  `packages/create-stitchkit/UPGRADING.md`, then tag `create-stitchkit-vX.Y.Z`.
+  CI checks the scaffolder version and publishes only `create-stitchkit`.
 
 The package versions never need to match. A framework release must not silently
 advance or publish the starter; a starter release must target a Stitchkit range
@@ -179,8 +210,12 @@ the release commit keeps a red run forever (that is what 0.55.0 did). Two gates
 hold the shape, both in the publishing workflow, so neither depends on local
 hooks: `assert-head` keeps the tag on the branch head, and `assert-subject`
 requires that head to be the `release(<scope>): … in X.Y.Z` commit for the tag's
-own namespace and exact version. The `pre-push` hook runs the same checks
-earlier, before the expensive gate. A published tag is never moved.
+own namespace and exact version. The `pre-push` hook runs the **subject** check
+earlier, before the expensive gate; it deliberately does not run `assert-head`,
+which needs the remote head and belongs where the remote is authoritative. So a
+tag pointing at a superseded release commit passes `pre-push` and fails in the
+workflow — after the tag is already pushed, and a published tag is never moved.
+Tag the head.
 
 If a release commit is already pushed and its run goes red, the fix does not
 become taggable: land the fix, then make a **new** release commit for the same

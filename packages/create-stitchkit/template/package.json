@@ -7,14 +7,14 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.52.0"
+    "stitchkit": "^0.59.0"
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "check": "bun run db:generate && bun run check:authored && bun x tsc -p tsconfig.json --noEmit && bun run --filter '*' check",
     "check:authored": "bun scripts/check-authored.ts",
-    "test": "bun run --filter '*' test",
-    "build": "bun run db:generate && bun --filter @app/backend build && bun --filter @app/frontend build",
+    "test": "bun test scripts && bun run --filter '*' test",
+    "build": "bun scripts/build-inputs.ts && bun run db:generate && bun --filter @app/backend build && bun --filter @app/frontend build",
     "start:api": "bun --filter @app/backend start",
     "start:web": "bun --filter @app/frontend start",
     "env:ensure": "bun scripts/local-env.ts",
@@ -31,7 +31,8 @@
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "pm2:dev": "bun scripts/dev.ts",
-    "pm2:prod": "bun run db:deploy && bun packages/backend/scripts/ensure-built.ts && pm2 startOrReload ecosystem.config.cjs --update-env"
+    "pm2:prod": "bun scripts/release.ts",
+    "gen:declaration": "bun scripts/declaration.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2"

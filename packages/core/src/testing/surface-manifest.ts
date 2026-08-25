@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { type ZodType, z } from 'zod';
 import type { EndpointMcpPolicy, HttpMethod } from '../contract';
+import { joinRoutePath } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 import type { RouteGroup, ServiceDef } from '../server/types';
@@ -199,15 +200,6 @@ function multipartDigest(value: unknown): string | null {
   return value === undefined ? null : digestValue(value);
 }
 
-function joinPath(...parts: Array<string | undefined>): string {
-  const joined = parts
-    .filter((part): part is string => Boolean(part))
-    .map((part) => part.replace(/^\/+|\/+$/g, ''))
-    .filter(Boolean)
-    .join('/');
-  return `/${joined}`;
-}
-
 function operationKey(kind: 'contract' | 'runtime', service: string, action: string): string {
   return `${kind}\u0000${service}\u0000${action}`;
 }
@@ -345,7 +337,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
       if (method.expose && !method.expose.includes('HTTP')) continue;
       const route = {
         method: method.method,
-        path: joinPath(prefix, service.prefix, method.path),
+        path: joinRoutePath(prefix, service.prefix, method.path),
       };
       if (
         !operation.http.some(

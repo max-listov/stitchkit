@@ -16,7 +16,9 @@ complete production UI system.
 It uses one conventional `packages/*` namespace: `backend`, `frontend`,
 `config`, `db` and `shared`. The destination name becomes the generated slug;
 `--display-name` sets the human title. Both are recorded once in
-`app.config.json` and drive package, process, transport, UI and SEO identity.
+`project.json` — the generated project's **declaration**, the single
+machine-readable statement it makes about itself — and drive package, process,
+transport, UI and SEO identity.
 
 The default scaffold is domain-free. To add the runnable repository example:
 

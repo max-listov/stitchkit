@@ -5,9 +5,12 @@ import { z } from 'zod';
 import { ensureLocalEnvironment } from './local-env';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+// Tooling addresses are LEGITIMATELY bound to a place — they name the deployment a
+// check is dialling. They must not be named `NEXT_PUBLIC_*`, because that
+// prefix makes Next substitute the value into the build output.
 const ToolingEnvSchema = z.object({
-  NEXT_PUBLIC_API_URL: z.url(),
-  NEXT_PUBLIC_WEB_URL: z.url(),
+  SMOKE_API_ORIGIN: z.url(),
+  SMOKE_WEB_ORIGIN: z.url(),
   PLAYWRIGHT_BASE_URL: z.url().optional(),
 });
 

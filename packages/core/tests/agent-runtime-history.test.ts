@@ -175,3 +175,44 @@ describe('agent history projection', () => {
     ]);
   });
 });
+
+describe('agent history file fallbacks keep storage addresses internal', () => {
+  const withFile = () =>
+    AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'user-1',
+      conversationId: 'conversation-1',
+      role: 'user',
+      status: 'completed',
+      parts: [
+        {
+          type: 'file',
+          reference: 's3://private-bucket/tenants/42/invoice.pdf',
+          mediaType: 'application/pdf',
+          filename: 'invoice.pdf',
+        },
+      ],
+      createdAt: '2026-08-24T00:00:00.000Z',
+      updatedAt: '2026-08-24T00:00:00.000Z',
+    });
+
+  test('the default omits an unresolved file instead of describing where it lives', async () => {
+    const projected = await projectAgentHistory([withFile()]);
+    expect(JSON.stringify(projected)).not.toContain('private-bucket');
+    expect(JSON.stringify(projected)).not.toContain('s3://');
+  });
+
+  test('the text fallback describes the attachment, never its storage reference', async () => {
+    const projected = await projectAgentHistory([withFile()], { unresolvedFile: 'text' });
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain('private-bucket');
+    expect(serialized).not.toContain('s3://');
+    expect(serialized).toContain('[attachment: invoice.pdf]');
+  });
+
+  test('the error fallback names the reference — it is thrown inward, not sent upstream', async () => {
+    await expect(
+      projectAgentHistory([withFile()], { unresolvedFile: 'error' }),
+    ).rejects.toThrow('s3://private-bucket/tenants/42/invoice.pdf');
+  });
+});

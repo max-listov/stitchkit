@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import type { AgentRuntimeStore } from '../src/agent-runtime';
 import {
   AgentMessageSchema,
   AgentRunSchema,
@@ -15,6 +16,36 @@ describe('agent runtime store driver', () => {
     await runAgentStoreConformance({
       createStore: createMemoryAgentRuntimeStore,
     });
+  });
+
+  test('a store implementing exactly the declared interface survives recover()', async () => {
+    // The contract used to demand an unbounded `scanRecoverable()` the runtime
+    // never called, while the method `recover()` actually needs was optional —
+    // so an adapter written straight from the interface threw at startup.
+    // Narrowing to the interface here is the point: nothing extra is in scope.
+    const store: AgentRuntimeStore = createMemoryAgentRuntimeStore();
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('not used');
+      },
+      tools: () => ({}),
+    });
+
+    expect(await runtime.recover({ resolveContext: () => ({}) })).toEqual([]);
+    await runtime.close({ forceTimeoutMs: 1_000 });
   });
 
   test('bounded recovery resumes queued work and skips a live acquired run by default', async () => {
@@ -266,17 +297,25 @@ describe('agent runtime store driver', () => {
     for (let index = 0; index < 101; index += 1) {
       await admit('large-conversation', `run-${index.toString().padStart(3, '0')}`);
     }
-    const firstPage = await store.scanRecoverablePage?.({ limit: 1 });
-    expect(firstPage?.items).toHaveLength(1);
-    const secondPage = await store.scanRecoverablePage?.({
-      cursor: firstPage?.nextCursor,
+    const firstPage = await store.scanRecoverable({ limit: 1 });
+    expect(firstPage.items).toHaveLength(1);
+    const secondPage = await store.scanRecoverable({
+      ...(firstPage.nextCursor !== undefined && { cursor: firstPage.nextCursor }),
       limit: 1,
     });
-    expect(secondPage?.items).toHaveLength(1);
-    expect(secondPage?.items[0]).not.toEqual(firstPage?.items[0]);
-    const snapshots = await store.scanRecoverable();
-    expect(
-      snapshots.filter((snapshot) => snapshot.conversationId === 'large-conversation'),
-    ).toHaveLength(1);
+    expect(secondPage.items).toHaveLength(1);
+    expect(secondPage.items[0]).not.toEqual(firstPage.items[0]);
+
+    // Walking every page reaches every recoverable run without ever holding
+    // the whole set: that is what makes the scan bounded rather than a
+    // pagination detail over an unbounded load.
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await store.scanRecoverable({ ...(cursor && { cursor }), limit: 50 });
+      seen.push(...page.items.map((item) => item.conversationId));
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    expect(new Set(seen).has('large-conversation')).toBe(true);
   });
 });

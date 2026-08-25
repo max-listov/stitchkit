@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port ${WEB_PORT:-3210}",
+    "dev": "bun scripts/serve.ts development",
     "build": "next build",
-    "start": "next start --port ${WEB_PORT:-3210}",
+    "start": "bun scripts/serve.ts production",
     "check": "next typegen && bun x tsc --noEmit",
     "test": "bun test --pass-with-no-tests"
   },

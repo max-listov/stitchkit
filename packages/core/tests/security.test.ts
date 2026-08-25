@@ -50,7 +50,13 @@ describe('parseCookies — prototype pollution + malformed segments', () => {
   test('skips a __proto__ cookie', () => {
     const cookies = parseCookies('__proto__=x; sid=abc');
     expect(cookies.sid).toBe('abc');
-    expect(({} as Record<string, unknown>).x).toBeUndefined();
+    // The load-bearing assertion. The old one — `({} as Record<…>).x` is
+    // undefined — is true whatever `parseCookies` does: assigning to
+    // `cookies['__proto__']` on a plain object hits the setter, which ignores a
+    // string, so no prototype is ever polluted through this input and nothing
+    // could have created `{}.x`. What must actually hold is that the key was
+    // DROPPED.
+    expect(Object.keys(cookies)).toEqual(['sid']);
   });
 
   test('skips a segment with no `=`', () => {

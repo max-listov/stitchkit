@@ -103,8 +103,15 @@ export interface AgentRuntimeStore {
   recoverRun(input: RecoverAgentRun): Promise<AgentStoreMutationResult>;
   commitRunTerminal(input: CommitRunTerminal): Promise<AgentStoreMutationResult>;
   replaceCompactedRange(input: ReplaceCompactedRange): Promise<AgentStoreMutationResult>;
-  scanRecoverable(): Promise<readonly AgentSnapshot[]>;
-  scanRecoverablePage?(input: {
+  /**
+   * One bounded page of recoverable runs.
+   *
+   * Bounded is the whole point (→ ADR 0101): recovery must not depend on
+   * loading every recoverable conversation into memory to start. The driver
+   * member of the same name has the same shape, so an adapter implements this
+   * once at whichever level it plugs in.
+   */
+  scanRecoverable(input: {
     cursor?: string;
     limit: number;
   }): Promise<import('./store-driver').AgentRecoverablePage>;

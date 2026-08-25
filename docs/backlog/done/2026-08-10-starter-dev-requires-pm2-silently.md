@@ -59,6 +59,11 @@ ASCII-баннер в stdout перед JSON (1367 байт, начиная с `
 ## Что сделано
 
 - [x] Реализация: packages/create-stitchkit/template/scripts/dev.ts and packages/create-stitchkit/template/ecosystem.dev.config.cjs.
-- [x] Регрессия: packages/create-stitchkit/tests/scaffold.test.ts::runs PM2 apps from their package directories
+- [x] Регрессия: packages/create-stitchkit/tests/scaffold.test.ts::runs PM2 apps from their own directories, with no launcher in between
+<!-- Точечная правка имени: тест не удалён, а переименован и усилен в
+     2026-08-24-derived-process-files.md — теперь он проверяет не форму строки,
+     а инвариант (роль стартует в своём каталоге, между супервизором и ролью нет
+     процесса-лаунчера). Историческое утверждение осталось верным, менялась
+     только ссылка, чтобы гейт docs-hygiene продолжал её проверять. -->
 - [x] Публичная документация и changelog синхронизированы там, где изменился consumer-facing контракт.
 - [x] Итоговый bun run verify подтверждает lint, typecheck, тесты, build, Node smoke и consumer lane.
