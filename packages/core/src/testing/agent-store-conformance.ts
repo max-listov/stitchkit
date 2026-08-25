@@ -215,10 +215,21 @@ export async function runAgentStoreConformance(
       createdAt: '2026-08-22T00:00:00.000Z',
       updatedAt: '2026-08-22T00:00:01.000Z',
     }),
+    usage: {
+      inputTokens: { value: 1_000, provenance: 'provider-reported' },
+      outputTokens: { value: 100, provenance: 'provider-reported' },
+      cost: { value: 0.25, currency: 'USD', provenance: 'provider-reported' },
+    },
   });
   requireOutcome(checkpoint, 'applied');
   const checkpointedRun = checkpoint.snapshot.runs.find((run) => run.id === running.id);
   if (!checkpointedRun) throw new Error('Checkpointed run disappeared');
+  // A process that dies mid-stream never reaches the terminal commit, so a
+  // driver that drops the checkpointed figure loses everything the run had
+  // spent — and the figure has no other durable home.
+  if (checkpointedRun.usage?.cost?.value !== 0.25) {
+    throw new Error('Checkpoint did not persist the run usage it was given');
+  }
   const terminalAssistant = AgentMessageSchema.parse({
     schemaVersion: 1,
     id: running.assistantMessageId,
@@ -238,6 +249,11 @@ export async function runAgentStoreConformance(
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',
+      usage: {
+        inputTokens: { value: 3_000, provenance: 'computed' },
+        outputTokens: { value: 300, provenance: 'computed' },
+        cost: { value: 1.5, currency: 'USD', provenance: 'computed' },
+      },
     }),
     store.commitRunTerminal({
       conversationId,
@@ -246,6 +262,11 @@ export async function runAgentStoreConformance(
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',
+      usage: {
+        inputTokens: { value: 3_000, provenance: 'computed' },
+        outputTokens: { value: 300, provenance: 'computed' },
+        cost: { value: 1.5, currency: 'USD', provenance: 'computed' },
+      },
     }),
   ]);
   const terminalOutcomes = terminalResults.map((result) => result.outcome).sort();
@@ -255,6 +276,10 @@ export async function runAgentStoreConformance(
   const terminalApplied = terminalResults.find((result) => result.outcome === 'applied');
   if (terminalApplied?.outcome !== 'applied') {
     throw new Error('Terminal race produced no applied result');
+  }
+  const settledRun = terminalApplied.snapshot.runs.find((run) => run.id === running.id);
+  if (settledRun?.usage?.cost?.value !== 1.5) {
+    throw new Error('Terminal commit did not persist the run usage it was given');
   }
   const compactedTerminal = await store.replaceCompactedRange({
     conversationId,

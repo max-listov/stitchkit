@@ -206,7 +206,7 @@ the fourth row below is a behaviour it deliberately does not offer yet:
 | `queue` (default) | finishes first | kept |
 | `interrupt` | ends | kept, and marked as cut off |
 | `supersede` | ends | discarded from the prompt, kept in the record |
-| _inject_ | continues | — not supported; see below |
+| `inject` | continues | kept — it takes the new input at a step boundary |
 
 `interrupt` and `supersede` differ in exactly one thing, and the question that
 picks between them is **not** "was the run interrupted" but **"did anyone see
@@ -290,15 +290,37 @@ const { decisions } = await projectAgentHistoryDetailed(snapshot.messages)
 process-local escape hatch chooses the reason, so a caller that knows the answer
 was never delivered can discard it without a newer input arriving.
 
-### The one that is not supported
+### The one that ends nothing
 
-**inject** — hand the input to the loop between tool calls and let the run
-continue — has no primitive. `loop.prepareStep` passes the AI SDK return type
-through, so an application *can* append messages between steps, but nothing
-hands `prepareStep` the pending inputs and nothing attaches an absorbed input to
-the running run's `inputMessageIds`. A run that answered two messages would
-carry a durable record claiming it answered one. It is reachable by hand, not
-supported.
+**`inject`** hands the input to the loop between tool calls and lets the run keep
+going. It is right when the input *refines* rather than redirects — a correction
+arriving while a multi-step task is halfway through, where discarding the
+finished steps would be pure loss.
+
+It queues like `queue`, and a run already in flight takes it on at its next step
+boundary. That ordering is the whole design: the tempting shape, attaching a new
+input straight to a running run, has a loss case with no honest answer, because
+the run may terminate before the loop reaches a boundary and the input would then
+be recorded as answered by a turn that never saw it. Queue first and absorb
+opportunistically, and the fallback is simply that the successor runs — the
+behaviour every other policy already has.
+
+When a run does absorb one:
+
+- both inputs land in the answering run's `inputMessageIds`, so the durable
+  record matches what the model was actually asked;
+- both submissions' tickets resolve to the same terminal result;
+- the absorbed run is marked `absorbed` with `absorbedIntoRunId` pointing at the
+  run that answered. It is kept, not deleted — its admission receipt still points
+  at it, so a duplicate submission has to resolve to something. It leaves the
+  conversation snapshot, because a snapshot carries active runs plus those a
+  message references and an absorbed run never wrote an assistant message;
+- the next provider call carries the re-projected history. An application's own
+  `prepareStep` wins if it sets `messages` itself — it is the one that knows why.
+
+A step boundary is the only place this can happen: the provider is between calls,
+so the next request can carry the new message. A single-step run never reaches
+one, and its successor simply runs next.
 
 With `runs.coalescePending: true`, an active lane has at most one queued
 successor. Every later accepted input is atomically appended to that successor;
@@ -551,6 +573,35 @@ rather than picking a label. The core records a currency and never converts one.
 Usage is **not durable**. It reaches you on the operator and delivery event
 streams and in `AgentRuntimeResult.metrics`, and stitchkit writes no spend to the
 store — where a figure lives afterwards is the application's (→ ADR 0002).
+
+### Reconciling with the provider's own accounting
+
+Whether a provider bills for a call that was aborted mid-flight cannot be known
+inside the process: the authoritative number arrives later, from the provider's
+accounting. **stitchkit does not accept it back** (→ ADR 0110) — a terminal run
+is an absorbing state, and a write that reached it through the conversation
+aggregate could conflict a concurrent compaction into discarding a summary it had
+just paid a model to produce.
+
+The join is yours, and `runId` is the key:
+
+```ts
+// when the run terminates — write what the runtime observed
+await ledger.record({
+  runId: terminal.run.id,
+  conversationId: terminal.run.conversationId,
+  costUsd: terminal.metrics?.usage?.cost?.value ?? null,   // null when `unavailable`
+  provenance: terminal.metrics?.usage?.cost?.provenance ?? 'unavailable',
+})
+
+// later — the provider's accounting names the same generation
+await ledger.reconcile({ runId, costUsd: billed, provenance: 'provider-reported' })
+```
+
+Record the row even when the figure is `unavailable`: that row is the evidence
+that a run happened and cost something nobody has counted yet, and it is what the
+provider's later figure attaches to. A run with no row is a run you cannot
+reconcile.
 
 The sink deduplicates stable event IDs by default. Cross-crash exactly-once still requires a durable
 outbox.

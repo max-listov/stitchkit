@@ -2,9 +2,10 @@
 title: Where a reconciled cost belongs
 description: Whether a later-known provider figure may be attached to a closed run, and whether that belongs in the core at all.
 type: task
-status: inbox
+status: done
 created: 2026-08-25
 updated: 2026-08-25
+completed: 2026-08-25 14:59 +0000
 related: docs/backlog/in-progress/2026-08-25-an-abandoned-run-under-reports-what-it-spent.md
 ---
 
@@ -54,19 +55,46 @@ application owns.
 
 ## План
 
-- [ ] Write the ADR. The recommendation from both plan validators is "no, this
+- [x] Write the ADR. The recommendation from both plan validators is "no, this
       lives in the application"; the ADR must argue it rather than assert it, and
       must survive the obvious counter-argument that the core already stores
       conversation state so one more column is free.
-- [ ] If the answer is yes: append-only, keyed by `runId`, **outside** the
+- [x] If the answer is yes: append-only, keyed by `runId`, **outside** the
       conversation aggregate and with no head CAS, precisely so accounting can
       never conflict with a conversation operation.
-- [ ] Pre-empt the follow-on requests in the same ADR: the core records a
+- [x] Pre-empt the follow-on requests in the same ADR: the core records a
       currency, it never converts one; it never aggregates, attributes per user,
       or enforces a budget.
-- [ ] Either way, document the join in `docs/guide/agent-runtime.md`.
+- [x] Either way, document the join in `docs/guide/agent-runtime.md`.
 
 ## Acceptance
 
-- [ ] ADR in `docs/decisions/` + row in `docs/decisions/README.md`.
-- [ ] The guide shows the reconciliation join, wherever it was decided to live.
+- [x] ADR in `docs/decisions/` + row in `docs/decisions/README.md`.
+- [x] The guide shows the reconciliation join, wherever it was decided to live.
+
+## Что сделано
+
+- [x] ADR `docs/decisions/0110-a-reconciled-cost-belongs-to-the-application.md`
+      + row in `docs/decisions/README.md`. The answer is **no** — a reconciled
+      cost is the application's ledger, joined on `runId`.
+- [x] The argument is made rather than asserted, and rests on a mechanism rather
+      than taste: every store mutation compare-and-swaps the conversation head,
+      so a late billing write could conflict a concurrent
+      `replaceCompactedRange` into discarding a summary it had just paid a model
+      to produce. An accounting write must not be able to do that.
+- [x] The counter-argument is answered: the append-only shape avoids the
+      coupling and costs a new driver namespace, table, pagination and
+      conformance entry — a second write path in every adapter, for data the
+      core has no other reason to hold.
+- [x] The shape is fixed in advance in case it is ever revisited: append-only,
+      keyed by `runId`, outside the conversation aggregate, no head CAS.
+- [x] Three follow-on requests pre-empted in the same ADR: the core records a
+      currency and never converts one; never aggregates; never enforces a budget.
+- [x] `docs/guide/agent-runtime.md` → `### Reconciling with the provider's own
+      accounting` shows the join, including that a row is written even when the
+      figure is `unavailable` — that row is what the later figure attaches to.
+
+### Что не сделано
+
+- [x] No code. The deliverable was a decision, and the decision is that the core
+      gains nothing.

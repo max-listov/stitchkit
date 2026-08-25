@@ -31,7 +31,9 @@ export function isSpeakableAssistantStatus(status: AgentMessage['status']): bool
 }
 
 export function assistantStatus(reason: AgentTerminalReason): AgentMessage['status'] {
-  if (reason === 'success' || reason === 'policy_stop') return 'completed';
+  if (reason === 'success' || reason === 'policy_stop' || reason === 'provider_stop') {
+    return 'completed';
+  }
   // Its own status, not a shade of `interrupted`. The two differ in exactly one
   // way — whether anything this run produced may still be shown to the model —
   // and that is the question the projection asks. Folding them together here

@@ -121,6 +121,7 @@ export const AgentRunStateSchema = z.enum([
   'completed',
   'interrupted',
   'superseded',
+  'absorbed',
   'failed',
   'cancelled',
   'abandoned',
@@ -129,6 +130,7 @@ export const AgentRunStateSchema = z.enum([
 export const AgentTerminalReasonSchema = z.enum([
   'success',
   'policy_stop',
+  'provider_stop',
   'interrupted',
   'superseded',
   'cancelled',
@@ -140,6 +142,28 @@ export const AgentTerminalReasonSchema = z.enum([
 ]);
 
 export type AgentTerminalReason = z.infer<typeof AgentTerminalReasonSchema>;
+
+export const AgentUsageValueSchema = z.object({
+  value: z.number().nonnegative().optional(),
+  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
+});
+
+export const AgentCostValueSchema = z.object({
+  value: z.number().nonnegative().optional(),
+  currency: z.string().length(3).optional(),
+  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
+});
+
+export const AgentUsageSchema = z.object({
+  inputTokens: AgentUsageValueSchema,
+  outputTokens: AgentUsageValueSchema,
+  reasoningTokens: AgentUsageValueSchema.optional(),
+  cacheReadTokens: AgentUsageValueSchema.optional(),
+  cacheWriteTokens: AgentUsageValueSchema.optional(),
+  cost: AgentCostValueSchema.optional(),
+});
+
+export type AgentUsage = z.infer<typeof AgentUsageSchema>;
 
 export const AgentRunSchema = z.object({
   schemaVersion: z.literal(1),
@@ -162,6 +186,34 @@ export const AgentRunSchema = z.object({
   fencingToken: AgentRecordVersionSchema.optional(),
   terminalReason: AgentTerminalReasonSchema.optional(),
   terminalPolicyName: z.string().min(1).optional(),
+  /**
+   * The run that answered this one's inputs instead of it.
+   *
+   * Set when a run in flight absorbed a queued successor at a step boundary
+   * (`inputPolicy: 'inject'`). The absorbed record is kept rather than deleted,
+   * because its admission receipt still points at it and a duplicate submission
+   * has to resolve to something.
+   *
+   * It leaves the conversation snapshot, though — a snapshot carries active
+   * runs plus those a message references, and an absorbed run never wrote an
+   * assistant message. What the conversation shows instead is the answering
+   * run's `inputMessageIds`, carrying both inputs. That is the projection an
+   * operator reads; this pointer is for whoever holds the run id.
+   */
+  absorbedIntoRunId: AgentRecordIdSchema.optional(),
+  /**
+   * What this run has cost, written with its terminal record.
+   *
+   * The figure used to exist only on two bounded, fire-and-forget event sinks
+   * that drop under load — and they drop by arrival order, so the event
+   * carrying nothing survives while the one carrying the money does not. With
+   * nowhere durable to read it back from, a dropped event was a lost number.
+   *
+   * It is deliberately **not** a ledger (→ ADR 0110): one figure, on the run
+   * that produced it, never aggregated and never reconciled against a provider
+   * invoice by the core. Absent on a run that has not terminated.
+   */
+  usage: AgentUsageSchema.optional(),
   createdAt: AgentTimestampSchema,
   updatedAt: AgentTimestampSchema,
 });
@@ -187,28 +239,6 @@ export const AgentSnapshotSchema = z.object({
 });
 
 export type AgentSnapshot = z.infer<typeof AgentSnapshotSchema>;
-
-export const AgentUsageValueSchema = z.object({
-  value: z.number().nonnegative().optional(),
-  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
-});
-
-export const AgentCostValueSchema = z.object({
-  value: z.number().nonnegative().optional(),
-  currency: z.string().length(3).optional(),
-  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
-});
-
-export const AgentUsageSchema = z.object({
-  inputTokens: AgentUsageValueSchema,
-  outputTokens: AgentUsageValueSchema,
-  reasoningTokens: AgentUsageValueSchema.optional(),
-  cacheReadTokens: AgentUsageValueSchema.optional(),
-  cacheWriteTokens: AgentUsageValueSchema.optional(),
-  cost: AgentCostValueSchema.optional(),
-});
-
-export type AgentUsage = z.infer<typeof AgentUsageSchema>;
 
 export const AgentRunMetricsSchema = z.object({
   partial: z.boolean(),

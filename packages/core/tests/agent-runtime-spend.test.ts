@@ -562,3 +562,290 @@ describe('the two event channels are gated for their own readers', () => {
     await runtime.close();
   });
 });
+
+describe('a run says who ended it', () => {
+  const runtimeFor = (model: MockLanguageModelV4, observed: AgentRunEvent[]) =>
+    createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store: createMemoryAgentRuntimeStore(),
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'expensive-model',
+            contextWindow: 100_000,
+            capabilities: [],
+          },
+          model,
+          normalizeUsage,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      observe: createAgentObservability({
+        write: (event) => {
+          observed.push(event);
+        },
+      }),
+    });
+
+  test('a provider failure is not a policy stop', async () => {
+    const observed: AgentRunEvent[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'error', error: new Error('upstream exploded') },
+            // The provider still delivers a finish, and this used to overwrite
+            // the failure with a stop policy that does not exist.
+            {
+              type: 'finish',
+              finishReason: { unified: 'error', raw: undefined },
+              usage: sdkUsage(10, 0),
+            },
+          ],
+        } as never),
+      }),
+    });
+    const runtime = runtimeFor(model, observed);
+    const terminal = await send(runtime, 'input-1', 'go').result;
+    await runtime.close();
+
+    expect(terminal.reason).toBe('provider_failure');
+    expect(terminal.policyName).toBeUndefined();
+  });
+
+  test('policy_stop never arrives without the policy that caused it', async () => {
+    const observed: AgentRunEvent[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'truncated…' },
+            { type: 'text-end', id: 'text-1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'length', raw: undefined },
+              usage: sdkUsage(10, 5),
+            },
+          ],
+        } as never),
+      }),
+    });
+    const runtime = runtimeFor(model, observed);
+    const terminal = await send(runtime, 'input-1', 'go').result;
+    await runtime.close();
+
+    // A cap the provider hit is the provider's decision, not the application's.
+    expect(terminal.reason).toBe('provider_stop');
+    expect(terminal.policyName).toBeUndefined();
+    // And the run is still a completed turn — it produced an answer.
+    expect(terminal.message.status).toBe('completed');
+  });
+});
+
+describe('a spend figure outlives the channel that reported it', () => {
+  test('the run record carries what it cost, so a dropped event is not a lost number', async () => {
+    const dropped: AgentRunEvent[] = [];
+    const store = createMemoryAgentRuntimeStore();
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'expensive-model',
+            contextWindow: 100_000,
+            capabilities: [],
+          },
+          model: threeStepModel(),
+          normalizeUsage,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({
+        ping: tool({
+          description: 'p',
+          inputSchema: z.object({}),
+          execute: async () => 'pong',
+        }),
+      }),
+      loop: { maxSteps: 10 },
+      // A sink that loses everything — the bounded default drops under load, and
+      // it drops by arrival order, so the event carrying the money is exactly as
+      // droppable as the one carrying nothing.
+      observe: createAgentObservability({
+        write: () => {
+          throw new Error('sink is down');
+        },
+        onSinkError: ({ event }) => {
+          if (event) dropped.push(event);
+        },
+      }),
+    });
+    const terminal = await send(runtime, 'input-1', 'go').result;
+    await runtime.close();
+
+    const snapshot = await store.loadSnapshot('conversation-1');
+    const stored = snapshot.runs.find((run) => run.id === terminal.run.id);
+    // Readable back from the store, with no event surviving at all.
+    expect(stored?.usage?.cost).toEqual({ value: 3, currency: 'USD', provenance: 'computed' });
+    expect(stored?.usage?.inputTokens).toEqual({ value: 6_000, provenance: 'computed' });
+  });
+
+  test('a crashed attempt leaves behind what it had already spent', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    // One step finishes and is checkpointed; the process then dies before the
+    // terminal commit. Writing usage only at the terminal used to mean the
+    // figure lived solely in an event the dead executor never emitted.
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'half an answer' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: sdkUsage(2_000, 200),
+              providerMetadata: { openrouter: { usage: { cost: 1.25 } } },
+            },
+          ],
+        } as never),
+      }),
+    });
+    const crashing: typeof store = {
+      ...store,
+      async commitRunTerminal() {
+        throw new Error('process died before the terminal commit');
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store: crashing,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'expensive-model',
+            contextWindow: 100_000,
+            capabilities: [],
+          },
+          model,
+          normalizeUsage,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      loop: { checkpointEveryEvents: 1 },
+    });
+    await expect(send(runtime, 'input-1', 'go').result).rejects.toThrow();
+    await runtime.close();
+
+    const snapshot = await store.loadSnapshot('conversation-1');
+    const crashed = snapshot.runs[0];
+    // The record the next process reads knows what the dead one had spent.
+    expect(crashed?.state).toBe('running');
+    // One step, so the provider's own figure passes through untouched — a sum
+    // of one is not a sum. The point is that it is *there* at all.
+    expect(crashed?.usage?.cost).toEqual({
+      value: 1.25,
+      currency: 'USD',
+      provenance: 'provider-reported',
+    });
+    expect(crashed?.usage?.inputTokens?.value).toBe(2_000);
+  });
+
+  test('what compaction spent is part of what the run spent', async () => {
+    const observed: AgentRunEvent[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'done' },
+            { type: 'text-end', id: 'text-1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: sdkUsage(1_000, 100),
+              providerMetadata: { openrouter: { usage: { cost: 0.25 } } },
+            },
+          ],
+        } as never),
+      }),
+    });
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store: createMemoryAgentRuntimeStore(),
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'expensive-model',
+            contextWindow: 100_000,
+            capabilities: [],
+          },
+          model,
+          normalizeUsage,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      history: {
+        // A real provider call the run caused, which produces no step and no
+        // event of its own and used to be invisible in every figure.
+        compact: async ({ conversationId, store }) => ({
+          outcome: 'not_needed' as const,
+          snapshot: await store.loadSnapshot(conversationId),
+          attempts: 1,
+          usage: {
+            inputTokens: { value: 400, provenance: 'provider-reported' as const },
+            outputTokens: { value: 40, provenance: 'provider-reported' as const },
+            cost: { value: 0.75, currency: 'USD', provenance: 'provider-reported' as const },
+          },
+        }),
+      },
+      observe: createAgentObservability({
+        write: (event) => {
+          observed.push(event);
+        },
+      }),
+    });
+    const terminal = await send(runtime, 'input-1', 'go').result;
+    await runtime.close();
+
+    // $0.75 summarising plus $0.25 answering.
+    expect(terminal.metrics?.usage?.cost).toEqual({
+      value: 1,
+      currency: 'USD',
+      provenance: 'computed',
+    });
+    // The provider reported the run total as 1000 input; compaction's 400 are
+    // outside it and the merge keeps them rather than letting the SDK's total
+    // erase what the hook reported.
+    expect(terminal.metrics?.partial).toBe(false);
+  });
+});

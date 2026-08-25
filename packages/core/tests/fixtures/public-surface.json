@@ -773,6 +773,8 @@
     "wrapInRequestContext"
   ],
   "stitchkit/agent-runtime": [
+    "AbsorbQueuedRun",
+    "AbsorbQueuedRunSchema",
     "AcceptInputAndAssignRun",
     "AcceptInputAndAssignRunSchema",
     "AcquireAgentRun",

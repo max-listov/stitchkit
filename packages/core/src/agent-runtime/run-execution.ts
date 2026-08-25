@@ -1,4 +1,10 @@
-import { type StopCondition, stepCountIs, streamText, type ToolSet } from 'ai';
+import {
+  type ModelMessage,
+  type StopCondition,
+  stepCountIs,
+  streamText,
+  type ToolSet,
+} from 'ai';
 import { isToolExecutionControlError } from '../tools/execute';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistory } from './history';
@@ -23,6 +29,7 @@ import {
   AgentMessagePartSchema,
   AgentMessageSchema,
   type AgentRun,
+  type AgentSnapshot,
   type AgentTerminalReason,
   type AgentUsage,
 } from './schemas';
@@ -72,6 +79,10 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     acceptedRun: AgentRun;
     context: CONTEXT;
     signal: AbortSignal;
+    /** Run ids the application submitted under `inputPolicy: 'inject'`. */
+    absorbable?: ReadonlySet<string>;
+    /** Told which queued run this one took on, so its ticket can be answered. */
+    onAbsorbed?(absorbedRunId: string): void;
   }): Promise<AgentRuntimeResult> {
     const queuedSnapshot = await config.store.loadSnapshot(input.acceptedRun.conversationId);
     const queuedRun = findRun(queuedSnapshot.runs, input.acceptedRun.id);
@@ -137,7 +148,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     let eventCount = 0;
     let sequence = 0;
     let terminalReason: AgentTerminalReason = 'success';
-    let usage: AgentUsage | undefined;
+    // A requeued run re-executes from scratch and pays the provider again, so
+    // its figure continues the one the earlier attempt persisted rather than
+    // replacing it. Without the durable field there was nothing to continue
+    // from: the crashed attempt's tokens lived only in an event its executor
+    // never survived to emit.
+    let usage: AgentUsage | undefined = input.acceptedRun.usage;
+    // Whether the provider ever told us the run was over. It is the difference
+    // between a total and a floor, and it is the only thing `partial` can
+    // honestly mean on a terminal event — it used to be a constant per event
+    // kind, `true` on every checkpoint and `false` on every terminal including
+    // the ones that were abandoned mid-stream.
+    let sawProviderFinish = false;
     let step = 0;
     let selectedModel: AgentResolvedModel | undefined;
     let internalCause: unknown;
@@ -189,14 +211,17 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           ownerId: runtimeEpoch,
           ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
           assistant,
+          usage: statedUsage(usage),
         }),
         'assistant checkpoint',
       );
       run = findRun(snapshot.runs, run.id);
       const checkpointMetrics = {
+        // Always true here, and now for a reason rather than by construction:
+        // a checkpoint is by definition taken before the provider has finished.
         partial: true,
         durationMs: performance.now() - runStartedAt,
-        ...(usage && { usage }),
+        usage: statedUsage(usage),
         ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
       };
       await publish({
@@ -220,6 +245,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         });
         snapshot = compacted.snapshot;
         run = findRun(snapshot.runs, run.id);
+        // A model call the run caused is the run's cost, even though it made no
+        // step and emitted no event of its own.
+        if (compacted.usage) usage = addUsage(usage, compacted.usage);
       }
 
       const assertCurrent = async (): Promise<'stale_run' | 'run_interrupted' | undefined> => {
@@ -264,17 +292,64 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       if (prompt.contextDecision === 'requires-compaction') {
         throw new Error('Agent context still exceeds the model budget after compaction');
       }
-      const history = await (config.history?.project
-        ? config.history.project(snapshot.messages)
-        : projectAgentHistory(snapshot.messages, {
-            ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
-            ...(config.history?.unresolvedFile && {
-              unresolvedFile: config.history.unresolvedFile,
-            }),
-            ...(config.history?.interruptedAssistant && {
-              interruptedAssistant: config.history.interruptedAssistant,
-            }),
-          }));
+      const projectHistory = (source: AgentSnapshot) =>
+        config.history?.project
+          ? config.history.project(source.messages)
+          : projectAgentHistory(source.messages, {
+              ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
+              ...(config.history?.unresolvedFile && {
+                unresolvedFile: config.history.unresolvedFile,
+              }),
+              ...(config.history?.interruptedAssistant && {
+                interruptedAssistant: config.history.interruptedAssistant,
+              }),
+            });
+      const history = await projectHistory(snapshot);
+
+      /**
+       * Take on a queued successor's inputs, if the application asked for it.
+       *
+       * Returns the re-projected history when something was absorbed, so the
+       * next provider call carries the new message. A conflict means the world
+       * moved — another owner, a successor that started, a revision that
+       * advanced — and the honest response is to do nothing and let the
+       * successor run on its own, which is what every other policy does anyway.
+       */
+      const absorbPending = async (): Promise<ModelMessage[] | undefined> => {
+        if (!input.absorbable?.size || executionSignal.aborted) return undefined;
+        const latest = await config.store.loadSnapshot(run.conversationId);
+        const current = latest.runs.find((candidate) => candidate.id === run.id);
+        if (current?.state !== 'running' || current.ownerId !== runtimeEpoch) {
+          return undefined;
+        }
+        const pending = latest.runs.find(
+          (candidate) => candidate.state === 'queued' && input.absorbable?.has(candidate.id),
+        );
+        if (!pending) return undefined;
+        const absorbed = await config.store.absorbQueuedRun({
+          conversationId: run.conversationId,
+          runningRunId: current.id,
+          runningExpectedRevision: current.revision,
+          ownerId: runtimeEpoch,
+          ...(current.fencingToken !== undefined && { fencingToken: current.fencingToken }),
+          queuedRunId: pending.id,
+          queuedExpectedRevision: pending.revision,
+        });
+        if (absorbed.outcome !== 'applied') return undefined;
+        input.onAbsorbed?.(pending.id);
+        snapshot = absorbed.snapshot;
+        run = findRun(snapshot.runs, run.id);
+        await publish({
+          type: 'run-state',
+          eventId: agentDurableEventId('run-state', run.id, snapshot.version),
+          conversationId: run.conversationId,
+          runId: run.id,
+          snapshotVersion: snapshot.version,
+          state: run.state,
+          emittedAt: now().toISOString(),
+        });
+        return [...(await projectHistory(snapshot))];
+      };
       const maxStepCondition = stepCountIs(maxSteps);
       const stopConditions: StopCondition<TOOLS>[] = [
         async (options) => {
@@ -298,10 +373,19 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
-        ...(config.loop?.prepareStep && {
-          prepareStep: (options) =>
-            config.loop?.prepareStep?.({ ...options, ...runtimeContext }),
-        }),
+        prepareStep: async (options) => {
+          // A step boundary is the only place an in-flight run may take on new
+          // input: the provider is between calls, so the next request can carry
+          // it. `absorbPending` is a no-op unless the application asked for it.
+          const absorbed = await absorbPending();
+          const prepared =
+            (await config.loop?.prepareStep?.({ ...options, ...runtimeContext })) ?? {};
+          // An application-supplied `prepareStep` wins if it set `messages`
+          // itself: it is the one that knows why.
+          return absorbed && !prepared.messages
+            ? { ...prepared, messages: absorbed }
+            : prepared;
+        },
       });
 
       for await (const part of result.stream) {
@@ -559,9 +643,22 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           });
           step += 1;
         } else if (part.type === 'finish' && part.finishReason !== 'stop') {
-          terminalReason = 'policy_stop';
+          // A provider that errors mid-stream still delivers a `finish`, and
+          // this branch used to overwrite the `provider_failure` the `error`
+          // part had just set — reporting a stop policy that does not exist,
+          // with no `policyName`, for a provider outage. A reason an earlier
+          // part already decided describes the same event and wins.
+          if (terminalReason === 'success') {
+            terminalReason =
+              part.finishReason === 'error' ? 'provider_failure' : 'provider_stop';
+            // Which cap it hit — `length`, `content-filter`, `other` — is the
+            // provider's word and belongs in the operator-only cause, not in a
+            // terminal reason the core would have to grow a member for each of.
+            internalCause ??= { finishReason: part.finishReason };
+          }
         }
         if (part.type === 'finish') {
+          sawProviderFinish = true;
           // This line used to graft the LAST STEP's cost onto every step's
           // tokens — a successful three-step run reported a third of the money
           // beside all of the tokens, and called it `provider-reported`.
@@ -657,6 +754,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           assistant,
           reason: terminalReason,
           ...(terminalPolicyName && { policyName: terminalPolicyName }),
+          usage: spent,
         },
         now,
       });
@@ -681,7 +779,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     terminalPolicyName = terminal.policyName;
     const terminalMetrics = terminal.committedByCaller
       ? {
-          partial: false,
+          partial: !sawProviderFinish,
           durationMs: performance.now() - runStartedAt,
           usage: spent,
           ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),

@@ -5,6 +5,7 @@ import {
   type AgentRun,
   type AgentSnapshot,
   type AgentTerminalReason,
+  type AgentUsage,
 } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
 import { assistantStatus } from './terminal-status';
@@ -26,6 +27,8 @@ interface TerminalCommitCandidate {
   assistant: AgentMessage;
   reason: AgentTerminalReason;
   policyName?: string;
+  /** What this run cost, persisted with the terminal record. */
+  usage?: AgentUsage;
 }
 
 export interface AgentTerminalCommitResolution extends TerminalCommitCandidate {
@@ -61,6 +64,7 @@ function canonicalTerminal(
     reason: run.terminalReason,
     committedByCaller: false,
     ...(run.terminalPolicyName && { policyName: run.terminalPolicyName }),
+    ...(run.usage && { usage: run.usage }),
   };
 }
 
@@ -133,6 +137,7 @@ export async function commitAgentRunTerminal(input: {
       assistant: candidate.assistant,
       reason: candidate.reason,
       ...(candidate.policyName && { policyName: candidate.policyName }),
+      ...(candidate.usage && { usage: candidate.usage }),
     });
     if (committed.outcome === 'applied') {
       const terminal = canonicalTerminal(committed.snapshot, candidate.run.id);

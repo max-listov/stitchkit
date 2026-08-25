@@ -237,6 +237,16 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   ) {
     throw new TypeError('idleTimeoutMs must be a positive safe integer');
   }
+  // Run ids submitted under `inputPolicy: 'inject'`, so a run already in flight
+  // knows which queued successor it may take on at a step boundary. Process-local
+  // on purpose: the durable record says a run was absorbed, never that it *may*
+  // be — that is a live decision about work this process is currently doing.
+  const absorbable = new Set<string>();
+  // Where an absorbed run's ticket gets its answer. Process-local like the
+  // offer itself: the durable record says a run *was* absorbed, and the caller
+  // waiting on a promise for it only exists in this process anyway.
+  const absorbedInto = new Map<string, string>();
+  const runResults = new Map<string, Promise<AgentRuntimeResult>>();
   const policyNames = new Set<string>(['max-steps']);
   for (const policy of config.loop?.stopPolicies ?? []) {
     if (!policy.name || policyNames.has(policy.name)) {
@@ -411,10 +421,14 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       const existingTicket = conversationTickets?.get(input.idempotencyKey);
       if (existingTicket) return existingTicket;
       const key = config.runs?.key?.(input) ?? input.conversationId;
-      const policy =
+      const declaredPolicy =
         typeof config.runs?.inputPolicy === 'function'
           ? config.runs.inputPolicy(input)
           : (config.runs?.inputPolicy ?? 'queue');
+      // `inject` queues. It differs from `queue` only in that a run already in
+      // flight is allowed to take it on early, and that offer is withdrawn the
+      // moment the run ends — at which point this is a plain queued successor.
+      const policy: AgentInputPolicy = declaredPolicy === 'inject' ? 'queue' : declaredPolicy;
       const nowIso = now().toISOString();
       const inputMessageId = rawInput.recordIds?.inputMessageId ?? generateId();
       const runId = rawInput.recordIds?.runId ?? generateId();
@@ -562,6 +576,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             state: acceptedRun.state,
             emittedAt: now().toISOString(),
           });
+          // Offered to whatever is already running on this key. Registered
+          // after acceptance, so nothing can absorb a run that does not exist
+          // durably yet.
+          if (declaredPolicy === 'inject') absorbable.add(acceptedRun.id);
           outerAccepted.resolve();
           if (acceptance.outcome === 'duplicate') {
             if (!acceptedRun.terminalReason) {
@@ -618,7 +636,25 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               if (reservation) await waitForAdmissionAcceptances(reservation.lane);
               return {
                 runId: acceptedRun.id,
-                execute: () => executeRun({ acceptedRun, context, signal }),
+                execute: () => {
+                  // Answered already, by the run that took this one's inputs.
+                  const answeredBy = absorbedInto.get(acceptedRun.id);
+                  const answer = answeredBy ? runResults.get(answeredBy) : undefined;
+                  if (answer) return answer;
+                  const running = executeRun({
+                    acceptedRun,
+                    context,
+                    signal,
+                    absorbable,
+                    onAbsorbed: (absorbedRunId) => {
+                      absorbedInto.set(absorbedRunId, acceptedRun.id);
+                    },
+                  });
+                  runResults.set(acceptedRun.id, running);
+                  return running.finally(() => {
+                    absorbable.delete(acceptedRun.id);
+                  });
+                },
               };
             },
           });

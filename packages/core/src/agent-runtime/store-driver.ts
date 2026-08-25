@@ -11,6 +11,8 @@ import {
   type AgentTerminalReasonSchema,
 } from './schemas';
 import {
+  type AbsorbQueuedRun,
+  AbsorbQueuedRunSchema,
   type AcceptInputAndAssignRun,
   AcceptInputAndAssignRunSchema,
   type AcquireAgentRun,
@@ -150,6 +152,7 @@ type StoreOperation =
   | { type: 'acquire'; input: AcquireAgentRun }
   | { type: 'checkpoint'; input: CheckpointRunAssistant }
   | { type: 'interrupt'; input: RequestRunInterrupt }
+  | { type: 'absorb'; input: AbsorbQueuedRun }
   | { type: 'recover'; input: RecoverAgentRun }
   | { type: 'terminal'; input: CommitRunTerminal }
   | { type: 'compact'; input: ReplaceCompactedRange };
@@ -158,6 +161,8 @@ interface ReducedApplied {
   outcome: 'applied';
   snapshot: AgentSnapshot;
   runRecord?: AgentStoredRun;
+  /** A second run the same mutation changed — absorbing touches two. */
+  secondaryRunRecord?: AgentStoredRun;
   admissionReceipt?: AgentAdmissionReceipt;
   historyMutation?: AgentHistoryMutation;
 }
@@ -320,7 +325,9 @@ function conflict(actualVersion: number): {
 }
 
 function terminalState(reason: z.infer<typeof AgentTerminalReasonSchema>): AgentRun['state'] {
-  if (reason === 'success' || reason === 'policy_stop') return 'completed';
+  if (reason === 'success' || reason === 'policy_stop' || reason === 'provider_stop') {
+    return 'completed';
+  }
   if (reason === 'interrupted') return 'interrupted';
   if (reason === 'superseded') return 'superseded';
   if (reason === 'cancelled' || reason === 'shutdown' || reason === 'timeout') {
@@ -335,6 +342,8 @@ function applied(
   input: { runs?: readonly AgentRun[]; messages?: readonly AgentMessage[] },
   effects?: {
     runRecord?: AgentStoredRun;
+    /** A second run the same mutation changed — absorbing touches two. */
+    secondaryRunRecord?: AgentStoredRun;
     admissionReceipt?: AgentAdmissionReceipt;
     historyMutation?: AgentHistoryMutation;
   },
@@ -348,6 +357,7 @@ function applied(
       messages: input.messages ?? current.messages,
     }),
     ...(effects?.runRecord && { runRecord: effects.runRecord }),
+    ...(effects?.secondaryRunRecord && { secondaryRunRecord: effects.secondaryRunRecord }),
     ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),
     ...(effects?.historyMutation && { historyMutation: effects.historyMutation }),
   };
@@ -431,6 +441,60 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     );
   }
 
+  if (operation.type === 'absorb') {
+    const input = operation.input;
+    if (current.conversationId !== input.conversationId) return { outcome: 'not_found' };
+    const running = current.runs.find((candidate) => candidate.id === input.runningRunId);
+    const queued = current.runs.find((candidate) => candidate.id === input.queuedRunId);
+    if (!running || !queued) return { outcome: 'not_found' };
+    if (
+      running.revision !== input.runningExpectedRevision ||
+      running.state !== 'running' ||
+      running.ownerId !== input.ownerId ||
+      (input.fencingToken !== undefined && running.fencingToken !== input.fencingToken)
+    ) {
+      return conflict(running.revision);
+    }
+    if (
+      queued.revision !== input.queuedExpectedRevision ||
+      queued.state !== 'queued' ||
+      queued.ownerId !== undefined ||
+      queued.terminalReason !== undefined ||
+      queued.id === running.id
+    ) {
+      return conflict(queued.revision);
+    }
+    const stamp = new Date().toISOString();
+    const grown = AgentRunSchema.parse({
+      ...running,
+      inputMessageIds: [...running.inputMessageIds, ...queued.inputMessageIds],
+      revision: running.revision + 1,
+      updatedAt: stamp,
+    });
+    // The absorbed record is kept, not deleted: its admission receipt still
+    // points at it, so a duplicate submission has to resolve to something, and
+    // an operator needs to see that one turn answered two inputs. It carries no
+    // terminal reason — nothing ran and nothing failed — and `absorbed` is
+    // outside every active-state list, so recovery leaves it alone.
+    const emptied = AgentRunSchema.parse({
+      ...queued,
+      state: 'absorbed',
+      absorbedIntoRunId: running.id,
+      revision: queued.revision + 1,
+      updatedAt: stamp,
+    });
+    return applied(
+      current,
+      { runs: replaceRun(replaceRun(current.runs, grown), emptied) },
+      {
+        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: grown }),
+        // Both, or the absorbed run stays `queued` in the driver's own store and
+        // is absorbed again at the next boundary, forever.
+        secondaryRunRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: emptied }),
+      },
+    );
+  }
+
   const conversationId = operation.input.conversationId;
   const run =
     operation.type === 'compact'
@@ -488,6 +552,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     }
     const next = AgentRunSchema.parse({
       ...run,
+      ...(input.usage && { usage: input.usage }),
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
@@ -608,6 +673,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       state: terminalState(input.reason),
       terminalReason: input.reason,
       ...(input.policyName && { terminalPolicyName: input.policyName }),
+      ...(input.usage && { usage: input.usage }),
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
@@ -745,7 +811,11 @@ export function createAgentRuntimeStore<TRANSACTION>(
           ? operation.input.coalesceIntoRunId
           : operation.type === 'compact'
             ? undefined
-            : operation.input.runId;
+            : operation.type === 'absorb'
+              ? // Both runs matter, and the queued one is the record the active
+                // listing may not carry — the running one always is.
+                operation.input.queuedRunId
+              : operation.input.runId;
       const [stored, messages, activeRecords, operationRecord, duplicateReceipt] =
         await Promise.all([
           driver.head.load(transaction, conversationId),
@@ -834,6 +904,9 @@ export function createAgentRuntimeStore<TRANSACTION>(
       });
       if (outcome.outcome === 'conflict') return conflict(outcome.actualVersion);
       if (reduced.runRecord) await driver.runs.save(transaction, reduced.runRecord);
+      if (reduced.secondaryRunRecord) {
+        await driver.runs.save(transaction, reduced.secondaryRunRecord);
+      }
       if (reduced.admissionReceipt) {
         await driver.admissions.create(transaction, reduced.admissionReceipt);
       }
@@ -862,6 +935,8 @@ export function createAgentRuntimeStore<TRANSACTION>(
         type: 'interrupt',
         input: RequestRunInterruptSchema.parse(input),
       }),
+    absorbQueuedRun: (input) =>
+      mutate({ type: 'absorb', input: AbsorbQueuedRunSchema.parse(input) }),
     recoverRun: (input) =>
       mutate({ type: 'recover', input: RecoverAgentRunSchema.parse(input) }),
     commitRunTerminal: (input) =>

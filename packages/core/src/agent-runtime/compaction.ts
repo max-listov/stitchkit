@@ -1,5 +1,5 @@
 import type { ZodType, z } from 'zod';
-import type { AgentMessage, AgentSnapshot } from './schemas';
+import type { AgentMessage, AgentSnapshot, AgentUsage } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
 import { isSpeakableAssistantStatus } from './terminal-status';
 
@@ -32,6 +32,19 @@ export interface AgentCompactionResult {
   outcome: 'not_needed' | 'nothing_eligible' | 'applied' | 'conflict' | 'not_found';
   snapshot: AgentSnapshot;
   attempts: number;
+  /**
+   * What summarising cost, if the implementation counted it.
+   *
+   * Compaction runs inside the turn and calls a model, so its spend is the
+   * run's spend — but it produces no step and no event of its own, so without
+   * this it was invisible. `maxAttempts` can pay for it more than once on a CAS
+   * conflict; report the total, not the last attempt.
+   *
+   * `structuredCompaction` cannot fill this in for you: it hands `summarize` a
+   * context and takes a summary back, and what the summariser spent getting
+   * there is known only inside it. Return it from your own wrapper.
+   */
+  usage?: AgentUsage;
 }
 
 interface MessageTurn {

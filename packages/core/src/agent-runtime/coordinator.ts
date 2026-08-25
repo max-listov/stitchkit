@@ -4,7 +4,13 @@
  * `queue` finishes the run first. `interrupt` and `supersede` both end it, and
  * differ in one thing only: what becomes of what it produced. An interrupted
  * run's partial answer stays part of the conversation; a superseded run's does
- * not reach the model again.
+ * not reach the model again. `inject` ends nothing: the run in flight takes the
+ * new input at its next step boundary and keeps going, which is right when the
+ * input refines rather than redirects and the work so far is still valid.
+ *
+ * `inject` queues like `queue` and is absorbed opportunistically, so a run that
+ * finishes before the next boundary simply answers it next — there is no case
+ * where an input is recorded as answered by a turn that never saw it.
  *
  * The runtime cannot decide that on its own, because the fact it turns on —
  * whether anyone saw the partial answer — belongs to the delivery surface. A
@@ -13,7 +19,7 @@
  * `inputPolicy` accepting a function of the input: one application can hold
  * both surfaces.
  */
-export type AgentInputPolicy = 'queue' | 'interrupt' | 'supersede';
+export type AgentInputPolicy = 'queue' | 'interrupt' | 'supersede' | 'inject';
 export type AgentStopReason = 'user-interrupt' | 'supersede' | 'timeout' | 'shutdown';
 
 export interface AgentCoordinatedRun<RESULT> {

@@ -13,6 +13,75 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.63.0] — 2026-08-25
+
+### ⚠️ Breaking changes
+
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **`AgentRuntimeStore` gained a ninth member, `absorbQueuedRun`.** An
+  application that implements the aggregate directly must add it; one built on
+  `AgentRuntimeStoreDriver` gets it for free. It moves a queued successor's
+  inputs into the run already answering, atomically, and is what
+  `inputPolicy: 'inject'` runs on.
+
+  ```ts
+  // before: eight members
+  // after:  absorbQueuedRun({ conversationId, runningRunId, runningExpectedRevision,
+  //                           ownerId, fencingToken?, queuedRunId, queuedExpectedRevision })
+  ```
+
+  The store conformance kit covers it, so an adapter that passes the kit is done.
+
+- **A provider failure no longer reports itself as a policy stop.** A stream that
+  errors mid-run still delivers a `finish`, and the branch that read it
+  overwrote the `provider_failure` just recorded — naming a stop policy that did
+  not exist, with no `policyName`, for a provider outage.
+
+  ```ts
+  // before
+  terminal.reason === 'policy_stop'   // …for an upstream error, with no policyName
+  // after
+  terminal.reason === 'provider_failure'
+  // and a cap the provider hit — length, content filter — is its own reason:
+  terminal.reason === 'provider_stop'
+  ```
+
+  **`policy_stop` now always arrives with the `policyName` that caused it.**
+  `'provider_stop'` and `'absorbed'` join `AgentTerminalReasonSchema` and
+  `AgentRunStateSchema` respectively, so an exhaustive switch needs the arms.
+
+- **`AgentRunMetrics.partial` says something about the run.** It used to be a
+  constant per event kind — `true` on every checkpoint, `false` on every
+  terminal including runs abandoned mid-stream. It now means "the provider never
+  reported this run finished, so this figure is not a confirmed total", which
+  makes it `true` on terminal events it used to be `false` on.
+
+- **`assistant-checkpoint` metrics always carry `usage`**, and it is a running
+  total. **Read the latest checkpoint; never sum them.**
+
+### Added
+
+- **`inputPolicy: 'inject'`** — a fourth admission policy. It ends nothing: a run
+  already in flight takes the new input at its next step boundary and keeps
+  going. It queues first and is absorbed opportunistically, so a run that
+  finishes before the boundary simply answers it next and no input is ever
+  recorded as answered by a turn that never saw it.
+- **`AgentRun.usage`** — what a run cost, persisted at every checkpoint and with
+  the terminal record. The figure used to exist only on two bounded,
+  drop-on-overflow event sinks with no durable counterpart, so a dropped event
+  was a lost number and a process that died mid-stream lost everything it had
+  counted.
+- **`AgentRun.absorbedIntoRunId`** — the run that answered this one's inputs.
+- **`AgentCompactionResult.usage`** — what summarising cost. Compaction calls a
+  model inside the turn and produces no step and no event of its own, so its
+  spend was invisible; returned here, it becomes part of the run's.
+
+### Fixed
+
+- **A dropped observability event is no longer a lost spend figure** — it is
+  readable back from the run record.
+
 ## [0.62.0] — 2026-08-25
 
 ### ⚠️ Breaking changes
@@ -4044,7 +4113,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/max-listov/stitchkit/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/max-listov/stitchkit/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/max-listov/stitchkit/compare/v0.60.1...v0.61.0
 [0.60.1]: https://github.com/max-listov/stitchkit/compare/v0.60.0...v0.60.1

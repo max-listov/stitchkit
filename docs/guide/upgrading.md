@@ -54,6 +54,73 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.63.0
+
+Four changes to what a running system reports and how an input reaches a run
+in flight. Nothing moves an export except one added store member, and only an
+application implementing `AgentRuntimeStore` directly has to touch code.
+
+### A spend figure that survives, and an input that joins
+
+### `AgentRuntimeStore` has a ninth member
+
+Only if you implement the aggregate interface directly — an adapter built on
+`AgentRuntimeStoreDriver` needs no change, and the public conformance kit covers
+the new operation.
+
+```ts
+// after
+absorbQueuedRun(input: AbsorbQueuedRun): Promise<AgentStoreMutationResult>
+```
+
+It moves a queued successor's inputs into the run already answering, in one
+mutation, and marks the successor `absorbed`. Two run records change in one
+transaction — if your driver persists them one at a time, persist both.
+
+### A provider failure says so
+
+```ts
+// before — an upstream error arrived as a policy stop with no policy
+if (terminal.reason === 'policy_stop') retryLater()
+
+// after
+if (terminal.reason === 'provider_failure') retryLater()
+if (terminal.reason === 'provider_stop') { /* a length cap or content filter */ }
+```
+
+`policy_stop` now always carries the `policyName` that caused it. If you switch
+exhaustively on `AgentTerminalReason` or `AgentRunState`, add `'provider_stop'`
+and `'absorbed'`.
+
+### `partial` changed meaning
+
+It used to tell you which event kind you were holding. It now tells you whether
+the figure beside it is a confirmed total:
+
+```ts
+// after — true when the provider never reported the run finished
+if (metrics.partial) treatAsFloor(metrics.usage)
+```
+
+Terminal events for runs that were superseded, interrupted, timed out or failed
+before the provider finished now report `partial: true` where they reported
+`false`.
+
+### Checkpoint metrics are a running total
+
+```ts
+// wrong, and now wrong by more than it used to be
+const spent = checkpoints.reduce((total, c) => total + (c.metrics.usage?.cost?.value ?? 0), 0)
+// right
+const spent = checkpoints.at(-1)?.metrics.usage?.cost?.value
+```
+
+### You can read a run's spend back from the store
+
+`AgentRun.usage` is written at every checkpoint and with the terminal record, so
+a dropped observability event no longer loses the number, and a process that dies
+mid-stream leaves behind what it had already spent.
+
 ## Released migration: 0.62.0
 
 Two groups of behaviour changes. Nothing moves an export — the surface is

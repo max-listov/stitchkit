@@ -91,7 +91,11 @@ describe('agent runtime mature-consumer parity', () => {
     }).result;
     expect(first.reason).toBe('success');
     expect(first.message.parts).toEqual([]);
-    expect(second.reason).toBe('policy_stop');
+    // The provider ended this turn for its own reason — a length cap, a content
+    // filter — and no policy asked it to. It used to report `policy_stop` with
+    // no `policyName`, naming a policy that does not exist.
+    expect(second.reason).toBe('provider_stop');
+    expect(second.policyName).toBeUndefined();
     await runtime.close();
   });
 

@@ -157,7 +157,13 @@ describe('agent runtime terminalization', () => {
     expect(snapshot.runs[0]?.terminalReason).toBe('provider_failure');
     expect(snapshot.messages[0]?.metadata).toEqual({ channel: 'test' });
     const terminalEvent = events.find((event) => event.type === 'terminal');
-    expect(terminalEvent?.metrics).toMatchObject({ partial: false });
+    // `partial` now says something about the run rather than which event kind
+    // you are holding: the provider never reported this run finished, so the
+    // figure beside it is not a confirmed total. It is also not a zero — the
+    // call may never have been made, and we cannot prove it either way.
+    const metrics = terminalEvent?.type === 'terminal' ? terminalEvent.metrics : undefined;
+    expect(metrics?.partial).toBe(true);
+    expect(metrics?.usage?.cost).toEqual({ provenance: 'unavailable' });
   });
 
   test('coalesces inputs behind an active run into one durable successor', async () => {
@@ -903,6 +909,7 @@ describe('agent runtime terminalization', () => {
         acquireRun: () => Promise.reject(new Error('not used')),
         checkpointRunAssistant: () => Promise.reject(new Error('not used')),
         requestRunInterrupt: () => Promise.reject(new Error('not used')),
+        absorbQueuedRun: () => Promise.reject(new Error('not used')),
         recoverRun: () => Promise.reject(new Error('not used')),
         commitRunTerminal: () => Promise.reject(new Error('not used')),
         replaceCompactedRange: () => Promise.reject(new Error('not used')),
