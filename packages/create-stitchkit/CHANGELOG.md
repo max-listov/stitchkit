@@ -12,6 +12,18 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-08-25
+
+### Fixed
+
+- **A freshly scaffolded project resolves the framework release that exists.**
+  The template ships a lockfile so a scaffold is reproducible, and that lockfile
+  still pinned the previous Stitchkit patch — so `create-stitchkit` published
+  minutes after a framework release produced a project on the older one, inside
+  a range that already allowed the newer. The range and the lock move together
+  now: `catalog.stitchkit` targets `^0.60.1` and the lockfile resolves it, which
+  is also what the packed target lane then tests against.
+
 ## [0.4.1] — 2026-08-25
 
 ### Fixed
