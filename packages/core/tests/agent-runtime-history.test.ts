@@ -216,3 +216,153 @@ describe('agent history file fallbacks keep storage addresses internal', () => {
     ).rejects.toThrow('s3://private-bucket/tenants/42/invoice.pdf');
   });
 });
+
+describe('an interrupted turn does not pass as a finished one', () => {
+  const at = '2026-08-25T00:00:00.000Z';
+  const message = (id: string, role: string, status: string, parts: unknown[]) =>
+    AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id,
+      conversationId: 'conversation-1',
+      role,
+      status,
+      parts,
+      createdAt: at,
+      updatedAt: at,
+    });
+  const user = message('user-1', 'user', 'committed', [{ type: 'text', text: 'Hello' }]);
+  const followUp = message('user-2', 'user', 'committed', [
+    { type: 'text', text: 'Actually, somewhere else' },
+  ]);
+  const cutOff = (status: string, parts?: unknown[]) =>
+    message('assistant-1', 'assistant', status, [
+      { type: 'text', text: 'We are the team, where would you like' },
+      ...(parts ?? []),
+    ]);
+
+  test('the default marks the fragment where a bare one used to go', async () => {
+    const projected = await projectAgentHistoryDetailed([
+      user,
+      cutOff('interrupted'),
+      followUp,
+    ]);
+    const assistant = projected.messages.filter((entry) => entry.role === 'assistant');
+    expect(assistant).toHaveLength(1);
+    expect(JSON.stringify(assistant)).toContain(
+      '[interrupted: this turn was cut off before it finished]',
+    );
+    // Still projected — an interrupt keeps what it produced; it just stops
+    // pretending the turn finished.
+    expect(projected.decisions).toContainEqual({
+      messageId: 'assistant-1',
+      action: 'projected',
+      reason: 'projected',
+    });
+  });
+
+  test('the marker follows the status, not a control part that may not be there', async () => {
+    // The abort path that closes the stream rather than throwing commits an
+    // interrupted assistant with no control part at all.
+    const withoutControl = await projectAgentHistoryDetailed([user, cutOff('interrupted')]);
+    const withControl = await projectAgentHistoryDetailed([
+      user,
+      cutOff('interrupted', [{ type: 'control', reason: 'run-interrupted' }]),
+    ]);
+    expect(JSON.stringify(withoutControl.messages)).toContain('[interrupted:');
+    expect(JSON.stringify(withControl.messages)).toContain('[interrupted:');
+    // And the control part is now represented rather than dropped in silence.
+    expect(withControl.decisions[1]).not.toHaveProperty('omittedParts');
+  });
+
+  test('a system note is context, where an assistant turn would be a commitment', async () => {
+    const projected = await projectAgentHistoryDetailed(
+      [user, cutOff('interrupted'), followUp],
+      { interruptedAssistant: 'system-note' },
+    );
+    expect(projected.messages.filter((entry) => entry.role === 'assistant')).toHaveLength(0);
+    const note = projected.messages.find((entry) => entry.role === 'system');
+    expect(note?.content).toBe(
+      '[interrupted] partial response: We are the team, where would you like',
+    );
+  });
+
+  test('a system note survives the half-finished tool turn that drops an assistant one', async () => {
+    const dangling = [{ type: 'tool-call', callId: 'call-1', toolName: 'lookup', input: {} }];
+    const asAssistant = await projectAgentHistoryDetailed([
+      user,
+      cutOff('interrupted', dangling),
+    ]);
+    expect(asAssistant.decisions[1]).toMatchObject({
+      action: 'omitted',
+      reason: 'incomplete-tool-turn',
+    });
+    const asNote = await projectAgentHistoryDetailed([user, cutOff('interrupted', dangling)], {
+      interruptedAssistant: 'system-note',
+    });
+    expect(asNote.messages.find((entry) => entry.role === 'system')?.content).toContain(
+      '[interrupted]',
+    );
+    // The tool call it could not pair is named, not dropped quietly.
+    expect(asNote.decisions[1]).toMatchObject({ omittedParts: ['tool-call'] });
+  });
+
+  test('omit keeps the fragment out of the request altogether', async () => {
+    const projected = await projectAgentHistoryDetailed(
+      [user, cutOff('interrupted'), followUp],
+      { interruptedAssistant: 'omit' },
+    );
+    expect(JSON.stringify(projected.messages)).not.toContain('where would you like');
+    expect(projected.decisions[1]).toEqual({
+      messageId: 'assistant-1',
+      action: 'omitted',
+      reason: 'interrupted',
+    });
+  });
+
+  test('a superseded turn is omitted under every setting, and says why', async () => {
+    for (const interruptedAssistant of ['assistant-marked', 'system-note', 'omit'] as const) {
+      const projected = await projectAgentHistoryDetailed(
+        [user, cutOff('superseded'), followUp],
+        { interruptedAssistant },
+      );
+      expect(JSON.stringify(projected.messages)).not.toContain('where would you like');
+      expect(projected.decisions[1]).toEqual({
+        messageId: 'assistant-1',
+        action: 'omitted',
+        reason: 'superseded',
+      });
+    }
+  });
+
+  test('a part no content stands for is recorded instead of vanishing', async () => {
+    const projected = await projectAgentHistoryDetailed([
+      user,
+      message('assistant-2', 'assistant', 'completed', [
+        { type: 'text', text: 'done' },
+        { type: 'source', sourceId: 'source-1', url: 'https://example.com/' },
+        {
+          type: 'provider',
+          envelope: { schemaVersion: 1, provider: 'test', data: { note: 'kept' } },
+        },
+      ]),
+    ]);
+    expect(projected.decisions[1]).toMatchObject({ action: 'projected' });
+    expect(projected.decisions[1]?.omittedParts?.toSorted()).toEqual(['provider', 'source']);
+    // A record whose parts all reached the projection carries no such list.
+    expect(projected.decisions[0]).not.toHaveProperty('omittedParts');
+  });
+
+  test('an unresolved file is named as omitted rather than silently dropped', async () => {
+    const projected = await projectAgentHistoryDetailed([
+      message('user-3', 'user', 'committed', [
+        { type: 'text', text: 'look' },
+        { type: 'file', mediaType: 'image/png', reference: 'internal://bucket/key' },
+      ]),
+    ]);
+    expect(projected.decisions[0]).toMatchObject({
+      action: 'projected',
+      omittedParts: ['file'],
+    });
+    expect(JSON.stringify(projected.messages)).not.toContain('internal://');
+  });
+});

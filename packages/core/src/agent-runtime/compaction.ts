@@ -1,6 +1,7 @@
 import type { ZodType, z } from 'zod';
 import type { AgentMessage, AgentSnapshot } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
+import { isSpeakableAssistantStatus } from './terminal-status';
 
 export interface AgentCompactionContext<SUMMARY> {
   conversationId: string;
@@ -41,9 +42,10 @@ interface MessageTurn {
 function providerValidTurn(messages: readonly AgentMessage[]): boolean {
   if (messages[0]?.role !== 'user') return false;
   const assistant = messages.find((message) => message.role === 'assistant');
-  if (!assistant || assistant.status === 'streaming' || assistant.status === 'failed') {
-    return false;
-  }
+  // A turn whose answer never reaches the model is not a turn that may be
+  // summarised into one: compacting it would feed the discarded text to the
+  // summariser and delete the durable record in `replacedMessageIds`.
+  if (!assistant || !isSpeakableAssistantStatus(assistant.status)) return false;
   const calls = new Set(
     assistant.parts.filter((part) => part.type === 'tool-call').map((part) => part.callId),
   );

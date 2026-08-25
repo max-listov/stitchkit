@@ -46,7 +46,8 @@ export interface AgentHistoryBudgetDecision {
     | 'protected-recent-turn'
     | 'protected-incomplete-turn'
     | 'oldest-eligible-turn'
-    | 'token-count-unavailable';
+    | 'token-count-unavailable'
+    | 'superseded';
   tokens: AgentTokenCount;
 }
 
@@ -118,20 +119,26 @@ export async function selectAgentHistory(
   if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0) {
     throw new TypeError('keepRecentTurns must be a non-negative safe integer');
   }
+  // A superseded record never reaches the model, so it is not conversation the
+  // budget has anything to say about. Left in, it was worse than merely
+  // counted: `completeTurn` reads it as an incomplete turn, which is the one
+  // class the eviction loop refuses to touch — so an abandoned fragment became
+  // permanently unevictable and pushed real, answered turns out in its place.
+  const spoken = options.messages.filter((message) => message.status !== 'superseded');
   const counts = new Map<string, AgentTokenCount>();
   let total = 0;
   let estimated = false;
-  for (const message of options.messages) {
+  for (const message of spoken) {
     const count = AgentTokenCountSchema.parse(await options.estimateMessage(message));
     counts.set(message.id, count);
     const value = knownValue(count);
     if (value === undefined) {
       return {
-        messages: [...options.messages],
+        messages: [...spoken],
         decisions: options.messages.map((candidate) => ({
           messageId: candidate.id,
-          action: 'kept',
-          reason: 'token-count-unavailable',
+          action: candidate.status === 'superseded' ? 'removed' : 'kept',
+          reason: candidate.status === 'superseded' ? 'superseded' : 'token-count-unavailable',
           tokens: counts.get(candidate.id) ?? { provenance: 'unavailable' },
         })),
         totalTokens: { provenance: 'unavailable' },
@@ -141,7 +148,7 @@ export async function selectAgentHistory(
     total += value;
     if (count.provenance === 'estimated') estimated = true;
   }
-  const turns = budgetTurns(options.messages);
+  const turns = budgetTurns(spoken);
   const completeIndexes = turns
     .map((turn, index) => ({ turn, index }))
     .filter(({ turn }) => turn.complete && !turn.protectedSystem)
@@ -157,8 +164,16 @@ export async function selectAgentHistory(
       total -= knownValue(counts.get(message.id) ?? { provenance: 'unavailable' }) ?? 0;
     }
   }
-  const messages = options.messages.filter((message) => !removed.has(message.id));
+  const messages = spoken.filter((message) => !removed.has(message.id));
   const decisions = options.messages.map((message): AgentHistoryBudgetDecision => {
+    if (message.status === 'superseded') {
+      return {
+        messageId: message.id,
+        action: 'removed',
+        reason: 'superseded',
+        tokens: { provenance: 'unavailable' },
+      };
+    }
     const turnIndex = turns.findIndex((turn) =>
       turn.messages.some((item) => item.id === message.id),
     );

@@ -322,6 +322,7 @@ function conflict(actualVersion: number): {
 function terminalState(reason: z.infer<typeof AgentTerminalReasonSchema>): AgentRun['state'] {
   if (reason === 'success' || reason === 'policy_stop') return 'completed';
   if (reason === 'interrupted') return 'interrupted';
+  if (reason === 'superseded') return 'superseded';
   if (reason === 'cancelled' || reason === 'shutdown' || reason === 'timeout') {
     return 'cancelled';
   }

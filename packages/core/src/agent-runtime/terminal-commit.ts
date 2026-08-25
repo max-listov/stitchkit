@@ -64,11 +64,23 @@ function canonicalTerminal(
   };
 }
 
+/**
+ * Re-form a candidate whose run acquired a durable interrupt request mid-commit.
+ *
+ * The request says **stop the run**. It does not say what becomes of what the
+ * run produced — and when the executor already decided that output is
+ * `superseded`, that decision is the stronger one and survives. Forcing
+ * `interrupted` here used to undo it: a stop button arriving between the
+ * executor's last read and its terminal CAS republished the abandoned fragment
+ * into the next prompt, which is the whole defect this path exists to prevent.
+ */
 function interruptedCandidate(
   candidate: TerminalCommitCandidate,
   run: AgentRun,
   now: () => Date,
 ): TerminalCommitCandidate {
+  const reason: AgentTerminalReason =
+    candidate.reason === 'superseded' ? 'superseded' : 'interrupted';
   const hasInterruptControl = candidate.assistant.parts.some(
     (part) => part.type === 'control' && part.reason === 'run-interrupted',
   );
@@ -82,11 +94,11 @@ function interruptedCandidate(
     run,
     assistant: AgentMessageSchema.parse({
       ...candidate.assistant,
-      status: 'interrupted',
+      status: assistantStatus(reason),
       parts,
       updatedAt: now().toISOString(),
     }),
-    reason: 'interrupted',
+    reason,
   };
 }
 

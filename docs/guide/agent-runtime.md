@@ -196,6 +196,110 @@ process-local coordinator releases its lane only after terminal commit.
 input + queued run → running → execution settled → terminal CAS → successor
 ```
 
+## What happens to a run when new input arrives
+
+`runs.inputPolicy` decides. It takes three values (or a function returning one);
+the fourth row below is a behaviour it deliberately does not offer yet:
+
+| policy | the run in flight | what it already produced |
+|--------|-------------------|--------------------------|
+| `queue` (default) | finishes first | kept |
+| `interrupt` | ends | kept, and marked as cut off |
+| `supersede` | ends | discarded from the prompt, kept in the record |
+| _inject_ | continues | — not supported; see below |
+
+`interrupt` and `supersede` differ in exactly one thing, and the question that
+picks between them is **not** "was the run interrupted" but **"did anyone see
+what it produced"**:
+
+- The user pressed **stop**. The partial answer was streamed to their screen and
+  they read it. It belongs in the conversation — dropping it makes the history
+  lie to the model about what the human has seen. That is `interrupt`.
+- A newer message **superseded** the run. Whether the partial reached anyone
+  depends on the delivery surface: a token stream shows it as it is produced, a
+  surface that sends nothing until the run is done never showed it at all. When
+  it reached nobody, it is not part of the conversation. That is `supersede`.
+
+**Stitchkit cannot answer that question for you** — delivery belongs to the
+transport, and the runtime sees an abort, not a screen. Hence a declared policy
+(→ ADR 0108), and hence `inputPolicy` accepting a function, so one application
+can hold two surfaces with different rules without the core learning which is
+which:
+
+```ts
+runs: {
+  inputPolicy: (input) =>
+    protocol.parseContext(input.context).surface === 'operator' ? 'queue' : 'supersede',
+}
+```
+
+`input.context` is the **raw** context here — admission runs before the runtime
+parses it, so the callback narrows it itself with the protocol it already has.
+
+A superseded run ends with `terminalReason: 'superseded'`, run state
+`'superseded'` and an assistant message of status `'superseded'`. **The record
+is kept** — excluded from the projection, not deleted — so an operator can see
+what was thrown away, and run identity, admission receipts and the terminal CAS
+keep the row they depend on. Compaction leaves it alone for the same reason: a
+turn whose answer is never spoken is not a turn that may be summarised into one,
+because that would both feed the discarded text to the summariser and drop the
+record in `replacedMessageIds`.
+
+It is also outside the token budget. `selectAgentHistory` removes it with reason
+`'superseded'` and does not count it, so an abandoned fragment cannot push a
+real turn out of a context it never occupies.
+
+### How an interrupted turn reaches the model
+
+An interrupted turn is projected, and says so:
+
+```text
+{ role: 'assistant', content: [
+    { type: 'text', text: 'We are the team, where would you like' },
+    { type: 'text', text: '[interrupted: this turn was cut off before it finished]' },
+]}
+```
+
+`history.interruptedAssistant` chooses the form, and the difference between the
+first two is structural rather than cosmetic. **An assistant turn in provider
+history is a commitment**: the model reads its own previous turn as something it
+said and stays consistent with it. A system line is context.
+
+| value | form | right when |
+|-------|------|-----------|
+| `assistant-marked` (default) | assistant turn plus a marker | the human read the text |
+| `system-note` | `[interrupted] partial response: …` as a system line | the fragment reached nobody |
+| `omit` | not projected at all | you want it gone from the request |
+
+There is deliberately no value that reproduces what the projection used to do,
+which was to send the partial as an ordinary assistant turn and drop its
+`control` marker on the way. That was the defect, not a behaviour to stay
+compatible with.
+
+`projectAgentHistoryDetailed` reports what reached the provider, including part
+types that no projected content stands for:
+
+```ts
+const { decisions } = await projectAgentHistoryDetailed(snapshot.messages)
+// → { messageId: 'assistant-2', action: 'projected', reason: 'projected',
+//      omittedParts: ['source', 'provider'] }
+// → { messageId: 'assistant-1', action: 'omitted', reason: 'superseded' }
+```
+
+`runtime.stop(key, 'supersede')` is the same decision taken by hand: the
+process-local escape hatch chooses the reason, so a caller that knows the answer
+was never delivered can discard it without a newer input arriving.
+
+### The one that is not supported
+
+**inject** — hand the input to the loop between tool calls and let the run
+continue — has no primitive. `loop.prepareStep` passes the AI SDK return type
+through, so an application *can* append messages between steps, but nothing
+hands `prepareStep` the pending inputs and nothing attaches an absorbed input to
+the running run's `inputMessageIds`. A run that answered two messages would
+carry a durable record claiming it answered one. It is reachable by hand, not
+supported.
+
 With `runs.coalescePending: true`, an active lane has at most one queued
 successor. Every later accepted input is atomically appended to that successor;
 its `AgentRun.inputMessageIds` records the whole batch and every input ticket
@@ -246,8 +350,12 @@ coordinator signal. If provider completion races that revision change, the termi
 the canonical snapshot. An already-terminal winner settles the ticket directly; a still-owned
 `interrupt_requested` run is committed as `interrupted`, and unrelated aggregate-head conflicts
 remain retriable while the run is active with the same owner and fencing token. A stale owner or
-fencing token remains a conflict. Only the execution that applies the terminal mutation emits the
-terminal event and operator metrics; a loser settles from canonical state without republishing it.
+fencing token remains a conflict. Only the execution that applies the terminal mutation publishes the
+**delivery** `terminal` event — a loser settles from canonical state without republishing the turn,
+and its `AgentRuntimeResult.metrics` is `undefined`. The **operator** `run-terminal` event is not
+gated that way: a losing execution still ran, and still spent whatever it spent, so it reports its
+own usage. The two channels answer to different readers — delivering a turn twice is a user's
+problem, and omitting a run's cost is an operator's.
 `runtime.stop(key)` is the process-local signal-only escape hatch.
 
 ## Store operations
@@ -406,10 +514,43 @@ sending new event kinds to existing request sinks. Product events omit provider
 causes. Operator `internalCause` is also redacted by default; an operator-only sink must explicitly
 set `includeInternalCause` and own its retention policy.
 
-Usage values carry `provider-reported`, `computed`, `estimated` or
-`unavailable` provenance. Cost additionally carries an ISO currency code;
-OpenRouter-reported cost is normalized as USD. Missing values remain absent,
-never zero-filled.
+### What a run says it spent
+
+Usage values carry `provider-reported`, `computed`, `estimated` or `unavailable`
+provenance, **per field**. Cost additionally carries an ISO currency code;
+OpenRouter-reported cost is normalized as USD.
+
+Read the provenance before the number (→ ADR 0109):
+
+- **`provider-reported`** — the provider handed us exactly this. On
+  `step-finished`, that is what a step's figures are.
+- **`computed`** — a total, added up over steps. **Every figure on a terminal
+  event is this**, tokens included: the AI SDK's `totalUsage` is a sum it
+  performed, not a number a provider reported for the run. It is not a figure to
+  bill against unchanged.
+- **`unavailable`** — nobody reported it. Not zero.
+
+Two rules follow from that last one, and they differ by field on purpose:
+
+- **A token total with an unreported step is a floor**, labelled `computed`. A
+  token count is a diagnostic, and a floor is a useful one.
+- **A cost with an unreported step is `unavailable`, not a floor.** Money is what
+  people bill against, and "at least $1.00" reported as `$1.00` is the same class
+  of lie this whole section exists to remove. One step that did not report its
+  cost makes the run's cost unknown — not smaller. It also stays unknown: later
+  steps reporting normally cannot revive it.
+
+**A terminal event always carries `usage`.** A run that ended before the provider
+reported anything — superseded, interrupted, timed out, shut down, failed —
+carries every field `unavailable`. That is deliberately different from a run that
+spent nothing, and an omitted object could not tell you which one you had.
+
+Two costs in different currencies do not add: the sum reports `unavailable`
+rather than picking a label. The core records a currency and never converts one.
+
+Usage is **not durable**. It reaches you on the operator and delivery event
+streams and in `AgentRuntimeResult.metrics`, and stitchkit writes no spend to the
+store — where a figure lives afterwards is the application's (→ ADR 0002).
 
 The sink deduplicates stable event IDs by default. Cross-crash exactly-once still requires a durable
 outbox.

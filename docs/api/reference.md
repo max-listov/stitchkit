@@ -542,7 +542,7 @@ Server-only optional application runtime. See the
 | `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
 | `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware context budget |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
-| `createAgentSessionCoordinator` | function | strict process-local queue/interrupt lifecycle |
+| `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
@@ -553,7 +553,7 @@ Server-only optional application runtime. See the
 | `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
-| `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver and explicit unresolved-file behavior |
+| `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |

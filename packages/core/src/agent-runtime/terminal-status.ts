@@ -9,8 +9,34 @@ import type { AgentMessage, AgentTerminalReason } from './schemas';
  * value — the check and the thing checked moving together, which is the one
  * shape an invariant must not have.
  */
+/**
+ * Whether an assistant record of this status may still reach the model.
+ *
+ * The same home as `assistantStatus`, and for the same reason. Three separate
+ * walkers ask this question — the history projection, compaction, and the token
+ * budget — and each used to answer it with its own inline list. Two of those
+ * lists were blacklists, so adding `superseded` to the enum left both saying
+ * yes: compaction summarised a discarded fragment back into the conversation
+ * and deleted its record, and the budget protected it from eviction while never
+ * sending it. A list that must be edited in three places when the enum grows is
+ * the shape an invariant must not have.
+ */
+export function isSpeakableAssistantStatus(status: AgentMessage['status']): boolean {
+  // A whitelist on purpose: a status added to the enum later is unspeakable
+  // until someone says otherwise, which is the direction that fails loudly.
+  // `committed` is in the list because the projection has always spoken it —
+  // the core never writes it on an assistant, but the enum permits it, and
+  // dropping it here would be a silent behaviour change outside this decision.
+  return status === 'completed' || status === 'interrupted' || status === 'committed';
+}
+
 export function assistantStatus(reason: AgentTerminalReason): AgentMessage['status'] {
   if (reason === 'success' || reason === 'policy_stop') return 'completed';
+  // Its own status, not a shade of `interrupted`. The two differ in exactly one
+  // way — whether anything this run produced may still be shown to the model —
+  // and that is the question the projection asks. Folding them together here
+  // would put the answer back out of reach one layer down.
+  if (reason === 'superseded') return 'superseded';
   if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
     return 'interrupted';
   }

@@ -1,6 +1,8 @@
 import { type FilePart, type ModelMessage, modelMessageSchema } from 'ai';
 import type { AgentMessage, AgentMessagePart, AgentProviderEnvelope } from './schemas';
 
+type PartType = AgentMessagePart['type'];
+
 export interface AgentHistoryProjectionOptions {
   resolveFile?(
     part: Extract<AgentMessagePart, { type: 'file' }>,
@@ -16,6 +18,31 @@ export interface AgentHistoryProjectionOptions {
   unresolvedFile?: 'text' | 'omit' | 'error';
   leadingAssistant?: 'omit' | 'allow' | 'error';
   incompleteToolTurn?: 'omit' | 'error';
+  /**
+   * How an assistant turn that ended `interrupted` reaches the model. Default
+   * `assistant-marked`.
+   *
+   * There is deliberately no setting that reproduces what this used to do,
+   * which was to project the partial text as an ordinary assistant turn and
+   * drop its `control` marker on the way. That is not a compatibility mode, it
+   * is the defect: the model received a confident half-sentence with nothing to
+   * mark it as cut off, and continued a thought the user had already redirected.
+   *
+   * - `assistant-marked` — the partial stays an assistant turn and says it was
+   *   cut off. Right for the case `interrupted` describes today: the user
+   *   pressed stop, the text was streamed to their screen, they read it. The
+   *   assistant turn is the truthful record of what the human saw.
+   * - `system-note` — the partial is rendered as a system line instead. An
+   *   assistant turn in provider history is a *commitment*: the model reads its
+   *   own previous turn as something it said and stays consistent with it. When
+   *   the fragment reached nobody, consistency with it is the last thing
+   *   wanted, and a system line is context rather than commitment.
+   * - `omit` — the partial does not reach the model at all.
+   *
+   * A run ended under `inputPolicy: 'supersede'` never reaches this setting.
+   * Its assistant is `superseded`, and superseded output is always omitted.
+   */
+  interruptedAssistant?: 'assistant-marked' | 'system-note' | 'omit';
 }
 
 export interface AgentHistoryProjectionDecision {
@@ -26,7 +53,20 @@ export interface AgentHistoryProjectionDecision {
     | 'draft-or-failed'
     | 'empty'
     | 'leading-assistant'
-    | 'incomplete-tool-turn';
+    | 'incomplete-tool-turn'
+    | 'interrupted'
+    | 'superseded';
+  /**
+   * Part types on a *projected* record that no content in the projection stands
+   * for.
+   *
+   * Only projected records carry this. An omitted record is already accounted
+   * for by its own decision; a record that reaches the model with parts quietly
+   * missing is the case nothing recorded before — and a `control` marker
+   * disappearing this way is what kept an interrupted answer looking complete
+   * for a release.
+   */
+  omittedParts?: readonly PartType[];
 }
 
 export interface AgentHistoryProjectionResult {
@@ -48,13 +88,54 @@ function textContent(parts: readonly AgentMessagePart[]): string {
     .join('\n');
 }
 
+function unrepresented(
+  parts: readonly AgentMessagePart[],
+  rendered: ReadonlySet<PartType>,
+): readonly PartType[] {
+  const missing = new Set<PartType>();
+  for (const part of parts) {
+    if (!rendered.has(part.type)) missing.add(part.type);
+  }
+  return [...missing];
+}
+
+function decide(
+  message: AgentMessage,
+  action: AgentHistoryProjectionDecision['action'],
+  reason: AgentHistoryProjectionDecision['reason'],
+  rendered?: ReadonlySet<PartType>,
+): AgentHistoryProjectionDecision {
+  if (action === 'omitted' || !rendered) return { messageId: message.id, action, reason };
+  const omittedParts = unrepresented(message.parts, rendered);
+  return {
+    messageId: message.id,
+    action,
+    reason,
+    ...(omittedParts.length > 0 && { omittedParts }),
+  };
+}
+
+/**
+ * What an interrupted turn says about itself.
+ *
+ * Driven by the message *status*, not by the presence of a `control` part: the
+ * abort path that does not throw commits an interrupted assistant without one,
+ * so a marker conditioned on the part would be missing from exactly the runs a
+ * newer input ended.
+ */
+const INTERRUPTION_NOTE = '[interrupted: this turn was cut off before it finished]';
+
 async function userMessage(
   message: AgentMessage,
   options: AgentHistoryProjectionOptions,
-): Promise<ModelMessage | undefined> {
+): Promise<{ message?: ModelMessage; rendered: Set<PartType> }> {
+  const rendered = new Set<PartType>();
   const text = textContent(message.parts);
   const content: unknown[] = [];
-  if (text) content.push({ type: 'text', text });
+  if (text) {
+    content.push({ type: 'text', text });
+    rendered.add('text');
+  }
   for (const part of message.parts) {
     if (part.type !== 'file') continue;
     if (options.resolveFile) {
@@ -64,6 +145,7 @@ async function userMessage(
         mediaType: part.mediaType,
         ...(part.filename && { filename: part.filename }),
       });
+      rendered.add('file');
       continue;
     }
     const fallback = options.unresolvedFile ?? 'omit';
@@ -81,23 +163,32 @@ async function userMessage(
         type: 'text',
         text: described ? `[attachment: ${described}]` : '[attachment]',
       });
+      rendered.add('file');
     }
   }
-  if (content.length === 0) return undefined;
-  return modelMessageSchema.parse({ role: 'user', content });
+  if (content.length === 0) return { rendered };
+  return { message: modelMessageSchema.parse({ role: 'user', content }), rendered };
 }
 
-function assistantMessages(message: AgentMessage): ModelMessage[] {
+function assistantMessages(
+  message: AgentMessage,
+  interrupted: boolean,
+): { messages: ModelMessage[]; rendered: Set<PartType> } {
+  const rendered = new Set<PartType>();
   const assistantContent: unknown[] = [];
   const toolContent: unknown[] = [];
   for (const part of message.parts) {
-    if (part.type === 'text') assistantContent.push({ type: 'text', text: part.text });
+    if (part.type === 'text') {
+      assistantContent.push({ type: 'text', text: part.text });
+      rendered.add('text');
+    }
     if (part.type === 'reasoning') {
       assistantContent.push({
         type: 'reasoning',
         text: part.text,
         ...(part.provider && { providerOptions: providerOptions(part.provider) }),
       });
+      rendered.add('reasoning');
     }
     if (part.type === 'tool-call') {
       assistantContent.push({
@@ -107,6 +198,7 @@ function assistantMessages(message: AgentMessage): ModelMessage[] {
         input: part.input,
         ...(part.provider && { providerOptions: providerOptions(part.provider) }),
       });
+      rendered.add('tool-call');
     }
     if (part.type === 'tool-result') {
       const output =
@@ -119,7 +211,14 @@ function assistantMessages(message: AgentMessage): ModelMessage[] {
         toolName: part.toolName,
         output,
       });
+      rendered.add('tool-result');
     }
+  }
+  if (interrupted && (assistantContent.length > 0 || toolContent.length > 0)) {
+    assistantContent.push({ type: 'text', text: INTERRUPTION_NOTE });
+    // The note stands for the marker, so a `control` part is now represented
+    // rather than silently dropped.
+    rendered.add('control');
   }
   const messages: ModelMessage[] = [];
   if (assistantContent.length > 0) {
@@ -128,7 +227,25 @@ function assistantMessages(message: AgentMessage): ModelMessage[] {
   if (toolContent.length > 0) {
     messages.push(modelMessageSchema.parse({ role: 'tool', content: toolContent }));
   }
-  return messages;
+  return { messages, rendered };
+}
+
+function interruptedSystemNote(message: AgentMessage): {
+  message?: ModelMessage;
+  rendered: Set<PartType>;
+} {
+  const rendered = new Set<PartType>();
+  const text = textContent(message.parts);
+  if (!text) return { rendered };
+  rendered.add('text');
+  rendered.add('control');
+  return {
+    message: modelMessageSchema.parse({
+      role: 'system',
+      content: `[interrupted] partial response: ${text}`,
+    }),
+    rendered,
+  };
 }
 
 function completeToolChronology(message: AgentMessage): boolean {
@@ -151,20 +268,28 @@ export async function projectAgentHistoryDetailed(
 ): Promise<AgentHistoryProjectionResult> {
   const projected: ModelMessage[] = [];
   const decisions: AgentHistoryProjectionDecision[] = [];
+  const interruptedRule = options.interruptedAssistant ?? 'assistant-marked';
   let observedUser = false;
   for (const message of messages) {
+    // A superseded record is durable and inspectable, and never spoken again.
+    // Not a variant of the rule below: the point of the status is that this
+    // output is known to have reached nobody.
+    if (message.status === 'superseded') {
+      decisions.push(decide(message, 'omitted', 'superseded'));
+      continue;
+    }
     if (message.status === 'streaming' || message.status === 'failed') {
-      decisions.push({ messageId: message.id, action: 'omitted', reason: 'draft-or-failed' });
+      decisions.push(decide(message, 'omitted', 'draft-or-failed'));
       continue;
     }
     if (message.role === 'user') {
       const user = await userMessage(message, options);
       observedUser = true;
-      if (user) {
-        projected.push(user);
-        decisions.push({ messageId: message.id, action: 'projected', reason: 'projected' });
+      if (user.message) {
+        projected.push(user.message);
+        decisions.push(decide(message, 'projected', 'projected', user.rendered));
       } else {
-        decisions.push({ messageId: message.id, action: 'omitted', reason: 'empty' });
+        decisions.push(decide(message, 'omitted', 'empty'));
       }
       continue;
     }
@@ -172,9 +297,9 @@ export async function projectAgentHistoryDetailed(
       const content = textContent(message.parts);
       if (content) {
         projected.push(modelMessageSchema.parse({ role: 'system', content }));
-        decisions.push({ messageId: message.id, action: 'projected', reason: 'projected' });
+        decisions.push(decide(message, 'projected', 'projected', new Set<PartType>(['text'])));
       } else {
-        decisions.push({ messageId: message.id, action: 'omitted', reason: 'empty' });
+        decisions.push(decide(message, 'omitted', 'empty'));
       }
       continue;
     }
@@ -182,31 +307,41 @@ export async function projectAgentHistoryDetailed(
       if (options.leadingAssistant === 'error') {
         throw new Error(`Assistant message ${message.id} precedes the first user message`);
       }
-      decisions.push({
-        messageId: message.id,
-        action: 'omitted',
-        reason: 'leading-assistant',
-      });
+      decisions.push(decide(message, 'omitted', 'leading-assistant'));
+      continue;
+    }
+    const interrupted = message.status === 'interrupted';
+    if (interrupted && interruptedRule === 'omit') {
+      decisions.push(decide(message, 'omitted', 'interrupted'));
+      continue;
+    }
+    if (interrupted && interruptedRule === 'system-note') {
+      // The chronology check below guards tool calls the provider would have to
+      // pair; a system note emits none, so a half-finished tool turn is no
+      // reason to drop the text with it.
+      const note = interruptedSystemNote(message);
+      if (note.message) {
+        projected.push(note.message);
+        decisions.push(decide(message, 'projected', 'projected', note.rendered));
+      } else {
+        decisions.push(decide(message, 'omitted', 'empty'));
+      }
       continue;
     }
     if (!completeToolChronology(message)) {
       if (options.incompleteToolTurn === 'error') {
         throw new Error(`Assistant message ${message.id} has incomplete tool chronology`);
       }
-      decisions.push({
-        messageId: message.id,
-        action: 'omitted',
-        reason: 'incomplete-tool-turn',
-      });
+      decisions.push(decide(message, 'omitted', 'incomplete-tool-turn'));
       continue;
     }
-    const assistant = assistantMessages(message);
-    projected.push(...assistant);
-    decisions.push({
-      messageId: message.id,
-      action: assistant.length > 0 ? 'projected' : 'omitted',
-      reason: assistant.length > 0 ? 'projected' : 'empty',
-    });
+    const assistant = assistantMessages(message, interrupted);
+    projected.push(...assistant.messages);
+    decisions.push(
+      assistant.messages.length > 0
+        ? decide(message, 'projected', 'projected', assistant.rendered)
+        : decide(message, 'omitted', 'empty'),
+    );
   }
   return { messages: projected, decisions };
 }

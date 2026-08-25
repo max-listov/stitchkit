@@ -13,6 +13,148 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.62.0] — 2026-08-25
+
+### ⚠️ Breaking changes
+
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **A multi-step run's reported cost changes, and so does its provenance.** The
+  step loop assigned usage instead of accumulating it, and the `finish` branch
+  grafted the surviving `cost` onto the SDK's token aggregate — which carries no
+  cost of its own. A successful three-step run costing $0.50, $1.00 and $1.50
+  reported **$1.50** beside all 6 000 of its input tokens, labelled
+  `provider-reported`. It now reports **$3.00**, labelled `computed`.
+
+  ```ts
+  // before
+  terminal.usage?.cost        // { value: 1.5, provenance: 'provider-reported' }  ← one step
+  // after
+  terminal.usage?.cost        // { value: 3.0, provenance: 'computed' }           ← the run
+  ```
+
+  **If you filter on `provenance === 'provider-reported'` to decide what to bill
+  against, that filter now drops every run total — and used to accept a number
+  that was wrong.** Accept `'computed'`: it means the figure was added up, not
+  that anyone estimated it.
+
+  Token totals moved the same way, for the same reason. The AI SDK's
+  `totalUsage` is a sum *it* performed over per-step provider figures, not a
+  total a provider handed over, so it no longer wears the provider's word
+  either. **A run total on a terminal event is always `computed`; the provider's
+  own figure lives on `step-finished`, per step.**
+
+  A token total missing a step is a floor, still labelled `computed`. A **cost**
+  missing a step is `unavailable`, not a floor: "at least $1.00" reported as
+  `$1.00` is the same defect one level down. Two costs in different currencies —
+  or one with no currency at all — also report `unavailable`; the core records a
+  currency and never converts one.
+
+  `assistant-checkpoint` metrics changed meaning with this: they used to
+  republish the last finished step and now carry a running total. **Read the
+  latest checkpoint; never sum them.**
+
+- **A terminal event always carries `usage`.** It used to be omitted entirely
+  when a run ended before the provider's `finish`, so a run that spent nothing
+  and a run that burned a minute of an expensive model looked identical.
+
+  ```ts
+  // before: `usage` absent on an aborted run — indistinguishable from no spend
+  if (event.usage) { … }
+  // after: present, with every field stated, unreported ones `unavailable`
+  if (event.usage?.cost?.provenance !== 'unavailable') { … }
+  ```
+
+  The optional chaining stays necessary: one `AgentRunEventSchema` covers
+  `run-started`, `step-finished` and `run-terminal`, and `usage` is rightly
+  optional for the first. The guarantee is per event kind and the type cannot
+  narrow it.
+
+- **An executor that loses the terminal CAS now emits an operator
+  `run-terminal` event.** It ran and it spent; only the *delivery* `terminal`
+  event stays gated on `committedByCaller`, because that one carries the
+  assistant message and would deliver the turn twice. A sink that counted
+  operator terminal events as "runs I committed" now counts runs someone else
+  committed too — read `AgentRuntimeResult.metrics`, which is still `undefined`
+  for a losing executor.
+
+- **An interrupted assistant turn now tells the model it was cut off.** The
+  history projection sent a partial answer upstream as an ordinary assistant
+  turn and dropped its `control` marker on the way, so the model received a
+  confident half-sentence with nothing to mark it as unfinished — and continued
+  a thought the user had already redirected. The partial is still projected;
+  it now carries a marker, and the form is a choice.
+
+  ```ts
+  // before: an interrupted turn reached the provider as
+  //   { role: 'assistant', content: [{ type: 'text', text: 'We are the team, where' }] }
+  // after:  the same turn, plus
+  //   { type: 'text', text: '[interrupted: this turn was cut off before it finished]' }
+  // to render it as context instead of a commitment:
+  createAgentRuntime({ history: { interruptedAssistant: 'system-note' } })
+  // to keep it out of the request entirely:
+  createAgentRuntime({ history: { interruptedAssistant: 'omit' } })
+  ```
+
+  There is deliberately no setting that restores the previous output. A silent
+  drop is the defect, not a behaviour to stay compatible with.
+
+- **`'superseded'` joins three enums.** `AgentTerminalReasonSchema`,
+  `AgentRunStateSchema` and `AgentMessageStatusSchema` each gain a member. Code
+  that exhaustively switches on any of them, or that persists them through a
+  narrower column, must handle it.
+
+  ```ts
+  // before: an ended-by-newer-input run was indistinguishable from a stopped one
+  if (run.terminalReason === 'interrupted') { … }
+  // after: the two are separate outcomes
+  if (run.terminalReason === 'interrupted') { … }   // the user pressed stop
+  if (run.terminalReason === 'superseded') { … }    // a newer input ended it
+  ```
+
+- **Two decision unions widened.** `AgentHistoryProjectionDecision['reason']`
+  gained `'interrupted'` and `'superseded'`; `AgentHistoryBudgetDecision['reason']`
+  gained `'superseded'`. Both are output-position unions on exported types, so an
+  exhaustive switch over either stops compiling — the same reason the three
+  schema enums above are listed here.
+
+  ```ts
+  // before: five projection reasons, six budget reasons
+  // after:  add the arms, or fall through a default
+  switch (decision.reason) { case 'superseded': /* never sent to the model */ break }
+  ```
+
+### Added
+
+- **`inputPolicy: 'supersede'`** — a third admission policy. Like `interrupt` it
+  ends the run in flight; unlike `interrupt` it discards what that run produced,
+  so the partial answer never reaches the model again. The durable record
+  survives and is inspectable; only the projection excludes it.
+- **`history.interruptedAssistant`** — `'assistant-marked'` (default),
+  `'system-note'` or `'omit'`.
+- **`AgentHistoryProjectionDecision.omittedParts`** — part types on a projected
+  record that no content in the projection stands for, so an application can
+  assert what actually reached the provider.
+- **`AgentStopReason` gained `'supersede'`** — `runtime.stop(key, 'supersede')`
+  ends a run and discards its output by hand, without a newer input arriving.
+
+### Fixed
+
+- **A discarded fragment can no longer come back.** Three readers walked history
+  asking whether a record may still reach the model, and each answered with its
+  own inline list; two were blacklists, so a superseded record was speakable by
+  default in both. A durable interrupt landing on the terminal commit rewrote
+  `superseded` back to `interrupted` and republished the fragment; compaction
+  summarised it into the conversation **and deleted its record**; and the token
+  budget read it as an incomplete turn — the one class eviction refuses to
+  touch — so it was unevictable and pushed real turns out in its place. The
+  question now has one home (`isSpeakableAssistantStatus`) and a test that
+  enumerates the status enum.
+- **The history projection no longer drops parts in silence.** `source`,
+  `provider`, `control` and unresolved `file` parts were removed from a
+  projected record with nothing recording it. Each is now named in that
+  record's decision.
+
 ## [0.61.0] — 2026-08-25
 
 ### ⚠️ Breaking changes
@@ -3902,7 +4044,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/max-listov/stitchkit/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/max-listov/stitchkit/compare/v0.60.1...v0.61.0
 [0.60.1]: https://github.com/max-listov/stitchkit/compare/v0.60.0...v0.60.1
 [0.60.0]: https://github.com/max-listov/stitchkit/compare/v0.59.4...v0.60.0

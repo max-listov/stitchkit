@@ -19,7 +19,7 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 | Canonical message/run shapes | Stitchkit | Zod schemas in `packages/core/src/agent-runtime/schemas.ts` |
 | Transition validation, revisions, idempotency and compaction replacement | Stitchkit | reducer in `store-driver.ts` |
 | Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history |
-| Process-local queue, interrupt and settlement | Stitchkit | `coordinator.ts` |
+| Process-local queue, interrupt, supersede and settlement | Stitchkit | `coordinator.ts` |
 | Distributed ownership | application adapter | lease plus optional monotonic `fencingToken` persisted with the run |
 | Model allowlist/default | application | registry declarations and selection policy |
 | Provider construction/usage normalization | provider adapter | isolated provider entrypoint |
@@ -46,7 +46,8 @@ independent run transition around the reducer.
 | acquired | recovery with explicit stale-owner evidence | `abandoned` | terminal projection |
 | acquired | recovery with explicit replay-safe evidence | `queued` | later acquisition; no automatic effect replay |
 
-Terminal states are `completed`, `interrupted`, `failed`, `cancelled` and `abandoned`. An
+Terminal states are `completed`, `interrupted`, `superseded`, `failed`, `cancelled`
+and `abandoned`. An
 `AbortSignal` is only a cooperation request and cannot advance durable state. A hung predecessor
 therefore blocks its keyed lane until it settles; `close({ forceTimeoutMs })` may bound caller
 waiting but does not pretend the external effect stopped.

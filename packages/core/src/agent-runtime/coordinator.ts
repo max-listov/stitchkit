@@ -1,5 +1,20 @@
-export type AgentInputPolicy = 'queue' | 'interrupt';
-export type AgentStopReason = 'user-interrupt' | 'timeout' | 'shutdown';
+/**
+ * What happens to a run in flight when new input arrives on the same key.
+ *
+ * `queue` finishes the run first. `interrupt` and `supersede` both end it, and
+ * differ in one thing only: what becomes of what it produced. An interrupted
+ * run's partial answer stays part of the conversation; a superseded run's does
+ * not reach the model again.
+ *
+ * The runtime cannot decide that on its own, because the fact it turns on —
+ * whether anyone saw the partial answer — belongs to the delivery surface. A
+ * token stream shows it as it is produced; a surface that sends nothing until
+ * the run is done never showed it at all. Hence a declared policy, and hence
+ * `inputPolicy` accepting a function of the input: one application can hold
+ * both surfaces.
+ */
+export type AgentInputPolicy = 'queue' | 'interrupt' | 'supersede';
+export type AgentStopReason = 'user-interrupt' | 'supersede' | 'timeout' | 'shutdown';
 
 export interface AgentCoordinatedRun<RESULT> {
   runId: string;
@@ -172,7 +187,10 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
         },
       };
 
+      // The abort reason is the only thing that survives into the terminal
+      // record, so the two ending policies must not share one.
       if (input.policy === 'interrupt') lane.active?.controller.abort('user-interrupt');
+      if (input.policy === 'supersede') lane.active?.controller.abort('supersede');
       lane.queue.push(pending);
       startNext(input.key, lane);
       return { accepted: accepted.promise, result: result.promise };

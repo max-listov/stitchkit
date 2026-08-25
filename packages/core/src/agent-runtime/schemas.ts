@@ -83,6 +83,7 @@ export const AgentMessageStatusSchema = z.enum([
   'streaming',
   'completed',
   'interrupted',
+  'superseded',
   'failed',
 ]);
 
@@ -119,6 +120,7 @@ export const AgentRunStateSchema = z.enum([
   'interrupt_requested',
   'completed',
   'interrupted',
+  'superseded',
   'failed',
   'cancelled',
   'abandoned',
@@ -128,6 +130,7 @@ export const AgentTerminalReasonSchema = z.enum([
   'success',
   'policy_stop',
   'interrupted',
+  'superseded',
   'cancelled',
   'timeout',
   'shutdown',

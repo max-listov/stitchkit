@@ -7,12 +7,15 @@ import type { AgentResolvedModel } from './models';
 import type { AgentRuntimeConfig } from './runtime';
 import {
   abortTerminalReason,
+  addUsage,
   appendText,
   createIdleDeadline,
   findRun,
   jsonValue,
+  mergeRunTotals,
   normalizeSdkUsage,
   providerEnvelope,
+  statedUsage,
 } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
 import {
@@ -267,6 +270,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
             ...(config.history?.unresolvedFile && {
               unresolvedFile: config.history.unresolvedFile,
+            }),
+            ...(config.history?.interruptedAssistant && {
+              interruptedAssistant: config.history.interruptedAssistant,
             }),
           }));
       const maxStepCondition = stepCountIs(maxSteps);
@@ -535,7 +541,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               usage: part.usage,
               providerMetadata: part.providerMetadata,
             }) ?? normalizeSdkUsage(part.usage);
-          usage = stepUsage;
+          usage = addUsage(usage, stepUsage);
           config.observe?.emit({
             schemaVersion: 1,
             eventId: generateId(),
@@ -556,8 +562,10 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           terminalReason = 'policy_stop';
         }
         if (part.type === 'finish') {
-          const aggregate = normalizeSdkUsage(part.totalUsage);
-          usage = { ...aggregate, ...(usage?.cost && { cost: usage.cost }) };
+          // This line used to graft the LAST STEP's cost onto every step's
+          // tokens — a successful three-step run reported a third of the money
+          // beside all of the tokens, and called it `provider-reported`.
+          usage = mergeRunTotals(normalizeSdkUsage(part.totalUsage), usage);
         }
         if (eventCount % checkpointEveryEvents === 0) await checkpoint();
       }
@@ -602,17 +610,70 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       parts,
       updatedAt: now().toISOString(),
     });
-    const terminal = await commitAgentRunTerminal({
-      store: config.store,
-      runtimeEpoch,
-      candidate: {
-        run,
-        assistant,
+    // Never absent. An omitted `usage` said the same thing about a run that
+    // never reached the provider and a run that burned a minute of the most
+    // expensive model available — and only one of those spent money.
+    const spent = statedUsage(usage);
+    const emitSpend = (report: {
+      eventId: string;
+      state: AgentRun['state'];
+      reason: AgentTerminalReason;
+    }): void => {
+      config.observe?.emit({
+        schemaVersion: 1,
+        eventId: report.eventId,
+        type: 'run-terminal',
+        conversationId: run.conversationId,
+        runId: run.id,
+        traceId: trace?.traceId ?? generateId(),
+        spanId: trace?.spanId ?? generateId(),
+        ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
+        state: report.state,
+        terminalReason: report.reason,
+        ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
+        durationMs: performance.now() - runStartedAt,
+        usage: spent,
+        ...(internalCause !== undefined && { internalCause }),
+        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+        emittedAt: now().toISOString(),
+      });
+    };
+    // A losing executor reports a DIFFERENT fact — its own spend for a run it
+    // did not settle — so its event must not wear the winner's identity. Both
+    // used to derive `${runId}:terminal:${version}` from the same post-commit
+    // snapshot, and the sink's default deduplication then dropped whichever
+    // arrived second, discarding one of the two spend figures. Qualified by the
+    // epoch, the id is still stable for this executor and unique between them.
+    const unsettledEventId = (version: number): string =>
+      agentDurableEventId('terminal', `${run.id}:${runtimeEpoch}`, version);
+
+    let terminal: Awaited<ReturnType<typeof commitAgentRunTerminal>>;
+    try {
+      terminal = await commitAgentRunTerminal({
+        store: config.store,
+        runtimeEpoch,
+        candidate: {
+          run,
+          assistant,
+          reason: terminalReason,
+          ...(terminalPolicyName && { policyName: terminalPolicyName }),
+        },
+        now,
+      });
+    } catch (error) {
+      // Where the record ends up is now someone else's to decide — the lease
+      // was taken, or the row moved under us. What this executor SPENT getting
+      // here is not in doubt, and dropping it is how a stolen run produced four
+      // fully billed steps and no row on either channel. `state` is the run as
+      // this executor last knew it, which is exactly the claim being made: an
+      // execution stopped here, and it did not settle the record.
+      emitSpend({
+        eventId: unsettledEventId(snapshot.version),
+        state: run.state,
         reason: terminalReason,
-        ...(terminalPolicyName && { policyName: terminalPolicyName }),
-      },
-      now,
-    });
+      });
+      throw error;
+    }
     snapshot = terminal.snapshot;
     run = terminal.run;
     assistant = terminal.assistant;
@@ -622,29 +683,25 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       ? {
           partial: false,
           durationMs: performance.now() - runStartedAt,
-          ...(usage && { usage }),
+          usage: spent,
           ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
         }
       : undefined;
+    // The two channels are not gated alike, because they are not for the same
+    // reader. Observability is the operator's, and it is about what THIS
+    // executor spent — money that is real whether or not this executor won the
+    // terminal CAS. Delivery carries the assistant message to the application's
+    // transport, so emitting it for a run someone else committed would deliver
+    // the same turn twice. Gating both on `committedByCaller` is why an
+    // executor that lost the race reported nothing at all.
+    emitSpend({
+      eventId: terminal.committedByCaller
+        ? agentDurableEventId('terminal', run.id, snapshot.version)
+        : unsettledEventId(snapshot.version),
+      state: run.state,
+      reason: terminalReason,
+    });
     if (terminalMetrics) {
-      config.observe?.emit({
-        schemaVersion: 1,
-        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
-        type: 'run-terminal',
-        conversationId: run.conversationId,
-        runId: run.id,
-        traceId: trace?.traceId ?? generateId(),
-        spanId: trace?.spanId ?? generateId(),
-        ...(trace?.parentSpanId && { parentSpanId: trace.parentSpanId }),
-        state: run.state,
-        terminalReason,
-        ...(selectedModel && { modelId: selectedModel.descriptor.modelId }),
-        durationMs: terminalMetrics.durationMs,
-        ...(usage && { usage }),
-        ...(internalCause !== undefined && { internalCause }),
-        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-        emittedAt: now().toISOString(),
-      });
       await publish({
         type: 'terminal',
         eventId: agentDurableEventId('terminal', run.id, snapshot.version),

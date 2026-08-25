@@ -406,9 +406,16 @@ describe('agent runtime terminalization', () => {
     expect(result.run.state).toBe('failed');
     expect(result.message.status).toBe('failed');
     expect(result.metrics).toBeUndefined();
+    // The delivery channel stays silent: the winner already delivered the turn,
+    // and publishing it again would deliver it twice.
     expect(events.filter((event) => event.type === 'terminal')).toHaveLength(0);
     await observability.flush();
-    expect(operatorEvents.filter((event) => event.type === 'run-terminal')).toHaveLength(0);
+    // The operator channel does not. This executor ran and spent whatever it
+    // spent, and losing a compare-and-swap does not refund it — a spend record
+    // that omits every run terminated by someone else is not a spend record.
+    const operatorTerminals = operatorEvents.filter((event) => event.type === 'run-terminal');
+    expect(operatorTerminals).toHaveLength(1);
+    expect(operatorTerminals[0]?.usage).toBeDefined();
     await observability.close();
   });
 

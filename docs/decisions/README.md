@@ -122,6 +122,8 @@ These records were consolidated from the project's internal design notes on
 | [0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md) | The error-code map is partial, and the registry is complete | Accepted — supersedes the exhaustiveness clause of 0026 |
 | [0106](0106-a-refused-frame-answers-its-sender.md) | A refused realtime frame answers its sender | Accepted — refines the realtime rejection surface of 0008 and keeps identity out of the core per 0002 |
 | [0107](0107-a-rollback-spends-a-declared-budget.md) | A rollback spends a declared budget, and the budget is a bound | Accepted — completes the deadline model of 0102 for the rollback path |
+| [0108](0108-what-a-stopped-run-said-is-a-declared-policy.md) | What a stopped run already said is a declared policy, not a default | Accepted — the runtime cannot observe delivery, so the application declares it |
+| [0109](0109-a-spend-figure-never-claims-a-provenance-it-does-not-have.md) | A spend figure never claims a provenance it does not have | Accepted — keeps billing out of the core per 0002 while making what the core reports true |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

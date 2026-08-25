@@ -54,6 +54,123 @@ current one *up to* your target, and apply each snippet.
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.62.0
+
+Two groups of behaviour changes. Nothing moves an export — the surface is
+strictly additive — and every item changes what a running system reports or
+sends, which is what this heading is for. One of them changes a number you may
+already be billing against.
+
+### A run reports what it spent
+
+Three changes to what the runtime says about cost and tokens. Nothing moves an
+export; all three change numbers a running system reports, and one of them
+changes a number you may already be billing against.
+
+#### Multi-step cost was under-reported and is now summed
+
+No code change is needed to get the fix — but check any predicate that reads
+`provenance`:
+
+```ts
+// before — accepted a number that was one step's cost, not the run's
+if (usage.cost?.provenance === 'provider-reported') bill(usage.cost.value)
+
+// after — a sum stitchkit performed says so
+if (usage.cost && usage.cost.provenance !== 'unavailable') bill(usage.cost.value)
+```
+
+`'computed'` means stitchkit added up provider-reported parts. It is not a guess
+— `'estimated'` is the word for that — but it is deliberately not
+`'provider-reported'`, because that label is what a caller filters on when it
+wants a figure it can bill against unchanged, and a sum is not one.
+
+Token totals moved with it. The AI SDK's `totalUsage` is a sum *it* performed
+over per-step provider figures — not a run total any provider handed over — so
+labelling it `provider-reported` was the same overstatement. **A run total on a
+terminal event is always `computed`.** If you want a figure with the provider's
+own word on it, read `step-finished`: each step carries what that call reported.
+
+#### `usage` is always present on a terminal event
+
+```ts
+// before — absent when the run ended before the provider's `finish`
+const spent = event.usage?.cost?.value ?? 0        // silently 0 for a real spend
+
+// after — present, and it says what it does not know
+event.usage?.cost?.provenance === 'unavailable'    // we spent, and cannot say how much
+```
+
+Keep the optional chaining: one `AgentRunEvent` shape covers `run-started`,
+`step-finished` and `run-terminal`, so `usage` stays optional on the type. The
+guarantee is about terminal events, and a schema shared with `run-started`
+cannot express it.
+
+**Do not read `unavailable` as zero.** A run aborted mid-stream has spent real
+money that nobody has counted; a run that never reached the provider has not.
+Both used to look the same and now do not.
+
+#### A losing executor reports its own spend
+
+An execution that loses the terminal compare-and-swap now emits an operator
+`run-terminal` event, because it ran and it spent. If a sink treated those events
+as "runs this process committed", that is no longer true — `AgentRuntimeResult.metrics`
+is still `undefined` for a losing executor and remains the way to tell.
+
+The *delivery* `terminal` event is unchanged and still fires only for the winner,
+so nothing delivers a turn twice.
+
+### An interrupted answer stops passing as a finished one
+
+Two behaviour changes, one shared cause: a run ended by a newer input used to
+leave its half-written answer in the conversation with no sign that it was cut
+off, and the next request to the provider carried it as an ordinary assistant
+turn.
+
+#### The projection marks an interrupted turn
+
+Nothing to change to adopt the fix — the default is the fixed behaviour. What to
+check is whether the marker is the *right* form for your surface, and the
+question that decides it is not "was the run interrupted" but **"did anyone see
+what it produced"**.
+
+```ts
+// after — pick the form; the default is 'assistant-marked'
+createAgentRuntime({ history: { interruptedAssistant: 'system-note' } })
+```
+
+- **The user pressed stop and the text was on their screen** — keep
+  `'assistant-marked'`. The assistant turn is the truthful record of what the
+  human read, and the model should stay consistent with it.
+- **The partial never reached anyone** — a surface that sends nothing until the
+  run is done — prefer `'system-note'`. An assistant turn in provider history is
+  a commitment the model stays consistent with; a system line is context.
+
+If you pass `history.project` you own the projection outright and none of this
+applies — but the same question does.
+
+#### A run ended by a newer input can now say so
+
+```ts
+// before
+runs: { inputPolicy: 'interrupt' }   // ends the run, keeps its partial answer
+
+// after — for a surface where a follow-up message invalidates the answer
+// in flight rather than merely stopping it
+runs: { inputPolicy: 'supersede' }   // ends the run, discards its partial answer
+```
+
+`inputPolicy` also accepts `(input) => policy`, which is how one application
+gives two conversation surfaces different rules without the runtime learning
+which is which.
+
+A superseded run terminates with `terminalReason: 'superseded'`, state
+`'superseded'` and an assistant message of status `'superseded'`. **If you switch
+exhaustively on any of those enums, add the arm** — that is the part of this
+release that can break a build rather than a behaviour. The record itself is
+kept: it is excluded from the projection, not deleted, so an operator can still
+see what was thrown away.
+
 ## Released migration: 0.61.0
 
 Three behaviour changes between versions. None moves an export — the surface is

@@ -160,6 +160,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     project?(messages: readonly AgentMessage[]): ModelMessage[] | Promise<ModelMessage[]>;
     resolveFile?: AgentHistoryProjectionOptions['resolveFile'];
     unresolvedFile?: AgentHistoryProjectionOptions['unresolvedFile'];
+    interruptedAssistant?: AgentHistoryProjectionOptions['interruptedAssistant'];
   };
   publish?: AgentRuntimePublisher;
   onPublishError?(input: { event: AgentRuntimeEvent; error: unknown }): void | Promise<void>;
