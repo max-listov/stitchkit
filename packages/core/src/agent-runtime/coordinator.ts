@@ -6,10 +6,13 @@
  * run's partial answer stays part of the conversation; a superseded run's does
  * not reach the model again.
  *
- * A fourth behaviour — hand the input to the loop between tool calls and let the
- * run continue — shipped as `inject` in 0.63.0 and was withdrawn in 0.65.0. It
- * committed the absorption durably before the answer existed, which left an
- * accepted input that no path could answer. The redesign is tracked separately.
+ * `inject` is the fourth: the running loop takes the successor's input into its
+ * prompt at a step boundary and answers it too. To the coordinator it is
+ * `queue` — it never ends the run in flight — and the successor stays an
+ * ordinary queued run until the absorbing run's terminal commit says otherwise.
+ * That ordering is the correction to the version withdrawn in 0.65.0, which
+ * committed the absorption at the boundary, before the answer existed (→ ADR
+ * 0113).
  *
  * The runtime cannot decide that on its own, because the fact it turns on —
  * whether anyone saw the partial answer — belongs to the delivery surface. A
@@ -18,7 +21,7 @@
  * `inputPolicy` accepting a function of the input: one application can hold
  * both surfaces.
  */
-export type AgentInputPolicy = 'queue' | 'interrupt' | 'supersede';
+export type AgentInputPolicy = 'queue' | 'inject' | 'interrupt' | 'supersede';
 export type AgentStopReason = 'user-interrupt' | 'supersede' | 'timeout' | 'shutdown';
 
 export interface AgentCoordinatedRun<RESULT> {

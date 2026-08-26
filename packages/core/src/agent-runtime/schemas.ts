@@ -138,6 +138,16 @@ export const AgentTerminalReasonSchema = z.enum([
   'provider_failure',
   /** This runtime refused to call the provider — the context did not fit. */
   'context_overflow',
+  /**
+   * This run's input was taken on by a run already in flight, which answered it.
+   *
+   * Never passed to `commitRunTerminal` as an operation's own reason: it is
+   * written as a **side effect** of the absorbing run's terminal commit, in the
+   * same transaction, which is the whole point (→ ADR 0113). A run that ends
+   * this way produces no assistant message of its own — the answer is on the run
+   * named by `absorbedIntoRunId`.
+   */
+  'absorbed',
   'abandoned',
 ]);
 
@@ -157,7 +167,13 @@ export function runStateForTerminalReason(
     return 'completed';
   }
   if (reason === 'interrupted') return 'interrupted';
-  if (reason === 'superseded') return 'superseded';
+  // `absorbed` shares `superseded`'s state, and for `superseded`'s reason: this
+  // run contributed nothing the model will ever hear. Sharing an existing state
+  // instead of minting one is deliberate — the withdrawn 0.63.0 design gave
+  // absorption a state of its own, and it was the only run state that was
+  // neither active, nor recoverable, nor terminal. The reason still says which
+  // of the two happened, and `absorbedIntoRunId` says where the answer went.
+  if (reason === 'superseded' || reason === 'absorbed') return 'superseded';
   if (reason === 'cancelled' || reason === 'shutdown' || reason === 'timeout') {
     return 'cancelled';
   }
@@ -165,15 +181,76 @@ export function runStateForTerminalReason(
   return 'failed';
 }
 
+/**
+ * How a number came to be known — one vocabulary for the whole entrypoint.
+ *
+ * There used to be two, and they did not share a word: a spend figure could be
+ * `provider-reported` or `computed`, a prompt-budget count `measured`, and
+ * neither type accepted the other's terms. A consumer holding both — and it
+ * holds both for the *same request*, `AgentPromptBudget.toolSchemas` beside
+ * `AgentUsage.inputTokens` — wrote two switches over one question, and the
+ * difference between `measured` and `provider-reported` could not be explained
+ * without reading both files.
+ *
+ * The words are now defined once, here, and each surface declares the subset it
+ * can produce with `.extract`. No surface widened: a reader's exhaustive switch
+ * still sees exactly the values that surface emits, and adding a word to the
+ * vocabulary does not silently add it to a surface.
+ *
+ * `measured` and `provider-reported` are **not** the same fact, which is why
+ * both survive:
+ *
+ * - `provider-reported` — the provider stated this number about a request it
+ *   served. Nothing else can produce it.
+ * - `measured` — this process counted it exactly, before any request was made.
+ *   A tokenizer over a string is the case.
+ * - `computed` — arithmetic over other values. A sum of exact numbers is still
+ *   `computed`, because what a caller filtering for a billable figure wants is
+ *   a number it can bill against unchanged, and a sum is not that.
+ * - `estimated` — a heuristic. Not exact and not claimed to be.
+ * - `unavailable` — not known. `value` is then absent, and that is a different
+ *   fact from a reported zero.
+ */
+export const AgentProvenanceSchema = z.enum([
+  'provider-reported',
+  'measured',
+  'computed',
+  'estimated',
+  'unavailable',
+]);
+
+export type AgentProvenance = z.infer<typeof AgentProvenanceSchema>;
+
+/**
+ * A token count, and how it came to be known.
+ *
+ * `z.int()` rather than `z.number()`: a fractional token is not a thing, and
+ * accepting `3.5` is how a bad estimator's output survives validation and turns
+ * up later as a context-window decision nobody can reproduce.
+ */
 export const AgentUsageValueSchema = z.object({
-  value: z.number().nonnegative().optional(),
-  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
+  value: z.int().nonnegative().optional(),
+  provenance: AgentProvenanceSchema.extract([
+    'provider-reported',
+    'computed',
+    'estimated',
+    'unavailable',
+  ]),
 });
 
+/**
+ * Money, which is fractional by nature — so `value` stays `z.number()` here and
+ * only here. Everything counted in tokens is an integer.
+ */
 export const AgentCostValueSchema = z.object({
   value: z.number().nonnegative().optional(),
   currency: z.string().length(3).optional(),
-  provenance: z.enum(['provider-reported', 'computed', 'estimated', 'unavailable']),
+  provenance: AgentProvenanceSchema.extract([
+    'provider-reported',
+    'computed',
+    'estimated',
+    'unavailable',
+  ]),
 });
 
 export const AgentUsageSchema = z.object({
@@ -209,6 +286,16 @@ const AgentRunFieldsSchema = z.object({
   terminalReason: AgentTerminalReasonSchema.optional(),
   terminalPolicyName: z.string().min(1).optional(),
   /**
+   * The run that took this run's input on and answered it.
+   *
+   * Present exactly when `terminalReason` is `'absorbed'`, and written in the
+   * same transaction as that reason. It is the only way back to the answer: an
+   * absorbed run has no assistant message of its own, and the store follows this
+   * pointer when a duplicate submission arrives on the absorbed run's
+   * idempotency key.
+   */
+  absorbedIntoRunId: AgentRecordIdSchema.optional(),
+  /**
    * What this run has cost, written with its terminal record.
    *
    * The figure used to exist only on two bounded, fire-and-forget event sinks
@@ -237,6 +324,13 @@ const AgentRunFieldsSchema = z.object({
  * conflict error or as a lie in an operator's console.
  */
 export const AgentRunSchema = AgentRunFieldsSchema.superRefine((run, ctx) => {
+  if (run.terminalReason !== 'absorbed' && run.absorbedIntoRunId !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['absorbedIntoRunId'],
+      message: 'Only an absorbed run names the run that answered it',
+    });
+  }
   if (run.terminalReason === undefined) {
     if (TERMINAL_RUN_STATES.has(run.state)) {
       ctx.addIssue({
@@ -260,6 +354,20 @@ export const AgentRunSchema = AgentRunFieldsSchema.superRefine((run, ctx) => {
       code: 'custom',
       path: ['terminalPolicyName'],
       message: 'A policy stop names the policy that stopped the run',
+    });
+  }
+  if (run.terminalReason === 'absorbed' && run.absorbedIntoRunId === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['absorbedIntoRunId'],
+      message: 'An absorbed run names the run that answered its input',
+    });
+  }
+  if (run.absorbedIntoRunId === run.id) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['absorbedIntoRunId'],
+      message: 'A run cannot absorb itself',
     });
   }
 });

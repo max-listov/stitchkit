@@ -13,6 +13,95 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.66.0] — 2026-08-26
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who implements `AgentRuntimeStore` **by hand** adds two
+members — an adapter built on `AgentRuntimeStoreDriver` needs no change at all.
+Anyone matching exhaustively on `AgentTerminalReason` adds an `'absorbed'` arm
+the compiler will point at.
+Anyone reading `provenance` off a prompt budget, or reading
+`ComposedAgentPrompt.instructionTokens` / `AgentHistoryBudgetResult.totalTokens`
+and matching on `'measured'`. Anyone producing a token count from a callback the
+runtime calls — `estimateTokens`, `estimateFallback`, an `AgentPromptBudget`
+field — now has it validated.
+
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **`inputPolicy: 'inject'` returns, with the ordering that made it wrong
+  corrected.** A run in flight takes a newly arrived input into its prompt at a
+  step boundary and answers it too — but **nothing durable happens until the run
+  settles.** The absorption is a field on `commitRunTerminal` and is applied in
+  the same transaction as the terminal record, so a run that crashes, is closed
+  or is interrupted after taking an input on leaves an ordinary queued
+  successor. There is no ordering in which an accepted input becomes
+  unanswerable (→ ADR 0113). The withdrawn 0.63.0 version committed the
+  absorption at the boundary, before the answer existed.
+  New surface: `AgentTerminalReason` gains `'absorbed'` (state `'superseded'`),
+  `AgentRun` gains `absorbedIntoRunId`, and `CommitRunTerminal` gains `absorb`.
+  An absorbed run has **no assistant message of its own**; the store follows
+  `absorbedIntoRunId` when a submission arrives on its idempotency key, so a
+  retry after a restart returns the answer. It publishes one final `run-state`
+  event carrying `'superseded'` — it never enters the run executor, so that is
+  the only thing telling a delivery surface it is no longer queued.
+- **`AgentRuntimeStore` gains `loadRun` and `listActiveRuns`.** `loadSnapshot`
+  was its only read, and it returns every message and every run — so the
+  runtime loaded whole conversations to answer questions about one record.
+  Seven of its eight `loadSnapshot` calls never touched a message, and one of
+  them, the fencing check, runs **before every tool call**: twenty tool calls in
+  a five-thousand-message conversation read a hundred thousand messages to
+  compare two numbers. Both new members read run records and the head only, and
+  **neither needs anything new from `AgentRuntimeStoreDriver`** — `runs.load`,
+  `runs.listActive` and `head.load` were already there and nothing had asked
+  them (→ ADR 0112).
+  `loadRun({ conversationId, runId })` also answers what nothing answered
+  before: how to resolve the `runId` `submit().admission` hands back.
+- **One vocabulary for how a number came to be known.** Two enums in one
+  entrypoint described the same kind of fact about the same request in different
+  words: `AgentUsageValue` said `provider-reported | computed | estimated |
+  unavailable`, `AgentTokenCount` said `measured | estimated | unavailable`, and
+  neither accepted the other's terms. The words are now defined once as
+  `AgentProvenanceSchema`, and each surface declares the subset it can produce.
+  No surface widened — an exhaustive switch still sees exactly what that surface
+  emits — but `AgentTokenCount` gains `'computed'`, and a **total is now
+  `computed` rather than `measured`**, because it is arithmetic this code
+  performed, not a count it took:
+  `// before: totalTokens.provenance === 'measured'` →
+  `// after: totalTokens.provenance === 'computed'` (unchanged when any part was
+  estimated: an estimate survives arithmetic).
+  `measured` and `provider-reported` survive as separate words because they are
+  separate facts: `measured` is this process counting a string exactly before
+  any request; `provider-reported` is the provider stating a figure about a
+  request it served. Neither surface can produce the other's.
+- **A token count is an integer.** `AgentUsageValue.value` was `z.number()` and
+  accepted `3.5`. Both token schemas now use `z.int()`, and the callbacks that
+  feed them are validated where they were not: `AgentPromptSection.estimateTokens`,
+  `ComposeAgentPromptOptions.estimateFallback` / `.historyTokens`, and the three
+  `AgentPromptBudget` counts — plus `contextWindow` and `reservedOutput`, which
+  went into the window arithmetic unchecked. `AgentCostValue.value` stays
+  fractional, because money is. A **provider** figure that is not a whole number
+  normalises to `{ provenance: 'unavailable' }` rather than throwing, so a run
+  that already produced its answer is not failed over a number nobody reads
+  until the invoice arrives.
+
+### Fixed
+
+- **A terminal commit that can never win no longer spins forever.** The retry
+  after a lost compare-and-swap was unbounded, so a store that conflicts while
+  still reporting a run this executor may commit became a hot loop that never
+  returned and never reported — on the path that persists what a run produced.
+  It is bounded at 32 attempts now and refuses with the ordinary terminal-commit
+  conflict; every legitimate outcome still ends it in one or two rounds.
+
+### Changed
+
+- **`loadSnapshot`'s cost is written down.** The agent-runtime guide gains a
+  *Reading a conversation* section: which reads are bounded, which are not, and
+  that compaction is what bounds the one that is not. No behaviour change —
+  history is still read whole by `loadSnapshot` and by every mutation, and ADR
+  0112 records why paging it is a separate decision.
+
 ## [0.65.1] — 2026-08-26
 
 ### Fixed

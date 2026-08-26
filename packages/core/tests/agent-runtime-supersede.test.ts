@@ -368,7 +368,9 @@ describe('a superseded record is not conversation, in every walker that reads hi
     expect(selected.messages.some((entry) => entry.id === 'a1')).toBe(false);
     // Its tokens are not in the total it never spends. Five spoken records at 1
     // each, minus the oldest evictable turn (u2+a2) — so 3, not 5.
-    expect(selected.totalTokens).toEqual({ value: 3, provenance: 'measured' });
+    // `computed`, not `measured`: the parts were measured, the total was added
+    // up here.
+    expect(selected.totalTokens).toEqual({ value: 3, provenance: 'computed' });
     expect(reasonOf('u2')).toBe('oldest-eligible-turn');
     expect(reasonOf('a3')).toBe('protected-recent-turn');
     // u1 stays: the user really said it, and its answer being discarded does

@@ -72,6 +72,149 @@ implement `AgentRuntimeStoreDriver` and compose the aggregate with
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.66.0
+
+Three changes, and only one of them is a feature. The other two are shapes that
+would have had to break later: a vocabulary that described one fact with two
+words, and a store whose only read was the whole conversation.
+
+The compiler points at most of it. Two things change with no compile error —
+what a **total** says about its own provenance, and the fact that token counts
+are now validated where they were not.
+
+### An input that joins a run in flight
+
+#### If you matched exhaustively on `AgentTerminalReason`
+
+`'absorbed'` is new. A run ends this way when a run already in flight took its
+input on and answered it; its state is `'superseded'`, and `absorbedIntoRunId`
+names the run that has the answer.
+
+```ts
+// after
+switch (run.terminalReason) {
+  // …
+  case 'absorbed':
+    // no assistant message of its own — follow run.absorbedIntoRunId
+    break
+}
+```
+
+A run record with `terminalReason: 'absorbed'` and no `absorbedIntoRunId` is
+refused at parse time, and so is `absorbedIntoRunId` on any other reason.
+
+#### If you render or export runs
+
+An absorbed run has **no assistant message**. Anything that assumes "every
+terminal run has one" needs the `absorbed` case — the answer is on the run
+`absorbedIntoRunId` names, and `store.loadRun` resolves it.
+
+#### If you want the policy
+
+```ts
+// after
+runs: { inputPolicy: 'inject' }
+```
+
+It was withdrawn in 0.65.0 and is back with the ordering corrected: the
+absorption commits with the terminal record, not at the step boundary. Read
+*An input that joins a run in flight* in the agent-runtime guide before turning
+it on — in particular what happens when the absorbing run does not complete, and
+how it composes with `coalescePending`.
+
+#### If you implement a store driver
+
+Nothing to do, but know what changed underneath: one terminal commit can now
+save **two** run records, and they must land in the same transaction. A driver
+that persists one of the pair fails `runAgentStoreConformance`.
+
+### A run read without its conversation
+
+#### If you implement `AgentRuntimeStore` by hand
+
+Two members to add. **If your adapter is an `AgentRuntimeStoreDriver` passed to
+`createAgentRuntimeStore`, there is nothing to do** — the driver already had
+everything both need.
+
+```ts
+// after
+loadRun(input: { conversationId: string; runId: string }): Promise<AgentRunView | undefined>
+listActiveRuns(conversationId: string): Promise<readonly AgentRun[]>
+```
+
+`AgentRunView` is `{ snapshotVersion, run, assistant? }`. `assistant` is the
+retained terminal answer, so it is present exactly when the run has ended and
+absent while it is live — a store that returns a live run's draft here lets the
+terminal path resolve a run that has not finished. `listActiveRuns` orders by
+`createdAt` then `id`, and must not report a run that has ended.
+`runAgentStoreConformance` covers both, including the boundary cases.
+
+#### If you have a store **double** in your tests
+
+The runtime now reads `loadRun` where it used to read `loadSnapshot`. A double
+that simulates a condition — a run drifting to another owner, a stale fencing
+token — must apply it to both reads, or the code under test will not see it.
+This is not hypothetical: it turned one of this repository's own fixtures into
+an infinite retry loop, which is how the bounded retry below was found.
+
+#### Nothing else changes
+
+`loadSnapshot` behaves exactly as before, and still returns the whole
+conversation — as does every mutation result. What it costs, and what bounds it,
+is now written down in *Reading a conversation* in the agent-runtime guide.
+
+### One provenance vocabulary, and integral tokens
+
+#### If you match on `'measured'`
+
+A **total** now says `computed`, because it is a sum this code performed rather
+than a count it took — the same rule `AgentUsage` has always applied to a run's
+spend. Two values change with no compile error:
+
+```ts
+// before
+if (result.totalTokens.provenance === 'measured') { /* exact */ }
+// after
+if (result.totalTokens.provenance === 'computed') { /* exact, and derived */ }
+```
+
+It affects `AgentHistoryBudgetResult.totalTokens` and
+`ComposedAgentPrompt.instructionTokens`. A per-message or per-section count is
+still `measured` — only the totals moved. When any part was estimated the total
+is still `estimated`: an estimate survives arithmetic, and that is the weaker
+claim, so it wins.
+
+#### If you produce token counts
+
+They are validated now, in the places they were not. A fractional count throws
+where it used to flow into the context-window arithmetic:
+
+```ts
+// refused from this release on
+estimateTokens: (text) => ({ value: text.length / 4, provenance: 'estimated' })
+// after
+estimateTokens: (text) => ({ value: Math.ceil(text.length / 4), provenance: 'estimated' })
+```
+
+The same applies to `ComposeAgentPromptOptions.estimateFallback` and
+`.historyTokens`, to `AgentPromptBudget.toolSchemas` / `.attachments` /
+`.providerOverhead`, and to `AgentPromptBudget.contextWindow` /
+`.reservedOutput`, which must now be non-negative safe integers.
+
+`AgentUsageValue.value` is `z.int()` too, which matters if you build usage
+records by hand or in a store double. A figure arriving from a **provider** is
+not thrown — `normalizeSdkUsage` and the OpenRouter adapter turn a non-integer
+into `{ provenance: 'unavailable' }`, so a run that already answered is not
+failed over its own bookkeeping.
+
+#### The new export
+
+`AgentProvenanceSchema` / `AgentProvenance` is the whole vocabulary:
+`provider-reported`, `measured`, `computed`, `estimated`, `unavailable`. Each
+surface declares its subset, so nothing widened — `AgentUsageValue` still refuses
+`measured` and `AgentTokenCount` still refuses `provider-reported`. Use it when
+you want one switch over the question instead of two.
+
 ## Released migration: 0.65.0
 
 The largest migration of the pre-1.0 line, and most of it is the compiler

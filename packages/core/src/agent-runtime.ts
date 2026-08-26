@@ -122,6 +122,8 @@ export {
   type AcquireAgentRun,
   AcquireAgentRunSchema,
   type AgentRuntimeStore,
+  type AgentRunView,
+  AgentRunViewSchema,
   AgentStoreAppliedSchema,
   AgentStoreConflictSchema,
   AgentStoreDuplicateSchema,

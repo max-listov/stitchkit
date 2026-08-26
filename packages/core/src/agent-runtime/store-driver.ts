@@ -16,6 +16,8 @@ import {
   type AcquireAgentRun,
   AcquireAgentRunSchema,
   type AgentRuntimeStore,
+  type AgentRunView,
+  AgentRunViewSchema,
   type AgentStoreMutationResult,
   type CheckpointRunAssistant,
   CheckpointRunAssistantSchema,
@@ -157,9 +159,16 @@ type StoreOperation =
 interface ReducedApplied {
   outcome: 'applied';
   snapshot: AgentSnapshot;
-  runRecord?: AgentStoredRun;
+  /**
+   * Plural because one mutation can settle two runs.
+   *
+   * A terminal commit that absorbs a queued successor writes both records, and
+   * it must write them in one transaction or the absorption is exactly the
+   * split-brain the 0.63.0 design shipped.
+   */
+  runRecords?: readonly AgentStoredRun[];
   admissionReceipt?: AgentAdmissionReceipt;
-  historyMutation?: AgentHistoryMutation;
+  historyMutations?: readonly AgentHistoryMutation[];
 }
 
 type ReducedMutation =
@@ -343,9 +352,9 @@ function applied(
   current: AgentSnapshot,
   input: { runs?: readonly AgentRun[]; messages?: readonly AgentMessage[] },
   effects?: {
-    runRecord?: AgentStoredRun;
+    runRecords?: readonly AgentStoredRun[];
     admissionReceipt?: AgentAdmissionReceipt;
-    historyMutation?: AgentHistoryMutation;
+    historyMutations?: readonly AgentHistoryMutation[];
   },
 ): ReducedApplied {
   return {
@@ -356,9 +365,9 @@ function applied(
       runs: input.runs ?? current.runs,
       messages: input.messages ?? current.messages,
     }),
-    ...(effects?.runRecord && { runRecord: effects.runRecord }),
+    ...(effects?.runRecords?.length && { runRecords: effects.runRecords }),
     ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),
-    ...(effects?.historyMutation && { historyMutation: effects.historyMutation }),
+    ...(effects?.historyMutations?.length && { historyMutations: effects.historyMutations }),
   };
 }
 
@@ -430,12 +439,9 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
           : [...current.runs, assignedRun],
       },
       {
-        runRecord: AgentStoredRunSchema.parse({
-          schemaVersion: 1,
-          run: assignedRun,
-        }),
+        runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: assignedRun })],
         admissionReceipt,
-        historyMutation: { type: 'admit', input: input.input },
+        historyMutations: [{ type: 'admit', input: input.input }],
       },
     );
   }
@@ -475,7 +481,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       current,
       { runs: replaceRun(current.runs, next) },
       {
-        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+        runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })],
       },
     );
   }
@@ -508,8 +514,8 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
         messages: replaceMessage(current.messages, input.assistant),
       },
       {
-        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
-        historyMutation: { type: 'upsert-assistant', message: input.assistant },
+        runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })],
+        historyMutations: [{ type: 'upsert-assistant', message: input.assistant }],
       },
     );
   }
@@ -528,7 +534,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       current,
       { runs: replaceRun(current.runs, next) },
       {
-        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+        runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })],
       },
     );
   }
@@ -585,12 +591,14 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
           messages: replaceMessage(current.messages, assistant),
         },
         {
-          runRecord: AgentStoredRunSchema.parse({
-            schemaVersion: 1,
-            run: next,
-            terminalAssistant: assistant,
-          }),
-          historyMutation: { type: 'upsert-assistant', message: assistant },
+          runRecords: [
+            AgentStoredRunSchema.parse({
+              schemaVersion: 1,
+              run: next,
+              terminalAssistant: assistant,
+            }),
+          ],
+          historyMutations: [{ type: 'upsert-assistant', message: assistant }],
         },
       );
     }
@@ -598,13 +606,19 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       current,
       { runs: replaceRun(current.runs, next) },
       {
-        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: next }),
+        runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })],
       },
     );
   }
 
   if (operation.type === 'terminal' && run) {
     const input = operation.input;
+    // `absorbed` is never an operation's own reason. It is written onto the
+    // *other* run of an absorbing commit, below, and a caller passing it here
+    // would be terminalizing a run whose answer lives somewhere else.
+    if (input.reason === 'absorbed') {
+      throw new TypeError('A run is absorbed by another run, never terminalized as absorbed');
+    }
     if (
       run.revision !== input.expectedRevision ||
       (run.state !== 'running' && run.state !== 'interrupt_requested') ||
@@ -618,28 +632,91 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     ) {
       return conflict(run.revision);
     }
+    // Only a run that finished may claim to have answered somebody else's
+    // input. An interrupted or failed run took the input into its prompt and
+    // then stopped, so the successor stays queued and answers itself.
+    if (input.absorb && runStateForTerminalReason(input.reason) !== 'completed') {
+      throw new TypeError('Only a completing run may absorb a queued successor');
+    }
+    // Refused, not dropped — neither of these is a race, and dropping them
+    // would hide a caller that has lost track of which run it is committing.
+    const named = new Set((input.absorb ?? []).map((entry) => entry.runId));
+    if (named.size !== (input.absorb ?? []).length || named.has(run.id)) {
+      throw new TypeError(
+        'An absorption names each successor once, and never the absorbing run',
+      );
+    }
+    // Dropped rather than refused: a successor that is no longer queued has
+    // been taken over by something else, and failing the commit over it would
+    // lose the answer this run has already produced. The dropped successor runs
+    // on its own, which is the behaviour it would have had anyway.
+    const absorbable = (input.absorb ?? []).filter((entry) => {
+      const candidate = current.runs.find((item) => item.id === entry.runId);
+      return (
+        candidate !== undefined &&
+        candidate.id !== run.id &&
+        candidate.state === 'queued' &&
+        candidate.conversationId === run.conversationId &&
+        candidate.inputMessageIds.length === entry.inputMessageIds.length &&
+        candidate.inputMessageIds.every((id, index) => id === entry.inputMessageIds[index])
+      );
+    });
+    const absorbedIds = new Set(absorbable.flatMap((entry) => entry.inputMessageIds));
     const next = AgentRunSchema.parse({
       ...run,
       state: runStateForTerminalReason(input.reason),
       terminalReason: input.reason,
       ...(input.policyName && { terminalPolicyName: input.policyName }),
       ...(input.usage && { usage: input.usage }),
+      // The absorbed inputs are inputs this run answered, so they belong to its
+      // record. Order is admission order, and the absorbed ones came last.
+      ...(absorbedIds.size > 0 && {
+        inputMessageIds: [
+          ...run.inputMessageIds,
+          ...[...absorbedIds].filter((id) => !run.inputMessageIds.includes(id)),
+        ],
+      }),
       revision: run.revision + 1,
       updatedAt: new Date().toISOString(),
     });
+    // No assistant message for an absorbed run, deliberately. It produced
+    // nothing; the answer is on `next`, and inventing an empty message here
+    // would be a record saying this run answered when it did not. Its reserved
+    // assistant identity simply stays unused.
+    const absorbedRuns = absorbable.map((entry) => {
+      const candidate = current.runs.find((item) => item.id === entry.runId);
+      if (!candidate) throw new TypeError('Absorbed run disappeared inside the reducer');
+      return AgentRunSchema.parse({
+        ...candidate,
+        state: runStateForTerminalReason('absorbed'),
+        terminalReason: 'absorbed',
+        absorbedIntoRunId: next.id,
+        revision: candidate.revision + 1,
+        updatedAt: new Date().toISOString(),
+      });
+    });
+    const runs = absorbedRuns.reduce(
+      (accumulated, absorbed) => replaceRun(accumulated, absorbed),
+      replaceRun(current.runs, next),
+    );
     return applied(
       current,
       {
-        runs: replaceRun(current.runs, next),
+        runs,
         messages: replaceMessage(current.messages, input.assistant),
       },
       {
-        runRecord: AgentStoredRunSchema.parse({
-          schemaVersion: 1,
-          run: next,
-          terminalAssistant: input.assistant,
-        }),
-        historyMutation: { type: 'upsert-assistant', message: input.assistant },
+        runRecords: [
+          AgentStoredRunSchema.parse({
+            schemaVersion: 1,
+            run: next,
+            terminalAssistant: input.assistant,
+          }),
+          ...absorbedRuns.map((absorbed) =>
+            AgentStoredRunSchema.parse({ schemaVersion: 1, run: absorbed }),
+          ),
+        ],
+        historyMutations: [{ type: 'upsert-assistant', message: input.assistant }],
       },
     );
   }
@@ -692,11 +769,13 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       current,
       { messages },
       {
-        historyMutation: {
-          type: 'replace-compacted-range',
-          replacedMessageIds: input.replacedMessageIds,
-          summary: input.summary,
-        },
+        historyMutations: [
+          {
+            type: 'replace-compacted-range',
+            replacedMessageIds: input.replacedMessageIds,
+            summary: input.summary,
+          },
+        ],
       },
     );
   }
@@ -768,6 +847,58 @@ export function createAgentRuntimeStore<TRANSACTION>(
       return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
     });
 
+  /**
+   * Both of these read run records and the head, and never `history.load` —
+   * which is the point, and the reason neither needed a new driver member. The
+   * driver already answers "this run" and "the active runs"; nothing had asked
+   * it, so every caller went through the conversation instead.
+   */
+  const loadRun = (input: {
+    conversationId: string;
+    runId: string;
+  }): Promise<AgentRunView | undefined> =>
+    driver.transaction(async (transaction) => {
+      const [stored, record] = await Promise.all([
+        driver.head.load(transaction, input.conversationId),
+        driver.runs.load(transaction, input),
+      ]);
+      if (!record) return undefined;
+      const parsed = AgentStoredRunSchema.parse(record);
+      if (
+        parsed.run.conversationId !== input.conversationId ||
+        parsed.run.id !== input.runId
+      ) {
+        throw new TypeError('Stored run does not match the identity it was loaded by');
+      }
+      const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(input.conversationId));
+      return AgentRunViewSchema.parse({
+        snapshotVersion: head.version,
+        run: parsed.run,
+        ...(parsed.terminalAssistant && { assistant: parsed.terminalAssistant }),
+      });
+    });
+
+  const listActiveRuns = (conversationId: string): Promise<readonly AgentRun[]> =>
+    driver.transaction(async (transaction) => {
+      const records = await driver.runs.listActive(transaction, conversationId);
+      const runs = records.map((record) => AgentStoredRunSchema.parse(record).run);
+      for (const run of runs) {
+        if (run.conversationId !== conversationId) {
+          throw new TypeError('Active run belongs to another conversation');
+        }
+        if (!isActiveRunState(run.state)) {
+          throw new TypeError('Active run listing returned a terminal run');
+        }
+      }
+      return runs.sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt < right.createdAt
+            ? -1
+            : 1,
+      );
+    });
+
   const mutate = (operation: StoreOperation): Promise<AgentStoreMutationResult> =>
     driver.transaction(async (transaction) => {
       const conversationId = operationConversationId(operation);
@@ -812,17 +943,37 @@ export function createAgentRuntimeStore<TRANSACTION>(
           throw new TypeError('Admission receipt points to a missing canonical run');
         }
         validateAdmissionReceipt(duplicateReceipt, duplicateRecord, conversationId);
+        // An absorbed run has no answer of its own — the run that took its
+        // input on has it. Following the pointer here is what makes a retry of
+        // the original idempotency key return the answer, across a restart and
+        // for as long as both records exist. Without it the key would resolve
+        // to an empty terminal record forever, which is exactly the case
+        // idempotency keys exist for.
+        const answering = duplicateRecord.run.absorbedIntoRunId
+          ? await driver.runs.load(transaction, {
+              conversationId,
+              runId: duplicateRecord.run.absorbedIntoRunId,
+            })
+          : undefined;
+        if (duplicateRecord.run.absorbedIntoRunId && !answering) {
+          throw new TypeError('Absorbed run points to a missing absorbing run');
+        }
+        const canonical = answering ?? duplicateRecord;
         return {
           outcome: 'duplicate',
           input: duplicateReceipt.input,
           inputMessageId: duplicateReceipt.input.id,
-          runId: duplicateReceipt.runId,
-          assistantMessageId: duplicateReceipt.assistantMessageId,
-          run: duplicateRecord.run,
-          ...(duplicateRecord.terminalAssistant && {
-            assistant: duplicateRecord.terminalAssistant,
+          runId: canonical.run.id,
+          assistantMessageId: canonical.run.assistantMessageId,
+          run: canonical.run,
+          ...(canonical.terminalAssistant && {
+            assistant: canonical.terminalAssistant,
           }),
-          snapshot: snapshotOf(head, messages, mergeRunRecords(records, [duplicateRecord])),
+          snapshot: snapshotOf(
+            head,
+            messages,
+            mergeRunRecords(records, [duplicateRecord], answering ? [answering] : []),
+          ),
         };
       }
 
@@ -864,18 +1015,22 @@ export function createAgentRuntimeStore<TRANSACTION>(
         next: nextHead,
       });
       if (outcome.outcome === 'conflict') return conflict(outcome.actualVersion);
-      if (reduced.runRecord) await driver.runs.save(transaction, reduced.runRecord);
+      for (const record of reduced.runRecords ?? []) {
+        await driver.runs.save(transaction, record);
+      }
       if (reduced.admissionReceipt) {
         await driver.admissions.create(transaction, reduced.admissionReceipt);
       }
-      if (reduced.historyMutation) {
-        await driver.history.apply(transaction, reduced.historyMutation);
+      for (const mutation of reduced.historyMutations ?? []) {
+        await driver.history.apply(transaction, mutation);
       }
       return { outcome: 'applied', snapshot: reduced.snapshot };
     });
 
   return {
     loadSnapshot,
+    loadRun,
+    listActiveRuns,
     acceptInputAndAssignRun: (input) =>
       mutate({
         type: 'accept',

@@ -126,6 +126,8 @@ These records were consolidated from the project's internal design notes on
 | [0109](0109-a-spend-figure-never-claims-a-provenance-it-does-not-have.md) | A spend figure never claims a provenance it does not have | Accepted — keeps billing out of the core per 0002 while making what the core reports true |
 | [0110](0110-a-reconciled-cost-belongs-to-the-application.md) | A reconciled cost belongs to the application, not to the core | Accepted — applies 0002 to the ledger question 0109 left open |
 | [0111](0111-the-driver-is-the-extension-point-and-the-runtime-is-not-stable-yet.md) | The driver is the extension point, and the agent runtime is not stable yet | Accepted — settles the promotion question 0103 opened, with named conditions |
+| [0112](0112-a-run-is-read-without-its-conversation.md) | A run is read without its conversation, and history stays whole | Accepted — applies the bounded-read reasoning of 0101 to the conversation, and names the limit it does not lift |
+| [0113](0113-an-absorbed-input-is-committed-with-the-answer.md) | An absorbed input is committed with the answer, never before it | Accepted — reinstates the `inject` policy withdrawn in 0.65.0, with the ordering that made it wrong corrected |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

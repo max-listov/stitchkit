@@ -200,8 +200,15 @@ export function unknownUsage(): AgentUsage {
 }
 
 export function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
+  // A fractional or negative figure is not a token count, and this is the one
+  // place a provider's number enters the runtime. Refusing it *here* means
+  // `unavailable` — an honest "we do not know" — rather than a `ZodError`
+  // thrown out of the terminal commit, which would fail a run that had already
+  // produced its answer over a number nobody reads until the invoice arrives.
+  // The schema refuses the same value, so a driver or a consumer that
+  // fabricates one still fails loudly; only the provider path degrades.
   const reported = (tokens: number | undefined): AgentUsage['inputTokens'] =>
-    tokens === undefined
+    tokens === undefined || !Number.isSafeInteger(tokens) || tokens < 0
       ? { provenance: 'unavailable' }
       : { value: tokens, provenance: 'provider-reported' };
   return {

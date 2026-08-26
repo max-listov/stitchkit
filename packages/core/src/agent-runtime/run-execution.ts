@@ -1,5 +1,6 @@
 import {
   type Instructions,
+  type ModelMessage,
   type StopCondition,
   type SystemModelMessage,
   stepCountIs,
@@ -9,6 +10,7 @@ import {
 import { isToolExecutionControlError } from '../tools/execute';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistoryDetailed } from './history';
+import type { AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
 import type { AgentRuntimeConfig } from './runtime';
@@ -26,6 +28,7 @@ import {
 } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
 import {
+  type AgentMessage,
   type AgentMessagePart,
   AgentMessagePartSchema,
   AgentMessageSchema,
@@ -33,6 +36,7 @@ import {
   type AgentSnapshot,
   type AgentTerminalReason,
   type AgentUsage,
+  runStateForTerminalReason,
 } from './schemas';
 import {
   AgentRuntimeConflictError,
@@ -51,6 +55,14 @@ export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
   checkpointEveryEvents: number;
   maxSteps: number;
   idleTimeoutMs?: number;
+  /**
+   * Present only when this runtime's `inputPolicy` can ever produce `inject`.
+   *
+   * `undefined` keeps the executor on exactly the path it had before: no
+   * `prepareStep` is installed unless the application asked for one, and no
+   * boundary does any work.
+   */
+  injection?: AgentInjectionRegistry;
 }
 
 /**
@@ -74,15 +86,53 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     idleTimeoutMs,
+    injection,
   } = dependencies;
 
   return async function executeRun(input: {
     acceptedRun: AgentRun;
     context: CONTEXT;
     signal: AbortSignal;
+    /** The admission lane this run belongs to — the key injection is offered on. */
+    key: string;
   }): Promise<AgentRuntimeResult> {
-    const queuedSnapshot = await config.store.loadSnapshot(input.acceptedRun.conversationId);
-    const queuedRun = findRun(queuedSnapshot.runs, input.acceptedRun.id);
+    // This run is no longer a queued successor, whatever happens next, so it
+    // stops being something another run may take on. First, before any I/O that
+    // can throw: no ordering may let a run absorb the input it is itself about
+    // to answer, and a read that fails must not leave a stale offer behind.
+    injection?.withdraw(input.key, input.acceptedRun.id);
+    // The run, not the conversation it lives in: all this needs is a revision
+    // to acquire against.
+    const queued = await config.store.loadRun({
+      conversationId: input.acceptedRun.conversationId,
+      runId: input.acceptedRun.id,
+    });
+    if (!queued) throw new AgentRuntimeConflictError('run lookup');
+    // Its input was taken on by a run that has already answered it. Nothing to
+    // execute; the answer is on the absorbing run, and this is the path that
+    // resolves it both in-process and after a restart, because it is reached
+    // from the durable record rather than from anything held in memory.
+    if (queued.run.terminalReason === 'absorbed') {
+      const absorbing = queued.run.absorbedIntoRunId
+        ? await config.store.loadRun({
+            conversationId: queued.run.conversationId,
+            runId: queued.run.absorbedIntoRunId,
+          })
+        : undefined;
+      if (!absorbing?.assistant || !absorbing.run.terminalReason) {
+        throw new AgentRuntimeConflictError('absorbed run resolution');
+      }
+      return {
+        run: absorbing.run,
+        message: absorbing.assistant,
+        reason: absorbing.run.terminalReason,
+        snapshotVersion: absorbing.snapshotVersion,
+        ...(absorbing.run.terminalPolicyName && {
+          policyName: absorbing.run.terminalPolicyName,
+        }),
+      };
+    }
+    const queuedRun = queued.run;
     const acquired = appliedSnapshot(
       await config.store.acquireRun({
         conversationId: queuedRun.conversationId,
@@ -140,8 +190,27 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       'assistant draft',
     );
     run = findRun(snapshot.runs, run.id);
+    /**
+     * The conversation version this executor last observed.
+     *
+     * It tracks `snapshot` while there is one to track, and outlives it: after
+     * the stream, both the durable-interrupt path and the terminal resolution
+     * learn a newer version from a one-run read that carries no messages at
+     * all. `snapshot` stays what it has always been — the history the prompt
+     * was built from — and is not reassigned from a read that has no history in
+     * it.
+     */
+    let observedVersion = snapshot.version;
 
     const parts: AgentMessagePart[] = [];
+    /**
+     * Inputs this run took on at a step boundary, and has not yet committed.
+     *
+     * Local until the terminal commit. A run that ends any other way — a crash,
+     * a close, an interrupt — leaves every one of these an ordinary queued run,
+     * which is what makes the ordering safe (→ ADR 0113).
+     */
+    const absorbed = new Map<string, string[]>();
     let eventCount = 0;
     let sequence = 0;
     let terminalReason: AgentTerminalReason = 'success';
@@ -213,6 +282,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }),
         'assistant checkpoint',
       );
+      observedVersion = snapshot.version;
       run = findRun(snapshot.runs, run.id);
       const checkpointMetrics = {
         // Always true here, and now for a reason rather than by construction:
@@ -224,10 +294,10 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       };
       await publish({
         type: 'assistant-checkpoint',
-        eventId: agentDurableEventId('assistant-checkpoint', run.id, snapshot.version),
+        eventId: agentDurableEventId('assistant-checkpoint', run.id, observedVersion),
         conversationId: run.conversationId,
         runId: run.id,
-        snapshotVersion: snapshot.version,
+        snapshotVersion: observedVersion,
         message: assistant,
         metrics: checkpointMetrics,
         emittedAt: now().toISOString(),
@@ -242,6 +312,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           signal: executionSignal,
         });
         snapshot = compacted.snapshot;
+        observedVersion = snapshot.version;
         run = findRun(snapshot.runs, run.id);
         // A model call the run caused is the run's cost, even though it made no
         // step and emitted no event of its own.
@@ -250,8 +321,13 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
 
       const assertCurrent = async (): Promise<'stale_run' | 'run_interrupted' | undefined> => {
         if (executionSignal.aborted) return 'run_interrupted';
-        const current = await config.store.loadSnapshot(run.conversationId);
-        const currentRun = current.runs.find((candidate) => candidate.id === run.id);
+        // Runs before EVERY tool call. Reading the whole conversation here is
+        // what made a long conversation quadratic in its own length.
+        const current = await config.store.loadRun({
+          conversationId: run.conversationId,
+          runId: run.id,
+        });
+        const currentRun = current?.run;
         if (!currentRun || currentRun.ownerId !== runtimeEpoch) return 'stale_run';
         if (currentRun.fencingToken !== run.fencingToken) return 'stale_run';
         if (currentRun.state === 'interrupt_requested') return 'run_interrupted';
@@ -313,6 +389,26 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         carriedSystem = detailed.system;
         return [...detailed.messages];
       };
+      /**
+       * The same projection, for messages that are not the conversation.
+       *
+       * Separate from `projectHistory` because that one publishes into
+       * `carriedSystem`, and running it over a single user message would
+       * replace the conversation's carried system content with an empty list.
+       */
+      const projectInputs = async (source: readonly AgentMessage[]) => {
+        if (config.history?.project) return config.history.project(source);
+        const detailed = await projectAgentHistoryDetailed(source, {
+          ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
+          ...(config.history?.unresolvedFile && {
+            unresolvedFile: config.history.unresolvedFile,
+          }),
+          ...(config.history?.interruptedAssistant && {
+            interruptedAssistant: config.history.interruptedAssistant,
+          }),
+        });
+        return [...detailed.messages];
+      };
       const history = await projectHistory(snapshot);
       // `Instructions` is `string | SystemModelMessage | SystemModelMessage[]`,
       // so the composed prompt is normalised before the carried entries join it.
@@ -345,6 +441,30 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           return stopped;
         });
       }
+      /** What this boundary takes on, projected for the provider. */
+      const takeInjectedMessages = async (): Promise<ModelMessage[]> => {
+        const taken = injection?.take(input.key, run.id) ?? [];
+        if (taken.length === 0) return [];
+        const messages: ModelMessage[] = [];
+        for (const entry of taken) {
+          // Only this admission's own message, never a re-projection of the
+          // snapshot — and through `projectInputs`, which does not touch
+          // `carriedSystem`. The withdrawn version re-projected the whole
+          // snapshot, so an unrelated queued input reached a run that never
+          // recorded it and was then answered a second time by its own run.
+          messages.push(...(await projectInputs([entry.input])));
+          // Keyed by run, and it grows: `coalescePending` can add an input to a
+          // successor after an earlier boundary already took one of its
+          // inputs, and the absorption is only committed if it covers the
+          // successor WHOLE. Re-taking at every boundary is what keeps it
+          // whole; only an input that arrives after the last boundary is left
+          // behind, and that one simply runs on its own.
+          const ids = absorbed.get(entry.runId) ?? [];
+          ids.push(entry.input.id);
+          absorbed.set(entry.runId, ids);
+        }
+        return messages;
+      };
       const result = streamText<TOOLS>({
         model: selectedModel.model,
         tools,
@@ -353,9 +473,20 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
-        ...(config.loop?.prepareStep && {
-          prepareStep: (options) =>
-            config.loop?.prepareStep?.({ ...options, ...runtimeContext }),
+        ...((config.loop?.prepareStep || injection) && {
+          prepareStep: async (options) => {
+            const prepared = await config.loop?.prepareStep?.({
+              ...options,
+              ...runtimeContext,
+            });
+            const injected = await takeInjectedMessages();
+            if (injected.length === 0) return prepared;
+            // The SDK carries a `prepareStep` message list into the next step,
+            // so appending only what was taken *this* boundary is right — and
+            // appending the whole accumulated list would duplicate it.
+            const base = prepared?.messages ?? options.messages;
+            return { ...prepared, messages: [...base, ...injected] };
+          },
         }),
       });
 
@@ -641,12 +772,17 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       if (executionSignal.aborted) terminalReason = abortTerminalReason(executionSignal);
     } catch (error) {
       internalCause = error;
-      const latest = await config.store.loadSnapshot(run.conversationId);
-      const latestRun = latest.runs.find((candidate) => candidate.id === run.id);
+      const latest = await config.store.loadRun({
+        conversationId: run.conversationId,
+        runId: run.id,
+      });
+      const latestRun = latest?.run;
       const durableInterrupt =
         latestRun?.ownerId === runtimeEpoch && latestRun.state === 'interrupt_requested';
-      if (durableInterrupt && latestRun) {
-        snapshot = latest;
+      if (durableInterrupt && latest && latestRun) {
+        // Only the version, never the messages: history was projected before
+        // the stream started and nothing reads it again from here on.
+        observedVersion = latest.snapshotVersion;
         run = latestRun;
       }
       if (isToolExecutionControlError(error) || executionSignal.aborted || durableInterrupt) {
@@ -726,6 +862,17 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           reason: terminalReason,
           ...(terminalPolicyName && { policyName: terminalPolicyName }),
           usage: spent,
+          // Only a run that finished may claim to have answered somebody
+          // else's input. Anything else leaves the successor queued, to be
+          // answered by its own run — which is what makes a crash, a close or
+          // an interrupt between the boundary and here safe.
+          ...(absorbed.size > 0 &&
+            runStateForTerminalReason(terminalReason) === 'completed' && {
+              absorb: [...absorbed].map(([runId, inputMessageIds]) => ({
+                runId,
+                inputMessageIds,
+              })),
+            }),
         },
         now,
       });
@@ -737,13 +884,13 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       // this executor last knew it, which is exactly the claim being made: an
       // execution stopped here, and it did not settle the record.
       emitSpend({
-        eventId: unsettledEventId(snapshot.version),
+        eventId: unsettledEventId(observedVersion),
         state: run.state,
         reason: terminalReason,
       });
       throw error;
     }
-    snapshot = terminal.snapshot;
+    observedVersion = terminal.snapshotVersion;
     run = terminal.run;
     assistant = terminal.assistant;
     terminalReason = terminal.reason;
@@ -765,18 +912,32 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // executor that lost the race reported nothing at all.
     emitSpend({
       eventId: terminal.committedByCaller
-        ? agentDurableEventId('terminal', run.id, snapshot.version)
-        : unsettledEventId(snapshot.version),
+        ? agentDurableEventId('terminal', run.id, observedVersion)
+        : unsettledEventId(observedVersion),
       state: run.state,
       reason: terminalReason,
     });
+    // A run that was admitted as `queued` and then absorbed publishes nothing
+    // else on its own — it never enters the executor's body. Without this a
+    // surface following that runId waits for a state that never comes.
+    for (const settled of terminal.absorbed ?? []) {
+      await publish({
+        type: 'run-state',
+        eventId: agentDurableEventId('run-state', settled.id, observedVersion),
+        conversationId: settled.conversationId,
+        runId: settled.id,
+        snapshotVersion: observedVersion,
+        state: settled.state,
+        emittedAt: now().toISOString(),
+      });
+    }
     if (terminalMetrics) {
       await publish({
         type: 'terminal',
-        eventId: agentDurableEventId('terminal', run.id, snapshot.version),
+        eventId: agentDurableEventId('terminal', run.id, observedVersion),
         conversationId: run.conversationId,
         runId: run.id,
-        snapshotVersion: snapshot.version,
+        snapshotVersion: observedVersion,
         reason: terminalReason,
         ...(terminalPolicyName && { policyName: terminalPolicyName }),
         message: assistant,
@@ -788,7 +949,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       run,
       message: assistant,
       reason: terminalReason,
-      snapshotVersion: snapshot.version,
+      snapshotVersion: observedVersion,
       ...(terminalMetrics && { metrics: terminalMetrics }),
       ...(terminalPolicyName && { policyName: terminalPolicyName }),
     };

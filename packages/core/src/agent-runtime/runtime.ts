@@ -23,6 +23,7 @@ import {
   agentDurableEventId,
 } from './events';
 import type { AgentHistoryProjectionOptions } from './history';
+import { createAgentInjectionRegistry } from './injection';
 import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
@@ -229,6 +230,17 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   const now = config.now ?? (() => new Date());
   const runtimeEpoch = generateId();
   const admissionLanes = createRuntimeAdmissionLanes();
+  /**
+   * Whether this runtime can ever inject, decided once from the configuration.
+   *
+   * A function policy might return `'inject'` for any input, so its mere
+   * presence enables the machinery. When it cannot, the executor keeps exactly
+   * the path it had before — no `prepareStep` it did not ask for, and no work
+   * at any boundary.
+   */
+  const injectionPossible =
+    typeof config.runs?.inputPolicy === 'function' || config.runs?.inputPolicy === 'inject';
+  const injection = injectionPossible ? createAgentInjectionRegistry() : undefined;
   const reserveAdmission = admissionLanes.reserve;
   const settleAdmission = admissionLanes.settle;
   const waitForAdmissionAcceptances = admissionLanes.waitForAcceptances;
@@ -281,6 +293,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+    ...(injection && { injection }),
   });
 
   /**
@@ -375,8 +388,12 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     const handedOff = beginAdmission();
     void (async () => {
       try {
-        const snapshot = await config.store.loadSnapshot(rawInput.conversationId);
-        const recoveredRun = findRun(snapshot.runs, rawInput.runId);
+        const recovered = await config.store.loadRun({
+          conversationId: rawInput.conversationId,
+          runId: rawInput.runId,
+        });
+        if (!recovered) throw new AgentRuntimeConflictError('run lookup');
+        const recoveredRun = recovered.run;
         if (recoveredRun.state !== 'queued') {
           throw new Error('Only a queued recovered agent run can be resumed');
         }
@@ -386,7 +403,13 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           policy: 'queue',
           create: (signal) => ({
             runId: recoveredRun.id,
-            execute: () => executeRun({ acceptedRun: recoveredRun, context, signal }),
+            execute: () =>
+              executeRun({
+                acceptedRun: recoveredRun,
+                context,
+                signal,
+                key: rawInput.conversationKey ?? rawInput.conversationId,
+              }),
           }),
         });
         void ticket.accepted.catch(() => undefined);
@@ -478,7 +501,15 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         conversationTickets ?? new Map<string, RuntimeTicket>();
       currentConversationTickets.set(input.idempotencyKey, publicTicket);
       if (!conversationTickets) tickets.set(input.conversationId, currentConversationTickets);
+      // The run this submission's input was offered under, which is the
+      // *assigned* run and not necessarily the proposed one: a coalesced input
+      // joins an existing queued successor.
+      let offeredRunId: string | undefined;
       const forgetTicket = (): void => {
+        // An offer outlives nothing: once this submission has a result there is
+        // no run left that could usefully take it on, and an entry nobody
+        // withdraws is an entry a much later run could absorb.
+        if (offeredRunId !== undefined) injection?.withdraw(key, offeredRunId);
         if (currentConversationTickets.get(input.idempotencyKey) !== publicTicket) return;
         currentConversationTickets.delete(input.idempotencyKey);
         if (currentConversationTickets.size === 0) tickets.delete(input.conversationId);
@@ -618,6 +649,18 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             }
             return;
           }
+          // Offered, not committed. The input is already a durable queued run;
+          // this only tells a run in flight on the same key that it MAY take it
+          // on, and the absorption is written by that run's terminal commit or
+          // not at all (→ ADR 0113). Offered before the coordinator handoff so
+          // an input that arrives while a run is streaming can be taken at the
+          // very next boundary, and offered for a coalesced input too — a
+          // successor is absorbed whole or not at all, so every one of its
+          // inputs has to be on the table.
+          if (policy === 'inject') {
+            offeredRunId = acceptedRun.id;
+            injection?.offer(key, { runId: acceptedRun.id, input: acceptedInput });
+          }
           if (reservation && !reservation.shouldSchedule) {
             void reservation.admission.completion.promise.then(
               outerResult.resolve,
@@ -632,7 +675,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               if (reservation) await waitForAdmissionAcceptances(reservation.lane);
               return {
                 runId: acceptedRun.id,
-                execute: () => executeRun({ acceptedRun, context, signal }),
+                execute: () => executeRun({ acceptedRun, context, signal, key }),
               };
             },
           });
@@ -675,12 +718,15 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     },
     resume,
     async interrupt(input) {
-      const snapshot = await config.store.loadSnapshot(input.conversationId);
-      const run = findRun(snapshot.runs, input.runId);
+      const view = await config.store.loadRun({
+        conversationId: input.conversationId,
+        runId: input.runId,
+      });
+      if (!view) throw new AgentRuntimeConflictError('run lookup');
       const requested = await config.store.requestRunInterrupt({
         conversationId: input.conversationId,
         runId: input.runId,
-        expectedRevision: run.revision,
+        expectedRevision: view.run.revision,
       });
       if (requested.outcome === 'applied') {
         const interruptedRun = findRun(requested.snapshot.runs, input.runId);
@@ -735,8 +781,8 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
           const handedOff = beginAdmission();
           try {
             if (item.run.state === 'queued') {
-              const snapshot = await config.store.loadSnapshot(item.conversationId);
-              const blockedByAcquiredPredecessor = snapshot.runs.some(
+              const active = await config.store.listActiveRuns(item.conversationId);
+              const blockedByAcquiredPredecessor = active.some(
                 (run) =>
                   run.id !== item.run.id &&
                   (run.state === 'running' || run.state === 'interrupt_requested'),
@@ -840,6 +886,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       // deterministic timestamps, and a wall clock steps backwards on its own.
       // Either makes the subtraction below meaningless.
       const startedAt = performance.now();
+      // Nothing may be taken on after this point: an offer is only ever a
+      // *permission* to absorb, and a closing runtime grants none. Every entry
+      // dropped here is still a queued run in the store, so recovery answers it.
+      injection?.clear();
       const stranded = await drainAdmissions(options.forceTimeoutMs);
       const spent = Math.max(0, Math.round(performance.now() - startedAt));
       const remainingBudget = (value: number | undefined): number | undefined =>

@@ -21,8 +21,9 @@ export function openRouterProvider(
   };
 }
 
+/** Same rule as `normalizeSdkUsage`: a non-integer is not a token count. */
 function reported(value: number | undefined): AgentUsage['inputTokens'] {
-  return value === undefined
+  return value === undefined || !Number.isSafeInteger(value) || value < 0
     ? { provenance: 'unavailable' }
     : { value, provenance: 'provider-reported' };
 }

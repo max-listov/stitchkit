@@ -580,10 +580,41 @@ Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentRec
 `AgentUsageValueSchema`, `AgentCostValueSchema`, `AgentUsageSchema`, `AgentUsage` and
 `AgentRunMetrics`.
 
+`AgentProvenanceSchema` / `AgentProvenance` is the entrypoint's single vocabulary for **how a
+number came to be known**: `provider-reported` (the provider stated it about a request it served),
+`measured` (this process counted it exactly, before any request was made), `computed` (arithmetic
+over other values — a sum of exact numbers is still `computed`), `estimated` (a heuristic) and
+`unavailable` (not known, so `value` is absent, which is a different fact from a reported zero).
+Each surface declares the subset it can produce: `AgentUsageValueSchema` and `AgentCostValueSchema`
+describe a request that has already happened and never say `measured`; `AgentTokenCountSchema`
+describes a prompt being composed and never says `provider-reported`. Every token count is an
+integer — `AgentUsageValueSchema` and `AgentTokenCountSchema` refuse a fractional `value`, and a
+provider figure that is not a whole number is normalised to `unavailable` rather than thrown.
+`AgentCostValueSchema.value` stays fractional, because money is.
+
+`runs.inputPolicy` takes `queue` (default), `inject`, `interrupt` or `supersede`, or a function of
+the raw input returning one. `inject` lets a run in flight take a newly arrived input into its prompt
+at a step boundary and answer it too; the absorption is committed in the **same transaction** as that
+run's terminal record, via `CommitRunTerminal.absorb`, so a run that ends any other way leaves an
+ordinary queued successor. The absorbed run ends with `terminalReason: 'absorbed'`, run state
+`'superseded'`, `absorbedIntoRunId` naming the run that answered it, and **no assistant message of
+its own**; a submission on its idempotency key resolves through that pointer to the answer
+(→ ADR 0113).
+
+`AgentRuntimeStore` has two **bounded** reads beside `loadSnapshot`:
+`loadRun({ conversationId, runId })` returns an `AgentRunView` — the run, the conversation version it
+was read at, and the retained answer once the run is terminal — or `undefined`; `listActiveRuns(conversationId)`
+returns the runs that have not ended, ordered by `createdAt` then `id`. Neither reads history, so
+neither grows with the length of the conversation, and neither needs anything new from
+`AgentRuntimeStoreDriver`. `loadSnapshot` and every mutation result still carry the whole
+conversation — that is what the store's reducer validates against, and what the runtime builds a
+prompt from (→ ADR 0112).
+
 Store command/result exports are `AcceptInputAndAssignRun`, `AcceptInputAndAssignRunSchema`,
 `AcquireAgentRun`, `AcquireAgentRunSchema`, `CheckpointRunAssistant`,
 `CheckpointRunAssistantSchema`, `CommitRunTerminal`, `CommitRunTerminalSchema`,
-`RequestRunInterrupt`, `RequestRunInterruptSchema`, `runStateForTerminalReason`,
+`RequestRunInterrupt`, `RequestRunInterruptSchema`, `AgentRunView`, `AgentRunViewSchema`,
+`runStateForTerminalReason`,
 `ACTIVE_AGENT_RUN_STATES`, `RecoverAgentRun`, `ReplaceCompactedRange`,
 `ReplaceCompactedRangeSchema`, `AgentStoreMutationResult`, `AgentStoreMutationResultSchema`,
 `AgentStoreAppliedSchema`, `AgentStoreConflictSchema`, `AgentStoreDuplicateSchema`,

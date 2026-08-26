@@ -291,6 +291,58 @@ export async function runAgentStoreConformance(
   if (foreignOwner.outcome !== 'conflict') {
     throw new Error('A checkpoint from another owner must conflict');
   }
+  // The two bounded reads. Everything below is the same fact the snapshot
+  // carries, asked for without the conversation — so a driver that answers one
+  // and not the other is the failure this section exists to catch.
+  const liveView = await store.loadRun({ conversationId, runId: running.id });
+  if (!liveView) throw new Error('loadRun must find a run of this conversation');
+  if (liveView.run.id !== running.id || liveView.run.conversationId !== conversationId) {
+    throw new Error('loadRun returned a run it was not asked for');
+  }
+  if (liveView.run.revision !== checkpointedRun.revision) {
+    throw new Error('loadRun must return the run as the last mutation left it');
+  }
+  if (liveView.run.usage?.cost?.value !== 0.25) {
+    throw new Error('loadRun must carry the figure the run has spent so far');
+  }
+  if (liveView.snapshotVersion !== checkpoint.snapshot.version) {
+    throw new Error('loadRun must report the conversation version it read at');
+  }
+  // A live run has no retained answer yet — its draft is history, not a
+  // terminal record — and a driver that hands one back here would let the
+  // terminal path resolve a run that has not finished.
+  if (liveView.assistant !== undefined) {
+    throw new Error('loadRun must not report a terminal answer for a live run');
+  }
+  if (await store.loadRun({ conversationId, runId: 'no-such-run' })) {
+    throw new Error('loadRun must return undefined for an unknown run');
+  }
+  if (await store.loadRun({ conversationId: 'no-such-conversation', runId: running.id })) {
+    throw new Error('loadRun must not cross conversation boundaries');
+  }
+  const activeRuns = await store.listActiveRuns(conversationId);
+  if (!activeRuns.some((run) => run.id === running.id)) {
+    throw new Error('listActiveRuns must report a run that is in flight');
+  }
+  if (activeRuns.some((run) => run.terminalReason !== undefined)) {
+    throw new Error('listActiveRuns must not report a run that has ended');
+  }
+  for (let index = 1; index < activeRuns.length; index += 1) {
+    const previous = activeRuns[index - 1];
+    const current = activeRuns[index];
+    if (!previous || !current) continue;
+    const ordered =
+      previous.createdAt === current.createdAt
+        ? previous.id.localeCompare(current.id) < 0
+        : previous.createdAt < current.createdAt;
+    if (!ordered) {
+      throw new Error('listActiveRuns must order by createdAt and then by id');
+    }
+  }
+  if ((await store.listActiveRuns('no-such-conversation')).length !== 0) {
+    throw new Error('listActiveRuns must be empty for an unknown conversation');
+  }
+
   // The one member `recover()` calls, and it had no coverage at all.
   const recoverable = await store.scanRecoverable({ limit: 10 });
   if (!recoverable.items.some((item) => item.run.id === running.id)) {
@@ -350,6 +402,19 @@ export async function runAgentStoreConformance(
   if (settledRun?.usage?.cost?.value !== 1.5) {
     throw new Error('Terminal commit did not persist the run usage it was given');
   }
+  // The terminal read: this is the one shape `commitAgentRunTerminal` resolves
+  // a lost race with, and it is the only reason `assistant` is on the view.
+  const terminalView = await store.loadRun({ conversationId, runId: running.id });
+  if (terminalView?.run.terminalReason !== 'success') {
+    throw new Error('loadRun must report the terminal reason a settled run ended with');
+  }
+  if (JSON.stringify(terminalView.assistant) !== JSON.stringify(terminalAssistant)) {
+    throw new Error('loadRun must retain the answer a settled run produced');
+  }
+  if ((await store.listActiveRuns(conversationId)).some((run) => run.id === running.id)) {
+    throw new Error('listActiveRuns must drop a run once it has ended');
+  }
+
   const compactedTerminal = await store.replaceCompactedRange({
     conversationId,
     expectedVersion: terminalApplied.snapshot.version,
@@ -414,5 +479,122 @@ export async function runAgentStoreConformance(
   );
   if (terminalRun?.state !== 'abandoned' || terminalMessage?.status !== 'failed') {
     throw new Error('Abandon recovery did not atomically terminalize its assistant record');
+  }
+
+  await assertAbsorptionIsAtomic(store);
+}
+
+/**
+ * One terminal commit, two run records — and they land together or not at all.
+ *
+ * A driver that saves the run it was asked about and drops the second is the
+ * failure this exists to catch: the absorbing run would claim to have answered
+ * an input whose own run is still queued, and that input would then be answered
+ * twice. The pair is written inside one transaction, so a driver that persists
+ * one record of it fails here.
+ */
+async function assertAbsorptionIsAtomic(store: AgentRuntimeStore): Promise<void> {
+  const conversationId = `conformance-absorb-${crypto.randomUUID()}`;
+  const leadInput = userMessage(conversationId, 'absorb-input-1');
+  const leadRun = queuedRun(conversationId, leadInput.id, 'absorb-run-1');
+  const lead = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'absorb-request-1',
+    input: leadInput,
+    run: leadRun,
+  });
+  requireOutcome(lead, 'applied');
+  const successorInput = userMessage(conversationId, 'absorb-input-2');
+  const successorRun = queuedRun(conversationId, successorInput.id, 'absorb-run-2');
+  const successor = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'absorb-request-2',
+    input: successorInput,
+    run: successorRun,
+  });
+  requireOutcome(successor, 'applied');
+
+  const acquired = await store.acquireRun({
+    conversationId,
+    runId: leadRun.id,
+    expectedRevision: 0,
+    ownerId: 'absorb-owner',
+  });
+  requireOutcome(acquired, 'applied');
+  const running = acquired.snapshot.runs.find((run) => run.id === leadRun.id);
+  if (!running) throw new Error('Absorbing run disappeared after acquisition');
+
+  const answer = AgentMessageSchema.parse({
+    schemaVersion: 1,
+    id: running.assistantMessageId,
+    conversationId,
+    runId: running.id,
+    role: 'assistant',
+    status: 'completed',
+    parts: [{ type: 'text', text: 'answered both' }],
+    createdAt: '2026-08-26T00:00:00.000Z',
+    updatedAt: '2026-08-26T00:00:02.000Z',
+  });
+  // A run that did not finish may not claim to have answered somebody else's
+  // input, and the store says so rather than trusting its caller.
+  await store
+    .commitRunTerminal({
+      conversationId,
+      runId: running.id,
+      expectedRevision: running.revision,
+      ownerId: 'absorb-owner',
+      assistant: AgentMessageSchema.parse({ ...answer, status: 'interrupted' }),
+      reason: 'interrupted',
+      absorb: [{ runId: successorRun.id, inputMessageIds: [successorInput.id] }],
+    })
+    .then(
+      () => {
+        throw new Error('A non-completing run absorbed a queued successor');
+      },
+      (error) => {
+        if (!(error instanceof TypeError)) throw error;
+      },
+    );
+
+  const committed = await store.commitRunTerminal({
+    conversationId,
+    runId: running.id,
+    expectedRevision: running.revision,
+    ownerId: 'absorb-owner',
+    assistant: answer,
+    reason: 'success',
+    absorb: [{ runId: successorRun.id, inputMessageIds: [successorInput.id] }],
+  });
+  requireOutcome(committed, 'applied');
+
+  const absorbingView = await store.loadRun({ conversationId, runId: leadRun.id });
+  if (absorbingView?.run.inputMessageIds.join(',') !== 'absorb-input-1,absorb-input-2') {
+    throw new Error('An absorbing run must record the inputs it answered');
+  }
+  const absorbedView = await store.loadRun({ conversationId, runId: successorRun.id });
+  if (absorbedView?.run.terminalReason !== 'absorbed') {
+    throw new Error('An absorbed successor must be terminal in the same transaction');
+  }
+  if (absorbedView.run.absorbedIntoRunId !== leadRun.id) {
+    throw new Error('An absorbed run must name the run that answered its input');
+  }
+  if (absorbedView.assistant !== undefined) {
+    throw new Error('An absorbed run produced no answer and must retain none');
+  }
+  if ((await store.listActiveRuns(conversationId)).length !== 0) {
+    throw new Error('An absorbed successor must leave the active listing');
+  }
+
+  // The whole reason the pointer is durable: a retry of the absorbed input's
+  // own idempotency key has to reach the answer, not an empty terminal record.
+  const retried = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'absorb-request-2',
+    input: userMessage(conversationId, 'absorb-discarded'),
+    run: queuedRun(conversationId, 'absorb-discarded', 'absorb-discarded-run'),
+  });
+  requireOutcome(retried, 'duplicate');
+  if (retried.runId !== leadRun.id || retried.assistant?.id !== answer.id) {
+    throw new Error('A retried absorbed key must resolve to the run that answered it');
+  }
+  if (retried.inputMessageId !== successorInput.id) {
+    throw new Error('A retried absorbed key must still name its own input');
   }
 }

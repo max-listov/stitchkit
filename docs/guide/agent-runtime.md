@@ -207,15 +207,14 @@ input + queued run → running → execution settled → terminal CAS → succes
 
 ## What happens to a run when new input arrives
 
-`runs.inputPolicy` decides. It takes three values, or a function returning one;
-the fourth row is a behaviour that shipped and was withdrawn:
+`runs.inputPolicy` decides. It takes four values, or a function returning one:
 
 | policy | the run in flight | what it already produced |
 |--------|-------------------|--------------------------|
 | `queue` (default) | finishes first | kept |
+| `inject` | continues, and answers the new input too | kept, and built on |
 | `interrupt` | ends | kept, and marked as cut off |
 | `supersede` | ends | discarded from the prompt, kept in the record |
-| _inject_ | continues | withdrawn in 0.65.0 — see below |
 
 `interrupt` and `supersede` differ in exactly one thing, and the question that
 picks between them is **not** "was the run interrupted" but **"did anyone see
@@ -299,19 +298,53 @@ const { decisions } = await projectAgentHistoryDetailed(snapshot.messages)
 process-local escape hatch chooses the reason, so a caller that knows the answer
 was never delivered can discard it without a newer input arriving.
 
-### The one that is not offered
+### An input that joins a run in flight
 
-**inject** — hand the input to the loop between tool calls and let the run
-continue — shipped in 0.63.0 and was **withdrawn in 0.65.0**. It committed the
-absorption durably at a step boundary, before the answer existed, and everything
-downstream of that ordering was wrong: an accepted input could end up in a state
-that was neither active, recoverable nor terminal, so `close()` could report
-`settled: true` while leaving it permanently unanswerable, and a duplicate
-submission of the same idempotency key was refused forever.
+`inject` is right when the new input **refines** rather than redirects, and the
+steps already taken are still worth something: *"summarise this thread… actually,
+in bullet points"* should not throw away the reading the first message paid for.
 
-The redesign is tracked in the backlog and is not a patch to what shipped: the
-absorption has to commit atomically **with** the terminal record, so that a run
-which ends first simply leaves an ordinary queued successor behind.
+What happens:
+
+1. The input is admitted exactly like any other — a committed user message and a
+   **queued run**, durable before anything else happens.
+2. At the running loop's next step boundary, that input joins its prompt. Only
+   that input: an unrelated queued submission is never carried in.
+3. When the run finishes, its terminal commit — **one transaction** — records
+   the input as one the run answered and settles the queued successor with
+   `terminalReason: 'absorbed'` and `absorbedIntoRunId` naming the run that
+   answered it. Every ticket for that successor resolves to the same answer.
+
+Nothing durable happens between 1 and 3, and that is the design (→ ADR 0113).
+A run that crashes, is closed, or is interrupted after taking an input on
+commits no absorption at all, so what is left behind is an ordinary queued
+successor — the state every other policy already produces and recovery already
+handles. **There is no ordering in which an accepted input becomes
+unanswerable.** Only a run that *completes* may absorb; an interrupted one took
+the input into its prompt and then stopped, and does not get to say it answered
+it.
+
+An absorbed run has **no assistant message of its own** — it produced none, and
+writing an empty one would be a record claiming otherwise. Its answer is
+reachable through `absorbedIntoRunId`, and the store follows that pointer itself
+when a submission arrives on the absorbed run's idempotency key, so a retry
+after a restart returns the answer rather than an empty terminal record.
+
+It does publish one more `run-state` event, carrying `'superseded'`. It never
+enters the run executor, so that event is the only thing that tells a delivery
+surface following its `runId` that it is no longer queued.
+
+With `coalescePending`, one successor can carry several inputs, and an
+absorption covers a successor **whole or not at all** — a partial one would
+leave a terminal run with inputs nobody answered. Inputs that coalesce before
+the absorbing run's last step boundary join the same absorption. One that
+arrives after it cancels the absorption: the successor then answers all of its
+inputs itself, and the absorbing run has answered one of them too. A duplicate
+answer, never a missing one.
+
+(0.63.0 shipped a version of this that committed the absorption at the step
+boundary, before the answer existed, and it was withdrawn in 0.65.0. ADR 0113
+records what that ordering broke.)
 
 With `runs.coalescePending: true`, an active lane has at most one queued
 successor. Every later accepted input is atomically appended to that successor;
@@ -374,7 +407,7 @@ problem, and omitting a run's cost is an operator's.
 ## Store operations
 
 `AgentRuntimeStore` remains the runtime-facing aggregate. Application adapters
-implement the smaller `AgentRuntimeStoreDriver` rather than these nine members:
+implement the smaller `AgentRuntimeStoreDriver` rather than these eleven members:
 
 - `acceptInputAndAssignRun`
 - `acquireRun`
@@ -383,10 +416,36 @@ implement the smaller `AgentRuntimeStoreDriver` rather than these nine members:
 - `recoverRun`
 - `commitRunTerminal`
 - `replaceCompactedRange`
-- `loadSnapshot`
+- `loadSnapshot` — the whole conversation; see **Reading a conversation** below
+- `loadRun` — one run by id, with the answer it produced if it has ended
+- `listActiveRuns` — the runs of one conversation that have not ended
 - `scanRecoverable` — one **bounded page** of recoverable runs; `recover()`
   calls this and nothing else, so an adapter that implements the interface has
   everything recovery needs
+
+### Reading a conversation
+
+Two shapes of read, and the difference matters as a conversation grows.
+
+**Bounded.** `loadRun` and `listActiveRuns` read run records and the
+conversation head. Neither touches history, so neither grows with the length of
+the conversation. `loadRun` is how you resolve the `runId` that
+`submit().admission` hands back — it returns the run, the version it was read
+at, and, once the run is terminal, the answer it produced.
+
+**Unbounded.** `loadSnapshot` returns every message and every run, and so does
+every mutation result: the store's reducer validates its invariants against the
+whole conversation, and the runtime builds the next prompt from the snapshot the
+mutation returns. Ask for it when you need the conversation — composing a
+prompt, or compacting — and not to look one run up.
+
+So the cost of a run scales with the length of its conversation, not with the
+length of the turn. **Configure compaction** (see below) for anything
+long-running: it is the only thing in the framework that makes a conversation
+smaller, and without it a year-old assistant thread is read in full on every
+turn. This is a known limit, held deliberately rather than by omission — paged
+history would have to change what a snapshot *is*, and the store's invariants
+with it, and that is a decision on its own (→ ADR 0112).
 
 Every mutation carries an expected run revision or snapshot version. Input
 assignment additionally carries an idempotency identity. A conflict is a

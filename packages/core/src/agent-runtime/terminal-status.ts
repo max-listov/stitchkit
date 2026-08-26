@@ -39,6 +39,12 @@ export function assistantStatus(reason: AgentTerminalReason): AgentMessage['stat
   // and that is the question the projection asks. Folding them together here
   // would put the answer back out of reach one layer down.
   if (reason === 'superseded') return 'superseded';
+  // An absorbed run has no assistant message at all — its answer belongs to the
+  // run that absorbed it — so nothing ever validates a message against this
+  // arm. It exists because the enum is exhaustive here on purpose, and because
+  // an absorbed run's record is `superseded`: whatever it might have said, the
+  // model will not hear it from this run.
+  if (reason === 'absorbed') return 'superseded';
   if (reason === 'interrupted' || reason === 'cancelled' || reason === 'shutdown') {
     return 'interrupted';
   }

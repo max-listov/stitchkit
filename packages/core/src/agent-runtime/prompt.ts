@@ -1,11 +1,25 @@
 import type { Instructions } from 'ai';
 import { z } from 'zod';
-import type { AgentMessage } from './schemas';
+import { type AgentMessage, AgentProvenanceSchema } from './schemas';
 import { isSpeakableAssistantStatus } from './terminal-status';
 
+/**
+ * A token count made *before* a request, and how it came to be known.
+ *
+ * The words come from `AgentProvenanceSchema`, shared with `AgentUsage` so one
+ * question has one vocabulary. The subset differs because the facts differ: no
+ * provider has reported anything yet at prompt-composition time, so
+ * `provider-reported` is not among the values this surface can produce, and a
+ * count this process took with a tokenizer is `measured`.
+ */
 export const AgentTokenCountSchema = z.object({
   value: z.int().nonnegative().optional(),
-  provenance: z.enum(['measured', 'estimated', 'unavailable']),
+  provenance: AgentProvenanceSchema.extract([
+    'measured',
+    'computed',
+    'estimated',
+    'unavailable',
+  ]),
 });
 
 export type AgentTokenCount = z.infer<typeof AgentTokenCountSchema>;
@@ -209,7 +223,14 @@ export async function selectAgentHistory(
   return {
     messages,
     decisions,
-    totalTokens: { value: total, provenance: estimated ? 'estimated' : 'measured' },
+    // A total this code added up, not a count it took: `computed`, by the same
+    // rule `addUsage` applies to a run's spend. It said `measured`, which is
+    // what a tokenizer reports about one string — so a caller could not tell a
+    // number that was counted from a number that was derived, on the one
+    // surface where the difference decides whether the window fits.
+    // An estimate survives arithmetic: one estimated part makes the sum an
+    // estimate, which is a weaker claim than `computed` and therefore wins.
+    totalTokens: { value: total, provenance: estimated ? 'estimated' : 'computed' },
     outcome:
       total > options.availableTokens ? 'oversized' : removed.size > 0 ? 'truncated' : 'fits',
   };
@@ -239,27 +260,48 @@ export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSectio
     for (const section of sections) {
       const text = await section.render({ context: options.context, signal: options.signal });
       rendered.push({ name: section.name, stability: section.stability, text });
+      // Parsed, like the per-message counts in `selectAgentHistory`: both come
+      // from a consumer callback, and only one of them was checked. A
+      // `3.5`-token section survived here and reached the window arithmetic.
       let count: AgentTokenCount;
-      if (section.estimateTokens) count = await section.estimateTokens(text);
-      else if (options.estimateFallback) count = await options.estimateFallback(text);
-      else count = { provenance: 'unavailable' };
+      if (section.estimateTokens) {
+        count = AgentTokenCountSchema.parse(await section.estimateTokens(text));
+      } else if (options.estimateFallback) {
+        count = AgentTokenCountSchema.parse(await options.estimateFallback(text));
+      } else count = { provenance: 'unavailable' };
       const value = knownValue(count);
       if (value === undefined) unavailable = true;
       else total += value;
       if (count.provenance === 'estimated') estimated = true;
     }
 
+    // A sum across sections, so `computed` — see the same call in
+    // `selectAgentHistory`.
     const instructionTokens: AgentTokenCount = unavailable
       ? { provenance: 'unavailable' }
-      : { value: total, provenance: estimated ? 'estimated' : 'measured' };
+      : { value: total, provenance: estimated ? 'estimated' : 'computed' };
     let availableHistoryTokens: number | undefined;
     let contextDecision: ComposedAgentPrompt['contextDecision'] = 'unavailable';
     if (options.budget) {
+      // The budget is consumer-supplied and went straight into the window
+      // arithmetic unchecked. A fractional reservation there produces a
+      // fractional `availableHistoryTokens`, which is then compared against
+      // integer history counts.
+      if (
+        !Number.isSafeInteger(options.budget.contextWindow) ||
+        options.budget.contextWindow < 0 ||
+        !Number.isSafeInteger(options.budget.reservedOutput) ||
+        options.budget.reservedOutput < 0
+      ) {
+        throw new TypeError(
+          'contextWindow and reservedOutput must be non-negative safe integers',
+        );
+      }
       const reserveValues = [
         options.budget.reservedOutput,
-        knownValue(options.budget.toolSchemas),
-        knownValue(options.budget.attachments),
-        knownValue(options.budget.providerOverhead),
+        knownValue(AgentTokenCountSchema.parse(options.budget.toolSchemas)),
+        knownValue(AgentTokenCountSchema.parse(options.budget.attachments)),
+        knownValue(AgentTokenCountSchema.parse(options.budget.providerOverhead)),
         knownValue(instructionTokens),
       ];
       if (reserveValues.every((value) => value !== undefined)) {
@@ -269,7 +311,7 @@ export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSectio
             reserveValues.reduce((sum, value) => sum + (value ?? 0), 0),
         );
         const historyTokens = options.historyTokens
-          ? knownValue(options.historyTokens)
+          ? knownValue(AgentTokenCountSchema.parse(options.historyTokens))
           : undefined;
         if (historyTokens !== undefined) {
           if (historyTokens <= availableHistoryTokens) contextDecision = 'fits';

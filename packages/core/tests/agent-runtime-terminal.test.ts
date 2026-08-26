@@ -3,6 +3,7 @@ import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  type AgentRun,
   type AgentRunEvent,
   type AgentRuntimeEvent,
   createAgentObservability,
@@ -14,6 +15,10 @@ import {
 function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing') {
   const durable = createMemoryAgentRuntimeStore();
   let terminalConflictSeen = false;
+  const drifted = (run: AgentRun): AgentRun =>
+    drift === 'owner'
+      ? { ...run, ownerId: 'replacement-runtime' }
+      : { ...run, fencingToken: (run.fencingToken ?? 0) + 1 };
   const store: typeof durable = {
     ...durable,
     async commitRunTerminal(input) {
@@ -21,17 +26,19 @@ function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing
       const snapshot = await durable.loadSnapshot(input.conversationId);
       return { outcome: 'conflict', actualVersion: snapshot.version };
     },
+    // Both reads drift, because the drift is a fact about the record and not
+    // about which call asks for it. The terminal path reads `loadRun` now; when
+    // only `loadSnapshot` drifted, the retry loop saw an unchanged owner every
+    // time and spun forever against a commit that always conflicts.
     async loadSnapshot(conversationId) {
       const snapshot = await durable.loadSnapshot(conversationId);
       if (!terminalConflictSeen) return snapshot;
-      return {
-        ...snapshot,
-        runs: snapshot.runs.map((run) =>
-          drift === 'owner'
-            ? { ...run, ownerId: 'replacement-runtime' }
-            : { ...run, fencingToken: (run.fencingToken ?? 0) + 1 },
-        ),
-      };
+      return { ...snapshot, runs: snapshot.runs.map(drifted) };
+    },
+    async loadRun(input) {
+      const view = await durable.loadRun(input);
+      if (!view || !terminalConflictSeen) return view;
+      return { ...view, run: drifted(view.run) };
     },
   };
   const runtime = createAgentRuntime({
@@ -905,6 +912,8 @@ describe('agent runtime terminalization', () => {
       }),
       store: {
         loadSnapshot: () => Promise.reject(new Error('not used')),
+        loadRun: () => Promise.reject(new Error('not used')),
+        listActiveRuns: () => Promise.reject(new Error('not used')),
         acceptInputAndAssignRun: () => Promise.reject(new Error('admission failed')),
         acquireRun: () => Promise.reject(new Error('not used')),
         checkpointRunAssistant: () => Promise.reject(new Error('not used')),
