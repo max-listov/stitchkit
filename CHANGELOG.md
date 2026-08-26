@@ -22,6 +22,16 @@ budget that never applied on the one path production actually stops through.
 
 ### ⚠️ Breaking changes
 
+**Who must act:** nobody changes code to keep compiling unless they **read**
+`resource.dependsOn` — declaring it is unchanged, and that read is a one-line
+`.map(managedResourceDependencyId)`. The work is in what changes *without* a
+compile error: an application that gave `managedServerResource` a thunk was
+never listening and now is, and an application that declared `shutdown` on
+`createApplication` has been stopping on 30 s / 5 s and will now stop on what it
+declared — check that against the supervisor timeout watching it. Everyone whose
+budgets already matched the defaults, and everyone passing an already-created
+server, re-reads two values and moves on.
+
 - **`ManagedResource.dependsOn` accepts the resource itself, not only its id** —
   its type widens from `readonly string[]` to
   `readonly ManagedResourceDependency[]`, where a dependency is `string |
