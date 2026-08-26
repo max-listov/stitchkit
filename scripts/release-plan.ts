@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { assertStarterLockfileIsCurrent, type FetchLike } from './starter-lockfile';
+import {
+  assertStarterLockfileIsCurrent,
+  type FetchLike,
+  type ReleaseTreeReader,
+  readFromWorkingTree,
+} from './starter-lockfile';
 
 const ZERO_SHA = /^0+$/;
 
@@ -419,6 +424,48 @@ export function releaseScopeForTag(tag: string): 'core' | 'starter' {
  * `10.56.0` never satisfy `0.56.0`, and the scope must match the tag
  * namespace so a starter release commit cannot carry a core tag.
  */
+/** What the cheap half of a pre-push decided, and what it found on the way. */
+export interface PrePushGateDecision {
+  profile: LocalGateProfile;
+  releaseCommits: readonly { sha: string; subject: string }[];
+}
+
+/**
+ * Cheap deterministic metadata first — for tags AND for release commits.
+ *
+ * The order is the whole guarantee, so it lives in one function that can be
+ * observed rather than in the sequence of statements inside `main`. Both kinds
+ * of release metadata are read before any expensive gate is chosen, because
+ * both are one file and a regular expression, and because the thing they refuse
+ * cannot be repaired in place once it is pushed.
+ *
+ * Release commits were the half that was missing. `hasReleaseCommit` already
+ * recognised them — that is how the expensive profile is selected — but nothing
+ * read their changelog, so a missing `**Who must act:**` line surfaced only at
+ * `git push origin vX.Y.Z`, after the full local gate and a CI run, on a commit
+ * that is by then public. `AGENTS.md` then requires a NEW release commit for the
+ * same version: a second gate, a second CI run. 0.67.0 paid exactly that.
+ */
+export async function prePushMetadataGate(
+  plan: PrePushPlan,
+  checks: {
+    validateTag(tag: string, sha: string): Promise<void>;
+    releaseCommits(
+      branchHeads: readonly string[],
+    ): Promise<{ sha: string; subject: string }[]>;
+    validateCommit(commit: { sha: string; subject: string }): Promise<void>;
+  },
+): Promise<PrePushGateDecision> {
+  for (const { tag, sha } of plan.releaseTags) {
+    await checks.validateTag(tag, sha);
+  }
+  const releaseCommits = plan.verify ? await checks.releaseCommits(plan.branchHeads) : [];
+  for (const commit of releaseCommits) {
+    await checks.validateCommit(commit);
+  }
+  return { profile: localGateProfile(plan, releaseCommits.length > 0), releaseCommits };
+}
+
 export function assertReleaseCommitSubject(
   subject: string,
   version: string,
@@ -486,6 +533,11 @@ export function decidePublishAction(
  */
 export interface ValidateReleaseTagOptions {
   fetch?: FetchLike;
+  /**
+   * Which tree to judge. The working tree by default; a pre-push check reads
+   * the commit being pushed, because that is what the push publishes.
+   */
+  read?: ReleaseTreeReader;
 }
 
 export async function validateReleaseTag(
@@ -494,25 +546,17 @@ export async function validateReleaseTag(
   options: ValidateReleaseTagOptions = {},
 ): Promise<ReleasePlan & { notes: string }> {
   const plan = releasePlanForTag(tag);
-  const manifest: unknown = JSON.parse(
-    await readFile(join(root, plan.packageDir, 'package.json'), 'utf8'),
+  const read = options.read ?? readFromWorkingTree(root);
+  const packageVersion = manifestVersion(
+    await read(`${plan.packageDir}/package.json`),
+    plan.packageDir,
   );
-  const packageVersion =
-    typeof manifest === 'object' &&
-    manifest !== null &&
-    Object.hasOwn(manifest, 'version') &&
-    typeof Reflect.get(manifest, 'version') === 'string'
-      ? Reflect.get(manifest, 'version')
-      : null;
-  if (packageVersion === null) {
-    throw new Error(`${plan.packageDir}/package.json has no string version`);
-  }
   if (packageVersion !== plan.version) {
     throw new Error(
       `${tag} does not match ${plan.packageName} package version ${packageVersion}`,
     );
   }
-  const changelog = await readFile(join(root, plan.changelog), 'utf8');
+  const changelog = await read(plan.changelog);
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
   assertBreakingAudience(notes, plan.version);
@@ -521,20 +565,81 @@ export async function validateReleaseTag(
   // it will start — which is a different reader from the framework's, and a
   // reason for a second guide rather than an argument against one.
   const channel = MIGRATION_CHANNELS[plan.target];
-  assertMigrationSection(
-    await readFile(join(root, channel.guidePath), 'utf8'),
-    plan.version,
-    notes,
-    channel,
-  );
+  assertMigrationSection(await read(channel.guidePath), plan.version, notes, channel);
   // A starter release is the range AND the lockfile. Only the release channel
   // checks this: outside a release a lockfile lagging its range is ordinary and
   // legitimate, and gating it there would turn every framework publication into
   // a template chore.
   if (plan.target === 'create-stitchkit') {
-    await assertStarterLockfileIsCurrent(root, options.fetch);
+    await assertStarterLockfileIsCurrent(root, options.fetch, read);
   }
   return { ...plan, notes };
+}
+
+/** The `version` field of a package manifest, or a refusal that names the file. */
+export function manifestVersion(source: string, packageDir: string): string {
+  const manifest: unknown = JSON.parse(source);
+  const version =
+    typeof manifest === 'object' &&
+    manifest !== null &&
+    Object.hasOwn(manifest, 'version') &&
+    typeof Reflect.get(manifest, 'version') === 'string'
+      ? Reflect.get(manifest, 'version')
+      : null;
+  if (version === null) throw new Error(`${packageDir}/package.json has no string version`);
+  return version;
+}
+
+/** Read one file out of a commit, so a pre-push check judges what is on the wire. */
+export function readFromCommit(sha: string): ReleaseTreeReader {
+  return (relativePath) => output(['git', 'show', `${sha}:${relativePath}`]);
+}
+
+/** Which package a `release(<scope>): …` subject is releasing. */
+export function releaseScopeForSubject(subject: string): 'core' | 'starter' {
+  const match = /^release\((core|starter)\):/.exec(subject.trim());
+  const scope = match?.[1];
+  if (scope !== 'core' && scope !== 'starter') {
+    throw new Error(`not a release commit subject: ${JSON.stringify(subject.trim())}`);
+  }
+  return scope;
+}
+
+const PACKAGE_DIR_FOR_SCOPE = {
+  core: 'packages/core',
+  starter: 'packages/create-stitchkit',
+} as const;
+
+/** The tag a scope and version would be released under. */
+export function releaseTagFor(scope: 'core' | 'starter', version: string): string {
+  return scope === 'core' ? `v${version}` : `create-stitchkit-v${version}`;
+}
+
+/**
+ * The metadata gate, run against a release COMMIT instead of a tag.
+ *
+ * The same checks, at the only moment they are still cheap to act on. They used
+ * to run for pushed tags alone, so a release commit went through the whole local
+ * gate and a CI run before a missing `**Who must act:**` line — one file, read in
+ * milliseconds — refused the tag. By then the commit is public, and `AGENTS.md`
+ * requires a NEW release commit for the same version: a second full gate and a
+ * second CI run for ten lines of prose. 0.67.0 paid exactly that.
+ *
+ * The version comes from the tree being pushed, not from the subject: the
+ * manifest is what publishes, and `assertReleaseCommitSubject` then holds the
+ * subject to it — the same direction the tag path checks in.
+ */
+export async function validateReleaseCommit(
+  root: string,
+  commit: { sha: string; subject: string },
+  options: ValidateReleaseTagOptions = {},
+): Promise<ReleasePlan & { notes: string }> {
+  const scope = releaseScopeForSubject(commit.subject);
+  const read = options.read ?? readFromCommit(commit.sha);
+  const packageDir = PACKAGE_DIR_FOR_SCOPE[scope];
+  const version = manifestVersion(await read(`${packageDir}/package.json`), packageDir);
+  assertReleaseCommitSubject(commit.subject, version, scope);
+  return validateReleaseTag(root, releaseTagFor(scope, version), { ...options, read });
 }
 
 /**
@@ -621,13 +726,16 @@ async function output(command: string[]): Promise<string> {
   return value.trim();
 }
 
-/** Does any pushed branch tip carry the release commit subject? */
-async function hasReleaseCommit(branchHeads: readonly string[]): Promise<boolean> {
+/** The pushed branch tips that are release commits, with the subject that says so. */
+async function releaseCommitsIn(
+  branchHeads: readonly string[],
+): Promise<{ sha: string; subject: string }[]> {
+  const commits: { sha: string; subject: string }[] = [];
   for (const sha of branchHeads) {
     const subject = await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]);
-    if (isReleaseCommitSubject(subject)) return true;
+    if (isReleaseCommitSubject(subject)) commits.push({ sha, subject });
   }
-  return false;
+  return commits;
 }
 
 async function release(target: ReleaseTarget): Promise<void> {
@@ -680,18 +788,18 @@ async function main(): Promise<void> {
   }
   if (command === 'pre-push') {
     const plan = classifyPrePush(await Bun.stdin.text());
-    // Cheap deterministic metadata first: a bad tag should not cost the full
-    // browser/starter gate before it is reported.
-    for (const { tag, sha } of plan.releaseTags) {
-      const validated = await validateReleaseTag(root, tag);
-      assertReleaseCommitSubject(
-        await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]),
-        validated.version,
-        releaseScopeForTag(tag),
-      );
-    }
-    const pushesReleaseCommit = plan.verify && (await hasReleaseCommit(plan.branchHeads));
-    const profile = localGateProfile(plan, pushesReleaseCommit);
+    const { profile } = await prePushMetadataGate(plan, {
+      validateTag: async (tag, sha) => {
+        const validated = await validateReleaseTag(root, tag);
+        assertReleaseCommitSubject(
+          await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]),
+          validated.version,
+          releaseScopeForTag(tag),
+        );
+      },
+      releaseCommits: releaseCommitsIn,
+      validateCommit: (commit) => validateReleaseCommit(root, commit).then(() => undefined),
+    });
     if (profile === 'fast') {
       process.stderr.write(
         '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',

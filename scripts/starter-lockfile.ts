@@ -149,12 +149,27 @@ export async function publishedVersions(
   return Object.keys(versions);
 }
 
+/**
+ * How a check reads the tree it is judging.
+ *
+ * The working tree by default. A pre-push check reads the COMMIT being pushed
+ * instead: the push publishes the commit, and a check that answers about the
+ * working tree can pass while the thing going to the server is broken.
+ */
+export type ReleaseTreeReader = (relativePath: string) => Promise<string>;
+
+/** Read relative to `root` — the default for everything but a pre-push check. */
+export function readFromWorkingTree(root: string): ReleaseTreeReader {
+  return (relativePath) => readFile(join(root, relativePath), 'utf8');
+}
+
 /** The template's range and its lockfile resolution, read from the tree. */
 export async function readStarterResolution(
   root: string,
+  read: ReleaseTreeReader = readFromWorkingTree(root),
 ): Promise<{ range: string; locked: string }> {
-  const template = join(root, 'packages/create-stitchkit/template');
-  const manifest: unknown = JSON.parse(await readFile(join(template, 'package.json'), 'utf8'));
+  const template = 'packages/create-stitchkit/template';
+  const manifest: unknown = JSON.parse(await read(`${template}/package.json`));
   const catalog =
     typeof manifest === 'object' && manifest !== null
       ? Reflect.get(manifest, 'catalog')
@@ -166,7 +181,7 @@ export async function readStarterResolution(
   }
   return {
     range,
-    locked: lockedStitchkitVersion(await readFile(join(template, 'bun.lock'), 'utf8')),
+    locked: lockedStitchkitVersion(await read(`${template}/bun.lock`)),
   };
 }
 
@@ -174,8 +189,9 @@ export async function readStarterResolution(
 export async function assertStarterLockfileIsCurrent(
   root: string,
   fetchImplementation: FetchLike = fetch,
+  read: ReleaseTreeReader = readFromWorkingTree(root),
 ): Promise<void> {
-  const { range, locked } = await readStarterResolution(root);
+  const { range, locked } = await readStarterResolution(root, read);
   assertLockfileResolvesNewest(
     locked,
     range,

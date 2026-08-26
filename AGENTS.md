@@ -110,7 +110,7 @@ picks by what a red run would cost on the commit being pushed:
 | Push | Local gate | Why |
 | --- | --- | --- |
 | ordinary branch push | `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| push carrying the `release(...)` commit | the whole of `verify`, then the packed HEAD lane | a red run here cannot be repaired in place |
+| push carrying the `release(...)` commit | that commit's release metadata, then the whole of `verify`, then the packed HEAD lane | a red run here cannot be repaired in place |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
 The release row is the whole argument. `assert-subject` requires a tag to sit
@@ -118,6 +118,18 @@ on a `release(<scope>): … in X.Y.Z` commit and `assert-head` requires that
 commit to be the branch head, so a red run on an already-pushed release commit
 is repaired only by making a **new** release commit. Everywhere else, red is
 two and a half minutes and a fix.
+
+**Metadata before machinery, on both pushes.** A release commit's changelog is
+read — version against the manifest, `### ⚠️ Breaking changes` against its
+`**Who must act:**` line, the breaking section against the version calibre, the
+promoted migration section — *before* `verify` starts, out of the commit being
+pushed rather than the working tree. It is one file and a regular expression;
+the gate behind it is eight minutes. Until 0.67.0 this ran for pushed **tags**
+only, so a release commit went through the whole gate and a CI run before the
+tag was refused — at which point the commit is public and the fix needs a second
+release commit, a second gate and a second CI run. 0.67.0 paid that. The order
+now lives in one observed function (`prePushMetadataGate`) rather than in the
+sequence of statements around it.
 
 All three profiles — fast, full and the packed HEAD lane — remember the last
 green run **by what they actually checked** (`scripts/gate-memo.ts`): an
@@ -288,6 +300,30 @@ If a release commit is already pushed and its run goes red, the fix does not
 become taggable: land the fix, then make a **new** release commit for the same
 version on top of it (or bump the patch), and tag that. Recovering by tagging
 the fix itself is exactly the shape these gates refuse.
+
+**Waiting for the green run — the query has to be able to answer.** Between
+pushing the release commit and tagging it there is exactly one thing to wait
+for: the **push** run of `ci.yml` for that **exact SHA**. Ask for it the way the
+publishing workflow itself does, and give it the full forty-character SHA:
+
+```bash
+SHA="$(git rev-parse HEAD)"
+gh api "repos/<owner>/<repo>/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed" \
+  --jq '.workflow_runs' | bun scripts/release-plan.ts select-ci-run "$SHA"
+```
+
+`gh run list --commit "$SHA" --json status,conclusion` and `gh run list --branch
+master --json headSha,status,conclusion` (filtered on `headSha`) answer the same
+question. All three need the **full** SHA.
+
+**`gh run list --commit` with a short SHA returns `[]`.** No error, no warning —
+the same empty list a commit with no runs yet would give. A poll loop built on
+it therefore waits forever while the run it is waiting for is already green, and
+reports "still running" the whole time. That is not a `gh` quirk to remember so
+much as an instance of a rule worth applying to every wait: **run the query once
+against a case whose answer you already know before you start waiting on it.**
+An empty result from a filter you have never seen return a row is not evidence
+that the event has not happened.
 
 **Releasing both packages from one tree.** Two independent tags plus
 `assert-head` means two tags need two branch heads, so the tree has to be split

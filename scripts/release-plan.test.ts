@@ -13,11 +13,15 @@ import {
   isReleaseCommitSubject,
   localGateProfile,
   MIGRATION_CHANNELS,
+  prePushMetadataGate,
   releasedVersionsInOrder,
   releasePlanForTag,
+  releaseScopeForSubject,
   releaseScopeForTag,
+  releaseTagFor,
   selectSuccessfulCiRun,
   shouldRunStarterHeadLane,
+  validateReleaseCommit,
 } from './release-plan';
 
 const SHA = '1'.repeat(40);
@@ -565,5 +569,173 @@ describe('a breaking section says who has to act', () => {
     const changelog = await Bun.file(`${import.meta.dir}/../CHANGELOG.md`).text();
     const notes = extractReleaseNotes(changelog, '0.63.0');
     expect(() => assertBreakingAudience(notes, '0.63.0')).not.toThrow();
+  });
+});
+
+describe('a release commit is checked before it costs a gate', () => {
+  const root = resolve(import.meta.dir, '..');
+
+  /** A tree the check reads instead of the repository — one file at a time. */
+  const treeOf = (files: Record<string, string>) => (relativePath: string) => {
+    const contents = files[relativePath];
+    if (contents === undefined) {
+      return Promise.reject(new Error(`no ${relativePath} in this tree`));
+    }
+    return Promise.resolve(contents);
+  };
+
+  const coreTree = (changelogSection: string, migration: string) =>
+    treeOf({
+      'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
+      'CHANGELOG.md': ['## [9.9.0] — x', '', changelogSection, ''].join('\n'),
+      'docs/guide/upgrading.md': migration,
+    });
+
+  const ADDITIVE = ['### Added', '', '- One genuinely new export nobody had before.'].join(
+    '\n',
+  );
+  const BREAKING_NO_AUDIENCE = [
+    '### ⚠️ Breaking changes',
+    '',
+    '- **Something moved**, and this section never says who has to act on it.',
+  ].join('\n');
+  const RELEASED_MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
+
+  test('reads the scope out of the subject', () => {
+    expect(releaseScopeForSubject('release(core): a thing in 1.2.3')).toBe('core');
+    expect(releaseScopeForSubject('release(starter): a thing in 1.2.3')).toBe('starter');
+    expect(() => releaseScopeForSubject('fix: not a release')).toThrow(/not a release commit/);
+  });
+
+  test('names the tag a scope and version would be released under', () => {
+    expect(releaseTagFor('core', '1.2.3')).toBe('v1.2.3');
+    expect(releaseTagFor('starter', '1.2.3')).toBe('create-stitchkit-v1.2.3');
+  });
+
+  test('refuses a breaking section with no audience line — at the COMMIT', async () => {
+    // The whole point: this used to be discoverable only when the tag was
+    // pushed, which is after the full local gate and a CI run, and after the
+    // commit is public. 0.67.0 paid for that with a second release commit.
+    await expect(
+      validateReleaseCommit(
+        root,
+        { sha: SHA, subject: 'release(core): a thing in 9.9.0' },
+        { read: coreTree(BREAKING_NO_AUDIENCE, RELEASED_MIGRATION) },
+      ),
+    ).rejects.toThrow(/Who must act/);
+  });
+
+  test('refuses a subject that names a version the tree does not carry', async () => {
+    await expect(
+      validateReleaseCommit(
+        root,
+        { sha: SHA, subject: 'release(core): a thing in 9.9.1' },
+        { read: coreTree(ADDITIVE, RELEASED_MIGRATION) },
+      ),
+    ).rejects.toThrow(/must name version 9\.9\.0/);
+  });
+
+  test('refuses a scope whose tag namespace the subject does not match', async () => {
+    await expect(
+      validateReleaseCommit(
+        root,
+        { sha: SHA, subject: 'release(starter): a thing in 9.9.0' },
+        {
+          read: treeOf({
+            'packages/create-stitchkit/package.json': JSON.stringify({ version: '9.9.0' }),
+          }),
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
+  test('accepts a well-formed additive release commit', async () => {
+    const validated = await validateReleaseCommit(
+      root,
+      { sha: SHA, subject: 'release(core): a thing in 9.9.0' },
+      { read: coreTree(ADDITIVE, RELEASED_MIGRATION) },
+    );
+    expect(validated.version).toBe('9.9.0');
+    expect(validated.packageName).toBe('stitchkit');
+  });
+
+  test('the release commit this repository last made passes it', async () => {
+    // Not a synthetic tree: the real one, read out of the real commit. Skipped
+    // rather than silently passed when HEAD is an ordinary commit — a test that
+    // returns early looks exactly like a test that checked something.
+    const subject = (await Bun.$`git log -1 --format=%s HEAD`.text()).trim();
+    if (!isReleaseCommitSubject(subject)) {
+      expect(isReleaseCommitSubject(subject)).toBe(false);
+      return;
+    }
+    const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
+    const validated = await validateReleaseCommit(root, { sha, subject });
+    const manifest: unknown = JSON.parse(
+      readFileSync(resolve(root, 'packages/core/package.json'), 'utf8'),
+    );
+    expect(validated.version).toBe(
+      typeof manifest === 'object' && manifest !== null
+        ? Reflect.get(manifest, 'version')
+        : null,
+    );
+  });
+});
+
+describe('the cheap metadata check runs before the expensive gate', () => {
+  const order: string[] = [];
+  const recording = (releaseCommits: { sha: string; subject: string }[]) => ({
+    validateTag: async (tag: string) => {
+      order.push(`tag:${tag}`);
+    },
+    releaseCommits: async () => releaseCommits,
+    validateCommit: async (commit: { sha: string; subject: string }) => {
+      order.push(`commit:${commit.sha}`);
+    },
+  });
+
+  test('a pushed release commit is validated, and the profile is the expensive one', async () => {
+    order.length = 0;
+    const decision = await prePushMetadataGate(
+      { verify: true, releaseTags: [], branchHeads: [SHA] },
+      recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
+    );
+    // The regression this whole change exists for: before it, nothing here
+    // read the release commit's changelog and `order` stayed empty.
+    expect(order).toEqual([`commit:${SHA}`]);
+    expect(decision.profile).toBe('full');
+    expect(decision.releaseCommits).toHaveLength(1);
+  });
+
+  test('a refusal stops the push before any gate is chosen', async () => {
+    const checks = recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]);
+    await expect(
+      prePushMetadataGate(
+        { verify: true, releaseTags: [], branchHeads: [SHA] },
+        {
+          ...checks,
+          validateCommit: () => Promise.reject(new Error('no Who must act line')),
+        },
+      ),
+    ).rejects.toThrow('no Who must act line');
+  });
+
+  test('an ordinary push reads no release metadata and stays fast', async () => {
+    order.length = 0;
+    const decision = await prePushMetadataGate(
+      { verify: true, releaseTags: [], branchHeads: [SHA] },
+      recording([]),
+    );
+    expect(order).toEqual([]);
+    expect(decision.profile).toBe('fast');
+  });
+
+  test('a tag push still checks the tag, and checks it first', async () => {
+    order.length = 0;
+    const decision = await prePushMetadataGate(
+      { verify: true, releaseTags: [{ tag: 'v9.9.0', sha: SHA }], branchHeads: [SHA] },
+      recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
+    );
+    expect(order).toEqual(['tag:v9.9.0', `commit:${SHA}`]);
+    expect(decision.profile).toBe('full');
   });
 });
