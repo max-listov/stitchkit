@@ -140,6 +140,7 @@ export {
   RequestRunInterruptSchema,
 } from './agent-runtime/store';
 export {
+  ACTIVE_AGENT_RUN_STATES,
   type AgentAdmissionReceipt,
   AgentAdmissionReceiptSchema,
   type AgentHistoryMutation,

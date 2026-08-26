@@ -13,6 +13,16 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.65.1] — 2026-08-26
+
+### Fixed
+
+- **`ACTIVE_AGENT_RUN_STATES` is reachable.** 0.65.0 added it and documented it
+  as exported "because a driver author needs it" — and left it out of the
+  entrypoint, so the one reader it exists for could not import it. Caught by
+  probing the published package rather than the source tree, which is the only
+  place the difference shows.
+
 ## [0.65.0] — 2026-08-26
 
 ### ⚠️ Breaking changes
@@ -4277,7 +4287,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.65.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.65.1...HEAD
+[0.65.1]: https://github.com/max-listov/stitchkit/compare/v0.65.0...v0.65.1
 [0.65.0]: https://github.com/max-listov/stitchkit/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/max-listov/stitchkit/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/max-listov/stitchkit/compare/v0.62.0...v0.63.0

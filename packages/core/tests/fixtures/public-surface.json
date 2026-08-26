@@ -773,6 +773,7 @@
     "wrapInRequestContext"
   ],
   "stitchkit/agent-runtime": [
+    "ACTIVE_AGENT_RUN_STATES",
     "AcceptInputAndAssignRun",
     "AcceptInputAndAssignRunSchema",
     "AcquireAgentRun",
