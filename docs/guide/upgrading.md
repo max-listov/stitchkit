@@ -16,6 +16,24 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Before you bump, if you implement an agent store
+
+One step, and it is mechanical. If your project has an `AgentRuntimeStore` — a
+Prisma adapter, an in-memory one, anything — run the conformance kit against it
+**on the version you are leaving**, then again after the bump:
+
+```ts
+import { runAgentStoreConformance } from 'stitchkit/testing'
+
+await runAgentStoreConformance({ store: yourStore, conversationId: 'conformance' })
+```
+
+Green before and red after tells you the contract grew and where, in one run,
+instead of one failure at a time in production. Green both times means the
+upgrade owes you nothing on that surface — which is the usual answer if you
+implement `AgentRuntimeStoreDriver` and compose the aggregate with
+`createAgentRuntimeStore(driver)`, the supported shape (→ ADR 0111).
+
 ## Flow (agent or human)
 
 1. **Find the current version.** In the consumer: the resolved `stitchkit` in
@@ -53,6 +71,47 @@ current one *up to* your target, and apply each snippet.
    removed/renamed/retyped surfaces. Then a **runtime smoke** (typecheck ≠
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
+
+## Released migration: 0.64.0
+
+Two changes, and only one of them can break a build. Nothing was removed.
+
+### An event that says which kind it is
+
+### Narrow `AgentRunEvent` on `type`
+
+```ts
+// before
+for (const event of events) record(event.usage?.cost?.value ?? 0)
+
+// after — and the compiler will point at every site
+for (const event of events) {
+  if (event.type !== 'run-terminal') continue
+  record(event.usage.cost.value ?? null)   // `usage` is present; unknown says so
+}
+```
+
+`step` is now required on `step-finished`, `terminalReason` on `run-terminal`,
+and `usage` on both. `queueWaitMs` exists only on `run-started`. Nothing was
+removed — the fields that were optional because a *different* kind of event
+lacked them are now simply on the kinds that have them.
+
+Import `AgentRunTerminalEventSchema` (or the sibling schemas) if you construct
+events in tests.
+
+### If you implement `AgentRuntimeStore` directly, move to the driver
+
+Not urgent and nothing breaks today — but the aggregate is no longer the
+supported target, so its future growth will not be announced as breaking
+(→ ADR 0111). The supported shape is one line:
+
+```ts
+const driver: AgentRuntimeStoreDriver<TransactionClient> = { /* six primitives */ }
+export const store = createAgentRuntimeStore(driver)
+```
+
+Run `runAgentStoreConformance` against your adapter before and after any bump —
+see *Before you bump, if you implement an agent store* above.
 
 ## Released migration: 0.63.0
 

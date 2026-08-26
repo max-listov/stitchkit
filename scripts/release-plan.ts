@@ -263,6 +263,33 @@ function countUnreleasedMigrations(guide: string): number {
   return seen;
 }
 
+/**
+ * A breaking section says who has to act, before it says what changed.
+ *
+ * "Adds a member to an interface an application may implement" and "adds an
+ * optional field" are both `⚠️ Breaking` today, and they are not remotely the
+ * same amount of work downstream. A reader planning an upgrade across four
+ * minors cannot see which one costs a day, and finds out by doing it.
+ *
+ * The line is deliberately the *first* thing in the section, so a reader
+ * skimming for the cost never has to read the change to find it.
+ */
+const AUDIENCE_LINE = /^\*\*Who must act:\*\*\s+\S/m;
+
+export function assertBreakingAudience(releaseNotes: string, version: string): void {
+  if (!BREAKING_HEADING.test(releaseNotes)) return;
+  const start = releaseNotes.search(BREAKING_HEADING);
+  const section = releaseNotes.slice(start);
+  const end = section.search(/^### (?!\s*\u26a0)/m);
+  const body = end === -1 ? section : section.slice(0, end);
+  if (AUDIENCE_LINE.test(body)) return;
+  throw new Error(
+    `${version} carries a "### \u26a0\ufe0f Breaking changes" section with no "**Who must act:**" line. ` +
+      'State who has to change code and who only has to re-read a value — a reader planning an ' +
+      'upgrade across several minors cannot tell which entry costs a day, and finds out by doing it.',
+  );
+}
+
 export function assertVersionCalibre(changelog: string, version: string): void {
   const notes = extractReleaseNotes(changelog, version);
   if (!BREAKING_HEADING.test(notes)) return;
@@ -488,6 +515,7 @@ export async function validateReleaseTag(
   const changelog = await readFile(join(root, plan.changelog), 'utf8');
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
+  assertBreakingAudience(notes, plan.version);
   // Both packages, each through its own channel. The scaffolder's guide is for
   // the operator of a GENERATED project — the steps a new version needs before
   // it will start — which is a different reader from the framework's, and a

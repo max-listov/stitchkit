@@ -13,9 +13,67 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.64.0] — 2026-08-26
+
+### ⚠️ Breaking changes
+
+**Who must act:** an operator sink that reads `AgentRunEvent` fields narrows on
+`type` first — a few lines, and the compiler points at every one. An application
+that implements `AgentRuntimeStore` directly should move to the driver; nothing
+is removed and its tests keep working.
+
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **`AgentRunEvent` is a discriminated union by `type`.** It was one flat object
+  for `run-started`, `step-finished` and `run-terminal`, with every distinguishing
+  field optional — so nothing could say that a step has a step number, that only
+  a terminal has a terminal reason, or that a terminal always states what it
+  spent. "A terminal event always carries `usage`" was a guarantee the type could
+  not express, and the migration snippet published for it did not typecheck.
+
+  ```ts
+  // before — every field optional, narrowing impossible
+  const spent = event.usage?.cost?.value
+
+  // after — say which kind of event you are holding, and the fields are certain
+  if (event.type === 'run-terminal') {
+    const spent = event.usage.cost   // present, always; `unavailable` when unknown
+  }
+  ```
+
+  `AgentRunStartedEventSchema`, `AgentStepFinishedEventSchema` and
+  `AgentRunTerminalEventSchema` are exported for narrowing and construction.
+
+- **`AgentRuntimeStore` is no longer a supported implementation target**
+  (→ ADR 0111). It stays exported and stays implementable — it is the type of
+  `AgentRuntimeConfig.store`, and an in-process double is a fine reason to write
+  one. What changes is what its growth means: **adding a member to the aggregate
+  is no longer a breaking change.** The supported way to obtain one is
+  `createAgentRuntimeStore(driver)`, and the stability promise moves to
+  `AgentRuntimeStoreDriver` — six storage primitives rather than nine operations.
+
+  Three members were added in three releases and cost the driver population
+  nothing. Announcing them as breaking told adopters they owed three migrations
+  when they owed none.
+
+### Added
+
+- **`scripts/surface-cadence.ts`** — derives, from the changelog, how often an
+  evolving entrypoint has actually been redefined. The entrypoint table now
+  carries that figure beside "evolving", and a test fails when the two drift.
+  A permission to redefine is not a plan, and the question a reader is really
+  asking is how often it happens.
+- **A release gate on breaking notes.** A `### ⚠️ Breaking changes` section must
+  open with a `**Who must act:**` line, so a reader planning an upgrade across
+  several minors can see which entry costs a day without reading the change.
+
 ## [0.63.0] — 2026-08-25
 
 ### ⚠️ Breaking changes
+
+**Who must act:** an application that implements `AgentRuntimeStore` **directly**
+adds one member; everyone else re-reads three values. An adapter built on
+`AgentRuntimeStoreDriver` needs no code change at all.
 
 Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
 
@@ -4113,7 +4171,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/max-listov/stitchkit/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/max-listov/stitchkit/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/max-listov/stitchkit/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/max-listov/stitchkit/compare/v0.60.1...v0.61.0

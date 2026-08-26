@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { createAgentObservability } from '../src/agent-runtime';
+import {
+  AgentRunEventSchema,
+  AgentRunTerminalEventSchema,
+  AgentStepFinishedEventSchema,
+  createAgentObservability,
+} from '../src/agent-runtime';
+import { unknownUsage } from '../src/agent-runtime/runtime-internals';
 
 describe('agent observability', () => {
   test('isolates a failing operator sink from runtime callers', async () => {
@@ -23,6 +29,9 @@ describe('agent observability', () => {
       state: 'failed',
       terminalReason: 'provider_failure',
       internalCause: new Error('private provider cause'),
+      // Required on a terminal event now: the union holds the guarantee the
+      // flat schema could only promise in prose.
+      usage: unknownUsage(),
       emittedAt: '2026-08-22T00:00:00.000Z',
     });
     await observability.flush();
@@ -48,6 +57,9 @@ describe('agent observability', () => {
       state: 'failed',
       terminalReason: 'provider_failure',
       internalCause: new Error('private provider cause'),
+      // Required on a terminal event now: the union holds the guarantee the
+      // flat schema could only promise in prose.
+      usage: unknownUsage(),
       emittedAt: '2026-08-22T00:00:00.000Z',
     } satisfies Parameters<typeof observability.emit>[0];
     observability.emit(event);
@@ -79,6 +91,7 @@ describe('agent observability', () => {
       state: 'failed',
       terminalReason: 'provider_failure',
       internalCause: new Error('private provider cause'),
+      usage: unknownUsage(),
       emittedAt: '2026-08-24T00:00:00.000Z',
     });
     await observability.flush();
@@ -110,6 +123,7 @@ describe('agent observability', () => {
         spanId: 'span-3',
         state: 'completed',
         terminalReason: 'success',
+        usage: unknownUsage(),
         emittedAt: '2026-08-24T00:00:00.000Z',
       });
     };
@@ -122,5 +136,66 @@ describe('agent observability', () => {
     await observability.flush();
 
     expect(received).toHaveLength(10_002);
+  });
+});
+
+describe('the run event union holds what the flat shape could only promise', () => {
+  const terminal = {
+    schemaVersion: 1 as const,
+    eventId: 'event-1',
+    type: 'run-terminal' as const,
+    conversationId: 'conversation-1',
+    runId: 'run-1',
+    traceId: 'trace-1',
+    spanId: 'span-1',
+    state: 'completed' as const,
+    terminalReason: 'success' as const,
+    emittedAt: '2026-08-25T00:00:00.000Z',
+  };
+
+  test('a terminal event without usage is refused by the schema, not by prose', () => {
+    // The whole reason for the split. "A terminal event always carries `usage`"
+    // used to be a sentence in a guide, and the migration snippet published for
+    // it did not typecheck, because `usage` had to stay optional for
+    // `run-started` on the shared shape.
+    expect(() => AgentRunTerminalEventSchema.parse(terminal)).toThrow();
+    expect(() =>
+      AgentRunTerminalEventSchema.parse({ ...terminal, usage: unknownUsage() }),
+    ).not.toThrow();
+  });
+
+  test('a field belongs to the kind of event that has it', () => {
+    // `step` on a terminal and `terminalReason` on a start were both
+    // constructible before, and meant nothing.
+    expect(() =>
+      AgentRunEventSchema.parse({
+        ...terminal,
+        type: 'run-started',
+        terminalReason: undefined,
+      }),
+    ).not.toThrow();
+    const started = AgentRunEventSchema.parse({
+      schemaVersion: 1,
+      eventId: 'event-2',
+      type: 'run-started',
+      conversationId: 'conversation-1',
+      runId: 'run-1',
+      traceId: 'trace-1',
+      spanId: 'span-1',
+      state: 'running',
+      queueWaitMs: 4,
+      emittedAt: '2026-08-25T00:00:00.000Z',
+    });
+    expect(started.type).toBe('run-started');
+    expect('usage' in started).toBe(false);
+    // A step always knows which step it is.
+    expect(() =>
+      AgentStepFinishedEventSchema.parse({
+        ...terminal,
+        type: 'step-finished',
+        terminalReason: undefined,
+        usage: unknownUsage(),
+      }),
+    ).toThrow();
   });
 });

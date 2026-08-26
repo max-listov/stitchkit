@@ -619,6 +619,8 @@ snapshot reload; the bounded sink isolates transport failure and supports a type
 
 Managed effects and operator telemetry additionally export `AgentToolFenceConfig`,
 `AgentToolFenceContext`, `AgentObservability`, `AgentRunEvent`, `AgentRunEventSchema`,
+`AgentRunStartedEvent`, `AgentRunStartedEventSchema`, `AgentStepFinishedEvent`,
+`AgentStepFinishedEventSchema`, `AgentRunTerminalEvent`, `AgentRunTerminalEventSchema`,
 `AgentRunSinkConfig`, `AgentRunSinkDrop` and `AgentRunSinkError`. A monotonic run `fencingToken`
 may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
 operator-only observability sink explicitly opts in.

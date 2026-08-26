@@ -125,6 +125,7 @@ These records were consolidated from the project's internal design notes on
 | [0108](0108-what-a-stopped-run-said-is-a-declared-policy.md) | What a stopped run already said is a declared policy, not a default | Accepted — the runtime cannot observe delivery, so the application declares it |
 | [0109](0109-a-spend-figure-never-claims-a-provenance-it-does-not-have.md) | A spend figure never claims a provenance it does not have | Accepted — keeps billing out of the core per 0002 while making what the core reports true |
 | [0110](0110-a-reconciled-cost-belongs-to-the-application.md) | A reconciled cost belongs to the application, not to the core | Accepted — applies 0002 to the ledger question 0109 left open |
+| [0111](0111-the-driver-is-the-extension-point-and-the-runtime-is-not-stable-yet.md) | The driver is the extension point, and the agent runtime is not stable yet | Accepted — settles the promotion question 0103 opened, with named conditions |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

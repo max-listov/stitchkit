@@ -70,6 +70,12 @@ export {
   type AgentRunSinkConfig,
   type AgentRunSinkDrop,
   type AgentRunSinkError,
+  type AgentRunStartedEvent,
+  AgentRunStartedEventSchema,
+  type AgentRunTerminalEvent,
+  AgentRunTerminalEventSchema,
+  type AgentStepFinishedEvent,
+  AgentStepFinishedEventSchema,
   createAgentObservability,
 } from './agent-runtime/observability';
 export {

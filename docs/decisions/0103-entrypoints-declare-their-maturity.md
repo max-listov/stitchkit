@@ -56,6 +56,16 @@ Today: `stitchkit`, `/contract`, `/server`, `/node`, `/tools`, `/cli`,
 `/agent-runtime`, `/agent-runtime/openrouter`, `/application`,
 `/application/grammy` and `/application/opentelemetry` are evolving.
 
+**"No consumer depends on it yet" is never an argument for exercising this
+permission.** The authority to redefine an evolving surface is this ADR, which
+does not rest on a fact nobody can check: a package on a public registry cannot
+enumerate who installed it, so the claim is unfalsifiable in principle — and it
+was made twice in one afternoon in this repository and was false both times, a
+consumer having already existed. The cadence a surface has actually kept is
+published beside it in the entrypoint table and derived from the changelog
+(`scripts/surface-cadence.ts`), because a permission is not a plan and the
+question a reader is really asking is how often it happens. → ADR 0111.
+
 Promoting a surface from evolving to stable is a decision of its own and
 requires its own ADR. Demotion does not exist: a stable surface that needs to
 move breaks in a minor like any other, which is what the level already permits.

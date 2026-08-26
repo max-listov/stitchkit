@@ -39,6 +39,15 @@ const normalizeUsage = ({
   };
 };
 
+/**
+ * Narrowing helper. The event union means `usage` cannot be read without
+ * saying which kind of event you are holding — which is the point of it.
+ */
+const terminalsIn = (events: readonly AgentRunEvent[]) =>
+  events.filter((event) => event.type === 'run-terminal');
+const stepsIn = (events: readonly AgentRunEvent[]) =>
+  events.filter((event) => event.type === 'step-finished');
+
 function runtimeWith(input: {
   model: MockLanguageModelV4;
   inputPolicy: 'queue' | 'supersede';
@@ -135,7 +144,7 @@ describe('a run reports what it spent, and names what it does not know', () => {
     await send(runtime, 'input-1', 'go').result;
     await runtime.close();
 
-    const terminal = observed.find((event) => event.type === 'run-terminal');
+    const terminal = terminalsIn(observed).at(0);
     // $0.50 + $1.00 + $1.50. This used to be 1.5 — the last step's cost, grafted
     // onto every step's tokens, and labelled as though the provider said it.
     expect(terminal?.usage?.cost?.value).toBe(3);
@@ -149,7 +158,7 @@ describe('a run reports what it spent, and names what it does not know', () => {
     // the provider's own word lives on `step-finished`, per step.
     expect(terminal?.usage?.inputTokens).toEqual({ value: 6_000, provenance: 'computed' });
     expect(terminal?.usage?.outputTokens).toEqual({ value: 600, provenance: 'computed' });
-    const steps = observed.filter((event) => event.type === 'step-finished');
+    const steps = stepsIn(observed);
     expect(steps).toHaveLength(3);
     expect(steps[0]?.usage?.inputTokens).toEqual(reported(1_000));
   });
@@ -178,8 +187,8 @@ describe('a run reports what it spent, and names what it does not know', () => {
     await first.result;
     await runtime.close();
 
-    const terminal = observed.find(
-      (event) => event.type === 'run-terminal' && event.terminalReason === 'superseded',
+    const terminal = terminalsIn(observed).find(
+      (event) => event.terminalReason === 'superseded',
     );
     // Present, not absent. Silence read the same as "this run spent nothing",
     // and those are the two facts that most need telling apart.
@@ -238,9 +247,8 @@ describe('a multi-step run that is abandoned reports the steps it finished', () 
     await runtime.close();
 
     expect(terminal.reason).toBe('superseded');
-    const event = observed.find(
-      (candidate) =>
-        candidate.type === 'run-terminal' && candidate.terminalReason === 'superseded',
+    const event = terminalsIn(observed).find(
+      (candidate) => candidate.terminalReason === 'superseded',
     );
     // Steps one and two finished: 1000+2000 in, 100+200 out, $0.50+$1.00.
     // This used to report 2000/200/$1.00 — the last step wearing the run's name.
@@ -321,7 +329,7 @@ describe('a run that never settles still says what it cost', () => {
 
     // Three fully billed steps. The run's fate belongs to whoever took it; the
     // three dollars were spent by this executor and are not in doubt.
-    const terminals = observed.filter((event) => event.type === 'run-terminal');
+    const terminals = terminalsIn(observed);
     expect(terminals).toHaveLength(1);
     expect(terminals[0]?.usage?.cost).toEqual({
       value: 3,
@@ -382,7 +390,7 @@ describe('a run that never settles still says what it cost', () => {
     const result = await send(runtime, 'input-1', 'go').result;
     await runtime.close();
 
-    const terminal = observed.find((event) => event.type === 'run-terminal');
+    const terminal = terminalsIn(observed).at(0);
     // The winner's id is `<runId>:terminal:<version>`. A losing executor
     // reporting its own spend must not derive the same string: both read the
     // same post-commit snapshot, and the sink deduplicates stable ids by
@@ -550,7 +558,7 @@ describe('the two event channels are gated for their own readers', () => {
     // The operator channel reports it: this executor really did spend three
     // dollars, and losing a compare-and-swap does not refund them. Gating this
     // on `committedByCaller` is why such a run used to report nothing at all.
-    const terminals = observed.filter((event) => event.type === 'run-terminal');
+    const terminals = terminalsIn(observed);
     expect(terminals).toHaveLength(1);
     expect(terminals[0]?.usage?.cost?.value).toBe(3);
 

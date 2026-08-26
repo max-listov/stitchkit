@@ -10,27 +10,71 @@ import {
   AgentUsageSchema,
 } from './schemas';
 
-export const AgentRunEventSchema = z.object({
+/**
+ * Identity every run event carries, whatever kind it is.
+ */
+const AgentRunEventBaseSchema = z.object({
   schemaVersion: z.literal(1),
   eventId: AgentRecordIdSchema,
-  type: z.enum(['run-started', 'step-finished', 'run-terminal']),
   conversationId: AgentRecordIdSchema,
   runId: AgentRecordIdSchema,
   traceId: z.string().min(1),
   spanId: z.string().min(1),
   parentSpanId: z.string().min(1).optional(),
   state: AgentRunStateSchema,
-  terminalReason: AgentTerminalReasonSchema.optional(),
   modelId: z.string().min(1).optional(),
-  step: z.int().nonnegative().optional(),
-  queueWaitMs: z.number().nonnegative().optional(),
   durationMs: z.number().nonnegative().optional(),
-  ttftMs: z.number().nonnegative().optional(),
-  usage: AgentUsageSchema.optional(),
-  internalCause: z.unknown().optional(),
   emittedAt: AgentTimestampSchema,
 });
 
+export const AgentRunStartedEventSchema = AgentRunEventBaseSchema.extend({
+  type: z.literal('run-started'),
+  /** How long the run waited before this executor picked it up. */
+  queueWaitMs: z.number().nonnegative().optional(),
+});
+
+export const AgentStepFinishedEventSchema = AgentRunEventBaseSchema.extend({
+  type: z.literal('step-finished'),
+  step: z.int().nonnegative(),
+  ttftMs: z.number().nonnegative().optional(),
+  /** What this one step reported — the provider's own figure, per step. */
+  usage: AgentUsageSchema,
+});
+
+export const AgentRunTerminalEventSchema = AgentRunEventBaseSchema.extend({
+  type: z.literal('run-terminal'),
+  terminalReason: AgentTerminalReasonSchema,
+  ttftMs: z.number().nonnegative().optional(),
+  internalCause: z.unknown().optional(),
+  /**
+   * What the run cost. **Required**, and that is the point of the union.
+   *
+   * "A terminal event always carries `usage`" was a promise the flat schema
+   * could not express — `usage` had to stay optional because `run-started` has
+   * none — so the guarantee lived in prose and the published migration snippet
+   * for it did not typecheck. Split by kind, the invariant is held by the type
+   * instead of documented beside it. What is unknown says `unavailable`; it is
+   * never absent.
+   */
+  usage: AgentUsageSchema,
+});
+
+/**
+ * One operator event, discriminated by what kind of thing happened.
+ *
+ * The fields were flat and every one of them optional, so nothing could say
+ * that a step always has a step number, that only a terminal has a terminal
+ * reason, or that a terminal always states what it spent.
+ */
+export const AgentRunEventSchema = z.discriminatedUnion('type', [
+  AgentRunStartedEventSchema,
+  AgentStepFinishedEventSchema,
+  AgentRunTerminalEventSchema,
+]);
+
+export type AgentRunStartedEvent = z.infer<typeof AgentRunStartedEventSchema>;
+export type AgentStepFinishedEvent = z.infer<typeof AgentStepFinishedEventSchema>;
+export type AgentRunTerminalEvent = z.infer<typeof AgentRunTerminalEventSchema>;
 export type AgentRunEvent = z.infer<typeof AgentRunEventSchema>;
 
 export interface AgentRunSinkError {
@@ -104,11 +148,14 @@ export function createAgentObservability(config: AgentRunSinkConfig): AgentObser
       const parsed = AgentRunEventSchema.parse(rawEvent);
       if ((config.deduplicate ?? true) && emitted.has(parsed.eventId)) return;
       remember(parsed.eventId);
-      manager.submit(() =>
-        config.includeInternalCause
-          ? parsed
-          : AgentRunEventSchema.omit({ internalCause: true }).parse(parsed),
-      );
+      manager.submit(() => {
+        if (config.includeInternalCause) return parsed;
+        // Only a terminal event carries a cause, and only that member has the
+        // field to strip — which is the union doing its job: there is no longer
+        // a shape where an unrelated event could be carrying one.
+        if (parsed.type !== 'run-terminal') return parsed;
+        return AgentRunTerminalEventSchema.omit({ internalCause: true }).parse(parsed);
+      });
     },
     flush: () => manager.flush(),
     getStatus: () => manager.getStatus(),

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  assertBreakingAudience,
   assertMigrationSection,
   assertReleaseCommitSubject,
   assertTagOnReleaseHead,
@@ -537,3 +538,32 @@ function comparePreOne(left: string, right: string): number {
   const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);
   return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
 }
+
+describe('a breaking section says who has to act', () => {
+  const breaking = ['### ⚠️ Breaking changes', '', '- **Something moved.**'].join('\n');
+
+  test('refuses a breaking section with no audience line', () => {
+    expect(() => assertBreakingAudience(breaking, '0.9.0')).toThrow(/Who must act/);
+  });
+
+  test('accepts one that opens with it', () => {
+    const withAudience = [
+      '### ⚠️ Breaking changes',
+      '',
+      '**Who must act:** nobody — the shape moved under a helper.',
+      '',
+      '- **Something moved.**',
+    ].join('\n');
+    expect(() => assertBreakingAudience(withAudience, '0.9.0')).not.toThrow();
+  });
+
+  test('says nothing about a purely additive release', () => {
+    expect(() => assertBreakingAudience('### Added\n\n- a thing', '0.9.0')).not.toThrow();
+  });
+
+  test('the release notes this repository ships pass it', async () => {
+    const changelog = await Bun.file(`${import.meta.dir}/../CHANGELOG.md`).text();
+    const notes = extractReleaseNotes(changelog, '0.63.0');
+    expect(() => assertBreakingAudience(notes, '0.63.0')).not.toThrow();
+  });
+});
