@@ -271,6 +271,17 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
     await restarted.prisma.$disconnect();
   });
 
+  /**
+   * Bounded by an explicit budget, because what it asserts is SIZE, not speed.
+   *
+   * It walks 64 admissions, acquisitions, terminals and compactions — 256 real
+   * transactions — and then checks that the head is one row, the active history
+   * is one message and nothing is left recoverable. Under Bun's default 5 s it
+   * failed at 5008 ms on a loaded machine: a size guarantee refused for a
+   * timing reason nobody chose for it. On the release commit that red run
+   * cannot be repaired in place, so the clock gets a number on purpose. A
+   * genuinely unbounded head would still be caught — by the assertions.
+   */
   test('keeps the runtime head constant-size across a long compacted conversation', async () => {
     if (!fixture) return;
     const conversationId = 'bounded-conversation';
@@ -383,5 +394,5 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       activeHistoryCount: 1,
       recoverableCount: 0,
     });
-  });
+  }, 120_000);
 });

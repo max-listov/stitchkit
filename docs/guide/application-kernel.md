@@ -56,17 +56,24 @@ const cleanup = createManagedSchedule({
   run: ({ signal }) => removeExpiredRecords(signal),
 })
 
+const http = managedServerResource({
+  id: 'http',
+  dependsOn: [database],
+  // Called during `start`, after `database` is ready — which is how "bind the
+  // port once the database is up" is expressed. Pass an already-running server
+  // instead when the application created it itself.
+  server: () => createServer({ port: env.PORT, services }),
+})
+
 const app = createApplication({
   id: 'service',
-  resources: [
-    database,
-    managedServerResource({ id: 'http', server, dependsOn: ['database'] }),
-    cleanup,
-  ],
+  resources: [database, http, cleanup],
+  // One number for how long this application may take to stop. `shutdown()`
+  // with no options and the signal path both spend it.
+  shutdown: { gracePeriodMs: 30_000, forceTimeoutMs: 5_000 },
 })
 
 const signals = bindProcessSignals(app, {
-  shutdown: { gracePeriodMs: 30_000, forceTimeoutMs: 5_000 },
   onComplete: (result) => {
     process.exitCode = result.outcome === 'clean' ? 0 : 1
   },
@@ -76,9 +83,10 @@ await app.start()
 ```
 
 The exact resource callbacks are typed by their public configuration. The
-important ownership rule is stable: the application creates and configures the
-database/server/provider objects; Stitchkit orders their process-local
-lifecycle.
+important ownership rule is stable: the application decides what the
+database/server/provider objects are and how they are configured; Stitchkit
+orders their process-local lifecycle and decides *when* they come into
+existence.
 
 ## Resource authoring
 
@@ -116,6 +124,40 @@ Invoking `start` makes the descriptor rollback-eligible immediately. Its
 `close` callback must therefore clean side effects even when `start` rejects
 before returning a runtime handle. The kernel calls cleanup once and continues
 cleaning other attempted resources even if one close fails.
+
+### Handing a resource to the resources that depend on it
+
+`dependsOn` says *when*. To say *what*, return a `value` from `start` and read
+it with `context.use(...)`:
+
+```ts
+const database = defineManagedResource({
+  id: 'database',
+  start: async ({ signal }) => ({ value: await connect(env.DATABASE_URL, signal) }),
+})
+
+const worker = defineManagedResource({
+  id: 'worker',
+  dependsOn: [database],
+  start: (context) => {
+    const db = context.use(database)   // Connection — not Connection | null
+    return { completion: consume(db, context.signal) }
+  },
+})
+```
+
+Declare the dependency with the **resource**, not its id, whenever you intend to
+read from it: that is the form `use` can type, and it keeps the declaration and
+the read from drifting apart. A string still works when all you need is order.
+
+The value is published when `start` resolves and stays readable for the rest of
+the application's life — from `activate` and from the shutdown phases too, where
+a dependant may still need the handle it was given.
+
+`use` refuses two things, both loudly: a resource that was never declared in
+`dependsOn` (it happens to work whenever declaration order is lucky), and a
+resource that published nothing. The second is refused by the compiler as well —
+reading a value off a resource with no `value` in its `start` does not type.
 
 ## Readiness and health
 
@@ -310,6 +352,15 @@ a repeated process signal forces that same chain.
 Do not add a second `process.on('SIGTERM')` handler around the application.
 `bindProcessSignals(app)` is the force/escalation owner. Exit code and hard-exit
 policy remain application/supervisor choices.
+
+**Where the budget comes from on the signal path.** `bindProcessSignals(app)`
+with no `shutdown` forwards nothing, so the application spends the budget it
+declared in `createApplication({ shutdown })`. Pass `shutdown` to the binding
+only to override that budget for signals specifically; passing one key overrides
+that key alone and leaves the other at the declaration. Declare the budget once,
+on the application — repeating it in both places is how the two numbers start to
+disagree, and the operator's supervisor timeout is calculated from the one they
+can read.
 
 ## Managed schedules
 

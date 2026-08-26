@@ -5,6 +5,7 @@ import { type ResolvedManagedResource, resolveResourceGraph } from './graph';
 import type {
   ManagedResource,
   ManagedResourceContext,
+  ManagedResourcePublished,
   ManagedResourceStartResult,
 } from './resource';
 import {
@@ -244,6 +245,14 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     }
   };
 
+  /**
+   * What each resource handed to its dependants, kept for the application's
+   * whole life rather than only until readiness: a dependant may still need the
+   * handle it was given while it drains, and dropping it at the end of startup
+   * would make `use()` work in `start` and fail in `close`.
+   */
+  const published = new Map<string, unknown>();
+
   const records = new Map<string, ResourceRecord>();
   for (const entry of ordered) {
     records.set(entry.id, {
@@ -357,6 +366,32 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       forceDeadlineAt: options.forceDeadlineAt,
     }),
     now: () => performance.now(),
+    use<TResource extends ManagedResource>(resource: TResource) {
+      const dependencyId = resource?.id;
+      if (typeof dependencyId !== 'string' || dependencyId.length === 0) {
+        throw new Error(
+          `[stitchkit] resource "${record.entry.id}": use() takes a managed resource, and this one has no id`,
+        );
+      }
+      // Declared-first, on purpose. Reading a value the graph was never told
+      // about is an ordering bug that happens to work today: nothing makes the
+      // owner start first, so it breaks the moment declaration order changes.
+      if (!record.entry.dependsOn.includes(dependencyId)) {
+        throw new Error(
+          `[stitchkit] resource "${record.entry.id}" used "${dependencyId}" without declaring it in dependsOn`,
+        );
+      }
+      if (!published.has(dependencyId)) {
+        throw new Error(
+          `[stitchkit] resource "${record.entry.id}" used "${dependencyId}", which published no value from start()`,
+        );
+      }
+      // Boundary: the store is one untyped map for the whole graph, while the
+      // signature's type is computed from the caller's own literal resource
+      // type. There is no representation that is both, so the bridge is here
+      // and nowhere else.
+      return published.get(dependencyId) as ManagedResourcePublished<TResource>;
+    },
     reportHealth(health) {
       if (record.state === 'stopped') return;
       record.health = health;
@@ -526,6 +561,10 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
           }
           if (isStartResult(started)) {
             record.runtime = started;
+            // Published before readiness is awaited: a dependant only runs after
+            // this resource reaches `ready`, and a resource that reports its own
+            // readiness asynchronously still handed the value over here.
+            if (started.value !== undefined) published.set(entry.id, started.value);
             let resourceReady = started.ready === undefined;
             let completionSettled = false;
             let completionFailure: unknown;

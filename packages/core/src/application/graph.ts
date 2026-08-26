@@ -1,4 +1,4 @@
-import type { ManagedResource } from './resource';
+import { type ManagedResource, managedResourceDependencyId } from './resource';
 import { ApplicationIdSchema } from './schemas';
 
 export interface ResolvedManagedResource {
@@ -16,7 +16,9 @@ export function resolveResourceGraph(
   const entries = resources.map((resource, declarationIndex) => ({
     resource,
     id: ApplicationIdSchema.parse(resource.id),
-    dependsOn: [...(resource.dependsOn ?? [])].map((id) => ApplicationIdSchema.parse(id)),
+    dependsOn: [...(resource.dependsOn ?? [])].map((dependency) =>
+      ApplicationIdSchema.parse(managedResourceDependencyId(dependency)),
+    ),
     required: resource.required ?? true,
     declarationIndex,
   }));

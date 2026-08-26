@@ -426,14 +426,19 @@ cutovers are covered by the executable
 | `ApplicationShutdownBudgetSchema` / `ApplicationShutdownBudget` | schema / _type_ | the same two budgets without a signal — `ApplicationConfig.shutdown`, the default for `shutdown()` and the only budget a failed startup's rollback can read |
 | `ActivityTokenBrand` | const | the brand symbol `ActivityToken` carries, exported so `ActivityProjection` is implementable |
 | `defineManagedResource` | function | retain the exact typed resource declaration; every invoked start is rollback-eligible |
-| `managedServerResource` | function | adapt an existing managed server without copying its HTTP/WebSocket shutdown machine |
+| `managedServerResource` | function | own a managed server's lifecycle without copying its HTTP/WebSocket shutdown machine — a thunk is called during `start`, and the handle is published to dependants |
+| `managedResourceDependencyId` | function | the id of a dependency declared either as a string or as the resource itself |
 | `createApplicationHealthHandler` | function | build a Fetch-clean liveness or readiness response from the sanitized application snapshot |
 | `createApplicationOperationalHandlers` | function | compose always-readable status plus the canonical readiness/liveness handlers |
 | `ApplicationAdmissionError` | class | stable `APPLICATION_NOT_ACCEPTING` rejection from `admission.run(...)` |
 | `ApplicationConfig` / `ApplicationHandle` | _type_ | application declaration and its start/snapshot/subscription/admission/shutdown handle |
 | `ApplicationAdmission` / `ApplicationOperationLease` | _type_ | atomic process-local admission and idempotent release primitive |
-| `ManagedResource` / `ManagedResourceContext` / `ManagedResourceStartResult` | _type_ | resource lifecycle callbacks, shared deadlines, health reporting and separate readiness/completion promises |
-| `ManagedServerResourceConfig` | _type_ | existing managed server, stable ID, dependencies and policy for `managedServerResource` |
+| `ManagedResource` / `ManagedResourceContext` / `ManagedResourceStartResult` | _type_ | resource lifecycle callbacks, shared deadlines, health reporting, separate readiness/completion promises and the value a resource publishes to its dependants |
+| `ManagedResourceDependency` | _type_ | a dependency named by id or given as the resource itself — the second form is what `context.use(...)` can type |
+| `ManagedResourcePublished` | _type_ | the value type `context.use(resource)` returns, recovered from that resource's own `start` |
+| `ManagedResourcePublishesNoValue` | _type_ | what `context.use(...)` returns for a resource that publishes nothing — a branded refusal rather than `never`, so reading it does not silently compile |
+| `ManagedServerResourceConfig` | _type_ | the server or a thunk that makes one, stable ID, dependencies and policy for `managedServerResource` |
+| `ManagedServerResource` | _type_ | the resource `managedServerResource` returns, whose `start` publishes the `ManagedServerHandle` |
 | `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
 | `ApplicationOperationalHandlers` / `ApplicationOperationalHandlersOptions` / `ApplicationOperationalHandlersOptionsSchema` | _type_ / schema | conventional status/readiness/liveness route surface and shared retry policy |
 

@@ -13,6 +13,88 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.67.0] — 2026-08-26
+
+Three defects in the application kernel, all found by one consuming project
+putting fifteen subsystems on it. Two of them were silent: an application that
+reported `healthy` with nothing listening on its port, and a declared shutdown
+budget that never applied on the one path production actually stops through.
+
+### ⚠️ Breaking changes
+
+- **`ManagedResource.dependsOn` accepts the resource itself, not only its id** —
+  its type widens from `readonly string[]` to
+  `readonly ManagedResourceDependency[]`, where a dependency is `string |
+  ManagedResource`. Declaring by reference is what makes `context.use(...)`
+  typeable, and it stops the declaration and the read from drifting apart. Every
+  existing string declaration keeps working; what breaks is *reading*
+  `resource.dependsOn` and expecting `string`.
+  `// before: const ids: readonly string[] = resource.dependsOn ?? []` →
+  `// after: const ids = (resource.dependsOn ?? []).map(managedResourceDependencyId)`
+
+- **`managedServerResource` creates the server during `start`** when it is given
+  a thunk. It used to call the thunk on the way *down* — from `stopAdmission` /
+  `drain` / `close` / `force` — so a graph that delegated server creation to it
+  started clean, reported `health: 'healthy'` and `ready: true`, and had nothing
+  bound to the port. The failure surfaced outside the process, as a request that
+  never arrived. An already-created handle is adopted exactly as before, and the
+  spread-over-your-own-`start` workaround the old behaviour forced on consumers
+  keeps working — but it is no longer needed.
+  `// before: const shutdown = managedServerResource({ id: 'http', server: () => handle! })`
+  `//         const http = defineManagedResource({ ...shutdown, start: () => { handle = createServer(config) } })` →
+  `// after:  const http = managedServerResource({ id: 'http', dependsOn: [database], server: () => createServer(config) })`
+
+- **`bindProcessSignals` no longer substitutes a budget nobody asked for.** It
+  parsed its `shutdown` option through a schema carrying defaults, so an omitted
+  budget arrived at `shutdown()` as three concrete numbers. Against a managed
+  server that was invisible — the server applies the same defaults itself. But
+  `createApplication({ shutdown })` falls back to the declared budget only where
+  the caller passed nothing, so the filled object made that branch unreachable:
+  an application declaring five seconds took thirty-five, and the operator's
+  supervisor timeout, calculated from the declaration, sent `SIGKILL` in the
+  middle of its own drain. Behaviour changes for any application that declared a
+  budget and did not repeat it on the binding — toward what it declared.
+  `// before: bindProcessSignals(app, { shutdown: SHUTDOWN_BUDGET })  // the same numbers, twice`
+  `// after:  bindProcessSignals(app)                                  // declared once, on the application`
+
+### Added
+
+- **A resource hands its handle to the resources that depend on it.** `start`
+  may return a `value`, and a dependant reads it with `context.use(resource)`,
+  typed from the publisher's own `start` — no `let handle: T | null`, no null
+  guard the graph makes unreachable, no half of the invariant living in the
+  order of assignments. The value is published when `start` resolves and stays
+  readable from `activate` and from the shutdown phases, where a dependant may
+  still need the handle it was given. `use` refuses a resource that was not
+  declared in `dependsOn` (it only ever worked by luck of declaration order) and
+  refuses a resource that published nothing — the second refusal is also a
+  compile error, because a value-less resource yields the unassignable
+  `ManagedResourcePublishesNoValue` rather than `never`. → ADR 0114
+
+- **`managedServerResource` publishes its `ManagedServerHandle`** and accepts an
+  asynchronous thunk, so "bind the port after the database is up" is expressed
+  in the graph. New exports: `ManagedServerResource`,
+  `ManagedResourceDependency`, `ManagedResourcePublished`,
+  `ManagedResourcePublishesNoValue`, `managedResourceDependencyId`. → ADR 0115
+
+- **Two migration recipes**: handing a handle to dependants, and the managed
+  HTTP server — the main resource of any web backend, and the one case the
+  recipes did not cover even though its ownership rule is the counter-intuitive
+  one. Both are executable in the packed consumer lane; the HTTP one binds a
+  real port, proves a request reaches it once `start()` resolves and proves the
+  port is closed after `shutdown()`.
+
+### Fixed
+
+- **A thunk that throws now fails the startup with its own error.** The rollback
+  no longer calls the thunk a second time, which would have turned one honest
+  startup failure into `[stitchkit] application startup and rollback failed`.
+
+- **The shutdown call stays synchronous when the handle is already in hand.**
+  `stopAdmission` closes the admission gate by making that call; deferring it by
+  a microtask would admit requests after the application decided to stop
+  accepting them.
+
 ## [0.66.1] — 2026-08-26
 
 ### Added
@@ -4410,7 +4492,10 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.65.1...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.67.0...HEAD
+[0.67.0]: https://github.com/max-listov/stitchkit/compare/v0.66.1...v0.67.0
+[0.66.1]: https://github.com/max-listov/stitchkit/compare/v0.66.0...v0.66.1
+[0.66.0]: https://github.com/max-listov/stitchkit/compare/v0.65.1...v0.66.0
 [0.65.1]: https://github.com/max-listov/stitchkit/compare/v0.65.0...v0.65.1
 [0.65.0]: https://github.com/max-listov/stitchkit/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/max-listov/stitchkit/compare/v0.63.0...v0.64.0

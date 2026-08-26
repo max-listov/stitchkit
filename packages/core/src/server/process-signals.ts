@@ -157,8 +157,35 @@ export function bindProcessSignals<TResult = ShutdownResult>(
 
   const signals = [...new Set(options.signals ?? DEFAULT_PROCESS_SIGNALS)];
   const source = options.signalSource ?? defaultSignalSource;
-  // Parsed here so an invalid budget fails at binding time, not at the signal.
-  const budgets = ShutdownOptionsSchema.omit({ signal: true }).parse(options.shutdown ?? {});
+  /**
+   * Validated at binding time, forwarded only where the caller said something.
+   *
+   * `ShutdownOptionsSchema` carries defaults, so parsing `{}` through it yields
+   * three concrete numbers. Against a managed server that was invisible — the
+   * server applies the same defaults itself. But `createApplication({ shutdown })`
+   * falls back to the declared budget only where the caller passed nothing, so a
+   * filled object made that branch unreachable, and the one path production
+   * actually stops through — a signal — ran on the schema's defaults instead of
+   * the application's declared budget. An application declaring five seconds
+   * took thirty-five, and the operator's supervisor timeout, calculated from the
+   * declaration, sent `SIGKILL` in the middle of its own drain.
+   *
+   * `.partial()` does not fix this: it makes a field optional and leaves its
+   * `.default()` in place, so the parse still fills every key. So the schema
+   * stays the validator — one source of truth for what a legal budget is — and
+   * the forwarding is decided by what the caller actually supplied.
+   */
+  const requested = options.shutdown ?? {};
+  const validated = ShutdownOptionsSchema.omit({ signal: true }).parse(requested);
+  const budgets: Omit<ShutdownOptions, 'signal'> = {
+    ...(requested.gracePeriodMs !== undefined && { gracePeriodMs: validated.gracePeriodMs }),
+    ...(requested.forceTimeoutMs !== undefined && {
+      forceTimeoutMs: validated.forceTimeoutMs,
+    }),
+    ...(requested.retryAfterSeconds !== undefined && {
+      retryAfterSeconds: validated.retryAfterSeconds,
+    }),
+  };
 
   const controller = new AbortController();
   const handlers: [ProcessSignalName, () => void][] = [];

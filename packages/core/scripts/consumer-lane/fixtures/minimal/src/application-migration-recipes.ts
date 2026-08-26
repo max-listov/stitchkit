@@ -3,7 +3,11 @@ import {
   createApplication,
   createApplicationSnapshotSink,
   defineManagedResource,
+  managedServerResource,
 } from 'stitchkit/application';
+import { defineContract } from 'stitchkit/contract';
+import { createServer, implement } from 'stitchkit/server';
+import { z } from 'zod';
 
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(`application migration recipe failed: ${message}`);
@@ -174,8 +178,120 @@ async function operationalPublisherRecipe(): Promise<void> {
   check(status.lastDeliveredRevision === 3, 'close must flush the final accepted revision');
 }
 
+async function dependencyValueRecipe(): Promise<void> {
+  const database = defineManagedResource({
+    id: 'database',
+    start: async () => {
+      await Promise.resolve();
+      return { value: { dsn: 'memory://recipes' } };
+    },
+  });
+  let seenDsn = '';
+  const worker = defineManagedResource({
+    id: 'worker',
+    dependsOn: [database],
+    start(context) {
+      // No module-local, no null guard the graph makes unreachable: the type
+      // here is the published object, not "the published object or null".
+      seenDsn = context.use(database).dsn;
+    },
+  });
+  const application = createApplication({ id: 'value-recipe', resources: [database, worker] });
+  await application.start();
+  check(
+    seenDsn === 'memory://recipes',
+    'a dependant must read the value its dependency published',
+  );
+
+  let refused = '';
+  const undeclared = createApplication({
+    id: 'undeclared-recipe',
+    resources: [
+      database,
+      defineManagedResource({
+        id: 'stranger',
+        start(context) {
+          context.use(database);
+        },
+      }),
+    ],
+  });
+  try {
+    await undeclared.start();
+  } catch (error) {
+    refused = error instanceof Error ? error.message : String(error);
+  }
+  check(
+    refused.includes('without declaring it in dependsOn'),
+    'reading a value from an undeclared dependency must be refused',
+  );
+  await application.shutdown();
+}
+
+async function managedHttpServerRecipe(): Promise<void> {
+  const contract = defineContract(
+    { prefix: 'recipes' },
+    {
+      ping: {
+        method: 'GET',
+        path: '/',
+        desc: 'Answer while the application is up',
+        output: z.object({ ok: z.boolean() }),
+      },
+    },
+  );
+  const services = [implement(contract, { ping: () => ({ ok: true }) })];
+
+  let databaseReady = false;
+  const database = defineManagedResource({
+    id: 'database',
+    start() {
+      databaseReady = true;
+    },
+  });
+  const http = managedServerResource({
+    id: 'http',
+    dependsOn: [database],
+    // The port is bound here, during `start`, after the database is ready —
+    // which is the whole reason to hand this resource a thunk instead of an
+    // already-listening server.
+    server: () => {
+      check(databaseReady, 'the server must be created after its dependency is ready');
+      return createServer({ port: 0, services });
+    },
+  });
+  // The server's own handle, read the way any dependant would read it.
+  let url = '';
+  const probe = defineManagedResource({
+    id: 'probe',
+    dependsOn: [http],
+    start(context) {
+      url = context.use(http).url;
+    },
+  });
+  const application = createApplication({
+    id: 'http-recipe',
+    resources: [database, http, probe],
+  });
+  await application.start();
+  check(url.length > 0, 'the server resource must publish its handle to dependants');
+
+  const response = await fetch(`${url}/recipes`);
+  check(response.status === 200, 'the application must be listening once start resolves');
+  await application.shutdown();
+  let refusedAfterShutdown = false;
+  try {
+    await fetch(`${url}/recipes`);
+  } catch {
+    refusedAfterShutdown = true;
+  }
+  check(refusedAfterShutdown, 'the application must stop listening after shutdown');
+}
+
 await databaseRecipe();
 await pollerRecipe();
 await queueRecipe();
 await operationalPublisherRecipe();
+await dependencyValueRecipe();
+await managedHttpServerRecipe();
 console.log('application migration recipes: ok');

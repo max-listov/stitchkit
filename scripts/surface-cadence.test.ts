@@ -12,6 +12,24 @@ const AGENT_RUNTIME_TERMS = [
   'AgentHistory',
 ] as const;
 
+/**
+ * The application kernel's own vocabulary.
+ *
+ * A second evolving surface deserves the same evidence as the first: the row
+ * that says "evolving" is a claim, and the reader deciding whether to build on
+ * it should not have to reconstruct the cadence from the changelog by hand.
+ */
+const APPLICATION_TERMS = [
+  'stitchkit/application',
+  'createApplication',
+  'ManagedResource',
+  'managedServerResource',
+  'ApplicationConfig',
+  'ManagedSchedule',
+  'bindProcessSignals',
+  'ApplicationSnapshot',
+] as const;
+
 test('counts a minor once however many patches broke it', () => {
   const changelog = [
     '## [0.3.1] — x',
@@ -53,6 +71,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 9 of the 11 minors since 0.56.2, most recently 0.66.0');
+  expect(sentence).toBe('redefined in 9 of the 12 minors since 0.56.2, most recently 0.66.0');
   expect(guide).toContain(`_${sentence}_`);
+
+  const application = cadenceSentence(
+    surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
+  );
+  expect(application).toBe(
+    'redefined in 3 of the 12 minors since 0.56.2, most recently 0.67.0',
+  );
+  expect(guide).toContain(`_${application}_`);
 });

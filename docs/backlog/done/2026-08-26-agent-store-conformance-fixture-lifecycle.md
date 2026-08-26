@@ -53,10 +53,8 @@ cannot typecheck against the package it documents.
 - [x] Setup and cleanup each run once; cleanup runs after an assertion failure.
 - [x] The packed Bun and Node consumer lanes compile the documented example.
 - [x] `bun run verify` is green.
-- [ ] The fix is available in a published patch release. — **не сделано в этом
-      заходе**: команды на релиз не было, а публикация в npm необратима и уходит
-      наружу. Всё для неё готово: `[Unreleased]` в changelog без секции
-      `### ⚠️ Breaking changes`, значит патч 0.66.1.
+- [x] The fix is available in a published patch release — **stitchkit 0.66.1**,
+      тег `v0.66.1`, коммит `2e3577c`.
 
 ## Что сделано
 
@@ -134,6 +132,16 @@ cannot typecheck against the package it documents.
 - [x] `docs/guide/agent-runtime.md`, `docs/api/reference.md`,
       `packages/core/tests/fixtures/public-surface.json`, `CHANGELOG.md`.
 
+### Release
+
+- [x] `stitchkit@0.66.1`, тег `v0.66.1`, коммит `2e3577c`. Полный локальный
+      гейт зелёный (`verify green for tree b31b54ac7e54`), CI на точном SHA
+      зелёный за 2:36, публикация 22 с, GitHub Release создан.
+- [x] Проверено **через опубликованный пакет**, а не через дерево: контекст
+      фикстуры приходит и называет три разговора, уборка выполняется на зелёном
+      и на красном пути, отказ сценария переживает уборку, стор без
+      provisioning падает, фабрика без аргументов работает.
+
 ### Чего не сделано
 
-- Публикация. См. незакрытый пункт Acceptance выше.
+- Ничего из плана не отложено.

@@ -113,6 +113,9 @@ function resourceContext(
       ...(deadlineAt !== undefined && { deadlineAt }),
       now: () => clock.now(),
       reportHealth: (value) => health.push(value),
+      use: () => {
+        throw new Error('this context has no graph');
+      },
     },
     health,
   };

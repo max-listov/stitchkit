@@ -61,7 +61,11 @@ export {
   defineManagedResource,
   type ManagedResource,
   type ManagedResourceContext,
+  type ManagedResourceDependency,
+  type ManagedResourcePublished,
+  type ManagedResourcePublishesNoValue,
   type ManagedResourceStartResult,
+  managedResourceDependencyId,
 } from './application/resource';
 export {
   createManagedSchedule,
@@ -103,6 +107,7 @@ export {
   projectApplicationStatus,
 } from './application/schemas';
 export {
+  type ManagedServerResource,
   type ManagedServerResourceConfig,
   managedServerResource,
 } from './application/server-resource';

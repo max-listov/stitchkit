@@ -91,6 +91,136 @@ implement `AgentRuntimeStoreDriver` and compose the aggregate with
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.67.0
+
+Three application-kernel changes. Two of them fix silent failures, so the most
+important part of this migration is not what the compiler points at — it is the
+two things that change with no compile error at all: **when your server is
+created**, and **which shutdown budget a signal spends**.
+
+### If you gave `managedServerResource` a thunk
+
+It is now called during `start`, after the resource's dependencies are ready —
+the reading the type always suggested. Before, it was called on the way *down*,
+so `app.start()` resolved, the snapshot said `healthy` and `ready`, and nothing
+was bound to the port.
+
+If your application looked like this, it was never listening:
+
+```ts
+// before — resolves clean, listens on nothing
+managedServerResource({ id: 'http', dependsOn: ['database'], server: () => createServer(config) })
+```
+
+Nothing to change: the same code now binds the port. Check your startup logs for
+a healthy report you never actually verified with a request.
+
+If you used the spread workaround — this resource's phases over your own
+`start` — it keeps working, and you can now delete it:
+
+```ts
+// before
+let handle: ManagedServerHandle<T> | null = null
+const shutdown = managedServerResource({ id: 'http', server: () => handle! })
+const http = defineManagedResource({
+  ...shutdown,
+  dependsOn: ['database', 'socket-io'],
+  start: () => { handle = createServer(config) },
+})
+
+// after
+const http = managedServerResource({
+  id: 'http',
+  dependsOn: [database, socketIo],
+  server: () => createServer(config),
+})
+```
+
+An already-created handle is adopted exactly as before.
+
+### If you passed `shutdown` to `bindProcessSignals`
+
+`bindProcessSignals` used to fill in the schema's defaults for every budget you
+omitted, which made `createApplication({ shutdown })` unreachable on the signal
+path — the one path production stops through. An application declaring five
+seconds took thirty-five.
+
+Declare the budget once, on the application, and delete the repetition:
+
+```ts
+// before — the same two numbers in two places, and only one of them applied
+const app = createApplication({ id: 'svc', resources, shutdown: SHUTDOWN_BUDGET })
+bindProcessSignals(app, { shutdown: SHUTDOWN_BUDGET })
+
+// after
+const app = createApplication({ id: 'svc', resources, shutdown: SHUTDOWN_BUDGET })
+bindProcessSignals(app)
+```
+
+**Check this even if you change nothing.** If you declared a budget on the
+application and did not repeat it on the binding, your process has been stopping
+on 30 s / 5 s and will now stop on what you declared. Compare it against the
+supervisor timeout that watches it — `kill_timeout`, `TimeoutStopSec` — because
+that number was probably calculated from the declaration.
+
+Passing `shutdown` to the binding still works and still wins, key by key: one
+key overrides that key alone and leaves the other at the declaration.
+
+### If you read `resource.dependsOn`
+
+Its type widened from `readonly string[]` to `readonly ManagedResourceDependency[]`
+— `string | ManagedResource` — so a dependency can be declared as the resource
+itself. Declaring stays compatible; reading needs one call:
+
+```ts
+// before
+const ids: readonly string[] = resource.dependsOn ?? []
+
+// after
+import { managedResourceDependencyId } from 'stitchkit/application'
+const ids = (resource.dependsOn ?? []).map(managedResourceDependencyId)
+```
+
+### If you thread a handle through a module-local
+
+This is the pattern the change exists to remove, and it is opt-in — nothing
+breaks if you keep yours:
+
+```ts
+// before
+let socket: SocketHandle | null = null
+const socketIo = defineManagedResource({
+  id: 'socket-io',
+  start: async () => { socket = await createSocketServer(config) },
+})
+const http = defineManagedResource({
+  id: 'http',
+  dependsOn: ['socket-io'],
+  start: () => {
+    if (!socket) throw new Error('socket is not initialized')   // unreachable
+    server = createServer({ socket })
+  },
+})
+
+// after
+const socketIo = defineManagedResource({
+  id: 'socket-io',
+  start: async () => ({ value: await createSocketServer(config) }),
+})
+const http = defineManagedResource({
+  id: 'http',
+  dependsOn: [socketIo],
+  start: (context) => {
+    server = createServer({ socket: context.use(socketIo) })   // SocketHandle
+  },
+})
+```
+
+Declare the dependency with the **resource** when you intend to read from it —
+that is the form `use` can type. `use` refuses a resource missing from
+`dependsOn`, and refuses one that published no value; the second refusal is a
+compile error too.
+
 ## Released migration: 0.66.0
 
 Three changes, and only one of them is a feature. The other two are shapes that

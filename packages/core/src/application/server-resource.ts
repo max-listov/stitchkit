@@ -1,21 +1,64 @@
-import type { ManagedServerHandle, ShutdownResult } from '../server/shutdown';
-import { defineManagedResource, type ManagedResource } from './resource';
+import type { ManagedServerHandle, ShutdownOptions, ShutdownResult } from '../server/shutdown';
+import {
+  defineManagedResource,
+  type ManagedResource,
+  type ManagedResourceContext,
+  type ManagedResourceDependency,
+} from './resource';
 
 export interface ManagedServerResourceConfig<TRuntime> {
   readonly id: string;
-  readonly server: ManagedServerHandle<TRuntime> | (() => ManagedServerHandle<TRuntime>);
-  readonly dependsOn?: readonly string[];
+  /**
+   * The server, or how to make one.
+   *
+   * A handle is adopted as it is. A thunk is called during `start`, which is
+   * the only way to say "bind the port after the database is up" — and the only
+   * reading of a thunk that is not a trap. It used to be called during
+   * *shutdown*, so a graph that delegated creation here started clean, reported
+   * `healthy`, and had nothing listening on the port; the failure surfaced as a
+   * request that never arrived.
+   */
+  readonly server:
+    | ManagedServerHandle<TRuntime>
+    | (() => ManagedServerHandle<TRuntime> | Promise<ManagedServerHandle<TRuntime>>);
+  readonly dependsOn?: readonly ManagedResourceDependency[];
   readonly required?: boolean;
   readonly retryAfterSeconds?: number;
 }
 
-/** Adapt an existing managed server without duplicating its shutdown state machine. */
+/**
+ * A managed resource that owns a managed server.
+ *
+ * Its `start` publishes the handle, so a resource that depends on this one
+ * reads the running server with `context.use(...)` instead of a module-local.
+ */
+export interface ManagedServerResource<TRuntime> extends ManagedResource {
+  start(
+    context: ManagedResourceContext,
+  ): Promise<{ readonly value: ManagedServerHandle<TRuntime> }>;
+}
+
+/** Own a managed server's lifecycle without duplicating its shutdown state machine. */
 export function managedServerResource<TRuntime>(
   config: ManagedServerResourceConfig<TRuntime>,
-): ManagedResource {
-  let shutdownPromise: Promise<ShutdownResult> | undefined;
-  const getServer = (): ManagedServerHandle<TRuntime> =>
+): ManagedServerResource<TRuntime> {
+  let shutdownPromise: Promise<ShutdownResult | undefined> | undefined;
+  /** The handle `start` resolved. Absent until it runs — and if it never does. */
+  let started: ManagedServerHandle<TRuntime> | undefined;
+  /** Whether `start` ran at all, which is a different question from whether it worked. */
+  let startAttempted = false;
+  const resolveServer = ():
+    | ManagedServerHandle<TRuntime>
+    | Promise<ManagedServerHandle<TRuntime>> =>
     typeof config.server === 'function' ? config.server() : config.server;
+
+  /**
+   * Told apart by what the handle has, not by `instanceof Promise`: a thunk may
+   * return any thenable, and a wrong answer here is a shutdown that never runs.
+   */
+  const isHandle = (
+    value: ManagedServerHandle<TRuntime> | Promise<ManagedServerHandle<TRuntime>>,
+  ): value is ManagedServerHandle<TRuntime> => 'shutdown' in value;
 
   /**
    * A budget the server will accept.
@@ -73,7 +116,20 @@ export function managedServerResource<TRuntime>(
         : phase === 'force'
           ? force(context.forceDeadlineAt - now)
           : force(context.forceDeadlineAt - (context.deadlineAt ?? now));
-    shutdownPromise = getServer().shutdown({
+    // Three cases, and only the middle one is new. `started` is the handle in
+    // every ordinary graph. If `start` ran and produced nothing — a thunk that
+    // threw — there is no server, and calling the thunk again during the
+    // rollback would raise its failure a second time, turning one honest
+    // startup error into "startup and rollback failed". If `start` never ran at
+    // all, the resource is being spread over someone else's `start` — the shape
+    // the broken version forced on consumers — and the thunk is still the only
+    // way to reach their server.
+    const server = started ?? (startAttempted ? undefined : resolveServer());
+    if (server === undefined) {
+      shutdownPromise = Promise.resolve(undefined);
+      return shutdownPromise;
+    }
+    const options: ShutdownOptions = {
       ...(gracePeriodMs !== undefined && { gracePeriodMs }),
       ...(forceTimeoutMs !== undefined && { forceTimeoutMs }),
       // The third integer field of the same schema, and it was left out of the
@@ -85,7 +141,14 @@ export function managedServerResource<TRuntime>(
       // is never closed, so the process hangs.
       retryAfterSeconds: grace(config.retryAfterSeconds ?? 5),
       signal: context.signal,
-    });
+    };
+    // Synchronous when the server is already in hand, which is every case but a
+    // pending async thunk. `stopAdmission` closes the admission gate by calling
+    // this, so deferring it by a microtask would let requests in after the
+    // application decided to stop accepting them.
+    shutdownPromise = isHandle(server)
+      ? server.shutdown(options)
+      : server.then((handle) => handle.shutdown(options));
     void shutdownPromise.catch(() => undefined);
     return shutdownPromise;
   };
@@ -94,9 +157,12 @@ export function managedServerResource<TRuntime>(
     id: config.id,
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     ...(config.required !== undefined && { required: config.required }),
-    start() {
-      // The application owns when the already-created server becomes managed;
-      // the server continues to own its HTTP/WebSocket lifecycle.
+    async start() {
+      // The application owns when the server exists; the server keeps owning its
+      // own HTTP/WebSocket lifecycle once it does.
+      startAttempted = true;
+      started = await resolveServer();
+      return { value: started };
     },
     stopAdmission(context) {
       ensureShutdown(context);

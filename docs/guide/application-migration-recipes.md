@@ -119,6 +119,65 @@ asynchronous subscriber callback racing cleanup: publish `getSnapshot()` before
 closing the outer sink, so any older or duplicate late delivery is rejected as
 stale instead of dropping the final state.
 
+## Handing a handle to the resources that depend on it
+
+`dependsOn` carries ordering. To carry the object as well, return a `value` from
+`start` and read it with `context.use(...)`. This replaces the module-local
+`let handle: T | null` with the guard the graph makes unreachable.
+
+```ts
+const database = defineManagedResource({
+  id: 'database',
+  start: async () => ({ value: await connect(env.DATABASE_URL) }),
+})
+
+const worker = defineManagedResource({
+  id: 'worker',
+  dependsOn: [database],
+  start(context) {
+    const db = context.use(database)   // Connection — not Connection | null
+  },
+})
+```
+
+Declare the dependency with the **resource** whenever you intend to read from
+it: that is the form `use` can type, and it stops the declaration and the read
+from drifting. A string still expresses order on its own.
+
+The value is published when `start` resolves and stays readable from `activate`
+and from the shutdown phases. `use` refuses a resource that was not declared in
+`dependsOn` — that only ever worked by luck of declaration order — and refuses a
+resource that published nothing, which the compiler refuses too. The executable
+recipe proves both the read and the refusal.
+
+## Managed HTTP server
+
+The main resource of a web backend, and the one whose ownership rule is
+counter-intuitive: give `managedServerResource` a **thunk** and it creates the
+server during `start`, after its dependencies are ready. Give it an
+already-listening server and it adopts that one instead.
+
+```ts
+const http = managedServerResource({
+  id: 'http',
+  dependsOn: [database],
+  server: () => createServer({ port: env.PORT, services }),
+})
+
+const app = createApplication({ id: 'service', resources: [database, http] })
+await app.start()   // the port is bound; the snapshot means it
+```
+
+The server resource publishes its `ManagedServerHandle`, so anything that needs
+the running server — a Socket.IO attachment, a URL to log, a probe — reads it
+with `context.use(http)` rather than through a module-local.
+
+Do not spread this resource over your own `start` to control creation order:
+that shape exists only as a workaround for the version whose `start` was empty,
+and `dependsOn` now expresses the order directly. The executable recipe binds a
+real port, proves a request reaches it after `start()` resolves, and proves the
+port is closed after `shutdown()`.
+
 ## Deletion checklist
 
 After the cutover, remove the old generic lifecycle path completely:

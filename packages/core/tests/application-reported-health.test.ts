@@ -459,6 +459,9 @@ describe('the server adapter hands the server a budget it can accept', () => {
       signal: new AbortController().signal,
       now: () => 1_000.25,
       reportHealth: () => undefined,
+      use: () => {
+        throw new Error('this context has no graph');
+      },
     });
 
     expect(captured).toHaveLength(1);
@@ -511,6 +514,9 @@ describe('the server adapter hands the server a budget it can accept', () => {
       // usable one.
       forceDeadlineAt: startedAt + 0.4,
       reportHealth: () => undefined,
+      use: () => {
+        throw new Error('this context has no graph');
+      },
     });
     expect(captured).toHaveLength(1);
     expect(captured[0]?.forceTimeoutMs).toBe(1);
