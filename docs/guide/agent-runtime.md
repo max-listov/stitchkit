@@ -695,5 +695,11 @@ outbox.
 `stitchkit/testing` exports `createAgentRaceBarrier`, `createAgentRaceDriver` and
 `createAgentRaceTrace`. Barriers have bounded teardown, traces assert exact partial order, and the
 helpers are exercised from packed Bun and Node consumers. `runAgentStoreConformance` runs duplicate,
-coalescing, collision, stale checkpoint, replay safety, terminal race, compaction and recovery
-invariants against any fresh durable adapter.
+coalescing, collision, stale checkpoint, replay safety, terminal race, absorption, bounded reads,
+compaction and recovery invariants against any fresh durable adapter.
+
+It picks its conversation identities itself and passes them to `createStore(context)` **before the
+first mutation**, so an adapter whose runtime rows reference an application-owned conversation row
+can provision those parents; the optional `cleanup(context)` removes them again, and runs once
+whether the scenario passed or failed. A factory that owns no fixture state ignores the argument and
+keeps working unchanged.

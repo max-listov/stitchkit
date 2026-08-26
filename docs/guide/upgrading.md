@@ -25,8 +25,27 @@ Prisma adapter, an in-memory one, anything — run the conformance kit against i
 ```ts
 import { runAgentStoreConformance } from 'stitchkit/testing'
 
-await runAgentStoreConformance({ store: yourStore, conversationId: 'conformance' })
+await runAgentStoreConformance({ createStore: () => yourStore })
 ```
+
+The kit picks the conversation identities itself and hands them over **before**
+the first mutation, so a store whose runtime rows hang off an application-owned
+conversation row can provision the parents — and take them away again:
+
+```ts
+await runAgentStoreConformance({
+  createStore: (context) => {
+    for (const conversationId of context.conversationIds) createConversationRow(conversationId)
+    return yourStore
+  },
+  cleanup: (context) => {
+    for (const conversationId of context.conversationIds) deleteConversationRow(conversationId)
+  },
+})
+```
+
+`cleanup` runs exactly once, after the scenario, whether it passed or failed —
+and a failure in it never replaces the scenario's own.
 
 Green before and red after tells you the contract grew and where, in one run,
 instead of one failure at a time in production. Green both times means the

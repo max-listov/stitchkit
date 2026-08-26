@@ -993,7 +993,8 @@ handler pipeline without opening a TCP port.
 | `createHandlerTestClient` | function | one contract client backed by an in-process `FetchHandler` |
 | `createHandlerTestClients` | function | exact contract-registry batch form |
 | `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
-| `AgentStoreConformanceConfig` | _type_ | factory configuration for running the same contract against a fresh adapter |
+| `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), cleanup?(context) }` — the factory the contract runs against, plus a teardown that runs once whether the scenario passed or failed |
+| `AgentStoreConformanceContext` | _type_ | `{ conversationIds }` — every conversation the scenario will mutate, handed over **before** the first mutation so an adapter can provision application-owned parent rows; a zero-argument factory stays valid |
 | `runManagedResourceConformance` | function | run the canonical deterministic lifecycle matrix against a fresh consumer-owned `ManagedResource` fixture; resolves `void` or throws `ManagedResourceConformanceError` with a stable scenario ID and normalized trace |
 | `ManagedResourceConformanceScenarioIdSchema` / `ManagedResourceConformanceScenarioId` | schema / _type_ | stable clean, rollback, readiness/completion, activation, shutdown-race and forced-cleanup scenario vocabulary |
 | `ManagedResourceConformanceScenarioSchema` / `ManagedResourceConformanceScenario` | schema / _type_ | discriminated scenario record including whether the controlled resource is required |

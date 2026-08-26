@@ -1065,6 +1065,7 @@
     "AgentRaceTrace",
     "AgentRaceTraceEntry",
     "AgentStoreConformanceConfig",
+    "AgentStoreConformanceContext",
     "ConformanceTransport",
     "CreateRealtimeProbeDriverConfig",
     "DefineRealtimeProbeConfig",

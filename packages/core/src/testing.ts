@@ -110,6 +110,7 @@ export {
 } from './agent-runtime/testing';
 export {
   type AgentStoreConformanceConfig,
+  type AgentStoreConformanceContext,
   runAgentStoreConformance,
 } from './testing/agent-store-conformance';
 export {

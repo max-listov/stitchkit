@@ -2,7 +2,7 @@
   "name": "stitchkit-consumer-node",
   "private": true,
   "type": "module",
-  "comment": "Node-facing declarations with every Node peer and no @types/bun.",
+  "comment": "Node-facing declarations with every Node peer and no @types/bun. @types/json-schema is here because `@ai-sdk/provider` DEPENDS on the untyped `json-schema` and keeps its types a devDependency, so its published .d.ts references a module a consumer does not get \u2014 a Node consumer reading the agent-runtime declarations with skipLibCheck:false installs the types itself. Not our gap, but this fixture is where a Node consumer's experience is proven, so it reproduces the real fix rather than hiding the problem.",
   "dependencies": {
     "stitchkit": "TARBALL",
     "zod": "^4.4.3",
@@ -11,6 +11,7 @@
     "ai": "^7.0.0",
     "srvx": "^0.12.5",
     "socket.io": "^4.8.3",
-    "@types/node": "^26.1.2"
+    "@types/node": "^26.1.2",
+    "@types/json-schema": "^7.0.15"
   }
 }

@@ -1,8 +1,44 @@
 import { AgentMessageSchema, AgentRunSchema } from '../agent-runtime/schemas';
 import type { AgentRuntimeStore } from '../agent-runtime/store';
 
+/**
+ * What the scenario is about to touch, handed over before the first mutation.
+ *
+ * The kit used to pick its conversation identities *after* `createStore()`
+ * returned, which locked out exactly the adapters it exists to certify: a
+ * durable store whose runtime rows hang off an application-owned conversation
+ * row cannot serve the first admission, because nobody ever told it which
+ * parent to provision. Running the kit against the memory reference store
+ * instead proves the reducer — which is not the thing under test.
+ */
+export interface AgentStoreConformanceContext {
+  /**
+   * Every conversation the scenario mutates, in the order it first touches
+   * them. Provision one parent per id before returning the store, and remove
+   * them again in `cleanup`.
+   */
+  readonly conversationIds: readonly string[];
+}
+
 export interface AgentStoreConformanceConfig {
-  createStore(): AgentRuntimeStore | Promise<AgentRuntimeStore>;
+  /**
+   * Build the store under test. The context arrives first so an adapter can
+   * provision fixture state; a factory that needs none may ignore it, and an
+   * existing zero-argument factory stays valid unchanged.
+   */
+  createStore(
+    context: AgentStoreConformanceContext,
+  ): AgentRuntimeStore | Promise<AgentRuntimeStore>;
+  /**
+   * Remove whatever `createStore` provisioned.
+   *
+   * Runs exactly once, after the scenario, whether it passed or failed — a kit
+   * that only cleans up on success leaks a row for every red run, which is the
+   * shape that makes a failing suite un-rerunnable. A failure here never
+   * replaces the scenario's own: the answer to "does this adapter conform" is
+   * not overwritten by the answer to "did the teardown work".
+   */
+  cleanup?(context: AgentStoreConformanceContext): void | Promise<void>;
 }
 
 function userMessage(conversationId: string, id: string) {
@@ -47,8 +83,52 @@ function requireOutcome<OUTCOME extends string>(
 export async function runAgentStoreConformance(
   config: AgentStoreConformanceConfig,
 ): Promise<void> {
-  const store = await config.createStore();
-  const conversationId = `conformance-${crypto.randomUUID()}`;
+  const run = `conformance-${crypto.randomUUID()}`;
+  const context: AgentStoreConformanceContext = {
+    conversationIds: [run, `${run}-recovery`, `${run}-absorb`],
+  };
+  const store = await config.createStore(context);
+  let failure: unknown;
+  try {
+    await conformanceScenario(store, context.conversationIds);
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await config.cleanup?.(context);
+  } catch (cleanupError) {
+    if (failure === undefined) throw cleanupError;
+    // Both failed. The scenario's message leads, so an assertion on it still
+    // matches, and the teardown failure travels with it instead of replacing
+    // it or vanishing.
+    throw new AggregateError(
+      [failure, cleanupError],
+      `${failure instanceof Error ? failure.message : String(failure)} (cleanup also failed: ${
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+      })`,
+    );
+  }
+  if (failure !== undefined) throw failure;
+}
+
+async function conformanceScenario(
+  store: AgentRuntimeStore,
+  conversationIds: readonly string[],
+): Promise<void> {
+  const [conversationId, recoveryConversationId, absorbConversationId] = conversationIds;
+  if (!conversationId || !recoveryConversationId || !absorbConversationId) {
+    throw new Error('Agent store conformance requires three conversation identities');
+  }
+  /**
+   * An identity the scenario asserts is ABSENT, and therefore deliberately not
+   * in `conversationIds` — provisioning it would destroy the assertion.
+   *
+   * Generated rather than written out: the literal `'no-such-conversation'` it
+   * used to be is a string a consumer's own database may legitimately contain,
+   * and then a green adapter failed here for a reason that has nothing to do
+   * with the contract.
+   */
+  const absentConversationId = `${conversationId}-absent`;
   const firstInput = userMessage(conversationId, 'input-1');
   const firstRun = queuedRun(conversationId, firstInput.id, 'run-1');
   const accepted = await store.acceptInputAndAssignRun({
@@ -317,7 +397,7 @@ export async function runAgentStoreConformance(
   if (await store.loadRun({ conversationId, runId: 'no-such-run' })) {
     throw new Error('loadRun must return undefined for an unknown run');
   }
-  if (await store.loadRun({ conversationId: 'no-such-conversation', runId: running.id })) {
+  if (await store.loadRun({ conversationId: absentConversationId, runId: running.id })) {
     throw new Error('loadRun must not cross conversation boundaries');
   }
   const activeRuns = await store.listActiveRuns(conversationId);
@@ -339,7 +419,7 @@ export async function runAgentStoreConformance(
       throw new Error('listActiveRuns must order by createdAt and then by id');
     }
   }
-  if ((await store.listActiveRuns('no-such-conversation')).length !== 0) {
+  if ((await store.listActiveRuns(absentConversationId)).length !== 0) {
     throw new Error('listActiveRuns must be empty for an unknown conversation');
   }
 
@@ -444,7 +524,6 @@ export async function runAgentStoreConformance(
     throw new Error('Compaction discarded the canonical duplicate terminal result');
   }
 
-  const recoveryConversationId = `${conversationId}-recovery`;
   const recoveryInput = userMessage(recoveryConversationId, 'recovery-input');
   const recoveryRun = queuedRun(recoveryConversationId, recoveryInput.id, 'recovery-run');
   const recoveryAccepted = await store.acceptInputAndAssignRun({
@@ -481,7 +560,7 @@ export async function runAgentStoreConformance(
     throw new Error('Abandon recovery did not atomically terminalize its assistant record');
   }
 
-  await assertAbsorptionIsAtomic(store);
+  await assertAbsorptionIsAtomic(store, absorbConversationId);
 }
 
 /**
@@ -493,8 +572,10 @@ export async function runAgentStoreConformance(
  * twice. The pair is written inside one transaction, so a driver that persists
  * one record of it fails here.
  */
-async function assertAbsorptionIsAtomic(store: AgentRuntimeStore): Promise<void> {
-  const conversationId = `conformance-absorb-${crypto.randomUUID()}`;
+async function assertAbsorptionIsAtomic(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
   const leadInput = userMessage(conversationId, 'absorb-input-1');
   const leadRun = queuedRun(conversationId, leadInput.id, 'absorb-run-1');
   const lead = await store.acceptInputAndAssignRun({

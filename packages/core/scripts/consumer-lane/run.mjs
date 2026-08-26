@@ -223,6 +223,22 @@ try {
     });
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
+    if (name === 'full') {
+      // The agent runtime needs `ai`, so this belongs to the fixture that
+      // opted into it — and it is the exact invocation the upgrading guide
+      // shows, so the guide cannot drift from the package again unnoticed.
+      const storeConformanceOutput = step('full: agent store conformance', () =>
+        run('bun', ['src/agent-store-conformance.ts'], dir),
+      );
+      if (!storeConformanceOutput.includes('agent store conformance: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] full: agent store conformance produced no proof',
+          storeConformanceOutput,
+        );
+      }
+    }
+
     if (name === 'minimal') {
       const conformanceOutput = step('minimal: managed resource conformance', () =>
         run('bun', ['src/managed-resource-conformance.ts'], dir),

@@ -13,6 +13,40 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.66.1] — 2026-08-26
+
+### Added
+
+- **The agent-store conformance kit takes a fixture lifecycle.** It picked its
+  conversation identities *after* `createStore()` returned, which locked out
+  exactly the adapters it exists to certify: a durable store whose runtime rows
+  hang off an application-owned conversation row cannot serve the first
+  admission, because nobody ever told it which parent to provision — so such an
+  adapter could only be "certified" by running the kit against the memory
+  reference store, which proves the reducer rather than the adapter.
+  `createStore(context)` now receives an `AgentStoreConformanceContext` naming
+  every conversation the scenario will mutate, and an optional
+  `cleanup(context)` removes what it provisioned.
+  `cleanup` runs **exactly once, after the scenario, whether it passed or
+  failed** — a kit that only tears down on success leaks a row per red run — and
+  a failure in it never replaces the scenario's own.
+  Additive: a zero-argument factory (`createStore: () => yourStore`) stays valid
+  with no wrapper.
+
+### Fixed
+
+- **The documented conformance invocation now typechecks.** `docs/guide/upgrading.md`
+  showed `runAgentStoreConformance({ store, conversationId })`, a shape the
+  released package has never accepted — so the one check the upgrade path tells
+  an adapter author to run could not compile against the package documenting it.
+  Corrected, and the packed Bun and Node consumer fixtures now compile and run
+  the exact documented form, so it cannot drift again quietly.
+- **The kit no longer asserts absence against a hardcoded identity.** It probed
+  `'no-such-conversation'`; a consumer database may legitimately contain that
+  string, and then a conforming adapter failed for a reason unrelated to the
+  contract. The absent identity is derived from the run's own generated prefix
+  and is deliberately not among `conversationIds`.
+
 ## [0.66.0] — 2026-08-26
 
 ### ⚠️ Breaking changes
