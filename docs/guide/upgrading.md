@@ -72,6 +72,81 @@ implement `AgentRuntimeStoreDriver` and compose the aggregate with
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Released migration: 0.65.0
+
+The largest migration of the pre-1.0 line, and most of it is the compiler
+pointing at things. One item is a feature withdrawal and two change behaviour
+with no compile error at all.
+
+### A projection a provider accepts, and a policy withdrawn
+
+### If you compact, or use `system-note`, you were broken and now are not
+
+No code change to adopt the fix — but **check your own code if you call
+`projectAgentHistory` yourself.** System and summary records no longer appear in
+`messages`; they come back in `system` and belong in the provider's instructions
+channel, which is the only place `ai` accepts them:
+
+```ts
+// before — the provider refuses this outright
+const messages = await projectAgentHistory(snapshot.messages)
+streamText({ model, messages })
+
+// after
+const { messages, system } = await projectAgentHistoryDetailed(snapshot.messages)
+streamText({
+  model,
+  instructions: system.map((content) => ({ role: 'system', content })),
+  messages,
+})
+```
+
+If you use `createAgentRuntime`, this is handled for you.
+
+### `inputPolicy: 'inject'` is withdrawn
+
+```ts
+// before
+runs: { inputPolicy: 'inject' }
+// after
+runs: { inputPolicy: 'queue' }
+```
+
+`'absorbed'`, `AgentRun.absorbedIntoRunId` and `AgentRuntimeStore.absorbQueuedRun`
+go with it. A driver built on `AgentRuntimeStoreDriver` needs no change.
+
+### Records must agree with themselves
+
+If you construct `AgentRun` values — a store double, a fixture, a migration —
+derive the state instead of setting it:
+
+```ts
+// after
+import { runStateForTerminalReason } from 'stitchkit/agent-runtime'
+AgentRunSchema.parse({ …run, terminalReason: reason, state: runStateForTerminalReason(reason) })
+```
+
+A terminal state with no reason, a queued run carrying one, and `policy_stop`
+without a `terminalPolicyName` are now all refused at parse time.
+
+### Enum and field changes the compiler will point at
+
+- `AgentTerminalReason`: `'tool_failure'` removed (never produced),
+  `'context_overflow'` added — this runtime's own refusal when the prompt does
+  not fit, which used to report `provider_failure`.
+- `AgentRunState`: `'absorbed'` removed.
+- `AgentRunMetrics.usage` is required.
+- `AgentHistoryBudgetDecision['reason']`: `'superseded'` → `'unspeakable'`.
+
+### Two behaviour changes with no compile error
+
+- **`loop.idleTimeoutMs` now defaults to 60 000.** A run whose provider stream
+  goes quiet for a minute ends as `timeout` instead of holding the lane forever.
+  Pass `null` for the old behaviour, and think about why you want it.
+- **`advanceAgentRuntimeEventCursor` stops returning `gap` for durable events.**
+  If you reload a conversation on `gap`, you were reloading after essentially
+  every run. Transient events still report it, and there it is real.
+
 ## Released migration: 0.64.0
 
 Two changes, and only one of them can break a build. Nothing was removed.

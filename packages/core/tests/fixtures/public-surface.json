@@ -773,8 +773,6 @@
     "wrapInRequestContext"
   ],
   "stitchkit/agent-runtime": [
-    "AbsorbQueuedRun",
-    "AbsorbQueuedRunSchema",
     "AcceptInputAndAssignRun",
     "AcceptInputAndAssignRunSchema",
     "AcquireAgentRun",
@@ -942,6 +940,7 @@
     "defineModelRegistry",
     "projectAgentHistory",
     "projectAgentHistoryDetailed",
+    "runStateForTerminalReason",
     "selectAgentHistory",
     "structuredCompaction",
     "validateAgentModelSnapshot"

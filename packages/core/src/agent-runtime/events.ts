@@ -160,9 +160,15 @@ export function advanceAgentRuntimeEventCursor(
     ) {
       return { status: 'duplicate', cursor };
     }
+    // Never `gap`. `snapshotVersion` is the **conversation's** version, bumped
+    // by every durable mutation including the many that publish nothing —
+    // checkpoints, compaction, acceptance of a run that has not started. Two
+    // consecutive published events are routinely several versions apart, so
+    // adjacency reported a gap after essentially every run, and the guide told
+    // consumers a gap means "reload the whole conversation". A durable loss is
+    // simply not detectable from this number; a reconnect reload is.
     return {
-      status:
-        previous !== undefined && event.snapshotVersion > previous + 1 ? 'gap' : 'accepted',
+      status: 'accepted',
       cursor: {
         ...cursor,
         snapshotVersion: event.snapshotVersion,

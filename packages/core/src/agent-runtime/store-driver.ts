@@ -8,11 +8,9 @@ import {
   AgentRunSchema,
   type AgentSnapshot,
   AgentSnapshotSchema,
-  type AgentTerminalReasonSchema,
+  runStateForTerminalReason,
 } from './schemas';
 import {
-  type AbsorbQueuedRun,
-  AbsorbQueuedRunSchema,
   type AcceptInputAndAssignRun,
   AcceptInputAndAssignRunSchema,
   type AcquireAgentRun,
@@ -152,7 +150,6 @@ type StoreOperation =
   | { type: 'acquire'; input: AcquireAgentRun }
   | { type: 'checkpoint'; input: CheckpointRunAssistant }
   | { type: 'interrupt'; input: RequestRunInterrupt }
-  | { type: 'absorb'; input: AbsorbQueuedRun }
   | { type: 'recover'; input: RecoverAgentRun }
   | { type: 'terminal'; input: CommitRunTerminal }
   | { type: 'compact'; input: ReplaceCompactedRange };
@@ -161,8 +158,6 @@ interface ReducedApplied {
   outcome: 'applied';
   snapshot: AgentSnapshot;
   runRecord?: AgentStoredRun;
-  /** A second run the same mutation changed — absorbing touches two. */
-  secondaryRunRecord?: AgentStoredRun;
   admissionReceipt?: AgentAdmissionReceipt;
   historyMutation?: AgentHistoryMutation;
 }
@@ -317,6 +312,26 @@ function replaceMessage(
     : [...messages, next];
 }
 
+/**
+ * The run states a recovery pass and an active listing must consider.
+ *
+ * Exported because a driver author needs it: `runs.listActive` and
+ * `scanRecoverable` are driver members, so this list crossed the public
+ * boundary as a literal every adapter had to guess and hardcode — the reference
+ * adapter repeats it three times. Adding a run state silently broke every
+ * deployed driver. Same reasoning as `isSpeakableAssistantStatus`, applied to
+ * the enum that a consumer implements against rather than reads.
+ */
+export const ACTIVE_AGENT_RUN_STATES: readonly AgentRun['state'][] = [
+  'queued',
+  'running',
+  'interrupt_requested',
+];
+
+function isActiveRunState(state: AgentRun['state']): boolean {
+  return ACTIVE_AGENT_RUN_STATES.includes(state);
+}
+
 function conflict(actualVersion: number): {
   outcome: 'conflict';
   actualVersion: number;
@@ -324,26 +339,11 @@ function conflict(actualVersion: number): {
   return { outcome: 'conflict', actualVersion };
 }
 
-function terminalState(reason: z.infer<typeof AgentTerminalReasonSchema>): AgentRun['state'] {
-  if (reason === 'success' || reason === 'policy_stop' || reason === 'provider_stop') {
-    return 'completed';
-  }
-  if (reason === 'interrupted') return 'interrupted';
-  if (reason === 'superseded') return 'superseded';
-  if (reason === 'cancelled' || reason === 'shutdown' || reason === 'timeout') {
-    return 'cancelled';
-  }
-  if (reason === 'abandoned') return 'abandoned';
-  return 'failed';
-}
-
 function applied(
   current: AgentSnapshot,
   input: { runs?: readonly AgentRun[]; messages?: readonly AgentMessage[] },
   effects?: {
     runRecord?: AgentStoredRun;
-    /** A second run the same mutation changed — absorbing touches two. */
-    secondaryRunRecord?: AgentStoredRun;
     admissionReceipt?: AgentAdmissionReceipt;
     historyMutation?: AgentHistoryMutation;
   },
@@ -357,7 +357,6 @@ function applied(
       messages: input.messages ?? current.messages,
     }),
     ...(effects?.runRecord && { runRecord: effects.runRecord }),
-    ...(effects?.secondaryRunRecord && { secondaryRunRecord: effects.secondaryRunRecord }),
     ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),
     ...(effects?.historyMutation && { historyMutation: effects.historyMutation }),
   };
@@ -437,60 +436,6 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
         }),
         admissionReceipt,
         historyMutation: { type: 'admit', input: input.input },
-      },
-    );
-  }
-
-  if (operation.type === 'absorb') {
-    const input = operation.input;
-    if (current.conversationId !== input.conversationId) return { outcome: 'not_found' };
-    const running = current.runs.find((candidate) => candidate.id === input.runningRunId);
-    const queued = current.runs.find((candidate) => candidate.id === input.queuedRunId);
-    if (!running || !queued) return { outcome: 'not_found' };
-    if (
-      running.revision !== input.runningExpectedRevision ||
-      running.state !== 'running' ||
-      running.ownerId !== input.ownerId ||
-      (input.fencingToken !== undefined && running.fencingToken !== input.fencingToken)
-    ) {
-      return conflict(running.revision);
-    }
-    if (
-      queued.revision !== input.queuedExpectedRevision ||
-      queued.state !== 'queued' ||
-      queued.ownerId !== undefined ||
-      queued.terminalReason !== undefined ||
-      queued.id === running.id
-    ) {
-      return conflict(queued.revision);
-    }
-    const stamp = new Date().toISOString();
-    const grown = AgentRunSchema.parse({
-      ...running,
-      inputMessageIds: [...running.inputMessageIds, ...queued.inputMessageIds],
-      revision: running.revision + 1,
-      updatedAt: stamp,
-    });
-    // The absorbed record is kept, not deleted: its admission receipt still
-    // points at it, so a duplicate submission has to resolve to something, and
-    // an operator needs to see that one turn answered two inputs. It carries no
-    // terminal reason — nothing ran and nothing failed — and `absorbed` is
-    // outside every active-state list, so recovery leaves it alone.
-    const emptied = AgentRunSchema.parse({
-      ...queued,
-      state: 'absorbed',
-      absorbedIntoRunId: running.id,
-      revision: queued.revision + 1,
-      updatedAt: stamp,
-    });
-    return applied(
-      current,
-      { runs: replaceRun(replaceRun(current.runs, grown), emptied) },
-      {
-        runRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: grown }),
-        // Both, or the absorbed run stays `queued` in the driver's own store and
-        // is absorbed again at the next boundary, forever.
-        secondaryRunRecord: AgentStoredRunSchema.parse({ schemaVersion: 1, run: emptied }),
       },
     );
   }
@@ -590,25 +535,30 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
 
   if (operation.type === 'recover' && run) {
     const input = operation.input;
-    if (
-      run.revision !== input.expectedRevision ||
-      !['queued', 'running', 'interrupt_requested'].includes(run.state)
-    ) {
+    if (run.revision !== input.expectedRevision || !isActiveRunState(run.state)) {
       return conflict(run.revision);
     }
     if (input.action === 'requeue' && run.state !== 'queued' && input.replaySafe !== true) {
       throw new TypeError('Recovering an acquired run requires explicit replaySafe evidence');
     }
+    // Carry the record forward and override what recovery changes, rather than
+    // rebuilding it from a list of fields. The list was the defect: it silently
+    // dropped every field added to `AgentRun` after it was written, and two of
+    // them mattered. `usage` is what a crashed attempt already spent — the
+    // figure this whole durable field exists to preserve, deleted by the one
+    // path that exists to recover from a crash. `fencingToken` is documented as
+    // monotonic so a distributed adapter can reject an old owner *even if an
+    // owner label is reused*, and resetting it to undefined made the next
+    // acquisition mint token 1 again — defeating precisely the named scenario.
+    //
+    // `ownerId` is the one field recovery really does clear: the lease is
+    // released, and that is the point of recovering.
+    const { ownerId: _released, ...carried } = run;
     const next = AgentRunSchema.parse({
-      schemaVersion: 1,
-      id: run.id,
-      conversationId: run.conversationId,
-      inputMessageIds: run.inputMessageIds,
-      assistantMessageId: run.assistantMessageId,
+      ...carried,
       state: input.action === 'requeue' ? 'queued' : 'abandoned',
       revision: run.revision + 1,
       ...(input.action === 'abandon' && { terminalReason: 'abandoned' }),
-      createdAt: run.createdAt,
       updatedAt: new Date().toISOString(),
     });
     if (input.action === 'abandon') {
@@ -670,7 +620,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     }
     const next = AgentRunSchema.parse({
       ...run,
-      state: terminalState(input.reason),
+      state: runStateForTerminalReason(input.reason),
       terminalReason: input.reason,
       ...(input.policyName && { terminalPolicyName: input.policyName }),
       ...(input.usage && { usage: input.usage }),
@@ -701,6 +651,21 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     const replaced = new Set(input.replacedMessageIds);
     if (!input.replacedMessageIds.every((id) => current.messages.some((m) => m.id === id))) {
       return { outcome: 'not_found' };
+    }
+    // A live run's assistant message is not history yet. Deleting it left the
+    // summary claiming to contain a turn while the run's next checkpoint
+    // re-appended the same message *after* the summary, with its user input
+    // gone. `structuredCompaction` avoids this by refusing an unspeakable
+    // turn, but `history.compact` is a supported callback and
+    // `replaceCompactedRange` is a public store operation — neither refused it.
+    const liveAssistant = current.runs.find(
+      (candidate) =>
+        isActiveRunState(candidate.state) && replaced.has(candidate.assistantMessageId),
+    );
+    if (liveAssistant) {
+      throw new TypeError(
+        `Compaction may not replace the assistant message of run ${liveAssistant.id}, which has not finished`,
+      );
     }
     const positions = current.messages
       .map((message, index) => (replaced.has(message.id) ? index : undefined))
@@ -811,11 +776,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
           ? operation.input.coalesceIntoRunId
           : operation.type === 'compact'
             ? undefined
-            : operation.type === 'absorb'
-              ? // Both runs matter, and the queued one is the record the active
-                // listing may not carry — the running one always is.
-                operation.input.queuedRunId
-              : operation.input.runId;
+            : operation.input.runId;
       const [stored, messages, activeRecords, operationRecord, duplicateReceipt] =
         await Promise.all([
           driver.head.load(transaction, conversationId),
@@ -904,9 +865,6 @@ export function createAgentRuntimeStore<TRANSACTION>(
       });
       if (outcome.outcome === 'conflict') return conflict(outcome.actualVersion);
       if (reduced.runRecord) await driver.runs.save(transaction, reduced.runRecord);
-      if (reduced.secondaryRunRecord) {
-        await driver.runs.save(transaction, reduced.secondaryRunRecord);
-      }
       if (reduced.admissionReceipt) {
         await driver.admissions.create(transaction, reduced.admissionReceipt);
       }
@@ -935,8 +893,6 @@ export function createAgentRuntimeStore<TRANSACTION>(
         type: 'interrupt',
         input: RequestRunInterruptSchema.parse(input),
       }),
-    absorbQueuedRun: (input) =>
-      mutate({ type: 'absorb', input: AbsorbQueuedRunSchema.parse(input) }),
     recoverRun: (input) =>
       mutate({ type: 'recover', input: RecoverAgentRunSchema.parse(input) }),
     commitRunTerminal: (input) =>
@@ -1063,9 +1019,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       },
       async listActive(transaction, conversationId) {
         return [...(transaction.runs.get(conversationId)?.values() ?? [])]
-          .filter((record) =>
-            ['queued', 'running', 'interrupt_requested'].includes(record.run.state),
-          )
+          .filter((record) => isActiveRunState(record.run.state))
           .map((record) => AgentStoredRunSchema.parse(structuredClone(record)));
       },
       async save(transaction, rawRecord) {
@@ -1154,9 +1108,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       const descriptors = [...runs]
         .flatMap(([conversationId, conversationRuns]) =>
           [...conversationRuns.values()]
-            .filter((record) =>
-              ['queued', 'running', 'interrupt_requested'].includes(record.run.state),
-            )
+            .filter((record) => isActiveRunState(record.run.state))
             .map((record) => ({ conversationId, run: record.run })),
         )
         .sort(
@@ -1165,11 +1117,24 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
             left.run.id.localeCompare(right.run.id),
         );
       const cursorTuple = input.cursor ? parseRecoverableCursor(input.cursor) : undefined;
+      // Keyset, not "the index after the cursor". Looking the cursor up by
+      // identity returns -1 the moment that run stops being recoverable — which
+      // is the *normal* outcome of a recovery pass, since recovering a run is
+      // what takes it out of the set — and `-1 + 1` restarted the scan at the
+      // beginning. A pass then re-visited conversations it had handled and
+      // burned its budget without reaching the tail. This is the reference
+      // implementation adapter authors copy.
       const start = cursorTuple
         ? descriptors.findIndex(
-            (item) => item.conversationId === cursorTuple[0] && item.run.id === cursorTuple[1],
-          ) + 1
+            (item) =>
+              item.conversationId.localeCompare(cursorTuple[0]) > 0 ||
+              (item.conversationId === cursorTuple[0] &&
+                item.run.id.localeCompare(cursorTuple[1]) > 0),
+          )
         : 0;
+      if (start === -1) {
+        return AgentRecoverablePageSchema.parse({ items: [] });
+      }
       const items = descriptors.slice(start, start + input.limit);
       const last = items.at(-1);
       const hasMore = start + items.length < descriptors.length;

@@ -548,7 +548,7 @@ Server-only optional application runtime. See the
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
 | `AgentRuntimeAdmission` | _type_ | canonical committed input, assigned run, pending assistant projection, compatibility IDs and snapshot version |
 | `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |
-| `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` distinguishes checkpoint from terminal totals |
+| `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` says the provider never reported the run finished, so the figure beside it is not a confirmed total |
 | `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with context resolver and explicit evidence policy |
 | `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
@@ -583,8 +583,7 @@ Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentRec
 Store command/result exports are `AcceptInputAndAssignRun`, `AcceptInputAndAssignRunSchema`,
 `AcquireAgentRun`, `AcquireAgentRunSchema`, `CheckpointRunAssistant`,
 `CheckpointRunAssistantSchema`, `CommitRunTerminal`, `CommitRunTerminalSchema`,
-`RequestRunInterrupt`, `RequestRunInterruptSchema`, `AbsorbQueuedRun`, `AbsorbQueuedRunSchema`,
-`RecoverAgentRun`, `ReplaceCompactedRange`,
+`RequestRunInterrupt`, `RequestRunInterruptSchema`, `runStateForTerminalReason`, `RecoverAgentRun`, `ReplaceCompactedRange`,
 `ReplaceCompactedRangeSchema`, `AgentStoreMutationResult`, `AgentStoreMutationResultSchema`,
 `AgentStoreAppliedSchema`, `AgentStoreConflictSchema`, `AgentStoreDuplicateSchema`,
 `AgentStoreNotFoundSchema`, `AgentAdmissionReceipt`, `AgentAdmissionReceiptSchema`,

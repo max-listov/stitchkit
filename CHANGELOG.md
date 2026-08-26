@@ -13,6 +13,112 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [0.65.0] — 2026-08-26
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone using `inputPolicy: 'inject'` moves back to `queue` —
+it is withdrawn. Anyone reading `AgentRunEvent`/`AgentRunMetrics` fields, or
+building `AgentRun` records by hand, adds arms and required fields the compiler
+points at. Everyone else re-reads two values and gets a timeout default they did
+not have.
+
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **A compacted conversation could not run.** `ai` refuses a system-role entry
+  inside `messages` — *"System messages are not allowed in the prompt or messages
+  fields. Use the instructions option instead."* — and the history projection put
+  `system` and `summary` records there. So **every run after a compaction failed
+  with `provider_failure`**, and `interruptedAssistant: 'system-note'` did the
+  same. Both shipped in 0.62.0 and were live through 0.64.0.
+
+  `AgentHistoryProjectionResult` gains `system: readonly string[]`, and those
+  records no longer appear in `messages`. If you pass a projection to a provider
+  yourself, pass `system` to the instructions channel:
+
+  ```ts
+  // before — rejected by the provider
+  streamText({ model, messages: projected.messages })
+  // after
+  streamText({
+    model,
+    instructions: projected.system.map((content) => ({ role: 'system', content })),
+    messages: projected.messages,
+  })
+  ```
+
+  The suite was green throughout because the projection tests asserted shape and
+  never handed the result to a provider. `agent-runtime-provider-valid.test.ts`
+  now does exactly that, including a case pinning the refusal itself.
+
+- **`inputPolicy: 'inject'` is withdrawn**, with `AgentRunState`'s `'absorbed'`,
+  `AgentRun.absorbedIntoRunId`, and `AgentRuntimeStore.absorbQueuedRun`. It
+  committed the absorption durably before the answer existed, so an accepted
+  input could land in a state that was neither active, recoverable nor terminal:
+  `close()` reported `settled: true` while leaving it permanently unanswerable,
+  and a duplicate submission of the same idempotency key was refused forever.
+  Use `queue`; the redesign is tracked in the backlog.
+
+- **`recoverRun` no longer destroys the run's spend and fencing token.** It
+  rebuilt the record from a hand-written field list, so the one path that exists
+  to recover from a crash deleted `AgentRun.usage` — the figure added in 0.63.0
+  to survive exactly that — and reset `fencingToken`, which let a stale owner
+  mint the same token again and overwrite a live answer.
+
+- **A run record must agree with itself.** `AgentRunSchema` accepted
+  `state: 'completed'` beside `terminalReason: 'interrupted'`, a terminal state
+  with no reason, a queued run carrying one, and `policy_stop` with no policy.
+  All four are now refused. `runStateForTerminalReason` is exported so a caller
+  building a terminal record derives the state instead of guessing it.
+
+- **`AgentRunMetrics.usage` is required**, on the delivery events as it already
+  was on the operator one. The invariant was held on one of two channels.
+
+- **`loop.idleTimeoutMs` defaults to 60 000.** There was no default, so a hung
+  provider stream held the conversation's lane forever. Pass `null` to disable.
+
+- **`'tool_failure'` is gone and `'context_overflow'` replaces it** in
+  `AgentTerminalReason`. `tool_failure` appeared exactly once in the repository —
+  its own declaration — and was never produced. `context_overflow` is this
+  runtime's own refusal when the prompt does not fit, which used to commit
+  `provider_failure` and blame an upstream that was never contacted.
+
+- **`advanceAgentRuntimeEventCursor` no longer reports `gap` for durable
+  events.** `snapshotVersion` is the conversation's version and advances on
+  mutations that publish nothing, so adjacency reported a gap after essentially
+  every run — and the guide says a gap means reload the conversation. `gap` is
+  still reported for transient events, where `sequence` is a real per-run
+  counter.
+
+- **The token budget stops protecting records the model never hears.** The fix
+  shipped in 0.62.0 named `superseded` alone; `interrupted` and `failed` turns
+  were still classified as incomplete, which is the one class eviction refuses to
+  touch, so every provider failure in a long conversation permanently reserved
+  budget. The decision reason `'superseded'` becomes `'unspeakable'`.
+
+- **Compaction may not replace a live run's assistant message.**
+  `replaceCompactedRange` allowed it, and the run's next checkpoint then
+  re-appended the same message after the summary that claimed to contain it.
+
+### Added
+
+- **`ACTIVE_AGENT_RUN_STATES`** — the run states an active listing and a
+  recovery scan consider. Driver authors had to guess and hardcode it; the
+  reference adapter repeats the literal three times.
+- **The store conformance kit covers what it was certifying blind**: that a
+  fencing token round-trips, that a stale token and a foreign owner are both
+  refused, that `scanRecoverable` reports a running run, and that a durable
+  interrupt neither loses the run's spend nor skips the state change.
+
+### Fixed
+
+- **`scanRecoverable`'s reference cursor no longer restarts at the beginning**
+  when the run it names stops being recoverable — which is the normal outcome of
+  a recovery pass, since recovering a run is what removes it from the set.
+- **A terminal commit racing a durable interrupt keeps the run's spend** and no
+  longer carries a `policyName` past the reason change, which had a run ending
+  `interrupted` durably naming a stop policy that had not stopped it.
+
 ## [0.64.0] — 2026-08-26
 
 ### ⚠️ Breaking changes
@@ -4171,7 +4277,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/max-listov/stitchkit/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/max-listov/stitchkit/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/max-listov/stitchkit/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/max-listov/stitchkit/compare/v0.61.0...v0.62.0

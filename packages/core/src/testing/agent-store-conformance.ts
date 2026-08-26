@@ -241,11 +241,80 @@ export async function runAgentStoreConformance(
     createdAt: '2026-08-22T00:00:00.000Z',
     updatedAt: '2026-08-22T00:00:02.000Z',
   });
+  // A driver that drops `fencingToken` on the way to storage passes every other
+  // check here and then fails *every checkpoint of every run* in production:
+  // `acquireRun` returns the token from the reducer's in-memory record, and the
+  // reloaded row has none, so the fenced compare-and-swap conflicts forever.
+  if (checkpointedRun.fencingToken === undefined) {
+    throw new Error('Acquisition must persist a fencing token the store can read back');
+  }
+  // And it must be rejected when it is stale. Nothing asserted this, so an
+  // adapter that ignores the token — or the owner — certified clean.
+  const staleFence = await store.checkpointRunAssistant({
+    conversationId,
+    runId: running.id,
+    expectedRevision: checkpointedRun.revision,
+    ownerId: 'conformance-owner',
+    fencingToken: checkpointedRun.fencingToken + 1,
+    assistant: AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: running.assistantMessageId,
+      conversationId,
+      runId: running.id,
+      role: 'assistant',
+      status: 'streaming',
+      parts: [{ type: 'text', text: 'stale fence' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:01.500Z',
+    }),
+  });
+  if (staleFence.outcome !== 'conflict') {
+    throw new Error('A checkpoint with a stale fencing token must conflict');
+  }
+  const foreignOwner = await store.checkpointRunAssistant({
+    conversationId,
+    runId: running.id,
+    expectedRevision: checkpointedRun.revision,
+    ownerId: 'a-different-runtime',
+    assistant: AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: running.assistantMessageId,
+      conversationId,
+      runId: running.id,
+      role: 'assistant',
+      status: 'streaming',
+      parts: [{ type: 'text', text: 'foreign owner' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:01.700Z',
+    }),
+  });
+  if (foreignOwner.outcome !== 'conflict') {
+    throw new Error('A checkpoint from another owner must conflict');
+  }
+  // The one member `recover()` calls, and it had no coverage at all.
+  const recoverable = await store.scanRecoverable({ limit: 10 });
+  if (!recoverable.items.some((item) => item.run.id === running.id)) {
+    throw new Error('A running run must appear in a recoverable scan');
+  }
+  const interrupted = await store.requestRunInterrupt({
+    conversationId,
+    runId: running.id,
+    expectedRevision: checkpointedRun.revision,
+  });
+  requireOutcome(interrupted, 'applied');
+  const interruptedRun = interrupted.snapshot.runs.find((run) => run.id === running.id);
+  if (interruptedRun?.state !== 'interrupt_requested') {
+    throw new Error('A durable interrupt must move the run to interrupt_requested');
+  }
+  if (interruptedRun.usage?.cost?.value !== 0.25) {
+    throw new Error('An interrupt must not discard the figure the run had already spent');
+  }
+
   const terminalResults = await Promise.all([
     store.commitRunTerminal({
       conversationId,
       runId: running.id,
-      expectedRevision: checkpointedRun.revision,
+      expectedRevision: interruptedRun.revision,
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',
@@ -258,7 +327,7 @@ export async function runAgentStoreConformance(
     store.commitRunTerminal({
       conversationId,
       runId: running.id,
-      expectedRevision: checkpointedRun.revision,
+      expectedRevision: interruptedRun.revision,
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',

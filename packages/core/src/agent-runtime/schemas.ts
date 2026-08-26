@@ -121,7 +121,6 @@ export const AgentRunStateSchema = z.enum([
   'completed',
   'interrupted',
   'superseded',
-  'absorbed',
   'failed',
   'cancelled',
   'abandoned',
@@ -137,11 +136,34 @@ export const AgentTerminalReasonSchema = z.enum([
   'timeout',
   'shutdown',
   'provider_failure',
-  'tool_failure',
+  /** This runtime refused to call the provider — the context did not fit. */
+  'context_overflow',
   'abandoned',
 ]);
 
 export type AgentTerminalReason = z.infer<typeof AgentTerminalReasonSchema>;
+
+/**
+ * The state a run ends in, given why it ended.
+ *
+ * Beside the enum rather than inside the store driver, because `AgentRunSchema`
+ * now enforces the agreement and a schema cannot import a reducer. Two readers
+ * derive from one statement instead of asserting the same thing twice.
+ */
+export function runStateForTerminalReason(
+  reason: AgentTerminalReason,
+): z.infer<typeof AgentRunStateSchema> {
+  if (reason === 'success' || reason === 'policy_stop' || reason === 'provider_stop') {
+    return 'completed';
+  }
+  if (reason === 'interrupted') return 'interrupted';
+  if (reason === 'superseded') return 'superseded';
+  if (reason === 'cancelled' || reason === 'shutdown' || reason === 'timeout') {
+    return 'cancelled';
+  }
+  if (reason === 'abandoned') return 'abandoned';
+  return 'failed';
+}
 
 export const AgentUsageValueSchema = z.object({
   value: z.number().nonnegative().optional(),
@@ -165,7 +187,7 @@ export const AgentUsageSchema = z.object({
 
 export type AgentUsage = z.infer<typeof AgentUsageSchema>;
 
-export const AgentRunSchema = z.object({
+const AgentRunFieldsSchema = z.object({
   schemaVersion: z.literal(1),
   id: AgentRecordIdSchema,
   conversationId: AgentRecordIdSchema,
@@ -187,21 +209,6 @@ export const AgentRunSchema = z.object({
   terminalReason: AgentTerminalReasonSchema.optional(),
   terminalPolicyName: z.string().min(1).optional(),
   /**
-   * The run that answered this one's inputs instead of it.
-   *
-   * Set when a run in flight absorbed a queued successor at a step boundary
-   * (`inputPolicy: 'inject'`). The absorbed record is kept rather than deleted,
-   * because its admission receipt still points at it and a duplicate submission
-   * has to resolve to something.
-   *
-   * It leaves the conversation snapshot, though — a snapshot carries active
-   * runs plus those a message references, and an absorbed run never wrote an
-   * assistant message. What the conversation shows instead is the answering
-   * run's `inputMessageIds`, carrying both inputs. That is the projection an
-   * operator reads; this pointer is for whoever holds the run id.
-   */
-  absorbedIntoRunId: AgentRecordIdSchema.optional(),
-  /**
    * What this run has cost, written with its terminal record.
    *
    * The figure used to exist only on two bounded, fire-and-forget event sinks
@@ -217,6 +224,54 @@ export const AgentRunSchema = z.object({
   createdAt: AgentTimestampSchema,
   updatedAt: AgentTimestampSchema,
 });
+
+/**
+ * A run record whose fields agree with each other.
+ *
+ * The object accepted every combination: `state: 'completed'` beside
+ * `terminalReason: 'interrupted'`, a terminal state with no reason at all, a
+ * `queued` run carrying a terminal reason, and `policy_stop` with no policy —
+ * the last of which the changelog had already promised could not happen. A
+ * driver is the supported extension point and may hand any of these back, and
+ * nothing downstream checked, so the contradiction surfaced later as a
+ * conflict error or as a lie in an operator's console.
+ */
+export const AgentRunSchema = AgentRunFieldsSchema.superRefine((run, ctx) => {
+  if (run.terminalReason === undefined) {
+    if (TERMINAL_RUN_STATES.has(run.state)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['terminalReason'],
+        message: `A run in terminal state "${run.state}" must say why it ended`,
+      });
+    }
+    return;
+  }
+  const expected = runStateForTerminalReason(run.terminalReason);
+  if (run.state !== expected) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['state'],
+      message: `Terminal reason "${run.terminalReason}" ends a run in state "${expected}", not "${run.state}"`,
+    });
+  }
+  if (run.terminalReason === 'policy_stop' && run.terminalPolicyName === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['terminalPolicyName'],
+      message: 'A policy stop names the policy that stopped the run',
+    });
+  }
+});
+
+const TERMINAL_RUN_STATES = new Set<z.infer<typeof AgentRunStateSchema>>([
+  'completed',
+  'interrupted',
+  'superseded',
+  'cancelled',
+  'abandoned',
+  'failed',
+]);
 
 export type AgentRun = z.infer<typeof AgentRunSchema>;
 
@@ -241,8 +296,21 @@ export const AgentSnapshotSchema = z.object({
 export type AgentSnapshot = z.infer<typeof AgentSnapshotSchema>;
 
 export const AgentRunMetricsSchema = z.object({
+  /**
+   * The provider never reported this run finished, so the figure beside it is
+   * not a confirmed total. Always `true` on a checkpoint, by construction.
+   */
   partial: z.boolean(),
-  usage: AgentUsageSchema.optional(),
+  /**
+   * Required, like its counterpart on the operator event.
+   *
+   * 0.64.0 split the operator event into a union so a terminal could not omit
+   * what it spent, and stopped there — leaving the *delivery* events, which
+   * carry the same `AgentRunMetrics`, free to omit it while the changelog said
+   * they always carried it. An invariant held on one of two channels is an
+   * invariant a reader cannot rely on.
+   */
+  usage: AgentUsageSchema,
   durationMs: z.number().nonnegative().optional(),
   ttftMs: z.number().nonnegative().optional(),
 });

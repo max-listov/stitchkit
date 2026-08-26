@@ -1,5 +1,6 @@
 import { type FilePart, type ModelMessage, modelMessageSchema } from 'ai';
 import type { AgentMessage, AgentMessagePart, AgentProviderEnvelope } from './schemas';
+import { isSpeakableAssistantStatus } from './terminal-status';
 
 type PartType = AgentMessagePart['type'];
 
@@ -72,6 +73,19 @@ export interface AgentHistoryProjectionDecision {
 export interface AgentHistoryProjectionResult {
   messages: readonly ModelMessage[];
   decisions: readonly AgentHistoryProjectionDecision[];
+  /**
+   * System and summary content, in order, for the provider's **instructions**
+   * channel — never for `messages`.
+   *
+   * `ai` refuses a system-role entry inside `messages` outright: *"System
+   * messages are not allowed in the prompt or messages fields. Use the
+   * instructions option instead."* This projection used to put them there, so a
+   * conversation that had ever been compacted failed **every** subsequent run
+   * with `provider_failure`, and the `system-note` form of an interrupted turn
+   * did the same. Both shipped, and the whole suite stayed green because the
+   * tests asserted the projection's *shape* and never handed it to a provider.
+   */
+  system: readonly string[];
 }
 
 function providerOptions(envelope: AgentProviderEnvelope | undefined) {
@@ -231,7 +245,7 @@ function assistantMessages(
 }
 
 function interruptedSystemNote(message: AgentMessage): {
-  message?: ModelMessage;
+  text?: string;
   rendered: Set<PartType>;
 } {
   const rendered = new Set<PartType>();
@@ -239,13 +253,7 @@ function interruptedSystemNote(message: AgentMessage): {
   if (!text) return { rendered };
   rendered.add('text');
   rendered.add('control');
-  return {
-    message: modelMessageSchema.parse({
-      role: 'system',
-      content: `[interrupted] partial response: ${text}`,
-    }),
-    rendered,
-  };
+  return { text: `[interrupted] partial response: ${text}`, rendered };
 }
 
 function completeToolChronology(message: AgentMessage): boolean {
@@ -267,15 +275,22 @@ export async function projectAgentHistoryDetailed(
   options: AgentHistoryProjectionOptions = {},
 ): Promise<AgentHistoryProjectionResult> {
   const projected: ModelMessage[] = [];
+  const system: string[] = [];
   const decisions: AgentHistoryProjectionDecision[] = [];
   const interruptedRule = options.interruptedAssistant ?? 'assistant-marked';
   let observedUser = false;
   for (const message of messages) {
-    // A superseded record is durable and inspectable, and never spoken again.
-    // Not a variant of the rule below: the point of the status is that this
-    // output is known to have reached nobody.
-    if (message.status === 'superseded') {
-      decisions.push(decide(message, 'omitted', 'superseded'));
+    // One home for "may this record still be spoken to the model", asked here,
+    // by compaction, and by the token budget. Each used to answer it with its
+    // own inline list, and the lists disagreed.
+    if (message.role === 'assistant' && !isSpeakableAssistantStatus(message.status)) {
+      decisions.push(
+        decide(
+          message,
+          'omitted',
+          message.status === 'superseded' ? 'superseded' : 'draft-or-failed',
+        ),
+      );
       continue;
     }
     if (message.status === 'streaming' || message.status === 'failed') {
@@ -296,7 +311,7 @@ export async function projectAgentHistoryDetailed(
     if (message.role === 'system' || message.role === 'summary') {
       const content = textContent(message.parts);
       if (content) {
-        projected.push(modelMessageSchema.parse({ role: 'system', content }));
+        system.push(content);
         decisions.push(decide(message, 'projected', 'projected', new Set<PartType>(['text'])));
       } else {
         decisions.push(decide(message, 'omitted', 'empty'));
@@ -320,8 +335,8 @@ export async function projectAgentHistoryDetailed(
       // pair; a system note emits none, so a half-finished tool turn is no
       // reason to drop the text with it.
       const note = interruptedSystemNote(message);
-      if (note.message) {
-        projected.push(note.message);
+      if (note.text) {
+        system.push(note.text);
         decisions.push(decide(message, 'projected', 'projected', note.rendered));
       } else {
         decisions.push(decide(message, 'omitted', 'empty'));
@@ -343,7 +358,7 @@ export async function projectAgentHistoryDetailed(
         : decide(message, 'omitted', 'empty'),
     );
   }
-  return { messages: projected, decisions };
+  return { messages: projected, decisions, system };
 }
 
 /** Project canonical engine records into provider-valid AI SDK messages. */

@@ -280,10 +280,13 @@ describe('an interrupted turn does not pass as a finished one', () => {
       { interruptedAssistant: 'system-note' },
     );
     expect(projected.messages.filter((entry) => entry.role === 'assistant')).toHaveLength(0);
-    const note = projected.messages.find((entry) => entry.role === 'system');
-    expect(note?.content).toBe(
+    // Into the provider's instructions channel, never into `messages`: `ai`
+    // refuses a system-role entry there, so putting it in the message list made
+    // this mode fail the run outright rather than merely say nothing useful.
+    expect(projected.messages.filter((entry) => entry.role === 'system')).toHaveLength(0);
+    expect(projected.system).toEqual([
       '[interrupted] partial response: We are the team, where would you like',
-    );
+    ]);
   });
 
   test('a system note survives the half-finished tool turn that drops an assistant one', async () => {
@@ -299,9 +302,7 @@ describe('an interrupted turn does not pass as a finished one', () => {
     const asNote = await projectAgentHistoryDetailed([user, cutOff('interrupted', dangling)], {
       interruptedAssistant: 'system-note',
     });
-    expect(asNote.messages.find((entry) => entry.role === 'system')?.content).toContain(
-      '[interrupted]',
-    );
+    expect(asNote.system[0]).toContain('[interrupted]');
     // The tool call it could not pair is named, not dropped quietly.
     expect(asNote.decisions[1]).toMatchObject({ omittedParts: ['tool-call'] });
   });

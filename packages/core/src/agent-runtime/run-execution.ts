@@ -1,13 +1,14 @@
 import {
-  type ModelMessage,
+  type Instructions,
   type StopCondition,
+  type SystemModelMessage,
   stepCountIs,
   streamText,
   type ToolSet,
 } from 'ai';
 import { isToolExecutionControlError } from '../tools/execute';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
-import { projectAgentHistory } from './history';
+import { projectAgentHistoryDetailed } from './history';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
 import type { AgentRuntimeConfig } from './runtime';
@@ -79,10 +80,6 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     acceptedRun: AgentRun;
     context: CONTEXT;
     signal: AbortSignal;
-    /** Run ids the application submitted under `inputPolicy: 'inject'`. */
-    absorbable?: ReadonlySet<string>;
-    /** Told which queued run this one took on, so its ticket can be answered. */
-    onAbsorbed?(absorbedRunId: string): void;
   }): Promise<AgentRuntimeResult> {
     const queuedSnapshot = await config.store.loadSnapshot(input.acceptedRun.conversationId);
     const queuedRun = findRun(queuedSnapshot.runs, input.acceptedRun.id);
@@ -160,6 +157,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // kind, `true` on every checkpoint and `false` on every terminal including
     // the ones that were abandoned mid-stream.
     let sawProviderFinish = false;
+    let contextRefusal = false;
     let step = 0;
     let selectedModel: AgentResolvedModel | undefined;
     let internalCause: unknown;
@@ -286,70 +284,52 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }),
         config.tools(runtimeContext),
       ]);
+      // This runtime's own decision, taken before any provider call. It used to
+      // land in the catch-all below and commit `provider_failure` — a durable
+      // record blaming an upstream that was never contacted.
       if (prompt.contextDecision === 'oversized') {
+        contextRefusal = true;
         throw new Error('Agent context exceeds the configured model budget');
       }
       if (prompt.contextDecision === 'requires-compaction') {
+        contextRefusal = true;
         throw new Error('Agent context still exceeds the model budget after compaction');
       }
-      const projectHistory = (source: AgentSnapshot) =>
-        config.history?.project
-          ? config.history.project(source.messages)
-          : projectAgentHistory(source.messages, {
-              ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
-              ...(config.history?.unresolvedFile && {
-                unresolvedFile: config.history.unresolvedFile,
-              }),
-              ...(config.history?.interruptedAssistant && {
-                interruptedAssistant: config.history.interruptedAssistant,
-              }),
-            });
-      const history = await projectHistory(snapshot);
-
-      /**
-       * Take on a queued successor's inputs, if the application asked for it.
-       *
-       * Returns the re-projected history when something was absorbed, so the
-       * next provider call carries the new message. A conflict means the world
-       * moved — another owner, a successor that started, a revision that
-       * advanced — and the honest response is to do nothing and let the
-       * successor run on its own, which is what every other policy does anyway.
-       */
-      const absorbPending = async (): Promise<ModelMessage[] | undefined> => {
-        if (!input.absorbable?.size || executionSignal.aborted) return undefined;
-        const latest = await config.store.loadSnapshot(run.conversationId);
-        const current = latest.runs.find((candidate) => candidate.id === run.id);
-        if (current?.state !== 'running' || current.ownerId !== runtimeEpoch) {
-          return undefined;
-        }
-        const pending = latest.runs.find(
-          (candidate) => candidate.state === 'queued' && input.absorbable?.has(candidate.id),
-        );
-        if (!pending) return undefined;
-        const absorbed = await config.store.absorbQueuedRun({
-          conversationId: run.conversationId,
-          runningRunId: current.id,
-          runningExpectedRevision: current.revision,
-          ownerId: runtimeEpoch,
-          ...(current.fencingToken !== undefined && { fencingToken: current.fencingToken }),
-          queuedRunId: pending.id,
-          queuedExpectedRevision: pending.revision,
+      // Carried out of the projection so the provider's instructions channel
+      // gets it. `ai` refuses a system-role entry inside `messages`, so a
+      // compacted conversation used to fail every run after the compaction.
+      let carriedSystem: readonly string[] = [];
+      const projectHistory = async (source: AgentSnapshot) => {
+        if (config.history?.project) return config.history.project(source.messages);
+        const detailed = await projectAgentHistoryDetailed(source.messages, {
+          ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
+          ...(config.history?.unresolvedFile && {
+            unresolvedFile: config.history.unresolvedFile,
+          }),
+          ...(config.history?.interruptedAssistant && {
+            interruptedAssistant: config.history.interruptedAssistant,
+          }),
         });
-        if (absorbed.outcome !== 'applied') return undefined;
-        input.onAbsorbed?.(pending.id);
-        snapshot = absorbed.snapshot;
-        run = findRun(snapshot.runs, run.id);
-        await publish({
-          type: 'run-state',
-          eventId: agentDurableEventId('run-state', run.id, snapshot.version),
-          conversationId: run.conversationId,
-          runId: run.id,
-          snapshotVersion: snapshot.version,
-          state: run.state,
-          emittedAt: now().toISOString(),
-        });
-        return [...(await projectHistory(snapshot))];
+        carriedSystem = detailed.system;
+        return [...detailed.messages];
       };
+      const history = await projectHistory(snapshot);
+      // `Instructions` is `string | SystemModelMessage | SystemModelMessage[]`,
+      // so the composed prompt is normalised before the carried entries join it.
+      const withCarriedSystem = (instructions: Instructions): Instructions => {
+        if (carriedSystem.length === 0) return instructions;
+        const composed: SystemModelMessage[] =
+          typeof instructions === 'string'
+            ? [{ role: 'system', content: instructions }]
+            : Array.isArray(instructions)
+              ? instructions
+              : [instructions];
+        return [
+          ...composed,
+          ...carriedSystem.map((content): SystemModelMessage => ({ role: 'system', content })),
+        ];
+      };
+
       const maxStepCondition = stepCountIs(maxSteps);
       const stopConditions: StopCondition<TOOLS>[] = [
         async (options) => {
@@ -368,24 +348,15 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       const result = streamText<TOOLS>({
         model: selectedModel.model,
         tools,
-        instructions: prompt.instructions,
+        instructions: withCarriedSystem(prompt.instructions),
         messages: history,
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
-        prepareStep: async (options) => {
-          // A step boundary is the only place an in-flight run may take on new
-          // input: the provider is between calls, so the next request can carry
-          // it. `absorbPending` is a no-op unless the application asked for it.
-          const absorbed = await absorbPending();
-          const prepared =
-            (await config.loop?.prepareStep?.({ ...options, ...runtimeContext })) ?? {};
-          // An application-supplied `prepareStep` wins if it set `messages`
-          // itself: it is the one that knows why.
-          return absorbed && !prepared.messages
-            ? { ...prepared, messages: absorbed }
-            : prepared;
-        },
+        ...(config.loop?.prepareStep && {
+          prepareStep: (options) =>
+            config.loop?.prepareStep?.({ ...options, ...runtimeContext }),
+        }),
       });
 
       for await (const part of result.stream) {
@@ -692,7 +663,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           }),
         );
       } else {
-        terminalReason = 'provider_failure';
+        terminalReason = contextRefusal ? 'context_overflow' : 'provider_failure';
       }
     } finally {
       // In a `finally` because the `catch` above does its own I/O: a

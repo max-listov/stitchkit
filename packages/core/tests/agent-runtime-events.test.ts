@@ -33,7 +33,12 @@ describe('agent application delivery events', () => {
         runId: 'run-2',
       }).status,
     ).toBe('accepted');
-    expect(advanceAgentRuntimeEventCursor(first.cursor, runState(4)).status).toBe('gap');
+    // Not a gap, and this test used to say it was. Two durable events are
+    // routinely several conversation versions apart, because checkpoints,
+    // compaction and unstarted acceptances all bump the version and publish
+    // nothing — so this reported a gap after essentially every run, and the
+    // guide told consumers a gap means "reload the whole conversation".
+    expect(advanceAgentRuntimeEventCursor(first.cursor, runState(4)).status).toBe('accepted');
 
     const delta: AgentRuntimeEvent = {
       type: 'assistant-delta',

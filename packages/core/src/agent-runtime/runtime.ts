@@ -147,7 +147,17 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   loop?: {
     maxSteps?: number;
     checkpointEveryEvents?: number;
-    idleTimeoutMs?: number;
+    /**
+     * How long the provider stream may produce nothing before the run is ended
+     * as `timeout`. Default 60 000; `null` disables it.
+     *
+     * There used to be no default, so a hung provider held the conversation's
+     * lane forever — the guide states the consequence itself ("a hung
+     * predecessor blocks the lane") without saying that the out-of-the-box
+     * setting is the one that produces it. `maxSteps` bounds steps, not a
+     * single stalled one.
+     */
+    idleTimeoutMs?: number | null;
     prepareStep?: AgentRuntimePrepareStep<CONTEXT, TOOLS>;
     stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS>[];
   };
@@ -224,7 +234,11 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   const waitForAdmissionAcceptances = admissionLanes.waitForAcceptances;
   const checkpointEveryEvents = config.loop?.checkpointEveryEvents ?? 20;
   const maxSteps = config.loop?.maxSteps ?? 50;
-  const idleTimeoutMs = config.loop?.idleTimeoutMs;
+  // A default, because the alternative is "hang forever" and that is what a
+  // consumer who configured nothing used to get.
+  const declaredIdleTimeoutMs = config.loop?.idleTimeoutMs;
+  const idleTimeoutMs =
+    declaredIdleTimeoutMs === null ? undefined : (declaredIdleTimeoutMs ?? 60_000);
   if (!Number.isSafeInteger(checkpointEveryEvents) || checkpointEveryEvents < 1) {
     throw new TypeError('checkpointEveryEvents must be a positive safe integer');
   }
@@ -237,16 +251,6 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
   ) {
     throw new TypeError('idleTimeoutMs must be a positive safe integer');
   }
-  // Run ids submitted under `inputPolicy: 'inject'`, so a run already in flight
-  // knows which queued successor it may take on at a step boundary. Process-local
-  // on purpose: the durable record says a run was absorbed, never that it *may*
-  // be — that is a live decision about work this process is currently doing.
-  const absorbable = new Set<string>();
-  // Where an absorbed run's ticket gets its answer. Process-local like the
-  // offer itself: the durable record says a run *was* absorbed, and the caller
-  // waiting on a promise for it only exists in this process anyway.
-  const absorbedInto = new Map<string, string>();
-  const runResults = new Map<string, Promise<AgentRuntimeResult>>();
   const policyNames = new Set<string>(['max-steps']);
   for (const policy of config.loop?.stopPolicies ?? []) {
     if (!policy.name || policyNames.has(policy.name)) {
@@ -421,14 +425,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       const existingTicket = conversationTickets?.get(input.idempotencyKey);
       if (existingTicket) return existingTicket;
       const key = config.runs?.key?.(input) ?? input.conversationId;
-      const declaredPolicy =
+      const policy =
         typeof config.runs?.inputPolicy === 'function'
           ? config.runs.inputPolicy(input)
           : (config.runs?.inputPolicy ?? 'queue');
-      // `inject` queues. It differs from `queue` only in that a run already in
-      // flight is allowed to take it on early, and that offer is withdrawn the
-      // moment the run ends — at which point this is a plain queued successor.
-      const policy: AgentInputPolicy = declaredPolicy === 'inject' ? 'queue' : declaredPolicy;
       const nowIso = now().toISOString();
       const inputMessageId = rawInput.recordIds?.inputMessageId ?? generateId();
       const runId = rawInput.recordIds?.runId ?? generateId();
@@ -576,10 +576,6 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
             state: acceptedRun.state,
             emittedAt: now().toISOString(),
           });
-          // Offered to whatever is already running on this key. Registered
-          // after acceptance, so nothing can absorb a run that does not exist
-          // durably yet.
-          if (declaredPolicy === 'inject') absorbable.add(acceptedRun.id);
           outerAccepted.resolve();
           if (acceptance.outcome === 'duplicate') {
             if (!acceptedRun.terminalReason) {
@@ -636,25 +632,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
               if (reservation) await waitForAdmissionAcceptances(reservation.lane);
               return {
                 runId: acceptedRun.id,
-                execute: () => {
-                  // Answered already, by the run that took this one's inputs.
-                  const answeredBy = absorbedInto.get(acceptedRun.id);
-                  const answer = answeredBy ? runResults.get(answeredBy) : undefined;
-                  if (answer) return answer;
-                  const running = executeRun({
-                    acceptedRun,
-                    context,
-                    signal,
-                    absorbable,
-                    onAbsorbed: (absorbedRunId) => {
-                      absorbedInto.set(absorbedRunId, acceptedRun.id);
-                    },
-                  });
-                  runResults.set(acceptedRun.id, running);
-                  return running.finally(() => {
-                    absorbable.delete(acceptedRun.id);
-                  });
-                },
+                execute: () => executeRun({ acceptedRun, context, signal }),
               };
             },
           });

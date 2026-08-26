@@ -20,12 +20,21 @@ mechanics: durable acceptance, history projection, the AI SDK stream loop,
 checkpoints, keyed interruption, terminal commit and stable application events.
 
 If the application already owns that loop, continue importing `mountAgent` from
-`stitchkit/tools`. Neither path depends on the other at runtime.
+`stitchkit/tools`. `stitchkit/tools` does not depend on this entrypoint at all;
+this entrypoint uses the tool executor from it, but pulls no MCP peer, so
+choosing `mountAgent` alone costs you nothing from here.
 
 ## Install
 
 ```sh
 bun add stitchkit ai zod
+```
+
+`mountAgent` from `stitchkit/tools` — used in the composition below — additionally
+needs the MCP peer, which that entrypoint imports statically:
+
+```sh
+bun add @modelcontextprotocol/server
 ```
 
 OpenRouter is isolated so other runtime users do not resolve its package:
@@ -67,7 +76,7 @@ const models = defineModelRegistry({
   },
 })
 
-const prompt = composeAgentPrompt([
+const prompt = composeAgentPrompt<{ userId: string }>([
   {
     name: 'product',
     stability: 'stable',
@@ -198,15 +207,15 @@ input + queued run → running → execution settled → terminal CAS → succes
 
 ## What happens to a run when new input arrives
 
-`runs.inputPolicy` decides. It takes three values (or a function returning one);
-the fourth row below is a behaviour it deliberately does not offer yet:
+`runs.inputPolicy` decides. It takes three values, or a function returning one;
+the fourth row is a behaviour that shipped and was withdrawn:
 
 | policy | the run in flight | what it already produced |
 |--------|-------------------|--------------------------|
 | `queue` (default) | finishes first | kept |
 | `interrupt` | ends | kept, and marked as cut off |
 | `supersede` | ends | discarded from the prompt, kept in the record |
-| `inject` | continues | kept — it takes the new input at a step boundary |
+| _inject_ | continues | withdrawn in 0.65.0 — see below |
 
 `interrupt` and `supersede` differ in exactly one thing, and the question that
 picks between them is **not** "was the run interrupted" but **"did anyone see
@@ -290,37 +299,19 @@ const { decisions } = await projectAgentHistoryDetailed(snapshot.messages)
 process-local escape hatch chooses the reason, so a caller that knows the answer
 was never delivered can discard it without a newer input arriving.
 
-### The one that ends nothing
+### The one that is not offered
 
-**`inject`** hands the input to the loop between tool calls and lets the run keep
-going. It is right when the input *refines* rather than redirects — a correction
-arriving while a multi-step task is halfway through, where discarding the
-finished steps would be pure loss.
+**inject** — hand the input to the loop between tool calls and let the run
+continue — shipped in 0.63.0 and was **withdrawn in 0.65.0**. It committed the
+absorption durably at a step boundary, before the answer existed, and everything
+downstream of that ordering was wrong: an accepted input could end up in a state
+that was neither active, recoverable nor terminal, so `close()` could report
+`settled: true` while leaving it permanently unanswerable, and a duplicate
+submission of the same idempotency key was refused forever.
 
-It queues like `queue`, and a run already in flight takes it on at its next step
-boundary. That ordering is the whole design: the tempting shape, attaching a new
-input straight to a running run, has a loss case with no honest answer, because
-the run may terminate before the loop reaches a boundary and the input would then
-be recorded as answered by a turn that never saw it. Queue first and absorb
-opportunistically, and the fallback is simply that the successor runs — the
-behaviour every other policy already has.
-
-When a run does absorb one:
-
-- both inputs land in the answering run's `inputMessageIds`, so the durable
-  record matches what the model was actually asked;
-- both submissions' tickets resolve to the same terminal result;
-- the absorbed run is marked `absorbed` with `absorbedIntoRunId` pointing at the
-  run that answered. It is kept, not deleted — its admission receipt still points
-  at it, so a duplicate submission has to resolve to something. It leaves the
-  conversation snapshot, because a snapshot carries active runs plus those a
-  message references and an absorbed run never wrote an assistant message;
-- the next provider call carries the re-projected history. An application's own
-  `prepareStep` wins if it sets `messages` itself — it is the one that knows why.
-
-A step boundary is the only place this can happen: the provider is between calls,
-so the next request can carry the new message. A single-step run never reaches
-one, and its successor simply runs next.
+The redesign is tracked in the backlog and is not a patch to what shipped: the
+absorption has to commit atomically **with** the terminal record, so that a run
+which ends first simply leaves an ordinary queued successor behind.
 
 With `runs.coalescePending: true`, an active lane has at most one queued
 successor. Every later accepted input is atomically appended to that successor;
@@ -442,8 +433,16 @@ crash between the database commit and `publish`. Reconnect should load canonical
 state. Exactly-once external delivery remains an application-owned outbox.
 
 Durable event IDs are derived from run, event type and snapshot version. Use
-`advanceAgentRuntimeEventCursor` to classify accepted, duplicate and gap delivery; a gap triggers a
-snapshot reload. `createAgentRuntimeEventSink` adds a bounded failure-isolated lifecycle and typed
+`advanceAgentRuntimeEventCursor` to classify delivery.
+
+**`gap` is reported for transient events only**, where `sequence` is a per-run
+counter the runtime really does increment once per event. Durable events carry
+the *conversation's* version, which advances on every mutation including the many
+that publish nothing — checkpoints, compaction, an acceptance that has not
+started — so two consecutive durable events are routinely several versions apart
+and adjacency says nothing. A durable loss is not detectable from the cursor;
+reload on reconnect, which is what a bounded fire-and-forget sink asks of you
+anyway. `createAgentRuntimeEventSink` adds a bounded failure-isolated lifecycle and typed
 projection/redaction hook. `onPublishError` records direct publisher failures without changing the
 already committed run.
 
@@ -570,9 +569,33 @@ spent nothing, and an omitted object could not tell you which one you had.
 Two costs in different currencies do not add: the sum reports `unavailable`
 rather than picking a label. The core records a currency and never converts one.
 
-Usage is **not durable**. It reaches you on the operator and delivery event
-streams and in `AgentRuntimeResult.metrics`, and stitchkit writes no spend to the
-store — where a figure lives afterwards is the application's (→ ADR 0002).
+**A run's figure is durable, and that is where to read it when a channel loses
+it.** `AgentRun.usage` is written at every checkpoint and again with the terminal
+record, so a crashed process leaves behind what it had already spent and a
+dropped event is not a lost number:
+
+```ts
+const snapshot = await store.loadSnapshot(conversationId)
+const spent = snapshot.runs.find((run) => run.id === runId)?.usage
+```
+
+Two gaps are open and are stated rather than left to be discovered:
+
+- **Both event sinks are bounded and drop under load**, by arrival order — the
+  event carrying the money is exactly as droppable as the one carrying nothing.
+  The run record is the recovery, and this paragraph is the only place that says
+  so.
+- **`AgentRuntimeResult.metrics` is `undefined` when this executor did not win
+  the terminal race.** Read `result.run.usage` — the durable figure — rather than
+  `result.metrics`, which is the channel that can go missing.
+- **Compaction spend is invisible unless you report it.** `config.history.compact`
+  calls a model inside the turn and produces no step and no event of its own.
+  Return `usage` from `AgentCompactionResult` and it joins the run's figure;
+  omit it and the run under-reports by whatever summarising cost.
+
+What stitchkit does **not** keep is a ledger: one figure, on the run that
+produced it, never aggregated and never reconciled against a provider invoice
+(→ ADR 0110).
 
 ### Reconciling with the provider's own accounting
 
@@ -590,8 +613,10 @@ The join is yours, and `runId` is the key:
 await ledger.record({
   runId: terminal.run.id,
   conversationId: terminal.run.conversationId,
-  costUsd: terminal.metrics?.usage?.cost?.value ?? null,   // null when `unavailable`
-  provenance: terminal.metrics?.usage?.cost?.provenance ?? 'unavailable',
+  // The durable figure, not `terminal.metrics` — that one is absent whenever
+  // this executor did not win the terminal race.
+  costUsd: terminal.run.usage?.cost?.value ?? null,        // null when `unavailable`
+  provenance: terminal.run.usage?.cost?.provenance ?? 'unavailable',
 })
 
 // later — the provider's accounting names the same generation

@@ -364,7 +364,7 @@ describe('a superseded record is not conversation, in every walker that reads hi
     const reasonOf = (id: string) =>
       selected.decisions.find((decision) => decision.messageId === id)?.reason;
     // It is gone, and it says why — not "protected" for a turn nobody speaks.
-    expect(reasonOf('a1')).toBe('superseded');
+    expect(reasonOf('a1')).toBe('unspeakable');
     expect(selected.messages.some((entry) => entry.id === 'a1')).toBe(false);
     // Its tokens are not in the total it never spends. Five spoken records at 1
     // each, minus the oldest evictable turn (u2+a2) — so 3, not 5.
@@ -482,9 +482,10 @@ describe('a superseded record is not conversation, in every walker that reads hi
         estimateMessage: () => ({ value: 1, provenance: 'measured' }),
       });
       const kept = budget.messages.some((entry) => entry.id === 'a1');
-      // The budget keeps anything it might still send; it drops only what is
-      // known unspeakable *for good* — a streaming draft is still becoming.
-      if (!speakable && status === 'superseded') expect(kept).toBe(false);
+      // Every walker now answers with the same predicate, so the budget drops
+      // exactly what the projection refuses to send — no status is protected
+      // from eviction while being withheld from the model.
+      expect(kept, `budget disagrees for status "${status}"`).toBe(speakable);
     }
   });
 

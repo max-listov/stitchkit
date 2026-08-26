@@ -95,6 +95,12 @@ function interruptedCandidate(
         AgentMessagePartSchema.parse({ type: 'control', reason: 'run-interrupted' }),
       ];
   return {
+    // `usage` carries: the money was spent whatever the run ended up called.
+    // `policyName` must NOT — it names the policy that stopped the run, and the
+    // reason just changed out from under it. Spreading the whole candidate
+    // carried both, and a run that ended `interrupted` then durably named a
+    // stop policy that had not stopped it.
+    ...(candidate.usage && { usage: candidate.usage }),
     run,
     assistant: AgentMessageSchema.parse({
       ...candidate.assistant,

@@ -1,6 +1,7 @@
 import type { Instructions } from 'ai';
 import { z } from 'zod';
 import type { AgentMessage } from './schemas';
+import { isSpeakableAssistantStatus } from './terminal-status';
 
 export const AgentTokenCountSchema = z.object({
   value: z.int().nonnegative().optional(),
@@ -47,7 +48,8 @@ export interface AgentHistoryBudgetDecision {
     | 'protected-incomplete-turn'
     | 'oldest-eligible-turn'
     | 'token-count-unavailable'
-    | 'superseded';
+    /** The model never hears this record, so the budget does not count it. */
+    | 'unspeakable';
   tokens: AgentTokenCount;
 }
 
@@ -119,12 +121,20 @@ export async function selectAgentHistory(
   if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0) {
     throw new TypeError('keepRecentTurns must be a non-negative safe integer');
   }
-  // A superseded record never reaches the model, so it is not conversation the
-  // budget has anything to say about. Left in, it was worse than merely
-  // counted: `completeTurn` reads it as an incomplete turn, which is the one
-  // class the eviction loop refuses to touch — so an abandoned fragment became
-  // permanently unevictable and pushed real, answered turns out in its place.
-  const spoken = options.messages.filter((message) => message.status !== 'superseded');
+  // A record the model never hears is not conversation the budget has anything
+  // to say about. Left in, it is worse than merely counted: `completeTurn` reads
+  // it as an incomplete turn, which is the one class the eviction loop refuses
+  // to touch — so it becomes permanently unevictable and pushes real, answered
+  // turns out in its place.
+  //
+  // This filter named `superseded` alone, and the same trap was live for every
+  // other unspeakable status: a `failed` assistant is never projected and was
+  // still protected, so every provider failure in a long conversation
+  // permanently reserved budget. The question has one home now, and this is one
+  // of the three walkers that asks it.
+  const spoken = options.messages.filter(
+    (message) => message.role !== 'assistant' || isSpeakableAssistantStatus(message.status),
+  );
   const counts = new Map<string, AgentTokenCount>();
   let total = 0;
   let estimated = false;
@@ -137,8 +147,14 @@ export async function selectAgentHistory(
         messages: [...spoken],
         decisions: options.messages.map((candidate) => ({
           messageId: candidate.id,
-          action: candidate.status === 'superseded' ? 'removed' : 'kept',
-          reason: candidate.status === 'superseded' ? 'superseded' : 'token-count-unavailable',
+          action:
+            candidate.role === 'assistant' && !isSpeakableAssistantStatus(candidate.status)
+              ? 'removed'
+              : 'kept',
+          reason:
+            candidate.role === 'assistant' && !isSpeakableAssistantStatus(candidate.status)
+              ? 'unspeakable'
+              : 'token-count-unavailable',
           tokens: counts.get(candidate.id) ?? { provenance: 'unavailable' },
         })),
         totalTokens: { provenance: 'unavailable' },
@@ -166,11 +182,11 @@ export async function selectAgentHistory(
   }
   const messages = spoken.filter((message) => !removed.has(message.id));
   const decisions = options.messages.map((message): AgentHistoryBudgetDecision => {
-    if (message.status === 'superseded') {
+    if (message.role === 'assistant' && !isSpeakableAssistantStatus(message.status)) {
       return {
         messageId: message.id,
         action: 'removed',
-        reason: 'superseded',
+        reason: 'unspeakable',
         tokens: { provenance: 'unavailable' },
       };
     }

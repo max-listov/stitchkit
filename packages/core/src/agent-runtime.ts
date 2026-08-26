@@ -117,8 +117,6 @@ export {
 export type { AgentRuntimeResult } from './agent-runtime/runtime-result';
 export * from './agent-runtime/schemas';
 export {
-  type AbsorbQueuedRun,
-  AbsorbQueuedRunSchema,
   type AcceptInputAndAssignRun,
   AcceptInputAndAssignRunSchema,
   type AcquireAgentRun,

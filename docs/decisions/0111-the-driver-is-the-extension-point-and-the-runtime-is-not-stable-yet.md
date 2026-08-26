@@ -68,12 +68,28 @@ in fact they were none.
 **The agent runtime is not promoted to stable today.** Two conditions remain, and
 they are checkable rather than atmospheric:
 
-1. **A minor with no breaking change to the surface.** Not a promise to stop
-   breaking it — evidence that it has stopped. One release is a weak signal and
-   is deliberately the bar: the point is to have a bar at all, not to pick a
-   comfortable one. The release carrying this ADR breaks the surface itself, so
-   the count stands at seven of nine and the condition is unmet by construction;
-   the next release is the earliest that could meet it.
+1. **An adversarial read of the surface that finds nothing worth breaking for.**
+   Reviewers who did not write it, given the whole of
+   `packages/core/src/agent-runtime` and the surface it exports, and asked to
+   find defects rather than to confirm quality.
+
+   This condition was first written as "a minor with no breaking change", and
+   that was wrong. **A break count measures how hard the surface is being read,
+   not how settled its shape is**, and a surface nobody examines scores
+   perfectly — 0.61.0 broke nothing here, and only because that release's work
+   was elsewhere. Worse, it is satisfiable on purpose: leave the surface alone
+   for one minor and the letter is met while the opposite is proved. A condition
+   that rewards not looking cannot be evidence of anything.
+
+   The cadence figure in the entrypoint table stays, because it answers the
+   question it is actually good for: *what does adopting this cost me?* A
+   consumer pays a migration whether the break was a repair or a redesign. It
+   simply cannot answer *have we found the bottom*, which is what promotion
+   turns on.
+
+   The bar is deliberately hard to game in the other direction too: a read that
+   finds nothing is only evidence if it was a real read, so what it covered is
+   recorded and the next attempt has to cover at least as much.
 2. **The known reporting gaps are closed or declared.** A spend figure can still
    be dropped by a bounded sink — recoverable from the run record, but only by a
    reader who knows to look — and compaction spend is reported only when the
