@@ -119,6 +119,56 @@ asynchronous subscriber callback racing cleanup: publish `getSnapshot()` before
 closing the outer sink, so any older or duplicate late delivery is rejected as
 stale instead of dropping the final state.
 
+## Bound a handler and a local worker with one lease policy
+
+Use a bounded admission when two entry paths consume the same finite local
+capacity. Composing it with `application.admission` keeps readiness and shutdown
+as the upstream gate:
+
+```ts
+const work = createBoundedAdmission({
+  upstream: app.admission,
+  policy: {
+    global: { maxConcurrent: 4 },
+    perKey: { maxConcurrent: 1, maxKeys: 1_000 },
+  },
+})
+
+const fromHttp = (key: string, signal: AbortSignal) =>
+  work.run(key, (context) => render(context.signal), { signal, timeoutMs: 20_000 })
+
+const fromWorker = (key: string) =>
+  work.run(key, (context) => reconcile(context.signal))
+```
+
+A timeout in `fromHttp` does not free a permit while `render` remains active.
+At shutdown call `work.stopAdmission()` with the other admission owners and
+await `work.drain(...)`; the result reports the actual remainder.
+
+## Replace ad-hoc output and progress queues
+
+Ordered output and replaceable progress are separate declarations:
+
+```ts
+const lines = createBoundedChannel<string>({
+  policy: 'ordered', maxItems: 100, maxBytes: 1_000_000,
+  sizeOf: (line) => new TextEncoder().encode(line).byteLength,
+})
+
+const state = createBoundedChannel<{ revision: number; percent: number }>({
+  policy: 'latest', maxItems: 1, maxBytes: 64,
+  sizeOf: () => 64,
+})
+
+const lineResult = lines.offer('one durable-in-process ordering unit')
+const stateResult = state.offer({ revision: 2, percent: 50 })
+```
+
+Handle `refused` from `lines` at the protocol boundary; do not turn it into
+implicit loss. A `coalesced` state result is expected latest-value behaviour,
+not evidence that an ordered event was delivered. Neither channel is durable;
+persist first when restart replay is required.
+
 ## Handing a handle to the resources that depend on it
 
 `dependsOn` carries ordering. To carry the object as well, return a `value` from

@@ -1,3 +1,4 @@
+import { DEFAULT_STREAM_LINE_BYTES, readBoundedUtf8Lines } from '../internal/bounded-lines';
 import { normalizeError } from '../internal/errors';
 
 /**
@@ -54,7 +55,9 @@ export function streamSSE(generator: AsyncGenerator<unknown>): Response {
 
 /** Options for `parseSSE`. */
 export interface ParseSSEOptions {
-  /** Called for a `data:` line that is not valid JSON — the alternative to throwing. */
+  /** Maximum bytes retained for one SSE line. Default 1 MiB. */
+  maxLineBytes?: number;
+  /** Called for invalid UTF-8/JSON; without it parsing fails closed. */
   onParseError?: (raw: string, error: Error) => void;
 }
 
@@ -67,38 +70,26 @@ export async function* parseSSE<T>(
   response: Response,
   options?: ParseSSEOptions,
 ): AsyncGenerator<T> {
-  const reader = response.body?.getReader();
-  if (!reader) return;
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const rawLine of lines) {
-        // Tolerate CRLF — the SSE spec uses `\r\n`, not just `\n`.
-        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-        if (!line.startsWith('data:')) continue;
-        // The spec allows `data:value` and `data: value` — one optional space.
-        const data = line.slice(5).replace(/^ /, '');
-        if (data === '[DONE]') return;
-        try {
-          yield JSON.parse(data);
-        } catch (err) {
-          options?.onParseError?.(data, err instanceof Error ? err : new Error(String(err)));
-        }
+    for await (const rawLine of readBoundedUtf8Lines(
+      response,
+      options?.maxLineBytes ?? DEFAULT_STREAM_LINE_BYTES,
+    )) {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).replace(/^ /, '');
+      if (data === '[DONE]') return;
+      try {
+        yield JSON.parse(data);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (!options?.onParseError) throw failure;
+        options.onParseError(data, failure);
       }
     }
-  } finally {
-    // Release the stream lock on every exit path — including an early
-    // `return` on `[DONE]` or a consumer breaking the loop.
-    reader.releaseLock();
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (!options?.onParseError) throw failure;
+    options.onParseError('', failure);
   }
 }

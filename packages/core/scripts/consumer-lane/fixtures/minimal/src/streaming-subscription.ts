@@ -22,6 +22,8 @@
 
 import {
   asRealtimeRejection,
+  createClient,
+  defineContract,
   type ParseNDJSONOptions,
   parseNDJSON,
   parseSSE,
@@ -33,6 +35,7 @@ import {
 import {
   createServer,
   DEFAULT_STREAM_HEARTBEAT_MS,
+  implement,
   ndjsonRoute,
   type RawRoute,
   type StreamingFormat,
@@ -41,6 +44,7 @@ import {
   sseRoute,
   streamingRoute,
 } from 'stitchkit/server';
+import { z } from 'zod';
 
 function fail(what: string): never {
   throw new Error(`[minimal] streaming subscription: ${what}`);
@@ -122,7 +126,37 @@ const generalOptions: StreamingRouteOptions<unknown> = {
 };
 const general: RawRoute = streamingRoute(generalOptions);
 
-const server = createServer({ port: 0, rawRoutes: [events, frames, sse, general] });
+const typedContract = defineContract(
+  { prefix: 'typed-stream' },
+  {
+    log: {
+      method: 'GET',
+      path: '/:id',
+      desc: 'Read a finite validated log',
+      params: z.object({ id: z.string() }),
+      stream: {
+        item: z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('line'), text: z.string() }),
+          z.object({ kind: z.literal('complete'), count: z.number().int() }),
+        ]),
+        terminal: z.object({ kind: z.literal('complete') }).loose(),
+        maxFrameBytes: 1_024,
+      },
+    },
+  },
+);
+const typedService = implement(typedContract, {
+  log: async function* ({ params }) {
+    yield { kind: 'line' as const, text: `packed:${params.id}` };
+    yield { kind: 'complete' as const, count: 1 };
+  },
+});
+
+const server = createServer({
+  port: 0,
+  services: [typedService],
+  rawRoutes: [events, frames, sse, general],
+});
 const origin = `http://127.0.0.1:${server.port}`;
 
 // 1. The headers arrive at open, before the source has produced anything. On a
@@ -185,7 +219,24 @@ if (generalResponse.headers.get('x-consumer') !== 'minimal')
   fail('declared header was dropped');
 await generalResponse.body?.cancel();
 
-// 7. The realtime refusal surface: the names resolve from the published
+// 7. One declaration drives server validation and the installed typed iterator.
+const typedClient = createClient(typedContract, { baseUrl: origin });
+const typed: AsyncIterableIterator<
+  z.output<(typeof typedContract.endpoints.log.stream)['item']>
+> = await typedClient.log({ id: 'finite' });
+const typedValues: Array<z.output<(typeof typedContract.endpoints.log.stream)['item']>> = [];
+for await (const value of typed) typedValues.push(value);
+if (
+  JSON.stringify(typedValues) !==
+  JSON.stringify([
+    { kind: 'line', text: 'packed:finite' },
+    { kind: 'complete', count: 1 },
+  ])
+) {
+  fail(`typed stream returned ${JSON.stringify(typedValues)}`);
+}
+
+// 8. The realtime refusal surface: the names resolve from the published
 //    entrypoint and the recogniser behaves. A refusal is recognised before any
 //    acknowledgement schema is consulted, so a consumer can classify one
 //    without knowing anything about Zod's internals.

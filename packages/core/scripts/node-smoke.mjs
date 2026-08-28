@@ -43,8 +43,14 @@ for (const name of entrypoints) {
 }
 
 const { createHttpClient, defineContract, defineRealtimeContract } = await import('stitchkit');
-const { bindRealtimeServer, createHandler, createSocketIOServer, implement, serveNode } =
-  await import('stitchkit/node');
+const {
+  bindRealtimeServer,
+  createHandler,
+  createSocketIOServer,
+  createUnixClientTransport,
+  implement,
+  serveNode,
+} = await import('stitchkit/node');
 const { createHandlerTestClient } = await import('stitchkit/testing');
 const { createManagedFileBoundary } = await import('stitchkit/files');
 const { createObservability } = await import('stitchkit/observability');
@@ -273,6 +279,87 @@ console.log('serveNode physical client disconnect cancellation: OK');
 // its narrow Bun adapter. The backend starts only after the first native fetch
 // has rejected, so success proves a real second transport attempt.
 const { createServer: createNativeNodeServer } = await import('node:http');
+
+// The installed Node entrypoint must select the Unix listener structurally,
+// keep redirects on it and pause a fast producer when the body reader stalls.
+const unixSmokeRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-unix-'));
+const unixSmokePath = join(unixSmokeRoot, 'daemon.sock');
+let unixTcpRequests = 0;
+let unixFastWrites = 0;
+const unixTcpSentinel = createNativeNodeServer((_request, response) => {
+  unixTcpRequests += 1;
+  response.end('wrong transport');
+});
+await new Promise((resolve, reject) => {
+  unixTcpSentinel.once('error', reject);
+  unixTcpSentinel.listen(0, '127.0.0.1', resolve);
+});
+const unixTcpAddress = unixTcpSentinel.address();
+assert.equal(typeof unixTcpAddress, 'object');
+assert.notEqual(unixTcpAddress, null);
+const unixResponder = createNativeNodeServer(async (request, response) => {
+  if (request.url === '/redirect') {
+    response.writeHead(302, {
+      location: `http://127.0.0.1:${unixTcpAddress.port}/final`,
+    });
+    response.end();
+    return;
+  }
+  if (request.url === '/fast') {
+    try {
+      for (let index = 0; index < 512; index += 1) {
+        if (!response.write(Buffer.alloc(32 * 1024))) {
+          await new Promise((resolve) => response.once('drain', resolve));
+        }
+        unixFastWrites += 1;
+      }
+      response.end();
+    } catch {
+      // The stalled-reader proof cancels this response deliberately.
+    }
+    return;
+  }
+  response.setHeader('content-type', 'application/json');
+  response.end(JSON.stringify({ transport: 'unix' }));
+});
+await new Promise((resolve, reject) => {
+  unixResponder.once('error', reject);
+  unixResponder.listen(unixSmokePath, resolve);
+});
+const unixTransport = createUnixClientTransport({ socketPath: unixSmokePath });
+const unixRedirected = await unixTransport.fetch(
+  `http://127.0.0.1:${unixTcpAddress.port}/redirect`,
+);
+assert.deepEqual(await unixRedirected.json(), { transport: 'unix' });
+assert.equal(unixTcpRequests, 0);
+const unixFast = await unixTransport.fetch('http://local/fast');
+const unixFastReader = unixFast.body.getReader();
+await unixFastReader.read();
+await new Promise((resolve) => setTimeout(resolve, 200));
+assert.ok(unixFastWrites < 512, 'Node Unix response must stop a stalled fast producer');
+await unixFastReader.cancel();
+await unixTransport.close();
+const missingUnix = createUnixClientTransport({
+  socketPath: join(unixSmokeRoot, 'missing.sock'),
+});
+await assert.rejects(missingUnix.fetch('http://local/missing'), {
+  code: 'UNIX_CONNECT_FAILED',
+  delivery: 'not-dispatched',
+});
+await missingUnix.close();
+unixResponder.closeAllConnections();
+unixTcpSentinel.closeAllConnections();
+await Promise.all([
+  new Promise((resolve, reject) =>
+    unixResponder.close((error) => (error ? reject(error) : resolve())),
+  ),
+  new Promise((resolve, reject) =>
+    unixTcpSentinel.close((error) => (error ? reject(error) : resolve())),
+  ),
+]);
+await rm(unixSmokeRoot, { recursive: true, force: true });
+console.log('portable bounded Unix client on Node: OK');
+
 const reservation = createNativeNodeServer((_request, response) => response.end());
 await new Promise((resolve, reject) => {
   reservation.once('error', reject);

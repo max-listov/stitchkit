@@ -3,6 +3,7 @@ import type {
   EndpointDef,
   EndpointMcpPolicy,
   EndpointResponseMeta,
+  EndpointStreamDescriptor,
   EndpointToolAnnotations,
   EndpointUiMeta,
   HandlerContext,
@@ -44,9 +45,11 @@ type InferMcpInput<E> =
  */
 type HandlerReturn<E> = E extends { rawResponse: true }
   ? Response | Promise<Response>
-  : Prop<E, 'output'> extends ZodType
-    ? Promise<InferOutput<E>> | InferOutput<E>
-    : void | Promise<void>;
+  : Prop<E, 'stream'> extends { item: ZodType<infer O> }
+    ? AsyncIterable<O> | Promise<AsyncIterable<O>>
+    : Prop<E, 'output'> extends ZodType
+      ? Promise<InferOutput<E>> | InferOutput<E>
+      : void | Promise<void>;
 
 /**
  * `ctx.req` is optional in general — a tool call has no `Request`. A raw
@@ -55,7 +58,14 @@ type HandlerReturn<E> = E extends { rawResponse: true }
  * to a guaranteed `Request` there rather than making every raw handler write
  * a non-null assertion. → ADR 0038.
  */
-type RequiredRequest<E> = E extends { rawResponse: true } ? { req: Request } : unknown;
+type RequiredRequest<E> = E extends
+  | { rawResponse: true }
+  | { stream: EndpointStreamDescriptor }
+  ? { req: Request }
+  : unknown;
+type RequiredStreamSignal<E> = E extends { stream: EndpointStreamDescriptor }
+  ? { signal: AbortSignal }
+  : unknown;
 type RetainedRawBody<E> = E extends { rawBody: true }
   ? { req: Request; rawBody: string }
   : unknown;
@@ -67,6 +77,7 @@ export type EndpointHandlerContext<
   E extends EndpointDef,
   TCtx extends RuntimeContext = HandlerContext,
 > = TCtx & { params: InferParams<E>; input: InferInput<E> } & RequiredRequest<E> &
+  RequiredStreamSignal<E> &
   RetainedRawBody<E> &
   RequiredResponseMetadata<E> &
   InferMcpInput<E> &
@@ -209,6 +220,7 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   paramsSchema?: ZodType<TParams>;
   inputSchema?: ZodType<TInput>;
   outputSchema?: ZodType<TOutput>;
+  stream?: EndpointStreamDescriptor;
   multipart?: MultipartDescriptor;
   multipartReceivers?: Record<string, MultipartReceiver>;
   /** Per-route JSON body ceiling; enforced before full buffering. */

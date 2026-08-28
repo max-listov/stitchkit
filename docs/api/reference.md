@@ -33,7 +33,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
-| `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework testing adapters |
+| `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework and application-owned adapters |
 | `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
@@ -42,7 +42,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
-| `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `unix` dials a unix domain socket (Bun only) — [details](../guide/client.md#createhttpclient) |
+| `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `fetch` installs an explicit transport and is mutually exclusive with the legacy Bun-only `unix` option — [details](../guide/client.md#createhttpclient) |
 | `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
 | `RequestOptions` | _type_ | per-call options — params, timeout, response type |
 | `HeaderProvider` | _type_ | static or per-request headers |
@@ -60,6 +60,8 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `parseNDJSON` | function | parse an NDJSON `Response`; blank keep-alive lines are skipped — [guide](../guide/client.md#ndjson) |
+| `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | internal-on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
+| `DEFAULT_CONTRACT_STREAM_FRAME_BYTES` | const | default maximum encoded contract-stream frame: 256 KiB |
 | `SocketIOClient` | _type_ | low-level client handle; `emit` reports disconnected drops and `emitWithAck` exposes the native Promise primitive used by validated `request()` |
 | `SocketIOClientPeerLoaders` | _type_ | inject `socket.io-client` so a bundler can put it in a self-contained artifact |
 | `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`, `onConnectError`, `onDroppedEmit`) |
@@ -135,6 +137,7 @@ from the root `stitchkit`.
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid) |
+| `EndpointStreamDescriptor` | _type_ | HTTP-only schema-derived stream declaration: item schema, NDJSON/SSE framing, frame/lifetime/heartbeat/idle bounds and optional terminal predicate — [guide](../guide/server.md#contract-first-streams) |
 | `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
 | `ResponseMetadata` | _type_ | per-request outbound collector exposed as `ctx.response` only for a `responseMeta` endpoint |
@@ -393,6 +396,12 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `StreamingRouteOptions` | _type_ | options for `streamingRoute` / `ndjsonRoute` / `sseRoute` |
 | `StreamingSourceContext` | _type_ | what a streaming source is given, including the cancellation `signal` |
 | `StreamingFormat` | _type_ | `'ndjson' \| 'sse'` |
+| `createUnixClientTransport` | function | owned Fetch-compatible Unix-socket transport on Bun and Node; every redirect stays on the socket — [guide](../guide/client.md#unix-domain-sockets) |
+| `UnixClientTransportConfig` | _type_ | absolute socket path plus request/response/header/connection/redirect bounds |
+| `UnixClientTransport` | _type_ | `{ fetch, closed, close() }`; `close()` settles owned active work |
+| `UnixClientTransportError` | class | stable transport failure with `code` and dispatch certainty in `delivery` |
+| `UnixClientTransportErrorCode` | _type_ | finite Unix transport failure-code union |
+| `UnixClientDeliveryState` | _type_ | `not-dispatched \| possibly-dispatched \| response-received`; input to application retry policy, never an implicit retry |
 
 ### OpenAPI
 
@@ -441,6 +450,39 @@ cutovers are covered by the executable
 | `ManagedServerResource` | _type_ | the resource `managedServerResource` returns, whose `start` publishes the `ManagedServerHandle` |
 | `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
 | `ApplicationOperationalHandlers` / `ApplicationOperationalHandlersOptions` / `ApplicationOperationalHandlersOptionsSchema` | _type_ / schema | conventional status/readiness/liveness route surface and shared retry policy |
+
+### Bounded admission
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createBoundedAdmission` | function | process-local no-queue global/per-key concurrency and rate leases, optionally composed with application admission |
+| `BoundedAdmissionPolicySchema` / `BoundedAdmissionPolicy` | schema / _type_ | finite global budget and optional finite per-key budget with `maxKeys` |
+| `BoundedRateBudgetSchema` / `BoundedRateBudget` | schema / _type_ | `{ limit, intervalMs }` monotonic sliding-window budget |
+| `BoundedAdmissionStateSchema` / `BoundedAdmissionState` | schema / _type_ | `accepting \| draining \| closed` |
+| `BoundedAdmissionRefusalReasonSchema` / `BoundedAdmissionRefusalReason` | schema / _type_ | exact local/upstream refusal vocabulary |
+| `BoundedAdmissionSnapshotSchema` / `BoundedAdmissionSnapshot` | schema / _type_ | absolute active/lifetime/refusal/rate-accounting counters |
+| `BoundedAdmission` / `BoundedAdmissionConfig` / `BoundedAdmissionClock` | _type_ | handle, policy/upstream/clock configuration and monotonic clock seam |
+| `BoundedAdmissionResult` / `BoundedAdmissionLeaseResult` / `BoundedAdmissionRefusedResult` | _type_ | explicit leased-or-refused acquisition result; retry time exists only for rate bounds |
+| `BoundedOperationLease` | _type_ | idempotent release lease, optionally carrying its key |
+| `BoundedOperationRunContext` / `BoundedOperationRunOptions` | _type_ | underlying work signal and caller abort/timeout wait budget |
+| `BoundedAdmissionDrainOptions` / `BoundedAdmissionDrainResult` / `BoundedAdmissionForceResult` | _type_ | bounded drain inputs and honest remaining-work results |
+| `BoundedAdmissionRefusalError` | class | `run()` refusal with reason and optional `retryAfterMs` |
+| `BoundedOperationWaitError` | class | caller wait ended as `cancelled` or `timed-out`; underlying capacity remains leased until work settles |
+
+### Bounded delivery
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createBoundedChannel` | function | finite single-reader async channel with explicit ordered or latest-value policy |
+| `BoundedChannelPolicySchema` / `BoundedChannelPolicy` | schema / _type_ | `ordered \| latest` retention policy |
+| `BoundedChannelStateSchema` / `BoundedChannelState` | schema / _type_ | `open \| draining \| closed \| failed` |
+| `BoundedChannelSnapshotSchema` / `BoundedChannelSnapshot` | schema / _type_ | exact retained count/bytes, waiter and outcome counters |
+| `BoundedChannel` / `BoundedChannelConfig` / `BoundedChannelCloseOptions` | _type_ | iterator/offer handle, explicit count/byte/size policy and drain/discard close mode |
+| `BoundedChannelOfferResult` | _type_ | `delivered`, `queued`, `coalesced`, or reasoned `refused` outcome |
+| `BoundedChannelReaderError` | class | refusal of a second concurrent pending `next()` |
+| `createCreditWindow` | function | finite byte-credit lease window with exact once-only replenishment |
+| `CreditWindow` / `CreditWindowSnapshot` / `CreditWindowSnapshotSchema` | _type_ / schema | byte-credit handle and absolute accounting record |
+| `CreditAcquireResult` / `CreditLease` | _type_ | reasoned refusal or idempotently releasable byte-credit lease |
 
 ### Managed schedules
 
@@ -1158,6 +1200,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `serveNode` | function | build the router and start a Node HTTP server (via `srvx`) |
 | `createHandler` | function | the router as a bare `(req) => Response` (same as `/server`) |
 | `createSocketIOServer` | function | the typed Node Socket.IO server (`io` + `attach`; no Bun engine declarations) |
+| `createUnixClientTransport` | function | the same fail-closed Bun/Node Unix client adapter exported by `stitchkit/server` |
 | `implement` / `createImplement` / `createScopedImplement` / `createScopedImplementRegistry` / `createMultipartStream` | function | bind a contract to typed handlers, optionally typed per endpoint scope (same as `/server`) |
 | `NodeServerConfig` | _type_ | config for `serveNode` |
 | `NodeServerHandle` | _type_ | managed Node handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
@@ -1165,6 +1208,8 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `NodeSocketLifecycle` | _type_ | Bun-free Socket.IO lifecycle accepted by `serveNode` |
 | `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
 | `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOPeerLoaders` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config, optional-peer loaders and the Bun-free Node handle with `io`, `attach` and lifecycle |
+| `UnixClientTransportConfig` / `UnixClientTransport` | _type_ | Unix socket bounds and owned Fetch-compatible handle |
+| `UnixClientTransportError` / `UnixClientTransportErrorCode` / `UnixClientDeliveryState` | class / _type_ | stable failure plus dispatch certainty; no cross-transport fallback |
 | `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---

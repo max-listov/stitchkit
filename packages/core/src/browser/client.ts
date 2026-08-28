@@ -11,6 +11,7 @@ import { isRecord, mapObject, typedEntries } from '../internal/typed';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import { buildMultipartForm } from './client-multipart';
 import { createClientRouteMatcher, joinClientBaseUrl, planClientRequest } from './client-url';
+import { parseContractStream } from './contract-stream';
 import {
   ApiError,
   type HttpClient as HttpAdapter,
@@ -19,6 +20,9 @@ import {
   type UnauthorizedMatcher,
 } from './http';
 import { responseTraceId } from './request-id';
+import type { ClientFetch } from './transport';
+
+export type { ClientFetch } from './transport';
 
 /** Merge an endpoint's timeout and response mode into request options. */
 function withTimeout(
@@ -27,11 +31,12 @@ function withTimeout(
 ): RequestOptions | undefined {
   // A raw endpoint answers with bytes — parsing it as JSON is how the old
   // hand-rolled transports produced empty objects. → ADR 0038.
-  const responseType: RequestOptions['responseType'] = endpoint.rawResponse
-    ? 'response'
-    : endpoint.output
-      ? undefined
-      : 'void';
+  const responseType: RequestOptions['responseType'] =
+    endpoint.rawResponse || 'stream' in endpoint
+      ? 'response'
+      : endpoint.output
+        ? undefined
+        : 'void';
   if (endpoint.timeout === undefined && responseType === undefined) return options;
   return {
     ...options,
@@ -47,8 +52,27 @@ function withTimeout(
  * whether a response exists. Applied on both client paths so the guarantee
  * cannot depend on which one a project wired.
  */
-function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<unknown> {
+function withOutput(
+  endpoint: EndpointDef,
+  result: Promise<unknown>,
+  abortStream?: () => void,
+): Promise<unknown> {
   if (endpoint.rawResponse) return result;
+  if ('stream' in endpoint && endpoint.stream) {
+    return result.then(
+      (value) => {
+        if (!(value instanceof Response)) {
+          abortStream?.();
+          throw new Error('Streaming endpoint did not return a Response');
+        }
+        return parseContractStream(value, endpoint.stream, abortStream ?? (() => undefined));
+      },
+      (error: unknown) => {
+        abortStream?.();
+        throw error;
+      },
+    );
+  }
   const schema = endpoint.output;
   return result.then((value) => {
     if (!schema) {
@@ -61,9 +85,6 @@ function withOutput(endpoint: EndpointDef, result: Promise<unknown>): Promise<un
     return schema.parse(value);
   });
 }
-
-/** Config for the built-in fetch client — used when no `HttpClient` is passed. */
-export type ClientFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface ClientConfig {
   baseUrl: string;
@@ -334,6 +355,16 @@ function createHttpExecutor<K extends string>(
     | 'delete';
   return (requestArgs, options) => {
     const plan = planClientRequest(endpoint, prefix, requestArgs, config);
+    const streamAbort = 'stream' in endpoint ? new AbortController() : undefined;
+    const requestOptions = streamAbort
+      ? {
+          ...options,
+          signal: options?.signal
+            ? AbortSignal.any([options.signal, streamAbort.signal])
+            : streamAbort.signal,
+        }
+      : options;
+    const finishStream = streamAbort ? () => streamAbort.abort() : undefined;
 
     if (endpoint.multipart) {
       // Multipart uses the endpoint's declared body verb — a `PUT` upload must
@@ -346,21 +377,24 @@ function createHttpExecutor<K extends string>(
       const formData = buildMultipartForm(endpoint.multipart, plan.remainingArgs);
       return withOutput(
         endpoint,
-        client[httpMethod](plan.relativeUrl, formData, withTimeout(options, endpoint)),
+        client[httpMethod](plan.relativeUrl, formData, withTimeout(requestOptions, endpoint)),
+        finishStream,
       );
     }
 
     if (httpMethod === 'get' || httpMethod === 'head') {
       return withOutput(
         endpoint,
-        client[httpMethod](plan.relativeUrl, withTimeout(options, endpoint)),
+        client[httpMethod](plan.relativeUrl, withTimeout(requestOptions, endpoint)),
+        finishStream,
       );
     }
 
     if (httpMethod === 'delete') {
       return withOutput(
         endpoint,
-        client.delete(plan.relativeUrl, withTimeout(options, endpoint)),
+        client.delete(plan.relativeUrl, withTimeout(requestOptions, endpoint)),
+        finishStream,
       );
     }
 
@@ -369,8 +403,9 @@ function createHttpExecutor<K extends string>(
       client[httpMethod](
         plan.relativeUrl,
         Object.keys(plan.remainingArgs).length > 0 ? plan.remainingArgs : undefined,
-        withTimeout(options, endpoint),
+        withTimeout(requestOptions, endpoint),
       ),
+      finishStream,
     );
   };
 }
@@ -394,10 +429,35 @@ function createFetchExecutor<K extends string>(
     // Apply the endpoint's declared `timeout` — the HttpClient path already did;
     // the bare-fetch path used to ignore it, so a declared timeout silently did
     // nothing here.
-    const cancellation = createRequestCancellation(
-      options?.signal,
-      endpoint.timeout ?? config.timeout ?? 30_000,
-    );
+    const streamAbort = 'stream' in endpoint ? new AbortController() : undefined;
+    const requestSignal = streamAbort
+      ? options?.signal
+        ? AbortSignal.any([options.signal, streamAbort.signal])
+        : streamAbort.signal
+      : options?.signal;
+    const openTimeoutMs = endpoint.timeout ?? config.timeout ?? 30_000;
+    const cancellation = streamAbort
+      ? {
+          signal: requestSignal,
+          async run<T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+            let timedOut = false;
+            const timer = setTimeout(() => {
+              timedOut = true;
+              streamAbort.abort(new DOMException('Request timed out', 'TimeoutError'));
+            }, openTimeoutMs);
+            try {
+              if (options?.signal?.aborted) throw new RequestCancellationError('caller');
+              return await operation(requestSignal);
+            } catch (error) {
+              if (timedOut) throw new RequestCancellationError('timeout');
+              if (options?.signal?.aborted) throw new RequestCancellationError('caller');
+              throw error;
+            } finally {
+              clearTimeout(timer);
+            }
+          },
+        }
+      : createRequestCancellation(requestSignal, openTimeoutMs);
 
     const hasBody =
       endpoint.method !== 'GET' &&
@@ -429,6 +489,10 @@ function createFetchExecutor<K extends string>(
         }
 
         if (endpoint.rawResponse) return res;
+
+        if ('stream' in endpoint && endpoint.stream) {
+          return parseContractStream(res, endpoint.stream, () => streamAbort?.abort());
+        }
 
         if (!endpoint.output) {
           const text = await res.text();

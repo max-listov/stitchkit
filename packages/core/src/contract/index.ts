@@ -10,6 +10,7 @@ export {
   type EndpointMcpInputRequired,
   type EndpointMcpPolicy,
   type EndpointResponseMeta,
+  type EndpointStreamDescriptor,
   type EndpointToolAnnotations,
   type EndpointUiMeta,
   type FileDescriptor,
@@ -86,3 +87,8 @@ export {
   type Paginated,
   paginatedSchema,
 } from './pagination';
+export {
+  type ContractStreamFrame,
+  ContractStreamFrameSchema,
+  DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
+} from './stream';

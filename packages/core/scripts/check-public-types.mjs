@@ -71,6 +71,8 @@ const ACCEPTED = {
   InferInput: 'inference helper — endpoint input is computed from its schema',
   InferMcpInput: 'inference helper — MCP input is computed from endpoint policy',
   RequiredRequest: 'inference helper — raw endpoints compute required request access',
+  RequiredStreamSignal:
+    'inference helper — contract streams compute required cancellation access',
   RetainedRawBody: 'inference helper — raw-body endpoints compute retained body access',
   RequiredResponseMetadata:
     'inference helper — response metadata access is computed from the endpoint declaration',
@@ -106,6 +108,7 @@ const ACCEPTED = {
   HttpOnlyEndpointDef: 'member of the exported EndpointDef union',
   ToolEndpointDef: 'member of the exported EndpointDef union',
   RawResponseEndpointDef: 'member of the exported EndpointDef union',
+  StreamingResponseEndpointDef: 'member of the exported EndpointDef union',
   RawBodyEndpointDef: 'member of the exported EndpointDef union',
   ResponseMetaDataEndpointDef: 'member of the exported EndpointDef union',
   ResponseMetaEmptyEndpointDef: 'member of the exported EndpointDef union',

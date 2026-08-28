@@ -34,6 +34,10 @@ const onError = createErrorHook({
     DOWNLOAD_NOT_FOUND: 'not_found',
     VIEW_HTTP_ERROR: 'upstream',
     OPERATION_NOT_SUCCEEDED: 'conflict',
+    STREAM_ITEM_INVALID: 'internal',
+    STREAM_FRAME_TOO_LARGE: 'internal',
+    STREAM_TERMINAL_MISSING: 'internal',
+    STREAM_LIFETIME_EXCEEDED: 'timeout',
     GRAMMY_WEBHOOK_NOT_ACCEPTING: 'unavailable',
     INTERNAL_SERVER_ERROR: 'internal',
     // `satisfies Record<StitchErrorCode, …>` HERE on purpose: this fixture is

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createBoundedChannel } from './channel';
 
 const SnapshotRevisionSchema = z.number().int().nonnegative();
 
@@ -63,9 +64,14 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
   let lastAcceptedRevision: number | undefined;
   let lastDeliveredRevision: number | undefined;
   let inFlight: Promise<void> | undefined;
-  let pending: TSnapshot | undefined;
   let closePromise: Promise<ApplicationSnapshotSinkStatus> | undefined;
   let resolveClose: ((status: ApplicationSnapshotSinkStatus) => void) | undefined;
+  const pending = createBoundedChannel<TSnapshot>({
+    policy: 'latest',
+    maxItems: 1,
+    maxBytes: 1,
+    sizeOf: () => 1,
+  });
 
   const getStatus = (): ApplicationSnapshotSinkStatus =>
     ApplicationSnapshotSinkStatusSchema.parse({
@@ -77,7 +83,7 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
       coalesced,
       failed,
       inFlight: inFlight !== undefined,
-      pending: pending !== undefined,
+      pending: pending.getSnapshot().queuedItems > 0,
       ...(lastAcceptedRevision !== undefined && { lastAcceptedRevision }),
       ...(lastDeliveredRevision !== undefined && { lastDeliveredRevision }),
     });
@@ -90,7 +96,8 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
   };
 
   const settleCloseIfIdle = (): void => {
-    if (accepting || inFlight || pending || !resolveClose) return;
+    if (accepting || inFlight || pending.getSnapshot().queuedItems > 0 || !resolveClose)
+      return;
     const resolve = resolveClose;
     resolveClose = undefined;
     resolve(getStatus());
@@ -108,11 +115,19 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
         reportFailure(error, snapshot);
       })
       .finally(() => {
-        inFlight = undefined;
-        const next = pending;
-        pending = undefined;
-        if (next) startWrite(next);
-        else settleCloseIfIdle();
+        if (pending.getSnapshot().queuedItems > 0) {
+          void pending.next().then((next) => {
+            if (next.done) {
+              inFlight = undefined;
+              settleCloseIfIdle();
+            } else {
+              startWrite(next.value);
+            }
+          });
+        } else {
+          inFlight = undefined;
+          settleCloseIfIdle();
+        }
       });
     inFlight = write;
   };
@@ -133,8 +148,8 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
       if (!inFlight) {
         startWrite(snapshot);
       } else {
-        if (pending) coalesced += 1;
-        pending = snapshot;
+        const offered = pending.offer(snapshot);
+        if (offered.outcome === 'coalesced') coalesced += offered.replaced;
       }
       return true;
     },
@@ -142,6 +157,7 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
     close() {
       if (closePromise) return closePromise;
       accepting = false;
+      pending.close({ mode: 'drain' });
       closePromise = new Promise((resolve) => {
         resolveClose = resolve;
         settleCloseIfIdle();

@@ -72,6 +72,16 @@ const contract = defineContract(
       desc: 'Return an explicit empty success status',
       responseMeta: { status: 205 },
     },
+    watch: {
+      method: 'GET',
+      path: '/watch',
+      desc: 'Watch validated progress',
+      stream: {
+        item: z.object({ revision: z.number().int() }),
+        format: 'sse',
+        maxFrameBytes: 4096,
+      },
+    },
     upload: {
       method: 'POST',
       path: '/upload',
@@ -106,6 +116,9 @@ const service = implement(contract, {
   nullable: () => null,
   empty: () => undefined,
   reset: () => undefined,
+  watch: async function* () {
+    yield { revision: 1 };
+  },
   upload: ({ files }) => ({ count: files.attachments.length }),
 });
 
@@ -146,8 +159,32 @@ describe('generateOpenApiDocument', () => {
       '/api/nullable',
       '/api/reset',
       '/api/upload',
+      '/api/watch',
     ]);
     expect(doc.paths['/api/tool']).toBeUndefined();
+  });
+
+  test('describes contract streams without pretending their envelope is buffered JSON', () => {
+    expect(spec.paths['/api/watch'].get).toMatchObject({
+      'x-stitchkit-has-output': true,
+      'x-stitchkit-stream': true,
+      responses: {
+        '200': {
+          content: {
+            'text/event-stream': {
+              schema: { type: 'string' },
+              'x-stitchkit-max-frame-bytes': 4096,
+              'x-stitchkit-terminal-required': false,
+            },
+          },
+        },
+      },
+    });
+    expect(
+      spec.paths['/api/watch'].get.responses['200'].content['text/event-stream'][
+        'x-stitchkit-item-schema'
+      ],
+    ).toMatchObject({ type: 'object', required: ['revision'] });
   });
 
   test('GET input becomes query parameters', () => {

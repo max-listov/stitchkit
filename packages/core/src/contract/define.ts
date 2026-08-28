@@ -23,6 +23,23 @@ export interface ResponseMetadata {
   headers: Headers;
 }
 
+/** Wire framing and bounds for one contract-first streaming response. */
+export interface EndpointStreamDescriptor<TItem extends ZodType = ZodType> {
+  item: TItem;
+  /** Default `ndjson`. */
+  format?: 'ndjson' | 'sse';
+  /** Maximum encoded data-frame size. Default 256 KiB. */
+  maxFrameBytes?: number;
+  /** Optional total operation lifetime after response open. */
+  lifetimeMs?: number;
+  /** Default 5 seconds; keeps a healthy quiet feed observable to intermediaries. */
+  heartbeatMs?: number;
+  /** Default 0 (disabled). */
+  idleTimeoutSeconds?: number;
+  /** When present, normal completion requires at least one matching item. */
+  terminal?: ZodType<unknown>;
+}
+
 /**
  * The transport tag on `ctx.source`. The four built-ins keep autocomplete, but
  * the union is **open** (`string & {}`) so a bring-your-own transport — e.g. a
@@ -270,6 +287,21 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   responseMeta?: never;
 }
 
+/** A validated HTTP-only stream whose client yields schema-derived items. */
+interface StreamingResponseEndpointDef extends EndpointDefBase {
+  stream: EndpointStreamDescriptor;
+  output?: never;
+  rawResponse?: never;
+  rawBody?: never;
+  responseMeta?: never;
+  multipart?: never;
+  toolName?: never;
+  ui?: never;
+  annotations?: never;
+  mcp?: never;
+  expose?: readonly ['HTTP'];
+}
+
 /** An explicit HTTP HEAD operation. Headers/status are handler-owned; the body is always stripped. */
 export interface HeadEndpointDef {
   method: 'HEAD';
@@ -303,6 +335,7 @@ export type EndpointDef =
   | ResponseMetaRawBodyDataEndpointDef
   | ResponseMetaRawBodyEmptyEndpointDef
   | RawResponseEndpointDef
+  | StreamingResponseEndpointDef
   | HeadEndpointDef;
 
 export interface ContractMeta<TScope extends string = string> {
@@ -385,6 +418,7 @@ export function defineContract(
     if (ep.multipart) assertMultipartEndpoint(meta.prefix, key, ep);
 
     if (ep.rawResponse) assertRawEndpoint(meta.prefix, key, ep);
+    if ('stream' in ep) assertStreamingResponseEndpoint(meta.prefix, key, ep);
     if (ep.method === 'HEAD') assertHeadEndpoint(meta.prefix, key, ep);
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
     if ('responseMeta' in ep) assertResponseMetaEndpoint(meta.prefix, key, ep);
@@ -486,6 +520,33 @@ function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef): void {
     throw new Error(`${where} cannot set MCP annotations`);
   }
   const nonHttp = (ep.expose ?? []).filter((t) => t !== 'HTTP');
+  if (nonHttp.length > 0) {
+    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
+  }
+}
+
+function assertStreamingResponseEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": streaming endpoint "${key}"`;
+  if (!('stream' in ep) || !ep.stream || typeof ep.stream !== 'object') {
+    throw new Error(`${where} must declare a stream descriptor`);
+  }
+  if (!ep.stream.item || typeof ep.stream.item.parse !== 'function') {
+    throw new Error(`${where} must declare an item schema`);
+  }
+  assertPositiveLimit(where, 'maxFrameBytes', ep.stream.maxFrameBytes);
+  assertPositiveLimit(where, 'lifetimeMs', ep.stream.lifetimeMs);
+  assertPositiveLimit(where, 'heartbeatMs', ep.stream.heartbeatMs);
+  if (
+    ep.stream.idleTimeoutSeconds !== undefined &&
+    (!Number.isSafeInteger(ep.stream.idleTimeoutSeconds) || ep.stream.idleTimeoutSeconds < 0)
+  ) {
+    throw new Error(`${where} idleTimeoutSeconds must be a non-negative safe integer`);
+  }
+  if (ep.output) throw new Error(`${where} cannot declare an output schema`);
+  if (ep.rawResponse) throw new Error(`${where} cannot also be rawResponse`);
+  if (ep.multipart) throw new Error(`${where} cannot be multipart`);
+  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
+  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
   }
@@ -769,9 +830,11 @@ type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &
  */
 type EndpointOutput<E> = E extends { rawResponse: true }
   ? Response
-  : Prop<E, 'output'> extends ZodType<infer O>
-    ? O
-    : undefined;
+  : Prop<E, 'stream'> extends { item: ZodType<infer O> }
+    ? AsyncIterableIterator<O>
+    : Prop<E, 'output'> extends ZodType<infer O>
+      ? O
+      : undefined;
 
 export type EndpointFn<E> = [keyof EndpointArgs<E>] extends [never]
   ? ClientEndpointWithoutArgs<EndpointOutput<E>>

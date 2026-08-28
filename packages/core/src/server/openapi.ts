@@ -11,6 +11,7 @@
  * `$ref` de-duplication can come later if a spec grows unwieldy.
  */
 
+import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract';
 import { inputIsQuery } from '../internal/http-input';
 import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
@@ -205,6 +206,21 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
                   },
                 },
               };
+      } else if (method.stream) {
+        const mediaType =
+          method.stream.format === 'sse' ? 'text/event-stream' : 'application/x-ndjson';
+        responses['200'] = {
+          description: 'Validated streaming response',
+          content: {
+            [mediaType]: {
+              schema: { type: 'string' },
+              'x-stitchkit-item-schema': safeJson(method.stream.item, 'output'),
+              'x-stitchkit-max-frame-bytes':
+                method.stream.maxFrameBytes ?? DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
+              'x-stitchkit-terminal-required': Boolean(method.stream.terminal),
+            },
+          },
+        };
       } else if (method.outputSchema) {
         responses[String(method.responseMeta?.status ?? 200)] = {
           description: 'Success',
@@ -219,7 +235,8 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         operationId: `${service.name}_${key}`,
         'x-stitchkit-scope': method.scope,
         'x-stitchkit-has-input': Boolean(method.inputSchema),
-        'x-stitchkit-has-output': Boolean(method.outputSchema),
+        'x-stitchkit-has-output': Boolean(method.outputSchema || method.stream),
+        ...(method.stream && { 'x-stitchkit-stream': true }),
         ...(parameters.length > 0 && { parameters }),
         responses,
       };

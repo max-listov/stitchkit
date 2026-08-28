@@ -88,3 +88,11 @@ export type {
   ScopedHandlers,
   ServiceDef,
 } from './server/types';
+export {
+  createUnixClientTransport,
+  type UnixClientDeliveryState,
+  type UnixClientTransport,
+  type UnixClientTransportConfig,
+  UnixClientTransportError,
+  type UnixClientTransportErrorCode,
+} from './server/unix-client';

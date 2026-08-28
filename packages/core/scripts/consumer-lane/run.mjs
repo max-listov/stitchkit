@@ -240,6 +240,26 @@ try {
     }
 
     if (name === 'minimal') {
+      const unixOutput = step('minimal: packed Bun Unix client', () =>
+        run('bun', ['src/unix-client-conformance.mjs'], dir),
+      );
+      if (!unixOutput.includes('packed Bun Unix client conformance: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: Unix client conformance produced no proof',
+          unixOutput,
+        );
+      }
+      const boundedOutput = step('minimal: bounded transport primitives', () =>
+        run('bun', ['src/bounded-primitives.ts'], dir),
+      );
+      if (!boundedOutput.includes('bounded transport primitives: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: bounded primitives produced no proof',
+          boundedOutput,
+        );
+      }
       const conformanceOutput = step('minimal: managed resource conformance', () =>
         run('bun', ['src/managed-resource-conformance.ts'], dir),
       );

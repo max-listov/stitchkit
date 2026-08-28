@@ -10,6 +10,7 @@ import { isRecord, transportResult } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import { responseTraceId } from './request-id';
+import type { ClientFetch } from './transport';
 
 export type ApiEvent =
   | { type: 'unauthorized' }
@@ -122,6 +123,8 @@ export interface HttpClientConfig {
    * Default `false`.
    */
   trace?: boolean;
+  /** Explicit Fetch-compatible transport, for example `createUnixClientTransport().fetch`. */
+  fetch?: ClientFetch;
   /**
    * Dial a unix domain socket instead of TCP (Bun runtime only — other
    * runtimes ignore the option and dial `baseUrl` over TCP). `baseUrl` stays
@@ -142,8 +145,11 @@ type ParamArrayValue = Array<string | number>;
  * URL plus a materialized init while the untouched first attempt keeps the
  * exact Ky Request.
  */
-function createRetryAwareFetch(unix?: string): NonNullable<Options['fetch']> {
-  const runtimeFetch = globalThis.fetch.bind(globalThis);
+function createRetryAwareFetch(
+  transportFetch: ClientFetch,
+  unix?: string,
+): NonNullable<Options['fetch']> {
+  const runtimeFetch = transportFetch;
   let attempt = 0;
 
   return (input, init) => {
@@ -157,13 +163,15 @@ function createRetryAwareFetch(unix?: string): NonNullable<Options['fetch']> {
       return runtimeFetch(input, init);
     }
     if (!(input instanceof Request)) {
-      return runtimeFetch(input, unix === undefined ? init : { ...init, unix });
+      if (unix === undefined) return runtimeFetch(input, init);
+      const unixInit: RequestInit & { unix: string } = { ...init, unix };
+      return runtimeFetch(input, unixInit);
     }
     // Undici requires `duplex: 'half'` when a Request body stream is moved into
     // URL + RequestInit form. Keep it in a spread because `duplex` is a runtime
     // Fetch field that is not yet present in every TypeScript DOM lib.
     const streamedBody = input.body ? { body: input.body, duplex: 'half' } : {};
-    return runtimeFetch(input.url, {
+    const materialized: RequestInit & { unix?: string } = {
       ...init,
       ...(unix !== undefined && { unix }),
       method: input.method,
@@ -178,7 +186,8 @@ function createRetryAwareFetch(unix?: string): NonNullable<Options['fetch']> {
       referrer: input.referrer,
       referrerPolicy: input.referrerPolicy,
       signal: input.signal,
-    });
+    };
+    return runtimeFetch(input.url, materialized);
   };
 }
 
@@ -222,6 +231,19 @@ export interface ConfiguredHttpClient extends HttpClient {
  * `401 → unauthorized` event stream, and safe transport retry.
  */
 export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient {
+  if (config.fetch && config.unix) {
+    throw new TypeError('HttpClientConfig.fetch and unix are mutually exclusive');
+  }
+  if (config.unix !== undefined) {
+    if (!config.unix.startsWith('/') || config.unix.includes('\0')) {
+      throw new TypeError('HttpClientConfig.unix must be an absolute Unix socket path');
+    }
+    if (typeof Reflect.get(globalThis, 'Bun') !== 'object') {
+      throw new TypeError(
+        'HttpClientConfig.unix requires Bun; on Bun or Node use createUnixClientTransport().fetch for an explicit portable transport',
+      );
+    }
+  }
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
@@ -316,7 +338,10 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.timeout ?? config.timeout ?? 30_000,
     );
     const kyOptions: Options = {
-      fetch: createRetryAwareFetch(config.unix),
+      fetch: createRetryAwareFetch(
+        config.fetch ?? globalThis.fetch.bind(globalThis),
+        config.unix,
+      ),
       timeout: false,
       signal: cancellation.signal,
     };

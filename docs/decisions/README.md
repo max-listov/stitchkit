@@ -130,6 +130,10 @@ These records were consolidated from the project's internal design notes on
 | [0113](0113-an-absorbed-input-is-committed-with-the-answer.md) | An absorbed input is committed with the answer, never before it | Accepted — reinstates the `inject` policy withdrawn in 0.65.0, with the ordering that made it wrong corrected |
 | [0114](0114-the-graph-carries-values-not-only-order.md) | The resource graph carries values, not only order | Accepted — `dependsOn` expressed half the dependency; the other half lived in a module-local with an unreachable guard |
 | [0115](0115-a-managed-server-resource-owns-when-the-server-exists.md) | A managed server resource owns when the server exists | Accepted — a thunk is created in `start`, because calling it on the way down produced a healthy application with nothing listening |
+| [0116](0116-a-selected-unix-transport-never-becomes-tcp.md) | A selected Unix transport never becomes TCP | Accepted — explicit owned Bun/Node transport with bounded work and delivery state |
+| [0117](0117-contract-streams-own-validation-and-wire-termination.md) | Contract streams own validation and wire termination | Accepted — schema-derived bounded frames and explicit completion on the existing HTTP stream path |
+| [0118](0118-operation-capacity-belongs-to-the-underlying-work.md) | Operation capacity belongs to the underlying work | Accepted — caller deadlines cannot release capacity still consumed by non-cooperative work |
+| [0119](0119-delivery-policy-is-ordered-or-replaceable.md) | Delivery policy is ordered or replaceable | Accepted — finite ordered retention and explicit latest-value coalescing are different contracts |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

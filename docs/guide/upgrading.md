@@ -91,6 +91,56 @@ implement `AgentRuntimeStoreDriver` and compose the aggregate with
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
+## Unreleased migration: bounded transport primitives
+
+### Make Unix transport selection explicit outside Bun
+
+The legacy `unix` option remains a Bun convenience, but on Node or another
+runtime it now fails before dispatch. Replace it with the owned adapter and close
+that adapter with the application:
+
+```ts
+// before — unsafe outside Bun: an unsupported fetch could dial baseUrl over TCP
+const http = createHttpClient({ baseUrl, unix: '/run/service.sock' })
+
+// after — Bun and Node; every dispatch and redirect stays on the socket
+import { createUnixClientTransport } from 'stitchkit/server' // or stitchkit/node
+const transport = createUnixClientTransport({ socketPath: '/run/service.sock' })
+const http = createHttpClient({ baseUrl, fetch: transport.fetch })
+// during shutdown
+await transport.close()
+```
+
+Do not automatically replay `possibly-dispatched`: a timeout or connection loss
+after bytes left the process does not prove that a write did not happen.
+
+### Choose tolerant stream parsing explicitly
+
+`parseNDJSON` and `parseSSE` now throw on malformed JSON, invalid UTF-8 and an
+over-limit line. The default line ceiling is 1 MiB. If a feed deliberately skips
+bad records, retain that policy explicitly:
+
+```ts
+// before — malformed input disappeared implicitly
+parseNDJSON(response)
+
+// after — ordinary fail-closed path
+parseNDJSON(response, { maxLineBytes: 256 * 1024 })
+
+// after — deliberately tolerant path
+parseNDJSON(response, { onParseError: (raw, error) => report(raw, error) })
+```
+
+### Extend exhaustive framework-error handling
+
+If a switch makes `StitchErrorCode` exhaustive, add
+`STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
+`STREAM_TERMINAL_MISSING` and `STREAM_LIFETIME_EXCEEDED`. A partial application
+status map needs no change (ADR 0105).
+
+The admission/channel APIs and endpoint `stream` descriptor are additive; raw
+responses and raw `streamingRoute` remain supported.
+
 ## Released migration: 0.67.0
 
 Three application-kernel changes. Two of them fix silent failures, so the most

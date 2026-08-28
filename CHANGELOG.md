@@ -13,6 +13,83 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [Unreleased]
+
+Four bounded process-local primitives: a portable fail-closed Unix client,
+schema-derived contract streams, operation admission leases and explicit
+ordered/latest delivery channels.
+
+### ⚠️ Breaking changes
+
+**Who must act:** a caller using the legacy `createHttpClient({ unix })` outside
+Bun must move to the explicit adapter; a caller relying on `parseNDJSON` or
+`parseSSE` to silently skip malformed input must supply `onParseError`; and a
+caller matching exhaustively on `StitchErrorCode` adds the four stream codes.
+Migration steps: [`docs/guide/upgrading.md`](docs/guide/upgrading.md).
+
+- **A selected legacy Unix socket no longer becomes TCP on a non-Bun runtime.**
+  The runtime-specific option used to be passed through to whichever `fetch`
+  existed, so an unsupported runtime could ignore it and dial `baseUrl`. It now
+  refuses before dispatch. The portable path is an explicit owned transport,
+  and `unix` is mutually exclusive with `fetch`.
+  `// before: createHttpClient({ baseUrl, unix: '/run/service.sock' })` →
+  `// after:  const transport = createUnixClientTransport({ socketPath: '/run/service.sock' }); createHttpClient({ baseUrl, fetch: transport.fetch })`
+
+- **The low-level NDJSON/SSE parsers fail closed by default.** Malformed JSON or
+  invalid UTF-8 used to disappear when no parse callback was installed, leaving
+  the consumer with a plausible partial stream. Lines are now bounded to 1 MiB
+  by default and malformed input throws. A deliberately lossy feed opts back
+  into skip-and-report explicitly.
+  `// before: parseNDJSON(response) // malformed records silently skipped` →
+  `// after:  parseNDJSON(response, { onParseError: report }) // explicit tolerant policy`
+
+- **`StitchErrorCode` gains four contract-stream failures:**
+  `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
+  `STREAM_TERMINAL_MISSING` and `STREAM_LIFETIME_EXCEEDED`. The framework code
+  map is intentionally partial (ADR 0105), but an exhaustive switch over the
+  union must add the new arms.
+  `// before: const unreachable: never = code` →
+  `// after:  case 'STREAM_ITEM_INVALID': case 'STREAM_FRAME_TOO_LARGE': case 'STREAM_TERMINAL_MISSING': case 'STREAM_LIFETIME_EXCEEDED': …`
+
+### Added
+
+- **Portable fail-closed Unix client transport.**
+  `createUnixClientTransport` is exported from `stitchkit/server` and
+  `stitchkit/node`; it enforces an absolute path, keeps redirects on that socket,
+  bounds request/response/header bytes, header wait, connections and redirects,
+  and owns active work through `close()`. `UnixClientTransportError.delivery`
+  distinguishes `not-dispatched`, `possibly-dispatched` and
+  `response-received`, so retry policy never guesses. Bun uses a backpressure-
+  aware raw socket path; Node uses its native HTTP Unix transport. → ADR 0116.
+
+- **Contract-first bounded response streams.** An HTTP endpoint's `stream`
+  descriptor declares the Zod item, NDJSON/SSE format, encoded-frame ceiling,
+  heartbeat/idle/lifetime policy and optional terminal predicate. Handlers yield
+  schema-derived items; typed clients consume validated owned iterators. The
+  wire has explicit data/error/end frames, safe post-header failures and one
+  cancellation lifetime. → ADR 0117.
+
+- **Composable bounded operation admission.** `createBoundedAdmission` combines
+  atomic global/per-key concurrency and rate budgets with the existing
+  application gate. It has no hidden queue, bounds the key registry, computes
+  retry time only from a timed rate budget and keeps capacity leased until the
+  underlying work—not merely a timed-out caller—settles. → ADR 0118.
+
+- **Bounded delivery channels and byte credit.** `createBoundedChannel` exposes
+  exact `ordered` retention or one-pending `latest` coalescing with count/byte
+  bounds and explicit offer outcomes. `createCreditWindow` supplies idempotent
+  exact byte leases. `createApplicationSnapshotSink` now shares the latest-value
+  channel mechanics while preserving its public revision/status semantics. →
+  ADR 0119.
+
+### Fixed
+
+- **Stream parsing is physically bounded before JSON decoding.** Unterminated
+  lines and invalid UTF-8 no longer accumulate or turn into replacement text.
+- **Unix response backpressure on Bun reaches the socket.** A stalled iterator
+  pauses a fast producer instead of allowing the Node compatibility response
+  wrapper to consume the whole body eagerly.
+
 ## [0.67.0] — 2026-08-26
 
 Three defects in the application kernel, all found by one consuming project

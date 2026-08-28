@@ -203,6 +203,14 @@ export type {
   StreamingMultipartImplementation,
 } from './types';
 export {
+  createUnixClientTransport,
+  type UnixClientDeliveryState,
+  type UnixClientTransport,
+  type UnixClientTransportConfig,
+  UnixClientTransportError,
+  type UnixClientTransportErrorCode,
+} from './unix-client';
+export {
   type ComposedLane,
   composeWebSocketHandlers,
   type WebSocketComposeConfig,

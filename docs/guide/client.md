@@ -59,23 +59,46 @@ your own `(pathname) => boolean`.
 
 ### Unix domain sockets
 
-The same typed client dials a local daemon's socket file
-([server side](server.md#local-daemon-over-a-unix-socket)):
+The same typed client dials a local daemon's socket file through an explicit,
+owned Bun/Node transport ([server side](server.md#local-daemon-over-a-unix-socket)):
 
 ```ts
+import { createHttpClient } from 'stitchkit'
+import { createUnixClientTransport } from 'stitchkit/server' // or stitchkit/node
+
+const transport = createUnixClientTransport({
+  socketPath: '/run/my-daemon.sock',
+  maxRequestBytes: 4 * 1024 * 1024,
+  maxResponseBytes: 16 * 1024 * 1024,
+})
 const http = createHttpClient({
-  baseUrl: 'http://localhost', // required prefix source; its host is ignored
-  unix: '/run/my-daemon.sock',
+  baseUrl: 'http://my-daemon', // URL/Host source; never dialled as TCP
+  fetch: transport.fetch,
+  retry: { limit: 0 },
 })
 const daemon = createClient(daemonContract, http)
+
+// At application shutdown:
+await transport.close()
 ```
 
-`baseUrl` stays required — it supplies the path prefix and the `Host` header,
-while the connection itself goes through the socket file. Bun runtime only:
-other runtimes ignore the option and dial `baseUrl` over TCP (Node's fetch
-would need an undici dispatcher — out of scope). A missing socket file
-surfaces as a normal `ApiError` and is not retried (transport retry stays
-connection-refused-only).
+`baseUrl` stays required because it supplies the URL and `Host` header. The
+adapter structurally owns dispatch: relative and absolute redirects use the same
+socket, and a missing socket cannot fall through to that host over TCP. Defaults
+are 16 MiB request/response bodies, 64 KiB headers, 30 s to response headers,
+eight connections and five redirects.
+
+`UnixClientTransportError` carries a stable `code` and `delivery`:
+`not-dispatched`, `possibly-dispatched` or `response-received`. Only the first
+proves that the remote operation did not begin; Stitchkit never silently retries
+an ambiguous write. Response consumption/cancellation belongs to the operation,
+and `close()` interrupts active work and destroys owned connections.
+
+The legacy `createHttpClient({ unix: '/absolute/path' })` spelling remains a
+Bun-only convenience. On a non-Bun runtime it now refuses before dispatch
+instead of ignoring the selection and dialing TCP. `unix` and an injected
+`fetch` are mutually exclusive; use `createUnixClientTransport` for portable,
+explicit lifecycle ownership. → ADR 0116.
 
 `trace: true` mints a fresh root trace per request. The stitchkit server
 [continues an inbound `traceparent`](./observability.md#trace-context), so the
@@ -443,6 +466,41 @@ sends one. The result keeps the full `react-query-kit` surface (`.getKey()`,
 `useSuspenseInfiniteQuery`, every option). The endpoint must return the
 `{ items, nextCursor }` envelope — see [Contracts → pagination](./contracts.md#pagination).
 
+## Contract-first streams
+
+When an endpoint declares `stream`, `createClient` returns a schema-derived
+owned iterator rather than an untyped `Response`:
+
+```ts
+const Progress = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('line'), text: z.string() }),
+  z.object({ kind: z.literal('complete'), count: z.number().int() }),
+])
+
+const contract = defineContract({ prefix: 'reports' }, {
+  watch: {
+    method: 'GET', path: '/:id/watch', desc: 'Watch one report',
+    params: z.object({ id: z.string() }),
+    stream: {
+      item: Progress,
+      format: 'ndjson',                 // default; `sse` is also supported
+      maxFrameBytes: 64 * 1024,         // default 256 KiB
+      terminal: z.object({ kind: z.literal('complete') }).loose(),
+    },
+  },
+})
+
+const stream = await createClient(contract, http).watch({ id: 'r-1' })
+for await (const item of stream) console.log(item) // inferred from Progress
+```
+
+The iterator validates every frame and item. Normal completion requires the
+wire `end` frame and, when declared, at least one matching terminal item; EOF is
+`STREAM_TRUNCATED`, and a missing terminal is `STREAM_TERMINAL_MISSING`.
+`return()`/`break`, caller abort, producer failure and optional `lifetimeMs`
+converge on the request operation. See the
+[server half](./server.md#contract-first-streams). → ADR 0117.
+
 ## SSE
 
 For a streaming endpoint, consume the response with `parseSSE`:
@@ -458,7 +516,9 @@ for await (const event of parseSSE(res)) {
 
 The server side is [`streamSSE`](./server.md#sse-streaming), or
 [`sseRoute`](./server.md#long-lived-subscriptions) for a subscription that stays
-open.
+open. One line is bounded by `maxLineBytes` (default 1 MiB), UTF-8 is decoded
+strictly and malformed input throws. Supply `onParseError` only when
+skip-and-report is an explicit application policy.
 
 ## NDJSON
 
@@ -490,5 +550,6 @@ convenience: a long-lived stream must send something while it is idle or
 intermediaries drop it, and an empty line is the natural pulse for this framing.
 Writing the rule down on both sides is what stops it being a verbal agreement —
 the server's keep-alive and the reader's skip are one decision with two
-implementations. A frame that is not valid JSON goes to `onParseError` rather
-than throwing, so one bad line does not end the subscription.
+implementations. One line is bounded by `maxLineBytes` (default 1 MiB), UTF-8 is
+decoded strictly and malformed input throws. Passing `onParseError` explicitly
+selects tolerant skip-and-report behaviour.

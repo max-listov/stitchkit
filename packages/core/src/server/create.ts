@@ -23,6 +23,7 @@ import {
   parsePathParamsInto,
   parseRequestPayloadInto,
 } from './context';
+import { contractStreamResponse } from './contract-stream';
 import {
   buildLogFields,
   levelForStatus,
@@ -76,6 +77,13 @@ function isClientClosedRequest(req: Request, error: unknown): boolean {
   return (
     req.signal.reason !== undefined && containsRequestAbortReason(error, req.signal.reason)
   );
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    return false;
+  }
+  return typeof Reflect.get(value, Symbol.asyncIterator) === 'function';
 }
 
 export function createHandler<TServer = unknown>(
@@ -449,6 +457,17 @@ export function createHandler<TServer = unknown>(
       const responseMetadata = method.responseMeta ? createResponseMetadata() : undefined;
       if (responseMetadata) ctx.response = responseMetadata;
 
+      const streamAbort = method.stream ? new AbortController() : undefined;
+      if (streamAbort) {
+        if (req.signal.aborted) streamAbort.abort(req.signal.reason);
+        else {
+          req.signal.addEventListener('abort', () => streamAbort.abort(req.signal.reason), {
+            once: true,
+          });
+        }
+        ctx.signal = streamAbort.signal;
+      }
+
       let result = await method.handler(ctx);
 
       // A raw endpoint owns its response: no `afterHandle` (that hook
@@ -476,6 +495,30 @@ export function createHandler<TServer = unknown>(
         const rawRes = applyCors(response, cors, req);
         complete(rawRes.status);
         return rawRes;
+      }
+
+      // A contract stream owns validated protocol frames, not a data value.
+      // Like a raw response it skips data transforms/serialization, while the
+      // framework still owns schema validation, bounds and cancellation.
+      if (method.stream) {
+        if (!streamAbort || !isAsyncIterable(result)) {
+          streamAbort?.abort();
+          throw new AppError(
+            'INTERNAL_SERVER_ERROR',
+            `Streaming endpoint ${method.serviceName}.${method.key} must return an AsyncIterable`,
+            500,
+          );
+        }
+        const response = await contractStreamResponse(
+          req,
+          { params: pathParams, server, ipAddress: clientIp.socketIp },
+          result,
+          method.stream,
+          streamAbort,
+        );
+        const withCors = applyCors(response, cors, req);
+        complete(withCors.status);
+        return withCors;
       }
 
       if (groupHooks?.afterHandle) {

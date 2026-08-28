@@ -851,6 +851,57 @@ focused helper — not a sub-framework.
 | `createCache()` + `cacheHeaders()` | in-memory TTL cache; `Cache-Control` builder |
 | `createEventBus<EventMap>()` | typed in-process pub/sub |
 
+### Contract-first streams
+
+Use an endpoint `stream` descriptor when the item schema and completion belong
+to the contract, rather than handing an application-owned `Response` to
+`rawResponse`:
+
+```ts
+const Item = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('line'), text: z.string() }),
+  z.object({ kind: z.literal('complete'), count: z.number().int() }),
+])
+
+const reports = defineContract({ prefix: 'reports' }, {
+  watch: {
+    method: 'GET', path: '/:id/watch', desc: 'Watch one report',
+    params: z.object({ id: z.string() }),
+    stream: {
+      item: Item,
+      format: 'ndjson',
+      maxFrameBytes: 64 * 1024,
+      terminal: z.object({ kind: z.literal('complete') }).loose(),
+    },
+  },
+})
+
+const service = implement(reports, {
+  watch: async function* ({ params, signal }) {
+    yield { kind: 'line', text: `starting ${params.id}` }
+    if (signal.aborted) return
+    yield { kind: 'complete', count: 1 }
+  },
+})
+```
+
+The handler return is inferred as `AsyncIterable<z.output<typeof Item>>`; an
+invalid JavaScript producer is rejected before its value reaches the wire. Data,
+safe errors and normal end use a framework envelope. The default encoded frame
+limit is 256 KiB. `format` defaults to `ndjson`; `heartbeatMs` defaults to five
+seconds; `idleTimeoutSeconds` defaults to disabled; `lifetimeMs` is optional.
+
+After headers, HTTP status can no longer report failure, so the stream sends a
+normalized code and never the raw internal exception. Normal producer completion
+sends an explicit `end`; when `terminal` is declared, at least one item must
+match it. Request abort and client iterator return abort `signal`, including a
+source waiting in `next()` or suspended at a yielded item.
+
+Contract streams are HTTP-only and cannot declare `output`, `rawResponse`,
+multipart or tool exposure. They do not provide replay, cursors or durable
+subscriptions. Keep using `streamingRoute` for an application-owned protocol and
+`rawResponse` for arbitrary response bodies. → ADR 0117.
+
 ### SSE streaming
 
 `streamSSE` returns a `Response`, so its endpoint declares

@@ -93,6 +93,8 @@ export interface StreamingRouteOptions<TServer = unknown> {
   ) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>;
   /** Extra response headers. The framing headers below cannot be overridden. */
   headers?: Record<string, string>;
+  /** Synchronous ownership hook invoked on every close/cancel/error path. */
+  onClose?: () => void;
 }
 
 /**
@@ -273,6 +275,7 @@ export function streamingRoute<TServer = unknown>(
         if (closed) return;
         closed = true;
         try {
+          options.onClose?.();
           stopHeartbeat();
           // A pump parked on backpressure must not stay parked: nothing will
           // ever ask for more once the consumer is gone.

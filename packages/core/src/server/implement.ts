@@ -225,7 +225,10 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
       // transport — would conclude a download is a tool. Making it explicit keeps
       // them correct without teaching them about `raw`. → ADR 0038.
       expose:
-        endpoint.rawResponse || endpoint.rawBody || endpoint.responseMeta
+        endpoint.rawResponse ||
+        endpoint.rawBody ||
+        endpoint.responseMeta ||
+        ('stream' in endpoint && endpoint.stream)
           ? HTTP_ONLY
           : endpoint.expose,
       // Effective scope: per-endpoint override, else the contract group scope.
@@ -235,6 +238,7 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
       paramsSchema: endpoint.params,
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
+      stream: 'stream' in endpoint ? endpoint.stream : undefined,
       multipart: endpoint.multipart,
       multipartReceivers: streamingHandler?.receivers,
       maxJsonBodyBytes: endpoint.maxJsonBodyBytes,

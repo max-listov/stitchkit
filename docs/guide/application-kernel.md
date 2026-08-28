@@ -343,6 +343,69 @@ try {
 `release()` is idempotent. Admission and counter increment are atomic, so work
 cannot slip between the shutdown check and drain accounting.
 
+### Bounded operation admission
+
+Compose `createBoundedAdmission` when accepted work also competes for a finite
+process-local resource:
+
+```ts
+const generations = createBoundedAdmission({
+  upstream: app.admission,
+  policy: {
+    global: { maxConcurrent: 8, rate: { limit: 120, intervalMs: 60_000 } },
+    perKey: { maxConcurrent: 1, maxKeys: 2_000 },
+  },
+})
+
+await generations.run(accountId, ({ signal }) => generate({ signal }), {
+  signal: request.signal,
+  timeoutMs: 30_000,
+})
+```
+
+Acquisition is no-queue and atomic across every configured budget. Refusal names
+the exact bound; only a rate refusal carries `retryAfterMs`. `maxKeys` keeps the
+per-key registry finite, and expired idle entries are retired.
+
+The caller timeout is a wait budget, not proof that the resource stopped. It
+aborts the signal and settles the caller, but the lease remains active until the
+underlying Promise actually settles. `drain()` therefore reports real work;
+`force()` closes admission and reports remaining work without claiming to have
+terminated it. → ADR 0118.
+
+### Bounded delivery and byte credit
+
+`createBoundedChannel` is for one asynchronous reader when an event bus is not a
+queue:
+
+```ts
+const output = createBoundedChannel<string>({
+  policy: 'ordered',
+  maxItems: 64,
+  maxBytes: 256 * 1024,
+  sizeOf: (value) => new TextEncoder().encode(value).byteLength,
+})
+
+const progress = createBoundedChannel<{ revision: number }>({
+  policy: 'latest',
+  maxItems: 1,
+  maxBytes: 128,
+  sizeOf: () => 128,
+})
+```
+
+`ordered` never overwrites accepted values; overflow is a reasoned refusal.
+`latest` retains exactly one pending replaceable value and reports
+`coalesced`. Offers never create a hidden writer queue, and only one `next()` may
+wait. Close chooses `drain` (default) or `discard`; abort discards; failure
+rejects the parked and all later reads.
+
+`createCreditWindow({ capacityBytes })` is the smaller primitive for a protocol
+that already owns its queue but needs exact byte permission. Each credit lease
+replenishes once; it is flow-control credit, not a durable acknowledgement. The
+application snapshot sink now shares the same latest-value mechanics without
+changing its revision or status contract. → ADR 0119.
+
 Shutdown performs one phase barrier at a time: stop admission everywhere,
 cancel future schedules, drain admitted work, then close in reverse stable
 topological order. Every hook shares the same grace deadline. Forced cleanup

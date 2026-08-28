@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { createClient } from 'stitchkit';
 import { createMemoryAgentRuntimeStore } from 'stitchkit/agent-runtime';
+import {
+  createBoundedAdmission,
+  createBoundedChannel,
+  createCreditWindow,
+} from 'stitchkit/application';
 import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract } from 'stitchkit/contract';
-import { implement } from 'stitchkit/server';
+import { createHandler, implement } from 'stitchkit/server';
 import { createAgentRaceTrace } from 'stitchkit/testing';
 import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
@@ -106,4 +112,66 @@ const result = await stdioClient.callTool({
 assert.deepEqual(result.structuredContent, { text: 'packed Node stdio' });
 await stdioClient.close();
 
-console.log('node consumer: ok (HTTP + stdio MCP)');
+const streamContract = defineContract(
+  { prefix: 'node-stream' },
+  {
+    read: {
+      method: 'GET',
+      path: '/',
+      desc: 'Read a packed Node stream',
+      stream: {
+        item: z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('line'), value: z.number() }),
+          z.object({ kind: z.literal('complete') }),
+        ]),
+        terminal: z.object({ kind: z.literal('complete') }),
+      },
+    },
+  },
+);
+const streamHandler = createHandler({
+  services: [
+    implement(streamContract, {
+      read: async function* () {
+        yield { kind: 'line', value: 1 };
+        yield { kind: 'complete' };
+      },
+    }),
+  ],
+});
+const streamClient = createClient(streamContract, {
+  baseUrl: 'http://packed-node',
+  fetch: (input, init) => streamHandler(new Request(input, init)),
+});
+const streamValues = [];
+for await (const value of await streamClient.read()) streamValues.push(value);
+assert.deepEqual(streamValues, [{ kind: 'line', value: 1 }, { kind: 'complete' }]);
+
+const bounded = createBoundedAdmission({
+  policy: { global: { maxConcurrent: 1 } },
+});
+const boundedLease = bounded.acquire();
+assert.equal(boundedLease.outcome, 'leased');
+assert.equal(bounded.acquire().outcome, 'refused');
+if (boundedLease.outcome === 'leased') boundedLease.lease.release();
+
+const channel = createBoundedChannel({
+  policy: 'ordered',
+  maxItems: 2,
+  maxBytes: 2,
+  sizeOf: () => 1,
+});
+channel.offer('one');
+channel.offer('two');
+channel.close();
+const channelValues = [];
+for await (const value of channel) channelValues.push(value);
+assert.deepEqual(channelValues, ['one', 'two']);
+
+const credit = createCreditWindow({ capacityBytes: 2 });
+const creditLease = credit.acquire(2);
+assert.equal(creditLease.outcome, 'leased');
+assert.equal(credit.acquire(1).outcome, 'refused');
+if (creditLease.outcome === 'leased') creditLease.lease.release();
+
+console.log('node consumer: ok (HTTP + stdio MCP + bounded transport primitives)');
