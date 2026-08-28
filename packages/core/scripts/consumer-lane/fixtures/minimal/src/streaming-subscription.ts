@@ -140,6 +140,9 @@ const typedContract = defineContract(
           z.object({ kind: z.literal('complete'), count: z.number().int() }),
         ]),
         terminal: z.object({ kind: z.literal('complete') }).loose(),
+        framing: 'item',
+        completion: 'terminal',
+        finalLine: 'require-newline',
         maxFrameBytes: 1_024,
       },
     },
@@ -149,6 +152,7 @@ const typedService = implement(typedContract, {
   log: async function* ({ params }) {
     yield { kind: 'line' as const, text: `packed:${params.id}` };
     yield { kind: 'complete' as const, count: 1 };
+    throw new Error('terminal completion consumed trailing producer work');
   },
 });
 
@@ -197,7 +201,10 @@ if (!closedInTime) fail('a disconnect did not close the source');
 
 // 4. The frames themselves, through the documented reader, with keep-alives
 //    interleaved — the blank-line rule is under test, not assumed.
-const options: ParseNDJSONOptions = { onParseError: (raw) => fail(`unreadable frame ${raw}`) };
+const options: ParseNDJSONOptions = {
+  finalLine: 'require-newline',
+  onParseError: (raw) => fail(`unreadable frame ${raw}`),
+};
 const received: unknown[] = [];
 for await (const frame of parseNDJSON(await fetch(`${origin}/frames`), options)) {
   received.push(frame);

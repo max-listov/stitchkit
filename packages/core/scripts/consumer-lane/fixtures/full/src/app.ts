@@ -14,6 +14,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { MockLanguageModelV4 } from 'ai/test';
 import { ApiError } from 'stitchkit';
 import {
+  AgentContextOverflowError,
   composeAgentPrompt,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
@@ -138,6 +139,47 @@ check(
     packedAgentTerminal.run.state === 'failed',
 );
 await packedAgentRuntime.close();
+
+const packedStepModel = new MockLanguageModelV4();
+const packedStepRuntime = createAgentRuntime({
+  protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+  store: createMemoryAgentRuntimeStore(),
+  models: {
+    resolve: () => ({
+      descriptor: {
+        provider: 'packed',
+        modelId: 'packed-step-model',
+        contextWindow: 1_000,
+        capabilities: [],
+      },
+      model: packedStepModel,
+    }),
+  },
+  prompt: () => ({
+    instructions: 'packed',
+    sections: [],
+    instructionTokens: { provenance: 'unavailable' },
+    contextDecision: 'fits',
+  }),
+  tools: () => ({}),
+  loop: {
+    prepareStep: () => {
+      throw new AgentContextOverflowError('packed step budget');
+    },
+  },
+});
+const packedStepTerminal = await packedStepRuntime.submit({
+  conversationId: 'packed-step-conversation',
+  idempotencyKey: 'packed-step-input',
+  context: {},
+  parts: [{ type: 'text', text: 'hello' }],
+}).result;
+check(
+  'the packed agent runtime preserves a typed step context refusal',
+  packedStepTerminal.reason === 'context_overflow' &&
+    packedStepModel.doStreamCalls.length === 0,
+);
+await packedStepRuntime.close();
 
 const packedOpenRouter = openRouterProvider({ apiKey: 'packed-no-network-key' });
 const packedOpenRouterModel = packedOpenRouter.create('provider/model');

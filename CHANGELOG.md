@@ -15,6 +15,27 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.4] — 2026-08-28
+
+### Added
+
+- **Contract streams can preserve a schema-owned NDJSON wire.**
+  `framing: 'item'` with `completion: 'terminal'` writes and reads validated items without the
+  Stitchkit data/error/end envelope. A matching terminal stops producer and reader work, releases
+  the owned request before the terminal item is yielded, and makes early EOF an explicit
+  `STREAM_TERMINAL_MISSING`. Existing envelope framing remains the default. → ADR 0126.
+- **NDJSON can require its final newline.** `finalLine: 'require-newline'` is available on contract
+  streams and `parseNDJSON`; the default remains permissive for existing callers.
+- **Per-step context budgeting can refuse a provider call without blaming it.** Throw
+  `AgentContextOverflowError` from `loop.prepareStep` before any step whose assembled context is
+  known to exceed the selected model budget. The durable run, delivery event and observability
+  terminal all report `context_overflow`; unrelated callback and provider errors remain
+  `provider_failure` with their internal diagnostics.
+
+No call-site migration is required. Choose item framing only for a protocol whose terminal item
+already proves successful completion. Use the typed context refusal only for a deliberate budget
+decision — never to classify an arbitrary error by its message.
+
 ## [0.68.3] — 2026-08-28
 
 ### Fixed

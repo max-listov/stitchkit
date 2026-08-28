@@ -59,8 +59,10 @@ The browser-and-server entrypoint. Re-exports everything from
 | `bindRealtimeClient` | function | bind contract validation and typed acknowledgements to an existing Stitchkit client transport without owning its lifecycle |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
-| `parseNDJSON` | function | parse an NDJSON `Response`; blank keep-alive lines are skipped — [guide](../guide/client.md#ndjson) |
-| `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | internal-on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
+| `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON; blank keep-alives are skipped and `finalLine: 'require-newline'` can make the delimiter mandatory — [guide](../guide/client.md#ndjson) |
+| `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | default on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
+| `ContractStreamFraming` / `ContractStreamCompletion` | _types_ | opt-in item-vs-envelope framing and terminal-vs-stream-end completion policies |
+| `StreamFinalLinePolicy` | _type_ | permissive or newline-required final NDJSON line policy |
 | `DEFAULT_CONTRACT_STREAM_FRAME_BYTES` | const | default maximum encoded contract-stream frame: 256 KiB |
 | `SocketIOClient` | _type_ | low-level client handle; `emit` reports disconnected drops and `emitWithAck` exposes the native Promise primitive used by validated `request()` |
 | `SocketIOClientPeerLoaders` | _type_ | inject `socket.io-client` so a bundler can put it in a self-contained artifact |
@@ -137,7 +139,7 @@ from the root `stitchkit`.
 | `ContractDef` | _type_ | a defined contract |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid) |
-| `EndpointStreamDescriptor` | _type_ | HTTP-only schema-derived stream declaration: item schema, NDJSON/SSE framing, frame/lifetime/heartbeat/idle bounds and optional terminal predicate — [guide](../guide/server.md#contract-first-streams) |
+| `EndpointStreamDescriptor` | _type_ | HTTP-only schema-derived stream declaration: item schema, envelope/item framing, stream-end/terminal completion, NDJSON/SSE encoding and frame/lifetime/heartbeat/idle bounds — [guide](../guide/server.md#contract-first-streams) |
 | `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
 | `ResponseMetadata` | _type_ | per-request outbound collector exposed as `ctx.response` only for a `responseMeta` endpoint |
@@ -594,6 +596,7 @@ Server-only optional application runtime. See the
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
+| `AgentContextOverflowError` | class | deliberate application budget refusal thrown from `loop.prepareStep`; terminalizes as `context_overflow` without classifying arbitrary error text |
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
 | `AgentRuntimeAdmission` | _type_ | canonical committed input, assigned run, pending assistant projection, compatibility IDs and snapshot version |
 | `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |

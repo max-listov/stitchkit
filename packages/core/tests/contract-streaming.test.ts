@@ -40,6 +40,30 @@ const contract = defineContract(
   },
 );
 
+const ItemFramedStreamItem = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('line'), text: z.string() }).strict(),
+  z.object({ kind: z.literal('complete') }).strict(),
+]);
+
+const itemFramedContract = defineContract(
+  { prefix: 'item-framed-stream' },
+  {
+    read: {
+      method: 'GET',
+      path: '/read',
+      desc: 'Read schema-owned NDJSON items',
+      stream: {
+        item: ItemFramedStreamItem,
+        framing: 'item',
+        completion: 'terminal',
+        terminal: z.object({ kind: z.literal('complete') }).strict(),
+        finalLine: 'require-newline',
+        maxFrameBytes: 512,
+      },
+    },
+  },
+);
+
 function localClient(services: ReturnType<typeof implement<typeof contract.endpoints>>) {
   const handler = createHandler({ services: [services] });
   return createClient(contract, {
@@ -49,6 +73,45 @@ function localClient(services: ReturnType<typeof implement<typeof contract.endpo
 }
 
 describe('contract-first bounded streams', () => {
+  test('the declaration refuses unsafe item-framing combinations at runtime', () => {
+    expect(() =>
+      defineContract(
+        { prefix: 'unsafe-item-stream' },
+        {
+          read: {
+            method: 'GET',
+            path: '/read',
+            desc: 'Invalid item stream',
+            stream: {
+              item: ItemFramedStreamItem,
+              framing: 'item',
+              completion: 'stream-end',
+              terminal: z.object({ kind: z.literal('complete') }),
+            } as never,
+          },
+        },
+      ),
+    ).toThrow('item framing requires terminal completion');
+
+    expect(() =>
+      defineContract(
+        { prefix: 'unsafe-final-line' },
+        {
+          read: {
+            method: 'GET',
+            path: '/read',
+            desc: 'Invalid SSE line policy',
+            stream: {
+              item: ItemFramedStreamItem,
+              format: 'sse',
+              finalLine: 'require-newline',
+            } as never,
+          },
+        },
+      ),
+    ).toThrow('finalLine applies only to ndjson');
+  });
+
   test('the typed client yields validated NDJSON items and requires a terminal', async () => {
     const client = localClient(
       implement(contract, {
@@ -138,6 +201,140 @@ describe('contract-first bounded streams', () => {
     await expect(parseNDJSON(oversized, { maxLineBytes: 5 }).next()).rejects.toBeInstanceOf(
       RangeError,
     );
+
+    const unterminated = new Response('{"kind":"complete"}');
+    await expect(
+      parseNDJSON(unterminated, { finalLine: 'require-newline' }).next(),
+    ).rejects.toThrow('unterminated final line');
+
+    const permissive = new Response('{"kind":"complete"}');
+    await expect(parseNDJSON(permissive).next()).resolves.toEqual({
+      done: false,
+      value: { kind: 'complete' },
+    });
+  });
+
+  test('schema-owned NDJSON has no envelope and stops the producer at its terminal item', async () => {
+    let producedTrailing = false;
+    let closeSource: () => void = () => undefined;
+    const sourceClosed = new Promise<void>((resolve) => {
+      closeSource = resolve;
+    });
+    const handler = createHandler({
+      services: [
+        implement(itemFramedContract, {
+          read: async function* () {
+            try {
+              yield { kind: 'line' as const, text: 'first' };
+              yield { kind: 'complete' as const };
+              producedTrailing = true;
+              yield { kind: 'line' as const, text: 'must-not-run' };
+            } finally {
+              closeSource();
+            }
+          },
+        }),
+      ],
+    });
+
+    const response = await handler(new Request('http://local/item-framed-stream/read'));
+    expect(await response.text()).toBe(
+      '\n{"kind":"line","text":"first"}\n{"kind":"complete"}\n',
+    );
+    await expect(sourceClosed).resolves.toBeUndefined();
+    expect(producedTrailing).toBe(false);
+  });
+
+  test('terminal completion releases client I/O before yielding the terminal item', async () => {
+    let requestSignal: AbortSignal | undefined;
+    let closeSource: () => void = () => undefined;
+    const sourceClosed = new Promise<void>((resolve) => {
+      closeSource = resolve;
+    });
+    const handler = createHandler({
+      services: [
+        implement(itemFramedContract, {
+          read: async function* () {
+            try {
+              yield { kind: 'line' as const, text: 'first' };
+              yield { kind: 'complete' as const };
+              await Bun.sleep(60_000);
+            } finally {
+              closeSource();
+            }
+          },
+        }),
+      ],
+    });
+    const client = createClient(itemFramedContract, {
+      baseUrl: 'http://local',
+      fetch: (input, init) => {
+        requestSignal = init?.signal ?? undefined;
+        return handler(new Request(input, init));
+      },
+    });
+
+    const stream = await client.read();
+    await expect(stream.next()).resolves.toEqual({
+      done: false,
+      value: { kind: 'line', text: 'first' },
+    });
+    expect(requestSignal?.aborted).toBe(false);
+    await expect(stream.next()).resolves.toEqual({
+      done: false,
+      value: { kind: 'complete' },
+    });
+    expect(requestSignal?.aborted).toBe(true);
+    await expect(
+      Promise.race([sourceClosed.then(() => 'closed'), Bun.sleep(1_000).then(() => 'leaked')]),
+    ).resolves.toBe('closed');
+    await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  test('schema-owned EOF without its required terminal fails explicitly', async () => {
+    const client = createClient(itemFramedContract, {
+      baseUrl: 'http://local',
+      fetch: async () =>
+        new Response('{"kind":"line","text":"only"}\n', {
+          headers: { 'content-type': 'application/x-ndjson' },
+        }),
+    });
+    const stream = await client.read();
+    await expect(stream.next()).resolves.toEqual({
+      done: false,
+      value: { kind: 'line', text: 'only' },
+    });
+    await expect(stream.next()).rejects.toMatchObject({ code: 'STREAM_TERMINAL_MISSING' });
+  });
+
+  test('schema-owned producer failure closes without leaking a foreign error frame', async () => {
+    const handler = createHandler({
+      services: [
+        implement(itemFramedContract, {
+          read: async function* () {
+            yield { kind: 'line' as const, text: 'visible' };
+            throw new Error('private producer detail');
+          },
+        }),
+      ],
+    });
+    const client = createClient(itemFramedContract, {
+      baseUrl: 'http://local',
+      fetch: (input, init) => handler(new Request(input, init)),
+    });
+
+    const stream = await client.read();
+    await expect(stream.next()).resolves.toEqual({
+      done: false,
+      value: { kind: 'line', text: 'visible' },
+    });
+    try {
+      await stream.next();
+      throw new Error('expected a missing-terminal failure');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'STREAM_TERMINAL_MISSING' });
+      expect(String(error)).not.toContain('private producer detail');
+    }
   });
 
   test('a truncated wire and missing declared terminal are explicit client failures', async () => {

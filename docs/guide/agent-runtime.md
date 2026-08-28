@@ -48,6 +48,7 @@ bun add @openrouter/ai-sdk-provider
 ```ts
 import { z } from 'zod'
 import {
+  AgentContextOverflowError,
   composeAgentPrompt,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
@@ -525,6 +526,25 @@ is persisted on the run and included in the terminal event/result. `max-steps`
 is the reserved built-in policy name. `loop.prepareStep` is the controlled AI
 SDK step boundary for changing active tools, model, instructions or messages.
 It cannot replace the managed tool set or bypass its lifecycle fence.
+
+Context can grow between steps as tool results and deferred schemas enter the
+provider prompt. When application budgeting can prove that the next assembled
+step exceeds the selected model window, refuse it by type before that provider
+call:
+
+```ts
+prepareStep: (step) => {
+  if (wouldExceedSelectedModelWindow(step)) {
+    throw new AgentContextOverflowError('Prepared step exceeds the selected model window')
+  }
+  return chooseProductStepOptions(step)
+}
+```
+
+That deliberate refusal ends the run as `context_overflow` on the durable
+record, delivery terminal and operator event. Stitchkit does not inspect error
+messages: every other `prepareStep` or provider error remains
+`provider_failure`, and operator-only observability retains its original cause.
 
 Completion validity belongs to the protocol and is checked before the terminal
 CAS. Protocols that require a visible answer opt in explicitly:

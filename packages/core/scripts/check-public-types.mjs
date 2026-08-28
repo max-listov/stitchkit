@@ -109,6 +109,11 @@ const ACCEPTED = {
   ToolEndpointDef: 'member of the exported EndpointDef union',
   RawResponseEndpointDef: 'member of the exported EndpointDef union',
   StreamingResponseEndpointDef: 'member of the exported EndpointDef union',
+  EndpointStreamDescriptorBase:
+    'composition member of the exported EndpointStreamDescriptor union',
+  ContractStreamEncoding: 'composition member of the exported EndpointStreamDescriptor union',
+  StreamEndCompletion: 'composition member of the exported EndpointStreamDescriptor union',
+  TerminalItemCompletion: 'composition member of the exported EndpointStreamDescriptor union',
   RawBodyEndpointDef: 'member of the exported EndpointDef union',
   ResponseMetaDataEndpointDef: 'member of the exported EndpointDef union',
   ResponseMetaEmptyEndpointDef: 'member of the exported EndpointDef union',

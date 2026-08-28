@@ -3,8 +3,11 @@ import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  AgentContextOverflowError,
+  type AgentRunEvent,
   AgentRunMetricsSchema,
   AgentRunSchema,
+  createAgentObservability,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
@@ -137,5 +140,126 @@ describe('a refusal this runtime made does not blame the provider', () => {
     await runtime.close();
     expect(terminal.reason).toBe('context_overflow');
     expect(terminal.run.state).toBe('failed');
+  });
+
+  test('a typed step refusal agrees across result, durable state, delivery and observability', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [] } as never) }),
+    });
+    const store = createMemoryAgentRuntimeStore();
+    const delivery: Array<{ type: string; reason?: string }> = [];
+    const observed: AgentRunEvent[] = [];
+    const observability = createAgentObservability({
+      includeInternalCause: true,
+      write: (event) => {
+        observed.push(event);
+      },
+    });
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: { provider: 'test', modelId: 'm', contextWindow: 10, capabilities: [] },
+          model,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'fits',
+      }),
+      tools: () => ({}),
+      loop: {
+        prepareStep: () => {
+          throw new AgentContextOverflowError('step budget exceeded');
+        },
+      },
+      publish: (event) => {
+        delivery.push(event);
+      },
+      observe: observability,
+    });
+
+    const terminal = await runtime.submit({
+      conversationId: 'typed-refusal',
+      idempotencyKey: 'typed-refusal',
+      context: {},
+      parts: [{ type: 'text', text: 'go' }],
+      metadata: {},
+    }).result;
+    await observability.flush();
+
+    expect(model.doStreamCalls).toHaveLength(0);
+    expect(terminal.reason).toBe('context_overflow');
+    expect(terminal.run.state).toBe('failed');
+    expect((await store.loadSnapshot('typed-refusal')).runs[0]?.terminalReason).toBe(
+      'context_overflow',
+    );
+    expect(delivery).toContainEqual(
+      expect.objectContaining({ type: 'terminal', reason: 'context_overflow' }),
+    );
+    expect(observed).toContainEqual(
+      expect.objectContaining({ type: 'run-terminal', terminalReason: 'context_overflow' }),
+    );
+    await runtime.close();
+  });
+
+  test('an unexpected step callback error remains provider_failure', async () => {
+    const failure = new Error('callback bug');
+    const observed: AgentRunEvent[] = [];
+    const observability = createAgentObservability({
+      includeInternalCause: true,
+      write: (event) => {
+        observed.push(event);
+      },
+    });
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: [] } as never) }),
+    });
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store: createMemoryAgentRuntimeStore(),
+      models: {
+        resolve: () => ({
+          descriptor: { provider: 'test', modelId: 'm', contextWindow: 10, capabilities: [] },
+          model,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'fits',
+      }),
+      tools: () => ({}),
+      loop: {
+        prepareStep: () => {
+          throw failure;
+        },
+      },
+      observe: observability,
+    });
+
+    const terminal = await runtime.submit({
+      conversationId: 'unexpected-refusal',
+      idempotencyKey: 'unexpected-refusal',
+      context: {},
+      parts: [{ type: 'text', text: 'go' }],
+      metadata: {},
+    }).result;
+    await observability.flush();
+
+    expect(model.doStreamCalls).toHaveLength(0);
+    expect(terminal.reason).toBe('provider_failure');
+    expect(observed).toContainEqual(
+      expect.objectContaining({
+        type: 'run-terminal',
+        terminalReason: 'provider_failure',
+        internalCause: failure,
+      }),
+    );
+    await runtime.close();
   });
 });

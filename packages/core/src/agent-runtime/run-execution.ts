@@ -8,6 +8,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { isToolExecutionControlError } from '../tools/execute';
+import { AgentContextOverflowError } from './context-refusal';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectionRegistry } from './injection';
@@ -258,7 +259,6 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // kind, `true` on every checkpoint and `false` on every terminal including
     // the ones that were abandoned mid-stream.
     let sawProviderFinish = false;
-    let contextRefusal = false;
     let step = 0;
     let selectedModel: AgentResolvedModel | undefined;
     let internalCause: unknown;
@@ -397,12 +397,12 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       // land in the catch-all below and commit `provider_failure` — a durable
       // record blaming an upstream that was never contacted.
       if (prompt.contextDecision === 'oversized') {
-        contextRefusal = true;
-        throw new Error('Agent context exceeds the configured model budget');
+        throw new AgentContextOverflowError();
       }
       if (prompt.contextDecision === 'requires-compaction') {
-        contextRefusal = true;
-        throw new Error('Agent context still exceeds the model budget after compaction');
+        throw new AgentContextOverflowError(
+          'Agent context still exceeds the model budget after compaction',
+        );
       }
       // Carried out of the projection so the provider's instructions channel
       // gets it. `ai` refuses a system-role entry inside `messages`, so a
@@ -751,7 +751,13 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         } else if (part.type === 'abort') {
           terminalReason = 'interrupted';
         } else if (part.type === 'error') {
-          terminalReason = 'provider_failure';
+          // AI SDK projects `prepareStep` exceptions into the stream as an
+          // error part. Preserve only the public typed refusal; arbitrary
+          // callback and provider failures remain provider failures.
+          terminalReason =
+            part.error instanceof AgentContextOverflowError
+              ? 'context_overflow'
+              : 'provider_failure';
           internalCause = part.error;
         } else if (part.type === 'finish-step') {
           const stepTrace = trace ? config.observe?.rootTrace(trace) : undefined;
@@ -855,7 +861,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           }),
         );
       } else {
-        terminalReason = contextRefusal ? 'context_overflow' : 'provider_failure';
+        terminalReason =
+          error instanceof AgentContextOverflowError ? 'context_overflow' : 'provider_failure';
       }
     } finally {
       // In a `finally` because the `catch` above does its own I/O: a

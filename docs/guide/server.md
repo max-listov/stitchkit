@@ -902,6 +902,27 @@ multipart or tool exposure. They do not provide replay, cursors or durable
 subscriptions. Keep using `streamingRoute` for an application-owned protocol and
 `rawResponse` for arbitrary response bodies. → ADR 0117.
 
+For an existing schema-owned NDJSON protocol, opt into direct item frames and
+terminal-owned completion:
+
+```ts
+stream: {
+  item: Item,
+  framing: 'item',
+  completion: 'terminal',
+  terminal: z.object({ kind: z.literal('complete') }).loose(),
+  finalLine: 'require-newline',
+}
+```
+
+`item` framing is NDJSON-only and requires terminal completion. The server
+writes each validated item directly, stops the source after the terminal and
+never reads trailing producer values. Because this wire has no framework error
+envelope, any producer/lifetime failure before terminal closes the response;
+the typed client reports `STREAM_TERMINAL_MISSING`. The terminal item therefore
+proves success without weakening safe post-header failure semantics. Existing
+streams retain the envelope and explicit end frame by default. → ADR 0126.
+
 ### SSE streaming
 
 `streamSSE` returns a `Response`, so its endpoint declares

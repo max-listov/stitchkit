@@ -161,6 +161,10 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
      * single stalled one.
      */
     idleTimeoutMs?: number | null;
+    /**
+     * Prepare each provider step. Throw `AgentContextOverflowError` when the
+     * application can prove the assembled step exceeds the model budget.
+     */
     prepareStep?: AgentRuntimePrepareStep<CONTEXT, TOOLS>;
     stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS>[];
   };

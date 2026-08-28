@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createClient } from 'stitchkit';
-import { createMemoryAgentRuntimeStore } from 'stitchkit/agent-runtime';
+import {
+  AgentContextOverflowError,
+  createMemoryAgentRuntimeStore,
+} from 'stitchkit/agent-runtime';
 import {
   createBoundedAdmission,
   createBoundedChannel,
@@ -16,6 +19,7 @@ import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
 
 const agentStore = createMemoryAgentRuntimeStore();
+assert.equal(new AgentContextOverflowError().name, 'AgentContextOverflowError');
 const agentSnapshot = await agentStore.loadSnapshot('packed-node-agent');
 assert.equal(agentSnapshot.version, 0);
 const agentTrace = createAgentRaceTrace();
@@ -125,6 +129,9 @@ const streamContract = defineContract(
           z.object({ kind: z.literal('complete') }),
         ]),
         terminal: z.object({ kind: z.literal('complete') }),
+        framing: 'item',
+        completion: 'terminal',
+        finalLine: 'require-newline',
       },
     },
   },
@@ -135,6 +142,7 @@ const streamHandler = createHandler({
       read: async function* () {
         yield { kind: 'line', value: 1 };
         yield { kind: 'complete' };
+        throw new Error('terminal completion consumed trailing producer work');
       },
     }),
   ],

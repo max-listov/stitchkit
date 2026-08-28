@@ -60,8 +60,9 @@ export function contractStreamResponse(
           );
         }
         const item = parsed.data;
-        if (descriptor.terminal?.safeParse(item).success) terminalSeen = true;
-        const frame = { type: 'data', data: item };
+        const terminal = descriptor.terminal?.safeParse(item).success ?? false;
+        if (terminal) terminalSeen = true;
+        const frame = descriptor.framing === 'item' ? item : { type: 'data', data: item };
         if (encodedBytes(frame, format) > maxFrameBytes) {
           console.error(
             `[stitchkit] contract stream frame exceeded its ${maxFrameBytes} byte limit`,
@@ -73,6 +74,7 @@ export function contractStreamResponse(
           );
         }
         yield frame;
+        if (terminal && descriptor.completion === 'terminal') return;
       }
       if (!terminalSeen) {
         throw new AppError(
@@ -81,10 +83,11 @@ export function contractStreamResponse(
           500,
         );
       }
-      yield { type: 'end' };
+      if (descriptor.framing !== 'item') yield { type: 'end' };
     } catch (error) {
       if (operationAbort.signal.aborted && !lifetimeExpired) return;
       if (lifetimeExpired) {
+        if (descriptor.framing === 'item') return;
         yield {
           type: 'error',
           error: new AppError(
@@ -93,6 +96,13 @@ export function contractStreamResponse(
             408,
           ).toJSON().error,
         };
+        return;
+      }
+      if (descriptor.framing === 'item') {
+        console.error(
+          '[stitchkit] item-framed contract stream failed:',
+          normalizeError(error),
+        );
         return;
       }
       yield { type: 'error', error: normalizeError(error).toJSON().error };

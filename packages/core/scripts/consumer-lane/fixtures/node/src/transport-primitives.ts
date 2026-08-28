@@ -17,17 +17,29 @@ const contract = defineContract(
       method: 'GET',
       path: '/',
       desc: 'Compile a typed Node stream',
-      stream: { item: z.object({ value: z.number() }) },
+      stream: {
+        item: z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('value'), value: z.number() }),
+          z.object({ kind: z.literal('complete') }),
+        ]),
+        framing: 'item',
+        completion: 'terminal',
+        terminal: z.object({ kind: z.literal('complete') }),
+        finalLine: 'require-newline',
+      },
     },
   },
 );
 implement(contract, {
   read: async function* () {
-    yield { value: 1 };
+    yield { kind: 'value', value: 1 };
+    yield { kind: 'complete' };
   },
 });
 const client = createClient(contract, { baseUrl: 'http://local' });
-const iterator: Promise<AsyncIterableIterator<{ value: number }>> = client.read();
+const iterator: Promise<
+  AsyncIterableIterator<z.output<(typeof contract.endpoints.read.stream)['item']>>
+> = client.read();
 void iterator;
 
 const admission = createBoundedAdmission({ policy: { global: { maxConcurrent: 1 } } });

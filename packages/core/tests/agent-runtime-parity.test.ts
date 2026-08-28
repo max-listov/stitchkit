@@ -3,6 +3,7 @@ import { type Instructions, simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  AgentContextOverflowError,
   type AgentRuntimeEvent,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
@@ -336,6 +337,65 @@ describe('agent runtime mature-consumer parity', () => {
       content: 'after tool',
     });
     expect(model.doStreamCalls[1]?.tools).toBeUndefined();
+    await runtime.close();
+  });
+
+  test('a typed refusal after a tool round preserves evidence and makes no extra provider call', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call',
+                toolCallId: 'call-1',
+                toolName: 'lookup',
+                input: '{"query":"value"}',
+              },
+              {
+                type: 'finish',
+                finishReason: { unified: 'tool-calls', raw: undefined },
+                usage,
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const runtime = createAgentRuntime({
+      protocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'initial',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'fits',
+      }),
+      tools: () => ({
+        lookup: tool({
+          inputSchema: z.object({ query: z.string() }),
+          execute: ({ query }) => ({ answer: query }),
+        }),
+      }),
+      loop: {
+        maxSteps: 3,
+        prepareStep: ({ stepNumber }) => {
+          if (stepNumber === 1) throw new AgentContextOverflowError();
+          return {};
+        },
+      },
+    });
+
+    const terminal = await submit(runtime).result;
+    expect(terminal.reason).toBe('context_overflow');
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(terminal.message.parts).toContainEqual(
+      expect.objectContaining({ type: 'tool-call', callId: 'call-1', toolName: 'lookup' }),
+    );
+    expect(terminal.message.parts).toContainEqual(
+      expect.objectContaining({ type: 'tool-result', callId: 'call-1', toolName: 'lookup' }),
+    );
     await runtime.close();
   });
 

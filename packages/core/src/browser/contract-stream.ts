@@ -14,6 +14,7 @@ function sourceFor(
 ): AsyncGenerator<unknown> {
   const options = {
     maxLineBytes: descriptor.maxFrameBytes ?? DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
+    finalLine: descriptor.finalLine,
   };
   return descriptor.format === 'sse'
     ? parseSSE<unknown>(response, options)
@@ -28,40 +29,47 @@ async function* readContractStream<T>(
 ): AsyncGenerator<T> {
   let ended = false;
   let terminalSeen = descriptor.terminal === undefined;
+  const source = sourceFor(response, descriptor);
   try {
-    for await (const raw of sourceFor(response, descriptor)) {
-      const parsedFrame = ContractStreamFrameSchema.safeParse(raw);
-      if (!parsedFrame.success) {
-        throw new ApiError(
-          'STREAM_PROTOCOL_ERROR',
-          0,
-          undefined,
-          'Stream frame did not match the protocol envelope',
-        );
-      }
-      const frame = parsedFrame.data;
-      if (frame.type === 'error') {
-        throw new ApiError(
-          frame.error.code,
-          0,
-          frame.error.details,
-          frame.error.message,
-          frame.error.hint,
-        );
-      }
-      if (frame.type === 'end') {
-        if (!terminalSeen) {
+    for (;;) {
+      const next = await source.next();
+      if (next.done) break;
+      let candidate: unknown = next.value;
+      if (descriptor.framing !== 'item') {
+        const parsedFrame = ContractStreamFrameSchema.safeParse(candidate);
+        if (!parsedFrame.success) {
           throw new ApiError(
-            'STREAM_TERMINAL_MISSING',
+            'STREAM_PROTOCOL_ERROR',
             0,
             undefined,
-            'Stream completed before its declared terminal item',
+            'Stream frame did not match the protocol envelope',
           );
         }
-        ended = true;
-        return;
+        const frame = parsedFrame.data;
+        if (frame.type === 'error') {
+          throw new ApiError(
+            frame.error.code,
+            0,
+            frame.error.details,
+            frame.error.message,
+            frame.error.hint,
+          );
+        }
+        if (frame.type === 'end') {
+          if (!terminalSeen) {
+            throw new ApiError(
+              'STREAM_TERMINAL_MISSING',
+              0,
+              undefined,
+              'Stream completed before its declared terminal item',
+            );
+          }
+          ended = true;
+          return;
+        }
+        candidate = frame.data;
       }
-      const parsedItem = descriptor.item.safeParse(frame.data);
+      const parsedItem = descriptor.item.safeParse(candidate);
       if (!parsedItem.success) {
         throw new ApiError(
           'STREAM_ITEM_INVALID',
@@ -71,8 +79,24 @@ async function* readContractStream<T>(
         );
       }
       const item = parsedItem.data;
-      if (descriptor.terminal?.safeParse(item).success) terminalSeen = true;
+      const terminal = descriptor.terminal?.safeParse(item).success ?? false;
+      if (terminal) terminalSeen = true;
+      if (terminal && descriptor.completion === 'terminal') {
+        abort();
+        await source.return(undefined);
+        ended = true;
+      }
       yield item;
+      if (ended) return;
+    }
+    if (descriptor.framing === 'item') {
+      if (terminalSeen) return;
+      throw new ApiError(
+        'STREAM_TERMINAL_MISSING',
+        0,
+        undefined,
+        'Stream completed before its declared terminal item',
+      );
     }
     if (!ended) {
       throw new ApiError(
@@ -84,6 +108,7 @@ async function* readContractStream<T>(
     }
   } finally {
     abort();
+    await source.return(undefined);
   }
 }
 

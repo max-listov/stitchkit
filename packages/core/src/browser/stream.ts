@@ -1,5 +1,6 @@
 export { type ParseSSEOptions, parseSSE } from '../server/stream';
 
+import type { StreamFinalLinePolicy } from '../contract';
 import { DEFAULT_STREAM_LINE_BYTES, readBoundedUtf8Lines } from '../internal/bounded-lines';
 
 export { DEFAULT_STREAM_LINE_BYTES } from '../internal/bounded-lines';
@@ -10,6 +11,8 @@ export interface ParseNDJSONOptions {
   maxLineBytes?: number;
   /** Called for invalid UTF-8/JSON; without it parsing fails closed. */
   onParseError?: (raw: string, error: Error) => void;
+  /** Default `allow`; use `require-newline` when a missing delimiter means truncation. */
+  finalLine?: StreamFinalLinePolicy;
 }
 
 function parseFailure(
@@ -47,6 +50,7 @@ export async function* parseNDJSON<T>(
     for await (const rawLine of readBoundedUtf8Lines(
       response,
       options?.maxLineBytes ?? DEFAULT_STREAM_LINE_BYTES,
+      options?.finalLine === 'require-newline',
     )) {
       const line = (rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine).trim();
       if (line === '') continue;

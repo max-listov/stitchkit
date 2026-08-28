@@ -140,6 +140,7 @@ These records were consolidated from the project's internal design notes on
 | [0123](0123-agent-terminal-output-and-tool-rounds.md) | Terminal output is accepted before commit and tool rounds keep causal order | Accepted — protocol policy owns completion validity; projection owns persisted execution order |
 | [0124](0124-entity-cache-membership-and-total-policy.md) | Entity cache membership and total deltas are declared per query | Accepted — filtered membership and pagination evidence are explicit without a consumer mutation engine |
 | [0125](0125-streaming-bodies-bound-retained-bytes-not-lifetime-traffic.md) | Streaming bodies bound retained bytes, not lifetime traffic | Accepted — unary totals remain finite while an explicit pull-driven stream has no cumulative lifetime cap |
+| [0126](0126-schema-owned-stream-frames-end-at-the-terminal-item.md) | Schema-owned stream frames end at the terminal item | Accepted — opt-in unwrapped NDJSON retains bounded parsing and completion proof without a second envelope |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -218,6 +218,9 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
               'x-stitchkit-max-frame-bytes':
                 method.stream.maxFrameBytes ?? DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
               'x-stitchkit-terminal-required': Boolean(method.stream.terminal),
+              'x-stitchkit-stream-framing': method.stream.framing ?? 'envelope',
+              'x-stitchkit-stream-completion': method.stream.completion ?? 'stream-end',
+              'x-stitchkit-final-line': method.stream.finalLine ?? 'allow',
             },
           },
         };

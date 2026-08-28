@@ -4,6 +4,7 @@ export {
   type StructuredCompactionConfig,
   structuredCompaction,
 } from './agent-runtime/compaction';
+export { AgentContextOverflowError } from './agent-runtime/context-refusal';
 export {
   type AgentCoordinatedRun,
   type AgentInputPolicy,

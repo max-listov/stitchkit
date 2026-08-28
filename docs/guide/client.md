@@ -579,6 +579,26 @@ wire `end` frame and, when declared, at least one matching terminal item; EOF is
 converge on the request operation. See the
 [server half](./server.md#contract-first-streams). → ADR 0117.
 
+An established NDJSON protocol may keep its item schema as the complete wire
+frame. This mode requires a terminal item because an unwrapped response has no
+separate safe error/end envelope:
+
+```ts
+stream: {
+  item: Progress,
+  framing: 'item',
+  completion: 'terminal',
+  terminal: z.object({ kind: z.literal('complete') }).loose(),
+  finalLine: 'require-newline',
+}
+```
+
+The matching terminal item ends the operation. Before `next()` returns that
+item, the client aborts the owned request and cancels its body reader; trailing
+frames are not read. EOF first is `STREAM_TERMINAL_MISSING`. The defaults remain
+`framing: 'envelope'`, `completion: 'stream-end'` and `finalLine: 'allow'`.
+→ ADR 0126.
+
 ## SSE
 
 For a streaming endpoint, consume the response with `parseSSE`:
@@ -631,3 +651,7 @@ the server's keep-alive and the reader's skip are one decision with two
 implementations. One line is bounded by `maxLineBytes` (default 1 MiB), UTF-8 is
 decoded strictly and malformed input throws. Passing `onParseError` explicitly
 selects tolerant skip-and-report behaviour.
+
+Set `finalLine: 'require-newline'` when the final newline is part of the
+protocol's truncation proof. The default `allow` continues to accept one valid
+final JSON document without a newline.

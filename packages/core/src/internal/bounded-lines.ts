@@ -20,6 +20,7 @@ function joinBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
 export async function* readBoundedUtf8Lines(
   response: Response,
   maxLineBytes?: number,
+  requireFinalNewline = false,
 ): AsyncGenerator<string> {
   const reader = response.body?.getReader();
   if (!reader) return;
@@ -47,7 +48,12 @@ export async function* readBoundedUtf8Lines(
         throw new RangeError(`Stream line exceeds the ${limit} byte limit`);
       }
     }
-    if (pending.byteLength > 0) yield decoder.decode(pending);
+    if (pending.byteLength > 0) {
+      if (requireFinalNewline) {
+        throw new SyntaxError('Stream ended with an unterminated final line');
+      }
+      yield decoder.decode(pending);
+    }
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();

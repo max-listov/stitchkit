@@ -23,11 +23,17 @@ export interface ResponseMetadata {
   headers: Headers;
 }
 
-/** Wire framing and bounds for one contract-first streaming response. */
-export interface EndpointStreamDescriptor<TItem extends ZodType = ZodType> {
+/** Whether the wire carries Stitchkit protocol envelopes or schema-owned items. */
+export type ContractStreamFraming = 'envelope' | 'item';
+
+/** What conclusively completes one contract-first stream operation. */
+export type ContractStreamCompletion = 'stream-end' | 'terminal';
+
+/** How an NDJSON reader treats a final JSON document without a newline. */
+export type StreamFinalLinePolicy = 'allow' | 'require-newline';
+
+interface EndpointStreamDescriptorBase<TItem extends ZodType> {
   item: TItem;
-  /** Default `ndjson`. */
-  format?: 'ndjson' | 'sse';
   /** Maximum encoded data-frame size. Default 256 KiB. */
   maxFrameBytes?: number;
   /** Optional total operation lifetime after response open. */
@@ -36,9 +42,48 @@ export interface EndpointStreamDescriptor<TItem extends ZodType = ZodType> {
   heartbeatMs?: number;
   /** Default 0 (disabled). */
   idleTimeoutSeconds?: number;
-  /** When present, normal completion requires at least one matching item. */
-  terminal?: ZodType<unknown>;
 }
+
+type ContractStreamEncoding =
+  | {
+      /** Default `ndjson`. */
+      format?: 'ndjson';
+      /** Default `allow`, preserving permissive parser behaviour. */
+      finalLine?: StreamFinalLinePolicy;
+    }
+  | {
+      format: 'sse';
+      finalLine?: never;
+    };
+
+type StreamEndCompletion = {
+  /** Default `stream-end`: the envelope's explicit end frame. */
+  completion?: 'stream-end';
+  /** When present, normal stream-end completion requires at least one matching item. */
+  terminal?: ZodType<unknown>;
+};
+
+type TerminalItemCompletion = {
+  /** The matching terminal item completes the operation and releases I/O before delivery. */
+  completion: 'terminal';
+  terminal: ZodType<unknown>;
+};
+
+/** Wire framing, completion ownership and bounds for one contract-first response stream. */
+export type EndpointStreamDescriptor<TItem extends ZodType = ZodType> =
+  | (EndpointStreamDescriptorBase<TItem> &
+      ContractStreamEncoding & {
+        /** Default `envelope`: `data` / safe `error` / `end` protocol frames. */
+        framing?: 'envelope';
+      } & (StreamEndCompletion | TerminalItemCompletion))
+  | (EndpointStreamDescriptorBase<TItem> & {
+      /** Schema-owned NDJSON frames with no Stitchkit protocol envelope. */
+      framing: 'item';
+      format?: 'ndjson';
+      finalLine?: StreamFinalLinePolicy;
+      completion: 'terminal';
+      terminal: ZodType<unknown>;
+    });
 
 /**
  * The transport tag on `ctx.source`. The four built-ins keep autocomplete, but
@@ -532,6 +577,20 @@ function assertStreamingResponseEndpoint(prefix: string, key: string, ep: Endpoi
   }
   if (!ep.stream.item || typeof ep.stream.item.parse !== 'function') {
     throw new Error(`${where} must declare an item schema`);
+  }
+  const runtimeFormat: unknown = Reflect.get(ep.stream, 'format');
+  const runtimeFinalLine: unknown = Reflect.get(ep.stream, 'finalLine');
+  if (ep.stream.framing === 'item' && runtimeFormat === 'sse') {
+    throw new Error(`${where} item framing is supported only for ndjson`);
+  }
+  if (ep.stream.framing === 'item' && ep.stream.completion !== 'terminal') {
+    throw new Error(`${where} item framing requires terminal completion`);
+  }
+  if (ep.stream.completion === 'terminal' && !ep.stream.terminal) {
+    throw new Error(`${where} terminal completion requires a terminal schema`);
+  }
+  if (runtimeFinalLine === 'require-newline' && runtimeFormat === 'sse') {
+    throw new Error(`${where} finalLine applies only to ndjson`);
   }
   assertPositiveLimit(where, 'maxFrameBytes', ep.stream.maxFrameBytes);
   assertPositiveLimit(where, 'lifetimeMs', ep.stream.lifetimeMs);
