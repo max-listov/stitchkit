@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.6] — 2026-08-28
+
+### Added
+
+- **Urgent interrupt input can run before ordinary pending work without deleting it.** Choose
+  `runs.inputPolicy: 'interrupt-next'` (or return it from the policy callback) for the explicit
+  `A → urgent C → pending B` behavior. The coordinator waits for A's real settlement; C retains its
+  own durable admission and runs next; B keeps its identity, idempotency and eventual execution.
+  FIFO remains intact inside urgent and ordinary classes.
+- **Effective execution order survives restart.** Optional `AgentRun.queuePriority` records pending
+  urgency and framework-assigned `AgentRun.executionSequence` records first acquisition. Canonical
+  snapshots, prompts, active-run reads and paged recovery therefore agree across equal timestamps.
+  The public store conformance kit proves this order for memory, PostgreSQL and packed consumers.
+  → ADR 0127.
+
+No call-site migration is required. Existing `queue`, `inject`, `interrupt` and `supersede`
+semantics are unchanged; priority is opt-in and remains product policy rather than inferred data.
+
 ## [0.68.5] — 2026-08-28
 
 ### Added
