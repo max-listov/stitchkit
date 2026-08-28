@@ -2,10 +2,11 @@
 title: Schema-owned NDJSON framing and terminal-owned iterator lifetime
 description: Allow adoption of typed bounded streams without changing an established item protocol or weakening completion guarantees.
 type: task
-status: in-progress
+status: done
 priority: P1
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 related: docs/backlog/done/2026-08-28-contract-first-bounded-streams.md
 ---
 
@@ -84,7 +85,7 @@ reader/server composition surface. Do not add consumer identifiers or service-sp
 - [x] Provide strict final-newline/truncation policy without silently changing permissive users.
 - [x] Preserve quiet subscriptions, pre-header refusal, typed post-header failure, external abort,
       pending-next/return-before-next cleanup, pull backpressure and finite memory.
-- [ ] Document/publicly export the supported surface; release with clean packed Bun/Node and
+- [x] Document/publicly export the supported surface; release with clean packed Bun/Node and
       strict NodeNext/bundler composition gates. No private checkout imports or consumer parser clone.
 
 ## Acceptance
@@ -93,8 +94,8 @@ reader/server composition surface. Do not add consumer identifiers or service-sp
       oversized, invalid UTF-8 and unterminated frames fail with distinct bounded outcomes.
 - [x] Terminal yield already has released connection/admission; trailing data is not consumed.
 - [x] Required terminal missing at EOF fails; indefinitely quiet streams remain until cancelled.
-- [ ] Deterministic real-reader/real-route regression and clean published-package proof on Bun/Node.
-- [ ] Exact release/tag/integrity/imports recorded; existing boxed framing remains explicitly supported.
+- [x] Deterministic real-reader/real-route regression and clean published-package proof on Bun/Node.
+- [x] Exact release/tag/integrity/imports recorded; existing boxed framing remains explicitly supported.
 
 ## Что сделано
 
@@ -112,5 +113,11 @@ reader/server composition surface. Do not add consumer identifiers or service-sp
 - [x] `packages/core/tests/openapi.test.ts` pins framing/completion/final-line
       metadata; packed minimal and Node fixtures compile and exercise the new
       public composition.
-- [ ] Full release gate, exact-SHA CI, tag, registry integrity and clean
-      installed-package acceptance remain release evidence.
+- [x] Full `bun run verify` passed for tree `17ba6fa76058`; exact-SHA CI run
+      `33157551168` and release run `33157754062` passed.
+- [x] Published `stitchkit@0.68.4`, tag `v0.68.4`, commit
+      `6f13771f3bf62dc5700333d9e0ac73bb1c95bd69`, integrity
+      `sha512-ajV2VFxDaFJ+XH7qq0WGYTfsebRyTlKUcO5MoPWFzKuD3G+J7yi4f+Eupz/R16yBUncXmsDlY/nDuEEjUOCHNw==`.
+- [x] A clean registry install outside the checkout proved raw terminal framing,
+      request release before terminal delivery, strict unterminated-line refusal
+      and post-terminal completion on Bun 1.3.14 and Node 24.18.0.

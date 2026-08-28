@@ -2,10 +2,11 @@
 title: Typed per-step context refusal in agent runtime
 description: Preserve context_overflow when application budgeting refuses a step before provider invocation.
 type: task
-status: in-progress
+status: done
 priority: P1
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 ---
 
 ## Evidence (published 0.68.3)
@@ -37,7 +38,7 @@ callback cannot set it; catch/stream error paths resolve to provider_failure.
   tool round; zero additional provider calls; preserve completed tool evidence.
 - [x] Normal unexpected callback/provider errors remain distinguishable; no
   message-string matching or consumer rewrite of terminal records.
-- [ ] Release with public types, examples and versioned acceptance evidence.
+- [x] Release with public types, examples and versioned acceptance evidence.
 
 Consumers can prepare adapters, but must not report provider failure for a known
 application budget refusal or rewrite the committed terminal record afterward.
@@ -55,5 +56,11 @@ application budget refusal or rewrite the committed terminal record afterward.
 - [x] The guide, API reference, changelog and packed Bun consumer describe and
       import the public refusal contract; the packed Node runtime imports the
       same class from the published entrypoint.
-- [ ] Full release gate, exact-SHA CI, tag, registry integrity and clean
-      installed-package acceptance remain release evidence.
+- [x] Full `bun run verify` passed for tree `17ba6fa76058`; exact-SHA CI run
+      `33157551168` and release run `33157754062` passed.
+- [x] Published `stitchkit@0.68.4`, tag `v0.68.4`, commit
+      `6f13771f3bf62dc5700333d9e0ac73bb1c95bd69`, integrity
+      `sha512-ajV2VFxDaFJ+XH7qq0WGYTfsebRyTlKUcO5MoPWFzKuD3G+J7yi4f+Eupz/R16yBUncXmsDlY/nDuEEjUOCHNw==`.
+- [x] A clean registry install outside the checkout classified the typed refusal
+      as `context_overflow`, state `failed`, with zero provider calls on Bun
+      1.3.14 and Node 24.18.0.
