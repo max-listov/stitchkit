@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.1] — 2026-08-28
+
 ### Added
 
 - **Managed server factories receive their resource context.** A sync or async
