@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.5] — 2026-08-28
+
 ### Fixed
 
 - **Configured HTTP clients keep caller cancellation after response headers.** Header deadlines
