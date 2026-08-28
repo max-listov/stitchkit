@@ -34,6 +34,7 @@ const entrypoints = [
   'stitchkit/application/opentelemetry',
   'stitchkit/agent-runtime',
   'stitchkit/agent-runtime/openrouter',
+  'stitchkit/agent-runtime/sqlite/node',
   'stitchkit/testing',
   'stitchkit/files',
 ];
@@ -55,11 +56,25 @@ const { createHandlerTestClient } = await import('stitchkit/testing');
 const { createManagedFileBoundary } = await import('stitchkit/files');
 const { createObservability } = await import('stitchkit/observability');
 const { createMemoryAgentRuntimeStore } = await import('stitchkit/agent-runtime');
+const { createNodeSqliteAgentRuntimeStore } = await import(
+  'stitchkit/agent-runtime/sqlite/node'
+);
 const { z } = await import('zod');
 
 const agentStore = createMemoryAgentRuntimeStore();
 const emptyAgentSnapshot = await agentStore.loadSnapshot('node-smoke');
 assert.equal(emptyAgentSnapshot.version, 0);
+
+const sqliteRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-sqlite-'));
+try {
+  const sqlite = createNodeSqliteAgentRuntimeStore({
+    filename: join(sqliteRoot, 'agent-runtime.sqlite'),
+  });
+  assert.equal((await sqlite.store.loadSnapshot('node-smoke')).version, 0);
+  await sqlite.close();
+} finally {
+  await rm(sqliteRoot, { recursive: true, force: true });
+}
 
 const fileRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-files-'));
 try {

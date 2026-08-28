@@ -1055,6 +1055,28 @@
     "runStateForTerminalReason"
   ],
   "stitchkit/agent-runtime/openrouter": ["OpenRouterProviderSettings", "openRouterProvider"],
+  "stitchkit/agent-runtime/sqlite/bun": [
+    "AgentRuntimeSqliteDatabase",
+    "AgentRuntimeSqliteStatement",
+    "AgentRuntimeSqliteValue",
+    "BunSqliteAgentRuntimeStoreConfig",
+    "SqliteAgentRuntimeStore",
+    "SqliteAgentRuntimeStoreConfig",
+    "createBunSqliteAgentRuntimeStore",
+    "createSqliteAgentRuntimeStore",
+    "initializeAgentRuntimeSqlite"
+  ],
+  "stitchkit/agent-runtime/sqlite/node": [
+    "AgentRuntimeSqliteDatabase",
+    "AgentRuntimeSqliteStatement",
+    "AgentRuntimeSqliteValue",
+    "NodeSqliteAgentRuntimeStoreConfig",
+    "SqliteAgentRuntimeStore",
+    "SqliteAgentRuntimeStoreConfig",
+    "createNodeSqliteAgentRuntimeStore",
+    "createSqliteAgentRuntimeStore",
+    "initializeAgentRuntimeSqlite"
+  ],
   "stitchkit/application": [
     "ActivityId",
     "ActivityIdSchema",

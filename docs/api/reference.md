@@ -743,6 +743,33 @@ Use this entrypoint from client components and shared DTO packages. The full
 | `openRouterProvider` | function | isolated `@openrouter/ai-sdk-provider` language-model factory |
 | `OpenRouterProviderSettings` | _type_ | official provider settings accepted by the factory |
 
+## `stitchkit/agent-runtime/sqlite/bun`
+
+Bun built-in SQLite persistence. The entrypoint imports `bun:sqlite` and is not
+loaded by the neutral, browser or Node runtime surfaces.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v1 and return `{ store, close }` |
+| `BunSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional create and initialization policies |
+| `createSqliteAgentRuntimeStore` | function | build the normalized store over an injected synchronous SQLite boundary |
+| `initializeAgentRuntimeSqlite` | function | initialize or validate only Stitchkit's namespaced SQLite schema |
+| `AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
+
+## `stitchkit/agent-runtime/sqlite/node`
+
+Node 22.5+ built-in SQLite persistence. It shares the schema and semantics of
+the Bun leaf but imports only `node:sqlite`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate schema v1 and return `{ store, close }` |
+| `NodeSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional read-only and initialization policies; read-only requires an initialized schema |
+| `createSqliteAgentRuntimeStore` / `initializeAgentRuntimeSqlite` | function | shared normalized adapter and namespaced schema lifecycle |
+| `AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
+
 ## `stitchkit/observability`
 
 Server-only. The audit layer one level above the raw hooks — W3C trace context,

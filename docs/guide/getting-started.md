@@ -52,6 +52,8 @@ own, recorded as an ADR.
 | `stitchkit/agent-runtime` | server | evolving<br>_redefined in 9 of the 13 minors since 0.56.2, most recently 0.66.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
 | `stitchkit/agent-runtime/browser` | browser + server | evolving | canonical agent records, events and reconnect cursor without execution or sinks |
+| `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving | durable built-in SQLite store for the agent runtime |
+| `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit/application` | server | evolving<br>_redefined in 3 of the 13 minors since 0.56.2, most recently 0.67.0_ | managed resource graph, readiness, admission, schedules and bounded shutdown |
 | `stitchkit/application/grammy` | server | evolving | isolated grammY polling and webhook lifecycle adapters |
 | `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
@@ -155,6 +157,7 @@ map — feature → packages:
 | MCP / agent adapters (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
 | Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
 | OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
+| SQLite agent store (`stitchkit/agent-runtime/sqlite/bun` or `/node`) | — (runtime built-in) |
 | MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |

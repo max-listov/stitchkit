@@ -15,6 +15,22 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **The public agent runtime has durable built-in SQLite adapters for Bun and Node.** Import
+  `createBunSqliteAgentRuntimeStore` from `stitchkit/agent-runtime/sqlite/bun` or
+  `createNodeSqliteAgentRuntimeStore` from `stitchkit/agent-runtime/sqlite/node`. Both use one
+  namespaced schema and the existing normalized reducer/conformance contract, survive reopen,
+  retain terminal and compaction evidence, roll back atomically and drain accepted work on close.
+  Same-thread competing writers fail immediately instead of blocking on a busy timeout. → ADR 0128.
+- **A tested headless harness recipe composes the existing runtime without a second loop.** The
+  executable example injects typed resources with provenance and diagnostics, model/tool/store
+  ports and prompt budgets while preserving the runtime's durable queue, interruption, recovery,
+  fencing, event and terminal semantics.
+
+No call-site migration is required. SQLite is opt-in; Bun uses `bun:sqlite`, while the Node leaf
+requires Node 22.5 or newer for `node:sqlite`. Existing application-owned drivers remain unchanged.
+
 ## [0.68.7] — 2026-08-28
 
 ### Fixed

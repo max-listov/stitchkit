@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-08-28
 ---
 
 # Agent application runtime
@@ -159,6 +159,47 @@ await ticket.accepted
 const terminal = await ticket.result
 ```
 
+### Executable headless harness and capability map
+
+[`packages/core/examples/headless-agent-harness.ts`](../../packages/core/examples/headless-agent-harness.ts)
+is the complete resource-aware recipe. It accepts injected protocol, model,
+tool and store ports, validates resources plus diagnostics, carries provenance
+into the prompt and delegates execution to `createAgentRuntime`. Importing the
+example starts no process, opens no database and discovers no filesystem path.
+
+| Concern | Public Stitchkit composition | Boundary |
+| --- | --- | --- |
+| execution loop | `createAgentRuntime` | already available; do not copy a second loop |
+| model choice | `defineModelRegistry` and `models.resolve` | provider credentials/discovery stay application-owned |
+| resources | injected loader → `composeAgentPrompt` sections | paths, trust, precedence and watching stay application-owned |
+| tools | `mountAgent` + `createAgentToolFenceLifecycle` | auth and domain effects stay application-owned |
+| follow-up | `runs.inputPolicy: 'queue'` | durable FIFO after the current run |
+| interrupt | `interrupt` or `interrupt-next` | `interrupt-next` terminates the active run and gives the new durable admission next priority |
+| recovery | `runtime.recover` + `scanRecoverable` | replay safety and context reconstruction are explicit callbacks |
+| reconnect | canonical snapshot + `advanceAgentRuntimeEventCursor` | transient deltas are replaceable; durable event IDs deduplicate |
+| persistence | memory reference, public driver, or SQLite leaf | product rows/outbox remain outside the runtime store |
+
+Pi's steering queue waits for the current tool calls and injects the steering
+message at its next loop boundary. It is therefore not an alias for
+`interrupt-next`: Stitchkit requests termination of the active durable run,
+waits for its terminal settlement, and executes the prioritized successor.
+Pi follow-up is closest to Stitchkit `queue`, while JSONL trees, branching,
+workspace discovery, permissions and terminal UI remain embedding-application
+features rather than runtime requirements.
+
+Runtime events preserve reasoning/text/tool lifecycle order. Durable admission,
+checkpoint, run-state and terminal events carry stable identities; transient
+deltas carry one runtime epoch and monotonic sequence. On a transient gap,
+reload the canonical snapshot and resume from the durable record instead of
+persisting deltas as a second history.
+
+Prompt `contextWindow` budgeting is a pre-request decision over the assembled
+context. `AgentRun.usage` is cumulative measured/provider-reported execution
+evidence across attempts and compaction. They answer different questions and
+must not be substituted for each other. TTFT and throughput require timestamps
+from the actual provider stream plus a provider-reported or tokenizer-measured
+token count; character counts cannot produce exact token or throughput figures.
+
 `recordIds` is optional. Supply stable application record IDs when an accepted-response transport must
 return durable placeholders before the run finishes. `ticket.admission` resolves after the store
 acceptance CAS and reports the canonical committed `input`, assigned `run`, a typed `pending`
@@ -218,6 +259,47 @@ conversation identity and monotonic version. Runs and admission receipts are nor
 recovery queries active run states directly instead of maintaining a second projection.
 An admission receipt retains its canonical input, and a terminal run retains its canonical
 assistant, so physical product-history compaction cannot break idempotent retries.
+
+### Built-in SQLite persistence
+
+Use the runtime-specific leaf; the neutral agent runtime never imports either
+SQLite built-in:
+
+```ts
+// Bun
+import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun'
+
+const sqlite = createBunSqliteAgentRuntimeStore({ filename: './agent-runtime.sqlite' })
+const runtime = createAgentRuntime({ ...config, store: sqlite.store })
+
+await runtime.close()
+await sqlite.close()
+```
+
+```ts
+// Node 22.5+
+import { createNodeSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/node'
+
+const sqlite = createNodeSqliteAgentRuntimeStore({ filename: './agent-runtime.sqlite' })
+```
+
+Initialization creates only `stitchkit_agent_runtime_*` tables and records
+schema version 1 in `stitchkit_agent_runtime_meta`; it does not use
+`PRAGMA user_version` or mutate application tables. An unknown schema version or
+unversioned partial Stitchkit schema is refused. The connection is owned by the
+returned handle and closes only after accepted operations drain.
+
+Each handle serializes its transactions. Separate connections use
+`busy_timeout = 0`: a competing synchronous writer fails promptly with
+SQLite's lock error, so an awaited transaction can resume and commit or roll
+back. Retry that explicit error with an application-owned bounded policy; do
+not configure a blocking busy timeout on the same JavaScript thread.
+
+The adapter proves canonical durability across reopen and process restart. It
+does not make external tool effects exactly once, join application projections
+atomically or replace an application outbox. If a product row must commit with
+an agent transition, implement `AgentRuntimeStoreDriver` over the application's
+own transaction boundary instead.
 
 ## Durable order
 

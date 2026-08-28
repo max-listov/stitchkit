@@ -92,6 +92,14 @@
       "types": "./dist/agent-runtime-openrouter.d.ts",
       "import": "./dist/agent-runtime-openrouter.js"
     },
+    "./agent-runtime/sqlite/bun": {
+      "types": "./dist/agent-runtime-sqlite-bun.d.ts",
+      "import": "./dist/agent-runtime-sqlite-bun.js"
+    },
+    "./agent-runtime/sqlite/node": {
+      "types": "./dist/agent-runtime-sqlite-node.d.ts",
+      "import": "./dist/agent-runtime-sqlite-node.js"
+    },
     "./application": {
       "types": "./dist/application.d.ts",
       "import": "./dist/application.js"
@@ -127,7 +135,7 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts src/declaration.ts src/agent-runtime-browser.ts --outdir dist --target node --packages external --splitting --root src",
-    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/tool-invoker.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/tool-invoker.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-openrouter.ts src/agent-runtime-sqlite-bun.ts src/agent-runtime-sqlite-node.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server && bun scripts/preserve-webpack-ignore.mjs",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly && bun scripts/rewrite-declaration-specifiers.mjs",
     "build": "rm -rf dist && bun run build:js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs",

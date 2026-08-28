@@ -87,6 +87,7 @@ import { createServer, createHandler, implement } from 'stitchkit/server'
 import { createSocketIOServer, createAuthHook } from 'stitchkit/server'
 import { createMcpHandler, mountAgent } from 'stitchkit/tools'
 import { createAgentRuntime, defineAgentProtocol } from 'stitchkit/agent-runtime'
+import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun'
 import { createApplication, defineManagedResource } from 'stitchkit/application'
 import { implementRemote } from 'stitchkit/remote'
 ```
@@ -99,6 +100,9 @@ adapters are isolated further; importing `stitchkit/application` never resolves
 grammY or OpenTelemetry. Browser code that shares agent records imports
 `stitchkit/agent-runtime/browser`; it contains the canonical schemas and event
 cursor but no execution, persistence or sink graph.
+Durable embedded storage is isolated behind
+`stitchkit/agent-runtime/sqlite/bun` and `stitchkit/agent-runtime/sqlite/node`;
+neither runtime-specific built-in leaks into the neutral or browser entrypoint.
 
 ## Managed application kernel
 
@@ -423,6 +427,7 @@ peer — an install pulls in only what the project actually uses.
 | `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
 | `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
+| SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
 | `grammy` | peer, optional | Only `stitchkit/application/grammy`; the neutral application kernel does not resolve it. |
 | `@opentelemetry/api` | peer, optional | Type-only boundary for `stitchkit/application/opentelemetry`; the adapter has no runtime import and owns no SDK/exporter. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
