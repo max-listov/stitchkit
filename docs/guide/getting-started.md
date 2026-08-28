@@ -48,9 +48,9 @@ own, recorded as an ADR.
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the store and managed-resource conformance kits |
 | `stitchkit/declaration` | build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser | stable | `createCursorQuery`, `createCacheBridge` |
-| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 9 of the 12 minors since 0.56.2, most recently 0.66.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 9 of the 13 minors since 0.56.2, most recently 0.66.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
-| `stitchkit/application` | server | evolving<br>_redefined in 3 of the 12 minors since 0.56.2, most recently 0.67.0_ | managed resource graph, readiness, admission, schedules and bounded shutdown |
+| `stitchkit/application` | server | evolving<br>_redefined in 3 of the 13 minors since 0.56.2, most recently 0.67.0_ | managed resource graph, readiness, admission, schedules and bounded shutdown |
 | `stitchkit/application/grammy` | server | evolving | isolated grammY polling and webhook lifecycle adapters |
 | `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
 

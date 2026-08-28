@@ -13,7 +13,7 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
-## [Unreleased]
+## [0.68.0] — 2026-08-28
 
 Four bounded process-local primitives: a portable fail-closed Unix client,
 schema-derived contract streams, operation admission leases and explicit

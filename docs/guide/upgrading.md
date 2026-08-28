@@ -91,7 +91,7 @@ implement `AgentRuntimeStoreDriver` and compose the aggregate with
    runtime): bootstrap the server, one HTTP request, and any feature you rely on
    (Socket.IO connect, an MCP tool call, a multipart upload, …).
 
-## Unreleased migration: bounded transport primitives
+## Released migration: 0.68.0
 
 ### Make Unix transport selection explicit outside Bun
 
