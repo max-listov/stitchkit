@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.8] — 2026-08-28
+
 ### Added
 
 - **The public agent runtime has durable built-in SQLite adapters for Bun and Node.** Import

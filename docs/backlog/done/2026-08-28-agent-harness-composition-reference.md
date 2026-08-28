@@ -2,10 +2,11 @@
 title: Executable agent harness composition and capability map
 description: Provide a minimal typed harness recipe using existing runtime primitives and isolate demonstrated API gaps.
 type: task
-status: in-progress
+status: done
 priority: P1
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 ---
 
 ## Why
@@ -44,28 +45,47 @@ No second provider SDK, scheduler, process manager or mandatory plugin framework
 
 ## Plan
 
-- [ ] Clone/read the reference at the specified commit and map patterns to current public exports.
-- [ ] Inspect packages/core/src/agent-runtime.ts and AgentRuntimeConfig in runtime.ts,
+- [x] Clone/read the reference at the specified commit and map patterns to current public exports.
+- [x] Inspect packages/core/src/agent-runtime.ts and AgentRuntimeConfig in runtime.ts,
   composeAgentPrompt, defineModelRegistry, createAgentRuntimeStore and tool fencing.
-- [ ] Define startup, run admission, queue/interrupt, cancel, recovery and shutdown composition
+- [x] Define startup, run admission, queue/interrupt, cancel, recovery and shutdown composition
   using injected model/tool/resource/store ports. Import must not start a process or open a DB.
-- [ ] Show typed resource input/provenance/diagnostics without hardcoded paths or hidden globals.
+- [x] Show typed resource input/provenance/diagnostics without hardcoded paths or hidden globals.
   Filesystem trust/discovery remains the embedding application's policy.
-- [ ] Demonstrate ordered reasoning/text/tool events and canonical snapshots with reconnect/dedup
+- [x] Demonstrate ordered reasoning/text/tool events and canonical snapshots with reconnect/dedup
   guidance; distinguish transient UI deltas from durable history and terminal evidence.
-- [ ] Demonstrate context budget vs cumulative usage, compaction and context_overflow.
+- [x] Demonstrate context budget vs cumulative usage, compaction and context_overflow.
   Explain TTFT/throughput measurement limits; do not derive exact tokens from character counts.
-- [ ] Add deterministic coverage for scoped concurrent sessions, queue/interrupt distinction,
+- [x] Add deterministic coverage for scoped concurrent sessions, queue/interrupt distinction,
   tool failure, terminal acceptance, recovery and resource/context isolation.
-- [ ] If an API gap is proven, document its minimal reproduction and implement the generic
+- [x] If an API gap is proven, document its minimal reproduction and implement the generic
   change with regression coverage; do not solve it through a private consumer hook.
-- [ ] Verify full gates, packed imports on supported Bun/Node, browser-safe boundaries,
+- [x] Verify full gates, packed imports on supported Bun/Node, browser-safe boundaries,
   docs/ADR/API metadata as applicable; publish a verified release for package changes.
   Return exact version/SHA/exports and executable commands. Docs-only findings must be labelled.
 
 ## Acceptance
 
-- [ ] An embedding application can run the example using public APIs without copying a loop.
-- [ ] Existing queue/history/compaction semantics are preserved, not approximated by Pi names.
-- [ ] Optional dependencies stay optional; no filesystem or provider package leaks into browser imports.
-- [ ] Reference-derived patterns, actual additions and explicitly deferred capabilities are distinct.
+- [x] An embedding application can run the example using public APIs without copying a loop.
+- [x] Existing queue/history/compaction semantics are preserved, not approximated by Pi names.
+- [x] Optional dependencies stay optional; no filesystem or provider package leaks into browser imports.
+- [x] Reference-derived patterns, actual additions and explicitly deferred capabilities are distinct.
+
+## Что сделано
+
+- Reference commit `6c87d9a026677b601e8278030dcf1ad97fe0bd86` was inspected and mapped in
+  `docs/guide/agent-runtime.md`; Pi steering is explicitly distinct from durable
+  `interrupt-next`, and JSONL trees, UI and application policy remain deferred.
+- `packages/core/examples/headless-agent-harness.ts` composes public runtime, model, tool, store,
+  prompt-budget and injected resource ports without import-time process, filesystem or database work.
+- `packages/core/tests/agent-harness-example.test.ts` —
+  `isolates scoped resources and reports their diagnostics` proves concurrent resource isolation.
+- Existing regression evidence remains canonical: `packages/core/tests/agent-runtime-coordinator.test.ts`
+  — `interrupt-next settles the active run then precedes ordinary pending work`; and
+  `packages/core/tests/agent-runtime-parity.test.ts` —
+  `applies required terminal output before commit without rejecting non-success endings` and
+  `redacts internal tool failures from application events`.
+- The public API reference, guide, READMEs and generated `llms.txt` surfaces describe lifecycle,
+  events, recovery/dedup, context versus cumulative usage and TTFT/throughput limits.
+- `bun run verify` passed the complete local release gate, including packed Bun/Node, Next/browser,
+  consumer, starter, PostgreSQL and supervised lanes; release `0.68.8` carries the result.
