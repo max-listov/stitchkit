@@ -1,4 +1,5 @@
 import { createHttpClient } from 'stitchkit';
+import { SocketClientCompileProof } from './socket-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +62,8 @@ export default async function Page() {
       data-recovery-fetch-calls={String(recoveryFetchCalls)}
       data-memo-a={String(memoA.value)}
       data-memo-b={String(memoB.value)}
-    />
+    >
+      <SocketClientCompileProof />
+    </main>
   );
 }

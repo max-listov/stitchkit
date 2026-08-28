@@ -42,7 +42,7 @@ export const OPTIONAL_PEER_MATRIX = [
     target: 'browser',
     source: featureSource('stitchkit', 'createClient'),
     runtimePeers: [],
-    declarationPeers: ['@socket.io/component-emitter'],
+    declarationPeers: [],
     execute: false,
   },
   {
@@ -55,6 +55,17 @@ export const OPTIONAL_PEER_MATRIX = [
     runtimePeers: ['@tanstack/react-query', 'react', 'react-query-kit'],
     declarationPeers: ['@tanstack/react-query', 'react', 'react-query-kit'],
     execute: false,
+  },
+  {
+    id: 'tool-invoker',
+    subpath: './tools/invoker',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/tools/invoker', 'createToolInvoker'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
   },
   {
     id: 'tools-cli-feature',

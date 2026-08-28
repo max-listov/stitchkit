@@ -303,13 +303,16 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
         return;
       }
       const bytes = Math.min(chunkRemaining, wire.byteLength, MAX_BODY_CHUNK_BYTES);
-      enqueue(takeWire(bytes));
-      if (settled) return;
+      const value = takeWire(bytes);
       chunkRemaining -= bytes;
       if (chunkRemaining === 0) {
         chunkRemaining = undefined;
         expectChunkCrlf = true;
       }
+      // `ReadableStreamDefaultController.enqueue()` may synchronously request
+      // another pull. Commit the framing transition first so a re-entrant pump
+      // cannot consume the CRLF delimiter as body bytes.
+      enqueue(value);
       return;
     }
   };
@@ -367,7 +370,7 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
       }
       return;
     }
-    if (headerEnd > options.maxHeaderBytes) {
+    if (headerEnd + 4 > options.maxHeaderBytes) {
       fail(
         new UnixClientTransportError(
           'UNIX_HEADERS_TOO_LARGE',

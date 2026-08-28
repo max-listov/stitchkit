@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "paths": {
+      "stitchkit": ["../../../../src/index.ts"],
+      "stitchkit/*": ["../../../../src/*"]
+    },
+    "noEmit": true,
+    "skipLibCheck": false,
+    "types": []
+  },
+  "include": ["src/app.ts"]
+}

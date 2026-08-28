@@ -43,16 +43,10 @@ const pkgRoot = join(here, '..', '..');
  * A name that stops appearing is reported, not failed — shrinking this list is
  * a good change and should not break an unrelated release. Read the report.
  */
-const ACCEPTED_UNRESOLVED = [
-  'Bun',
-  'bun',
-  'node:http',
-  'socket.io',
-  '@socket.io/bun-engine',
-  '@socket.io/component-emitter',
-];
+const ACCEPTED_UNRESOLVED = ['Bun', 'bun', 'node:http', 'socket.io', '@socket.io/bun-engine'];
 
-const FIXTURES = ['minimal', 'full', 'node', 'grammy'];
+const FIXTURES = ['minimal', 'nodenext', 'full', 'node', 'grammy'];
+const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
 let failed = false;
@@ -158,18 +152,20 @@ try {
       failed = true;
       console.error('[consumer-lane] node: unexpectedly installed @types/bun');
     }
-    if (name === 'minimal' && existsSync(join(dir, 'node_modules', 'grammy'))) {
+    if (PEER_FREE_FIXTURES.includes(name) && existsSync(join(dir, 'node_modules', 'grammy'))) {
       failed = true;
-      console.error('[consumer-lane] minimal: unexpectedly installed optional peer grammy');
+      console.error(`[consumer-lane] ${name}: unexpectedly installed optional peer grammy`);
     }
     if (
-      name === 'minimal' &&
+      PEER_FREE_FIXTURES.includes(name) &&
       (existsSync(join(dir, 'node_modules', 'socket.io')) ||
+        existsSync(join(dir, 'node_modules', 'socket.io-client')) ||
+        existsSync(join(dir, 'node_modules', '@socket.io', 'component-emitter')) ||
         existsSync(join(dir, 'node_modules', '@socket.io', 'bun-engine')))
     ) {
       failed = true;
       console.error(
-        '[consumer-lane] minimal: unexpectedly installed optional Socket.IO peers',
+        `[consumer-lane] ${name}: unexpectedly installed optional Socket.IO peers`,
       );
     }
 
@@ -185,6 +181,12 @@ try {
     const libCheck = step(`${name}: declaration check`, () =>
       tsc(dir, ['--skipLibCheck', 'false']),
     );
+    if (name === 'nodenext' && libCheck.trim()) {
+      failed = true;
+      console.error(
+        `[consumer-lane] nodenext: packed HTTP-only declarations are not clean\n${libCheck}`,
+      );
+    }
     const fixtureUnresolved = new Set();
     for (const line of libCheck.split('\n')) {
       if (!line.includes('node_modules/stitchkit/')) continue;
@@ -210,7 +212,7 @@ try {
 
     const output = step(`${name}: run`, () => {
       try {
-        return name === 'node'
+        return name === 'node' || name === 'nodenext'
           ? run('node', ['src/runtime.mjs'], dir)
           : run('bun', ['src/app.ts'], dir);
       } catch (err) {
@@ -243,7 +245,13 @@ try {
       const unixOutput = step('minimal: packed Bun Unix client', () =>
         run('bun', ['src/unix-client-conformance.mjs'], dir),
       );
-      if (!unixOutput.includes('packed Bun Unix client conformance: ok')) {
+      const unixNodeOutput = step('minimal: packed Node Unix client', () =>
+        run('node', ['src/unix-client-conformance.mjs'], dir),
+      );
+      if (
+        !unixOutput.includes('packed Bun Unix client conformance: ok') ||
+        !unixNodeOutput.includes('packed Node Unix client conformance: ok')
+      ) {
         failed = true;
         console.error(
           '[consumer-lane] minimal: Unix client conformance produced no proof',
@@ -259,6 +267,19 @@ try {
           '[consumer-lane] minimal: bounded primitives produced no proof',
           boundedOutput,
         );
+      }
+      for (const runtime of ['bun', 'node']) {
+        const invokerOutput = step(`minimal: peer-free tool invoker (${runtime})`, () =>
+          run(runtime, ['src/tool-invoker-conformance.mjs'], dir),
+        );
+        if (
+          !invokerOutput.includes(
+            `packed ${runtime === 'bun' ? 'Bun' : 'Node'} tool invoker: ok`,
+          )
+        ) {
+          failed = true;
+          console.error(`[consumer-lane] minimal: ${runtime} tool invoker produced no proof`);
+        }
       }
       const conformanceOutput = step('minimal: managed resource conformance', () =>
         run('bun', ['src/managed-resource-conformance.ts'], dir),

@@ -76,6 +76,14 @@ function responseHeaders(response: IncomingMessage): Headers {
   return headers;
 }
 
+function isNodeHeaderOverflow(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    Reflect.get(error, 'code') === 'HPE_HEADER_OVERFLOW'
+  );
+}
+
 function redirectedRequest(
   request: Request,
   location: string,
@@ -227,6 +235,9 @@ export function createUnixClientTransport(
           headers,
           agent,
           signal: request.signal,
+          // Node's parser enforces this before exposing an IncomingMessage.
+          // The limit counts the complete HTTP response head in wire bytes.
+          maxHeaderSize: maxHeaderBytes,
         },
         resolveOnce,
       );
@@ -253,6 +264,17 @@ export function createUnixClientTransport(
       timer.unref();
       outgoing.once('response', () => clearTimeout(timer));
       outgoing.once('error', (error) => {
+        if (isNodeHeaderOverflow(error)) {
+          rejectOnce(
+            new UnixClientTransportError(
+              'UNIX_HEADERS_TOO_LARGE',
+              `Unix response headers exceed the ${maxHeaderBytes} byte limit`,
+              'response-received',
+              { cause: error },
+            ),
+          );
+          return;
+        }
         // `bytesWritten` includes data buffered before a failed connect on
         // Node, and is cumulative on a pooled socket. Delivery is ambiguous
         // only after this socket really connected and this request advanced it.

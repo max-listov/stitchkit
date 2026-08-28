@@ -20,7 +20,6 @@
  * The returned client satisfies `CacheBridgeSocket` (`on()` returns an
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
-import type { EventsMap } from '@socket.io/component-emitter';
 import { isModuleNotFound } from '../internal/optional-peer';
 import type { StitchLogger } from '../logger';
 import type {
@@ -107,7 +106,10 @@ export interface SocketIOClientPeerLoaders {
 let ioLoader: Promise<IoFn> | null = null;
 function loadIo(): Promise<IoFn> {
   if (!ioLoader) {
-    ioLoader = import(SOCKET_IO_CLIENT).then(
+    // Webpack must leave this runtime-selected optional peer alone. Without
+    // the magic comment it reports an expression dependency even when a
+    // consumer supplies the literal `peers.client` loader below.
+    ioLoader = import(/* webpackIgnore: true */ SOCKET_IO_CLIENT).then(
       (mod: typeof import('socket.io-client')) => mod.io,
       (cause) => {
         ioLoader = null;
@@ -205,12 +207,19 @@ function toIoAuth(
 
 /**
  * Socket.IO event map — `{ event: (...args) => void }`. Aliases Socket.IO's
- * own `EventsMap` constraint, which intentionally maps to `any`: that is what
+ * own event-map constraint, which intentionally maps to `any`: that is what
  * lets a plain `interface ServerToClientEvents { … }` (no index signature) be
- * passed as a type argument. Per-event typing is fully preserved on the
- * public `on` / `emit` signatures.
+ * passed as a type argument. The constraint lives here instead of importing
+ * Socket.IO's equivalent: the root HTTP client declarations must remain usable
+ * when no optional Socket.IO peer is installed. Per-event typing is fully
+ * preserved on the public `on` / `emit` signatures.
  */
-export type SocketEventMap = EventsMap;
+export interface SocketEventMap {
+  // Transport boundary: Socket.IO deliberately uses `any` here so a normal
+  // event interface without a string index signature satisfies the constraint.
+  // Replacing it with `unknown` rejects those interfaces under TypeScript.
+  [event: string]: any;
+}
 
 export interface SocketIOClientConfig<TServerEvents extends SocketEventMap = SocketEventMap> {
   /** Server origin, e.g. `https://api.example.com`. */

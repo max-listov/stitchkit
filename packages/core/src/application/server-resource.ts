@@ -11,16 +11,16 @@ export interface ManagedServerResourceConfig<TRuntime> {
   /**
    * The server, or how to make one.
    *
-   * A handle is adopted as it is. A thunk is called during `start`, which is
-   * the only way to say "bind the port after the database is up" — and the only
-   * reading of a thunk that is not a trap. It used to be called during
-   * *shutdown*, so a graph that delegated creation here started clean, reported
-   * `healthy`, and had nothing listening on the port; the failure surfaced as a
-   * request that never arrived.
+   * A handle is adopted as it is. A factory is called during `start`, after its
+   * declared dependencies are ready, and receives the resource context. That
+   * context is the supported way to read dependency values and the startup
+   * signal while constructing routes and adapters.
    */
   readonly server:
     | ManagedServerHandle<TRuntime>
-    | (() => ManagedServerHandle<TRuntime> | Promise<ManagedServerHandle<TRuntime>>);
+    | ((
+        context: ManagedResourceContext,
+      ) => ManagedServerHandle<TRuntime> | Promise<ManagedServerHandle<TRuntime>>);
   readonly dependsOn?: readonly ManagedResourceDependency[];
   readonly required?: boolean;
   readonly retryAfterSeconds?: number;
@@ -47,10 +47,10 @@ export function managedServerResource<TRuntime>(
   let started: ManagedServerHandle<TRuntime> | undefined;
   /** Whether `start` ran at all, which is a different question from whether it worked. */
   let startAttempted = false;
-  const resolveServer = ():
-    | ManagedServerHandle<TRuntime>
-    | Promise<ManagedServerHandle<TRuntime>> =>
-    typeof config.server === 'function' ? config.server() : config.server;
+  const resolveServer = (
+    context: ManagedResourceContext,
+  ): ManagedServerHandle<TRuntime> | Promise<ManagedServerHandle<TRuntime>> =>
+    typeof config.server === 'function' ? config.server(context) : config.server;
 
   /**
    * Told apart by what the handle has, not by `instanceof Promise`: a thunk may
@@ -124,7 +124,7 @@ export function managedServerResource<TRuntime>(
     // all, the resource is being spread over someone else's `start` — the shape
     // the broken version forced on consumers — and the thunk is still the only
     // way to reach their server.
-    const server = started ?? (startAttempted ? undefined : resolveServer());
+    const server = started ?? (startAttempted ? undefined : resolveServer(context));
     if (server === undefined) {
       shutdownPromise = Promise.resolve(undefined);
       return shutdownPromise;
@@ -157,11 +157,11 @@ export function managedServerResource<TRuntime>(
     id: config.id,
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     ...(config.required !== undefined && { required: config.required }),
-    async start() {
+    async start(context) {
       // The application owns when the server exists; the server keeps owning its
       // own HTTP/WebSocket lifecycle once it does.
       startAttempted = true;
-      started = await resolveServer();
+      started = await resolveServer(context);
       return { value: started };
     },
     stopAdmission(context) {

@@ -13,6 +13,52 @@ that section is purely additive. To move a project across versions, see
 additive**; the first breaking change landed in 0.10.0. Grep the file for
 `⚠️ Breaking changes` to find every one.
 
+## [Unreleased]
+
+### Added
+
+- **Managed server factories receive their resource context.** A sync or async
+  `managedServerResource({ server })` factory can read typed declared dependency
+  values with `context.use(resource)` and receives the startup signal. Existing
+  zero-argument factories and already-created handles remain valid. → ADR 0121.
+- **Peer-free in-process tool dispatch has a dedicated entrypoint.** Import
+  `createToolInvoker` from `stitchkit/tools/invoker` when no MCP or AI adapter is
+  mounted. It remains the canonical validation/lifecycle/output runner and is
+  proven from a packed minimal install on Bun and Node. → ADR 0122.
+
+### Fixed
+
+- **Published ESM declarations resolve under NodeNext.** Relative declaration
+  imports now name explicit `.js` or `/index.js` targets, and the packed gate
+  compiles an HTTP-only NodeNext consumer with `skipLibCheck: false`. → ADR 0120.
+- **The root HTTP client no longer requires Socket.IO declarations.** Stitchkit
+  owns the generic event-map constraint used by its root surface, so a consumer
+  installing only `stitchkit` and `zod` does not need
+  `@socket.io/component-emitter` to typecheck.
+- **Injected transport failures keep their concrete cause.** Bare-fetch
+  `createClient` still reports `ApiError('UNKNOWN_ERROR', 0)` for an unknown
+  delivery failure, while `error.cause` preserves a transport's dispatch
+  certainty and stable error type. Received domain failures remain ordinary
+  response `ApiError`s without a transport cause.
+- **Bun Unix response framing survives backpressure resume.** Parser state is
+  committed before a stream enqueue can re-enter `pull`, preserving the exact
+  chunked body while malformed delimiters still fail closed.
+- **Node enforces `maxHeaderBytes`.** The configured ceiling reaches Node's HTTP
+  parser and refuses with `UNIX_HEADERS_TOO_LARGE` and
+  `delivery: 'response-received'`, matching Bun.
+- **Webpack accepts the supported Socket.IO loader without a critical dynamic-
+  dependency warning.** The published root preserves the bundler directive on
+  its runtime-selected fallback while literal `peers.client` loading remains
+  lazy and bundleable. → ADR 0122.
+- **Prompt reservations cannot fit by clamping a deficit to zero.**
+  `composeAgentPrompt` retains a negative `availableHistoryTokens` deficit and
+  reports irreducible instruction/output/tool/attachment/provider reservation
+  overflow as `oversized`, even with empty history and `compact` policy.
+
+No call-site migration is required. A project with a mutable dependency handoff
+inside a managed server factory may delete it and read the declared resource from
+the new context argument.
+
 ## [0.68.0] — 2026-08-28
 
 Four bounded process-local primitives: a portable fail-closed Unix client,

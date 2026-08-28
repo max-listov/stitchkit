@@ -305,16 +305,19 @@ export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSectio
         knownValue(instructionTokens),
       ];
       if (reserveValues.every((value) => value !== undefined)) {
-        availableHistoryTokens = Math.max(
-          0,
+        // Keep the sign. Clamping here made an irreducible reservation deficit
+        // indistinguishable from a window with exactly zero room for history:
+        // empty history then "fit", and `compact` proposed work that could not
+        // possibly repair the request.
+        availableHistoryTokens =
           options.budget.contextWindow -
-            reserveValues.reduce((sum, value) => sum + (value ?? 0), 0),
-        );
+          reserveValues.reduce((sum, value) => sum + (value ?? 0), 0);
         const historyTokens = options.historyTokens
           ? knownValue(AgentTokenCountSchema.parse(options.historyTokens))
           : undefined;
         if (historyTokens !== undefined) {
-          if (historyTokens <= availableHistoryTokens) contextDecision = 'fits';
+          if (availableHistoryTokens < 0) contextDecision = 'oversized';
+          else if (historyTokens <= availableHistoryTokens) contextDecision = 'fits';
           else
             contextDecision =
               options.oversizePolicy === 'compact' ? 'requires-compaction' : 'oversized';

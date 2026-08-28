@@ -1,9 +1,13 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { once } from 'node:events';
 import { createServer as createNodeServer, type Server } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHttpClient } from '../src';
+import { z } from 'zod';
+import { createClient, createHttpClient } from '../src';
+import { ApiError } from '../src/browser/http';
+import { defineContract } from '../src/contract';
 import {
   createUnixClientTransport,
   UnixClientTransportError,
@@ -30,6 +34,29 @@ function close(server: Server): Promise<void> {
     server.close((error) => (error ? reject(error) : resolve()));
     server.closeAllConnections();
   });
+}
+
+const typedProbe = defineContract(
+  { prefix: 'probe' },
+  {
+    read: {
+      method: 'GET',
+      path: '/',
+      desc: 'Read a typed transport probe',
+      output: z.object({ ok: z.boolean() }),
+    },
+  },
+);
+
+async function rejectedApiError(work: Promise<unknown>): Promise<ApiError> {
+  try {
+    await work;
+  } catch (error) {
+    expect(error).toBeInstanceOf(ApiError);
+    if (error instanceof ApiError) return error;
+    throw error;
+  }
+  throw new Error('Expected the typed client request to reject');
 }
 
 const servers: Server[] = [];
@@ -123,13 +150,15 @@ describe('createUnixClientTransport', () => {
     await transport.close();
   });
 
-  test('Bun pauses a fast producer when the response reader stalls', async () => {
+  test('Bun pauses and resumes a chunked producer without corrupting framing', async () => {
     let written = 0;
+    const frame = `${JSON.stringify({ index: 0, data: 'x'.repeat(32 * 1024) })}\n`;
     const unix = createNodeServer(async (_request, response) => {
       response.setHeader('content-type', 'application/octet-stream');
       try {
-        for (let index = 0; index < 512; index += 1) {
-          if (!response.write(Buffer.alloc(32 * 1024))) await once(response, 'drain');
+        for (let index = 0; index < 64; index += 1) {
+          const value = frame.replace('"index":0', `"index":${index}`);
+          if (!response.write(value)) await once(response, 'drain');
           written += 1;
         }
         response.end();
@@ -145,11 +174,52 @@ describe('createUnixClientTransport', () => {
     const reader = response.body?.getReader();
     expect(reader).toBeDefined();
     if (!reader) return;
-    await reader.read();
+    const chunks: Uint8Array[] = [];
+    const first = await reader.read();
+    if (first.value) chunks.push(first.value);
     await Bun.sleep(200);
-    expect(written).toBeLessThan(512);
-    await reader.cancel();
+    expect(written).toBeLessThan(64);
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      chunks.push(next.value);
+    }
+    const actual = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString();
+    const expected = Array.from({ length: 64 }, (_, index) =>
+      frame.replace('"index":0', `"index":${index}`),
+    ).join('');
+    expect(actual).toBe(expected);
+    expect(written).toBe(64);
     await transport.close();
+  });
+
+  test('Bun still refuses malformed chunk delimiters', async () => {
+    const socketPath = nextSocketPath();
+    const server = createNetServer((socket) => {
+      socket.once('data', () => {
+        socket.end(
+          'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabcX\r\n0\r\n\r\n',
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      const transport = createUnixClientTransport({ socketPath });
+      await expect(
+        transport.fetch('http://local/malformed').then((response) => response.text()),
+      ).rejects.toMatchObject({
+        code: 'UNIX_RESPONSE_ABORTED',
+        delivery: 'response-received',
+      });
+      await transport.close();
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   test('close interrupts an active body once and the finite connection cap refuses without queueing', async () => {
@@ -200,6 +270,113 @@ describe('createUnixClientTransport', () => {
     await expect(timed.fetch('http://local/closed')).rejects.toBeInstanceOf(
       UnixClientTransportError,
     );
+  });
+
+  test('typed-client cause preserves not-dispatched and post-dispatch timeout states', async () => {
+    const missingTransport = createUnixClientTransport({ socketPath: nextSocketPath() });
+    const missingClient = createClient(typedProbe, {
+      baseUrl: 'http://local',
+      fetch: missingTransport.fetch,
+    });
+    const missing = await rejectedApiError(missingClient.read());
+    expect(missing).toMatchObject({ code: 'UNKNOWN_ERROR', status: 0 });
+    expect(missing.cause).toBeInstanceOf(UnixClientTransportError);
+    expect(missing.cause).toMatchObject({
+      code: 'UNIX_CONNECT_FAILED',
+      delivery: 'not-dispatched',
+    });
+    await missingTransport.close();
+
+    const hanging = createNodeServer(() => undefined);
+    servers.push(hanging);
+    const socketPath = nextSocketPath();
+    await listen(hanging, socketPath);
+    const timedTransport = createUnixClientTransport({ socketPath, headersTimeoutMs: 25 });
+    const timedClient = createClient(typedProbe, {
+      baseUrl: 'http://local',
+      fetch: timedTransport.fetch,
+    });
+    const timed = await rejectedApiError(timedClient.read());
+    expect(timed.cause).toMatchObject({
+      code: 'UNIX_HEADERS_TIMEOUT',
+      delivery: 'possibly-dispatched',
+    });
+    await timedTransport.close();
+  });
+
+  test('typed-client cancellation and response bounds remain distinguishable', async () => {
+    const requestStarted = Promise.withResolvers<void>();
+    const unix = createNodeServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.write('{"ok":');
+      requestStarted.resolve();
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+    const transport = createUnixClientTransport({ socketPath, maxResponseBytes: 8 });
+    const client = createClient(typedProbe, {
+      baseUrl: 'http://local',
+      fetch: transport.fetch,
+    });
+    const abort = new AbortController();
+    const cancelledRequest = client.read.withOptions({ signal: abort.signal });
+    await requestStarted.promise;
+    abort.abort(new Error('caller left'));
+    await expect(cancelledRequest).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'REQUEST_ABORTED',
+      status: 0,
+    });
+    await transport.close();
+
+    const oversized = createNodeServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true, padding: 'too large' }));
+    });
+    servers.push(oversized);
+    const oversizedPath = nextSocketPath();
+    await listen(oversized, oversizedPath);
+    const boundedTransport = createUnixClientTransport({
+      socketPath: oversizedPath,
+      maxResponseBytes: 8,
+    });
+    const boundedClient = createClient(typedProbe, {
+      baseUrl: 'http://local',
+      fetch: boundedTransport.fetch,
+    });
+    const bounded = await rejectedApiError(boundedClient.read());
+    expect(bounded.cause).toMatchObject({
+      code: 'UNIX_RESPONSE_TOO_LARGE',
+      delivery: 'response-received',
+    });
+    await boundedTransport.close();
+  });
+
+  test('typed-client received domain failure stays an ApiError response', async () => {
+    const unix = createNodeServer((_request, response) => {
+      response.writeHead(409, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({ error: { code: 'CONFLICT', message: 'Already changed' } }),
+      );
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+    const transport = createUnixClientTransport({ socketPath });
+    const client = createClient(typedProbe, {
+      baseUrl: 'http://local',
+      fetch: transport.fetch,
+    });
+
+    const failure = await rejectedApiError(client.read());
+    expect(failure).toMatchObject({
+      name: 'ApiError',
+      code: 'CONFLICT',
+      status: 409,
+    });
+    expect(failure.cause).toBeUndefined();
+    await transport.close();
   });
 
   test('rejects ambiguous configuration and unsafe legacy Unix selection', () => {

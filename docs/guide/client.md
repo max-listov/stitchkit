@@ -88,6 +88,14 @@ socket, and a missing socket cannot fall through to that host over TCP. Defaults
 are 16 MiB request/response bodies, 64 KiB headers, 30 s to response headers,
 eight connections and five redirects.
 
+`maxHeaderBytes` is enforced before exposing a response. Bun's owned parser
+counts the complete response head in wire bytes, including the status line and
+terminating blank line. Node passes the same configured integer unchanged to
+`http.request({ maxHeaderSize })`, so its native parser's documented header-size
+accounting is authoritative there. Exceeding either ceiling yields
+`UNIX_HEADERS_TOO_LARGE` with `delivery: 'response-received'`. A stalled body
+pauses its socket, and resuming preserves the exact chunked body.
+
 `UnixClientTransportError` carries a stable `code` and `delivery`:
 `not-dispatched`, `possibly-dispatched` or `response-received`. Only the first
 proves that the remote operation did not begin; Stitchkit never silently retries
@@ -202,11 +210,57 @@ Abort and timeout do not emit `network_error` and are not retried. The same
 options work for query, JSON, multipart and raw-response calls. Stitchkit does
 not expose upload progress: Fetch has no portable upload-progress primitive.
 
+An injected transport failure is normalized to `UNKNOWN_ERROR` while its exact
+object remains available as `ApiError.cause`. This is how a bounded adapter can
+preserve facts the generic client cannot invent — for example a Unix transport's
+`not-dispatched`, `possibly-dispatched` or `response-received` state. Never replay
+an effect from `UNKNOWN_ERROR` alone; inspect the owned adapter's cause and retry
+only when it proves that dispatch did not happen.
+
 For an endpoint without contract arguments, pass only the options object:
 
 ```ts
 await api.health.withOptions({ signal: controller.signal })
 ```
+
+### Injected delivery adapters
+
+`ClientFetch` is the narrow composition seam for application-owned delivery.
+The contract still owns operation identity, request serialization and response
+validation; the adapter owns I/O, bounds and dispatch certainty:
+
+```ts
+import { type ClientFetch, createClient } from 'stitchkit'
+
+const delivery: ClientFetch = async (input, init) => {
+  // Fixed deployment destination and policy are chosen here, not by caller data.
+  return boundedFetch(input, { ...init, signal: init?.signal })
+}
+
+const query = createClient(queryContract, {
+  baseUrl: 'https://service.internal',
+  fetch: delivery,
+})
+const work = createClient(requestWorkContract, {
+  baseUrl: 'https://service.internal',
+  fetch: delivery,
+})
+```
+
+The same adapter accepts unrelated contract shapes without learning their DTOs
+or operation inventory. `createClient` chooses method/path from the contract,
+serializes only the declared arguments, forwards `.withOptions(..., { signal })`
+and validates the response through the endpoint's output schema. A caller payload
+cannot replace the configured base URL or reserved operation path.
+
+Contract metadata describes an effect; it does not authorize one. Authentication,
+scope and destination policy remain in the application/server boundary. A schema
+mismatch is an explicit validation failure and is not retried automatically. A
+timeout means the caller stopped waiting, not that the remote effect did not run.
+
+Published declarations are checked from a clean tarball under both bundler and
+NodeNext resolution. The HTTP-only NodeNext proof uses `skipLibCheck: false` and
+installs no Socket.IO peer. → ADR 0120.
 
 ### Many contracts at once
 
@@ -344,6 +398,7 @@ try {
     err.details  // structured details, if any
     err.hint     // optional hint
     err.traceId  // x-request-id — correlate this failure with backend logs
+    err.cause    // concrete injected transport failure, when delivery failed
   }
 }
 ```

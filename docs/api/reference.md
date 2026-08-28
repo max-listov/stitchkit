@@ -39,7 +39,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
 | `createHttpClient` | function | the Ky-based HTTP transport; on Next.js SSR its first attempt stays request-memoizable while every retry is a distinct transport attempt — [guide](../guide/client.md#createhttpclient) |
-| `ApiError` | class | a non-2xx response, with `code` / `status` / `details` / `hint` and optional readonly `traceId` from `x-request-id` |
+| `ApiError` | class | a non-2xx or client failure, with `code` / `status` / `details` / `hint`, optional readonly `traceId` from `x-request-id`, and standard `cause` preserving an injected transport failure |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `fetch` installs an explicit transport and is mutually exclusive with the legacy Bun-only `unix` option — [details](../guide/client.md#createhttpclient) |
@@ -446,7 +446,7 @@ cutovers are covered by the executable
 | `ManagedResourceDependency` | _type_ | a dependency named by id or given as the resource itself — the second form is what `context.use(...)` can type |
 | `ManagedResourcePublished` | _type_ | the value type `context.use(resource)` returns, recovered from that resource's own `start` |
 | `ManagedResourcePublishesNoValue` | _type_ | what `context.use(...)` returns for a resource that publishes nothing — a branded refusal rather than `never`, so reading it does not silently compile |
-| `ManagedServerResourceConfig` | _type_ | the server or a thunk that makes one, stable ID, dependencies and policy for `managedServerResource` |
+| `ManagedServerResourceConfig` | _type_ | the server or a sync/async factory receiving `ManagedResourceContext`, plus stable ID, dependencies and shutdown policy for `managedServerResource` |
 | `ManagedServerResource` | _type_ | the resource `managedServerResource` returns, whose `start` publishes the `ManagedServerHandle` |
 | `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
 | `ApplicationOperationalHandlers` / `ApplicationOperationalHandlersOptions` / `ApplicationOperationalHandlersOptionsSchema` | _type_ / schema | conventional status/readiness/liveness route surface and shared retry policy |
@@ -587,7 +587,7 @@ Server-only optional application runtime. See the
 | `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
 | `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
 | `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
-| `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware context budget |
+| `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware signed context budget; irreducible reservation deficits are `oversized`, not compactable history |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
@@ -812,7 +812,7 @@ payload.
 | `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
-| `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
+| `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use peer-free `stitchkit/tools/invoker`, or the full `stitchkit/tools` adapter barrel — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
 | `defineCliCommand` | function | define one typed CLI-only command with optional post-validation `present` and successful `exitCode` policy — [guide](../guide/cli.md#native-binary-commands) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |

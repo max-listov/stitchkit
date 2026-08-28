@@ -242,21 +242,21 @@ async function managedHttpServerRecipe(): Promise<void> {
   );
   const services = [implement(contract, { ping: () => ({ ok: true }) })];
 
-  let databaseReady = false;
   const database = defineManagedResource({
     id: 'database',
-    start() {
-      databaseReady = true;
-    },
+    start: () => ({ value: { message: 'ready' } }),
   });
+  let factorySignal: AbortSignal | undefined;
   const http = managedServerResource({
     id: 'http',
     dependsOn: [database],
-    // The port is bound here, during `start`, after the database is ready —
-    // which is the whole reason to hand this resource a thunk instead of an
-    // already-listening server.
-    server: () => {
-      check(databaseReady, 'the server must be created after its dependency is ready');
+    // The factory receives the same declared-dependency and startup-signal
+    // context as an ordinary resource; route construction needs no outer handoff.
+    server: (context) => {
+      const dependency: { message: string } = context.use(database);
+      check(dependency.message === 'ready', 'the factory must read its dependency value');
+      check(!context.signal.aborted, 'the factory startup signal must be live');
+      factorySignal = context.signal;
       return createServer({ port: 0, services });
     },
   });
@@ -279,6 +279,7 @@ async function managedHttpServerRecipe(): Promise<void> {
   const response = await fetch(`${url}/recipes`);
   check(response.status === 200, 'the application must be listening once start resolves');
   await application.shutdown();
+  check(factorySignal?.aborted === true, 'shutdown must abort the factory lifetime signal');
   let refusedAfterShutdown = false;
   try {
     await fetch(`${url}/recipes`);

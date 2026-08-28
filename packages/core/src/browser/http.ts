@@ -41,8 +41,9 @@ export class ApiError extends Error {
     message?: string,
     public readonly hint?: string,
     public readonly traceId?: string,
+    options?: ErrorOptions,
   ) {
-    super(message ?? `API Error: ${code}`);
+    super(message ?? `API Error: ${code}`, options);
     this.name = 'ApiError';
     // Non-enumerable — invisible to JSON / spread, present for `is()`.
     Object.defineProperty(this, API_ERROR_BRAND, { value: true });
@@ -126,10 +127,10 @@ export interface HttpClientConfig {
   /** Explicit Fetch-compatible transport, for example `createUnixClientTransport().fetch`. */
   fetch?: ClientFetch;
   /**
-   * Dial a unix domain socket instead of TCP (Bun runtime only — other
-   * runtimes ignore the option and dial `baseUrl` over TCP). `baseUrl` stays
-   * required as the path/prefix source; its host is ignored by the socket
-   * transport, so `baseUrl: 'http://localhost'` is the idiomatic pairing.
+   * Dial a unix domain socket instead of TCP (Bun runtime only). Other runtimes
+   * fail before dispatch; use `createUnixClientTransport().fetch` for the
+   * portable Bun/Node path. `baseUrl` stays required as the path/prefix source;
+   * its host is ignored by Bun's socket transport.
    */
   unix?: string;
 }

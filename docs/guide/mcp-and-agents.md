@@ -81,7 +81,7 @@ AI SDK `ToolSet` and call its transport adapter manually. Compile an in-process
 invoker once and call the shared framework runner directly:
 
 ```ts
-import { createToolInvoker } from 'stitchkit/tools'
+import { createToolInvoker } from 'stitchkit/tools/invoker'
 
 const invoker = createToolInvoker(services, {
   transport: 'AGENT',       // required exposure policy
@@ -109,6 +109,11 @@ to `invoke` / `invokeOrThrow`, so one registry can safely serve parallel and
 recursive calls without retaining request state. Every invocation gets a fresh
 tool-call context and runs the same extension resolution, input/output
 validation, lifecycle, hooks and output-strip reporter as mounted tools.
+
+The dedicated entrypoint needs only the normal `stitchkit`/`zod` install. Use
+the broader `stitchkit/tools` barrel when the same program also mounts MCP or AI
+adapters and has installed their optional peers. Both imports reach the same
+runner; this is dependency isolation, not a second execution implementation.
 
 `invoke` returns the canonical discriminated `ToolResult`, not an AI SDK or MCP
 presentation envelope. `invokeOrThrow` returns validated data and throws the

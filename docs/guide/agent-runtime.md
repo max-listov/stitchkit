@@ -184,6 +184,14 @@ const store = createAgentRuntimeStore({
 })
 ```
 
+Prompt budgeting keeps reservation deficits signed. If instructions,
+`reservedOutput`, tool schemas, attachments and provider overhead already exceed
+`contextWindow`, `composeAgentPrompt` returns `contextDecision: 'oversized'`
+and a negative `availableHistoryTokens` even when history is empty. A `compact`
+policy is returned only when removing history could actually make the prompt
+fit. Exact equality (including a zero window with zero reservations/history)
+fits; any unavailable component keeps the decision `unavailable`.
+
 The same opaque `tx` reaches head, run, admission and history callbacks. The adapter maps rows
 and supplies atomicity; Stitchkit owns transition validation and revision
 arithmetic. The executable reference is

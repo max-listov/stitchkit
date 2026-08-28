@@ -9,6 +9,80 @@ import {
 } from '../src/agent-runtime';
 
 describe('agent prompt and model policy', () => {
+  test('reservation overflow is irreducible even with empty history', async () => {
+    const zero = { value: 0, provenance: 'computed' } as const;
+    const prompt = composeAgentPrompt([]);
+    for (const oversizePolicy of ['reject', 'compact'] as const) {
+      const result = await prompt({
+        context: {},
+        signal: new AbortController().signal,
+        historyTokens: zero,
+        oversizePolicy,
+        budget: {
+          contextWindow: 100,
+          reservedOutput: 101,
+          toolSchemas: zero,
+          attachments: zero,
+          providerOverhead: zero,
+        },
+      });
+      expect(result.availableHistoryTokens).toBe(-1);
+      expect(result.contextDecision).toBe('oversized');
+    }
+  });
+
+  test('every reservation participates, equality fits, and unavailable stays unknown', async () => {
+    const zero = { value: 0, provenance: 'computed' } as const;
+    const one = { value: 1, provenance: 'computed' } as const;
+    const section = {
+      name: 'instructions',
+      stability: 'stable' as const,
+      render: () => 'x',
+      estimateTokens: () => one,
+    };
+    for (const budget of [
+      { reservedOutput: 1, toolSchemas: zero, attachments: zero, providerOverhead: zero },
+      { reservedOutput: 0, toolSchemas: one, attachments: zero, providerOverhead: zero },
+      { reservedOutput: 0, toolSchemas: zero, attachments: one, providerOverhead: zero },
+      { reservedOutput: 0, toolSchemas: zero, attachments: zero, providerOverhead: one },
+    ]) {
+      const overflow = await composeAgentPrompt([section])({
+        context: {},
+        signal: new AbortController().signal,
+        historyTokens: zero,
+        budget: { contextWindow: 1, ...budget },
+      });
+      expect(overflow.contextDecision).toBe('oversized');
+    }
+    const exact = await composeAgentPrompt([])({
+      context: {},
+      signal: new AbortController().signal,
+      historyTokens: zero,
+      budget: {
+        contextWindow: 0,
+        reservedOutput: 0,
+        toolSchemas: zero,
+        attachments: zero,
+        providerOverhead: zero,
+      },
+    });
+    expect(exact).toMatchObject({ availableHistoryTokens: 0, contextDecision: 'fits' });
+    const unavailable = await composeAgentPrompt([])({
+      context: {},
+      signal: new AbortController().signal,
+      historyTokens: zero,
+      budget: {
+        contextWindow: 0,
+        reservedOutput: 0,
+        toolSchemas: { provenance: 'unavailable' },
+        attachments: zero,
+        providerOverhead: zero,
+      },
+    });
+    expect(unavailable.contextDecision).toBe('unavailable');
+    expect(unavailable.availableHistoryTokens).toBeUndefined();
+  });
+
   test('keeps unavailable estimates unknown and makes oversize policy explicit', async () => {
     const prompt = composeAgentPrompt([
       {

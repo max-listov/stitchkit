@@ -237,6 +237,11 @@ runtime or type-only package outside a case's budget fails with both the case id
 and package name, so an accidental eager import cannot hide behind another
 fixture's transitive dependency.
 
+That includes `stitchkit/tools/invoker`: a minimal packed consumer imports it
+without MCP/AI peers and executes validation, output projection and normalized
+errors on Bun and Node. The broader `stitchkit/tools` barrel deliberately keeps
+the adapter peer budget.
+
 Beside the matrix, one case is about the ARTIFACT rather than the inventory: a
 program that injects the Socket.IO peer loaders is bundled and started in a
 directory with no `node_modules`, under Node and under Bun with auto-install
@@ -267,6 +272,11 @@ const socket = await createSocketIOServer({
   },
 })
 ```
+
+The packed Next/Webpack gate compiles the browser
+`peers.client: () => import('socket.io-client')` loader and rejects Webpack's
+"request is an expression" warning. Stitchkit's runtime fallback remains lazy;
+its emitted import carries a count-checked ignore directive.
 
 Omit `peers` and nothing changes: the peers stay lazy and are resolved from the
 machine. Both peers must be listed as dependencies of the package you bundle,

@@ -58,6 +58,154 @@ function fakeServer(calls: ShutdownOptions[]): ManagedServerHandle<undefined> {
 }
 
 describe('managedServerResource owns when the server exists', () => {
+  test('a factory reads its declared dependency value and startup signal', async () => {
+    const calls: ShutdownOptions[] = [];
+    const database = defineManagedResource({
+      id: 'database',
+      start: () => ({ value: { message: 'ready' } }),
+    });
+    let factorySignal: AbortSignal | undefined;
+    const http = managedServerResource({
+      id: 'http',
+      dependsOn: [database],
+      server: (context) => {
+        const dependency: { message: string } = context.use(database);
+        expect(dependency.message).toBe('ready');
+        expect(context.signal.aborted).toBe(false);
+        factorySignal = context.signal;
+        return fakeServer(calls);
+      },
+    });
+    const app = createApplication({ id: 'factory-context', resources: [database, http] });
+
+    await app.start();
+    expect(factorySignal?.aborted).toBe(false);
+    await app.shutdown();
+    expect(factorySignal?.aborted).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('an async factory receives the same typed context before dependants start', async () => {
+    const calls: ShutdownOptions[] = [];
+    const dependency = defineManagedResource({
+      id: 'dependency',
+      start: () => ({ value: { sequence: 7 } }),
+    });
+    const order: string[] = [];
+    const http = managedServerResource({
+      id: 'http',
+      dependsOn: [dependency],
+      server: async (context) => {
+        await Promise.resolve();
+        const value: { sequence: number } = context.use(dependency);
+        order.push(`factory:${value.sequence}`);
+        return fakeServer(calls);
+      },
+    });
+    const app = createApplication({
+      id: 'async-factory-context',
+      resources: [
+        dependency,
+        http,
+        defineManagedResource({
+          id: 'dependant',
+          dependsOn: [http],
+          start: () => void order.push('dependant'),
+        }),
+      ],
+    });
+
+    await app.start();
+    expect(order).toEqual(['factory:7', 'dependant']);
+    await app.shutdown();
+  });
+
+  test('an undeclared dependency read fails once and preserves the factory error', async () => {
+    const dependency = defineManagedResource({
+      id: 'dependency',
+      start: () => ({ value: { message: 'ready' } }),
+    });
+    let calls = 0;
+    const app = createApplication({
+      id: 'factory-undeclared-dependency',
+      resources: [
+        dependency,
+        managedServerResource({
+          id: 'http',
+          server: (context) => {
+            calls += 1;
+            context.use(dependency);
+            return fakeServer([]);
+          },
+        }),
+      ],
+    });
+
+    const error = await app.start().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AggregateError);
+    expect(error instanceof Error ? error.message : '').toContain(
+      'without declaring it in dependsOn',
+    );
+    expect(calls).toBe(1);
+  });
+
+  test('a failed dependency prevents the server factory from binding', async () => {
+    let calls = 0;
+    const dependency = defineManagedResource({
+      id: 'dependency',
+      start: () => {
+        throw new Error('dependency unavailable');
+      },
+    });
+    const app = createApplication({
+      id: 'factory-dependency-failure',
+      resources: [
+        dependency,
+        managedServerResource({
+          id: 'http',
+          dependsOn: [dependency],
+          server: () => {
+            calls += 1;
+            return fakeServer([]);
+          },
+        }),
+      ],
+    });
+
+    await expect(app.start()).rejects.toThrow('dependency unavailable');
+    expect(calls).toBe(0);
+  });
+
+  test('an async factory rejection is not invoked again during rollback', async () => {
+    let calls = 0;
+    const app = createApplication({
+      id: 'async-factory-rejection',
+      resources: [
+        managedServerResource({
+          id: 'http',
+          server: async () => {
+            calls += 1;
+            await Promise.resolve();
+            throw new Error('async bind failed');
+          },
+        }),
+      ],
+    });
+
+    const error = await app.start().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AggregateError);
+    expect(error instanceof Error ? error.message : '').toBe('async bind failed');
+    expect(calls).toBe(1);
+  });
+
   test('a thunk binds the port during start, not during shutdown', async () => {
     // The decisive one. A healthy snapshot is exactly what the broken version
     // produced, so the assertion is not the snapshot — it is a request that has

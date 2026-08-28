@@ -134,6 +134,9 @@ These records were consolidated from the project's internal design notes on
 | [0117](0117-contract-streams-own-validation-and-wire-termination.md) | Contract streams own validation and wire termination | Accepted — schema-derived bounded frames and explicit completion on the existing HTTP stream path |
 | [0118](0118-operation-capacity-belongs-to-the-underlying-work.md) | Operation capacity belongs to the underlying work | Accepted — caller deadlines cannot release capacity still consumed by non-cooperative work |
 | [0119](0119-delivery-policy-is-ordered-or-replaceable.md) | Delivery policy is ordered or replaceable | Accepted — finite ordered retention and explicit latest-value coalescing are different contracts |
+| [0120](0120-published-declarations-follow-esm-resolution.md) | Published declarations follow ESM resolution | Accepted — explicit JavaScript targets and a peer-free packed NodeNext root |
+| [0121](0121-managed-server-factories-receive-resource-context.md) | Managed server factories receive resource context | Accepted — declared values and the startup signal reach server construction without an outer handoff |
+| [0122](0122-optional-peer-surfaces-are-proven-from-artifacts.md) | Optional-peer surfaces are proven from artifacts | Accepted — peer-free invocation and warning-free injected Socket.IO loading are packed-consumer guarantees |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

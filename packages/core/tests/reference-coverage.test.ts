@@ -24,6 +24,7 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/contract': 'contract/index.ts',
   'stitchkit/server': 'server/index.ts',
   'stitchkit/tools': 'tools.ts',
+  'stitchkit/tools/invoker': 'tool-invoker.ts',
   'stitchkit/react': 'react.ts',
   'stitchkit/node': 'node.ts',
   'stitchkit/cli': 'cli.ts',

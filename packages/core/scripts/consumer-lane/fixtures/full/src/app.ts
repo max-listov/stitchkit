@@ -14,6 +14,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { MockLanguageModelV4 } from 'ai/test';
 import { ApiError } from 'stitchkit';
 import {
+  composeAgentPrompt,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
@@ -73,6 +74,26 @@ const packedRaceTrace = createAgentRaceTrace();
 packedRaceTrace.record('admission');
 packedRaceTrace.record('terminal');
 packedRaceTrace.assertBefore('admission', 'terminal');
+
+const zeroTokens = { value: 0, provenance: 'computed' } as const;
+const packedPromptOverflow = await composeAgentPrompt([])({
+  context: {},
+  signal: new AbortController().signal,
+  historyTokens: zeroTokens,
+  oversizePolicy: 'compact',
+  budget: {
+    contextWindow: 100,
+    reservedOutput: 101,
+    toolSchemas: zeroTokens,
+    attachments: zeroTokens,
+    providerOverhead: zeroTokens,
+  },
+});
+check(
+  'packed prompt rejects irreducible reservation overflow',
+  packedPromptOverflow.contextDecision === 'oversized' &&
+    packedPromptOverflow.availableHistoryTokens === -1,
+);
 
 const packedApiError = new ApiError(
   'CONFLICT',

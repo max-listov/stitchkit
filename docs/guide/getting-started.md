@@ -41,6 +41,7 @@ own, recorded as an ADR.
 | `stitchkit/server` | server (Bun) | stable | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
 | `stitchkit/node` | server (Node ≥ 22) | stable | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
 | `stitchkit/tools` | server | stable | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
+| `stitchkit/tools/invoker` | server | stable | peer-free `createToolInvoker` over the canonical contract tool runner |
 | `stitchkit/cli` | server | stable | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
@@ -149,7 +150,8 @@ map — feature → packages:
 | anything (validation) | `zod` |
 | `createServer` (Bun) | — (uses `Bun.serve`) |
 | `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
-| MCP / agent tools (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
+| In-process contract tools (`stitchkit/tools/invoker`) | — |
+| MCP / agent adapters (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
 | Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
 | OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
 | MCP host/client tests | `@modelcontextprotocol/client` |
@@ -157,7 +159,7 @@ map — feature → packages:
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
-| Socket.IO client | `socket.io-client` (brings `@socket.io/component-emitter`, which the browser declarations reference for types only) |
+| Socket.IO client | `socket.io-client` (runtime peer; unrelated root declarations remain peer-free) |
 | grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
 | OpenTelemetry gauges (`stitchkit/application/opentelemetry`) | `@opentelemetry/api` |
 

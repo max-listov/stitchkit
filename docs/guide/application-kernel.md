@@ -59,10 +59,12 @@ const cleanup = createManagedSchedule({
 const http = managedServerResource({
   id: 'http',
   dependsOn: [database],
-  // Called during `start`, after `database` is ready — which is how "bind the
-  // port once the database is up" is expressed. Pass an already-running server
-  // instead when the application created it itself.
-  server: () => createServer({ port: env.PORT, services }),
+  // Called during `start`, after `database` is ready. The factory receives the
+  // same declared-dependency and startup-signal context as any resource.
+  server: (context) => {
+    const db = context.use(database)
+    return createServer({ port: env.PORT, services: createServices(db) })
+  },
 })
 
 const app = createApplication({
@@ -149,6 +151,12 @@ const worker = defineManagedResource({
 Declare the dependency with the **resource**, not its id, whenever you intend to
 read from it: that is the form `use` can type, and it keeps the declaration and
 the read from drifting apart. A string still works when all you need is order.
+
+`managedServerResource` follows the same rule. Its factory receives this context
+during `start`, so constructing routes from a database/service/socket value does
+not need an outer mutable handoff or a custom `start` override. A zero-argument
+factory remains valid when it needs only ordering, and an already-running handle
+can still be passed directly. → ADR 0121.
 
 The value is published when `start` resolves and stays readable for the rest of
 the application's life — from `activate` and from the shutdown phases too, where

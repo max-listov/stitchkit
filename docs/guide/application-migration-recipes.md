@@ -211,7 +211,10 @@ already-listening server and it adopts that one instead.
 const http = managedServerResource({
   id: 'http',
   dependsOn: [database],
-  server: () => createServer({ port: env.PORT, services }),
+  server: (context) => {
+    const db = context.use(database)
+    return createServer({ port: env.PORT, services: createServices(db) })
+  },
 })
 
 const app = createApplication({ id: 'service', resources: [database, http] })
@@ -221,6 +224,11 @@ await app.start()   // the port is bound; the snapshot means it
 The server resource publishes its `ManagedServerHandle`, so anything that needs
 the running server — a Socket.IO attachment, a URL to log, a probe — reads it
 with `context.use(http)` rather than through a module-local.
+
+The factory itself receives `ManagedResourceContext` too. It can read only the
+dependencies declared on the server resource and shares the graph's startup
+signal. A dependency failure prevents the factory from binding; a factory
+rejection is rolled back without invoking the factory a second time.
 
 Do not spread this resource over your own `start` to control creation order:
 that shape exists only as a workaround for the version whose `start` was empty,

@@ -515,7 +515,15 @@ function createFetchExecutor<K extends string>(
       }
       if (ApiError.is(error)) throw error;
       const message = error instanceof Error ? error.message : undefined;
-      throw new ApiError('UNKNOWN_ERROR', 0, message ? { message } : undefined, message);
+      throw new ApiError(
+        'UNKNOWN_ERROR',
+        0,
+        message ? { message } : undefined,
+        message,
+        undefined,
+        undefined,
+        { cause: error },
+      );
     }
   };
 }

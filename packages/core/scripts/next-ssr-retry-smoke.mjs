@@ -23,6 +23,7 @@ function run(command, args, cwd) {
       `${command} ${args.join(' ')} failed\n${result.stdout ?? ''}${result.stderr ?? ''}`,
     );
   }
+  return `${result.stdout ?? ''}${result.stderr ?? ''}`;
 }
 
 function listen(server) {
@@ -114,7 +115,12 @@ try {
   manifest.dependencies.stitchkit = `file:${tarball}`;
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   run('bun', ['install', '--no-save'], appRoot);
-  run('bun', ['run', 'build'], appRoot);
+  const buildOutput = run('bun', ['run', 'build', '--', '--webpack'], appRoot);
+  assert.doesNotMatch(
+    buildOutput,
+    /Critical dependency: the request of a dependency is an expression/,
+    `the supported Socket.IO loader must compile without an expression dependency warning\n${buildOutput}`,
+  );
 
   const originReservation = createServer();
   await listen(originReservation);

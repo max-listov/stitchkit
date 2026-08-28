@@ -1,0 +1,10 @@
+{
+  "name": "stitchkit-consumer-nodenext",
+  "private": true,
+  "type": "module",
+  "comment": "Strict HTTP-only NodeNext consumer: stitchkit and zod, with no optional peers.",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3"
+  }
+}

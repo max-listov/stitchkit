@@ -426,6 +426,13 @@
     "webSocketLane",
     "zodIssues"
   ],
+  "stitchkit/tools/invoker": [
+    "ToolInvocationOptions",
+    "ToolInvoker",
+    "ToolInvokerConfig",
+    "ToolInvokerTransport",
+    "createToolInvoker"
+  ],
   "stitchkit/tools": [
     "AdaptedContractAsyncOperationConfig",
     "AdaptedContractAsyncOperationFollowKey",
