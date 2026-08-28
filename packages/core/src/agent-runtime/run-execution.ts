@@ -22,7 +22,7 @@ import {
   createIdleDeadline,
   findRun,
   jsonValue,
-  mergeRunTotals,
+  mergeModelTotals,
   normalizeSdkUsage,
   providerEnvelope,
   statedUsage,
@@ -256,7 +256,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // replacing it. Without the durable field there was nothing to continue
     // from: the crashed attempt's tokens lived only in an event its executor
     // never survived to emit.
-    let usage: AgentUsage | undefined = input.acceptedRun.usage;
+    let nonModelUsage: AgentUsage | undefined = input.acceptedRun.usage;
+    let modelUsage: AgentUsage | undefined;
+    let usage: AgentUsage | undefined = nonModelUsage;
     // Whether the provider ever told us the run was over. It is the difference
     // between a total and a floor, and it is the only thing `partial` can
     // honestly mean on a terminal event — it used to be a constant per event
@@ -352,7 +354,13 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         run = findRun(snapshot.runs, run.id);
         // A model call the run caused is the run's cost, even though it made no
         // step and emitted no event of its own.
-        if (compacted.usage) usage = addUsage(usage, compacted.usage);
+        if (compacted.usage) {
+          // The SDK's terminal total covers only model steps. Compaction and
+          // spend carried by a recovered attempt stay in a separate subtotal,
+          // so reconciling the provider total cannot replace either one.
+          nonModelUsage = addUsage(nonModelUsage, compacted.usage);
+          usage = modelUsage ? addUsage(nonModelUsage, modelUsage) : nonModelUsage;
+        }
       }
 
       const assertCurrent = async (): Promise<'stale_run' | 'run_interrupted' | undefined> => {
@@ -770,7 +778,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               usage: part.usage,
               providerMetadata: part.providerMetadata,
             }) ?? normalizeSdkUsage(part.usage);
-          usage = addUsage(usage, stepUsage);
+          modelUsage = addUsage(modelUsage, stepUsage);
+          usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
           config.observe?.emit({
             schemaVersion: 1,
             eventId: generateId(),
@@ -807,7 +816,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           // This line used to graft the LAST STEP's cost onto every step's
           // tokens — a successful three-step run reported a third of the money
           // beside all of the tokens, and called it `provider-reported`.
-          usage = mergeRunTotals(normalizeSdkUsage(part.totalUsage), usage);
+          modelUsage = mergeModelTotals(normalizeSdkUsage(part.totalUsage), modelUsage);
+          usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
         }
         if (eventCount % checkpointEveryEvents === 0) await checkpoint();
       }

@@ -18,6 +18,22 @@ const sdkUsage = (input: number, output: number) => ({
   outputTokens: { total: output, text: output, reasoning: undefined },
 });
 
+const detailedSdkUsage = (
+  input: number,
+  output: number,
+  reasoning: number,
+  cacheRead: number,
+  cacheWrite: number,
+) => ({
+  inputTokens: {
+    total: input,
+    noCache: input - cacheRead - cacheWrite,
+    cacheRead,
+    cacheWrite,
+  },
+  outputTokens: { total: output, text: output - reasoning, reasoning },
+});
+
 const reported = (value: number) => ({ value, provenance: 'provider-reported' as const });
 
 /** Mirrors the shipped OpenRouter adapter: per-step cost out of provider metadata. */
@@ -136,6 +152,52 @@ const send = (
     parts: [{ type: 'text', text }],
     metadata: {},
   });
+
+const compactedUsage: AgentUsage = {
+  inputTokens: reported(400),
+  outputTokens: reported(40),
+  reasoningTokens: reported(7),
+  cacheReadTokens: reported(30),
+  cacheWriteTokens: reported(10),
+  cost: { value: 0.75, currency: 'USD', provenance: 'provider-reported' },
+};
+
+function compactingRuntime(model: MockLanguageModelV4) {
+  const store = createMemoryAgentRuntimeStore();
+  const runtime = createAgentRuntime({
+    protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+    store,
+    models: {
+      resolve: () => ({
+        descriptor: {
+          provider: 'test',
+          modelId: 'expensive-model',
+          contextWindow: 100_000,
+          capabilities: [],
+        },
+        model,
+        normalizeUsage,
+      }),
+    },
+    prompt: () => ({
+      instructions: 'test',
+      sections: [],
+      instructionTokens: { provenance: 'unavailable' },
+      contextDecision: 'unavailable',
+    }),
+    tools: () => ({}),
+    history: {
+      compact: async ({ conversationId, store: runtimeStore }) => ({
+        outcome: 'not_needed',
+        snapshot: await runtimeStore.loadSnapshot(conversationId),
+        // The hook reports its cumulative spend, including a paid CAS retry.
+        attempts: 2,
+        usage: compactedUsage,
+      }),
+    },
+  });
+  return { runtime, store };
+}
 
 describe('a run reports what it spent, and names what it does not know', () => {
   test('a successful multi-step run reports every step of the money', async () => {
@@ -782,7 +844,6 @@ describe('a spend figure outlives the channel that reported it', () => {
   });
 
   test('what compaction spent is part of what the run spent', async () => {
-    const observed: AgentRunEvent[] = [];
     const model = new MockLanguageModelV4({
       doStream: async () => ({
         stream: simulateReadableStream({
@@ -793,67 +854,109 @@ describe('a spend figure outlives the channel that reported it', () => {
             {
               type: 'finish',
               finishReason: { unified: 'stop', raw: undefined },
-              usage: sdkUsage(1_000, 100),
+              usage: detailedSdkUsage(1_000, 100, 20, 100, 50),
               providerMetadata: { openrouter: { usage: { cost: 0.25 } } },
             },
           ],
         } as never),
       }),
     });
-    const runtime = createAgentRuntime({
-      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
-      store: createMemoryAgentRuntimeStore(),
-      models: {
-        resolve: () => ({
-          descriptor: {
-            provider: 'test',
-            modelId: 'expensive-model',
-            contextWindow: 100_000,
-            capabilities: [],
-          },
-          model,
-          normalizeUsage,
-        }),
-      },
-      prompt: () => ({
-        instructions: 'test',
-        sections: [],
-        instructionTokens: { provenance: 'unavailable' },
-        contextDecision: 'unavailable',
-      }),
-      tools: () => ({}),
-      history: {
-        // A real provider call the run caused, which produces no step and no
-        // event of its own and used to be invisible in every figure.
-        compact: async ({ conversationId, store }) => ({
-          outcome: 'not_needed' as const,
-          snapshot: await store.loadSnapshot(conversationId),
-          attempts: 1,
-          usage: {
-            inputTokens: { value: 400, provenance: 'provider-reported' as const },
-            outputTokens: { value: 40, provenance: 'provider-reported' as const },
-            cost: { value: 0.75, currency: 'USD', provenance: 'provider-reported' as const },
-          },
-        }),
-      },
-      observe: createAgentObservability({
-        write: (event) => {
-          observed.push(event);
-        },
-      }),
-    });
+    const { runtime, store } = compactingRuntime(model);
     const terminal = await send(runtime, 'input-1', 'go').result;
     await runtime.close();
 
-    // $0.75 summarising plus $0.25 answering.
+    const expected: AgentUsage = {
+      inputTokens: { value: 1_400, provenance: 'computed' },
+      outputTokens: { value: 140, provenance: 'computed' },
+      reasoningTokens: { value: 27, provenance: 'computed' },
+      cacheReadTokens: { value: 130, provenance: 'computed' },
+      cacheWriteTokens: { value: 60, provenance: 'computed' },
+      cost: {
+        value: 1,
+        currency: 'USD',
+        provenance: 'computed',
+      },
+    };
+    expect(terminal.metrics?.usage).toEqual(expected);
+    expect(terminal.run.usage).toEqual(expected);
+    expect(
+      (await store.loadRun({ conversationId: 'conversation-1', runId: terminal.run.id }))?.run
+        .usage,
+    ).toEqual(expected);
+    expect(terminal.metrics?.partial).toBe(false);
+  });
+
+  test('an interrupted run retains compaction spend without inventing model usage', async () => {
+    const started = Promise.withResolvers<void>();
+    const model = new MockLanguageModelV4({
+      doStream: async ({ abortSignal }) => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            started.resolve();
+            abortSignal?.addEventListener('abort', () => controller.close(), { once: true });
+          },
+        }),
+      }),
+    });
+    const { runtime, store } = compactingRuntime(model);
+    const ticket = send(runtime, 'input-interrupted', 'stop me');
+    const admission = await ticket.admission;
+    await started.promise;
+    expect(
+      await runtime.interrupt({
+        conversationId: 'conversation-1',
+        runId: admission.runId,
+      }),
+    ).toMatchObject({ outcome: 'applied' });
+    const terminal = await ticket.result;
+    await runtime.close();
+
+    expect(terminal.reason).toBe('interrupted');
+    expect(terminal.metrics?.usage).toEqual(compactedUsage);
+    expect(
+      (await store.loadRun({ conversationId: 'conversation-1', runId: terminal.run.id }))?.run
+        .usage,
+    ).toEqual(compactedUsage);
+  });
+
+  test('a provider failure retains compaction spend beside the SDK model total', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'error', error: new Error('provider exploded') },
+            {
+              type: 'finish',
+              finishReason: { unified: 'error', raw: undefined },
+              usage: detailedSdkUsage(1_000, 100, 20, 100, 50),
+              providerMetadata: { openrouter: { usage: { cost: 0.25 } } },
+            },
+          ],
+        } as never),
+      }),
+    });
+    const { runtime, store } = compactingRuntime(model);
+    const terminal = await send(runtime, 'input-failed', 'fail').result;
+    await runtime.close();
+
+    expect(terminal.reason).toBe('provider_failure');
+    expect(terminal.metrics?.usage?.inputTokens).toEqual({
+      value: 1_400,
+      provenance: 'computed',
+    });
+    expect(terminal.metrics?.usage?.reasoningTokens).toEqual({
+      value: 27,
+      provenance: 'computed',
+    });
     expect(terminal.metrics?.usage?.cost).toEqual({
       value: 1,
       currency: 'USD',
       provenance: 'computed',
     });
-    // The provider reported the run total as 1000 input; compaction's 400 are
-    // outside it and the merge keeps them rather than letting the SDK's total
-    // erase what the hook reported.
-    expect(terminal.metrics?.partial).toBe(false);
+    expect(
+      (await store.loadRun({ conversationId: 'conversation-1', runId: terminal.run.id }))?.run
+        .usage,
+    ).toEqual(terminal.metrics?.usage);
   });
 });

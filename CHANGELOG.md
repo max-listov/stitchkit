@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.7] — 2026-08-28
+
+### Fixed
+
+- **Terminal agent usage retains model calls made by history compaction.** The AI SDK's final
+  token total now reconciles only the model steps it covers, then joins compaction and recovered-
+  attempt spend. Successful, interrupted and failed runs therefore agree across terminal metrics,
+  observability and durable memory/PostgreSQL records, including reasoning and cache token fields.
+
+No call-site migration is required. `AgentCompactionResult.usage` keeps its existing contract: it
+is the cumulative usage of the compaction operation, including paid compare-and-swap retries.
+
 ## [0.68.6] — 2026-08-28
 
 ### Added

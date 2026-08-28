@@ -125,7 +125,7 @@ export function addUsage(total: AgentUsage | undefined, step: AgentUsage): Agent
 }
 
 /**
- * The provider's own run total where it has one, ours where it does not.
+ * The SDK's own model-step total where it has one, our per-step sum where it does not.
  *
  * `totalUsage` is the SDK's sum over the steps it saw, and it covers only the
  * five token fields it knows about — a `normalizeUsage` hook that reads
@@ -140,7 +140,7 @@ export function addUsage(total: AgentUsage | undefined, step: AgentUsage): Agent
  * for a billable figure cares about, and pretending otherwise made one run
  * report `provider-reported` on success and `computed` on abort.
  */
-export function mergeRunTotals(
+export function mergeModelTotals(
   sdkTotal: AgentUsage,
   accumulated: AgentUsage | undefined,
 ): AgentUsage {

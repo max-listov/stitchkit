@@ -1,4 +1,4 @@
-import { AgentMessageSchema, AgentRunSchema } from '../agent-runtime/schemas';
+import { AgentMessageSchema, AgentRunSchema, type AgentUsage } from '../agent-runtime/schemas';
 import type { AgentRuntimeStore } from '../agent-runtime/store';
 
 /**
@@ -463,6 +463,14 @@ async function conformanceScenario(
     throw new Error('An interrupt must not discard the figure the run had already spent');
   }
 
+  const terminalUsage = {
+    inputTokens: { value: 3_000, provenance: 'computed' },
+    outputTokens: { value: 300, provenance: 'computed' },
+    reasoningTokens: { value: 30, provenance: 'computed' },
+    cacheReadTokens: { value: 200, provenance: 'computed' },
+    cacheWriteTokens: { value: 100, provenance: 'computed' },
+    cost: { value: 1.5, currency: 'USD', provenance: 'computed' },
+  } satisfies AgentUsage;
   const terminalResults = await Promise.all([
     store.commitRunTerminal({
       conversationId,
@@ -471,11 +479,7 @@ async function conformanceScenario(
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',
-      usage: {
-        inputTokens: { value: 3_000, provenance: 'computed' },
-        outputTokens: { value: 300, provenance: 'computed' },
-        cost: { value: 1.5, currency: 'USD', provenance: 'computed' },
-      },
+      usage: terminalUsage,
     }),
     store.commitRunTerminal({
       conversationId,
@@ -484,11 +488,7 @@ async function conformanceScenario(
       ownerId: 'conformance-owner',
       assistant: terminalAssistant,
       reason: 'success',
-      usage: {
-        inputTokens: { value: 3_000, provenance: 'computed' },
-        outputTokens: { value: 300, provenance: 'computed' },
-        cost: { value: 1.5, currency: 'USD', provenance: 'computed' },
-      },
+      usage: terminalUsage,
     }),
   ]);
   const terminalOutcomes = terminalResults.map((result) => result.outcome).sort();
@@ -500,7 +500,7 @@ async function conformanceScenario(
     throw new Error('Terminal race produced no applied result');
   }
   const settledRun = terminalApplied.snapshot.runs.find((run) => run.id === running.id);
-  if (settledRun?.usage?.cost?.value !== 1.5) {
+  if (JSON.stringify(settledRun?.usage) !== JSON.stringify(terminalUsage)) {
     throw new Error('Terminal commit did not persist the run usage it was given');
   }
   // The terminal read: this is the one shape `commitAgentRunTerminal` resolves
@@ -508,6 +508,9 @@ async function conformanceScenario(
   const terminalView = await store.loadRun({ conversationId, runId: running.id });
   if (terminalView?.run.terminalReason !== 'success') {
     throw new Error('loadRun must report the terminal reason a settled run ended with');
+  }
+  if (JSON.stringify(terminalView.run.usage) !== JSON.stringify(terminalUsage)) {
+    throw new Error('loadRun must return every persisted terminal usage field');
   }
   if (JSON.stringify(terminalView.assistant) !== JSON.stringify(terminalAssistant)) {
     throw new Error('loadRun must retain the answer a settled run produced');
