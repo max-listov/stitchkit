@@ -209,6 +209,13 @@ assistant, so physical product-history compaction cannot break idempotent retrie
 acquisition, revision-checked assistant checkpoints and one terminal CAS. The
 process-local coordinator releases its lane only after terminal commit.
 
+A queued admission is durable immediately, even if its predecessor is still awaiting ownership
+or its first checkpoint. Snapshots expose causal turn order rather than physical append order:
+the predecessor's assigned input(s) and assistant come before the successor input(s). Execution
+uses the same run boundary, so neither `prompt({ snapshot })` nor default/custom history
+projection can see inputs assigned to a later run. `inject` remains the explicit path that moves
+a successor input into the run already in flight.
+
 ```text
 input + queued run → running → execution settled → terminal CAS → successor
 ```
@@ -725,7 +732,7 @@ outbox.
 `createAgentRaceTrace`. Barriers have bounded teardown, traces assert exact partial order, and the
 helpers are exercised from packed Bun and Node consumers. `runAgentStoreConformance` runs duplicate,
 coalescing, collision, stale checkpoint, replay safety, terminal race, absorption, bounded reads,
-compaction and recovery invariants against any fresh durable adapter.
+causal queued-history order, compaction and recovery invariants against any fresh durable adapter.
 
 It picks its conversation identities itself and passes them to `createStore(context)` **before the
 first mutation**, so an adapter whose runtime rows reference an application-owned conversation row

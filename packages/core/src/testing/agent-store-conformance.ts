@@ -85,7 +85,7 @@ export async function runAgentStoreConformance(
 ): Promise<void> {
   const run = `conformance-${crypto.randomUUID()}`;
   const context: AgentStoreConformanceContext = {
-    conversationIds: [run, `${run}-recovery`, `${run}-absorb`],
+    conversationIds: [run, `${run}-recovery`, `${run}-absorb`, `${run}-causal-history`],
   };
   const store = await config.createStore(context);
   let failure: unknown;
@@ -115,9 +115,19 @@ async function conformanceScenario(
   store: AgentRuntimeStore,
   conversationIds: readonly string[],
 ): Promise<void> {
-  const [conversationId, recoveryConversationId, absorbConversationId] = conversationIds;
-  if (!conversationId || !recoveryConversationId || !absorbConversationId) {
-    throw new Error('Agent store conformance requires three conversation identities');
+  const [
+    conversationId,
+    recoveryConversationId,
+    absorbConversationId,
+    causalHistoryConversationId,
+  ] = conversationIds;
+  if (
+    !conversationId ||
+    !recoveryConversationId ||
+    !absorbConversationId ||
+    !causalHistoryConversationId
+  ) {
+    throw new Error('Agent store conformance requires four conversation identities');
   }
   /**
    * An identity the scenario asserts is ABSENT, and therefore deliberately not
@@ -560,7 +570,69 @@ async function conformanceScenario(
     throw new Error('Abandon recovery did not atomically terminalize its assistant record');
   }
 
+  await assertCausalHistoryOrder(store, causalHistoryConversationId);
   await assertAbsorptionIsAtomic(store, absorbConversationId);
+}
+
+/** A later durable admission follows the predecessor answer in every snapshot. */
+async function assertCausalHistoryOrder(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  const leadInput = userMessage(conversationId, 'causal-input-1');
+  const leadRun = queuedRun(conversationId, leadInput.id, 'causal-run-1');
+  requireOutcome(
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'causal-request-1',
+      input: leadInput,
+      run: leadRun,
+    }),
+    'applied',
+  );
+  const acquired = await store.acquireRun({
+    conversationId,
+    runId: leadRun.id,
+    expectedRevision: leadRun.revision,
+    ownerId: 'causal-owner',
+  });
+  requireOutcome(acquired, 'applied');
+  const running = acquired.snapshot.runs.find((run) => run.id === leadRun.id);
+  if (!running) throw new Error('Causal-order run disappeared after acquisition');
+
+  const successorInput = userMessage(conversationId, 'causal-input-2');
+  const successorRun = queuedRun(conversationId, successorInput.id, 'causal-run-2');
+  requireOutcome(
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'causal-request-2',
+      input: successorInput,
+      run: successorRun,
+    }),
+    'applied',
+  );
+  const assistant = AgentMessageSchema.parse({
+    schemaVersion: 1,
+    id: running.assistantMessageId,
+    conversationId,
+    runId: running.id,
+    role: 'assistant',
+    status: 'streaming',
+    parts: [{ type: 'text', text: 'causal answer' }],
+    createdAt: '2026-08-28T00:00:00.000Z',
+    updatedAt: '2026-08-28T00:00:01.000Z',
+  });
+  const checkpoint = await store.checkpointRunAssistant({
+    conversationId,
+    runId: running.id,
+    expectedRevision: running.revision,
+    ownerId: 'causal-owner',
+    ...(running.fencingToken !== undefined && { fencingToken: running.fencingToken }),
+    assistant,
+  });
+  requireOutcome(checkpoint, 'applied');
+  const order = checkpoint.snapshot.messages.map((message) => message.id).join(',');
+  if (order !== `${leadInput.id},${assistant.id},${successorInput.id}`) {
+    throw new Error(`Agent history is not in causal run order: ${order}`);
+  }
 }
 
 /**

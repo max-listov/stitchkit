@@ -216,6 +216,49 @@ function historyPositions(messages: readonly AgentMessage[]): (run: AgentRun) =>
   };
 }
 
+function orderRuns(messages: readonly AgentMessage[], runs: readonly AgentRun[]): AgentRun[] {
+  const positionOf = historyPositions(messages);
+  return [...runs].sort(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) ||
+      positionOf(left) - positionOf(right) ||
+      left.id.localeCompare(right.id),
+  );
+}
+
+/**
+ * Put every run-owned message into durable causal order without moving
+ * unowned history anchors such as summaries and system records.
+ *
+ * Admissions are durable before execution, so storage naturally appends a
+ * queued successor's user message before the predecessor writes its assistant.
+ * Replacing only the owned slots keeps storage codecs append-friendly while a
+ * snapshot consistently reads as input(s) → answer, then successor input(s).
+ */
+function orderRunMessages(
+  messages: readonly AgentMessage[],
+  runs: readonly AgentRun[],
+): AgentMessage[] {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  const ownedIds = new Set(
+    runs.flatMap((run) => [...run.inputMessageIds, run.assistantMessageId]),
+  );
+  const orderedOwned = runs.flatMap((run) =>
+    [...run.inputMessageIds, run.assistantMessageId].flatMap((id) => {
+      const message = byId.get(id);
+      return message ? [message] : [];
+    }),
+  );
+  let ownedIndex = 0;
+  return messages.map((message) => {
+    if (!ownedIds.has(message.id)) return message;
+    const ordered = orderedOwned[ownedIndex];
+    if (!ordered) throw new TypeError('Stored agent history lost a run-owned message');
+    ownedIndex += 1;
+    return ordered;
+  });
+}
+
 function snapshotOf(
   head: AgentRuntimeHead,
   messages: readonly AgentMessage[],
@@ -232,20 +275,16 @@ function snapshotOf(
   // test read position 1 as "the successor" and half the time got the run it
   // was queued behind. History is the causal record the runtime already keeps
   // in order for the prompt, so it is what decides.
-  const positionOf = historyPositions(messages);
+  const runs = orderRuns(
+    messages,
+    records.map((record) => record.run),
+  );
   return AgentSnapshotSchema.parse({
     schemaVersion: 1,
     conversationId: head.conversationId,
     version: head.version,
-    messages,
-    runs: records
-      .map((record) => record.run)
-      .sort(
-        (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          positionOf(left) - positionOf(right) ||
-          left.id.localeCompare(right.id),
-      ),
+    messages: orderRunMessages(messages, runs),
+    runs,
   });
 }
 
@@ -357,13 +396,15 @@ function applied(
     historyMutations?: readonly AgentHistoryMutation[];
   },
 ): ReducedApplied {
+  const runs = input.runs ?? current.runs;
+  const messages = input.messages ?? current.messages;
   return {
     outcome: 'applied',
     snapshot: AgentSnapshotSchema.parse({
       ...current,
       version: current.version + 1,
-      runs: input.runs ?? current.runs,
-      messages: input.messages ?? current.messages,
+      runs,
+      messages: orderRunMessages(messages, runs),
     }),
     ...(effects?.runRecords?.length && { runRecords: effects.runRecords }),
     ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),

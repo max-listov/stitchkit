@@ -34,6 +34,7 @@ import {
   AgentMessageSchema,
   type AgentRun,
   type AgentSnapshot,
+  AgentSnapshotSchema,
   type AgentTerminalReason,
   type AgentUsage,
   runStateForTerminalReason,
@@ -44,6 +45,37 @@ import {
   commitAgentRunTerminal,
 } from './terminal-commit';
 import { assistantStatus } from './terminal-status';
+
+/**
+ * The conversation as this run is allowed to know it.
+ *
+ * Durable admission may append successor inputs while acquisition or the
+ * initial assistant checkpoint is awaiting I/O. Those inputs belong to later
+ * runs and cannot enter this run's prompt merely because they already exist in
+ * the conversation aggregate. Unowned records (summary/system) remain shared;
+ * run-owned records become eligible in causal run order through this run.
+ */
+function snapshotForRunPrompt(snapshot: AgentSnapshot, runId: string): AgentSnapshot {
+  const runIndex = snapshot.runs.findIndex((candidate) => candidate.id === runId);
+  if (runIndex < 0) throw new AgentRuntimeConflictError('prompt run lookup');
+  const ownedIds = new Set(
+    snapshot.runs.flatMap((candidate) => [
+      ...candidate.inputMessageIds,
+      candidate.assistantMessageId,
+    ]),
+  );
+  const eligibleIds = new Set(
+    snapshot.runs
+      .slice(0, runIndex + 1)
+      .flatMap((candidate) => [...candidate.inputMessageIds, candidate.assistantMessageId]),
+  );
+  return AgentSnapshotSchema.parse({
+    ...snapshot,
+    messages: snapshot.messages.filter(
+      (message) => !ownedIds.has(message.id) || eligibleIds.has(message.id),
+    ),
+  });
+}
 
 /** Everything one run needs from the factory that owns it. */
 export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
@@ -351,12 +383,13 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         context: input.context,
         conversationId: run.conversationId,
       });
+      const promptSnapshot = snapshotForRunPrompt(snapshot, run.id);
       const [prompt, tools] = await Promise.all([
         config.prompt({
           context: input.context,
           signal: executionSignal,
           model: selectedModel,
-          snapshot,
+          snapshot: promptSnapshot,
         }),
         config.tools(runtimeContext),
       ]);
@@ -409,7 +442,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         });
         return [...detailed.messages];
       };
-      const history = await projectHistory(snapshot);
+      const history = await projectHistory(promptSnapshot);
       // `Instructions` is `string | SystemModelMessage | SystemModelMessage[]`,
       // so the composed prompt is normalised before the carried entries join it.
       const withCarriedSystem = (instructions: Instructions): Instructions => {

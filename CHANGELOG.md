@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.3] — 2026-08-28
+
+### Fixed
+
+- **Queued successor inputs stay out of predecessor prompts.** Durable admission may finish
+  while an earlier run is still acquiring ownership. The executor now projects only the inputs
+  assigned through its own causal run boundary, and framework-owned snapshots order run records
+  as input(s) → assistant before the queued successor. Custom prompt construction, default or
+  custom history projection and structured compaction therefore observe the same turn order.
+  The reusable store conformance kit now requires this ordering from memory and durable drivers.
+
+No call-site migration is required. A consumer blocked on `runs.inputPolicy: 'queue'` can remove
+its hold after upgrading; no consumer-side prompt filter or replacement queue is needed.
+
 ## [0.68.2] — 2026-08-28
 
 ### Added

@@ -651,6 +651,11 @@ ordinary queued successor. The absorbed run ends with `terminalReason: 'absorbed
 its own**; a submission on its idempotency key resolves through that pointer to the answer
 (→ ADR 0113).
 
+With `queue`, a durable successor admission is not prompt eligibility: the current executor sees
+only records through its own run boundary. Snapshot history is normalized to causal turn order
+(assigned input(s), assistant, then successor input(s)) even when the storage codec physically
+appended the successor before the predecessor checkpoint.
+
 `AgentRuntimeStore` has two **bounded** reads beside `loadSnapshot`:
 `loadRun({ conversationId, runId })` returns an `AgentRunView` — the run, the conversation version it
 was read at, and the retained answer once the run is terminal — or `undefined`; `listActiveRuns(conversationId)`
