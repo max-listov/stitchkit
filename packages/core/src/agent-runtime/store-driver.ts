@@ -218,12 +218,28 @@ function historyPositions(messages: readonly AgentMessage[]): (run: AgentRun) =>
 
 function orderRuns(messages: readonly AgentMessage[], runs: readonly AgentRun[]): AgentRun[] {
   const positionOf = historyPositions(messages);
-  return [...runs].sort(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) ||
-      positionOf(left) - positionOf(right) ||
-      left.id.localeCompare(right.id),
-  );
+  const fallback = (left: AgentRun, right: AgentRun): number =>
+    left.createdAt.localeCompare(right.createdAt) ||
+    positionOf(left) - positionOf(right) ||
+    left.id.localeCompare(right.id);
+  return [...runs].sort((left, right) => {
+    if (
+      left.executionSequence !== undefined &&
+      right.executionSequence !== undefined &&
+      left.executionSequence !== right.executionSequence
+    ) {
+      return left.executionSequence - right.executionSequence;
+    }
+    const leftStarted = left.executionSequence !== undefined || left.state !== 'queued';
+    const rightStarted = right.executionSequence !== undefined || right.state !== 'queued';
+    if (leftStarted !== rightStarted) return leftStarted ? -1 : 1;
+    if (!leftStarted && !rightStarted) {
+      const priority =
+        Number(right.queuePriority !== undefined) - Number(left.queuePriority !== undefined);
+      if (priority !== 0) return priority;
+    }
+    return fallback(left, right);
+  });
 }
 
 /**
@@ -265,7 +281,9 @@ function snapshotOf(
   records: readonly AgentStoredRun[],
 ): AgentSnapshot {
   validateSnapshot(head, messages, records);
-  // `createdAt` first, then history, then the identifier.
+  // Durable execution sequence first. Before a run starts, explicit urgent
+  // priority precedes ordinary work; creation/history/id remain the stable
+  // fallback inside either class and for legacy records.
   //
   // The middle key is not decoration. Two runs of one conversation are
   // routinely created inside the same millisecond — a successor coalescing
@@ -437,6 +455,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       input.run.inputMessageIds[0] !== input.input.id ||
       input.run.state !== 'queued' ||
       input.run.revision !== 0 ||
+      input.run.executionSequence !== undefined ||
       input.run.ownerId !== undefined ||
       input.run.terminalReason !== undefined ||
       input.run.terminalPolicyName !== undefined ||
@@ -513,6 +532,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
     const next = AgentRunSchema.parse({
       ...run,
       state: 'running',
+      executionSequence: run.executionSequence ?? current.version + 1,
       ownerId: operation.input.ownerId,
       fencingToken: (run.fencingToken ?? 0) + 1,
       revision: run.revision + 1,

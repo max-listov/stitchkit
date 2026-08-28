@@ -1,7 +1,10 @@
 /**
  * What happens to a run in flight when new input arrives on the same key.
  *
- * `queue` finishes the run first. `interrupt` and `supersede` both end it, and
+ * `queue` finishes the run first. `interrupt`, `interrupt-next` and `supersede`
+ * end it. `interrupt-next` is the priority form: it runs before ordinary work
+ * already waiting on the lane, while preserving FIFO inside both classes.
+ * `interrupt` keeps ordinary FIFO. `interrupt` and `supersede` otherwise
  * differ in one thing only: what becomes of what it produced. An interrupted
  * run's partial answer stays part of the conversation; a superseded run's does
  * not reach the model again.
@@ -21,7 +24,12 @@
  * `inputPolicy` accepting a function of the input: one application can hold
  * both surfaces.
  */
-export type AgentInputPolicy = 'queue' | 'inject' | 'interrupt' | 'supersede';
+export type AgentInputPolicy =
+  | 'queue'
+  | 'inject'
+  | 'interrupt'
+  | 'interrupt-next'
+  | 'supersede';
 export type AgentStopReason = 'user-interrupt' | 'supersede' | 'timeout' | 'shutdown';
 
 export interface AgentCoordinatedRun<RESULT> {
@@ -105,6 +113,7 @@ export interface AgentSessionCloseResult {
 }
 
 interface PendingRun {
+  priority: boolean;
   start(): Promise<void>;
   reject(reason: unknown): void;
 }
@@ -172,6 +181,7 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
 
       const lane = laneFor(input.key);
       const pending: PendingRun = {
+        priority: input.policy === 'interrupt-next',
         reject(reason) {
           accepted.reject(reason);
           result.reject(reason);
@@ -197,9 +207,17 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
 
       // The abort reason is the only thing that survives into the terminal
       // record, so the two ending policies must not share one.
-      if (input.policy === 'interrupt') lane.active?.controller.abort('user-interrupt');
+      if (input.policy === 'interrupt' || input.policy === 'interrupt-next') {
+        lane.active?.controller.abort('user-interrupt');
+      }
       if (input.policy === 'supersede') lane.active?.controller.abort('supersede');
-      lane.queue.push(pending);
+      if (pending.priority) {
+        const firstOrdinary = lane.queue.findIndex((queued) => !queued.priority);
+        if (firstOrdinary === -1) lane.queue.push(pending);
+        else lane.queue.splice(firstOrdinary, 0, pending);
+      } else {
+        lane.queue.push(pending);
+      }
       startNext(input.key, lane);
       return { accepted: accepted.promise, result: result.promise };
     },

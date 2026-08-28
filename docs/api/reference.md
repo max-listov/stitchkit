@@ -580,6 +580,7 @@ Server-only optional application runtime. See the
 | `defineAgentProtocol` | function | declare context, input metadata, canonical parts and optional pre-CAS terminal acceptance (`allow-empty`, `require-output` or callback) |
 | `hasAgentTerminalOutput` | function | generic `require-output` predicate for non-blank text, generated files, structured provider parts and explicit tool-only policy stops |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
+| `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
 | `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history and indexed run recovery |
@@ -629,7 +630,8 @@ Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentTer
 `AgentToolCallPartSchema`, `AgentToolResultPartSchema`, `AgentOpaquePartSchema`,
 `AgentControlPartSchema`, `AgentMessageRoleSchema`, `AgentMessageStatusSchema`, `AgentMessage`,
 `AgentAssistantPlaceholderSchema`, `AgentAssistantPlaceholder`, `AgentRunStateSchema`,
-`AgentTerminalReasonSchema`, `AgentTerminalReason`, `AgentRun`, `AgentSnapshot`,
+`AgentTerminalReasonSchema`, `AgentTerminalReason`, `AgentRunQueuePrioritySchema`,
+`AgentRunQueuePriority`, `AgentRun`, `AgentSnapshot`,
 `AgentUsageValueSchema`, `AgentCostValueSchema`, `AgentUsageSchema`, `AgentUsage` and
 `AgentRunMetrics`.
 
@@ -645,7 +647,7 @@ integer — `AgentUsageValueSchema` and `AgentTokenCountSchema` refuse a fractio
 provider figure that is not a whole number is normalised to `unavailable` rather than thrown.
 `AgentCostValueSchema.value` stays fractional, because money is.
 
-`runs.inputPolicy` takes `queue` (default), `inject`, `interrupt` or `supersede`, or a function of
+`runs.inputPolicy` takes `queue` (default), `inject`, `interrupt`, `interrupt-next` or `supersede`, or a function of
 the raw input returning one. `inject` lets a run in flight take a newly arrived input into its prompt
 at a step boundary and answer it too; the absorption is committed in the **same transaction** as that
 run's terminal record, via `CommitRunTerminal.absorb`, so a run that ends any other way leaves an
@@ -653,6 +655,12 @@ ordinary queued successor. The absorbed run ends with `terminalReason: 'absorbed
 `'superseded'`, `absorbedIntoRunId` naming the run that answered it, and **no assistant message of
 its own**; a submission on its idempotency key resolves through that pointer to the answer
 (→ ADR 0113).
+
+`interrupt-next` interrupts the active run, waits for its real settlement and then executes the new
+input before ordinary pending work. Ordinary work is not dropped or re-admitted, and urgent work is
+FIFO within its own class. `AgentRun.queuePriority` persists the pending class;
+`AgentRun.executionSequence` persists the actual first-acquisition order, so recovery and canonical
+history preserve the same `A → C → B` order across equal timestamps and scan pages (→ ADR 0127).
 
 With `queue`, a durable successor admission is not prompt eligibility: the current executor sees
 only records through its own run boundary. Snapshot history is normalized to causal turn order
@@ -662,7 +670,7 @@ appended the successor before the predecessor checkpoint.
 `AgentRuntimeStore` has two **bounded** reads beside `loadSnapshot`:
 `loadRun({ conversationId, runId })` returns an `AgentRunView` — the run, the conversation version it
 was read at, and the retained answer once the run is terminal — or `undefined`; `listActiveRuns(conversationId)`
-returns the runs that have not ended, ordered by `createdAt` then `id`. Neither reads history, so
+returns the runs that have not ended in durable execution/priority order. Neither reads history, so
 neither grows with the length of the conversation, and neither needs anything new from
 `AgentRuntimeStoreDriver`. `loadSnapshot` and every mutation result still carry the whole
 conversation — that is what the store's reducer validates against, and what the runtime builds a

@@ -91,6 +91,7 @@ export async function runAgentStoreConformance(
       `${run}-absorb`,
       `${run}-causal-history`,
       `${run}-causal-active`,
+      `${run}-interrupt-priority`,
     ],
   };
   const store = await config.createStore(context);
@@ -127,15 +128,17 @@ async function conformanceScenario(
     absorbConversationId,
     causalHistoryConversationId,
     causalActiveConversationId,
+    interruptPriorityConversationId,
   ] = conversationIds;
   if (
     !conversationId ||
     !recoveryConversationId ||
     !absorbConversationId ||
     !causalHistoryConversationId ||
-    !causalActiveConversationId
+    !causalActiveConversationId ||
+    !interruptPriorityConversationId
   ) {
-    throw new Error('Agent store conformance requires five conversation identities');
+    throw new Error('Agent store conformance requires six conversation identities');
   }
   /**
    * An identity the scenario asserts is ABSENT, and therefore deliberately not
@@ -580,7 +583,123 @@ async function conformanceScenario(
 
   await assertCausalHistoryOrder(store, causalHistoryConversationId);
   await assertActiveRunCausalOrder(store, causalActiveConversationId);
+  await assertInterruptPriorityOrder(store, interruptPriorityConversationId);
   await assertAbsorptionIsAtomic(store, absorbConversationId);
+}
+
+/** Urgent queued work survives storage and becomes the next acquired run. */
+async function assertInterruptPriorityOrder(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  const inputs = ['priority-a', 'priority-b', 'priority-c'].map((id) =>
+    userMessage(conversationId, id),
+  );
+  const [inputA, inputB, inputC] = inputs;
+  if (!inputA || !inputB || !inputC) throw new Error('Priority fixture is incomplete');
+
+  const runA = queuedRun(conversationId, inputA.id, 'priority-run-a');
+  const runB = queuedRun(conversationId, inputB.id, 'priority-run-b');
+  const runC = AgentRunSchema.parse({
+    ...queuedRun(conversationId, inputC.id, 'priority-run-c'),
+    queuePriority: 'interrupt-next',
+  });
+  requireOutcome(
+    await store.acceptInputAndAssignRun({ idempotencyKey: runA.id, input: inputA, run: runA }),
+    'applied',
+  );
+  const acquiredA = await store.acquireRun({
+    conversationId,
+    runId: runA.id,
+    expectedRevision: runA.revision,
+    ownerId: 'priority-owner-a',
+  });
+  requireOutcome(acquiredA, 'applied');
+  const runningA = acquiredA.snapshot.runs.find((run) => run.id === runA.id);
+  if (!runningA) throw new Error('Priority lead run disappeared after acquisition');
+  requireOutcome(
+    await store.acceptInputAndAssignRun({ idempotencyKey: runB.id, input: inputB, run: runB }),
+    'applied',
+  );
+  requireOutcome(
+    await store.acceptInputAndAssignRun({ idempotencyKey: runC.id, input: inputC, run: runC }),
+    'applied',
+  );
+
+  const active = await store.listActiveRuns(conversationId);
+  if (active.map((run) => run.id).join(',') !== `${runA.id},${runC.id},${runB.id}`) {
+    throw new Error('Active runs did not place urgent work before ordinary pending work');
+  }
+  requireOutcome(
+    await store.acquireRun({
+      conversationId,
+      runId: runB.id,
+      expectedRevision: runB.revision,
+      ownerId: 'priority-owner-b',
+    }),
+    'conflict',
+  );
+
+  const abandonedA = await store.recoverRun({
+    conversationId,
+    runId: runA.id,
+    expectedRevision: runningA.revision,
+    action: 'abandon',
+  });
+  requireOutcome(abandonedA, 'applied');
+  const queuedC = abandonedA.snapshot.runs.find((run) => run.id === runC.id);
+  if (!queuedC) throw new Error('Urgent run disappeared after predecessor settlement');
+  const acquiredC = await store.acquireRun({
+    conversationId,
+    runId: runC.id,
+    expectedRevision: queuedC.revision,
+    ownerId: 'priority-owner-c',
+  });
+  requireOutcome(acquiredC, 'applied');
+  const runningC = acquiredC.snapshot.runs.find((run) => run.id === runC.id);
+  if (!runningC) throw new Error('Urgent run disappeared after acquisition');
+  requireOutcome(
+    await store.acquireRun({
+      conversationId,
+      runId: runB.id,
+      expectedRevision: runB.revision,
+      ownerId: 'priority-owner-b',
+    }),
+    'conflict',
+  );
+
+  const abandonedC = await store.recoverRun({
+    conversationId,
+    runId: runC.id,
+    expectedRevision: runningC.revision,
+    action: 'abandon',
+  });
+  requireOutcome(abandonedC, 'applied');
+  const queuedB = abandonedC.snapshot.runs.find((run) => run.id === runB.id);
+  if (!queuedB) throw new Error('Ordinary run disappeared after urgent settlement');
+  const acquiredB = await store.acquireRun({
+    conversationId,
+    runId: runB.id,
+    expectedRevision: queuedB.revision,
+    ownerId: 'priority-owner-b',
+  });
+  requireOutcome(acquiredB, 'applied');
+
+  const ordered = acquiredB.snapshot.runs.map((run) => run.id).join(',');
+  if (ordered !== `${runA.id},${runC.id},${runB.id}`) {
+    throw new Error(`Durable execution order was not preserved: ${ordered}`);
+  }
+  const [sequenceA, sequenceC, sequenceB] = acquiredB.snapshot.runs.map(
+    (run) => run.executionSequence,
+  );
+  if (
+    sequenceA === undefined ||
+    sequenceC === undefined ||
+    sequenceB === undefined ||
+    !(sequenceA < sequenceC && sequenceC < sequenceB)
+  ) {
+    throw new Error('Acquisition did not persist increasing execution sequence values');
+  }
 }
 
 /** Active-run reads preserve admission order when identifiers point backwards. */

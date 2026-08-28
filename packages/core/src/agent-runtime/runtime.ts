@@ -494,6 +494,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         assistantMessageId,
         state: 'queued',
         revision: 0,
+        ...(policy === 'interrupt-next' && { queuePriority: 'interrupt-next' }),
         createdAt: nowIso,
         updatedAt: nowIso,
       });
@@ -501,9 +502,10 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       const outerAdmission = Promise.withResolvers<AgentRuntimeAdmission>();
       void outerAdmission.promise.catch(() => undefined);
       const outerResult = Promise.withResolvers<AgentRuntimeResult>();
-      const reservation = config.runs?.coalescePending
-        ? reserveAdmission(key, runId)
-        : undefined;
+      const reservation =
+        config.runs?.coalescePending && policy !== 'interrupt-next'
+          ? reserveAdmission(key, runId)
+          : undefined;
       const previousAcceptance = reservation?.lane.acceptanceTail ?? Promise.resolve();
       const acceptanceDone = Promise.withResolvers<void>();
       if (reservation) {

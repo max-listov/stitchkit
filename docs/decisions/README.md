@@ -141,6 +141,7 @@ These records were consolidated from the project's internal design notes on
 | [0124](0124-entity-cache-membership-and-total-policy.md) | Entity cache membership and total deltas are declared per query | Accepted — filtered membership and pagination evidence are explicit without a consumer mutation engine |
 | [0125](0125-streaming-bodies-bound-retained-bytes-not-lifetime-traffic.md) | Streaming bodies bound retained bytes, not lifetime traffic | Accepted — unary totals remain finite while an explicit pull-driven stream has no cumulative lifetime cap |
 | [0126](0126-schema-owned-stream-frames-end-at-the-terminal-item.md) | Schema-owned stream frames end at the terminal item | Accepted — opt-in unwrapped NDJSON retains bounded parsing and completion proof without a second envelope |
+| [0127](0127-interrupt-priority-is-durable-execution-order.md) | Interrupt priority is durable execution order | Accepted — urgent input runs next without deleting ordinary queued work, and recovery preserves the same order |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

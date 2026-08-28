@@ -126,6 +126,9 @@ export const AgentRunStateSchema = z.enum([
   'abandoned',
 ]);
 
+export const AgentRunQueuePrioritySchema = z.enum(['interrupt-next']);
+export type AgentRunQueuePriority = z.infer<typeof AgentRunQueuePrioritySchema>;
+
 export const AgentTerminalReasonSchema = z.enum([
   'success',
   'policy_stop',
@@ -272,6 +275,10 @@ const AgentRunFieldsSchema = z.object({
   assistantMessageId: AgentRecordIdSchema,
   state: AgentRunStateSchema,
   revision: AgentRecordVersionSchema,
+  /** Absent means ordinary FIFO; urgent input remains a distinct durable run. */
+  queuePriority: AgentRunQueuePrioritySchema.optional(),
+  /** Conversation-head version at first durable acquisition; preserves execution order. */
+  executionSequence: AgentRecordVersionSchema.optional(),
   /**
    * Which runtime instance holds this run.
    *

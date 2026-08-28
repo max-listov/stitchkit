@@ -77,6 +77,86 @@ describe('agent session coordinator', () => {
     expect(await second.result).toBe('second');
   });
 
+  test('interrupt-next settles the active run then precedes ordinary pending work', async () => {
+    const coordinator = createAgentSessionCoordinator();
+    const release = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const first = coordinator.submit({
+      key: 'priority-conversation',
+      policy: 'queue',
+      create: (signal) => ({
+        runId: 'A',
+        async execute() {
+          order.push('A');
+          signal.addEventListener('abort', () => aborted.resolve(), { once: true });
+          await release.promise;
+        },
+      }),
+    });
+    await first.accepted;
+    const ordinary = coordinator.submit({
+      key: 'priority-conversation',
+      policy: 'queue',
+      create: () => ({ runId: 'B', execute: async () => void order.push('B') }),
+    });
+    const urgent = coordinator.submit({
+      key: 'priority-conversation',
+      policy: 'interrupt-next',
+      create: () => ({ runId: 'C', execute: async () => void order.push('C') }),
+    });
+
+    await aborted.promise;
+    expect(order).toEqual(['A']);
+    release.resolve();
+    await Promise.all([first.result, ordinary.result, urgent.result]);
+    expect(order).toEqual(['A', 'C', 'B']);
+    await coordinator.close();
+  });
+
+  test('interrupt-next preserves FIFO among urgent submissions', async () => {
+    const coordinator = createAgentSessionCoordinator();
+    const release = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const first = coordinator.submit({
+      key: 'priority-fifo',
+      policy: 'queue',
+      create: () => ({
+        runId: 'A',
+        async execute() {
+          order.push('A');
+          await release.promise;
+        },
+      }),
+    });
+    await first.accepted;
+    const ordinary = coordinator.submit({
+      key: 'priority-fifo',
+      policy: 'queue',
+      create: () => ({ runId: 'B', execute: async () => void order.push('B') }),
+    });
+    const firstUrgent = coordinator.submit({
+      key: 'priority-fifo',
+      policy: 'interrupt-next',
+      create: () => ({ runId: 'C', execute: async () => void order.push('C') }),
+    });
+    const secondUrgent = coordinator.submit({
+      key: 'priority-fifo',
+      policy: 'interrupt-next',
+      create: () => ({ runId: 'D', execute: async () => void order.push('D') }),
+    });
+
+    release.resolve();
+    await Promise.all([
+      first.result,
+      ordinary.result,
+      firstUrgent.result,
+      secondUrgent.result,
+    ]);
+    expect(order).toEqual(['A', 'C', 'D', 'B']);
+    await coordinator.close();
+  });
+
   test('close drains an active run before using the shutdown abort', async () => {
     const coordinator = createAgentSessionCoordinator();
     const release = Promise.withResolvers<void>();

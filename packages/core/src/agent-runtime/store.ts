@@ -174,8 +174,9 @@ export interface AgentRuntimeStore {
    * Every run of this conversation that has not reached a terminal state, in
    * the same causal order as `AgentSnapshot.runs`.
    *
-   * The history position is the tie-breaker when timestamps match. Recovery
-   * relies on that fact: identifiers are identities, never queue positions.
+   * Started runs follow durable execution sequence. Queued `interrupt-next`
+   * runs precede ordinary queued runs, preserving FIFO inside each class.
+   * Recovery relies on that fact: identifiers are identities, never positions.
    */
   listActiveRuns(conversationId: string): Promise<readonly AgentRun[]>;
   acceptInputAndAssignRun(input: AcceptInputAndAssignRun): Promise<AgentStoreMutationResult>;

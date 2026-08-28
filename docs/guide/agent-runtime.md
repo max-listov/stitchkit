@@ -238,14 +238,21 @@ input + queued run → running → execution settled → terminal CAS → succes
 
 ## What happens to a run when new input arrives
 
-`runs.inputPolicy` decides. It takes four values, or a function returning one:
+`runs.inputPolicy` decides. It takes five values, or a function returning one:
 
 | policy | the run in flight | what it already produced |
 |--------|-------------------|--------------------------|
 | `queue` (default) | finishes first | kept |
 | `inject` | continues, and answers the new input too | kept, and built on |
 | `interrupt` | ends | kept, and marked as cut off |
+| `interrupt-next` | ends; this input runs before ordinary queued work | kept, and marked as cut off |
 | `supersede` | ends | discarded from the prompt, kept in the record |
+
+`interrupt-next` is the explicit priority path for an urgent input. If A is
+running, ordinary B is queued, and urgent C arrives, the coordinator aborts A,
+waits for A to settle and then runs C before B. B keeps its durable identity and
+eventually runs. Urgent inputs remain FIFO among themselves. They do not
+coalesce into an ordinary pending run: that would erase the priority boundary.
 
 `interrupt` and `supersede` differ in exactly one thing, and the question that
 picks between them is **not** "was the run interrupted" but **"did anyone see
@@ -487,9 +494,11 @@ checkpoint/terminal CAS and tool context, so a distributed adapter can reject an
 an owner label is reused. Lease expiry and renewal remain application-owned.
 
 On startup, `runtime.recover({ resolveContext })` consumes bounded lightweight
-pages, then restores each conversation's canonical causal order before any run
-acquires. Scan identifiers and page boundaries therefore never become queue
-order. Its safe default resumes queued runs and reports acquired or
+pages, then restores each conversation's durable execution order before any run
+acquires. Persisted `executionSequence` orders work that started; queued
+`interrupt-next` work precedes ordinary queued work with FIFO preserved inside
+each class. Scan identifiers, equal timestamps and page boundaries therefore
+never become queue order. Its safe default resumes queued runs and reports acquired or
 `interrupt_requested` runs as skipped. A policy may requeue acquired work only
 with explicit replay-safe evidence, or abandon it only with stale-owner
 evidence. Each attempted run returns its own outcome/error; a `resumed` or
@@ -773,7 +782,8 @@ outbox.
 `createAgentRaceTrace`. Barriers have bounded teardown, traces assert exact partial order, and the
 helpers are exercised from packed Bun and Node consumers. `runAgentStoreConformance` runs duplicate,
 coalescing, collision, stale checkpoint, replay safety, terminal race, absorption, bounded reads,
-causal queued-history order, compaction and recovery invariants against any fresh durable adapter.
+causal queued-history order, durable interrupt priority, compaction and recovery invariants against
+any fresh durable adapter.
 
 It picks its conversation identities itself and passes them to `createStore(context)` **before the
 first mutation**, so an adapter whose runtime rows reference an application-owned conversation row
