@@ -2,10 +2,11 @@
 title: Durable interrupt priority ahead of pending ordinary runs
 description: Provide a public policy for urgent interrupt input to run next without dropping previously queued input.
 type: task
-status: in-progress
+status: done
 priority: P1
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 11:58 +0000
 ---
 
 ## Why
@@ -92,7 +93,7 @@ assert.deepEqual(order, ['A', 'C', 'B']); // required priority policy
   including same timestamps and scan page boundaries.
 - [x] Deterministic coordinator/runtime regressions and memory/PostgreSQL public
   store conformance; packed consumer proof for the exposed policy.
-- [ ] Document semantics and publish a verified release with exact version/SHA.
+- [x] Document semantics and publish a verified release with exact version/SHA.
 
 No consumer queue wrapper, private storage mutation or private dist import is an
 acceptable implementation.
@@ -119,3 +120,8 @@ acceptable implementation.
   full consumer fixtures execute the exported conformance kit from the built
   tarball. Targeted suite: 31 passed; PostgreSQL lane: 7 passed; packed consumer
   lane: minimal, NodeNext, full, Node and grammY all passed.
+- Released as `stitchkit@0.68.6` from exact SHA
+  `85c4c54add60dc5d97908fbeca0fb12c9466632e`; exact-SHA CI run `33168932687`
+  and release run `33169137794` passed. npm integrity is
+  `sha512-fnniuyge5JEN55TVdI3qH+nN1XyGJ6MglwOraWeOk6FkYs7mv6ZZyEo1kkFVT1bcsYj4HZW7KJCiKwnsjDoyfw==`;
+  clean Bun and Node imports of the published priority schema passed.
