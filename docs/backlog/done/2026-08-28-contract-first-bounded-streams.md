@@ -2,9 +2,10 @@
 title: Contract-first bounded typed streaming responses
 description: Contract-first bounded typed streaming responses with explicit ownership, bounds and published conformance evidence.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 05:08 +00:00
 pipeline: transport-primitives
 order: 2
 depends-on: —
@@ -70,3 +71,11 @@ Related completed baseline: docs/backlog/done/2026-08-25-a-long-lived-streaming-
 
 The packed Bun and Node lanes compile schema-derived iterator types and execute
 a quiet long-lived stream through the installed tarball.
+
+## Release evidence
+
+Published by `stitchkit@0.68.0` from
+`8c64154f77aabce65f57948ab2c7cb29a0dcae34`. Registry integrity is
+`sha512-tugTbOXIVyUu7js/HfdRunE6lc8/9fNMBureorJX5UA/nfkghT0avyG9E6Ej0a5+QnnlBngnj57z2y/BLCYhxA==`.
+The declaration/server/client examples are in `docs/guide/server.md` and
+`docs/guide/client.md`; parser migration is in `docs/guide/upgrading.md`.

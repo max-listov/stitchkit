@@ -2,9 +2,10 @@
 title: Fail-closed Unix client transport on Bun and Node
 description: Fail-closed Unix client transport on Bun and Node with explicit ownership, bounds and published conformance evidence.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 05:08 +00:00
 pipeline: transport-primitives
 order: 1
 depends-on: —
@@ -36,7 +37,7 @@ The existing typed-client pipeline can use a supported Bun/Node Unix adapter wit
 - [x] Pre-abort, pending headers, trickling body, oversize request/response and close-with-active-work are bounded and settle once.
 - [x] Disposal leaves no owned sockets/timers that keep the standalone consumer alive.
 - [x] Ordinary HTTP, auth, raw responses, multipart and typed output validation retain their established contract.
-- [ ] Published import paths, package integrity and standalone local-daemon examples are recorded; no consumer source changes required to publish.
+- [x] Published import paths, package integrity and standalone local-daemon examples are recorded; no consumer source changes required to publish.
 
 Related completed baseline: docs/backlog/done/2026-08-18-unix-socket-transport.md. Do not reopen or replace its server-side behavior by assumption.
 
@@ -94,3 +95,11 @@ This does not establish a defect in a not-yet-published new adapter.
 
 Installed-artifact lanes additionally report `portable bounded Unix client on
 Node: OK` and `packed Bun Unix client conformance: ok`.
+
+## Release evidence
+
+Published by `stitchkit@0.68.0` from
+`8c64154f77aabce65f57948ab2c7cb29a0dcae34`. Registry integrity is
+`sha512-tugTbOXIVyUu7js/HfdRunE6lc8/9fNMBureorJX5UA/nfkghT0avyG9E6Ej0a5+QnnlBngnj57z2y/BLCYhxA==`.
+The standalone adapter and shutdown recipe is in `docs/guide/client.md`; the
+breaking migration is `docs/guide/upgrading.md` → `Released migration: 0.68.0`.

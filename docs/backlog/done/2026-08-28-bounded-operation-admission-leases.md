@@ -2,9 +2,10 @@
 title: Composable bounded admission and operation leases
 description: Composable bounded admission and operation leases with explicit ownership, bounds and published conformance evidence.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 05:08 +00:00
 pipeline: transport-primitives
 order: 3
 depends-on: —
@@ -40,7 +41,7 @@ Caller outcome: waiting → completed/cancelled/timed-out. Underlying work may s
 - [x] Per-key/rate registries are bounded and retired keys do not accumulate forever.
 - [x] Drain refuses new work and observes real pending work; force behavior reports rather than pretends termination.
 - [x] A bounded handler and an independent local worker exercise the published API in Bun/Node packed consumers.
-- [ ] API/ADR/migration, canonical full gates and installable release evidence are complete.
+- [x] API/ADR/migration, canonical full gates and installable release evidence are complete.
 
 ## Выполнено до публикации
 
@@ -69,3 +70,13 @@ Caller outcome: waiting → completed/cancelled/timed-out. Underlying work may s
 
 The installed Bun fixture exercises an independent worker plus keyed
 handler-shaped work; the Node fixture compiles and runs the same public exports.
+
+## Release evidence
+
+Published by `stitchkit@0.68.0` from
+`8c64154f77aabce65f57948ab2c7cb29a0dcae34`. Registry integrity is
+`sha512-tugTbOXIVyUu7js/HfdRunE6lc8/9fNMBureorJX5UA/nfkghT0avyG9E6Ej0a5+QnnlBngnj57z2y/BLCYhxA==`.
+The API and composition recipes are in `docs/api/reference.md`,
+`docs/guide/application-kernel.md` and
+`docs/guide/application-migration-recipes.md`; the ownership decision is ADR
+0118.

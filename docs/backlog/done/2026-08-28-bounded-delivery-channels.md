@@ -2,9 +2,10 @@
 title: Bounded delivery channels with explicit queue policies
 description: Bounded delivery channels with explicit queue policies with explicit ownership, bounds and published conformance evidence.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 05:08 +00:00
 pipeline: transport-primitives
 order: 4
 depends-on: —
@@ -40,7 +41,7 @@ Ordered values are not silently overwritten. Latest mode may coalesce only pendi
 - [x] Credit cannot exceed the window, go negative or replenish twice for one consumed item.
 - [x] Independent progress-state and ordered-output examples prove reusable semantics; existing snapshot-sink tests remain green.
 - [x] No broker, persistence, boot-epoch policy, distributed acknowledgement or automatic resync enters core.
-- [ ] Publish exact exports/defaults, migration and packed Bun/Node conformance evidence through the canonical release flow.
+- [x] Publish exact exports/defaults, migration and packed Bun/Node conformance evidence through the canonical release flow.
 
 ## Выполнено до публикации
 
@@ -73,3 +74,12 @@ cases: `delivers a blocked revision 1 followed by only the latest revision 100`,
 and `rejects duplicate and backwards revisions without disturbing delivery order`.
 Packed Bun examples exercise independent latest progress and ordered output;
 the Node fixture compiles and runs the public channel and credit exports.
+
+## Release evidence
+
+Published by `stitchkit@0.68.0` from
+`8c64154f77aabce65f57948ab2c7cb29a0dcae34`. Registry integrity is
+`sha512-tugTbOXIVyUu7js/HfdRunE6lc8/9fNMBureorJX5UA/nfkghT0avyG9E6Ej0a5+QnnlBngnj57z2y/BLCYhxA==`.
+Exact exports/defaults are in `docs/api/reference.md`; composition examples are
+in `docs/guide/application-kernel.md` and
+`docs/guide/application-migration-recipes.md`; policy is ADR 0119.
