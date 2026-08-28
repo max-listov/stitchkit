@@ -574,7 +574,8 @@ Server-only optional application runtime. See the
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and winner-only terminal publication; reconciles same-owner terminal/interrupt/head CAS races before releasing the lane |
-| `defineAgentProtocol` | function | declare and validate context, input metadata and canonical message parts |
+| `defineAgentProtocol` | function | declare context, input metadata, canonical parts and optional pre-CAS terminal acceptance (`allow-empty`, `require-output` or callback) |
+| `hasAgentTerminalOutput` | function | generic `require-output` predicate for non-blank text, generated files, structured provider parts and explicit tool-only policy stops |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
@@ -616,7 +617,8 @@ transport adapters validate the same records. Runtime composition types are `Age
 `AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult` and
 `StructuredCompactionConfig`.
 
-Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentRecordIdSchema`, `AgentRecordVersionSchema`,
+Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentTerminalAcceptance`,
+`AgentTerminalAcceptanceInput`, `hasAgentTerminalOutput`, `AgentRecordIdSchema`, `AgentRecordVersionSchema`,
 `AgentTimestampSchema`, `AgentJsonObjectSchema`, `AgentProviderEnvelopeSchema`,
 `AgentProviderEnvelope`, `AgentMessagePartSchema`, `AgentMessagePart`, `AgentTextPartSchema`,
 `AgentReasoningPartSchema`, `AgentFilePartSchema`, `AgentSourcePartSchema`,
@@ -1257,6 +1259,8 @@ and `react-query-kit` peers.
 | `createCacheBridge` | function | sync socket events into the Query cache — [guide](../guide/realtime.md#cache-bridge) |
 | `createEntityCacheHandlers` | function | created/updated/deleted cache handlers for one entity — [guide](../guide/realtime.md#entity-cache-handlers) |
 | `EntityCacheConfig` | _type_ | config for `createEntityCacheHandlers` |
+| `EntityCacheMembership` / `EntityCacheMembershipPolicy` | _type_ | per-exact-query `include | exclude | unknown` filter decision and unknown invalidation policy |
+| `EntityCacheTotalPolicy` / `EntityCacheTotalDeltaInput` | _type_ | evidence-aware reconciliation of numeric totals on paginated cache shapes |
 | `EntityCacheHandlers` | _type_ | the `{ created, updated, deleted }` handlers it returns |
 | `EntityCacheEvent` | _type_ | discriminated created/updated/deleted input for dynamic cache keys |
 | `EntityCacheKey` | _type_ | static `QueryKey` or event-aware key factory |

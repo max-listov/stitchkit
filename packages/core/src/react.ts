@@ -17,4 +17,8 @@ export {
   type EntityCacheKey,
   type EntityCacheListConfig,
   type EntityCacheListShape,
+  type EntityCacheMembership,
+  type EntityCacheMembershipPolicy,
+  type EntityCacheTotalDeltaInput,
+  type EntityCacheTotalPolicy,
 } from './react/entity-cache';

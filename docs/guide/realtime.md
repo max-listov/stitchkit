@@ -521,6 +521,36 @@ page metadata and `pageParams`; an infinite create changes only the selected
 edge page (`createAt: 'start' | 'end'`). Creates are deduplicated across every
 cached page. `updateMissing` makes an absent update explicitly skip or insert.
 
+Filtered query families can additionally declare membership per exact key and
+evidence-aware total reconciliation:
+
+```ts
+list: {
+  key: ['tickets'],
+  shape: 'infinite-paginated',
+  createAt: 'start',
+  updateMissing: 'skip',
+  membership: {
+    evaluate: (event, queryKey) => membershipFor(event, queryKey),
+    unknown: 'invalidate',
+  },
+  total: {
+    mode: 'reconcile',
+    unknown: 'invalidate',
+    delta: ({ event, present, membership }) => provenDelta(event, present, membership),
+  },
+}
+```
+
+Membership is `include | exclude | unknown`. An excluded update removes an
+existing row; an included one follows `updateMissing`. Unknown evidence never
+guesses and either preserves or invalidates the exact query. The conservative
+total policy increments only a non-duplicate create and decrements only a
+delete/update whose membership is observed; unseen IDs are `unknown`. Supply
+`delta` only when the event itself proves a stronger transition. Every page's
+numeric `total` changes together while cursor metadata and `pageParams` remain
+unchanged.
+
 The event entity may be richer than a list row. Keep the full value in detail
 cache, project it for lists, and provide the same comparator the backend uses:
 
@@ -558,9 +588,9 @@ deleted payload without guessing. The same resolved detail key drives the
 `isFresh` echo guard. Shape checks also leave neighbouring detail caches alone
 when a list key is intentionally used as a partial query-key prefix.
 
-The helper deliberately does **not** flatten pages, update totals, derive a
-sort order or replace arbitrary `setQueryData` logic. Those are application
-policies; this helper only applies declared CRUD semantics.
+The helper deliberately does **not** flatten pages, infer filter semantics,
+derive a sort order or replace arbitrary `setQueryData` logic. Those remain
+declared application policies; Stitchkit applies their generic cache mechanics.
 
 ## Raw binary lane (Bun)
 

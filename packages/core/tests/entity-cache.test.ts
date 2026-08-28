@@ -6,6 +6,7 @@ import {
   createEntityCacheHandlers,
   type EntityCacheEvent,
   type EntityCacheListShape,
+  type EntityCacheMembership,
 } from '../src/react';
 
 interface Widget {
@@ -265,5 +266,144 @@ describe('scoped keys, detail cache and echo guard', () => {
 
     cache.deleted({ key: 'x', name: 'one' }, context(queryClient));
     expect(queryClient.getQueryData<LegacyEntity[]>(['legacy'])).toEqual([]);
+  });
+});
+
+interface Ticket {
+  id: string;
+  status: 'open' | 'closed';
+  rank: number;
+}
+
+function ticketMembership(
+  event: EntityCacheEvent<Ticket>,
+  queryKey: readonly unknown[],
+): EntityCacheMembership {
+  let status: Ticket['status'];
+  if (event.type === 'deleted') {
+    if (!('status' in event.payload)) return 'unknown';
+    status = event.payload.status;
+  } else {
+    status = event.entity.status;
+  }
+  const filter = queryKey[1];
+  if (filter !== 'open' && filter !== 'closed') return 'include';
+  return status === filter ? 'include' : 'exclude';
+}
+
+describe('entity cache membership and total policies', () => {
+  test('moves an update across filtered query membership with an explicit total transition', () => {
+    const queryClient = new QueryClient();
+    const openKey = ['tickets', 'open'];
+    const closedKey = ['tickets', 'closed'];
+    queryClient.setQueryData(openKey, {
+      items: [{ id: '1', status: 'open', rank: 1 }],
+      nextCursor: null,
+      total: 1,
+    });
+    queryClient.setQueryData(closedKey, { items: [], nextCursor: null, total: 0 });
+    const cache = createEntityCacheHandlers<Ticket>({
+      getId: (entity) => entity.id,
+      getListItemId: (entity) => entity.id,
+      toListItem: (entity) => entity,
+      list: {
+        key: ['tickets'],
+        shape: 'paginated',
+        createAt: 'start',
+        updateMissing: 'insert',
+        membership: { evaluate: ticketMembership },
+        total: {
+          mode: 'reconcile',
+          delta: ({ event, present, membership }) => {
+            if (event.type !== 'updated') return 'unknown';
+            if (present && membership === 'exclude') return -1;
+            if (!present && membership === 'include') return 1;
+            return 0;
+          },
+        },
+      },
+    });
+
+    cache.updated({ id: '1', status: 'closed', rank: 1 }, context(queryClient));
+
+    expect(queryClient.getQueryData<unknown>(openKey)).toEqual({
+      items: [],
+      nextCursor: null,
+      total: 0,
+    });
+    expect(queryClient.getQueryData<unknown>(closedKey)).toEqual({
+      items: [{ id: '1', status: 'closed', rank: 1 }],
+      nextCursor: null,
+      total: 1,
+    });
+  });
+
+  test('deduplicates creates/deletes and invalidates an unknowable unseen delta', () => {
+    const queryClient = new QueryClient();
+    const key = ['tickets', 'open'];
+    queryClient.setQueryData(key, {
+      items: [{ id: '1', status: 'open', rank: 1 }],
+      nextCursor: 'more',
+      total: 4,
+    });
+    const cache = createEntityCacheHandlers<Ticket>({
+      getId: (entity) => entity.id,
+      getListItemId: (entity) => entity.id,
+      toListItem: (entity) => entity,
+      list: {
+        key: ['tickets'],
+        shape: 'paginated',
+        createAt: 'start',
+        updateMissing: 'skip',
+        membership: { evaluate: ticketMembership, unknown: 'invalidate' },
+        total: { mode: 'reconcile', unknown: 'invalidate' },
+      },
+    });
+
+    cache.created({ id: '1', status: 'open', rank: 1 }, context(queryClient));
+    cache.deleted({ id: '1' }, context(queryClient));
+    cache.deleted({ id: '1' }, context(queryClient));
+
+    expect(queryClient.getQueryData<unknown>(key)).toEqual({
+      items: [],
+      nextCursor: 'more',
+      total: 3,
+    });
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  test('updates multiple loaded cursor pages without moving page envelopes or pageParams', () => {
+    const queryClient = new QueryClient();
+    const key = ['tickets', 'open'];
+    const data = {
+      pages: [
+        { items: [{ id: '1', status: 'open', rank: 1 }], nextCursor: 'c1', total: 2 },
+        { items: [{ id: '2', status: 'open', rank: 2 }], nextCursor: null, total: 2 },
+      ],
+      pageParams: [undefined, 'c1'],
+    };
+    queryClient.setQueryData(key, data);
+    const cache = createEntityCacheHandlers<Ticket>({
+      getId: (entity) => entity.id,
+      getListItemId: (entity) => entity.id,
+      toListItem: (entity) => entity,
+      list: {
+        key: ['tickets'],
+        shape: 'infinite-paginated',
+        createAt: 'start',
+        updateMissing: 'skip',
+        membership: { evaluate: ticketMembership },
+        total: { mode: 'reconcile' },
+      },
+    });
+
+    cache.updated({ id: '2', status: 'closed', rank: 2 }, context(queryClient));
+    expect(queryClient.getQueryData<unknown>(key)).toEqual({
+      pages: [
+        { items: [{ id: '1', status: 'open', rank: 1 }], nextCursor: 'c1', total: 1 },
+        { items: [], nextCursor: null, total: 1 },
+      ],
+      pageParams: [undefined, 'c1'],
+    });
   });
 });

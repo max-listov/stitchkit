@@ -31,6 +31,12 @@ const protocol = defineAgentProtocol({
   inputMetadata: z.object({}),
 });
 
+const answerProtocol = defineAgentProtocol({
+  context: z.object({}),
+  inputMetadata: z.object({}),
+  terminalAcceptance: 'require-output',
+});
+
 function submit(runtime: ReturnType<typeof createAgentRuntime>) {
   return runtime.submit({
     conversationId: 'conversation-1',
@@ -96,6 +102,128 @@ describe('agent runtime mature-consumer parity', () => {
     // no `policyName`, naming a policy that does not exist.
     expect(second.reason).toBe('provider_stop');
     expect(second.policyName).toBeUndefined();
+    await runtime.close();
+  });
+
+  test('applies required terminal output before commit without rejecting non-success endings', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'text-start', id: 'answer' },
+              { type: 'text-delta', id: 'answer', delta: 'done' },
+              { type: 'text-end', id: 'answer' },
+              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'file',
+                mediaType: 'application/json',
+                data: { type: 'data', data: new TextEncoder().encode('{"ok":true}') },
+              },
+              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'custom', kind: 'test.structured' },
+              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+            ],
+          }),
+        },
+      ],
+    });
+    const store = createMemoryAgentRuntimeStore();
+    const runtime = createAgentRuntime({
+      protocol: answerProtocol,
+      store,
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      persistGeneratedFile: () => ({ reference: 'generated:answer.json' }),
+    });
+    const send = (index: number) =>
+      runtime.submit({
+        conversationId: `terminal-acceptance-${index}`,
+        idempotencyKey: `terminal-acceptance-${index}`,
+        context: {},
+        parts: [{ type: 'text', text: 'answer' }],
+        metadata: {},
+      }).result;
+
+    const empty = await send(1);
+    const text = await send(2);
+    const file = await send(3);
+    const structured = await send(4);
+    expect(empty.reason).toBe('provider_failure');
+    expect(empty.message.status).toBe('failed');
+    expect(text.reason).toBe('success');
+    expect(file.message.parts).toContainEqual(
+      expect.objectContaining({ type: 'file', reference: 'generated:answer.json' }),
+    );
+    expect(structured.message.parts).toContainEqual(
+      expect.objectContaining({ type: 'provider' }),
+    );
+    expect((await store.loadSnapshot('terminal-acceptance-1')).runs[0]?.state).toBe('failed');
+    await runtime.close();
+  });
+
+  test('terminal acceptance never rewrites an interrupted response', async () => {
+    const delta = Promise.withResolvers<void>();
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunkDelayInMs: 25,
+          chunks: [
+            { type: 'text-start', id: 'partial' },
+            { type: 'text-delta', id: 'partial', delta: 'partial' },
+            { type: 'text-delta', id: 'partial', delta: ' later' },
+            { type: 'text-end', id: 'partial' },
+            { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+          ],
+        }),
+      }),
+    });
+    const runtime = createAgentRuntime({
+      protocol: answerProtocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+      publish: (event) => {
+        if (event.type === 'assistant-delta') delta.resolve();
+      },
+    });
+    const ticket = submit(runtime);
+    await delta.promise;
+    expect(runtime.stop('conversation-1', 'user-interrupt')).toBe(true);
+    const terminal = await ticket.result;
+    expect(terminal.reason).toBe('interrupted');
+    expect(terminal.message.status).toBe('interrupted');
     await runtime.close();
   });
 
@@ -211,6 +339,110 @@ describe('agent runtime mature-consumer parity', () => {
     await runtime.close();
   });
 
+  test('projects its persisted multi-step run into the next provider prompt by causal round', async () => {
+    const finish = (reason: 'tool-calls' | 'stop') => ({
+      type: 'finish' as const,
+      finishReason: { unified: reason, raw: undefined },
+      usage,
+    });
+    const model = new MockLanguageModelV4({
+      doStream: [
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call',
+                toolCallId: 'call-a',
+                toolName: 'lookupA',
+                input: '{"query":"first"}',
+              },
+              finish('tool-calls'),
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call',
+                toolCallId: 'call-b',
+                toolName: 'lookupB',
+                input: '{"from":1}',
+              },
+              finish('tool-calls'),
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'text-start', id: 'final' },
+              { type: 'text-delta', id: 'final', delta: 'final' },
+              { type: 'text-end', id: 'final' },
+              finish('stop'),
+            ],
+          }),
+        },
+        {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'text-start', id: 'next' },
+              { type: 'text-delta', id: 'next', delta: 'next' },
+              { type: 'text-end', id: 'next' },
+              finish('stop'),
+            ],
+          }),
+        },
+      ],
+    });
+    const runtime = createAgentRuntime({
+      protocol: answerProtocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({
+        lookupA: tool({
+          inputSchema: z.object({ query: z.string() }),
+          execute: () => ({ value: 1 }),
+        }),
+        lookupB: tool({
+          inputSchema: z.object({ from: z.number() }),
+          execute: () => ({ value: 2 }),
+        }),
+      }),
+    });
+
+    await submit(runtime).result;
+    await runtime.submit({
+      conversationId: 'conversation-1',
+      idempotencyKey: 'input-2',
+      context: {},
+      parts: [{ type: 'text', text: 'continue' }],
+      metadata: {},
+    }).result;
+
+    const prompt = model.doStreamCalls[3]?.prompt ?? [];
+    expect(prompt.map((entry) => entry.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+      'assistant',
+      'user',
+    ]);
+    expect(JSON.stringify(prompt[2])).toContain('call-a');
+    expect(JSON.stringify(prompt[4])).toContain('call-b');
+    expect(JSON.stringify(prompt[6])).toContain('final');
+    await runtime.close();
+  });
+
   test('resets the inactivity deadline on stream activity', async () => {
     const model = new MockLanguageModelV4({
       doStream: async () => ({
@@ -309,7 +541,7 @@ describe('agent runtime mature-consumer parity', () => {
     });
     const events: AgentRuntimeEvent[] = [];
     const runtime = createAgentRuntime({
-      protocol,
+      protocol: answerProtocol,
       store: createMemoryAgentRuntimeStore(),
       models: { resolve: () => ({ descriptor, model }) },
       prompt: () => ({

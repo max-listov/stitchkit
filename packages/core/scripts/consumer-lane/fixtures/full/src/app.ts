@@ -513,6 +513,43 @@ check(
     ?.label === 'one',
 );
 
+const packedFilteredKey = ['entities', 'open'];
+const packedFilteredClient = new QueryClient();
+interface PackedFilteredPage {
+  items: PackedListItem[];
+  nextCursor: string | null;
+  total: number;
+}
+packedFilteredClient.setQueryData<PackedFilteredPage>(packedFilteredKey, {
+  items: [],
+  nextCursor: null,
+  total: 0,
+});
+const packedFilteredCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
+  getId: (entity) => entity.id,
+  getListItemId: (item) => item.id,
+  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  list: {
+    key: ['entities'],
+    shape: 'paginated',
+    createAt: 'start',
+    updateMissing: 'skip',
+    membership: {
+      evaluate: (_event, queryKey) => (queryKey[1] === 'open' ? 'include' : 'unknown'),
+      unknown: 'invalidate',
+    },
+    total: { mode: 'reconcile', unknown: 'invalidate' },
+  },
+});
+packedFilteredCache.created(
+  { id: 'e2', workspaceId: 'w1', label: 'two', internal: 'private' },
+  { queryClient: packedFilteredClient, isFresh: () => false },
+);
+check(
+  'the packed filtered entity cache exposes membership and total policies',
+  packedFilteredClient.getQueryData<PackedFilteredPage>(packedFilteredKey)?.total === 1,
+);
+
 const defaultMcpHandler = createMcpHandler({
   serverInfo: { name: 'consumer', version: '1' },
   auth: () => ({ id: 'consumer' }),

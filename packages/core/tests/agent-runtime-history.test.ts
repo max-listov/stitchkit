@@ -52,6 +52,79 @@ describe('agent history projection', () => {
     expect(JSON.stringify(projected)).toContain('thought_signature');
   });
 
+  test('preserves dependent tool rounds and trailing final text in causal order', async () => {
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'user-rounds',
+      conversationId: 'conversation-rounds',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'research' }],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    const assistant = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'assistant-rounds',
+      conversationId: 'conversation-rounds',
+      runId: 'run-rounds',
+      role: 'assistant',
+      status: 'completed',
+      parts: [
+        { type: 'tool-call', callId: 'a', toolName: 'lookup', input: { query: 'first' } },
+        {
+          type: 'tool-call',
+          callId: 'parallel',
+          toolName: 'lookup',
+          input: { query: 'peer' },
+        },
+        {
+          type: 'tool-result',
+          callId: 'a',
+          toolName: 'lookup',
+          outcome: 'success',
+          output: { value: 1 },
+        },
+        {
+          type: 'tool-result',
+          callId: 'parallel',
+          toolName: 'lookup',
+          outcome: 'success',
+          output: { value: 2 },
+        },
+        {
+          type: 'tool-call',
+          callId: 'b',
+          toolName: 'lookup',
+          input: { from: 1 },
+        },
+        {
+          type: 'tool-result',
+          callId: 'b',
+          toolName: 'lookup',
+          outcome: 'success',
+          output: { value: 3 },
+        },
+        { type: 'text', text: 'final answer' },
+      ],
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+
+    const projected = await projectAgentHistory([user, assistant]);
+    expect(projected.map((entry) => entry.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+      'assistant',
+    ]);
+    expect(JSON.stringify(projected[1])).toContain('parallel');
+    expect(JSON.stringify(projected[3])).toContain('"b"');
+    expect(JSON.stringify(projected[5])).toContain('final answer');
+  });
+
   test('excludes crash drafts while preserving completed reasoning metadata', async () => {
     const shared = {
       schemaVersion: 1,

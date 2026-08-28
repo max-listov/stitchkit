@@ -137,6 +137,8 @@ These records were consolidated from the project's internal design notes on
 | [0120](0120-published-declarations-follow-esm-resolution.md) | Published declarations follow ESM resolution | Accepted — explicit JavaScript targets and a peer-free packed NodeNext root |
 | [0121](0121-managed-server-factories-receive-resource-context.md) | Managed server factories receive resource context | Accepted — declared values and the startup signal reach server construction without an outer handoff |
 | [0122](0122-optional-peer-surfaces-are-proven-from-artifacts.md) | Optional-peer surfaces are proven from artifacts | Accepted — peer-free invocation and warning-free injected Socket.IO loading are packed-consumer guarantees |
+| [0123](0123-agent-terminal-output-and-tool-rounds.md) | Terminal output is accepted before commit and tool rounds keep causal order | Accepted — protocol policy owns completion validity; projection owns persisted execution order |
+| [0124](0124-entity-cache-membership-and-total-policy.md) | Entity cache membership and total deltas are declared per query | Accepted — filtered membership and pagination evidence are explicit without a consumer mutation engine |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

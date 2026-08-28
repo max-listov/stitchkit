@@ -27,6 +27,7 @@ import { createAgentInjectionRegistry } from './injection';
 import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
+import type { AgentTerminalAcceptanceInput } from './protocol';
 import { createRunExecutor } from './run-execution';
 import { findRun } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
@@ -49,6 +50,7 @@ export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
   parseInputMetadata(input: unknown): z.infer<typeof AgentJsonObjectSchema>;
   parsePart(input: unknown): AgentMessagePart;
+  acceptTerminal?(input: AgentTerminalAcceptanceInput): boolean | Promise<boolean>;
 }
 
 export interface AgentRuntimeInput {

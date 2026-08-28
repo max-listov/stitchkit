@@ -519,6 +519,24 @@ is the reserved built-in policy name. `loop.prepareStep` is the controlled AI
 SDK step boundary for changing active tools, model, instructions or messages.
 It cannot replace the managed tool set or bypass its lifecycle fence.
 
+Completion validity belongs to the protocol and is checked before the terminal
+CAS. Protocols that require a visible answer opt in explicitly:
+
+```ts
+const protocol = defineAgentProtocol({
+  context: ContextSchema,
+  inputMetadata: InputMetadataSchema,
+  terminalAcceptance: 'require-output',
+})
+```
+
+The built-in rule accepts non-blank text, generated files, structured provider
+parts, and a named tool-only `policy_stop`. The default is `allow-empty` for
+protocols where an empty acknowledgement is meaningful. Pass a callback when
+the product has a narrower definition; it receives the candidate message,
+terminal reason and optional policy name, and runs before persistence. A false
+result fails the candidate instead of rewriting an already committed success.
+
 `loop.idleTimeoutMs` is inactivity, not total duration: the deadline resets on
 every model stream event. A stalled call aborts with durable reason `timeout`;
 user interruption and shutdown remain distinct.
@@ -541,7 +559,10 @@ effect must be replay-safe.
 ## History, provider metadata and files
 
 `projectAgentHistory` converts canonical engine records into provider-valid AI
-SDK messages and pairs tool calls/results. Provider-required metadata is kept
+SDK messages and pairs tool calls/results in persisted causal order. Adjacent
+parallel calls stay in one assistant round and their adjacent results stay in
+one tool round; a dependent call after those results starts a new assistant
+round, and trailing final text remains after the last tool result. Provider-required metadata is kept
 in a versioned opaque envelope and omitted from product delivery by default.
 `projectAgentHistoryDetailed` additionally returns one inspectable decision per canonical record;
 leading assistant records, crash drafts and unmatched tool chronology are never silently passed to

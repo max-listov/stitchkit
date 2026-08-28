@@ -95,7 +95,10 @@ export {
 export {
   type AgentProtocol,
   type AgentProtocolConfig,
+  type AgentTerminalAcceptance,
+  type AgentTerminalAcceptanceInput,
   defineAgentProtocol,
+  hasAgentTerminalOutput,
 } from './agent-runtime/protocol';
 export {
   type AgentRuntime,

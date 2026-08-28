@@ -27,6 +27,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   `createToolInvoker` from `stitchkit/tools/invoker` when no MCP or AI adapter is
   mounted. It remains the canonical validation/lifecycle/output runner and is
   proven from a packed minimal install on Bun and Node. → ADR 0122.
+- **Agent protocols can require a real terminal output before commit.**
+  `terminalAcceptance: 'require-output'` accepts non-blank text, generated
+  files, structured provider parts and explicit tool-only policy stops; a
+  callback can define a product-specific rule. Rejection happens before the
+  terminal CAS and cannot rewrite a committed result. → ADR 0123.
+- **Entity cache handlers can maintain filtered cursor lists declaratively.**
+  An optional per-query membership policy includes, excludes or invalidates on
+  unknown evidence; an optional paginated total policy applies proven integer
+  deltas or invalidates when unseen IDs make the delta unknowable. Existing
+  envelope-preserving behavior remains the default. → ADR 0124.
 
 ### Fixed
 
@@ -56,6 +66,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   `composeAgentPrompt` retains a negative `availableHistoryTokens` deficit and
   reports irreducible instruction/output/tool/attachment/provider reservation
   overflow as `oversized`, even with empty history and `compact` policy.
+- **Projected agent history preserves causal tool rounds.** Sequential
+  `call → result → dependent call → result → final` records now remain separate
+  assistant/tool rounds, while genuinely parallel calls and results stay
+  grouped. A later run therefore receives the same order the earlier run
+  actually executed. → ADR 0123.
 
 No call-site migration is required. A project with a mutable dependency handoff
 inside a managed server factory may delete it and read the declared resource from

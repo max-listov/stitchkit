@@ -770,6 +770,29 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       }
       if (terminalPolicyName !== undefined) terminalReason = 'policy_stop';
       if (executionSignal.aborted) terminalReason = abortTerminalReason(executionSignal);
+      if (
+        config.protocol.acceptTerminal &&
+        (terminalReason === 'success' ||
+          terminalReason === 'policy_stop' ||
+          terminalReason === 'provider_stop')
+      ) {
+        const candidate = AgentMessageSchema.parse({
+          ...assistant,
+          status: assistantStatus(terminalReason),
+          parts,
+          updatedAt: now().toISOString(),
+        });
+        if (
+          !(await config.protocol.acceptTerminal({
+            message: candidate,
+            reason: terminalReason,
+            ...(terminalPolicyName && { policyName: terminalPolicyName }),
+          }))
+        ) {
+          terminalReason = 'provider_failure';
+          internalCause = new Error('Agent terminal output was rejected by the protocol');
+        }
+      }
     } catch (error) {
       internalCause = error;
       const latest = await config.store.loadRun({

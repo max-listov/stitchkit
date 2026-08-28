@@ -189,15 +189,28 @@ function assistantMessages(
   interrupted: boolean,
 ): { messages: ModelMessage[]; rendered: Set<PartType> } {
   const rendered = new Set<PartType>();
-  const assistantContent: unknown[] = [];
-  const toolContent: unknown[] = [];
+  const messages: ModelMessage[] = [];
+  let role: 'assistant' | 'tool' | undefined;
+  let content: unknown[] = [];
+  const flush = (): void => {
+    if (!role || content.length === 0) return;
+    messages.push(modelMessageSchema.parse({ role, content }));
+    content = [];
+  };
+  const append = (nextRole: 'assistant' | 'tool', part: unknown): void => {
+    if (role !== nextRole) {
+      flush();
+      role = nextRole;
+    }
+    content.push(part);
+  };
   for (const part of message.parts) {
     if (part.type === 'text') {
-      assistantContent.push({ type: 'text', text: part.text });
+      append('assistant', { type: 'text', text: part.text });
       rendered.add('text');
     }
     if (part.type === 'reasoning') {
-      assistantContent.push({
+      append('assistant', {
         type: 'reasoning',
         text: part.text,
         ...(part.provider && { providerOptions: providerOptions(part.provider) }),
@@ -205,7 +218,7 @@ function assistantMessages(
       rendered.add('reasoning');
     }
     if (part.type === 'tool-call') {
-      assistantContent.push({
+      append('assistant', {
         type: 'tool-call',
         toolCallId: part.callId,
         toolName: part.toolName,
@@ -219,7 +232,7 @@ function assistantMessages(
         part.outcome === 'success'
           ? { type: 'json', value: part.output ?? null }
           : { type: 'error-json', value: part.output ?? { message: part.outcome } };
-      toolContent.push({
+      append('tool', {
         type: 'tool-result',
         toolCallId: part.callId,
         toolName: part.toolName,
@@ -228,19 +241,13 @@ function assistantMessages(
       rendered.add('tool-result');
     }
   }
-  if (interrupted && (assistantContent.length > 0 || toolContent.length > 0)) {
-    assistantContent.push({ type: 'text', text: INTERRUPTION_NOTE });
+  if (interrupted && (messages.length > 0 || content.length > 0)) {
+    append('assistant', { type: 'text', text: INTERRUPTION_NOTE });
     // The note stands for the marker, so a `control` part is now represented
     // rather than silently dropped.
     rendered.add('control');
   }
-  const messages: ModelMessage[] = [];
-  if (assistantContent.length > 0) {
-    messages.push(modelMessageSchema.parse({ role: 'assistant', content: assistantContent }));
-  }
-  if (toolContent.length > 0) {
-    messages.push(modelMessageSchema.parse({ role: 'tool', content: toolContent }));
-  }
+  flush();
   return { messages, rendered };
 }
 
@@ -257,16 +264,26 @@ function interruptedSystemNote(message: AgentMessage): {
 }
 
 function completeToolChronology(message: AgentMessage): boolean {
-  const calls = new Set(
-    message.parts.filter((part) => part.type === 'tool-call').map((part) => part.callId),
-  );
-  const results = new Set(
-    message.parts.filter((part) => part.type === 'tool-result').map((part) => part.callId),
-  );
-  return (
-    [...calls].every((callId) => results.has(callId)) &&
-    [...results].every((callId) => calls.has(callId))
-  );
+  const pending = new Set<string>();
+  const completed = new Set<string>();
+  let resultsStarted = false;
+  for (const part of message.parts) {
+    if (part.type === 'tool-call') {
+      // Once a round has started returning results, every outstanding parallel
+      // call must settle before a dependent round may begin. Otherwise no
+      // provider-valid assistant/tool grouping can preserve the stored order.
+      if (resultsStarted && pending.size > 0) return false;
+      if (pending.size === 0) resultsStarted = false;
+      if (pending.has(part.callId) || completed.has(part.callId)) return false;
+      pending.add(part.callId);
+    }
+    if (part.type === 'tool-result') {
+      if (!pending.delete(part.callId)) return false;
+      completed.add(part.callId);
+      resultsStarted = true;
+    }
+  }
+  return pending.size === 0;
 }
 
 /** Project history and retain a decision for every canonical record. */
