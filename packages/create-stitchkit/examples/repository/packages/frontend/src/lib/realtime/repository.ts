@@ -20,7 +20,13 @@ function buildSocket() {
   // browser actually dialled, read at connect time, exactly like the server
   // reads the request's origin. This function only ever runs in an effect.
   const url = optionalRealtimeOrigin() ?? window.location.origin;
-  return createRealtimeClient(repositoryRealtimeContract, { url });
+  return createRealtimeClient(repositoryRealtimeContract, {
+    url,
+    // Keep the optional peer lazy while giving the browser bundler a literal
+    // import it can include. Stitchkit's default resolver intentionally stays
+    // runtime-selected so HTTP-only consumers do not acquire this dependency.
+    peers: { client: () => import('socket.io-client') },
+  });
 }
 
 function buildBridge() {

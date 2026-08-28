@@ -221,6 +221,9 @@ not evidence that the packed browser build is warning-free.
       Next/Webpack client with the literal Socket.IO loader and refuses the
       former critical dependency warning. ADRs 0120 and 0122, guides, reference
       and changelog describe the supported boundaries.
+- [x] The generated repository example uses the same literal loader. The packed
+      HEAD starter lane proves its real WebSocket connection and realtime cache
+      update in Chromium, WebKit and mobile Chromium.
 - [x] Full `bun run verify` passed. Package release is `0.68.1`, immutable tag
       `v0.68.1`; exact SHA and registry integrity are reported from the release
       and registry authorities after publication.
