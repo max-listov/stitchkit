@@ -2,9 +2,10 @@
 title: Recover queued runs in causal order rather than scan identifier order
 description: A recovery pass reports resumed while a queued successor loses acquisition and remains stranded.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: P1
 ---
 
@@ -121,7 +122,7 @@ event of the predecessor; it does not infer failure from a short empty poll.
 - [x] Cover acquired/stale predecessors, replay-safety policy, cancellation,
       concurrent admission/recovery and close without duplicating side effects.
 - [x] Deterministic regression on the memory store and PostgreSQL conformance.
-- [ ] Publish a patch with clean verification and package-install proof.
+- [x] Publish a patch with clean verification and package-install proof.
 
 ## Что сделано
 
@@ -148,3 +149,9 @@ event of the predecessor; it does not infer failure from a short empty poll.
       `Prisma/PostgreSQL agent store reference > passes the reusable store conformance contract`
       prove the active-order contract on memory and real PostgreSQL drivers.
 - [x] Full `bun run verify` passed for tree `02992105a45e`.
+- [x] Published `stitchkit@0.68.5`, tag `v0.68.5`, commit
+      `be704cf5ea632f741bb06eeb3c10a6634c61dd4f`; exact-SHA CI run
+      `33162308907` and release run `33162508215` passed. Registry integrity is
+      `sha512-9OXV5we+TeSMdHXKtpuJvBNB0QONm+IRJsibhj/uH1w1T/0selespylsMAVpIlI92eW5e26FqthLJu5GPWAlDQ==`.
+- [x] A clean registry install under Bun 1.3.14 and Node admitted same-timestamp
+      runs as `z → a` and observed `listActiveRuns()` in that causal order.

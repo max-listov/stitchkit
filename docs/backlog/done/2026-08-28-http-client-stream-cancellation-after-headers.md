@@ -2,9 +2,10 @@
 title: Configured HTTP client drops streaming cancellation after response headers
 description: Keep caller cancellation attached to response-body ownership for contract streams and raw responses.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: P1
 ---
 
@@ -39,7 +40,7 @@ present in the 0.68.4 checkout. Do not claim 0.68.4 runtime repro without testin
       before its first `next()`, normal end, error, and raw response-body cancellation.
 - [x] Prove server admission and Unix connection slots are actually reusable, not
       merely that local iterators settle; test both client construction forms.
-- [ ] Preserve existing retry, error and timeout semantics; publish a patch with
+- [x] Preserve existing retry, error and timeout semantics; publish a patch with
       package-level Bun and Node proofs. No consumer cancellation shim.
 
 The separate public `createClient` Fetch-config form has a stream-owned signal path;
@@ -60,3 +61,10 @@ it must be included as the parity comparison, not used to mark this adapter fixe
       finite connection slot; the packed Node fixture imports the same client surface.
 - [x] `docs/guide/client.md` and `CHANGELOG.md` describe the full body-lifetime contract.
 - [x] Full `bun run verify` passed for tree `02992105a45e`.
+- [x] Published `stitchkit@0.68.5`, tag `v0.68.5`, commit
+      `be704cf5ea632f741bb06eeb3c10a6634c61dd4f`; exact-SHA CI run
+      `33162308907` and release run `33162508215` passed. Registry integrity is
+      `sha512-9OXV5we+TeSMdHXKtpuJvBNB0QONm+IRJsibhj/uH1w1T/0selespylsMAVpIlI92eW5e26FqthLJu5GPWAlDQ==`.
+- [x] A clean registry install ran the published client and store surfaces under
+      Bun 1.3.14 and Node, after packed Bun/Node lanes proved physical Unix
+      cancellation and connection reuse from the same release tree.

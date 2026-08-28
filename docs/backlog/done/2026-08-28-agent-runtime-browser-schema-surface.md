@@ -2,9 +2,10 @@
 title: Browser-safe agent runtime schemas and event cursor surface
 description: Canonical run schemas imported into a client bundle pull the server runtime and node async_hooks.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28
 priority: P1
 ---
 
@@ -52,7 +53,7 @@ Schema reuse must not load model providers, execution, AsyncLocalStorage or Node
 - [x] Preserve one source for schemas; no copied browser enum definitions.
 - [x] Package-level browser bundling regression including Next/Webpack; retain
       Bun and Node runtime imports and optional-peer behavior.
-- [ ] Document the boundary and publish a patch; specify the supported import path.
+- [x] Document the boundary and publish a patch; specify the supported import path.
 
 ## Что сделано
 
@@ -72,3 +73,9 @@ Schema reuse must not load model providers, execution, AsyncLocalStorage or Node
 - [x] `README.md`, `docs/guide/agent-runtime.md`, `docs/guide/getting-started.md`,
       `docs/api/reference.md` and `CHANGELOG.md` name the supported import boundary.
 - [x] Full `bun run verify` passed for tree `02992105a45e`.
+- [x] Published `stitchkit@0.68.5`, tag `v0.68.5`, commit
+      `be704cf5ea632f741bb06eeb3c10a6634c61dd4f`; exact-SHA CI run
+      `33162308907` and release run `33162508215` passed. Registry integrity is
+      `sha512-9OXV5we+TeSMdHXKtpuJvBNB0QONm+IRJsibhj/uH1w1T/0selespylsMAVpIlI92eW5e26FqthLJu5GPWAlDQ==`.
+- [x] A clean registry install imported `stitchkit/agent-runtime/browser` and
+      parsed its canonical schema/cursor exports under Bun 1.3.14 and Node.
