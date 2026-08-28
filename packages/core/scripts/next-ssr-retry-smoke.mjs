@@ -179,10 +179,11 @@ try {
   assert.match(html, /data-recovery="true"/);
   assert.match(html, /data-memo-a="7"/);
   assert.match(html, /data-memo-b="7"/);
+  assert.match(html, /data-agent-schema="queued:context_overflow:1"/);
   assert.equal(recoveryFetchCalls, 2, 'Ky must invoke the selected Next fetch twice');
   assert.equal(recoveryAttempts, 1, 'only the post-rejection retry reaches the origin');
   assert.equal(memoAttempts, 1, 'the first successful attempt must stay memoized by Next');
-  console.log('Next.js 16.3.0 SSR retry + first-attempt memoization: OK');
+  console.log('Next.js 16.3.0 SSR retry + browser-safe agent schemas: OK');
 } finally {
   next?.kill('SIGTERM');
   await close(origin).catch(() => undefined);

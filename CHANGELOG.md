@@ -17,8 +17,21 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [0.68.5] — 2026-08-28
 
+### Added
+
+- **Agent records and delivery cursors have a browser-safe entrypoint.** Import canonical message,
+  run, usage and terminal schemas plus agent event schemas and cursor helpers from
+  `stitchkit/agent-runtime/browser`. It shares the runtime's source schemas but contains no model,
+  execution, sink or Node context graph, and is proven in a packed Next 16.3.0 Webpack client build.
+
 ### Fixed
 
+- **Recovery schedules queued runs by durable causal order, not identifier order.** A bounded
+  scan is reordered with the store's canonical active-run order before acquisition, including
+  equal timestamps and page boundaries. `recover()` now waits for each reported handoff to reach
+  durable acquisition and exposes its terminal `result`, so an acquisition conflict is a `failed`
+  outcome instead of a swallowed rejection beside a stranded queued run. The reusable store
+  conformance kit requires history-based active ordering from memory and PostgreSQL adapters.
 - **Configured HTTP clients keep caller cancellation after response headers.** Header deadlines
   remain bounded and are cleared when headers arrive, while contract streams and raw response
   bodies retain their caller signal through body completion or cancellation. Quiet pending reads,
@@ -26,7 +39,9 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   connection capacity on both configured-adapter and Fetch-config clients.
 
 No call-site migration is required. Existing `AbortSignal` and owned contract-stream cancellation
-now reach the transport for the complete response-body lifetime.
+now reach the transport for the complete response-body lifetime. Recovery callers may await the
+optional `outcome.result` when they need terminal completion or failure; `resumed` / `requeued`
+still mean that the run was acquired and handed to the local coordinator, not that it completed.
 
 ## [0.68.4] — 2026-08-28
 

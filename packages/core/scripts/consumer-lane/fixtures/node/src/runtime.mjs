@@ -14,7 +14,7 @@ import {
 import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract } from 'stitchkit/contract';
 import { createHandler, implement } from 'stitchkit/server';
-import { createAgentRaceTrace } from 'stitchkit/testing';
+import { createAgentRaceTrace, runAgentStoreConformance } from 'stitchkit/testing';
 import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
 
@@ -22,6 +22,7 @@ const agentStore = createMemoryAgentRuntimeStore();
 assert.equal(new AgentContextOverflowError().name, 'AgentContextOverflowError');
 const agentSnapshot = await agentStore.loadSnapshot('packed-node-agent');
 assert.equal(agentSnapshot.version, 0);
+await runAgentStoreConformance({ createStore: () => createMemoryAgentRuntimeStore() });
 const agentTrace = createAgentRaceTrace();
 agentTrace.record('admission');
 agentTrace.record('terminal');

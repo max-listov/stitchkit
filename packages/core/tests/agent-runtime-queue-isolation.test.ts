@@ -3,6 +3,8 @@ import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  AgentMessageSchema,
+  AgentRunSchema,
   type AgentRuntimeStore,
   type AgentSnapshot,
   createAgentRuntime,
@@ -43,6 +45,101 @@ function submit(
 }
 
 describe('queued inputs cross the provider boundary only with their assigned run', () => {
+  test.each([
+    ['distinct timestamps', ['2026-08-28T00:00:00.000Z', '2026-08-28T00:00:01.000Z']],
+    ['equal timestamps', ['2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z']],
+  ])('recovery restores causal order across pages with %s', async (_label, timestamps) => {
+    const store = createMemoryAgentRuntimeStore();
+    const conversationId = `recovery-${_label.replace(' ', '-')}`;
+    for (const [index, id] of ['z', 'a'].entries()) {
+      const createdAt = timestamps[index];
+      if (!createdAt) throw new Error('fixture timestamp missing');
+      const input = AgentMessageSchema.parse({
+        schemaVersion: 1,
+        id: `${id}-input`,
+        conversationId,
+        role: 'user',
+        status: 'committed',
+        parts: [{ type: 'text', text: `INPUT_${id}` }],
+        createdAt,
+        updatedAt: createdAt,
+      });
+      await store.acceptInputAndAssignRun({
+        idempotencyKey: id,
+        input,
+        run: AgentRunSchema.parse({
+          schemaVersion: 1,
+          id,
+          conversationId,
+          inputMessageIds: [input.id],
+          assistantMessageId: `${id}-assistant`,
+          state: 'queued',
+          revision: 0,
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      });
+    }
+
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        call += 1;
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'text-start', id: `text-${call}` },
+              { type: 'text-delta', id: `text-${call}`, delta: `ANSWER_${call}` },
+              { type: 'text-end', id: `text-${call}` },
+              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+            ],
+          }),
+        };
+      },
+    });
+    const runtime = createAgentRuntime({
+      protocol,
+      store,
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({}),
+    });
+
+    const outcomes = await runtime.recover({
+      resolveContext: () => ({}),
+      pageSize: 1,
+    });
+    expect(outcomes.map(({ runId, outcome }) => ({ runId, outcome }))).toEqual([
+      { runId: 'z', outcome: 'resumed' },
+      { runId: 'a', outcome: 'resumed' },
+    ]);
+    await Promise.all(
+      outcomes.map((outcome) => {
+        if (!outcome.result) throw new Error('resumed recovery did not expose its result');
+        return outcome.result;
+      }),
+    );
+
+    expect(model.doStreamCalls).toHaveLength(2);
+    const firstPrompt = JSON.stringify(model.doStreamCalls[0]?.prompt ?? []);
+    const secondPrompt = JSON.stringify(model.doStreamCalls[1]?.prompt ?? []);
+    expect(firstPrompt).toContain('INPUT_z');
+    expect(firstPrompt).not.toContain('INPUT_a');
+    expect(secondPrompt).toContain('INPUT_z');
+    expect(secondPrompt).toContain('ANSWER_1');
+    expect(secondPrompt).toContain('INPUT_a');
+    expect((await store.loadSnapshot(conversationId)).runs.map((run) => run.state)).toEqual([
+      'completed',
+      'completed',
+    ]);
+    await runtime.close({ forceTimeoutMs: 1_000 });
+  });
+
   test('an admission during predecessor acquisition stays out of its prompt and follows its answer', async () => {
     const durable = createMemoryAgentRuntimeStore();
     const acquiring = Promise.withResolvers<void>();

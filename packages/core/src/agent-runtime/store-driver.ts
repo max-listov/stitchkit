@@ -889,10 +889,11 @@ export function createAgentRuntimeStore<TRANSACTION>(
     });
 
   /**
-   * Both of these read run records and the head, and never `history.load` —
-   * which is the point, and the reason neither needed a new driver member. The
-   * driver already answers "this run" and "the active runs"; nothing had asked
-   * it, so every caller went through the conversation instead.
+   * `loadRun` reads one run and the head. `listActiveRuns` also reads history:
+   * active recovery order must use the same causal tie-break as a snapshot,
+   * because same-millisecond identifiers are not queue positions. Neither
+   * needs a new driver member; both compose the normalized boundaries already
+   * present here.
    */
   const loadRun = (input: {
     conversationId: string;
@@ -921,7 +922,10 @@ export function createAgentRuntimeStore<TRANSACTION>(
 
   const listActiveRuns = (conversationId: string): Promise<readonly AgentRun[]> =>
     driver.transaction(async (transaction) => {
-      const records = await driver.runs.listActive(transaction, conversationId);
+      const [records, messages] = await Promise.all([
+        driver.runs.listActive(transaction, conversationId),
+        driver.history.load(transaction, conversationId),
+      ]);
       const runs = records.map((record) => AgentStoredRunSchema.parse(record).run);
       for (const run of runs) {
         if (run.conversationId !== conversationId) {
@@ -931,13 +935,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
           throw new TypeError('Active run listing returned a terminal run');
         }
       }
-      return runs.sort((left, right) =>
-        left.createdAt === right.createdAt
-          ? left.id.localeCompare(right.id)
-          : left.createdAt < right.createdAt
-            ? -1
-            : 1,
-      );
+      return orderRuns(messages, runs);
     });
 
   const mutate = (operation: StoreOperation): Promise<AgentStoreMutationResult> =>

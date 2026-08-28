@@ -44,3 +44,19 @@ present in the 0.68.4 checkout. Do not claim 0.68.4 runtime repro without testin
 
 The separate public `createClient` Fetch-config form has a stream-owned signal path;
 it must be included as the parity comparison, not used to mark this adapter fixed.
+
+## Что сделано
+
+- [x] `packages/core/src/browser/cancellation.ts` composes the caller signal with
+      the bounded header deadline and clears only deadline-owned state after headers;
+      caller cancellation remains attached until the response body releases ownership.
+- [x] `packages/core/tests/http-client-stream-cancellation-lifetime.test.ts` —
+      `response-body cancellation lifetime — configured HTTP adapter Unix option > all terminal paths release server admission and the finite Unix slot`,
+      the matching configured-adapter case and the Fetch-config parity case cover
+      pending reads, return before/after first `next`, normal end, typed stream failure
+      and raw-body cancellation against a real one-slot Unix transport.
+- [x] `packages/core/scripts/consumer-lane/fixtures/minimal/src/unix-client-conformance.mjs`
+      proves the packed public package releases a live Unix subscription and reuses its
+      finite connection slot; the packed Node fixture imports the same client surface.
+- [x] `docs/guide/client.md` and `CHANGELOG.md` describe the full body-lifetime contract.
+- [x] Full `bun run verify` passed for tree `02992105a45e`.

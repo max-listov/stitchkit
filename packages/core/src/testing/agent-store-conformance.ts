@@ -85,7 +85,13 @@ export async function runAgentStoreConformance(
 ): Promise<void> {
   const run = `conformance-${crypto.randomUUID()}`;
   const context: AgentStoreConformanceContext = {
-    conversationIds: [run, `${run}-recovery`, `${run}-absorb`, `${run}-causal-history`],
+    conversationIds: [
+      run,
+      `${run}-recovery`,
+      `${run}-absorb`,
+      `${run}-causal-history`,
+      `${run}-causal-active`,
+    ],
   };
   const store = await config.createStore(context);
   let failure: unknown;
@@ -120,14 +126,16 @@ async function conformanceScenario(
     recoveryConversationId,
     absorbConversationId,
     causalHistoryConversationId,
+    causalActiveConversationId,
   ] = conversationIds;
   if (
     !conversationId ||
     !recoveryConversationId ||
     !absorbConversationId ||
-    !causalHistoryConversationId
+    !causalHistoryConversationId ||
+    !causalActiveConversationId
   ) {
-    throw new Error('Agent store conformance requires four conversation identities');
+    throw new Error('Agent store conformance requires five conversation identities');
   }
   /**
    * An identity the scenario asserts is ABSENT, and therefore deliberately not
@@ -571,7 +579,30 @@ async function conformanceScenario(
   }
 
   await assertCausalHistoryOrder(store, causalHistoryConversationId);
+  await assertActiveRunCausalOrder(store, causalActiveConversationId);
   await assertAbsorptionIsAtomic(store, absorbConversationId);
+}
+
+/** Active-run reads preserve admission order when identifiers point backwards. */
+async function assertActiveRunCausalOrder(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  for (const id of ['z-causal-run', 'a-causal-run']) {
+    const input = userMessage(conversationId, `${id}-input`);
+    requireOutcome(
+      await store.acceptInputAndAssignRun({
+        idempotencyKey: id,
+        input,
+        run: queuedRun(conversationId, input.id, id),
+      }),
+      'applied',
+    );
+  }
+  const active = await store.listActiveRuns(conversationId);
+  if (active.map((run) => run.id).join(',') !== 'z-causal-run,a-causal-run') {
+    throw new Error('listActiveRuns must preserve causal history order for timestamp ties');
+  }
 }
 
 /** A later durable admission follows the predecessor answer in every snapshot. */

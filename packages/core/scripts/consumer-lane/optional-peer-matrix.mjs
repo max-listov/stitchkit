@@ -177,6 +177,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'agent-runtime-browser',
+    subpath: './agent-runtime/browser',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/agent-runtime/browser', 'AgentRunStateSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'agent-runtime-openrouter',
     subpath: './agent-runtime/openrouter',
     fixture: 'full',

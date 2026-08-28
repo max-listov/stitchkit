@@ -128,6 +128,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     signal: AbortSignal;
     /** The admission lane this run belongs to — the key injection is offered on. */
     key: string;
+    /** Recovery uses this to distinguish queue handoff from durable acquisition. */
+    onAcquired?(): void;
   }): Promise<AgentRuntimeResult> {
     // This run is no longer a queued successor, whatever happens next, so it
     // stops being something another run may take on. First, before any I/O that
@@ -155,6 +157,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       if (!absorbing?.assistant || !absorbing.run.terminalReason) {
         throw new AgentRuntimeConflictError('absorbed run resolution');
       }
+      input.onAcquired?.();
       return {
         run: absorbing.run,
         message: absorbing.assistant,
@@ -176,6 +179,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       'run acquisition',
     );
     let run = findRun(acquired.runs, input.acceptedRun.id);
+    input.onAcquired?.();
     await publish({
       type: 'run-state',
       eventId: agentDurableEventId('run-state', run.id, acquired.version),

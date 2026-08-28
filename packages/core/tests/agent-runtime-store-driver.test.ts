@@ -117,10 +117,13 @@ describe('agent runtime store driver', () => {
       pageSize: 1,
       maxRuns: 2,
     });
-    expect(outcomes).toEqual([
+    expect(outcomes.map(({ result: _result, ...outcome }) => outcome)).toEqual([
       { conversationId: 'acquired', runId: 'acquired-run', outcome: 'skipped' },
       { conversationId: 'queued', runId: 'queued-run', outcome: 'resumed' },
     ]);
+    const recoveredResult = outcomes.find((outcome) => outcome.runId === queued.id)?.result;
+    if (!recoveredResult) throw new Error('resumed recovery did not expose its result');
+    expect((await recoveredResult).reason).toBe('provider_failure');
     await runtime.close({ forceTimeoutMs: 1_000 });
   });
 
@@ -200,6 +203,74 @@ describe('agent runtime store driver', () => {
         outcome: 'skipped',
       },
     ]);
+  });
+
+  test('reports an acquisition conflict as failed instead of a successful handoff', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    const input = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'conflict-input',
+      conversationId: 'recovery-conflict',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'conflict' }],
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    });
+    const run = AgentRunSchema.parse({
+      schemaVersion: 1,
+      id: 'conflict-run',
+      conversationId: input.conversationId,
+      inputMessageIds: [input.id],
+      assistantMessageId: 'conflict-assistant',
+      state: 'queued',
+      revision: 0,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    });
+    await durable.acceptInputAndAssignRun({
+      idempotencyKey: 'conflict-request',
+      input,
+      run,
+    });
+    const store: AgentRuntimeStore = {
+      ...durable,
+      async acquireRun() {
+        return { outcome: 'conflict', actualVersion: 0 };
+      },
+    };
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('must not reach prompt');
+      },
+      tools: () => ({}),
+    });
+
+    const outcomes = await runtime.recover({ resolveContext: () => ({}) });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      conversationId: input.conversationId,
+      runId: run.id,
+      outcome: 'failed',
+      error: expect.any(Error),
+    });
+    expect(
+      (await durable.loadRun({ conversationId: input.conversationId, runId: run.id }))?.run,
+    ).toMatchObject({ state: 'queued' });
+    await runtime.close({ forceTimeoutMs: 1_000 });
   });
 
   test('atomically refuses out-of-order or sibling acquisition', async () => {

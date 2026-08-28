@@ -171,13 +171,11 @@ export interface AgentRuntimeStore {
   /** One run by id. `undefined` if this conversation has no such run. */
   loadRun(input: { conversationId: string; runId: string }): Promise<AgentRunView | undefined>;
   /**
-   * Every run of this conversation that has not reached a terminal state,
-   * oldest first by `createdAt` and then by `id`.
+   * Every run of this conversation that has not reached a terminal state, in
+   * the same causal order as `AgentSnapshot.runs`.
    *
-   * Deliberately a weaker order than `AgentSnapshot.runs`, which breaks a
-   * `createdAt` tie by where the run sits in the conversation's history. That
-   * tiebreak needs the history, and reading it is the cost this call exists to
-   * avoid.
+   * The history position is the tie-breaker when timestamps match. Recovery
+   * relies on that fact: identifiers are identities, never queue positions.
    */
   listActiveRuns(conversationId: string): Promise<readonly AgentRun[]>;
   acceptInputAndAssignRun(input: AcceptInputAndAssignRun): Promise<AgentStoreMutationResult>;

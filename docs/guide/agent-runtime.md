@@ -24,6 +24,21 @@ If the application already owns that loop, continue importing `mountAgent` from
 this entrypoint uses the tool executor from it, but pulls no MCP peer, so
 choosing `mountAgent` alone costs you nothing from here.
 
+UI and shared DTO code must import canonical records and delivery validation from
+`stitchkit/agent-runtime/browser`, not from the server runtime barrel:
+
+```ts
+import {
+  AgentRunSchema,
+  AgentRuntimeEventSchema,
+  advanceAgentRuntimeEventCursor,
+} from 'stitchkit/agent-runtime/browser'
+```
+
+This browser-safe entrypoint re-exports the same schemas and inferred types used
+by the runtime. It intentionally excludes model construction, execution,
+persistence, event sinks and every Node context dependency.
+
 ## Install
 
 ```sh
@@ -472,12 +487,18 @@ checkpoint/terminal CAS and tool context, so a distributed adapter can reject an
 an owner label is reused. Lease expiry and renewal remain application-owned.
 
 On startup, `runtime.recover({ resolveContext })` consumes bounded lightweight
-pages. Its safe default resumes queued runs and reports acquired or
+pages, then restores each conversation's canonical causal order before any run
+acquires. Scan identifiers and page boundaries therefore never become queue
+order. Its safe default resumes queued runs and reports acquired or
 `interrupt_requested` runs as skipped. A policy may requeue acquired work only
 with explicit replay-safe evidence, or abandon it only with stale-owner
-evidence. Each attempted run returns its own outcome/error; `pageSize`,
-`maxRuns`, and `signal` bound the pass. `runtime.resume(...)` remains available
-for one known queued record.
+evidence. Each attempted run returns its own outcome/error; a `resumed` or
+`requeued` outcome also exposes the terminal `result` promise. The outcome is
+reported only after durable acquisition, so a lost acquisition is `failed`
+rather than a successful-looking handoff. `pageSize`, `maxRuns`, and `signal`
+bound the pass. `runtime.resume(...)` remains available for one known queued
+record; its `accepted` promise likewise means that the recovered run acquired
+durable ownership, while `result` carries terminal completion.
 
 Canonical records currently write `schemaVersion: 1`. A durable adapter owns
 read-time migration of older rows: migrate to the current shape at its storage

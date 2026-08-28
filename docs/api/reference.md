@@ -601,7 +601,7 @@ Server-only optional application runtime. See the
 | `AgentRuntimeAdmission` | _type_ | canonical committed input, assigned run, pending assistant projection, compatibility IDs and snapshot version |
 | `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |
 | `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` says the provider never reported the run finished, so the figure beside it is not a confirmed total |
-| `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with context resolver and explicit evidence policy |
+| `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with causal per-conversation scheduling, context resolver and explicit evidence policy |
 | `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
@@ -713,6 +713,20 @@ Managed effects and operator telemetry additionally export `AgentToolFenceConfig
 `AgentRunSinkConfig`, `AgentRunSinkDrop` and `AgentRunSinkError`. A monotonic run `fencingToken`
 may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
 operator-only observability sink explicitly opts in.
+
+## `stitchkit/agent-runtime/browser`
+
+Browser-safe canonical agent data. It re-exports the run, message, part, usage,
+terminal and provider-envelope schemas/types listed under
+`stitchkit/agent-runtime`, together with all runtime delivery event schemas,
+`AgentRuntimeEventCursorSchema`, `advanceAgentRuntimeEventCursor` and
+`agentDurableEventId`. It imports no model provider, executor, store, event sink
+or Node context module.
+
+Use this entrypoint from client components and shared DTO packages. The full
+`stitchkit/agent-runtime` entrypoint remains server-only.
+
+---
 
 ## `stitchkit/agent-runtime/openrouter`
 

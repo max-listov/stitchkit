@@ -106,6 +106,8 @@ export interface AgentRuntimeRecoveryOutcome {
   runId: string;
   outcome: 'resumed' | 'requeued' | 'abandoned' | 'skipped' | 'failed';
   error?: unknown;
+  /** Terminal execution result for work handed to the local coordinator. */
+  result?: Promise<AgentRuntimeResult>;
 }
 
 export interface AgentRuntimeInterruptInput {
@@ -391,6 +393,14 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
     const context = config.protocol.parseContext(rawInput.context);
     const accepted = Promise.withResolvers<void>();
     const result = Promise.withResolvers<AgentRuntimeResult>();
+    let acquisitionSettled = false;
+    const resolveAcquisition = (): void => {
+      acquisitionSettled = true;
+      accepted.resolve();
+    };
+    const rejectAcquisition = (error: unknown): void => {
+      if (!acquisitionSettled) accepted.reject(error);
+    };
     const handedOff = beginAdmission();
     void (async () => {
       try {
@@ -403,7 +413,6 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         if (recoveredRun.state !== 'queued') {
           throw new Error('Only a queued recovered agent run can be resumed');
         }
-        accepted.resolve();
         const ticket = coordinator.submit({
           key: rawInput.conversationKey ?? rawInput.conversationId,
           policy: 'queue',
@@ -415,13 +424,17 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
                 context,
                 signal,
                 key: rawInput.conversationKey ?? rawInput.conversationId,
+                onAcquired: resolveAcquisition,
               }),
           }),
         });
         void ticket.accepted.catch(() => undefined);
-        void ticket.result.then(result.resolve, result.reject);
+        void ticket.result.then(result.resolve, (error) => {
+          rejectAcquisition(error);
+          result.reject(error);
+        });
       } catch (error) {
-        accepted.reject(error);
+        rejectAcquisition(error);
         result.reject(error);
       } finally {
         handedOff();
@@ -763,114 +776,145 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
       if (!Number.isSafeInteger(maxRuns) || maxRuns < 1) {
         throw new TypeError('Recovery maxRuns must be a positive safe integer');
       }
-      const outcomes: AgentRuntimeRecoveryOutcome[] = [];
+      const recoverable: AgentRecoverableDescriptor[] = [];
       let cursor: string | undefined;
-      while (outcomes.length < maxRuns && !options.signal?.aborted && !admissionClosed) {
+      while (recoverable.length < maxRuns && !options.signal?.aborted && !admissionClosed) {
         const page = await config.store.scanRecoverable({
           ...(cursor && { cursor }),
-          limit: Math.min(pageSize, maxRuns - outcomes.length),
+          limit: Math.min(pageSize, maxRuns - recoverable.length),
         });
-        for (const item of page.items) {
-          if (options.signal?.aborted) break;
-          // Per ITEM, not per page: a close arriving in the middle of a page
-          // used to leave the rest of it to be recovered afterwards.
-          if (admissionClosed) break;
-          // One item's mutating slice, inside the same barrier admission uses.
-          //
-          // The gate at the top of `recover` and the one in the loop condition
-          // stop what has not started; neither stops what is between
-          // `decide()` and the durable write it leads to. A close arriving
-          // inside that user callback used to return `settled: true` and then
-          // watch `recoverRun` commit — a write after the runtime said it had
-          // stopped writing. Held until the item reaches `resume`, which owns
-          // the handoff from there.
-          const handedOff = beginAdmission();
-          try {
-            if (item.run.state === 'queued') {
-              const active = await config.store.listActiveRuns(item.conversationId);
-              const blockedByAcquiredPredecessor = active.some(
-                (run) =>
-                  run.id !== item.run.id &&
-                  (run.state === 'running' || run.state === 'interrupt_requested'),
-              );
-              if (blockedByAcquiredPredecessor) {
-                outcomes.push({
-                  conversationId: item.conversationId,
-                  runId: item.run.id,
-                  outcome: 'skipped',
-                });
-                continue;
-              }
-            }
-            const decision =
-              (await options.decide?.(item)) ??
-              (item.run.state === 'queued' ? { action: 'resume' } : { action: 'skip' });
-            // Re-read AFTER the callback: this is the last point before the
-            // first durable write, and the callback is where a close fits.
-            if (admissionClosed) throw closedError();
-            if (decision.action === 'skip') {
-              outcomes.push({
-                conversationId: item.conversationId,
-                runId: item.run.id,
-                outcome: 'skipped',
-              });
-              continue;
-            }
-            if (decision.action === 'abandon') {
-              const abandoned = await config.store.recoverRun({
-                conversationId: item.conversationId,
-                runId: item.run.id,
-                expectedRevision: item.run.revision,
-                action: 'abandon',
-              });
-              if (abandoned.outcome !== 'applied') {
-                throw new AgentRuntimeConflictError('recovery abandon');
-              }
-              outcomes.push({
-                conversationId: item.conversationId,
-                runId: item.run.id,
-                outcome: 'abandoned',
-              });
-              continue;
-            }
-            if (decision.action === 'requeue') {
-              const requeued = await config.store.recoverRun({
-                conversationId: item.conversationId,
-                runId: item.run.id,
-                expectedRevision: item.run.revision,
-                action: 'requeue',
-                replaySafe: true,
-              });
-              if (requeued.outcome !== 'applied') {
-                throw new AgentRuntimeConflictError('recovery requeue');
-              }
-            }
-            const context = await options.resolveContext(item);
-            const resumed = resume({
-              conversationId: item.conversationId,
-              runId: item.run.id,
-              context,
-            });
-            void resumed.result.catch(() => undefined);
-            await resumed.accepted;
-            outcomes.push({
-              conversationId: item.conversationId,
-              runId: item.run.id,
-              outcome: decision.action === 'requeue' ? 'requeued' : 'resumed',
-            });
-          } catch (error) {
-            outcomes.push({
-              conversationId: item.conversationId,
-              runId: item.run.id,
-              outcome: 'failed',
-              error,
-            });
-          } finally {
-            handedOff();
-          }
-        }
+        recoverable.push(...page.items);
         cursor = page.nextCursor;
         if (!cursor || page.items.length === 0) break;
+      }
+
+      // A recovery cursor is an identity cursor, not a queue. Buffering remains
+      // bounded by `maxRuns`, then each conversation is put back into the
+      // store's canonical causal order before anything can acquire. Grouping
+      // after the complete bounded scan is what makes a page boundary
+      // semantically invisible.
+      const grouped = new Map<string, AgentRecoverableDescriptor[]>();
+      for (const item of recoverable) {
+        const items = grouped.get(item.conversationId) ?? [];
+        items.push(item);
+        grouped.set(item.conversationId, items);
+      }
+      const ordered: AgentRecoverableDescriptor[] = [];
+      for (const [conversationId, items] of grouped) {
+        const active = await config.store.listActiveRuns(conversationId);
+        const position = new Map(active.map((run, index) => [run.id, index]));
+        ordered.push(
+          ...items.sort((left, right) => {
+            const leftPosition = position.get(left.run.id);
+            const rightPosition = position.get(right.run.id);
+            if (leftPosition === undefined && rightPosition === undefined) return 0;
+            if (leftPosition === undefined) return 1;
+            if (rightPosition === undefined) return -1;
+            return leftPosition - rightPosition;
+          }),
+        );
+      }
+
+      const outcomes: AgentRuntimeRecoveryOutcome[] = [];
+      const scheduledRuns = new Map<string, Set<string>>();
+      for (const item of ordered) {
+        if (options.signal?.aborted) break;
+        // Per ITEM, not per page: a close arriving in the middle of a page
+        // used to leave the rest of it to be recovered afterwards.
+        if (admissionClosed) break;
+        // One item's mutating slice, inside the same barrier admission uses.
+        //
+        // The gate at the top of `recover` and the one in the loop condition
+        // stop what has not started; neither stops what is between
+        // `decide()` and the durable write it leads to. A close arriving
+        // inside that user callback used to return `settled: true` and then
+        // watch `recoverRun` commit — a write after the runtime said it had
+        // stopped writing. Held until the item reaches `resume`, which owns
+        // the handoff from there.
+        const releaseAdmission = beginAdmission();
+        try {
+          const active = await config.store.listActiveRuns(item.conversationId);
+          const position = active.findIndex((run) => run.id === item.run.id);
+          const scheduled = scheduledRuns.get(item.conversationId) ?? new Set<string>();
+          const blockedByUnscheduledPredecessor =
+            position > 0 && active.slice(0, position).some((run) => !scheduled.has(run.id));
+          if (blockedByUnscheduledPredecessor) {
+            outcomes.push({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              outcome: 'skipped',
+            });
+            continue;
+          }
+          const decision =
+            (await options.decide?.(item)) ??
+            (item.run.state === 'queued' ? { action: 'resume' } : { action: 'skip' });
+          // Re-read AFTER the callback: this is the last point before the
+          // first durable write, and the callback is where a close fits.
+          if (admissionClosed) throw closedError();
+          if (decision.action === 'skip') {
+            outcomes.push({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              outcome: 'skipped',
+            });
+            continue;
+          }
+          if (decision.action === 'abandon') {
+            const abandoned = await config.store.recoverRun({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              expectedRevision: item.run.revision,
+              action: 'abandon',
+            });
+            if (abandoned.outcome !== 'applied') {
+              throw new AgentRuntimeConflictError('recovery abandon');
+            }
+            outcomes.push({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              outcome: 'abandoned',
+            });
+            continue;
+          }
+          if (decision.action === 'requeue') {
+            const requeued = await config.store.recoverRun({
+              conversationId: item.conversationId,
+              runId: item.run.id,
+              expectedRevision: item.run.revision,
+              action: 'requeue',
+              replaySafe: true,
+            });
+            if (requeued.outcome !== 'applied') {
+              throw new AgentRuntimeConflictError('recovery requeue');
+            }
+          }
+          const context = await options.resolveContext(item);
+          const resumed = resume({
+            conversationId: item.conversationId,
+            runId: item.run.id,
+            context,
+          });
+          void resumed.result.catch(() => undefined);
+          await resumed.accepted;
+          scheduled.add(item.run.id);
+          scheduledRuns.set(item.conversationId, scheduled);
+          outcomes.push({
+            conversationId: item.conversationId,
+            runId: item.run.id,
+            outcome: decision.action === 'requeue' ? 'requeued' : 'resumed',
+            result: resumed.result,
+          });
+        } catch (error) {
+          outcomes.push({
+            conversationId: item.conversationId,
+            runId: item.run.id,
+            outcome: 'failed',
+            error,
+          });
+        } finally {
+          releaseAdmission();
+        }
       }
       return outcomes;
     },

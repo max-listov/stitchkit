@@ -1,4 +1,5 @@
 import { createHttpClient } from 'stitchkit';
+import { AgentSchemaClientCompileProof } from './agent-schema-client';
 import { SocketClientCompileProof } from './socket-client';
 
 export const dynamic = 'force-dynamic';
@@ -64,6 +65,7 @@ export default async function Page() {
       data-memo-b={String(memoB.value)}
     >
       <SocketClientCompileProof />
+      <AgentSchemaClientCompileProof />
     </main>
   );
 }

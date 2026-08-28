@@ -76,6 +76,7 @@ Browser code imports browser-safe entrypoints:
 import { defineContract, createClient, createHttpClient } from 'stitchkit'
 import { createSocketIOClient } from 'stitchkit'
 import { createCursorQuery, createCacheBridge } from 'stitchkit/react'
+import { AgentRunSchema, AgentRuntimeEventSchema } from 'stitchkit/agent-runtime/browser'
 import { parseSSE } from 'stitchkit'
 ```
 
@@ -95,7 +96,9 @@ application, AI-SDK-backed agent-runtime and peer-free remote-proxy code live
 behind `stitchkit/server`, `stitchkit/tools`, `stitchkit/application`,
 `stitchkit/agent-runtime` and `stitchkit/remote` respectively. Optional provider
 adapters are isolated further; importing `stitchkit/application` never resolves
-grammY or OpenTelemetry.
+grammY or OpenTelemetry. Browser code that shares agent records imports
+`stitchkit/agent-runtime/browser`; it contains the canonical schemas and event
+cursor but no execution, persistence or sink graph.
 
 ## Managed application kernel
 
