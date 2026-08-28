@@ -2,9 +2,10 @@
 title: Unix streaming bodies need bounded buffering without a cumulative response cap
 description: Compose long-lived NDJSON subscriptions with the Unix adapter without treating their lifetime byte count as retained memory.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 07:39 +0000
 priority: P1
 related: docs/backlog/done/2026-08-28-portable-fail-closed-unix-client.md
 ---
@@ -94,17 +95,42 @@ The owner defines the public API; do not infer mode from Content-Type or a domai
 
 ## План
 
-- [ ] Define typed configuration/composition for finite unary bodies versus long-lived streams.
-- [ ] Keep headers, request body, connection count and physical queued-byte ceilings finite.
-- [ ] Preserve pull-driven backpressure, strict malformed framing and abort/close semantics.
-- [ ] Add packed Bun/Node proof: drain beyond the unary default, pause/resume, exact content,
+- [x] Define typed configuration/composition for finite unary bodies versus long-lived streams.
+- [x] Keep headers, request body, connection count and physical queued-byte ceilings finite.
+- [x] Preserve pull-driven backpressure, strict malformed framing and abort/close semantics.
+- [x] Add packed Bun/Node proof: drain beyond the unary default, pause/resume, exact content,
       cancel during silence/paused reads and reuse the freed connection slot.
-- [ ] Publish the implementation, migration example, version/tag/full SHA/integrity.
+- [x] Publish the implementation, migration example, version/tag/full SHA/integrity.
 
 ## Acceptance
 
-- [ ] Streaming mode drains well beyond 16 MiB with no lifetime-total rejection or implicit reconnect.
-- [ ] Unary defaults still reject oversized responses; streaming mode cannot weaken those defaults accidentally.
-- [ ] The slow-reader plateau and physical retained-byte bounds hold; unlimited buffering is not a solution.
-- [ ] Installed typed-client/NDJSON composition works on Bun and Node without MAX_SAFE_INTEGER,
+- [x] Streaming mode drains well beyond 16 MiB with no lifetime-total rejection or implicit reconnect.
+- [x] Unary defaults still reject oversized responses; streaming mode cannot weaken those defaults accidentally.
+- [x] The slow-reader plateau and physical retained-byte bounds hold; unlimited buffering is not a solution.
+- [x] Installed typed-client/NDJSON composition works on Bun and Node without MAX_SAFE_INTEGER,
       a copied socket/parser engine or fallback transport.
+
+## Что сделано
+
+- Added the discriminated `responseBodyMode: 'bounded' | 'streaming'` Unix client
+  configuration. Bounded remains the default; streaming removes only the cumulative
+  lifetime response counter and rejects a simultaneous `maxResponseBytes` at both the
+  TypeScript and runtime boundaries.
+- Kept request, header, connection, framing and queued-byte bounds unchanged in the Node
+  and Bun adapters. Backpressure remains pull-driven, and cancellation releases the
+  connection slot.
+- Documented the contract in ADR 0125, the server/API guides and the 0.68.2 changelog.
+- Regression coverage:
+  `packages/core/tests/unix-client-transport.test.ts` —
+  `streaming response mode removes only the cumulative response ceiling`,
+  `Bun pauses and resumes a chunked producer without corrupting framing`, and
+  `close interrupts an active body once and the finite connection cap refuses without queueing`.
+- Packed consumer coverage:
+  `packages/core/scripts/consumer-lane/fixtures/minimal/src/unix-client-conformance.mjs`
+  proves the bounded rejection, 17,000 ordered typed NDJSON frames beyond 16 MiB,
+  stalled-reader backpressure, cancellation/slot reuse and invalid mixed configuration
+  on both Bun and Node.
+- `bun run verify` passed for the release tree. Exact-SHA CI run `33152053357` passed.
+- Published `stitchkit@0.68.2`, tag `v0.68.2`, commit
+  `2286cfc13e61b60aa551fd90fc6ee1174a30f32b`, integrity
+  `sha512-qtQJ6EHTKZ1VfqNy6sPi0jlaXaachTF+4NK297fSMAJlw55mqO2gl6IW5z0+B+e4UaODg07YXOeNLurZxFlD7g==`.
