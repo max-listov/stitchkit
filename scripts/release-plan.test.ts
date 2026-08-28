@@ -14,6 +14,7 @@ import {
   localGateProfile,
   MIGRATION_CHANNELS,
   prePushMetadataGate,
+  releaseCandidateIdentity,
   releasedVersionsInOrder,
   releasePlanForTag,
   releaseScopeForSubject,
@@ -612,6 +613,32 @@ describe('a release commit is checked before it costs a gate', () => {
     expect(releaseTagFor('starter', '1.2.3')).toBe('create-stitchkit-v1.2.3');
   });
 
+  test('one candidate identity separates exact-SHA CI from tag publication', () => {
+    expect(
+      releaseCandidateIdentity(
+        {
+          target: 'core',
+          packageName: 'stitchkit',
+          packageDir: 'packages/core',
+          changelog: 'CHANGELOG.md',
+          version: '9.9.0',
+        },
+        SHA,
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      target: 'core',
+      packageName: 'stitchkit',
+      packageDir: 'packages/core',
+      changelog: 'CHANGELOG.md',
+      version: '9.9.0',
+      sha: SHA,
+      tag: 'v9.9.0',
+      ci: { workflow: 'ci.yml', event: 'push', headSha: SHA },
+      publication: { workflow: 'release.yml', event: 'push', tag: 'v9.9.0' },
+    });
+  });
+
   test('refuses a breaking section with no audience line — at the COMMIT', async () => {
     // The whole point: this used to be discoverable only when the tag was
     // pushed, which is after the full local gate and a CI run, and after the
@@ -671,7 +698,7 @@ describe('a release commit is checked before it costs a gate', () => {
     const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
     const validated = await validateReleaseCommit(root, { sha, subject });
     const manifest: unknown = JSON.parse(
-      readFileSync(resolve(root, 'packages/core/package.json'), 'utf8'),
+      await Bun.$`git show ${sha}:packages/core/package.json`.text(),
     );
     expect(validated.version).toBe(
       typeof manifest === 'object' && manifest !== null

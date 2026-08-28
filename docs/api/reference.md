@@ -397,8 +397,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `StreamingSourceContext` | _type_ | what a streaming source is given, including the cancellation `signal` |
 | `StreamingFormat` | _type_ | `'ndjson' \| 'sse'` |
 | `createUnixClientTransport` | function | owned Fetch-compatible Unix-socket transport on Bun and Node; every redirect stays on the socket — [guide](../guide/client.md#unix-domain-sockets) |
-| `UnixClientTransportConfig` | _type_ | absolute socket path plus request/response/header/connection/redirect bounds |
+| `UnixClientTransportConfig` | _type_ | absolute socket path plus request/header/connection/redirect bounds and an explicit bounded-or-streaming response policy |
 | `UnixClientTransport` | _type_ | `{ fetch, closed, close() }`; `close()` settles owned active work |
+| `UnixResponseBodyMode` | _type_ | `bounded \| streaming`; bounded is the 16 MiB cumulative default, streaming keeps pull-driven buffering without a lifetime total |
 | `UnixClientTransportError` | class | stable transport failure with `code` and dispatch certainty in `delivery` |
 | `UnixClientTransportErrorCode` | _type_ | finite Unix transport failure-code union |
 | `UnixClientDeliveryState` | _type_ | `not-dispatched \| possibly-dispatched \| response-received`; input to application retry policy, never an implicit retry |
@@ -1210,7 +1211,8 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `NodeSocketLifecycle` | _type_ | Bun-free Socket.IO lifecycle accepted by `serveNode` |
 | `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
 | `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOPeerLoaders` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config, optional-peer loaders and the Bun-free Node handle with `io`, `attach` and lifecycle |
-| `UnixClientTransportConfig` / `UnixClientTransport` | _type_ | Unix socket bounds and owned Fetch-compatible handle |
+| `UnixClientTransportConfig` / `UnixClientTransport` | _type_ | Unix socket bounds, explicit response-body mode and owned Fetch-compatible handle |
+| `UnixResponseBodyMode` | _type_ | finite cumulative `bounded` mode or explicit pull-driven `streaming` mode |
 | `UnixClientTransportError` / `UnixClientTransportErrorCode` / `UnixClientDeliveryState` | class / _type_ | stable failure plus dispatch certainty; no cross-transport fallback |
 | `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 

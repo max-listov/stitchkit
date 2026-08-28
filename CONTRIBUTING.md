@@ -171,6 +171,21 @@ validates the package version and changelog, and pushes only the matching tag.
 The tag workflow downloads the already-validated tarball; it does not rebuild or
 rerun the expensive gates.
 
+An external observer identifies release intent from the committed tree instead
+of treating every push as a candidate:
+
+```bash
+bun scripts/release-plan.ts candidate <full-commit-sha>
+```
+
+The versioned JSON names the target, package, version, exact SHA, future tag,
+qualifying `ci.yml` push identity and separate `release.yml` tag identity. The
+command refuses an ordinary commit or invalid release metadata. GitHub's workflow
+API supplies `id` and `run_attempt` for every `ci.yml` push matching that full
+`head_sha`; retries on one SHA remain separate observations. A successful CI run
+means only that the candidate artifact is eligible: publication is established
+later by the tag workflow and registry version/integrity, never inferred from CI.
+
 ### Git hooks
 
 `bun install` wires three hooks (`.githooks/`, via `core.hooksPath` set by the

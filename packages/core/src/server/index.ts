@@ -209,6 +209,7 @@ export {
   type UnixClientTransportConfig,
   UnixClientTransportError,
   type UnixClientTransportErrorCode,
+  type UnixResponseBodyMode,
 } from './unix-client';
 export {
   type ComposedLane,

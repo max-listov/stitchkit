@@ -5,7 +5,7 @@ import {
   type IncomingMessage,
 } from 'node:http';
 import type { ClientFetch } from '../browser/transport';
-import { boundedIncomingBody, readBoundedRequestBody } from './unix-client-body';
+import { incomingResponseBody, readBoundedRequestBody } from './unix-client-body';
 import { bunUnixRequest, hasBunUnixRuntime } from './unix-client-bun';
 import { UnixClientTransportError } from './unix-client-error';
 
@@ -15,17 +15,32 @@ const DEFAULT_MAX_CONNECTIONS = 8;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
 
-export interface UnixClientTransportConfig {
+/** Whether response bytes have a finite lifetime total or only bounded buffering. */
+export type UnixResponseBodyMode = 'bounded' | 'streaming';
+
+/**
+ * Unix transport configuration. Unary responses are cumulatively bounded by
+ * default; a long-lived stream must opt into pull-driven streaming explicitly.
+ */
+export type UnixClientTransportConfig = {
   /** Absolute local socket path selected by deployment configuration. */
   socketPath: string;
   maxRequestBytes?: number;
-  maxResponseBytes?: number;
   headersTimeoutMs?: number;
   maxHeaderBytes?: number;
   maxConnections?: number;
   /** Redirects stay on this Unix transport. Default 5. */
   maxRedirects?: number;
-}
+} & (
+  | {
+      responseBodyMode?: 'bounded';
+      maxResponseBytes?: number;
+    }
+  | {
+      responseBodyMode: 'streaming';
+      maxResponseBytes?: never;
+    }
+);
 
 export interface UnixClientTransport {
   readonly fetch: ClientFetch;
@@ -123,11 +138,13 @@ export function createUnixClientTransport(
     DEFAULT_MAX_BODY_BYTES,
     'maxRequestBytes',
   );
-  const maxResponseBytes = positiveInteger(
-    config.maxResponseBytes,
-    DEFAULT_MAX_BODY_BYTES,
-    'maxResponseBytes',
-  );
+  if (config.responseBodyMode === 'streaming' && config.maxResponseBytes !== undefined) {
+    throw new TypeError('maxResponseBytes cannot be combined with responseBodyMode streaming');
+  }
+  const maxResponseBytes =
+    config.responseBodyMode === 'streaming'
+      ? undefined
+      : positiveInteger(config.maxResponseBytes, DEFAULT_MAX_BODY_BYTES, 'maxResponseBytes');
   const headersTimeoutMs = positiveInteger(
     config.headersTimeoutMs,
     DEFAULT_HEADERS_TIMEOUT_MS,
@@ -306,6 +323,7 @@ export function createUnixClientTransport(
     if (
       declaredResponseBytes !== null &&
       /^\d+$/.test(declaredResponseBytes) &&
+      maxResponseBytes !== undefined &&
       Number(declaredResponseBytes) > maxResponseBytes
     ) {
       incoming.destroy();
@@ -348,7 +366,7 @@ export function createUnixClientTransport(
         headers: responseHeadersValue,
       });
     }
-    return new Response(boundedIncomingBody(incoming, maxResponseBytes, releaseResponse), {
+    return new Response(incomingResponseBody(incoming, maxResponseBytes, releaseResponse), {
       status,
       statusText: incoming.statusMessage,
       headers: responseHeadersValue,

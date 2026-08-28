@@ -102,6 +102,29 @@ proves that the remote operation did not begin; Stitchkit never silently retries
 an ambiguous write. Response consumption/cancellation belongs to the operation,
 and `close()` interrupts active work and destroys owned connections.
 
+The response total is a unary-body policy, not a stream-buffer measurement. A
+long-lived NDJSON/SSE client opts into streaming explicitly instead of choosing
+an arbitrarily large integer:
+
+```ts
+const streamTransport = createUnixClientTransport({
+  socketPath: '/run/my-daemon.sock',
+  responseBodyMode: 'streaming',
+})
+const streamClient = createClient(streamContract, {
+  baseUrl: 'http://my-daemon',
+  fetch: streamTransport.fetch,
+})
+```
+
+`streaming` removes only the cumulative lifetime response limit. It cannot be
+combined with `maxResponseBytes`; request/header/connection bounds, socket
+pause/resume, cancellation and strict HTTP framing remain active. The stream
+descriptor's `maxFrameBytes` bounds each protocol frame, and the application
+still owns any queue it builds after consuming those frames. Use a separate
+default transport for finite calls that must retain the 16 MiB unary ceiling.
+The adapter never infers this policy from `Content-Type`. → ADR 0125.
+
 The legacy `createHttpClient({ unix: '/absolute/path' })` spelling remains a
 Bun-only convenience. On a non-Bun runtime it now refuses before dispatch
 instead of ignoring the selection and dialing TCP. `unix` and an injected

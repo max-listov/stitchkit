@@ -4,16 +4,24 @@ import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createClient, defineContract } from 'stitchkit';
 import { createUnixClientTransport } from 'stitchkit/server';
+import { z } from 'zod';
 
 const root = await mkdtemp(join(tmpdir(), 'stitchkit-packed-bun-unix-'));
 const socketPath = join(root, 'daemon.sock');
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let written = 0;
+let streamed = 0;
 const frames = Array.from(
   { length: 64 },
   (_, index) => `${JSON.stringify({ index, data: 'x'.repeat(32 * 1024) })}\n`,
 );
+const offered = 17_000;
+const streamData = 'x'.repeat(1000);
+const streamFrame = (index) =>
+  `${JSON.stringify({ type: 'data', data: { index, data: streamData } })}\n`;
+const terminalFrame = `${JSON.stringify({ type: 'end' })}\n`;
 const server = createServer(async (request, response) => {
   if (request.url === '/fast') {
     try {
@@ -26,6 +34,25 @@ const server = createServer(async (request, response) => {
       response.end();
     } catch {
       // Cancellation is the expected end of the stalled-reader proof.
+    }
+    return;
+  }
+  if (request.url === '/oversized') {
+    response.end('x'.repeat(17 * 1024 * 1024));
+    return;
+  }
+  if (request.url === '/feed' || request.url === '/feed/') {
+    streamed = 0;
+    try {
+      for (let index = 0; index < offered; index += 1) {
+        if (!response.write(streamFrame(index))) {
+          await new Promise((resolve) => response.once('drain', resolve));
+        }
+        streamed += 1;
+      }
+      response.end(terminalFrame);
+    } catch {
+      // Reader cancellation intentionally closes the producer.
     }
     return;
   }
@@ -50,6 +77,15 @@ await new Promise((resolve, reject) => {
 });
 
 try {
+  assert.throws(
+    () =>
+      createUnixClientTransport({
+        socketPath,
+        responseBodyMode: 'streaming',
+        maxResponseBytes: 1024,
+      }),
+    /cannot be combined/,
+  );
   const transport = createUnixClientTransport({ socketPath });
   const response = await transport.fetch('http://local/value');
   const runtime = process.versions.bun ? 'bun' : 'node';
@@ -71,7 +107,68 @@ try {
   assert.equal(written, frames.length, 'packed Bun adapter must resume the producer');
   await transport.close();
 
-  const single = createUnixClientTransport({ socketPath, maxConnections: 1 });
+  const bounded = createUnixClientTransport({ socketPath });
+  await assert.rejects(
+    async () => {
+      const oversized = await bounded.fetch('http://local/oversized');
+      for await (const _chunk of oversized.body) {
+        // The default must reject on its cumulative unary ceiling.
+      }
+    },
+    (error) => error?.code === 'UNIX_RESPONSE_TOO_LARGE',
+  );
+  await bounded.close();
+
+  const streamContract = defineContract(
+    { prefix: '/feed' },
+    {
+      subscribe: {
+        method: 'GET',
+        path: '/',
+        desc: 'Read a long-lived Unix stream',
+        stream: {
+          item: z.object({ index: z.number().int(), data: z.string() }).strict(),
+        },
+      },
+    },
+  );
+  const streaming = createUnixClientTransport({
+    socketPath,
+    responseBodyMode: 'streaming',
+    maxConnections: 1,
+  });
+  const streamClient = createClient(streamContract, {
+    baseUrl: 'http://local',
+    fetch: streaming.fetch,
+  });
+  const items = await streamClient.subscribe();
+  const firstItem = await items.next();
+  assert.equal(firstItem.done, false);
+  assert.deepEqual(firstItem.value, { index: 0, data: streamData });
+  let streamWireBytes = Buffer.byteLength(streamFrame(0)) + Buffer.byteLength(terminalFrame);
+  await delay(200);
+  assert.ok(streamed < offered, 'streaming mode must pause a stalled producer');
+  let received = 1;
+  for (;;) {
+    const next = await items.next();
+    if (next.done) break;
+    assert.equal(next.value.index, received);
+    assert.equal(next.value.data, streamData);
+    streamWireBytes += Buffer.byteLength(streamFrame(received));
+    received += 1;
+  }
+  assert.equal(received, offered);
+  assert.ok(
+    streamWireBytes > 16 * 1024 * 1024,
+    'packed stream proof must cross the unary default ceiling',
+  );
+  await streaming.close();
+
+  const single = createUnixClientTransport({
+    socketPath,
+    responseBodyMode: 'streaming',
+    maxConnections: 1,
+  });
   const stalled = await single.fetch('http://local/stall');
   const stalledReader = stalled.body.getReader();
   await stalledReader.read();

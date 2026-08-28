@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.2] — 2026-08-28
+
+### Added
+
+- **Unix subscriptions can stream beyond the unary response total.**
+  `createUnixClientTransport({ responseBodyMode: 'streaming' })` removes the
+  cumulative lifetime response cap while preserving pull-driven socket
+  backpressure, finite headers/requests/connections, strict framing and
+  cancellation. The default remains a 16 MiB bounded unary response, and the
+  streaming mode cannot be combined with `maxResponseBytes`. → ADR 0125.
+
+No call-site migration is required. Use a dedicated streaming transport for a
+long-lived NDJSON/SSE client; finite clients retain the existing defaults.
+
 ## [0.68.1] — 2026-08-28
 
 ### Added

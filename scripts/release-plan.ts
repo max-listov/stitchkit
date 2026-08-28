@@ -19,6 +19,22 @@ export interface ReleasePlan {
   version: string;
 }
 
+export interface ReleaseCandidateIdentity extends ReleasePlan {
+  schemaVersion: 1;
+  sha: string;
+  tag: string;
+  ci: {
+    workflow: 'ci.yml';
+    event: 'push';
+    headSha: string;
+  };
+  publication: {
+    workflow: 'release.yml';
+    event: 'push';
+    tag: string;
+  };
+}
+
 export interface ReleaseTagPush {
   tag: string;
   /** The SHA git is actually sending — NOT whatever the local tag name resolves to. */
@@ -615,6 +631,23 @@ export function releaseTagFor(scope: 'core' | 'starter', version: string): strin
   return scope === 'core' ? `v${version}` : `create-stitchkit-v${version}`;
 }
 
+/** Stable identity shared by an in-flight CI attempt and later publication. */
+export function releaseCandidateIdentity(
+  plan: ReleasePlan,
+  sha: string,
+): ReleaseCandidateIdentity {
+  const scope = plan.target === 'core' ? 'core' : 'starter';
+  const tag = releaseTagFor(scope, plan.version);
+  return {
+    schemaVersion: 1,
+    ...plan,
+    sha,
+    tag,
+    ci: { workflow: 'ci.yml', event: 'push', headSha: sha },
+    publication: { workflow: 'release.yml', event: 'push', tag },
+  };
+}
+
 /**
  * The metadata gate, run against a release COMMIT instead of a tag.
  *
@@ -786,6 +819,14 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify(plan));
     return;
   }
+  if (command === 'candidate') {
+    if (!argument) throw new Error('Usage: release-plan.ts candidate <sha>');
+    const sha = await output(['git', 'rev-parse', `${argument}^{commit}`]);
+    const subject = await output(['git', 'log', '-1', '--format=%s', sha]);
+    const plan = await validateReleaseCommit(root, { sha, subject });
+    process.stdout.write(JSON.stringify(releaseCandidateIdentity(plan, sha)));
+    return;
+  }
   if (command === 'pre-push') {
     const plan = classifyPrePush(await Bun.stdin.text());
     const { profile } = await prePushMetadataGate(plan, {
@@ -857,7 +898,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: release-plan.ts <preflight TAG|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
+    'Usage: release-plan.ts <preflight TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
   );
 }
 

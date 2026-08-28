@@ -48,9 +48,9 @@ export async function readBoundedRequestBody(
   return result;
 }
 
-export function boundedIncomingBody(
+export function incomingResponseBody(
   response: IncomingMessage,
-  maxBytes: number,
+  maxBytes: number | undefined,
   onDone: () => void,
 ): ReadableStream<Uint8Array> {
   let finished = false;
@@ -67,8 +67,8 @@ export function boundedIncomingBody(
         response.pause();
         response.on('data', (chunk: Buffer) => {
           if (finished) return;
-          received += chunk.byteLength;
-          if (received > maxBytes) {
+          if (maxBytes !== undefined) received += chunk.byteLength;
+          if (maxBytes !== undefined && received > maxBytes) {
             controller.error(
               new UnixClientTransportError(
                 'UNIX_RESPONSE_TOO_LARGE',

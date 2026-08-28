@@ -35,6 +35,8 @@ import {
   type LoggingConfig,
   type MethodDef,
   type StitchLogger,
+  type UnixClientTransportConfig,
+  type UnixResponseBodyMode,
 } from 'stitchkit/server';
 import { createHandlerTestClient } from 'stitchkit/testing';
 import { z } from 'zod';
@@ -49,6 +51,14 @@ declare const process: {
 };
 
 let failures = 0;
+
+const responseBodyMode: UnixResponseBodyMode = 'streaming';
+const streamingUnixConfig: UnixClientTransportConfig = {
+  socketPath: '/run/example.sock',
+  responseBodyMode,
+};
+void streamingUnixConfig;
+
 function check(what: string, ok: boolean, detail?: unknown): void {
   if (ok) return;
   failures += 1;

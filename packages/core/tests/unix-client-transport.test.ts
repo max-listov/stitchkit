@@ -150,6 +150,31 @@ describe('createUnixClientTransport', () => {
     await transport.close();
   });
 
+  test('streaming response mode removes only the cumulative response ceiling', async () => {
+    const payload = 'x'.repeat(128 * 1024);
+    const unix = createNodeServer((_request, response) => response.end(payload));
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const bounded = createUnixClientTransport({ socketPath, maxResponseBytes: 1024 });
+    await expect(
+      bounded.fetch('http://local/bounded').then((response) => response.text()),
+    ).rejects.toMatchObject({ code: 'UNIX_RESPONSE_TOO_LARGE' });
+    await bounded.close();
+
+    const streaming = createUnixClientTransport({
+      socketPath,
+      responseBodyMode: 'streaming',
+      maxHeaderBytes: 1024,
+      maxConnections: 1,
+    });
+    expect(
+      await streaming.fetch('http://local/stream').then((response) => response.text()),
+    ).toBe(payload);
+    await streaming.close();
+  });
+
   test('Bun pauses and resumes a chunked producer without corrupting framing', async () => {
     let written = 0;
     const frame = `${JSON.stringify({ index: 0, data: 'x'.repeat(32 * 1024) })}\n`;
@@ -169,7 +194,10 @@ describe('createUnixClientTransport', () => {
     servers.push(unix);
     const socketPath = nextSocketPath();
     await listen(unix, socketPath);
-    const transport = createUnixClientTransport({ socketPath });
+    const transport = createUnixClientTransport({
+      socketPath,
+      responseBodyMode: 'streaming',
+    });
     const response = await transport.fetch('http://local/fast');
     const reader = response.body?.getReader();
     expect(reader).toBeDefined();
@@ -230,7 +258,11 @@ describe('createUnixClientTransport', () => {
     servers.push(unix);
     const socketPath = nextSocketPath();
     await listen(unix, socketPath);
-    const transport = createUnixClientTransport({ socketPath, maxConnections: 1 });
+    const transport = createUnixClientTransport({
+      socketPath,
+      responseBodyMode: 'streaming',
+      maxConnections: 1,
+    });
     const response = await transport.fetch('http://local/active');
     const reader = response.body?.getReader();
     expect(reader).toBeDefined();

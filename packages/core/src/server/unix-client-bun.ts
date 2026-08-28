@@ -43,7 +43,7 @@ export interface BunUnixRequestOptions {
   readonly socketPath: string;
   readonly request: Request;
   readonly body?: Uint8Array;
-  readonly maxResponseBytes: number;
+  readonly maxResponseBytes: number | undefined;
   readonly maxHeaderBytes: number;
   readonly headersTimeoutMs: number;
   registerAbort(abort: () => void): () => void;
@@ -187,8 +187,8 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   };
 
   const enqueue = (value: Uint8Array): void => {
-    received += value.byteLength;
-    if (received > options.maxResponseBytes) {
+    if (options.maxResponseBytes !== undefined) received += value.byteLength;
+    if (options.maxResponseBytes !== undefined && received > options.maxResponseBytes) {
       fail(
         new UnixClientTransportError(
           'UNIX_RESPONSE_TOO_LARGE',
@@ -410,7 +410,11 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
       fail(transportFailure(error));
       return;
     }
-    if (remainingLength !== undefined && remainingLength > options.maxResponseBytes) {
+    if (
+      options.maxResponseBytes !== undefined &&
+      remainingLength !== undefined &&
+      remainingLength > options.maxResponseBytes
+    ) {
       fail(
         new UnixClientTransportError(
           'UNIX_RESPONSE_TOO_LARGE',

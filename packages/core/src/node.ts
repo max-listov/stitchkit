@@ -95,4 +95,5 @@ export {
   type UnixClientTransportConfig,
   UnixClientTransportError,
   type UnixClientTransportErrorCode,
+  type UnixResponseBodyMode,
 } from './server/unix-client';
