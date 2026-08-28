@@ -21,30 +21,33 @@ export function createRequestCancellation(
   if (!caller && timeoutMs === undefined) {
     return { signal: undefined, run: (operation) => operation() };
   }
-  const controller = new AbortController();
+  const timeoutController = timeoutMs === undefined ? undefined : new AbortController();
+  const signal =
+    caller && timeoutController
+      ? AbortSignal.any([caller, timeoutController.signal])
+      : (caller ?? timeoutController?.signal);
   let cause: CancellationCause | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const abortFromCaller = (): void => {
     if (cause) return;
     cause = 'caller';
-    controller.abort(caller?.reason);
   };
   if (caller?.aborted) abortFromCaller();
   else caller?.addEventListener('abort', abortFromCaller, { once: true });
-  if (timeoutMs !== undefined) {
+  if (timeoutMs !== undefined && timeoutController) {
     timer = setTimeout(() => {
       if (cause) return;
       cause = 'timeout';
-      controller.abort(new DOMException('Request timed out', 'TimeoutError'));
+      timeoutController.abort(new DOMException('Request timed out', 'TimeoutError'));
     }, timeoutMs);
   }
 
   return {
-    signal: controller.signal,
+    signal,
     async run(operation) {
       try {
         if (cause === 'caller') throw cancellationError(cause);
-        return await operation(controller.signal);
+        return await operation(signal);
       } catch (error) {
         if (cause) throw cancellationError(cause);
         throw error;

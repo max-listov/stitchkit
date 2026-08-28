@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createClient, defineContract } from 'stitchkit';
+import { createClient, createHttpClient, defineContract } from 'stitchkit';
 import { createUnixClientTransport } from 'stitchkit/server';
 import { z } from 'zod';
 
@@ -13,6 +13,7 @@ const socketPath = join(root, 'daemon.sock');
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let written = 0;
 let streamed = 0;
+let activeCancellations = 0;
 const frames = Array.from(
   { length: 64 },
   (_, index) => `${JSON.stringify({ index, data: 'x'.repeat(32 * 1024) })}\n`,
@@ -64,6 +65,20 @@ const server = createServer(async (request, response) => {
   if (request.url === '/stall') {
     response.writeHead(200);
     response.write('first');
+    return;
+  }
+  if (request.url === '/cancel/stream' || request.url === '/cancel/raw') {
+    activeCancellations += 1;
+    request.socket.once('close', () => {
+      activeCancellations -= 1;
+    });
+    response.writeHead(200, {
+      'content-type':
+        request.url === '/cancel/raw' ? 'application/octet-stream' : 'application/x-ndjson',
+    });
+    response.write(
+      request.url === '/cancel/raw' ? 'baseline' : '{"type":"data","data":{"value":1}}\n',
+    );
     return;
   }
   response.setHeader('content-type', 'application/json');
@@ -132,6 +147,23 @@ try {
       },
     },
   );
+  const cancellationContract = defineContract(
+    { prefix: '/cancel' },
+    {
+      stream: {
+        method: 'GET',
+        path: '/stream',
+        desc: 'Cancel a response after its headers',
+        stream: { item: z.object({ value: z.number().int() }).strict() },
+      },
+      raw: {
+        method: 'GET',
+        path: '/raw',
+        desc: 'Cancel a raw body after its headers',
+        rawResponse: true,
+      },
+    },
+  );
   const streaming = createUnixClientTransport({
     socketPath,
     responseBodyMode: 'streaming',
@@ -178,6 +210,58 @@ try {
     transport: 'unix',
   });
   await single.close();
+
+  const waitForCancellationRelease = async () => {
+    const deadline = Date.now() + 1_000;
+    while (activeCancellations > 0 && Date.now() < deadline) await delay(5);
+    assert.equal(activeCancellations, 0, 'cancelled response must release its server source');
+  };
+  for (const kind of ['configured', 'fetch-config']) {
+    const owned = createUnixClientTransport({
+      socketPath,
+      responseBodyMode: 'streaming',
+      maxConnections: 1,
+    });
+    const cancellationClient = createClient(
+      cancellationContract,
+      kind === 'configured'
+        ? createHttpClient({
+            baseUrl: 'http://local',
+            fetch: owned.fetch,
+            retry: { limit: 0 },
+          })
+        : { baseUrl: 'http://local', fetch: owned.fetch },
+    );
+    const streamController = new AbortController();
+    const ownedStream = await cancellationClient.stream.withOptions({
+      signal: streamController.signal,
+    });
+    assert.deepEqual(await ownedStream.next(), { done: false, value: { value: 1 } });
+    const pendingStreamRead = ownedStream.next();
+    streamController.abort(new Error('packed caller stopped stream'));
+    await pendingStreamRead.catch(() => undefined);
+    await waitForCancellationRelease();
+    assert.deepEqual(await (await owned.fetch('http://local/value')).json(), {
+      runtime,
+      transport: 'unix',
+    });
+
+    const rawController = new AbortController();
+    const rawResponse = await cancellationClient.raw.withOptions({
+      signal: rawController.signal,
+    });
+    const rawReader = rawResponse.body.getReader();
+    assert.equal((await rawReader.read()).done, false);
+    const pendingRawRead = rawReader.read();
+    rawController.abort(new Error('packed caller stopped raw body'));
+    await pendingRawRead.catch(() => undefined);
+    await waitForCancellationRelease();
+    assert.deepEqual(await (await owned.fetch('http://local/value')).json(), {
+      runtime,
+      transport: 'unix',
+    });
+    await owned.close();
+  }
 
   const tooSmall = createUnixClientTransport({ socketPath, maxHeaderBytes: 256 });
   await assert.rejects(

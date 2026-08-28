@@ -579,6 +579,13 @@ wire `end` frame and, when declared, at least one matching terminal item; EOF is
 converge on the request operation. See the
 [server half](./server.md#contract-first-streams). → ADR 0117.
 
+The request deadline bounds the wait for response headers. Once headers arrive,
+that timer is cleared, while the caller signal remains attached to the response
+body until it ends or is cancelled. This is the same for a Fetch-config client,
+`createHttpClient`, the Bun-only `unix` convenience and an injected portable
+Unix transport. Cancelling a quiet stream therefore releases its server source
+and transport connection instead of only settling the local iterator.
+
 An established NDJSON protocol may keep its item schema as the complete wire
 frame. This mode requires a terminal item because an unwrapped response has no
 separate safe error/end envelope:

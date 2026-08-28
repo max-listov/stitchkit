@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- **Configured HTTP clients keep caller cancellation after response headers.** Header deadlines
+  remain bounded and are cleared when headers arrive, while contract streams and raw response
+  bodies retain their caller signal through body completion or cancellation. Quiet pending reads,
+  iterator return, post-header errors and normal completion release server work and reusable Unix
+  connection capacity on both configured-adapter and Fetch-config clients.
+
+No call-site migration is required. Existing `AbortSignal` and owned contract-stream cancellation
+now reach the transport for the complete response-body lifetime.
+
 ## [0.68.4] — 2026-08-28
 
 ### Added
