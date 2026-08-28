@@ -2,10 +2,11 @@
 title: Agent runtime must isolate queued successor inputs from predecessor prompts
 description: Deterministic queue-policy repro against published 0.68.1 leaks a later input into an earlier run and misorders turn history.
 type: task
-status: in-progress
+status: done
 priority: P1
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 08:09 +0000
 ---
 
 # Queued input isolation
@@ -83,24 +84,45 @@ history adapter or by restoring a second application-owned queue.
 
 ## Plan
 
-- [ ] Encode the concurrent queue-admission repro at the public runtime boundary.
-- [ ] Derive the prompt/history eligibility boundary from durable run ownership rather than
+- [x] Encode the concurrent queue-admission repro at the public runtime boundary.
+- [x] Derive the prompt/history eligibility boundary from durable run ownership rather than
       projecting every message already present in the conversation snapshot.
-- [ ] Preserve successor turn order, coalesced/injected inputs, recovery and compaction semantics.
-- [ ] Prove the fix against the memory store and the public durable-driver conformance boundary.
-- [ ] Update public guidance and release metadata, pass the complete release gate, rescan the live
+- [x] Preserve successor turn order, coalesced/injected inputs, recovery and compaction semantics.
+- [x] Prove the fix against the memory store and the public durable-driver conformance boundary.
+- [x] Update public guidance and release metadata, pass the complete release gate, rescan the live
       backlog and publish the corrected package.
 
 ## Acceptance
 
-- [ ] Public runtime + mock provider regression proves assigned-input isolation
+- [x] Public runtime + mock provider regression proves assigned-input isolation
   during concurrent queue admissions and async acquisition/checkpoint boundaries.
-- [ ] Successor prompt contains the prior completed turn then its own assigned
+- [x] Successor prompt contains the prior completed turn then its own assigned
   inputs, preserving legitimate coalesced/injected inputs without duplication.
-- [ ] Verify causal history/structured compaction after concurrent queue admissions.
-- [ ] Verify memory and public durable-driver implementations; preserve admission
+- [x] Verify causal history/structured compaction after concurrent queue admissions.
+- [x] Verify memory and public durable-driver implementations; preserve admission
   idempotency, interrupt/supersede/recovery semantics and legitimate injection.
-- [ ] Publish a corrected package with the regression and adoption note.
+- [x] Publish a corrected package with the regression and adoption note.
 
 Consumer remains on its existing execution path pending a corrected release;
 no consumer queue filter or runtime fork was added.
+
+## Что сделано
+
+- [x] `run-execution.ts` projects a run-scoped snapshot for both the framework projector and the
+  consumer `prompt` callback; future queued admissions cannot enter a predecessor prompt.
+- [x] `store-driver.ts` normalizes run-owned messages into causal turn order while preserving the
+  physical anchors of unowned system and summary records.
+- [x] `packages/core/tests/agent-runtime-queue-isolation.test.ts` —
+  `queued inputs cross the provider boundary only with their assigned run > an admission during predecessor acquisition stays out of its prompt and follows its answer`
+  proves prompt isolation, successor ordering, custom prompt projection and structured compaction.
+- [x] `packages/core/tests/agent-runtime-store-driver.test.ts` —
+  `agent runtime store driver > memory driver passes the reusable production-store contract`
+  covers the reusable memory-driver contract.
+- [x] `examples/agent-store-prisma/adapter.test.ts` —
+  `Prisma/PostgreSQL agent store reference > passes the reusable store conformance contract`
+  proves the same causal order against the real PostgreSQL adapter.
+- [x] Full local `bun run verify` passed for tree `ffb5472ee361`; exact-SHA CI run
+  `33154009677` passed for `be37843f21ffea2ffa9d677a337496f2dca1cc81`.
+- [x] Published `stitchkit@0.68.3` and GitHub tag `v0.68.3` from that SHA; release workflow
+  `33154220733` passed. Registry integrity is
+  `sha512-xdzUye0k7R7f7qk3jZf38LsHRe04qxbvSU1mC5QmIDla29VotzWwhaKrDkBJgWnOmX0NXy1RQlBIFkpp3SQszw==`.
