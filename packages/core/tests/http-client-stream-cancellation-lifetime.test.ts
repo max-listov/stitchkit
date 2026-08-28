@@ -54,6 +54,9 @@ type ClientFactory = (
   socketPath: string,
 ) => CancellationClient;
 
+const OPEN_TIMEOUT_MS = 250;
+const AFTER_HEADERS_RETENTION_MS = OPEN_TIMEOUT_MS + 50;
+
 let socketCounter = 0;
 const servers: Server[] = [];
 
@@ -128,7 +131,12 @@ const factories: Array<[string, ClientFactory]> = [
     (baseUrl, _fetch, socketPath) =>
       createClient(
         cancellationContract,
-        createHttpClient({ baseUrl, unix: socketPath, timeout: 40, retry: { limit: 0 } }),
+        createHttpClient({
+          baseUrl,
+          unix: socketPath,
+          timeout: OPEN_TIMEOUT_MS,
+          retry: { limit: 0 },
+        }),
       ),
   ],
   [
@@ -136,12 +144,13 @@ const factories: Array<[string, ClientFactory]> = [
     (baseUrl, fetch) =>
       createClient(
         cancellationContract,
-        createHttpClient({ baseUrl, fetch, timeout: 40, retry: { limit: 0 } }),
+        createHttpClient({ baseUrl, fetch, timeout: OPEN_TIMEOUT_MS, retry: { limit: 0 } }),
       ),
   ],
   [
     'Fetch config',
-    (baseUrl, fetch) => createClient(cancellationContract, { baseUrl, fetch, timeout: 40 }),
+    (baseUrl, fetch) =>
+      createClient(cancellationContract, { baseUrl, fetch, timeout: OPEN_TIMEOUT_MS }),
   ],
 ];
 
@@ -157,7 +166,10 @@ describe.each(factories)('response-body cancellation lifetime — %s', (_name, m
 
     const quietAfterYield = await client.quiet();
     expect(await quietAfterYield.next()).toEqual({ done: false, value: { value: 1 } });
-    await Bun.sleep(60);
+    // Stay open beyond the configured headers deadline. The margin keeps the
+    // proof about timer lifetime without making a busy full-suite scheduler
+    // race a 40ms local-server admission window.
+    await Bun.sleep(AFTER_HEADERS_RETENTION_MS);
     expect(active.has('/lifetime/quiet')).toBe(true);
     await quietAfterYield.return?.();
     await waitForRelease(active, '/lifetime/quiet');

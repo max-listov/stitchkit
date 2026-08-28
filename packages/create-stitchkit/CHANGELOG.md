@@ -12,6 +12,21 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-08-28
+
+### Fixed
+
+- **Fresh projects use the current published Stitchkit line.** The template's
+  single catalog target is `^0.68.6`, and its frozen lockfile resolves exactly
+  `0.68.6`. A generated project therefore receives the current contract,
+  application and agent-runtime compatibility line instead of remaining below
+  `0.61.0` under pre-1.0 caret semantics.
+- **The repository variant carries its optional realtime client into browser
+  bundles.** Its `createRealtimeClient` composition supplies a literal
+  `socket.io-client` loader while preserving the framework target as the
+  template's single source of truth, so a packed scaffold resolves the optional
+  peer without adding a second framework range.
+
 ## [0.4.2] — 2026-08-25
 
 ### Fixed

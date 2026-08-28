@@ -698,7 +698,7 @@ describe('a release commit is checked before it costs a gate', () => {
     const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
     const validated = await validateReleaseCommit(root, { sha, subject });
     const manifest: unknown = JSON.parse(
-      await Bun.$`git show ${sha}:packages/core/package.json`.text(),
+      await Bun.$`git show ${sha}:${validated.packageDir}/package.json`.text(),
     );
     expect(validated.version).toBe(
       typeof manifest === 'object' && manifest !== null
