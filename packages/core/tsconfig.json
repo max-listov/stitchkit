@@ -11,9 +11,10 @@
     "noEmit": true,
     "types": ["bun"],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "stitchkit/agent-runtime": ["./src/agent-runtime.ts"]
     }
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "examples"],
   "exclude": ["tests/fixtures/next-ssr-retry"]
 }
