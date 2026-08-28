@@ -2,9 +2,10 @@
 title: Preserve compaction usage when finalizing agent runs
 description: Final SDK totals overwrite tokens charged by the history compaction hook.
 type: task
-status: in-progress
+status: done
 created: 2026-08-28
 updated: 2026-08-28
+completed: 2026-08-28 14:34 +0000
 ---
 
 # Preserve compaction usage when finalizing agent runs
@@ -38,13 +39,35 @@ remain correct; SDK totals must neither discard compaction nor double count step
 
 ## Plan / acceptance
 
-- [ ] Add a deterministic regression using createAgentRuntime and a nonzero compact
+- [x] Add a deterministic regression using createAgentRuntime and a nonzero compact
       hook usage result; include success and interrupted/failed paths.
-- [ ] Preserve compaction token fields through terminal merge, including optional
+- [x] Preserve compaction token fields through terminal merge, including optional
       reasoning/cache fields and cumulative CAS retry spend.
-- [ ] Keep existing normalized provider and SDK-total accounting regressions green.
-- [ ] Assert persisted usage for memory and PostgreSQL stores.
-- [ ] Run the full release gate and publish a patch with version, SHA and CI evidence.
+- [x] Keep existing normalized provider and SDK-total accounting regressions green.
+- [x] Assert persisted usage for memory and PostgreSQL stores.
+- [x] Run the full release gate and publish a patch with version, SHA and CI evidence.
+
+## Что сделано
+
+- [x] Runtime keeps recovered/compaction usage apart from the current model-step subtotal,
+      reconciles the AI SDK terminal total only against model steps, then combines both totals.
+- [x] Regression: `packages/core/tests/agent-runtime-spend.test.ts` —
+      `a spend figure outlives the channel that reported it > what compaction spent is part of what the run spent`.
+- [x] Regression: `packages/core/tests/agent-runtime-spend.test.ts` —
+      `a spend figure outlives the channel that reported it > an interrupted run retains compaction spend without inventing model usage`.
+- [x] Regression: `packages/core/tests/agent-runtime-spend.test.ts` —
+      `a spend figure outlives the channel that reported it > a provider failure retains compaction spend beside the SDK model total`.
+- [x] Store coverage: `packages/core/tests/agent-store-conformance-fixture.test.ts` —
+      `the conformance kit can be given a fixture > a store that needs a parent row passes the whole kit`;
+      `examples/agent-store-prisma/adapter.test.ts` —
+      `Prisma/PostgreSQL agent store reference > passes the reusable store conformance contract`.
+- [x] Verification: `bun run verify` and `bun run starter-head-lane` passed on the release tree;
+      exact-SHA CI run `33180438608` passed all framework, PostgreSQL, packed-consumer,
+      supervised and eight starter jobs.
+- [x] Released `stitchkit@0.68.7` as tag `v0.68.7` from
+      `c8c96b53cc7822740b6db813ba7d4dafadd0387b`; release run `33180737854` published
+      npm shasum `463f1b8df138b346e2c8544c8cb431730a5458f8` and provenance-backed integrity
+      `sha512-Cr7KnaGfQKUeXDu+zDusn3v/ntBD9vVf/qe2Bv641GX5d/Y7b5qKY0XZfFP2NTwWbi8HwldJWR2Ux9vKGNY2aw==`.
 
 ## Isolated reproduction
 
