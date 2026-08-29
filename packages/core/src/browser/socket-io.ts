@@ -33,6 +33,9 @@ import type {
 import {
   RealtimeRequestDisconnectedError,
   type RealtimeRequestOptions,
+  type RealtimeRequestPhase,
+  type RealtimeRequestPhaseEvent,
+  type RealtimeRequestPhaseHook,
   RealtimeRequestTimeoutError,
 } from '../realtime/request';
 import {
@@ -51,6 +54,83 @@ type IoFn = typeof import('socket.io-client')['io'];
 
 /** The concrete Socket.IO client socket type (loose, default event typing). */
 type ClientSocket = ReturnType<IoFn>;
+
+interface RealtimeRequestTrace {
+  readonly requestId: string;
+  readonly event: string;
+  readonly startedAt: number;
+  readonly observe: RealtimeRequestPhaseHook;
+  nativeKey?: string;
+  closed: boolean;
+}
+
+const realtimeRequestTraces = new WeakMap<Promise<unknown>, RealtimeRequestTrace>();
+
+function observeRealtimeRequestPhase(
+  trace: RealtimeRequestTrace,
+  phase: RealtimeRequestPhase,
+): void {
+  const observation: RealtimeRequestPhaseEvent = {
+    requestId: trace.requestId,
+    event: trace.event,
+    phase,
+    elapsedMs: performance.now() - trace.startedAt,
+  };
+  try {
+    const result = trace.observe(observation);
+    if (result) void Promise.resolve(result).catch(() => undefined);
+  } catch {
+    // Observability is isolated: a broken observer cannot change request truth.
+  }
+}
+
+interface SocketIoPacketIdentity {
+  readonly namespace: string;
+  readonly id: string;
+}
+
+/** Read only the Socket.IO packet envelope prefix; payload JSON is never parsed. */
+function socketIoPacketIdentity(
+  data: unknown,
+  expected: 'event' | 'ack',
+): SocketIoPacketIdentity | null {
+  if (typeof data !== 'string') return null;
+  const type = data.charAt(0);
+  const binary = type === (expected === 'event' ? '5' : '6');
+  if (type !== (expected === 'event' ? '2' : '3') && !binary) return null;
+
+  let offset = 1;
+  if (binary) {
+    const separator = data.indexOf('-', offset);
+    if (separator < 0) return null;
+    for (let index = offset; index < separator; index += 1) {
+      const code = data.charCodeAt(index);
+      if (code < 48 || code > 57) return null;
+    }
+    offset = separator + 1;
+  }
+
+  let namespace = '/';
+  if (data.charAt(offset) === '/') {
+    const separator = data.indexOf(',', offset);
+    if (separator < 0) return null;
+    namespace = data.slice(offset, separator);
+    offset = separator + 1;
+  }
+
+  const start = offset;
+  while (offset < data.length) {
+    const code = data.charCodeAt(offset);
+    if (code < 48 || code > 57) break;
+    offset += 1;
+  }
+  if (offset === start) return null;
+  return { namespace, id: data.slice(start, offset) };
+}
+
+function packetIdentityKey(identity: SocketIoPacketIdentity): string {
+  return `${identity.namespace}:${identity.id}`;
+}
 
 // Held in a variable, not a string literal, on purpose: under `--target node`
 // the bundler rewrites a *literal* external dynamic import into a `createRequire`
@@ -398,7 +478,14 @@ export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegi
   extends BindRealtimeClientOptions,
     SocketIOClientConfig<{
       [TEvent in keyof TServerToClient]: (...args: unknown[]) => void;
-    }> {}
+    }> {
+  /**
+   * Observe bounded metadata-only phases of acknowledged requests. Engine.IO
+   * phases are local encoder/decoder boundaries, not remote send time or RTT.
+   * Observer failures are isolated from request lifecycle.
+   */
+  onRequestPhase?: RealtimeRequestPhaseHook;
+}
 
 function assertRealtimeClientTransport(transport: RealtimeClientTransport): void {
   for (const capability of ['on', 'emit', 'emitWithAck', 'onConnectionChange']) {
@@ -470,15 +557,26 @@ export function bindRealtimeClient<
     if (!definition?.ack) {
       throw new Error(`Realtime request "${event}" has no acknowledgement schema`);
     }
-    const value = await transport.emitWithAck(event, parsedArgs, { timeoutMs });
-    const acknowledgement = parseRealtimeRequestAcknowledgement(
-      definition.ack,
-      event,
-      'client-inbound',
-      value,
-      onRejected,
-      logger,
-    );
+    const pending = transport.emitWithAck(event, parsedArgs, { timeoutMs });
+    const trace = realtimeRequestTraces.get(pending);
+    if (trace) realtimeRequestTraces.delete(pending);
+    const value = await pending;
+    let acknowledgement: unknown;
+    try {
+      acknowledgement = parseRealtimeRequestAcknowledgement(
+        definition.ack,
+        event,
+        'client-inbound',
+        value,
+        onRejected,
+        logger,
+      );
+    } finally {
+      if (trace && !trace.closed) {
+        trace.closed = true;
+        observeRealtimeRequestPhase(trace, 'settled');
+      }
+    }
     // Boundary cast: Socket.IO's emitter returns `unknown`; the selected
     // contract key and successful Zod ack parse above prove the conditional
     // acknowledgement output that TypeScript cannot retain through registry
@@ -501,9 +599,12 @@ export function createRealtimeClient<
   const TClientToServer extends RealtimeEventRegistry,
 >(
   contract: RealtimeContract<TServerToClient, TClientToServer>,
-  { onRejected, logger, ...config }: RealtimeClientOptions<TServerToClient>,
+  { onRejected, logger, onRequestPhase, ...config }: RealtimeClientOptions<TServerToClient>,
 ): RealtimeClient<TServerToClient, TClientToServer> {
-  const transport = createSocketIOClient<SocketEventMap, SocketEventMap>(config);
+  const transport = createSocketIOClientInternal<SocketEventMap, SocketEventMap>(
+    config,
+    onRequestPhase,
+  );
   const bound = bindRealtimeClient(contract, transport, { onRejected, logger });
   return {
     ...bound,
@@ -519,6 +620,16 @@ export function createSocketIOClient<
   TServerEvents extends SocketEventMap,
   TClientEvents extends SocketEventMap,
 >(config: SocketIOClientConfig<TServerEvents>): SocketIOClient<TServerEvents, TClientEvents> {
+  return createSocketIOClientInternal(config);
+}
+
+function createSocketIOClientInternal<
+  TServerEvents extends SocketEventMap,
+  TClientEvents extends SocketEventMap,
+>(
+  config: SocketIOClientConfig<TServerEvents>,
+  onRequestPhase?: RealtimeRequestPhaseHook,
+): SocketIOClient<TServerEvents, TClientEvents> {
   // The internal socket keeps Socket.IO's default (loose) event typing — the
   // public methods below are the fully-typed surface. Socket.IO's emitter is a
   // conditional-typed API that cannot be forwarded through a generic wrapper;
@@ -540,6 +651,8 @@ export function createSocketIOClient<
   // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingRequestDisconnects = new Set<() => void>();
+  const requestTracesByNativeKey = new Map<string, RealtimeRequestTrace>();
+  let startingRequestTrace: RealtimeRequestTrace | null = null;
   const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
   const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
   // Durable event subscriptions — each re-attaches itself onto a fresh socket.
@@ -584,6 +697,32 @@ export function createSocketIOClient<
       reconnectionDelayMax: config.reconnectionDelayMax ?? 5000,
       timeout: config.timeout ?? 20_000,
     });
+
+    if (onRequestPhase) {
+      socket.io.on('open', () => {
+        const engine = socket?.io.engine;
+        if (!engine) return;
+        engine.on('packetCreate', (packet) => {
+          if (!startingRequestTrace || packet.type !== 'message') return;
+          const identity = socketIoPacketIdentity(packet.data, 'event');
+          if (!identity) return;
+          const key = packetIdentityKey(identity);
+          startingRequestTrace.nativeKey = key;
+          requestTracesByNativeKey.set(key, startingRequestTrace);
+          observeRealtimeRequestPhase(startingRequestTrace, 'engine-handoff');
+        });
+        engine.on('packet', (packet) => {
+          if (packet.type !== 'message') return;
+          const identity = socketIoPacketIdentity(packet.data, 'ack');
+          if (!identity) return;
+          const key = packetIdentityKey(identity);
+          const trace = requestTracesByNativeKey.get(key);
+          if (!trace || trace.closed) return;
+          observeRealtimeRequestPhase(trace, 'engine-ack-received');
+          requestTracesByNativeKey.delete(key);
+        });
+      });
+    }
 
     socket.on('connect', () => notifyConnection(true));
     socket.on('disconnect', (reason) => {
@@ -749,11 +888,29 @@ export function createSocketIOClient<
     },
 
     emitWithAck(event, args, options) {
+      const trace: RealtimeRequestTrace | undefined = onRequestPhase
+        ? {
+            requestId: crypto.randomUUID(),
+            event,
+            startedAt: performance.now(),
+            observe: onRequestPhase,
+            closed: false,
+          }
+        : undefined;
+      const closeTrace = (phase: 'timeout' | 'disconnected'): void => {
+        if (!trace || trace.closed) return;
+        trace.closed = true;
+        if (trace.nativeKey) requestTracesByNativeKey.delete(trace.nativeKey);
+        observeRealtimeRequestPhase(trace, phase);
+      };
       const active = socket;
       if (!active?.connected) {
-        return Promise.reject(new RealtimeRequestDisconnectedError(event));
+        const pending = Promise.reject(new RealtimeRequestDisconnectedError(event));
+        closeTrace('disconnected');
+        if (trace) realtimeRequestTraces.set(pending, trace);
+        return pending;
       }
-      return new Promise((resolve, reject) => {
+      const pending = new Promise<unknown>((resolve, reject) => {
         let settled = false;
         const finish = (result: () => void): void => {
           if (settled) return;
@@ -763,26 +920,37 @@ export function createSocketIOClient<
           result();
         };
         const onDisconnect = (): void => {
-          finish(() => reject(new RealtimeRequestDisconnectedError(event)));
+          finish(() => {
+            closeTrace('disconnected');
+            reject(new RealtimeRequestDisconnectedError(event));
+          });
         };
         pendingRequestDisconnects.add(onDisconnect);
         active.on('disconnect', onDisconnect);
-        void active
-          .timeout(options.timeoutMs)
-          .emitWithAck(event, ...args)
-          .then(
-            (value) => finish(() => resolve(value)),
-            () => {
-              finish(() =>
-                reject(
-                  active.connected
-                    ? new RealtimeRequestTimeoutError(event, options.timeoutMs)
-                    : new RealtimeRequestDisconnectedError(event),
-                ),
+        let acknowledgement: Promise<unknown>;
+        startingRequestTrace = trace ?? null;
+        try {
+          acknowledgement = active.timeout(options.timeoutMs).emitWithAck(event, ...args);
+        } finally {
+          startingRequestTrace = null;
+        }
+        void acknowledgement.then(
+          (value) => finish(() => resolve(value)),
+          () => {
+            finish(() => {
+              const connected = active.connected;
+              closeTrace(connected ? 'timeout' : 'disconnected');
+              reject(
+                connected
+                  ? new RealtimeRequestTimeoutError(event, options.timeoutMs)
+                  : new RealtimeRequestDisconnectedError(event),
               );
-            },
-          );
+            });
+          },
+        );
       });
+      if (trace) realtimeRequestTraces.set(pending, trace);
+      return pending;
     },
 
     onConnectionChange(listener) {

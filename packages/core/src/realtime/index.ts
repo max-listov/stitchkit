@@ -25,6 +25,11 @@ export {
   RealtimeRequestDisconnectedError,
   RealtimeRequestInvalidAcknowledgementError,
   type RealtimeRequestOptions,
+  type RealtimeRequestPhase,
+  type RealtimeRequestPhaseEvent,
+  RealtimeRequestPhaseEventSchema,
+  type RealtimeRequestPhaseHook,
+  RealtimeRequestPhaseSchema,
   RealtimeRequestRejectedError,
   RealtimeRequestTimeoutError,
 } from './request';

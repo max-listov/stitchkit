@@ -69,7 +69,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `SocketIOClientConfig` | _type_ | config for `createSocketIOClient` (incl. `retain`, `onConnectError`, `onDroppedEmit`) |
 | `SocketEventMap` | _type_ | the shape of an event map |
 | `RealtimeClient` | _type_ | validated client inferred from a realtime contract |
-| `RealtimeClientOptions` | _type_ | transport options and the rejected-event hook for `createRealtimeClient` |
+| `RealtimeClientOptions` | _type_ | transport options plus rejected-event and metadata-only acknowledged-request phase hooks for `createRealtimeClient` |
 | `BoundRealtimeClient` | _type_ | validated non-owning `on`/`emit`/`request` client with no `connect`/`disconnect` |
 | `RealtimeClientTransport` | _type_ | minimal existing transport capability accepted by `bindRealtimeClient` |
 | `BindRealtimeClientOptions` | _type_ | rejection/logger options for a bound existing transport |
@@ -77,6 +77,9 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RealtimeAcknowledgement` | _type_ | validated acknowledgement output inferred from an event definition |
 | `RealtimeRequestArguments` | _type_ | request arguments inferred from an acknowledged event tuple |
 | `RealtimeRequestOptions` | _type_ | finite positive native acknowledgement `timeoutMs` |
+| `RealtimeRequestPhaseSchema` / `RealtimeRequestPhase` | schema / _type_ | closed `engine-handoff` / `engine-ack-received` / `settled` / `timeout` / `disconnected` lifecycle |
+| `RealtimeRequestPhaseEventSchema` / `RealtimeRequestPhaseEvent` | schema / _type_ | strict metadata-only `{ requestId, event, phase, elapsedMs }` observation |
+| `RealtimeRequestPhaseHook` | _type_ | isolated sync/async observer accepted by `RealtimeClientOptions.onRequestPhase` |
 | `RealtimeRequestTimeoutError` | class | stable `REALTIME_REQUEST_TIMEOUT` rejection |
 | `RealtimeRequestDisconnectedError` | class | stable `REALTIME_REQUEST_DISCONNECTED` rejection, including an immediate disconnected call |
 | `RealtimeRequestInvalidAcknowledgementError` | class | invalid ack was reported through `onRejected` and the request rejected |

@@ -1,4 +1,30 @@
+import { z } from 'zod';
 import type { RealtimeRejectionIssue } from './rejected-frame';
+
+/** Closed lifecycle reported by an opt-in acknowledged-request observer. */
+export const RealtimeRequestPhaseSchema = z.enum([
+  'engine-handoff',
+  'engine-ack-received',
+  'settled',
+  'timeout',
+  'disconnected',
+]);
+
+/** Metadata-only observation: no arguments, acknowledgement or packet bytes. */
+export const RealtimeRequestPhaseEventSchema = z
+  .object({
+    requestId: z.string().min(1),
+    event: z.string().min(1),
+    phase: RealtimeRequestPhaseSchema,
+    elapsedMs: z.number().finite().nonnegative(),
+  })
+  .strict();
+
+export type RealtimeRequestPhase = z.infer<typeof RealtimeRequestPhaseSchema>;
+export type RealtimeRequestPhaseEvent = z.infer<typeof RealtimeRequestPhaseEventSchema>;
+export type RealtimeRequestPhaseHook = (
+  event: RealtimeRequestPhaseEvent,
+) => void | Promise<void>;
 
 export interface RealtimeRequestOptions {
   /** Maximum acknowledgement wait in milliseconds. Must be finite and > 0. */

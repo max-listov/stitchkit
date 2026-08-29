@@ -221,6 +221,7 @@ const socket = createRealtimeClient(realtimeContract, {
   url: 'https://api.example.com',
   retain: ['note:created'],
   onRejected: (event) => reportClientError(event),
+  onRequestPhase: (event) => metrics.realtimeRequestPhase(event),
 })
 
 socket.connect()
@@ -274,6 +275,48 @@ bounded request-response work. A job that runs for minutes, progress streaming,
 or resumable delivery should use separate correlated events or the async
 operation protocol; keeping one acknowledgement open is not a durable RPC/job
 transport.
+
+### Acknowledged-request phases
+
+`createRealtimeClient` can expose the local boundary that a single Promise
+normally hides:
+
+```ts
+const socket = createRealtimeClient(realtimeContract, {
+  url,
+  onRequestPhase: ({ requestId, event, phase, elapsedMs }) => {
+    requestPhaseHistogram.record(elapsedMs, { requestId, event, phase })
+  },
+})
+```
+
+The hook is opt-in and each record has exactly four metadata fields: an opaque,
+Kit-owned `requestId`, the contract event name, monotonic `elapsedMs`, and one
+closed phase:
+
+| Phase | Exact local boundary |
+|-------|----------------------|
+| `engine-handoff` | Engine.IO created the outbound message packet and accepted it into its write path |
+| `engine-ack-received` | Engine.IO decoded the inbound acknowledgement message, before Socket.IO invokes the acknowledgement callback |
+| `settled` | the acknowledgement callback ran and Stitchkit finished acknowledgement validation |
+| `timeout` | the existing native acknowledgement timeout won |
+| `disconnected` | the request began disconnected or an in-flight disconnect won |
+
+Engine handoff is not proof of a physical network write. Engine acknowledgement
+receipt is not a remote clock, end-to-end RTT or proof that application
+validation has run. The useful interval is local and monotonic:
+`engine-ack-received → settled` isolates callback scheduling plus validation
+from transport waiting.
+
+Records never contain request arguments, acknowledgement values, raw packets,
+credentials, URLs or query data. Concurrent requests are correlated internally
+with Socket.IO acknowledgement ids, but those ids are never exposed. A timeout
+or disconnect is terminal, a late packet cannot reopen the identity, and sync
+or async observer failures are ignored so telemetry cannot change request
+correctness. With no hook, no request identity, Engine.IO listener or correlation
+map entry is created. The low-level `createSocketIOClient` and non-owning
+`bindRealtimeClient` remain unchanged; this phase surface belongs to the
+canonical composed client that owns both transport and validation.
 
 ## Low-level transport
 

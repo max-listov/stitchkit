@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Acknowledged realtime requests expose their local transport and settlement phases.** Opt in
+  with `createRealtimeClient({ onRequestPhase })` to receive a Kit-owned opaque identity, event
+  name and monotonic elapsed time for Engine.IO handoff, Engine.IO acknowledgement receipt,
+  validated Promise settlement, timeout or disconnect. Records are metadata-only, concurrent
+  native acknowledgements stay directly correlated through reordering, and observer failures are
+  isolated from request truth.
+
+No call-site migration is required. The hook is absent by default; the request API, error classes,
+timeouts and low-level or non-owning transport composition remain unchanged.
+
 ## [0.68.10] — 2026-08-29
 
 ### Added

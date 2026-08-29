@@ -42,29 +42,43 @@ function clientSource({ inject }) {
         '  // no bundler can follow — so this artifact does not contain it.',
       ];
   return [
-    "import { createSocketIOClient } from 'stitchkit';",
+    "import { createRealtimeClient, defineRealtimeContract, RealtimeRequestPhaseEventSchema } from 'stitchkit';",
+    "import { z } from 'zod';",
     '',
     'const url = process.argv[2];',
-    'const client = createSocketIOClient({',
+    'const contract = defineRealtimeContract({',
+    '  serverToClient: {},',
+    '  clientToServer: { ping: {',
+    '    args: z.tuple([z.object({ n: z.number() })]),',
+    '    ack: z.object({ n: z.number() }),',
+    '  } },',
+    '});',
+    'const phases = [];',
+    'const client = createRealtimeClient(contract, {',
     '  url,',
     "  transports: ['websocket'],",
     ...peers,
+    '  onRequestPhase: (observation) => {',
+    '    RealtimeRequestPhaseEventSchema.parse(observation);',
+    '    phases.push(observation.phase);',
+    '  },',
     '  onConnectError: (error) => {',
     '    console.error(error.message);',
     '    process.exit(1);',
     '  },',
     '});',
     '',
-    'const finished = new Promise((resolve, reject) => {',
-    "  client.on('pong', (payload) => resolve(payload));",
-    "  setTimeout(() => reject(new Error('no pong within 10s')), 10_000);",
-    '});',
+    'const finished = Promise.withResolvers();',
+    "setTimeout(() => finished.reject(new Error('no acknowledgement within 10s')), 10_000);",
     'client.onConnectionChange((connected) => {',
-    "  if (connected) client.emit('ping', { n: 41 });",
+    "  if (connected) void client.request('ping', { n: 41 }, { timeoutMs: 5_000 }).then(finished.resolve, finished.reject);",
     '});',
     'client.connect();',
-    'const pong = await finished;',
+    'const pong = await finished.promise;',
     'if (pong?.n !== 42) throw new Error("unexpected pong " + JSON.stringify(pong));',
+    "if (phases.join(',') !== 'engine-handoff,engine-ack-received,settled') {",
+    "  throw new Error('unexpected phases ' + phases.join(','));",
+    '}',
     'client.disconnect();',
     `console.log(${JSON.stringify(MARKER)});`,
     'process.exit(0);',
@@ -79,7 +93,7 @@ const SERVER_SOURCE = [
   '',
   'const handle = await createSocketIOServer({ cors: { origin: "*" } });',
   "handle.io.on('connection', (socket) => {",
-  "  socket.on('ping', (data) => socket.emit('pong', { n: data.n + 1 }));",
+  "  socket.on('ping', (data, acknowledge) => acknowledge({ n: data.n + 1 }));",
   '});',
   'const server = createServer({ port: 0, socket: handle });',
   'console.log("ready " + server.port);',
@@ -149,6 +163,12 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
   const manifest = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
   const peers = manifest.peerDependencies ?? {};
   const dependencies = { stitchkit: `file:${tarball}` };
+  if (!peers.zod) {
+    throw new Error(
+      '[self-contained-socket-client] the package declares no peer range for zod',
+    );
+  }
+  dependencies.zod = peers.zod;
   for (const name of ['socket.io', 'socket.io-client', '@socket.io/bun-engine']) {
     const range = peers[name];
     if (!range) {
