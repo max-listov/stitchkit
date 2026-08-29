@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.11] — 2026-08-29
+
 ### Added
 
 - **Acknowledged realtime requests expose their local transport and settlement phases.** Opt in
