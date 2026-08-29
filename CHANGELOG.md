@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.10] — 2026-08-29
+
 ### Added
 
 - **Large Agent catalogs can be searched before their real tools enter provider context.**
