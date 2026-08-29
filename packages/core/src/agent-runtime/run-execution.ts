@@ -9,6 +9,7 @@ import {
 } from 'ai';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
+import { deferredToolRepair } from './deferred-tools-internal';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectionRegistry } from './injection';
@@ -518,6 +519,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
+        repairToolCall: deferredToolRepair(config.loop?.prepareStep),
         ...((config.loop?.prepareStep || injection) && {
           prepareStep: async (options) => {
             const prepared = await config.loop?.prepareStep?.({

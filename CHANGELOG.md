@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Large Agent catalogs can be searched before their real tools enter provider context.**
+  `createDeferredAgentToolSurface` composes the canonical mixed surface, bounded search, finite
+  identity-specific registries, dynamic pins and schema/tool ceilings. Versioned search receipts
+  reconstruct the latest same-run selection from durable history after recovery; queued successors
+  and other surfaces inherit nothing. Selected calls remain direct `mountAgent` tools with their
+  original lifecycle, fencing, observability, errors and multimodal presenters. Known inactive
+  calls return through a recoverable `SEARCH_REQUIRED` search round; unknown names remain failures.
+  → ADR 0129.
+
+No call-site migration is required. Raw `mountAgent`, MCP mounts and application-owned
+`activeTools` loops are unchanged; deferred search is an opt-in evolving Agent-runtime primitive.
+
 ## [0.68.9] — 2026-08-29
 
 ### Added

@@ -1189,6 +1189,16 @@ fails first on duplicate contract/runtime names. There is no runtime-only
 manifest helper or public mount adapter: the framework owns merging and schema
 projection.
 
+Applications using Stitchkit's durable runtime can compose this manifest with
+bounded per-run activation through `createDeferredAgentToolSurface` from
+`stitchkit/agent-runtime`. It keeps selected calls as direct `mountAgent` tools
+rather than routing them through a generic executor. Search receipts live in
+ordinary durable tool-result history, so recovery restores activation and a
+queued successor cannot inherit it. See
+[Bounded deferred tool catalogs](./agent-runtime.md#bounded-deferred-tool-catalogs)
+and ADR 0129. Raw `mountAgent`, `mountMcp` and `buildToolManifest` behavior is
+unchanged.
+
 `listToolNames` remains diagnostic and reports `kind: 'contract' | 'runtime'`
 for every identity. `summarizeTransports` returns `contractServices`,
 `runtimeTools`, aggregate `totals`, and a `sources` breakdown. Runtime tools

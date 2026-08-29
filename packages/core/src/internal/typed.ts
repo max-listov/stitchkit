@@ -1,3 +1,6 @@
+import type { SurfaceAgentRuntimeToolDefinition } from '../tools/internal/surface-projector';
+import type { RuntimeToolDefinition } from '../tools/runtime-tool';
+
 export function typedEntries<T extends object>(
   value: T,
 ): Array<{ [K in keyof T]: [K, T[K]] }[keyof T]> {
@@ -15,6 +18,30 @@ export function callRuntimeHandler(handler: unknown, context: unknown): unknown 
     throw new TypeError('Runtime handler must be a function');
   }
   return Reflect.apply(handler, undefined, [context]);
+}
+
+/**
+ * Agent-only public declarations use a peer-free structural tool definition.
+ * Construction validates executable functions before this boundary restores
+ * the richer internal definition consumed by the canonical mount.
+ */
+export function executableAgentRuntimeTools(
+  tools: readonly SurfaceAgentRuntimeToolDefinition[],
+): readonly RuntimeToolDefinition[] {
+  for (const tool of tools) {
+    if (typeof tool.handler !== 'function') {
+      throw new TypeError(`Runtime tool "${tool.name}" must provide a handler`);
+    }
+    if (tool.present?.agent !== undefined && typeof tool.present.agent !== 'function') {
+      throw new TypeError(`Runtime tool "${tool.name}" Agent presenter must be a function`);
+    }
+    if (tool.present?.agent !== undefined && tool.output === undefined) {
+      throw new TypeError(
+        `Runtime tool "${tool.name}" Agent presenter requires an output schema`,
+      );
+    }
+  }
+  return tools as readonly RuntimeToolDefinition[];
 }
 
 /**

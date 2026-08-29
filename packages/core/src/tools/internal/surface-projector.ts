@@ -36,6 +36,12 @@ export interface SurfaceRuntimeToolDefinition {
   mcp?: EndpointMcpPolicy;
 }
 
+/** Peer-free executable shape accepted by Agent-only composition entrypoints. */
+export interface SurfaceAgentRuntimeToolDefinition extends SurfaceRuntimeToolDefinition {
+  handler: unknown;
+  present?: { agent?: unknown };
+}
+
 /** One peer-free structural extension shared by executable mounts and projections. */
 export interface SurfaceToolExtension<
   TContext extends Record<string, unknown> = Record<string, unknown>,

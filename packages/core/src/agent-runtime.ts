@@ -16,6 +16,22 @@ export {
   createAgentSessionCoordinator,
 } from './agent-runtime/coordinator';
 export {
+  createDeferredAgentToolSurface,
+  type DeferredAgentRuntimeToolDefinition,
+  type DeferredAgentToolCommonConfig,
+  type DeferredAgentToolController,
+  type DeferredAgentToolEvent,
+  type DeferredAgentToolManifestEntry,
+  DeferredAgentToolMatchSchema,
+  type DeferredAgentToolMountConfig,
+  type DeferredAgentToolReceipt,
+  DeferredAgentToolReceiptSchema,
+  type DeferredAgentToolSearchContext,
+  DeferredAgentToolSearchInputSchema,
+  type DeferredAgentToolSurfaceConfig,
+  type DeferredAgentToolSurfaceDefinition,
+} from './agent-runtime/deferred-tools';
+export {
   AgentAdmissionEventSchema,
   AgentCheckpointEventSchema,
   AgentReasoningDeltaEventSchema,

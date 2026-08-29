@@ -577,6 +577,12 @@ Server-only optional application runtime. See the
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and winner-only terminal publication; reconciles same-owner terminal/interrupt/head CAS races before releasing the lane |
+| `createDeferredAgentToolSurface` | function | bounded canonical catalog search plus durable same-run activation of direct `mountAgent` tools; supports one immutable surface or a finite identity-specific registry |
+| `DeferredAgentToolSearchInputSchema` / `DeferredAgentToolMatchSchema` / `DeferredAgentToolReceiptSchema` | schema | bounded search input, public match and versioned durable selection receipt |
+| `DeferredAgentToolSurfaceConfig` / `DeferredAgentToolCommonConfig` / `DeferredAgentToolSurfaceDefinition` / `DeferredAgentToolController` | _type_ | finite catalogs, selector, pin, budget and `mount`/`prepareStep` composition contracts |
+| `DeferredAgentRuntimeToolDefinition` / `DeferredAgentToolMountConfig` | _type_ | peer-free Agent-only runtime definition and canonical mount configuration accepted by the controller |
+| `DeferredAgentToolManifestEntry` / `DeferredAgentToolSearchContext` / `DeferredAgentToolReceipt` | _type_ | canonical selector input and inferred durable receipt records |
+| `DeferredAgentToolEvent` | _type_ | PII-free search/step evidence with surface, provenance, counts, canonical schema bytes and ceilings |
 | `defineAgentProtocol` | function | declare context, input metadata, canonical parts and optional pre-CAS terminal acceptance (`allow-empty`, `require-output` or callback) |
 | `hasAgentTerminalOutput` | function | generic `require-output` predicate for non-blank text, generated files, structured provider parts and explicit tool-only policy stops |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |

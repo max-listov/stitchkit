@@ -337,6 +337,13 @@ try {
             `[consumer-lane] node: ${runtime} durable compositions produced no proof`,
           );
         }
+        const deferredOutput = step(`node: deferred tools (${runtime})`, () =>
+          run(runtime, ['src/deferred-tools.mjs'], dir),
+        );
+        if (!deferredOutput.includes('packed deferred tools: ok')) {
+          failed = true;
+          console.error(`[consumer-lane] node: ${runtime} deferred tools produced no proof`);
+        }
       }
     }
   }

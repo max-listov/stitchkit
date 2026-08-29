@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-08-28
+updated: 2026-08-29
 ---
 
 # Agent application runtime
@@ -158,6 +158,69 @@ const admission = await ticket.admission
 await ticket.accepted
 const terminal = await ticket.result
 ```
+
+## Bounded deferred tool catalogs
+
+Use `createDeferredAgentToolSurface` when a measured large catalog makes
+sending every schema on every provider step expensive. The controller mounts
+the complete executable surface in process, but initially advertises only its
+search tool, explicit `alwaysOn` tools and bounded policy pins:
+
+```ts
+import { createDeferredAgentToolSurface } from 'stitchkit/agent-runtime'
+import { composeToolLifecycle } from 'stitchkit/tools'
+
+const deferred = createDeferredAgentToolSurface({
+  surfaces: {
+    member: { services: memberServices, runtimeTools, alwaysOn: ['ask_user'] },
+    broadcast: { services: broadcastServices, runtimeTools },
+  },
+  selectSurface: ({ context }) => context.mode,
+  pins: ({ context }) => context.skillTools,
+  search: {
+    name: 'tool_search',
+    maxQueryBytes: 1_024,
+    maxResults: 8,
+    maxResultBytes: 8_192,
+    select: ({ query, manifest }) => rankCatalog(query, manifest),
+  },
+  activation: {
+    maxSelectedTools: 8,
+    maxActiveTools: 16,
+    maxSchemaBytes: 32_768,
+  },
+  observe: event => recordDeferredToolEvidence(event),
+})
+
+const runtime = createAgentRuntime({
+  // protocol, store, models and prompt...
+  tools: runContext => deferred.mount(runContext, {
+    context: runContext.context,
+    lifecycle: composeToolLifecycle(authLifecycle, runContext.toolFenceLifecycle),
+  }),
+  loop: { prepareStep: deferred.prepareStep(applicationPrepareStep) },
+})
+```
+
+The built-in selector deterministically ranks exact name, prefix/token and
+description matches. A custom async selector returns names only; unknown and
+duplicate output is removed against the local canonical manifest. Search never
+executes the selected operation and never returns its schema. A later provider
+step receives the real selected tools by name, so their direct lifecycle,
+fencing, hooks, errors and `present.agent` output remain unchanged.
+
+Selection is a versioned receipt in the ordinary durable tool-result history.
+The latest valid same-run search replaces the earlier selection; parallel
+searches in one step merge in call order. Recovery reconstructs it, while a
+different run or finite surface cannot inherit it. Known inactive calls take a
+recoverable `SEARCH_REQUIRED` search round; unknown names still fail.
+
+Every ceiling is required. `maxSchemaBytes` measures UTF-8 bytes over canonical
+name, description and presentation schema. It is useful for before/after
+comparison, but provider serialization and tokenization differ: use existing
+provider-reported input usage and cost to decide whether the extra search round
+is beneficial. Controller evidence intentionally omits query text, prompts,
+arguments and application context. → ADR 0129.
 
 ### Executable headless harness and capability map
 
