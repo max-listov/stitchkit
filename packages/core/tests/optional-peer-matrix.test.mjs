@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
   assertAllowedOptionalPackages,
   assertExportCoverage,
+  assertMissingPeerDiagnostic,
   OPTIONAL_PEER_MATRIX,
 } from '../scripts/consumer-lane/optional-peer-matrix.mjs';
 
@@ -37,5 +38,28 @@ describe('optional peer matrix', () => {
         allowed: [],
       }),
     ).toThrow('neutral-types: forbidden declaration package @modelcontextprotocol/server');
+  });
+
+  test('a feature with two absent runtime peers accepts whichever package Node resolves first', () => {
+    const expectation = {
+      caseName: 'tools-mcp-feature',
+      expected: ['Cannot find package'],
+      expectedAny: ["'ai'", "'@modelcontextprotocol/server'"],
+    };
+    expect(() =>
+      assertMissingPeerDiagnostic({
+        ...expectation,
+        result: {
+          failed: true,
+          output: "Cannot find package '@modelcontextprotocol/server' imported from tools.js",
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertMissingPeerDiagnostic({
+        ...expectation,
+        result: { failed: true, output: "Cannot find package 'unrelated-peer'" },
+      }),
+    ).toThrow('tools-mcp-feature: missing-peer diagnostic mismatch');
   });
 });

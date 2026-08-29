@@ -91,7 +91,8 @@ export const OPTIONAL_PEER_MATRIX = [
     missingPeer: {
       fixture: 'minimal',
       command: ['node', 'src/missing-mcp-peer.mjs'],
-      expected: ["Cannot find package 'ai'"],
+      expected: ['Cannot find package'],
+      expectedAny: ["'ai'", "'@modelcontextprotocol/server'"],
     },
   },
   {
@@ -425,6 +426,17 @@ function runExpectFailure(command, args, cwd) {
   }
 }
 
+export function assertMissingPeerDiagnostic({ caseName, result, expected, expectedAny = [] }) {
+  const missesRequiredText = expected.some((text) => !result.output.includes(text));
+  const missesEveryAlternative =
+    expectedAny.length > 0 && expectedAny.every((text) => !result.output.includes(text));
+  if (!result.failed || missesRequiredText || missesEveryAlternative) {
+    throw new Error(
+      `[optional-peer-matrix] ${caseName}: missing-peer diagnostic mismatch\n${result.output}`,
+    );
+  }
+}
+
 export function runOptionalPeerMatrix({ fixtureDirectories }) {
   const minimalDir = fixtureDirectories.minimal;
   const installedManifest = JSON.parse(
@@ -509,10 +521,6 @@ export function runOptionalPeerMatrix({ fixtureDirectories }) {
     const directory = fixtureDirectories[missingPeer.fixture];
     const [command, ...args] = missingPeer.command;
     const result = runExpectFailure(command, args, directory);
-    if (!result.failed || missingPeer.expected.some((text) => !result.output.includes(text))) {
-      throw new Error(
-        `[optional-peer-matrix] ${entry.id}: missing-peer diagnostic mismatch\n${result.output}`,
-      );
-    }
+    assertMissingPeerDiagnostic({ caseName: entry.id, result, ...missingPeer });
   }
 }
