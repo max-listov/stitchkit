@@ -327,6 +327,17 @@ try {
           output,
         );
       }
+      for (const runtime of ['bun', 'node']) {
+        const compositionOutput = step(`node: durable compositions (${runtime})`, () =>
+          run(runtime, ['src/durable-composition.mjs'], dir),
+        );
+        if (!compositionOutput.includes('packed durable compositions: ok')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} durable compositions produced no proof`,
+          );
+        }
+      }
     }
   }
 

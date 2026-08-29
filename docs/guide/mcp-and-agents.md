@@ -1010,6 +1010,36 @@ const exportOperation = defineAsyncOperation({
 const runtimeTools = exportOperation.runtimeTools
 ```
 
+#### Durable application-owned execution
+
+The executable reference
+[`durable-async-operation-harness.ts`](../../packages/core/examples/durable-async-operation-harness.ts)
+shows the complete boundary behind that surface. It composes
+`defineAsyncOperationContract`, `defineAsyncOperation`, `createApplication`,
+`createBoundedAdmission`, managed shutdown and `createAgentToolFenceLifecycle`
+around an injected store and provider.
+
+The store transactionally owns the idempotency key **and normalized request
+hash**. Reusing both returns the existing operation; reusing the key with a
+different hash conflicts. Every mutation is an expected-revision CAS. Before an
+external call, the application persists a unique attempt/effect key and marks
+the dispatch `possibly-dispatched`; a lost response is therefore reconciled by
+that key after restart and is never treated as permission to submit the effect
+again. Provider acknowledgement, progress, cancellation intent, result and
+artifact references remain durable application state.
+
+Agent tool fencing and operation idempotency are separate guarantees. The fence
+prevents a stale run owner from crossing an effect boundary; the transactional
+idempotency record makes a repeated current call converge on one operation.
+Neither replaces the other.
+
+Stitchkit deliberately does **not** own the durable queue, operation database,
+lease renewal, provider retry/reconciliation protocol, asset catalog or domain
+states. The process-local application resource stops admission and drains
+accepted work; unresolved durable records survive shutdown for the next
+recovery pass. The packed consumer lane executes this composition from the
+published package on Bun and Node.
+
 Every follow-up repeats `authorize`; an opaque id is never authority. Aborting
 `wait` only stops waiting and never calls optional domain `cancel`.
 

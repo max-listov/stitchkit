@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Executable recipes prove crash-safe durable operations and external agent channels without
+  framework-owned infrastructure.** The operation harness composes canonical async-operation,
+  application admission/shutdown and agent fencing around injected CAS storage and provider
+  reconciliation. The channel harness composes restart-safe ingress deduplication, stable runtime
+  event identities and an application-owned ordered outbox whose terminal and delivery receipts
+  remain distinct. Generic adapters are primary; grammY stays an isolated optional composition.
+  Packed consumer checks execute the shared public primitives on Bun and Node.
+
+No call-site migration is required. Durable queues, provider retry policy, channel databases,
+identity mapping and domain state remain application-owned.
+
 ## [0.68.8] — 2026-08-28
 
 ### Added

@@ -619,6 +619,43 @@ These are post-commit notifications, not a transactional outbox: a process can
 crash between the database commit and `publish`. Reconnect should load canonical
 state. Exactly-once external delivery remains an application-owned outbox.
 
+### External channel ingress and delivery
+
+The executable
+[`external-channel-harness.ts`](../../packages/core/examples/external-channel-harness.ts)
+is the reference composition for webhooks, polling transports and local-device
+adapters. Its generic boundary injects a runtime, durable store and delivery
+adapter; the optional
+[`external-channel-grammy.ts`](../../packages/core/examples/external-channel-grammy.ts)
+attaches the same ingress function to grammY polling or webhook lifecycle
+without putting provider types in the agent runtime.
+
+Inbound update identity, principal resolution, conversation mapping and reply
+target are application policy. Persist and deduplicate the update before
+`runtime.submit`, use the stored idempotency key on crash recovery, then persist
+the admitted `runId`. A duplicate arriving after restart resolves to that same
+mapping instead of creating another model turn.
+
+For output, choose `terminal-only` or `streaming` explicitly. Stable durable
+`eventId` values and transient `(runtimeEpoch, sequence)` identities become
+outbox keys; the application store assigns causal ordinals. A bounded channel
+is only a process-local wakeup and never the durable authority. Before sending,
+persist one of these states:
+
+| State | Recovery action |
+| --- | --- |
+| `not-dispatched` | may dispatch once |
+| `possibly-dispatched` | reconcile with the adapter or remain unresolved |
+| `acknowledged` | deduplicate; delivery is complete |
+
+The agent `terminal` event and the adapter's delivery receipt are intentionally
+different records. A successful run does not prove that a reply reached its
+channel, and a delivery failure never rewrites the canonical agent result.
+Shutdown stops ingress, drains accepted process-local work and leaves ambiguous
+outbox records visible for a later reconciliation pass. Stitchkit does not own
+a channel database, durable broker, provider payload schema or application
+identity policy.
+
 Durable event IDs are derived from run, event type and snapshot version. Use
 `advanceAgentRuntimeEventCursor` to classify delivery.
 

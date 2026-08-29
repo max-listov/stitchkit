@@ -12,7 +12,10 @@
     "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
-      "stitchkit/agent-runtime": ["./src/agent-runtime.ts"]
+      "stitchkit/agent-runtime": ["./src/agent-runtime.ts"],
+      "stitchkit/application": ["./src/application.ts"],
+      "stitchkit/application/grammy": ["./src/application-grammy.ts"],
+      "stitchkit/tools": ["./src/tools.ts"]
     }
   },
   "include": ["src", "tests", "examples"],

@@ -607,7 +607,7 @@ Server-only optional application runtime. See the
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
-| `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent` |
+| `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent`; compose beside application idempotency for [durable operations](../guide/mcp-and-agents.md#durable-application-owned-execution) |
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
@@ -996,8 +996,8 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `NativeToolIdentity` | _type_ | pathless service/action/scope/meta identity; semantic method is factory-owned |
 | `ManagedWaitRender` | _type_ | optional managed wait terminal text and failure classification |
 | `UploadToolInputSchema` | constant | fixed `{ path: string }` input schema for `defineUploadTool` |
-| `defineAsyncOperation` | function | runtime-only start/status/wait plus configured cancel/result/artifacts definitions |
-| `defineAsyncOperationContract` | function | define one canonical Zod-first HTTP contract for start/status/wait plus optional capabilities |
+| `defineAsyncOperation` | function | runtime-only start/status/wait plus configured cancel/result/artifacts definitions; see the [durable application-owned recipe](../guide/mcp-and-agents.md#durable-application-owned-execution) |
+| `defineAsyncOperationContract` | function | define one canonical Zod-first HTTP contract for start/status/wait plus optional capabilities; execution and recovery remain application-owned |
 | `bindContractAsyncOperation` | function | bind literal methods from an existing contract without creating another HTTP surface |
 | `createAsyncOperationSnapshotSchema` | function | canonical pending/running/succeeded/failed/cancelled Zod snapshot |
 | `AsyncOperationCancelResultSchema` | constant | validated accepted/already_terminal/rejected cancellation result |
