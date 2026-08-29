@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.68.9] — 2026-08-29
+
 ### Added
 
 - **Executable recipes prove crash-safe durable operations and external agent channels without
