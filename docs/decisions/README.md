@@ -144,6 +144,11 @@ These records were consolidated from the project's internal design notes on
 | [0127](0127-interrupt-priority-is-durable-execution-order.md) | Interrupt priority is durable execution order | Accepted — urgent input runs next without deleting ordinary queued work, and recovery preserves the same order |
 | [0128](0128-sqlite-runtime-store-is-a-leaf-adapter.md) | SQLite runtime storage is a leaf adapter | Accepted — one normalized mapping behind isolated Bun and Node built-in bindings |
 | [0129](0129-deferred-agent-tools-are-durable-direct-activation.md) | Deferred Agent tools are durable direct activation | Accepted — bounded search receipts activate real mounted tools per durable run without a gateway |
+| [0130](0130-headless-harness-composes-the-agent-runtime.md) | A headless harness composes the Agent runtime | Accepted — publishes resource-aware composition and isolated direct coding tools without owning supervision or a second loop |
+| [0131](0131-harness-leaves-preserve-canonical-agent-identity.md) | Harness leaves preserve canonical Agent identity | Accepted — lazy resources, signed approval continuations, reconnectable views and coding artifacts retain direct operations and one history |
+| [0132](0132-agent-tui-is-an-explicit-starter-profile.md) | Agent TUI is an explicit starter profile | Superseded by 0133 — the explicit profile remains, but its reusable product mechanics moved out of copied starter source |
+| [0133](0133-agent-tui-is-an-optional-package-over-one-controller.md) | Agent TUI is an optional package over one controller | Accepted — reusable terminal mechanics stay outside core and local attachment enters the host's only controller |
+| [0134](0134-diagnostic-journal-is-bounded-local-evidence.md) | Diagnostic journal is bounded local evidence | Accepted — one finite FIFO local writer without durable-delivery claims or a second observability framework |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

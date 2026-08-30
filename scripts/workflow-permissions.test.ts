@@ -170,7 +170,7 @@ describe('CI release-critical graph', () => {
 
   test('publication inputs are packed and uploaded only by the core job', () => {
     expect(ci.match(/name: release-packages/g)).toHaveLength(1);
-    expect(ci.match(/bun pm pack/g)).toHaveLength(2);
+    expect(ci.match(/bun pm pack/g)).toHaveLength(3);
     const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  starter:'));
     expect(coreSection).toContain('name: release-packages');
     expect(release).toContain('name: release-packages');

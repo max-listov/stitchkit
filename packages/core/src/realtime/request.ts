@@ -29,6 +29,11 @@ export type RealtimeRequestPhaseHook = (
 export interface RealtimeRequestOptions {
   /** Maximum acknowledgement wait in milliseconds. Must be finite and > 0. */
   timeoutMs: number;
+  /**
+   * Observe phases for this invocation only. Correlate through the hook's local
+   * closure; no caller metadata is retained or transmitted with the request.
+   */
+  onPhase?: RealtimeRequestPhaseHook;
 }
 
 export class RealtimeRequestTimeoutError extends Error {

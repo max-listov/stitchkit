@@ -3,6 +3,7 @@ import type {
   ModelMessage,
   PrepareStepFunction,
   StopCondition,
+  ToolApprovalConfiguration,
   ToolSet,
 } from 'ai';
 import type { z } from 'zod';
@@ -42,9 +43,13 @@ import {
   AgentRunSchema,
   type AgentSnapshot,
 } from './schemas';
-import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
-import type { AgentRecoverableDescriptor } from './store-driver';
+import type {
+  AgentRecoverableDescriptor,
+  AgentRuntimeStore,
+  AgentStoreMutationResult,
+} from './store';
 import { AgentRuntimeConflictError, appliedSnapshot } from './terminal-commit';
+import type { AgentHistoryEvidencePolicy } from './terminal-status';
 
 export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
@@ -60,6 +65,8 @@ export interface AgentRuntimeInput {
   parts: readonly AgentMessagePart[];
   metadata?: unknown;
   recordIds?: AgentRuntimeRecordIds;
+  /** Tool-role input is reserved for a durable approval continuation. */
+  role?: 'user' | 'tool';
 }
 
 export interface AgentRuntimeRecordIds {
@@ -135,6 +142,8 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     resolve(input: {
       context: CONTEXT;
       conversationId: string;
+      run: AgentRun;
+      snapshot: AgentSnapshot;
     }): AgentResolvedModel | Promise<AgentResolvedModel>;
   };
   prompt(input: {
@@ -169,6 +178,9 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
      */
     prepareStep?: AgentRuntimePrepareStep<CONTEXT, TOOLS>;
     stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS>[];
+    toolApproval?: ToolApprovalConfiguration<TOOLS, CONTEXT>;
+    /** Enables the SDK's HMAC binding between approval request and exact tool call/input. */
+    toolApprovalSecret?: string | Uint8Array;
   };
   history?: {
     compact?(input: {
@@ -180,6 +192,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     resolveFile?: AgentHistoryProjectionOptions['resolveFile'];
     unresolvedFile?: AgentHistoryProjectionOptions['unresolvedFile'];
     interruptedAssistant?: AgentHistoryProjectionOptions['interruptedAssistant'];
+    evidencePolicy?: AgentHistoryEvidencePolicy;
   };
   publish?: AgentRuntimePublisher;
   onPublishError?(input: { event: AgentRuntimeEvent; error: unknown }): void | Promise<void>;
@@ -460,8 +473,16 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         idempotencyKey: rawInput.idempotencyKey,
         context: rawInput.context,
         parts: rawInput.parts.map((part) => config.protocol.parsePart(part)),
+        role: rawInput.role ?? 'user',
         ...(metadata !== undefined && { metadata }),
       };
+      if (
+        input.role === 'tool' &&
+        (input.parts.length === 0 ||
+          input.parts.some((part) => part.type !== 'tool-approval-response'))
+      ) {
+        throw new TypeError('Tool-role Agent input only accepts approval responses');
+      }
       const context = config.protocol.parseContext(input.context);
       const conversationTickets = tickets.get(input.conversationId);
       const existingTicket = conversationTickets?.get(input.idempotencyKey);
@@ -479,7 +500,7 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         schemaVersion: 1,
         id: inputMessageId,
         conversationId: input.conversationId,
-        role: 'user',
+        role: input.role,
         status: 'committed',
         parts: input.parts,
         ...(input.metadata && { metadata: input.metadata }),

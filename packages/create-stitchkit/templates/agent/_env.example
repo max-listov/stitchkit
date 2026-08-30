@@ -1,0 +1,4 @@
+# Create an API key at https://openrouter.ai/settings/keys
+OPENROUTER_API_KEY=
+# Optional: preselect this exact row when the live model picker opens.
+OPENROUTER_MODEL=

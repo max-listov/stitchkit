@@ -20,10 +20,13 @@ import { resolve } from 'node:path';
  * because what matters is whether the path is ignored, not how it is written.
  */
 const root = resolve(import.meta.dir, '..');
-const templateDirectory = 'packages/create-stitchkit/template';
+const templateDirectories = [
+  'packages/create-stitchkit/template',
+  'packages/create-stitchkit/templates/agent',
+];
 
 /** A path that the pattern must cover, for each pattern the template declares. */
-function sampleFor(pattern: string): string {
+function sampleFor(templateDirectory: string, pattern: string): string {
   const bare = pattern.replace(/\/$/, '');
   if (bare.startsWith('*')) return `${templateDirectory}/artefact${bare.slice(1)}`;
   return pattern.endsWith('/')
@@ -37,23 +40,28 @@ function isIgnored(path: string): boolean {
 }
 
 describe("the repository ignores its template workspace's output", () => {
-  const patterns = readFileSync(resolve(root, templateDirectory, '_gitignore'), 'utf8')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith('#'));
+  const declarations = templateDirectories.flatMap((templateDirectory) =>
+    readFileSync(resolve(root, templateDirectory, '_gitignore'), 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+      .map((pattern) => ({ pattern, templateDirectory })),
+  );
 
   test('the template declares rules to check', () => {
-    expect(patterns.length).toBeGreaterThan(0);
+    expect(declarations.length).toBeGreaterThan(0);
   });
 
   test('every rule a generated project gets, this repository has too', () => {
-    const uncovered = patterns.filter((pattern) => !isIgnored(sampleFor(pattern)));
+    const uncovered = declarations.filter(
+      ({ pattern, templateDirectory }) => !isIgnored(sampleFor(templateDirectory, pattern)),
+    );
     expect(uncovered).toEqual([]);
   });
 
   test('the checker can fail', () => {
     // Without this the test above would pass with `git check-ignore` broken,
     // missing, or answering 0 for everything.
-    expect(isIgnored(`${templateDirectory}/package.json`)).toBeFalse();
+    expect(isIgnored('packages/create-stitchkit/template/package.json')).toBeFalse();
   });
 });

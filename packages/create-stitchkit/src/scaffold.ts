@@ -37,7 +37,12 @@ const TEMPLATE_RENAMES = new Map([
   ['_gitignore', '.gitignore'],
 ]);
 
-const RootManifestSchema = z.looseObject({ name: z.string().min(1) });
+const RootManifestSchema = z.looseObject({
+  name: z.string().min(1),
+  catalog: z.record(z.string(), z.string()).optional(),
+  dependencies: z.record(z.string(), z.string()).optional(),
+  devDependencies: z.record(z.string(), z.string()).optional(),
+});
 
 /**
  * What never travels — as data, because two consumers read it.
@@ -52,6 +57,7 @@ const RootManifestSchema = z.looseObject({ name: z.string().min(1) });
  */
 export const IGNORED_DIRECTORIES = new Set([
   '.next',
+  '.stitchkit',
   'coverage',
   'dist',
   'node_modules',
@@ -200,7 +206,13 @@ async function writeMaterialisedFiles(
 export async function scaffoldProject(
   templateDirectory: string,
   destination: string,
-  options: { overlayDirectory?: string; displayName?: string } = {},
+  options: {
+    overlayDirectory?: string;
+    displayName?: string;
+    identityModule?: boolean;
+    lockfile?: boolean;
+    stitchkitCatalogTarget?: string;
+  } = {},
 ): Promise<void> {
   const resolvedDestination = resolve(destination);
   const identity = createApplicationIdentity(resolvedDestination, options.displayName);
@@ -218,6 +230,9 @@ export async function scaffoldProject(
         await materialiseTemplateFiles(options.overlayDirectory),
       );
     }
+    if (options.lockfile === false) {
+      await rm(join(resolvedDestination, 'bun.lock'), { force: true });
+    }
     // The declaration travels with the template; only its identity is this
     // project's. Rewriting the whole file here would make the scaffolder a
     // second author of roles, build and release steps.
@@ -228,16 +243,45 @@ export async function scaffoldProject(
     );
     await writeFile(declarationPath, `${JSON.stringify(declaration, undefined, 2)}\n`);
     // Derived from the declaration, so it is stamped in the same pass.
-    const identityPath = join(resolvedDestination, APP_IDENTITY_PATH);
-    await mkdir(dirname(identityPath), { recursive: true });
-    await writeFile(identityPath, renderAppIdentityModule(declaration.identity));
+    if (options.identityModule !== false) {
+      const identityPath = join(resolvedDestination, APP_IDENTITY_PATH);
+      await mkdir(dirname(identityPath), { recursive: true });
+      await writeFile(identityPath, renderAppIdentityModule(declaration.identity));
+    }
     const manifestPath = join(resolvedDestination, 'package.json');
     const manifest = RootManifestSchema.parse(
       JSON.parse(await readFile(manifestPath, 'utf8')),
     );
+    const catalog = options.stitchkitCatalogTarget
+      ? { ...(manifest.catalog ?? {}), stitchkit: options.stitchkitCatalogTarget }
+      : manifest.catalog;
+    const replaceLocalPackages = (dependencies: Record<string, string> | undefined) => {
+      if (!dependencies) return dependencies;
+      return {
+        ...dependencies,
+        ...(dependencies.stitchkit?.startsWith('file:') && { stitchkit: 'catalog:' }),
+        ...(dependencies['@stitchkit/tui']?.startsWith('file:') && {
+          '@stitchkit/tui': 'catalog:',
+        }),
+      };
+    };
     await writeFile(
       manifestPath,
-      `${JSON.stringify({ ...manifest, name: identity.slug }, undefined, 2)}\n`,
+      `${JSON.stringify(
+        {
+          ...manifest,
+          name: identity.slug,
+          ...(catalog && { catalog }),
+          ...(manifest.dependencies && {
+            dependencies: replaceLocalPackages(manifest.dependencies),
+          }),
+          ...(manifest.devDependencies && {
+            devDependencies: replaceLocalPackages(manifest.devDependencies),
+          }),
+        },
+        undefined,
+        2,
+      )}\n`,
     );
   } catch (error) {
     if (!destinationExisted) {

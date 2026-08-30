@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "application",
+  "identity": {
+    "slug": "stitchkit-agent-starter",
+    "name": "Stitchkit Agent Starter",
+    "version": "0.1.0",
+    "description": {
+      "en": "A durable terminal coding agent built with Stitchkit."
+    }
+  },
+  "roles": [
+    {
+      "name": "agent",
+      "workingDirectory": ".",
+      "commands": {
+        "development": {
+          "executable": "bun",
+          "args": ["--watch", "src/index.ts"]
+        },
+        "production": {
+          "executable": "bun",
+          "args": ["dist/index.js"]
+        }
+      },
+      "drainFloorMs": 1000
+    }
+  ],
+  "requires": [],
+  "release": {},
+  "env": {
+    "variables": [
+      {
+        "name": "OPENROUTER_API_KEY",
+        "shape": "string",
+        "required": true
+      },
+      {
+        "name": "OPENROUTER_MODEL",
+        "shape": "string",
+        "required": false
+      }
+    ]
+  }
+}

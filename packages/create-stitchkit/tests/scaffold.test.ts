@@ -505,6 +505,7 @@ describe('scaffoldProject', () => {
   test('excludes runtime artifacts from scaffold and package inputs', () => {
     expect(isTemplateSourcePathIncluded('test-results/.last-run.json')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/frontend/.next/routes.json')).toBeFalse();
+    expect(isTemplateSourcePathIncluded('.stitchkit/agent.sqlite')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/frontend/next-env.d.ts')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/backend/dist/index.js')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/db/src/generated/client.ts')).toBeFalse();
@@ -527,7 +528,7 @@ describe('scaffoldProject', () => {
     const negations = new Set(Array.isArray(files) ? files : []);
 
     const missing: string[] = [];
-    for (const tree of ['template', 'examples']) {
+    for (const tree of ['template', 'templates', 'examples']) {
       for (const directory of IGNORED_DIRECTORIES) {
         const pattern = `!${tree}/**/${directory}/**`;
         if (!negations.has(pattern)) missing.push(pattern);
@@ -542,6 +543,38 @@ describe('scaffoldProject', () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+
+  test('materialises the Agent template with the canonical catalog and no app identity module', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'templates/agent');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'terminal-agent');
+    created.push(parent);
+
+    await scaffoldProject(templateRoot, destination, {
+      identityModule: false,
+      lockfile: false,
+      stitchkitCatalogTarget: '^0.68.6',
+    });
+
+    const manifest = JSON.parse(await readFile(join(destination, 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({
+      name: 'terminal-agent',
+      catalog: { stitchkit: '^0.68.6', '@stitchkit/tui': '^0.1.0' },
+      dependencies: { stitchkit: 'catalog:', '@stitchkit/tui': 'catalog:' },
+    });
+    expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
+    expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();
+    expect(await readFile(join(destination, 'src/runtime.ts'), 'utf8')).toContain(
+      'createHeadlessAgentHarness',
+    );
+    expect(await readFile(join(destination, 'stitchkit.agent.ts'), 'utf8')).toContain(
+      'defineAgentTui',
+    );
+    expect(await readFile(join(destination, '.env.example'), 'utf8')).not.toContain(
+      'OPENROUTER_CONTEXT_WINDOW',
+    );
+    expect(await readFile(join(destination, '.gitignore'), 'utf8')).toContain('.stitchkit/');
   });
 
   test('rejects a non-empty destination', async () => {

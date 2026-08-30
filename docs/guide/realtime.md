@@ -257,7 +257,10 @@ from the contract and validated on both sides:
 const result = await socket.request(
   'room:join',
   'general',
-  { timeoutMs: 5_000 },
+  {
+    timeoutMs: 5_000,
+    onPhase: (phase) => roomJoinMetrics.record(phase),
+  },
 )
 // result: { joined: boolean }
 ```
@@ -302,6 +305,22 @@ closed phase:
 | `timeout` | the existing native acknowledgement timeout won |
 | `disconnected` | the request began disconnected or an in-flight disconnect won |
 
+When a caller needs to join those phases to its own invocation, put `onPhase`
+on that request's options and keep the caller identity in the hook's closure:
+
+```ts
+await socket.request('room:join', 'general', {
+  timeoutMs: 5_000,
+  onPhase: (phase) => recordPhase({ operationId, phase }),
+})
+```
+
+The client-wide hook receives every observed request; a request hook receives
+only its invocation. If the same function is supplied in both places it runs
+once per phase. The closure is local: Stitchkit does not retain `operationId`,
+add it to the event or transmit it to the peer. A request hook works without a
+client-wide hook, and the no-hook path installs no phase listeners.
+
 Engine handoff is not proof of a physical network write. Engine acknowledgement
 receipt is not a remote clock, end-to-end RTT or proof that application
 validation has run. The useful interval is local and monotonic:
@@ -314,9 +333,9 @@ with Socket.IO acknowledgement ids, but those ids are never exposed. A timeout
 or disconnect is terminal, a late packet cannot reopen the identity, and sync
 or async observer failures are ignored so telemetry cannot change request
 correctness. With no hook, no request identity, Engine.IO listener or correlation
-map entry is created. The low-level `createSocketIOClient` and non-owning
-`bindRealtimeClient` remain unchanged; this phase surface belongs to the
-canonical composed client that owns both transport and validation.
+map entry is created. The low-level `createSocketIOClient` implements the same
+request option, so a non-owning `bindRealtimeClient` over that transport keeps
+request-scoped observation without opening a second connection.
 
 ## Low-level transport
 

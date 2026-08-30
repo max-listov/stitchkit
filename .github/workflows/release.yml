@@ -6,11 +6,12 @@
 # Tags:
 #   vX.Y.Z                    publishes stitchkit
 #   create-stitchkit-vX.Y.Z   publishes create-stitchkit
+#   stitchkit-tui-vX.Y.Z      publishes @stitchkit/tui
 name: Release
 
 on:
   push:
-    tags: ['v*', 'create-stitchkit-v*']
+    tags: ['v*', 'create-stitchkit-v*', 'stitchkit-tui-v*']
 
 permissions:
   contents: read
@@ -69,14 +70,16 @@ jobs:
         run: |
           PACKAGE="$(jq -r .packageName "$RUNNER_TEMP/release-plan.json")"
           VERSION="$(jq -r .version "$RUNNER_TEMP/release-plan.json")"
+          TARBALL_PACKAGE="${PACKAGE#@}"
+          TARBALL_PACKAGE="${TARBALL_PACKAGE//\//-}"
           NPM_MAJOR="$(npm --version | cut -d. -f1)"
           if [ "$NPM_MAJOR" -lt 11 ]; then
             echo "::error::npm 11.5+ is required for OIDC trusted publishing"
             exit 1
           fi
-          TARBALL="$(find release-artifacts -maxdepth 1 -type f -name "$PACKAGE-$VERSION.tgz" -print -quit)"
+          TARBALL="$(find release-artifacts -maxdepth 1 -type f -name "$TARBALL_PACKAGE-$VERSION.tgz" -print -quit)"
           if [ -z "$TARBALL" ]; then
-            echo "::error::validated tarball $PACKAGE-$VERSION.tgz is missing"
+            echo "::error::validated tarball $TARBALL_PACKAGE-$VERSION.tgz is missing"
             exit 1
           fi
           EXPECTED_SHA="$(sha1sum "$TARBALL" | cut -d' ' -f1)"

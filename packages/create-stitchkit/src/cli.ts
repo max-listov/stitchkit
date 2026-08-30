@@ -16,13 +16,22 @@ export async function run(args: string[]): Promise<number> {
     }
 
     const destination = resolve(options.destination);
-    const templateDirectory = resolve(import.meta.dir, '../template');
+    const applicationTemplateDirectory = resolve(import.meta.dir, '../template');
+    const templateDirectory =
+      options.template === 'agent'
+        ? resolve(import.meta.dir, '../templates/agent')
+        : applicationTemplateDirectory;
     const overlayDirectory = options.example
       ? resolve(import.meta.dir, `../examples/${options.example}`)
       : undefined;
     await scaffoldProject(templateDirectory, destination, {
       ...(overlayDirectory && { overlayDirectory }),
       ...(options.displayName && { displayName: options.displayName }),
+      ...(options.template === 'agent' && {
+        identityModule: false,
+        lockfile: false,
+        stitchkitCatalogTarget: await readStitchkitCatalogTarget(applicationTemplateDirectory),
+      }),
     });
 
     if (options.install) {
@@ -36,7 +45,12 @@ export async function run(args: string[]): Promise<number> {
       if (exitCode !== 0) throw new Error(`bun install failed with exit code ${exitCode}`);
     }
 
-    const mode = options.example ? ` with the ${options.example} example` : '';
+    const mode =
+      options.template === 'agent'
+        ? ' from the agent template'
+        : options.example
+          ? ` with the ${options.example} example`
+          : '';
     process.stdout.write(
       `\nCreated ${options.displayName ?? basename(destination)}${mode}\n\n`,
     );
@@ -54,6 +68,24 @@ export async function run(args: string[]): Promise<number> {
     process.stderr.write(`create-stitchkit: ${message}\n`);
     return 1;
   }
+}
+
+async function readStitchkitCatalogTarget(templateDirectory: string): Promise<string> {
+  const manifest: unknown = JSON.parse(
+    await readFile(join(templateDirectory, 'package.json'), 'utf8'),
+  );
+  if (
+    typeof manifest !== 'object' ||
+    manifest === null ||
+    !('catalog' in manifest) ||
+    typeof manifest.catalog !== 'object' ||
+    manifest.catalog === null ||
+    !('stitchkit' in manifest.catalog) ||
+    typeof manifest.catalog.stitchkit !== 'string'
+  ) {
+    throw new Error('Application template is missing catalog.stitchkit');
+  }
+  return manifest.catalog.stitchkit;
 }
 
 if (import.meta.main) {

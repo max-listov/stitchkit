@@ -1,12 +1,13 @@
 import {
   type Instructions,
   type ModelMessage,
+  type PrepareStepFunction,
   type StopCondition,
   type SystemModelMessage,
   stepCountIs,
-  streamText,
   type ToolSet,
 } from 'ai';
+import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
 import { deferredToolRepair } from './deferred-tools-internal';
@@ -395,6 +396,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       selectedModel = await config.models.resolve({
         context: input.context,
         conversationId: run.conversationId,
+        run,
+        snapshot,
       });
       const promptSnapshot = snapshotForRunPrompt(snapshot, run.id);
       const [prompt, tools] = await Promise.all([
@@ -431,6 +434,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           ...(config.history?.interruptedAssistant && {
             interruptedAssistant: config.history.interruptedAssistant,
           }),
+          ...(config.history?.evidencePolicy && {
+            evidencePolicy: config.history.evidencePolicy,
+          }),
         });
         carriedSystem = detailed.system;
         return [...detailed.messages];
@@ -451,6 +457,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           }),
           ...(config.history?.interruptedAssistant && {
             interruptedAssistant: config.history.interruptedAssistant,
+          }),
+          ...(config.history?.evidencePolicy && {
+            evidencePolicy: config.history.evidencePolicy,
           }),
         });
         return [...detailed.messages];
@@ -511,7 +520,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }
         return messages;
       };
-      const result = streamText<TOOLS>({
+      const result = streamAgentTextBoundary<TOOLS>({
         model: selectedModel.model,
         tools,
         instructions: withCarriedSystem(prompt.instructions),
@@ -520,8 +529,15 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         maxRetries: 0,
         stopWhen: stopConditions,
         repairToolCall: deferredToolRepair(config.loop?.prepareStep),
+        ...(config.loop?.toolApproval && {
+          toolApproval: config.loop.toolApproval,
+          runtimeContext: input.context,
+        }),
+        ...(config.loop?.toolApprovalSecret && {
+          experimental_toolApprovalSecret: config.loop.toolApprovalSecret,
+        }),
         ...((config.loop?.prepareStep || injection) && {
-          prepareStep: async (options) => {
+          prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
             const prepared = await config.loop?.prepareStep?.({
               ...options,
               ...runtimeContext,
@@ -734,11 +750,25 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           );
         } else if (part.type === 'reasoning-file') {
           throw new Error('persistGeneratedFile is required for generated reasoning files');
-        } else if (
-          part.type === 'tool-approval-request' ||
-          part.type === 'tool-approval-response'
-        ) {
-          throw new Error('Durable tool approval/resume is outside this runtime version');
+        } else if (part.type === 'tool-approval-request') {
+          parts.push(
+            AgentMessagePartSchema.parse({
+              type: 'tool-approval-request',
+              approvalId: part.approvalId,
+              callId: part.toolCall.toolCallId,
+              ...(part.isAutomatic !== undefined && { isAutomatic: part.isAutomatic }),
+              ...(part.signature && { signature: part.signature }),
+            }),
+          );
+        } else if (part.type === 'tool-approval-response') {
+          parts.push(
+            AgentMessagePartSchema.parse({
+              type: 'tool-approval-response',
+              approvalId: part.approvalId,
+              approved: part.approved,
+              ...(part.reason && { reason: part.reason }),
+            }),
+          );
         } else if (part.type === 'custom') {
           const provider = providerEnvelope(part.providerMetadata);
           parts.push(
@@ -825,7 +855,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       }
       if (terminalPolicyName !== undefined) terminalReason = 'policy_stop';
       if (executionSignal.aborted) terminalReason = abortTerminalReason(executionSignal);
+      const awaitsApproval = parts.some((part) => part.type === 'tool-approval-request');
       if (
+        !awaitsApproval &&
         config.protocol.acceptTerminal &&
         (terminalReason === 'success' ||
           terminalReason === 'policy_stop' ||

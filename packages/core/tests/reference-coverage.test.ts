@@ -31,6 +31,8 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/remote': 'remote.ts',
   'stitchkit/observability': 'observability/index.ts',
   'stitchkit/agent-runtime': 'agent-runtime.ts',
+  'stitchkit/agent-runtime/harness': 'agent-runtime-harness.ts',
+  'stitchkit/agent-runtime/coding-tools': 'agent-runtime-coding-tools.ts',
   'stitchkit/agent-runtime/browser': 'agent-runtime-browser.ts',
   'stitchkit/agent-runtime/openrouter': 'agent-runtime-openrouter.ts',
   'stitchkit/agent-runtime/sqlite/bun': 'agent-runtime-sqlite-bun.ts',

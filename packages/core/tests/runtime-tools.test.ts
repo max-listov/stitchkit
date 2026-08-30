@@ -125,7 +125,7 @@ describe('framework runtime tools', () => {
       hooks: audit.toolCall,
       lifecycle: {
         beforeHandle: (context) => {
-          const input = z.object({ id: z.string() }).passthrough().parse(context.input);
+          const input = z.object({ id: z.string() }).loose().parse(context.input);
           setRequestDimensions({ entityId: input.id });
         },
       },

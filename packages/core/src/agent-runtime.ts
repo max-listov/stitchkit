@@ -6,6 +6,15 @@ export {
 } from './agent-runtime/compaction';
 export { AgentContextOverflowError } from './agent-runtime/context-refusal';
 export {
+  type AgentConversationMessagePage,
+  AgentConversationMessagePageSchema,
+  type AgentConversationPage,
+  AgentConversationPageSchema,
+  type AgentConversationReader,
+  type AgentConversationSummary,
+  AgentConversationSummarySchema,
+} from './agent-runtime/conversations';
+export {
   type AgentCoordinatedRun,
   type AgentInputPolicy,
   type AgentRunTicket,
@@ -69,15 +78,35 @@ export {
   type AgentLanguageModelProvider,
   type AgentModelCapability,
   AgentModelCapabilitySchema,
+  type AgentModelCatalog,
+  type AgentModelCatalogEntry,
+  AgentModelCatalogEntrySchema,
+  type AgentModelCatalogProvider,
+  AgentModelCatalogSchema,
   type AgentModelDescriptor,
   AgentModelDescriptorSchema,
+  type AgentModelMetric,
+  AgentModelMetricSchema,
+  type AgentModelPopularity,
+  AgentModelPopularitySchema,
+  type AgentModelPrice,
+  AgentModelPriceSchema,
   type AgentModelRegistry,
   type AgentModelRegistryConfig,
   type AgentModelRegistrySnapshot,
   AgentModelRegistrySnapshotSchema,
+  type AgentModelSearchInput,
+  AgentModelSearchInputSchema,
+  type AgentModelSearchResult,
+  AgentModelSearchResultSchema,
+  type AgentModelSelection,
+  AgentModelSelectionSchema,
+  type AgentModelSelectionStore,
   type AgentModelSnapshotPolicy,
   type AgentResolvedModel,
+  createMemoryAgentModelSelectionStore,
   defineModelRegistry,
+  searchAgentModelCatalog,
   validateAgentModelSnapshot,
 } from './agent-runtime/models';
 export {
@@ -141,6 +170,10 @@ export {
   AcceptInputAndAssignRunSchema,
   type AcquireAgentRun,
   AcquireAgentRunSchema,
+  type AgentRecoverableDescriptor,
+  AgentRecoverableDescriptorSchema,
+  type AgentRecoverablePage,
+  AgentRecoverablePageSchema,
   type AgentRuntimeStore,
   type AgentRunView,
   AgentRunViewSchema,
@@ -167,10 +200,6 @@ export {
   AgentAdmissionReceiptSchema,
   type AgentHistoryMutation,
   AgentHistoryMutationSchema,
-  type AgentRecoverableDescriptor,
-  AgentRecoverableDescriptorSchema,
-  type AgentRecoverablePage,
-  AgentRecoverablePageSchema,
   type AgentRuntimeHead,
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
@@ -181,3 +210,7 @@ export {
   createMemoryAgentRuntimeStore,
 } from './agent-runtime/store-driver';
 export { AgentRuntimeConflictError } from './agent-runtime/terminal-commit';
+export {
+  type AgentHistoryEvidencePolicy,
+  isAssistantHistoryEvidence,
+} from './agent-runtime/terminal-status';

@@ -47,7 +47,8 @@ How stitchkit is built and why.
 - [`AGENTS.md`](../AGENTS.md) — the development guide: rules, architecture,
   breaking-change and release flow (read by Cursor / Codex / Claude too).
 - [`VISION.md`](./VISION.md) — what stitchkit is, its principles, its direction.
-- [`architecture/`](./architecture/) — current subsystem design and runtime boundaries.
+- [`architecture/`](./architecture/) — current subsystem design and runtime boundaries, including
+  the optional [`terminal host`](./architecture/terminal-host.md) layering.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
   One file per ADR. Index: [`decisions/README.md`](./decisions/README.md).
 - [`backlog/`](./backlog/) — task tracking — the **what**.

@@ -3,10 +3,15 @@ import { parseOptions } from '../src/options';
 
 describe('create-stitchkit options', () => {
   test('parses a destination and install preference', () => {
-    expect(parseOptions(['my-app'])).toEqual({ destination: 'my-app', install: true });
+    expect(parseOptions(['my-app'])).toEqual({
+      destination: 'my-app',
+      install: true,
+      template: 'application',
+    });
     expect(parseOptions(['my-app', '--no-install'])).toEqual({
       destination: 'my-app',
       install: false,
+      template: 'application',
     });
   });
 
@@ -14,6 +19,7 @@ describe('create-stitchkit options', () => {
     expect(parseOptions(['my-app', '--example', 'repository'])).toEqual({
       destination: 'my-app',
       install: true,
+      template: 'application',
       example: 'repository',
     });
   });
@@ -22,8 +28,23 @@ describe('create-stitchkit options', () => {
     expect(parseOptions(['talk-control', '--display-name', 'Talk Control'])).toEqual({
       destination: 'talk-control',
       install: true,
+      template: 'application',
       displayName: 'Talk Control',
     });
+  });
+
+  test('parses the agent template and rejects application-only overlays', () => {
+    expect(parseOptions(['my-agent', '--template', 'agent'])).toEqual({
+      destination: 'my-agent',
+      install: true,
+      template: 'agent',
+    });
+    expect(() =>
+      parseOptions(['my-agent', '--template', 'agent', '--example', 'repository']),
+    ).toThrow('--example is only supported');
+    expect(() => parseOptions(['my-agent', '--template', 'unknown'])).toThrow(
+      'Unknown template',
+    );
   });
 
   test('rejects missing and extra destinations', () => {

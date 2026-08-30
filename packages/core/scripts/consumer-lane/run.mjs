@@ -328,6 +328,13 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const harnessOutput = step(`node: headless harness (${runtime})`, () =>
+          run(runtime, ['src/headless-harness.mjs'], dir),
+        );
+        if (!harnessOutput.includes('packed headless harness: ok')) {
+          failed = true;
+          console.error(`[consumer-lane] node: ${runtime} headless harness produced no proof`);
+        }
         const compositionOutput = step(`node: durable compositions (${runtime})`, () =>
           run(runtime, ['src/durable-composition.mjs'], dir),
         );
@@ -343,6 +350,15 @@ try {
         if (!deferredOutput.includes('packed deferred tools: ok')) {
           failed = true;
           console.error(`[consumer-lane] node: ${runtime} deferred tools produced no proof`);
+        }
+        const journalOutput = step(`node: diagnostic journal (${runtime})`, () =>
+          run(runtime, ['src/diagnostic-journal.mjs'], dir),
+        );
+        if (!journalOutput.includes('packed diagnostic journal: ok')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} diagnostic journal produced no proof`,
+          );
         }
       }
     }

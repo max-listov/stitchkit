@@ -25,9 +25,16 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 | Provider construction/usage normalization | provider adapter | isolated provider entrypoint |
 | Prompt order/budget and whole-turn slicing | Stitchkit | `prompt.ts` |
 | Domain prompt text and tools | application | typed callbacks |
+| Headless resource composition and applied profile evidence | Stitchkit facade | `agent-runtime/harness` over the same runtime |
+| Resource discovery and containment | Stitchkit optional leaf | explicit roots, shared contained walker and bounded lazy reads |
+| Resource trust, root IDs and precedence | application/host | declared roots and provenance policy |
+| Coding-tool authorization and concrete limits | application/host | `agent-runtime/coding-tools` configuration |
+| Control protocol, leases and pure view projection | Stitchkit optional leaf | harness and browser-safe schemas/reducer |
+| Process placement, restart, control transport/authentication and OS isolation | external supervisor | outside Stitchkit |
 | External effect idempotency | application | stable run/call identity and business transaction |
 | Canonical application events | Stitchkit | `events.ts` |
 | Transport, replay buffer and UI | application | publisher/sink adapter |
+| Official terminal host composition | generated Agent starter | OpenTUI view over canonical harness snapshots/events; no second loop |
 | Operator telemetry | Stitchkit protocol plus application sink | `observability.ts` |
 
 No state mutation has two owners. History adapters expose storage primitives; they cannot perform an
@@ -62,7 +69,7 @@ delivery and operator metrics.
 
 ## History and context
 
-Canonical history retains provider envelopes and storage-neutral file references. Projection omits
+Canonical history retains provider envelopes, signed approval parts and storage-neutral file references. Projection omits
 crash drafts, leading assistant records and incomplete tool chronology by explicit decision.
 `selectAgentHistory` removes only whole old provider-valid turns, protects system/summary,
 incomplete and configured recent turns, and reports one decision per message. If token provenance is
@@ -71,6 +78,10 @@ unavailable it does not invent a count or silently truncate.
 Compaction summarizes outside the transaction, then replaces one exact contiguous range through
 snapshot CAS. A configured retry reloads, reselects and re-summarizes; a stale summary is never
 reapplied. Failure leaves the original history canonical.
+
+Failed terminal evidence remains omitted by default. An explicit `AgentHistoryEvidencePolicy` may
+include a marked partial failed assistant; projection, token budgeting and compaction consume the
+same policy so no hidden record reserves budget or reappears unmarked through a summary.
 
 ## Models and loop
 
@@ -84,6 +95,14 @@ text/reasoning/tools/sources/files/provider envelopes, uses bounded checkpoints,
 step and named stop policy, and commits exactly one terminal state by CAS. Tool fencing runs before
 the handler and again before accepting its result; stale control errors are never model-facing.
 
+`createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
+caller-provided model per run, loads bounded typed resources, composes them through the canonical
+prompt budget and records an observation-only applied profile containing the actual model
+descriptor, resource provenance and direct tool names. It owns no daemon, catalog discovery,
+credentials or second recovery state. Signed approval requests end one run before an effect; an
+exact durable tool-role response starts a successor, and the existing fence owns execution. Its optional coding tools remain ordinary direct runtime
+tools; their path root constrains file resolution but is not an OS sandbox for allowed executables.
+
 ## Delivery and observability
 
 Durable event IDs derive from `(runId, event type, snapshotVersion)`. Transient events use
@@ -91,6 +110,10 @@ Durable event IDs derive from `(runId, event type, snapshotVersion)`. Transient 
 gap is recovered by loading the canonical snapshot, not by assuming infinite process replay.
 `createAgentRuntimeEventSink` supplies bounded failure-isolated delivery and a projection/redaction
 hook. It is not a transactional outbox.
+
+The multi-session control cursor scopes durable versions per conversation and transient sequences
+per run. Control connection close releases only its observer/controller attachment; harness
+shutdown is a separate host action.
 
 Operator events use a separate schema and sink lifecycle. Terminal IDs deduplicate naturally;
 missing usage/cost stays unavailable, and raw internal causes are excluded unless an operator-only
@@ -107,6 +130,10 @@ and run record, not from active history.
 `runtime.recover()` scans indexed active states in the normalized run store. Queued work resumes only when no acquired
 predecessor blocks it. Acquired work defaults to skip; requeue and abandon require explicit evidence.
 Each run returns its own outcome so one corrupt record does not hide the rest of the pass.
+The harness adds no replay rule: completed tool evidence reopens from the canonical store, while
+requeueing an acquired run still requires the runtime's explicit replay-safe evidence. External
+effects remain idempotent only when the application uses stable run/call identity at its own
+transaction boundary.
 
 Current records write `schemaVersion: 1`. Adapters migrate older rows at read time, validate the
 current exported schema, and write only the current version. Unknown future versions fail closed.

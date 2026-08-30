@@ -227,6 +227,46 @@ describe('agent prompt and model policy', () => {
     });
   });
 
+  test('evicts a completed approval continuation as one chronological turn', async () => {
+    const at = '2026-08-22T00:00:00.000Z';
+    const parse = (id: string, role: 'user' | 'assistant' | 'tool', parts: unknown[]) =>
+      AgentMessageSchema.parse({
+        schemaVersion: 1,
+        id,
+        conversationId: 'approval-history',
+        ...(role !== 'user' && { runId: id }),
+        role,
+        status: role === 'user' || role === 'tool' ? 'committed' : 'completed',
+        parts,
+        createdAt: at,
+        updatedAt: at,
+      });
+    const messages = [
+      parse('user-approval', 'user', [{ type: 'text', text: 'change it' }]),
+      parse('assistant-request', 'assistant', [
+        { type: 'tool-call', callId: 'call-1', toolName: 'change', input: {} },
+        { type: 'tool-approval-request', approvalId: 'approval-1', callId: 'call-1' },
+      ]),
+      parse('tool-response', 'tool', [
+        { type: 'tool-approval-response', approvalId: 'approval-1', approved: true },
+      ]),
+      parse('assistant-result', 'assistant', [
+        { type: 'tool-result', callId: 'call-1', toolName: 'change', outcome: 'success' },
+        { type: 'text', text: 'changed' },
+      ]),
+      parse('user-recent', 'user', [{ type: 'text', text: 'next' }]),
+      parse('assistant-recent', 'assistant', [{ type: 'text', text: 'answer' }]),
+    ];
+    const selected = await selectAgentHistory({
+      messages,
+      availableTokens: 2,
+      keepRecentTurns: 1,
+      estimateMessage: () => ({ value: 1, provenance: 'measured' }),
+    });
+    expect(selected.messages.map(({ id }) => id)).toEqual(['user-recent', 'assistant-recent']);
+    expect(selected.outcome).toBe('truncated');
+  });
+
   test('publishes versioned model snapshots and rejects stale or unavailable entries', () => {
     const registry = defineModelRegistry({
       providers: { test: { create: () => new MockLanguageModelV4() } },

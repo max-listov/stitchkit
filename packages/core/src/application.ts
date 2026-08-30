@@ -64,6 +64,31 @@ export {
   createBoundedChannel,
   createCreditWindow,
 } from './application/channel';
+export { createDiagnosticJournal } from './application/diagnostic-journal';
+export {
+  type DiagnosticJournal,
+  type DiagnosticJournalCloseResult,
+  DiagnosticJournalCloseResultSchema,
+  type DiagnosticJournalConfig,
+  type DiagnosticJournalFailure,
+  type DiagnosticJournalFailurePhase,
+  DiagnosticJournalFailurePhaseSchema,
+  type DiagnosticJournalFrame,
+  DiagnosticJournalFrameSchema,
+  type DiagnosticJournalLimits,
+  DiagnosticJournalLimitsSchema,
+  type DiagnosticJournalRefusalReason,
+  DiagnosticJournalRefusalReasonSchema,
+  type DiagnosticJournalState,
+  DiagnosticJournalStateSchema,
+  type DiagnosticJournalStatus,
+  DiagnosticJournalStatusSchema,
+  type DiagnosticJournalSubmitResult,
+  DiagnosticJournalSubmitResultSchema,
+  type DiagnosticJournalWaitOptions,
+  type DiagnosticJournalWaitResult,
+  DiagnosticJournalWaitResultSchema,
+} from './application/diagnostic-journal-contract';
 export {
   type ApplicationEventSink,
   type ApplicationEventSinkConfig,

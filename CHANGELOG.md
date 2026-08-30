@@ -15,6 +15,88 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.69.0] — 2026-08-30
+
+### ⚠️ Breaking changes
+
+**Who must act:** consumers that exhaustively switch over `AgentMessage.role` or
+`AgentMessagePart.type` from an Agent-runtime entrypoint, and consumers of the evolving
+`createAgentCodingTools` names.
+
+- **Durable approvals add the `tool` role and `tool-approval-request` /
+  `tool-approval-response` parts.** These records preserve the provider's signed approval
+  continuation without flattening it into text. Extend exhaustive branches for the new variants:
+  `// before: type Role = 'user' | 'assistant' | 'system' | 'summary'` →
+  `// after: type Role = AgentMessage['role'] // includes 'tool'`; likewise, handle or deliberately
+  ignore both `tool-approval-*` part types in exhaustive renderers. Existing stored records remain
+  valid; this changes only the public union a compiler asks consumers to cover.
+- **Direct coding tools now use operation names and the unguarded edit tool is removed.** This
+  avoids leaking one example profile into durable tool identity and leaves one guarded mutation
+  path: `// before: coding_read_file / coding_search / coding_patch_file / coding_shell` →
+  `// after: read_file / search_files / apply_patch / run_command`. Replace `coding_edit_file`
+  with `apply_patch` using the SHA-256 returned by `read_file`; artifact and resource readers are
+  now `read_output` and `read_resource`.
+
+### Added
+
+- **Acknowledged realtime phases can be correlated at the invoking call site.**
+  `RealtimeRequestOptions.onPhase` observes only that invocation, so callers keep their own local
+  operation identity in a closure while Stitchkit retains its opaque native-ACK identity. The
+  client-wide hook still observes all requests; identical hooks are deduplicated. No caller key,
+  payload, acknowledgement or transport metadata is retained or added to the wire.
+- **The official Agent TUI starts fresh and makes durable resume explicit.** Normal launches and
+  `/clear` create new conversation identities; `/resume` and `/sessions` select retained history.
+  A bounded per-session diagnostic journal records only lifecycle, conversation and run metadata,
+  discarding prompt/reasoning text, tool inputs, provider causes and credentials before disk.
+- **The Agent TUI command palette and status line are host-composable.** Enter executes the
+  highlighted exact slash command instead of admitting partial command text as a model run;
+  Up/Down, Tab and Escape share that selection state. The terminal-native default shell removes
+  raw identifiers and permanent key hints from the main frame, while typed status rows expose
+  model context capacity and only usage present in the durable snapshot. Hosts may replace or
+  disable those rows without replacing the runtime controller.
+
+- **A bounded ordered diagnostic journal captures finite local metadata evidence.**
+  `createDiagnosticJournal` validates an owner-supplied Zod schema synchronously, admits complete
+  JSONL frames within item/byte limits, preserves one process epoch and contiguous accepted
+  sequence, and serializes append/rotation through one exclusive local writer. Explicit status and
+  refusals distinguish accepted memory from completed writes, terminal failures and caller
+  timeout/cancellation; finite mode-`0600` generations and partial-tail rotation bound local files.
+  It deliberately promises no `fsync`, durable delivery, replay, remote receipt or exactly-once
+  execution. Packed Bun and Node consumers execute the public entrypoint. → ADR 0134.
+
+- **A published headless Agent harness composes the durable runtime for externally supervised
+  sessions.** `createHeadlessAgentHarness` accepts caller-owned model adapters, bounded
+  instruction/skill/resource inputs, direct tools and prompt policy while retaining the canonical
+  queue, interruption, recovery, SQLite store and terminal semantics. Applied profiles report the
+  actual model, resource provenance and direct tool names. The isolated
+  `stitchkit/agent-runtime/coding-tools` leaf adds host-authorized bounded file and shell tools;
+  workspace isolation, executable policy, credentials, process placement and restart remain host
+  responsibilities. Packed Bun and Node consumers execute the public surface. → ADR 0130.
+- **Composable harness leaves add lazy skills, signed durable approvals, reconnectable control and
+  referenced coding output without a second loop.** Explicit filesystem roots produce
+  `rootId:relative/path` provenance; skill bodies remain behind the direct
+  `read_resource` tool. Approval requests/responses survive SQLite reopen and execute the
+  original direct tool only through the canonical fence. Browser-safe multi-session cursors and a
+  pure view reducer resync on gaps, while controller leases detach without shutting down the
+  harness. Coding tools add bounded search, SHA-256-guarded single-file patch and optional opaque
+  artifacts for output larger than its inline preview. Failed-run evidence is an explicit shared
+  projection/budget/compaction policy and remains omitted by default. → ADR 0131.
+- **Provider-neutral model catalogs and durable selections support real terminal hosts.** Catalog
+  entries retain descriptor, price, popularity and benchmark observations with independent source
+  and timestamp. The OpenRouter adapter loads the complete tool-capable text catalog, weekly usage
+  rank and available benchmark feeds without treating rank as quality. Model resolution receives
+  the durable run and snapshot so a host can reconstruct the model pinned to the input.
+- **SQLite exposes optional bounded conversation discovery without widening the store contract.**
+  `conversations.list()` and `conversations.messages()` page summaries and history for terminal or
+  administrative views; custom stores remain valid without implementing the reader.
+- **Coding search tolerates normal dependency trees.** Symlinks and declared dependency/build
+  directories are skipped with bounded counters, while direct reads and writes still fail closed
+  on symlink targets. `run_command` is omitted when the host declares no executable aliases, and
+  otherwise its schema enumerates only those aliases. → ADR 0133.
+
+Harness leaves remain opt-in and evolving. Consumers that do not exhaustively inspect canonical
+Agent messages need no call-site change; exhaustive message readers follow the migration above.
+
 ## [0.68.11] — 2026-08-29
 
 ### Added

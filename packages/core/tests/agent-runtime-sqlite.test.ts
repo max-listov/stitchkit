@@ -82,6 +82,61 @@ describe('SQLite agent-runtime store', () => {
     await second.close();
   });
 
+  test('pages conversation summaries and active history through an optional reader', async () => {
+    const fixture = createBunSqliteAgentRuntimeStore({ filename: databasePath('reader') });
+    const records: [string, string, string][] = [
+      ['alpha', 'alpha-1', 'run-alpha-1'],
+      ['alpha', 'alpha-2', 'run-alpha-2'],
+      ['beta', 'beta-1', 'run-beta-1'],
+    ];
+    for (const [conversationId, messageId, runId] of records) {
+      const message = input(conversationId, messageId);
+      await fixture.store.acceptInputAndAssignRun({
+        idempotencyKey: `${conversationId}:${messageId}`,
+        input: message,
+        run: run(conversationId, messageId, runId),
+      });
+    }
+
+    const first = await fixture.conversations.list({ limit: 1 });
+    expect(first.items).toEqual([
+      expect.objectContaining({
+        conversationId: 'alpha',
+        version: 2,
+        preview: 'alpha-2',
+        activeRuns: 2,
+      }),
+    ]);
+    expect(first.nextCursor).toBeDefined();
+    expect(await fixture.conversations.list({ cursor: first.nextCursor, limit: 1 })).toEqual({
+      items: [
+        expect.objectContaining({
+          conversationId: 'beta',
+          version: 1,
+          preview: 'beta-1',
+          activeRuns: 1,
+        }),
+      ],
+    });
+
+    const latest = await fixture.conversations.messages({
+      conversationId: 'alpha',
+      limit: 1,
+      direction: 'before',
+    });
+    expect(latest.items.map(({ id }) => id)).toEqual(['alpha-2']);
+    expect(latest.nextCursor).toBeDefined();
+    expect(
+      await fixture.conversations.messages({
+        conversationId: 'alpha',
+        cursor: latest.nextCursor,
+        limit: 1,
+        direction: 'before',
+      }),
+    ).toMatchObject({ items: [{ id: 'alpha-1' }] });
+    await fixture.close();
+  });
+
   test('fails competing same-thread writers promptly and permits a deterministic retry', async () => {
     const filename = databasePath('contention');
     const firstDatabase = new Database(filename, { create: true, readwrite: true });

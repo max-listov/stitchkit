@@ -5,6 +5,12 @@ import {
   agentDurableEventId,
   createAgentRuntimeEventSink,
 } from '../src/agent-runtime';
+import {
+  advanceAgentMultiSessionCursor,
+  createAgentControlView,
+  reduceAgentControlEvent,
+  reduceAgentControlSnapshot,
+} from '../src/agent-runtime-browser';
 
 const emittedAt = '2026-08-22T00:00:00.000Z';
 
@@ -21,6 +27,84 @@ function runState(snapshotVersion: number): Extract<AgentRuntimeEvent, { type: '
 }
 
 describe('agent application delivery events', () => {
+  test('isolates transient cursors per conversation and run', () => {
+    const first = advanceAgentMultiSessionCursor(
+      { conversations: {} },
+      {
+        type: 'assistant-delta',
+        conversationId: 'a',
+        runId: 'run-a',
+        runtimeEpoch: 'epoch',
+        sequence: 1,
+        textDelta: 'a',
+        emittedAt,
+      },
+    );
+    const independent = advanceAgentMultiSessionCursor(first.cursor, {
+      type: 'assistant-delta',
+      conversationId: 'b',
+      runId: 'run-b',
+      runtimeEpoch: 'epoch',
+      sequence: 1,
+      textDelta: 'b',
+      emittedAt,
+    });
+    expect(independent.status).toBe('accepted');
+    const view = reduceAgentControlEvent(createAgentControlView(), {
+      type: 'assistant-delta',
+      conversationId: 'a',
+      runId: 'run-a',
+      runtimeEpoch: 'epoch',
+      sequence: 1,
+      textDelta: 'first',
+      emittedAt,
+    });
+    expect(view.conversations.a?.resyncRequired).toBe(false);
+    const gap = reduceAgentControlEvent(view, {
+      type: 'assistant-delta',
+      conversationId: 'a',
+      runId: 'run-a',
+      runtimeEpoch: 'epoch',
+      sequence: 3,
+      textDelta: 'gap',
+      emittedAt,
+    });
+    expect(gap.conversations.a?.resyncRequired).toBe(true);
+    expect(
+      advanceAgentMultiSessionCursor(
+        { conversations: {} },
+        {
+          type: 'assistant-delta',
+          conversationId: 'a',
+          runId: 'late-run',
+          runtimeEpoch: 'epoch',
+          sequence: 2,
+          textDelta: 'late',
+          emittedAt,
+        },
+      ).status,
+    ).toBe('gap');
+  });
+
+  test('treats snapshots as authoritative and requests resync for newer durable state', () => {
+    const snapshot = {
+      schemaVersion: 1 as const,
+      conversationId: 'conversation-1',
+      version: 2,
+      messages: [],
+      runs: [],
+      idempotency: {},
+      updatedAt: emittedAt,
+    };
+    const loaded = reduceAgentControlSnapshot(createAgentControlView(), snapshot);
+    expect(loaded.cursor.conversations['conversation-1']?.snapshotVersion).toBe(2);
+    const stale = reduceAgentControlEvent(loaded, runState(4));
+    expect(stale.conversations['conversation-1']?.resyncRequired).toBe(true);
+    const refreshed = reduceAgentControlSnapshot(stale, { ...snapshot, version: 4 });
+    expect(refreshed.conversations['conversation-1']?.resyncRequired).toBe(false);
+    expect(refreshed.cursor.conversations['conversation-1']?.snapshotVersion).toBe(4);
+  });
+
   test('detects durable and transient duplicates or reconnect gaps', () => {
     const first = advanceAgentRuntimeEventCursor({}, runState(2));
     expect(first.status).toBe('accepted');

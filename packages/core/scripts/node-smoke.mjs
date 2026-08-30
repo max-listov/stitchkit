@@ -33,6 +33,8 @@ const entrypoints = [
   'stitchkit/application/grammy',
   'stitchkit/application/opentelemetry',
   'stitchkit/agent-runtime',
+  'stitchkit/agent-runtime/harness',
+  'stitchkit/agent-runtime/coding-tools',
   'stitchkit/agent-runtime/openrouter',
   'stitchkit/agent-runtime/sqlite/node',
   'stitchkit/testing',

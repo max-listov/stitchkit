@@ -250,6 +250,10 @@ const realtimeContract = defineRealtimeContract({
       args: z.tuple([z.number(), z.string()]),
       ack: z.string(),
     },
+    inspect: {
+      args: z.tuple([z.number()]),
+      ack: z.object({ ok: z.literal(true) }),
+    },
     disconnectBeforeAck: {
       args: z.tuple([]),
       ack: z.object({ accepted: z.boolean() }),
@@ -304,6 +308,9 @@ realtime.onConnection((connection) => {
   });
   events.on('delayed', (delayMs, value, acknowledge) => {
     setTimeout(() => acknowledge(value), delayMs);
+  });
+  events.on('inspect', (delayMs, acknowledge) => {
+    setTimeout(() => acknowledge({ ok: true }), delayMs);
   });
   events.on('disconnectBeforeAck', () => {
     raw.disconnect(true);
@@ -557,6 +564,163 @@ describe('Zod-first realtime contracts', () => {
       .filter(({ phase }) => phase === 'settled')
       .map(({ requestId }) => requestId);
     expect(settledOrder).toEqual(handoffOrder.slice(0, 2).reverse());
+    client.disconnect();
+  });
+
+  test('request-scoped phase hooks correlate reordered identical acknowledgements locally', async () => {
+    const all: RealtimeRequestPhaseEvent[] = [];
+    const slow: RealtimeRequestPhaseEvent[] = [];
+    const fast: RealtimeRequestPhaseEvent[] = [];
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onRequestPhase: (observation) => {
+        all.push(observation);
+      },
+    });
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+
+    const slowResult = client.request('inspect', 40, {
+      timeoutMs: 500,
+      onPhase: (observation) => {
+        slow.push(observation);
+      },
+    });
+    const fastResult = client.request('inspect', 5, {
+      timeoutMs: 500,
+      onPhase: (observation) => {
+        fast.push(observation);
+      },
+    });
+    expect(await fastResult).toEqual({ ok: true });
+    expect(await slowResult).toEqual({ ok: true });
+
+    expect(slow.map(({ phase }) => phase)).toEqual([
+      'engine-handoff',
+      'engine-ack-received',
+      'settled',
+    ]);
+    expect(fast.map(({ phase }) => phase)).toEqual([
+      'engine-handoff',
+      'engine-ack-received',
+      'settled',
+    ]);
+    expect(new Set(slow.map(({ requestId }) => requestId)).size).toBe(1);
+    expect(new Set(fast.map(({ requestId }) => requestId)).size).toBe(1);
+    const [slowFirst] = slow;
+    const [fastFirst] = fast;
+    if (!slowFirst || !fastFirst) throw new Error('request phase hooks did not run');
+    expect(slowFirst.requestId).not.toBe(fastFirst.requestId);
+    expect(
+      all.filter(({ phase }) => phase === 'settled').map(({ requestId }) => requestId),
+    ).toEqual([fastFirst.requestId, slowFirst.requestId]);
+    expect(Object.keys(slowFirst).sort()).toEqual([
+      'elapsedMs',
+      'event',
+      'phase',
+      'requestId',
+    ]);
+    client.disconnect();
+  });
+
+  test('request-scoped hooks survive reentrancy and close every terminal path once', async () => {
+    const shared: RealtimeRequestPhaseEvent[] = [];
+    const nested: RealtimeRequestPhaseEvent[] = [];
+    const invalid: RealtimeRequestPhaseEvent[] = [];
+    const late: RealtimeRequestPhaseEvent[] = [];
+    const nestedResult = Promise.withResolvers<{ accepted: boolean }>();
+    let nestedStarted = false;
+    const sharedHook = (observation: RealtimeRequestPhaseEvent): void => {
+      shared.push(observation);
+      if (observation.phase === 'engine-handoff' && !nestedStarted) {
+        nestedStarted = true;
+        void client
+          .request(
+            'ping',
+            { n: 2 },
+            {
+              timeoutMs: 500,
+              onPhase: (phase) => {
+                nested.push(phase);
+              },
+            },
+          )
+          .then(nestedResult.resolve, nestedResult.reject);
+      }
+      throw new Error('request observer failure');
+    };
+    const client = createRealtimeClient(realtimeContract, {
+      url: REALTIME_URL,
+      transports: ['websocket'],
+      onRequestPhase: sharedHook,
+      onRejected: () => undefined,
+    });
+    const disconnected: RealtimeRequestPhaseEvent[] = [];
+    await expect(
+      client.request(
+        'ping',
+        { n: 1 },
+        {
+          timeoutMs: 500,
+          onPhase: (phase) => {
+            disconnected.push(phase);
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(RealtimeRequestDisconnectedError);
+    expect(disconnected.map(({ phase }) => phase)).toEqual(['disconnected']);
+
+    const connected = whenConnected(client);
+    client.connect();
+    await connected;
+    expect(
+      await client.request('ping', { n: 1 }, { timeoutMs: 500, onPhase: sharedHook }),
+    ).toEqual({ accepted: true });
+    expect(await within(nestedResult.promise, 'nested request')).toEqual({ accepted: true });
+    const sharedByRequest = Map.groupBy(shared, ({ requestId }) => requestId);
+    expect(sharedByRequest.size).toBe(3);
+    expect(
+      [...sharedByRequest.values()].map((events) => events.map(({ phase }) => phase)),
+    ).toContainEqual(['disconnected']);
+    expect(
+      [...sharedByRequest.values()].filter(
+        (events) =>
+          events.map(({ phase }) => phase).join(',') ===
+          'engine-handoff,engine-ack-received,settled',
+      ).length,
+    ).toBe(2);
+    expect(nested.map(({ phase }) => phase)).toEqual([
+      'engine-handoff',
+      'engine-ack-received',
+      'settled',
+    ]);
+
+    await expect(
+      client.request('invalidAck', {
+        timeoutMs: 500,
+        onPhase: (phase) => {
+          invalid.push(phase);
+        },
+      }),
+    ).rejects.toBeInstanceOf(RealtimeRequestInvalidAcknowledgementError);
+    expect(invalid.map(({ phase }) => phase)).toEqual([
+      'engine-handoff',
+      'engine-ack-received',
+      'settled',
+    ]);
+
+    await expect(
+      client.request('lateAck', {
+        timeoutMs: 10,
+        onPhase: (phase) => {
+          late.push(phase);
+        },
+      }),
+    ).rejects.toBeInstanceOf(RealtimeRequestTimeoutError);
+    await Bun.sleep(60);
+    expect(late.map(({ phase }) => phase)).toEqual(['engine-handoff', 'timeout']);
     client.disconnect();
   });
 

@@ -1,7 +1,10 @@
 import type { ZodType, z } from 'zod';
 import type { AgentMessage, AgentSnapshot, AgentUsage } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
-import { isSpeakableAssistantStatus } from './terminal-status';
+import {
+  type AgentHistoryEvidencePolicy,
+  isCompleteAgentHistoryTurn,
+} from './terminal-status';
 
 export interface AgentCompactionContext<SUMMARY> {
   conversationId: string;
@@ -14,6 +17,7 @@ export interface AgentCompactionContext<SUMMARY> {
 export interface StructuredCompactionConfig<SUMMARY_SCHEMA extends ZodType> {
   schema: SUMMARY_SCHEMA;
   keepRecentTurns: number;
+  evidencePolicy?: AgentHistoryEvidencePolicy;
   /** Total summarize/CAS attempts. A conflict always recomputes from a fresh snapshot. */
   maxAttempts?: number;
   threshold(input: AgentSnapshot): boolean | Promise<boolean>;
@@ -52,33 +56,17 @@ interface MessageTurn {
   complete: boolean;
 }
 
-function providerValidTurn(messages: readonly AgentMessage[]): boolean {
-  if (messages[0]?.role !== 'user') return false;
-  const assistant = messages.find((message) => message.role === 'assistant');
-  // A turn whose answer never reaches the model is not a turn that may be
-  // summarised into one: compacting it would feed the discarded text to the
-  // summariser and delete the durable record in `replacedMessageIds`.
-  if (!assistant || !isSpeakableAssistantStatus(assistant.status)) return false;
-  const calls = new Set(
-    assistant.parts.filter((part) => part.type === 'tool-call').map((part) => part.callId),
-  );
-  const results = new Set(
-    assistant.parts.filter((part) => part.type === 'tool-result').map((part) => part.callId),
-  );
-  return (
-    [...calls].every((callId) => results.has(callId)) &&
-    [...results].every((callId) => calls.has(callId))
-  );
-}
-
-function groupProviderTurns(messages: readonly AgentMessage[]): MessageTurn[] {
+function groupProviderTurns(
+  messages: readonly AgentMessage[],
+  evidencePolicy: AgentHistoryEvidencePolicy | undefined,
+): MessageTurn[] {
   const turns: MessageTurn[] = [];
   let current: AgentMessage[] = [];
   for (const message of messages) {
     if (message.role === 'user' && current.length > 0) {
       turns.push({
         messages: current,
-        complete: providerValidTurn(current),
+        complete: isCompleteAgentHistoryTurn(current, evidencePolicy),
       });
       current = [];
     }
@@ -87,7 +75,7 @@ function groupProviderTurns(messages: readonly AgentMessage[]): MessageTurn[] {
   if (current.length > 0) {
     turns.push({
       messages: current,
-      complete: providerValidTurn(current),
+      complete: isCompleteAgentHistoryTurn(current, evidencePolicy),
     });
   }
   return turns;
@@ -96,9 +84,10 @@ function groupProviderTurns(messages: readonly AgentMessage[]): MessageTurn[] {
 function eligibleForCompaction(
   messages: readonly AgentMessage[],
   keepRecentTurns: number,
+  evidencePolicy: AgentHistoryEvidencePolicy | undefined,
 ): AgentMessage[] {
   const withoutLeadingSummary = messages[0]?.role === 'summary' ? messages.slice(1) : messages;
-  const turns = groupProviderTurns(withoutLeadingSummary);
+  const turns = groupProviderTurns(withoutLeadingSummary, evidencePolicy);
   const firstIncomplete = turns.findIndex((turn) => !turn.complete);
   const completeTurns = firstIncomplete === -1 ? turns : turns.slice(0, firstIncomplete);
   const eligibleCount = Math.max(0, completeTurns.length - keepRecentTurns);
@@ -144,6 +133,7 @@ export function structuredCompaction<SUMMARY_SCHEMA extends ZodType>(
       const eligibleMessages = eligibleForCompaction(
         snapshot.messages,
         config.keepRecentTurns,
+        config.evidencePolicy,
       );
       if (eligibleMessages.length === 0) {
         return { outcome: 'nothing_eligible', snapshot, attempts: attempt };

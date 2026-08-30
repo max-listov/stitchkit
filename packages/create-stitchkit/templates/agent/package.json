@@ -1,0 +1,35 @@
+{
+  "name": "stitchkit-agent-starter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "catalog": {
+    "@stitchkit/tui": "^0.1.0"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "check": "bun x tsgo --noEmit",
+    "lint": "bun x biome check --error-on-warnings .",
+    "lint:fix": "bun x biome check --write .",
+    "test": "bun test",
+    "build": "bun build src/index.ts --outdir dist --target bun --packages external"
+  },
+  "dependencies": {
+    "@stitchkit/tui": "file:../../../tui",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "ai": "^7.0.84",
+    "stitchkit": "file:../../../core",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.14",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "packageManager": "bun@1.3.14"
+}

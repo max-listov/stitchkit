@@ -76,10 +76,10 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RealtimeAcknowledgedEvent` | _type_ | event-name union restricted to definitions with an `ack` schema |
 | `RealtimeAcknowledgement` | _type_ | validated acknowledgement output inferred from an event definition |
 | `RealtimeRequestArguments` | _type_ | request arguments inferred from an acknowledged event tuple |
-| `RealtimeRequestOptions` | _type_ | finite positive native acknowledgement `timeoutMs` |
+| `RealtimeRequestOptions` | _type_ | finite positive native acknowledgement `timeoutMs` plus an optional invocation-scoped `onPhase` observer |
 | `RealtimeRequestPhaseSchema` / `RealtimeRequestPhase` | schema / _type_ | closed `engine-handoff` / `engine-ack-received` / `settled` / `timeout` / `disconnected` lifecycle |
 | `RealtimeRequestPhaseEventSchema` / `RealtimeRequestPhaseEvent` | schema / _type_ | strict metadata-only `{ requestId, event, phase, elapsedMs }` observation |
-| `RealtimeRequestPhaseHook` | _type_ | isolated sync/async observer accepted by `RealtimeClientOptions.onRequestPhase` |
+| `RealtimeRequestPhaseHook` | _type_ | isolated sync/async observer accepted globally by `RealtimeClientOptions.onRequestPhase` or per invocation by `RealtimeRequestOptions.onPhase` |
 | `RealtimeRequestTimeoutError` | class | stable `REALTIME_REQUEST_TIMEOUT` rejection |
 | `RealtimeRequestDisconnectedError` | class | stable `REALTIME_REQUEST_DISCONNECTED` rejection, including an immediate disconnected call |
 | `RealtimeRequestInvalidAcknowledgementError` | class | invalid ack was reported through `onRejected` and the request rejected |
@@ -490,6 +490,29 @@ cutovers are covered by the executable
 | `CreditWindow` / `CreditWindowSnapshot` / `CreditWindowSnapshotSchema` | _type_ / schema | byte-credit handle and absolute accounting record |
 | `CreditAcquireResult` / `CreditLease` | _type_ | reasoned refusal or idempotently releasable byte-credit lease |
 
+### Bounded diagnostic journal
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createDiagnosticJournal` | function | create one schema-owned FIFO JSONL writer with bounded retained memory, exclusive local path ownership and finite rotation |
+| `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
+| `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
+| `DiagnosticJournalSubmitResultSchema` / `DiagnosticJournalSubmitResult` | schema / _type_ | accepted epoch/sequence or explicit invalid, oversized, capacity, closed or failed refusal |
+| `DiagnosticJournalStatusSchema` / `DiagnosticJournalStatus` | schema / _type_ | state, limits, exact admission/write/failure counters, pending ownership, rotations, partial tails and last safe sequences |
+| `DiagnosticJournalFrameSchema` / `DiagnosticJournalFrame` | schema / _type_ | version-1 JSONL frame carrying process epoch, contiguous accepted sequence and schema-validated JSON event |
+| `DiagnosticJournalWaitResultSchema` / `DiagnosticJournalWaitResult` | schema / _type_ | flush settlement boundary with truthful settled, timed-out or cancelled result |
+| `DiagnosticJournalCloseResultSchema` / `DiagnosticJournalCloseResult` | schema / _type_ | physical close or caller timeout/cancellation without pretending an active write stopped |
+| `DiagnosticJournalStateSchema` / `DiagnosticJournalState` | schema / _type_ | `open \| draining \| closed \| failed` |
+| `DiagnosticJournalRefusalReasonSchema` / `DiagnosticJournalRefusalReason` | schema / _type_ | `closed \| failed \| invalid \| oversized \| item-capacity \| byte-capacity` |
+| `DiagnosticJournalFailurePhaseSchema` / `DiagnosticJournalFailurePhase` | schema / _type_ | internal `write \| rotation \| close` failure phase exposed only to status and the isolated observer |
+| `DiagnosticJournalWaitOptions` / `DiagnosticJournalFailure` | _type_ | caller wait signal/timeout and isolated internal failure callback record |
+
+`accepted` is bounded in-memory admission and `written` is completed append, not `fsync` or durable
+delivery. The journal has no reader/replay/upload API. See the
+[guide](../guide/application-kernel.md#bounded-local-diagnostic-journal),
+[architecture](../architecture/diagnostic-journal.md) and [ADR
+0134](../decisions/0134-diagnostic-journal-is-bounded-local-evidence.md).
+
 ### Managed schedules
 
 | Export | Kind | Summary |
@@ -601,6 +624,21 @@ Server-only optional application runtime. See the
 | `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
 | `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
 | `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
+| `AgentModelCatalogSchema` / `AgentModelCatalog` | schema / _type_ | provider-neutral complete/partial model catalog with separately sourced popularity, metrics, prices and observation time |
+| `AgentModelCatalogEntrySchema` / `AgentModelCatalogEntry` | schema / _type_ | one canonical provider model descriptor with optional price, popularity and metric evidence |
+| `AgentModelPriceSchema` / `AgentModelPrice` | schema / _type_ | normalized per-token input/output pricing and source currency |
+| `AgentModelPopularitySchema` / `AgentModelPopularity` | schema / _type_ | independently sourced ranked popularity observation with window and timestamp |
+| `AgentModelMetricSchema` / `AgentModelMetric` | schema / _type_ | independently sourced benchmark measurement with provenance and observation time |
+| `AgentModelCatalogProvider` | _type_ | abortable live catalog loader supplied by a provider adapter or application |
+| `AgentModelSearchInputSchema` / `AgentModelSearchInput` | schema / _type_ | bounded catalog text query and result ceiling |
+| `AgentModelSearchResultSchema` / `AgentModelSearchResult` | schema / _type_ | exact bounded catalog projection with total match count |
+| `searchAgentModelCatalog` | function | deterministic bounded search over a loaded canonical catalog |
+| `AgentModelSelectionSchema` / `AgentModelSelection` / `AgentModelSelectionStore` | schema / _type_ | durable per-conversation model choice; runtime resolvers receive run and snapshot to recover the model pinned to input metadata |
+| `createMemoryAgentModelSelectionStore` | function | process-local selection reference adapter |
+| `AgentConversationReader` | _type_ | optional bounded conversation-summary and message-history reader; not part of the required runtime store contract |
+| `AgentConversationSummarySchema` / `AgentConversationSummary` | schema / _type_ | bounded durable conversation list item with version, activity and preview |
+| `AgentConversationPageSchema` / `AgentConversationPage` | schema / _type_ | cursor-paged conversation summaries |
+| `AgentConversationMessagePageSchema` / `AgentConversationMessagePage` | schema / _type_ | cursor-paged durable message history |
 | `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware signed context budget; irreducible reservation deficits are `oversized`, not compactable history |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
@@ -704,7 +742,10 @@ History and context-budget exports are `projectAgentHistoryDetailed`,
 `AgentPromptBudget`, `AgentPromptSection`, `AgentPromptSectionContext`, `AgentTokenCount`,
 `AgentTokenCountSchema`, `ComposeAgentPromptOptions` and `ComposedAgentPrompt`. Whole-turn history
 selection never splits a tool chronology and reports why every canonical record was retained or
-removed.
+removed. `AgentHistoryEvidencePolicy` is the shared opt-in for marked failed-assistant evidence in
+projection, budgeting and structured compaction; `isAssistantHistoryEvidence` applies it. The
+compatibility default omits it. Approval message schemas are
+`AgentToolApprovalRequestPartSchema` and `AgentToolApprovalResponsePartSchema`.
 
 Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
 `AgentModelCapabilitySchema`, `AgentModelDescriptor`,
@@ -731,12 +772,69 @@ Managed effects and operator telemetry additionally export `AgentToolFenceConfig
 may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
 operator-only observability sink explicitly opts in.
 
+## `stitchkit/agent-runtime/harness`
+
+Server-only evolving facade over the canonical Agent runtime. It requires the optional `ai` peer
+and introduces no store, queue or model-provider implementation of its own.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createHeadlessAgentHarness` | function | compose one `createAgentRuntime` with caller-supplied model resolution, bounded resources, tools and prompt policy; adds canonical `snapshot` |
+| `HeadlessAgentHarness` / `HeadlessAgentHarnessConfig` | _type_ | runtime facade and injected ownership boundary |
+| `HeadlessAgentModelResolver` | _type_ | per-run preflight/resolve port returning the actual `AgentResolvedModel` |
+| `AgentHarnessResourceSchema` / `AgentHarnessResource` | schema / _type_ | strict instruction, skill or resource with name, text and provenance |
+| `AgentHarnessResourceKindSchema` / `AgentHarnessResourceKind` | schema / _type_ | closed `instruction`, `skill` or `resource` vocabulary |
+| `AgentHarnessResourceResult` | _type_ | one loader result containing resources and diagnostics |
+| `AgentHarnessResourceDiagnosticSchema` / `AgentHarnessResourceDiagnostic` | schema / _type_ | bounded caller evidence; observer failure is isolated |
+| `AgentHarnessLimitsSchema` / `AgentHarnessLimits` | schema / _type_ | resource count, total UTF-8 bytes and diagnostic ceilings |
+| `AgentHarnessProfileEventSchema` / `AgentHarnessProfileEvent` | schema / _type_ | actual model descriptor, non-content resource provenance and sorted direct tool identities applied to one run |
+| `createAgentHarnessFileResources` | function | discover explicit instruction/skill/resource roots with symlink containment, bounded summaries and direct exact reads |
+| `AgentHarnessFileRootSchema` / `AgentHarnessFileRoot` | schema / _type_ | caller-owned absolute path, public root ID and resource kind |
+| `AgentHarnessFileLimitsSchema` / `AgentHarnessFileLimits` | schema / _type_ | file count, depth, per-file and aggregate byte ceilings |
+| `AgentHarnessFileResources` | _type_ | loader plus direct `read_resource` definition for lazy exact content |
+| `createAgentHarnessControlServer` | function | transport-neutral correlated requests, observer attachments and exclusive controller leases |
+| `AgentHarnessControlServer` / `AgentHarnessControlConnection` | _type_ | host server and detachable connection lifecycle; `deliver` is serialized, while required out-of-band `onOverflow` closes/aborts a slow transport before reconnect |
+| `AgentHarnessControlServerConfig` | _type_ | explicit per-connection pending-event bound for failure-isolated control delivery |
+| `AgentHarnessPendingApproval` / `AgentHarnessApprovalDecision` | _type_ | exact durable pending request and allow/deny successor input |
+
+Resources default to at most 64 entries, 1 MiB of total UTF-8 text and 128 diagnostics. Duplicate
+names and exceeded bounds fail before the provider step. Recovery remains the underlying runtime's
+explicit policy; use the Bun or Node SQLite leaf for durable reopen.
+
+## `stitchkit/agent-runtime/coding-tools`
+
+Server-only evolving, peer-free direct runtime tools. `createAgentCodingTools(config)` returns
+`read_file`, `write_file`, `search_files`, `apply_patch`, optional `run_command` and, when an
+artifact store is supplied, `read_output`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions |
+| `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
+| `AgentCodingToolConfig` | _type_ | absolute root, required authorization callback, finite executable alias map, exact child environment and optional limits |
+| `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |
+| `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout ceilings |
+| `AgentCodingArtifactStore` | _type_ | host-owned opaque artifact write and bounded read boundary |
+| `FileReadInputSchema` / `FileReadOutputSchema` | schema | bounded strict-UTF-8 byte slice; offsets must align with UTF-8 code-point boundaries |
+| `FileWriteInputSchema` / `FileWriteOutputSchema` | schema | create-only by default or explicit atomic replacement; symlink targets fail closed |
+| `createShellInputSchema` / `ShellOutputSchema` | schema | enumerated executable alias plus arguments and concrete relative cwd; explicit exited/timeout/output-limit/cancelled outcome |
+
+The default ceilings are 4,096 path bytes, 256 KiB read/write/output, 128 shell arguments, 64 KiB
+of aggregate argument text, 4 MiB per artifact and 30 seconds. The root is a path-resolution
+boundary, not an OS sandbox; executable behavior, process
+isolation, credentials and external-effect idempotency remain host responsibilities.
+
 ## `stitchkit/agent-runtime/browser`
 
 Browser-safe canonical agent data. It re-exports the run, message, part, usage,
 terminal and provider-envelope schemas/types listed under
 `stitchkit/agent-runtime`, together with all runtime delivery event schemas,
-`AgentRuntimeEventCursorSchema`, `advanceAgentRuntimeEventCursor` and
+`AgentRuntimeEventCursorSchema`, `advanceAgentRuntimeEventCursor`,
+`AgentControlRequestSchema` / `AgentControlRequest`, `AgentControlResponseSchema` /
+`AgentControlResponse`, `AgentControlDeliverySchema` / `AgentControlDelivery`, `AgentMultiSessionCursorSchema` /
+`AgentMultiSessionCursor`, `AgentConversationView`, `AgentControlView`,
+`advanceAgentMultiSessionCursor`, `createAgentControlView`, `reduceAgentControlSnapshot`,
+`reduceAgentControlEvent` and
 `agentDurableEventId`. It imports no model provider, executor, store, event sink
 or Node context module.
 
@@ -750,7 +848,9 @@ Use this entrypoint from client components and shared DTO packages. The full
 | Export | Kind | Summary |
 |--------|------|---------|
 | `openRouterProvider` | function | isolated `@openrouter/ai-sdk-provider` language-model factory |
+| `openRouterModelCatalog` | function | complete tool-capable text catalog plus independent weekly popularity and available benchmark observations |
 | `OpenRouterProviderSettings` | _type_ | official provider settings accepted by the factory |
+| `OpenRouterModelCatalogOptions` / `OpenRouterCatalogFetch` | _type_ | credential, timeout, clock and injected fetch boundary for catalog loading |
 
 ## `stitchkit/agent-runtime/sqlite/bun`
 
@@ -759,12 +859,54 @@ loaded by the neutral, browser or Node runtime surfaces.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v1 and return `{ store, close }` |
+| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v1 and return `{ store, conversations, close }` |
 | `BunSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional create and initialization policies |
 | `createSqliteAgentRuntimeStore` | function | build the normalized store over an injected synchronous SQLite boundary |
 | `initializeAgentRuntimeSqlite` | function | initialize or validate only Stitchkit's namespaced SQLite schema |
 | `AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
 | `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
+
+---
+
+## `@stitchkit/tui`
+
+Separate optional evolving Bun/OpenTUI package over a caller-composed headless harness.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineAgentTui` | function | typed config for title/theme/status rows, model catalog, context, commands, runtime bundle and optional host-evidenced recovery policy; the default never requeues acquired effects |
+| `runAgentTui` | function | start one fresh durable conversation and terminal controller, recover durable work and publish its authenticated local session; `initialConversationId` is an explicit resume override |
+| `defineTuiCommand` / `resolveTuiCommand` | function | typed composable slash-command registry; unknown slash input remains an ordinary model prompt |
+| `createAgentTuiController` | function | single admission, selection, approval, interruption and conversation-switch owner over the harness |
+| `startAgentTuiSessionHost` / `createAgentTuiClient` | function | authenticated mode-`0600` Unix-socket host/client for status, submit and interrupt through that controller |
+| `listAgentTuiSessions` | function | discover live local terminal session IDs and their current conversation |
+| `createAgentTuiComposer` / `navigateAgentTuiHistory` | function | multiline draft and reversible prompt-history state |
+| `defaultAgentTuiStatusLine` / `AgentTuiStatusLineFormatter` | function / _type_ | terminal-native default rows and a host formatter over model capacity, durable snapshot, activity, workspace and local identities; `statusLine: false` hides the rows |
+| `createAgentTuiDiagnosticRecorder` / `AgentTuiDiagnosticEventSchema` | function / schema | bounded per-session metadata journal that rejects prompt, reasoning, tool-input and provider-cause payloads before disk admission |
+
+The `stitchkit-agent` binary loads `stitchkit.agent.ts` by default and also exposes `sessions`,
+`status`, `send` and `interrupt`. `--workspace` addresses a host outside the caller's cwd,
+`send --idempotency-key` accepts caller-owned retry identity, and `interrupt` defaults to the
+active run returned by `status`. Session descriptors and sockets are local control credentials,
+not a remote API.
+Interactive `/resume` and `/sessions` open the durable conversation picker. `/clear` creates a new
+conversation and keeps the previous one available there; it is not a viewport-only operation.
+The slash palette owns its highlighted selection: Up/Down move it, Tab completes it, Enter runs
+the exact command and Escape dismisses it. Partial input is never submitted while the palette is
+active; unknown slash text with no match remains an ordinary model prompt.
+
+### `@stitchkit/tui/core`
+
+Renderer-neutral state only. This entrypoint imports neither React/OpenTUI nor the agent runtime.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createTerminalCollection` / `reduceTerminalCollection` | function | identity-stable live collection selection, reconciliation, windowing and resize |
+| `createTerminalFeedViewport` / `reduceTerminalFeedViewport` | function | generic follow-tail, history anchoring, unseen and bounded visible-range state |
+| `createTerminalPaneState` / `reduceTerminalPaneState` | function | bounded split-pane focus, resize and single-pane collapse |
+| `createTerminalCommandPalette` / `terminalCommandMatches` | function | bounded command filtering and keyboard selection over a collision-validated registry |
+| `resolveExactTerminalCommand` / `validateTerminalCommands` | function | exact dispatch and fail-closed name/alias validation |
+| `createTerminalOperationState` / `reduceTerminalOperationState` | function | confirmation and single-pending-operation lifecycle |
 
 ## `stitchkit/agent-runtime/sqlite/node`
 

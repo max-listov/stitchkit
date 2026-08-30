@@ -23,6 +23,8 @@ Applications that repeat dependency-aware startup, readiness, admission,
 periodic timers and ordered shutdown may opt into the server-only managed
 application kernel. It composes resources inside one process; durable work,
 provider policy, process supervision and deployment remain outside Stitchkit.
+Applications may also attach a bounded local diagnostic journal to that server-only boundary; its
+ordered files are finite process evidence, never canonical or durable domain state.
 
 ## The problem
 
@@ -64,8 +66,8 @@ client. One source of truth; the transports cannot drift.
   retain durable jobs, provider protocols, restart policy and process placement.
 - **Every entrypoint says how settled it is.** The contract, HTTP, client, tool,
   CLI, observability and testing surfaces are **stable**: they change rarely and
-  only for a reason worth a migration. The declaration, the agent runtime and the application
-  kernel are **evolving**: their shape is still being found and may be redefined
+  only for a reason worth a migration. The declaration, the agent runtime (including its harness
+  and coding-tool leaves) and the application kernel are **evolving**: their shape is still being found and may be redefined
   in any minor, always with a marked breaking change and a migration section,
   never silently. Both are legitimate to build on — the declaration exists so
   the choice is informed rather than discovered. Promoting a surface from
@@ -79,7 +81,13 @@ clients, Socket.IO, MCP contract and native tools, MCP Apps resources, agent
 tools, CLI generation and request/tool observability. The optional agent application runtime is a
 public server-only package surface. Its protocol, persistence reducer, recovery, race harness and
 packed Bun/Node proof ship as one coherent slice; consumer-owned database, domain and transport
-policy remain outside core.
+policy remain outside core. Its headless facade packages lazy resources, signed approval
+continuations and reconnectable control without becoming a process supervisor; its isolated
+coding-tool leaf requires host authorization and explicit search, patch, output and time bounds.
+An optional `@stitchkit/tui` package projects those headless contracts into a maintained terminal
+host with one controller, durable model selection and authenticated local attachment. Rendering
+dependencies and provider/tool policy stay outside core; applications can keep using the headless
+runtime or `mountAgent` directly.
 
 A project also describes itself once. `stitchkit/declaration` ships the project
 declaration — identity, roles, build, runtime requirements, release steps and
@@ -110,8 +118,11 @@ the published package before release.
 - Grow the packed official starter only where it clarifies already-shipped
   capabilities without moving frontend infrastructure into the framework.
 - Remove copied agent-runtime mechanics from consuming applications through a
-  server-only additive entrypoint, while retaining `mountAgent` as the smaller
-  independent composition path.
+  server-only additive harness, while retaining `createAgentRuntime` and `mountAgent` as smaller
+  independent composition paths and keeping process placement, model catalogs, credentials and
+  workspace isolation with the embedding host. Reuse optional terminal mechanics through
+  the renderer-neutral `@stitchkit/tui/core` state layer or the maintained root agent host,
+  not copied application shells, a second loop or an integrated god factory.
 - Remove copied process lifecycle, timer, admission and operational-projection
   mechanics through an optional provider-neutral application entrypoint, while
   retaining the lower-level server and signal primitives.

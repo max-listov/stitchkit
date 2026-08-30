@@ -16,6 +16,47 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.69.0
+
+### Direct coding-tool operation names
+
+`createAgentCodingTools` no longer prefixes durable operation identity with `coding_`, and the
+unguarded exact-string edit tool is gone. Update approval maps, presenters and tests together:
+
+```ts
+// before
+{ coding_read_file: 'approved', coding_search: 'approved', coding_patch_file: 'user-approval' }
+
+// after
+{ read_file: 'approved', search_files: 'approved', apply_patch: 'user-approval' }
+```
+
+The full mapping is `coding_read_file → read_file`, `coding_write_file → write_file`,
+`coding_search → search_files`, `coding_patch_file → apply_patch`, `coding_shell → run_command`,
+`coding_read_artifact → read_output` and `harness_read_resource → read_resource`. Replace
+`coding_edit_file` with `read_file` followed by guarded `apply_patch`; `read_file` now returns the
+required SHA-256. If the host declares no executable aliases, expect `run_command` to be absent.
+
+### Durable Agent approval message variants
+
+If a renderer, store adapter or export pipeline exhaustively switches over
+`AgentMessage.role`, add the `tool` branch. If it switches over
+`AgentMessagePart.type`, add `tool-approval-request` and `tool-approval-response`.
+They are durable provider-continuation evidence: preserve them in storage and provider history;
+a UI may render them as approval state or intentionally omit their visual row.
+
+```ts
+// before
+const unreachable: never = message.role
+
+// after
+if (message.role === 'tool') renderToolContinuation(message.parts)
+else renderExistingRole(message)
+```
+
+No data migration is needed. The schema still accepts all earlier records, and applications that
+do not exhaustively branch over these unions compile unchanged.
+
 ## Before you bump, if you implement an agent store
 
 One step, and it is mechanical. If your project has an `AgentRuntimeStore` — a

@@ -15,6 +15,9 @@ import {
   AcceptInputAndAssignRunSchema,
   type AcquireAgentRun,
   AcquireAgentRunSchema,
+  type AgentRecoverableDescriptor,
+  type AgentRecoverablePage,
+  AgentRecoverablePageSchema,
   type AgentRuntimeStore,
   type AgentRunView,
   AgentRunViewSchema,
@@ -72,23 +75,10 @@ export const AgentHistoryMutationSchema = z.discriminatedUnion('type', [
 
 export type AgentHistoryMutation = z.infer<typeof AgentHistoryMutationSchema>;
 
-export const AgentRecoverableDescriptorSchema = z.object({
-  conversationId: AgentRecordIdSchema,
-  run: AgentRunSchema,
-});
-
-export const AgentRecoverablePageSchema = z.object({
-  items: z.array(AgentRecoverableDescriptorSchema),
-  nextCursor: z.string().min(1).optional(),
-});
-
 const AgentRecoverableScanInputSchema = z.object({
   cursor: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(1_000),
 });
-
-export type AgentRecoverableDescriptor = z.infer<typeof AgentRecoverableDescriptorSchema>;
-export type AgentRecoverablePage = z.infer<typeof AgentRecoverablePageSchema>;
 
 export type AgentStoreCompareAndSwapResult =
   | { outcome: 'applied' }
@@ -459,7 +449,7 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
       input.run.ownerId !== undefined ||
       input.run.terminalReason !== undefined ||
       input.run.terminalPolicyName !== undefined ||
-      input.input.role !== 'user' ||
+      (input.input.role !== 'user' && input.input.role !== 'tool') ||
       input.input.status !== 'committed' ||
       input.input.runId !== undefined ||
       current.messages.some((message) => message.id === input.input.id) ||

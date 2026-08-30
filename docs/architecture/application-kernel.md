@@ -28,6 +28,10 @@ The boundary is mechanical: anything that must survive a process restart or
 coordinate replicas requires application-owned durable state. Anything that
 starts, places or replaces the process belongs to deployment tooling.
 
+Optional bounded local diagnostic evidence follows the same boundary. The
+[diagnostic journal](./diagnostic-journal.md) owns one process-local FIFO writer and finite file
+generations; it is neither canonical application state nor a durable log.
+
 ## Application state
 
 `createApplication` creates one non-restartable state machine.

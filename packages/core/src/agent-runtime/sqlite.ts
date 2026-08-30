@@ -1,10 +1,14 @@
 import { z } from 'zod';
+import {
+  AgentConversationMessagePageSchema,
+  AgentConversationPageSchema,
+  type AgentConversationReader,
+} from './conversations';
 import { AgentMessageSchema, AgentRunSchema } from './schemas';
+import { AgentRecoverableDescriptorSchema, AgentRecoverablePageSchema } from './store';
 import {
   AgentAdmissionReceiptSchema,
   AgentHistoryMutationSchema,
-  AgentRecoverableDescriptorSchema,
-  AgentRecoverablePageSchema,
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
   AgentStoredRunSchema,
@@ -34,6 +38,7 @@ export interface SqliteAgentRuntimeStoreConfig {
 
 export interface SqliteAgentRuntimeStore {
   store: ReturnType<typeof createAgentRuntimeStore<AgentRuntimeSqliteDatabase>>;
+  conversations: AgentConversationReader;
   /** Refuse new work, wait for queued operations, then close the owned connection. */
   close(): Promise<void>;
 }
@@ -59,6 +64,15 @@ const RecoverableRowSchema = z.object({
 });
 const MetaRowSchema = z.object({ value: z.string() });
 const TableRowSchema = z.object({ name: z.string() });
+const ConversationHeadRowSchema = z.object({
+  conversation_id: z.string(),
+  version: z.number().int().nonnegative(),
+});
+const CountRowSchema = z.object({ count: z.number().int().nonnegative() });
+const MessagePageRowSchema = z.object({
+  position: z.number().int().nonnegative(),
+  payload: z.string(),
+});
 
 const SCHEMA_VERSION = 1;
 const TABLES = [
@@ -105,6 +119,27 @@ function recoveryCursor(conversationId: string, runId: string): string {
 
 function parseRecoveryCursor(cursor: string): readonly [string, string] {
   return z.tuple([z.string().min(1), z.string().min(1)]).parse(parseJson(cursor));
+}
+
+function conversationCursor(conversationId: string): string {
+  return encodeJson([conversationId]);
+}
+
+function parseConversationCursor(cursor: string): string {
+  return z.tuple([z.string().min(1)]).parse(parseJson(cursor))[0];
+}
+
+function messageCursor(position: number): string {
+  return encodeJson([position]);
+}
+
+function parseMessageCursor(cursor: string): number {
+  return z.tuple([z.int().nonnegative()]).parse(parseJson(cursor))[0];
+}
+
+function messagePreview(message: z.infer<typeof AgentMessageSchema>): string {
+  const text = message.parts.find((part) => part.type === 'text');
+  return text?.type === 'text' ? text.text.slice(0, 160) : message.role;
 }
 
 /**
@@ -522,6 +557,102 @@ export function createSqliteAgentRuntimeStore(
 
   return {
     store: createAgentRuntimeStore(driver),
+    conversations: {
+      list: (input) =>
+        serial(async () => {
+          if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+            throw new TypeError('Conversation page limit must be between 1 and 1000');
+          }
+          const cursor = input.cursor ? parseConversationCursor(input.cursor) : undefined;
+          const search = input.search?.trim();
+          const clauses = [
+            ...(cursor ? ['conversation_id > ?'] : []),
+            ...(search ? ['instr(conversation_id, ?) > 0'] : []),
+          ];
+          const parameters: AgentRuntimeSqliteValue[] = [
+            ...(cursor ? [cursor] : []),
+            ...(search ? [search] : []),
+            input.limit + 1,
+          ];
+          const rows = database
+            .prepare(`
+              SELECT conversation_id, version FROM stitchkit_agent_runtime_heads
+              ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
+              ORDER BY conversation_id ASC LIMIT ?
+            `)
+            .all(...parameters)
+            .map((row) => ConversationHeadRowSchema.parse(row));
+          const hasMore = rows.length > input.limit;
+          const pageRows = rows.slice(0, input.limit);
+          const items = pageRows.map((row) => {
+            const latestRaw = database
+              .prepare(`
+                SELECT position, payload FROM stitchkit_agent_runtime_messages
+                WHERE conversation_id = ? AND active = 1
+                ORDER BY position DESC LIMIT 1
+              `)
+              .get(row.conversation_id);
+            if (missing(latestRaw)) {
+              throw new Error('Agent conversation head has no active history');
+            }
+            const latest = AgentMessageSchema.parse(
+              parseJson(MessagePageRowSchema.parse(latestRaw).payload),
+            );
+            const active = CountRowSchema.parse(
+              database
+                .prepare(`
+                  SELECT count(*) AS count FROM stitchkit_agent_runtime_runs
+                  WHERE conversation_id = ?
+                    AND state IN ('queued', 'running', 'interrupt_requested')
+                `)
+                .get(row.conversation_id),
+            );
+            return {
+              conversationId: row.conversation_id,
+              version: row.version,
+              updatedAt: latest.updatedAt,
+              preview: messagePreview(latest),
+              activeRuns: active.count,
+            };
+          });
+          const last = pageRows.at(-1);
+          return AgentConversationPageSchema.parse({
+            items,
+            ...(hasMore && last
+              ? { nextCursor: conversationCursor(last.conversation_id) }
+              : {}),
+          });
+        }),
+      messages: (input) =>
+        serial(async () => {
+          if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
+            throw new TypeError('Conversation message page limit must be between 1 and 1000');
+          }
+          const cursor = input.cursor ? parseMessageCursor(input.cursor) : undefined;
+          const before = input.direction === 'before';
+          const rows = database
+            .prepare(`
+              SELECT position, payload FROM stitchkit_agent_runtime_messages
+              WHERE conversation_id = ? AND active = 1
+              ${cursor === undefined ? '' : before ? 'AND position < ?' : 'AND position > ?'}
+              ORDER BY position ${before ? 'DESC' : 'ASC'} LIMIT ?
+            `)
+            .all(
+              input.conversationId,
+              ...(cursor === undefined ? [] : [cursor]),
+              input.limit + 1,
+            )
+            .map((row) => MessagePageRowSchema.parse(row));
+          const hasMore = rows.length > input.limit;
+          const pageRows = rows.slice(0, input.limit);
+          const ordered = before ? [...pageRows].reverse() : pageRows;
+          const boundary = pageRows.at(-1);
+          return AgentConversationMessagePageSchema.parse({
+            items: ordered.map((row) => AgentMessageSchema.parse(parseJson(row.payload))),
+            ...(hasMore && boundary ? { nextCursor: messageCursor(boundary.position) } : {}),
+          });
+        }),
+    },
     async close() {
       if (closed) return;
       closing = true;

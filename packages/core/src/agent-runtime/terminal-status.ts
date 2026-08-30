@@ -30,6 +30,70 @@ export function isSpeakableAssistantStatus(status: AgentMessage['status']): bool
   return status === 'completed' || status === 'interrupted' || status === 'committed';
 }
 
+/** One policy shared by projection, budgeting and compaction for terminal evidence. */
+export interface AgentHistoryEvidencePolicy {
+  /** Default `omit`; opt in only when a host wants safe partial failure evidence. */
+  failedAssistant?: 'omit' | 'assistant-marked';
+}
+
+export function isAssistantHistoryEvidence(
+  status: AgentMessage['status'],
+  policy: AgentHistoryEvidencePolicy | undefined,
+): boolean {
+  return (
+    isSpeakableAssistantStatus(status) ||
+    (status === 'failed' && policy?.failedAssistant === 'assistant-marked')
+  );
+}
+
+/** Validate one complete user turn across every durable assistant/tool record. */
+export function isCompleteAgentHistoryTurn(
+  messages: readonly AgentMessage[],
+  policy: AgentHistoryEvidencePolicy | undefined,
+): boolean {
+  if (messages[0]?.role !== 'user') return false;
+  const calls = new Set<string>();
+  const completed = new Set<string>();
+  const approvals = new Map<string, { callId: string; answered: boolean }>();
+  let assistantCount = 0;
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      if (!isAssistantHistoryEvidence(message.status, policy)) return false;
+      assistantCount += 1;
+    }
+    for (const part of message.parts) {
+      if (part.type === 'tool-call') {
+        if (calls.has(part.callId)) return false;
+        calls.add(part.callId);
+      } else if (part.type === 'tool-approval-request') {
+        if (
+          !calls.has(part.callId) ||
+          completed.has(part.callId) ||
+          approvals.has(part.approvalId)
+        )
+          return false;
+        if ([...approvals.values()].some((approval) => approval.callId === part.callId))
+          return false;
+        approvals.set(part.approvalId, { callId: part.callId, answered: false });
+      } else if (part.type === 'tool-approval-response') {
+        const approval = approvals.get(part.approvalId);
+        if (!approval || approval.answered) return false;
+        approval.answered = true;
+      } else if (part.type === 'tool-result') {
+        if (!calls.has(part.callId) || completed.has(part.callId)) return false;
+        const approval = [...approvals.values()].find((entry) => entry.callId === part.callId);
+        if (approval && !approval.answered) return false;
+        completed.add(part.callId);
+      }
+    }
+  }
+  return (
+    assistantCount > 0 &&
+    calls.size === completed.size &&
+    [...approvals.values()].every((approval) => approval.answered)
+  );
+}
+
 export function assistantStatus(reason: AgentTerminalReason): AgentMessage['status'] {
   if (reason === 'success' || reason === 'policy_stop' || reason === 'provider_stop') {
     return 'completed';

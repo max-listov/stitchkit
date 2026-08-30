@@ -12,6 +12,22 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Added
+
+- **An explicit Agent template opens a durable OpenRouter coding session in the terminal.**
+  `bun create stitchkit my-agent --template agent` generates an OpenTUI host over the published
+  headless harness, Bun SQLite storage, lazy skills, direct coding tools, signed approvals and
+  recovery. The default production application and its repository overlay are unchanged. The
+  Agent development source follows framework HEAD locally, while generated projects receive the
+  application starter's one canonical Stitchkit catalog target. Startup requires only an API key:
+  a bounded picker reads the current popular tool-capable models and their provider-owned context
+  windows directly from OpenRouter. → ADR 0132.
+- **The Agent template now composes the official terminal package instead of copying a product
+  shell.** `stitchkit.agent.ts` is the editable typed entrypoint; `/model`, durable sessions,
+  approvals, scrolling and local `send`/`interrupt` attachment come from `@stitchkit/tui`. The
+  generated manifest receives portable catalog dependencies while the repository fixture tests
+  both packages from source. → ADR 0133.
+
 ## [0.4.3] — 2026-08-28
 
 ### Fixed

@@ -54,6 +54,21 @@ export const AgentToolResultPartSchema = z.object({
   output: z.json().optional(),
 });
 
+export const AgentToolApprovalRequestPartSchema = z.object({
+  type: z.literal('tool-approval-request'),
+  approvalId: z.string().min(1),
+  callId: z.string().min(1),
+  isAutomatic: z.boolean().optional(),
+  signature: z.string().min(1).optional(),
+});
+
+export const AgentToolApprovalResponsePartSchema = z.object({
+  type: z.literal('tool-approval-response'),
+  approvalId: z.string().min(1),
+  approved: z.boolean(),
+  reason: z.string().min(1).optional(),
+});
+
 export const AgentOpaquePartSchema = z.object({
   type: z.literal('provider'),
   envelope: AgentProviderEnvelopeSchema,
@@ -71,13 +86,21 @@ export const AgentMessagePartSchema = z.discriminatedUnion('type', [
   AgentSourcePartSchema,
   AgentToolCallPartSchema,
   AgentToolResultPartSchema,
+  AgentToolApprovalRequestPartSchema,
+  AgentToolApprovalResponsePartSchema,
   AgentOpaquePartSchema,
   AgentControlPartSchema,
 ]);
 
 export type AgentMessagePart = z.infer<typeof AgentMessagePartSchema>;
 
-export const AgentMessageRoleSchema = z.enum(['user', 'assistant', 'system', 'summary']);
+export const AgentMessageRoleSchema = z.enum([
+  'user',
+  'assistant',
+  'tool',
+  'system',
+  'summary',
+]);
 export const AgentMessageStatusSchema = z.enum([
   'committed',
   'streaming',

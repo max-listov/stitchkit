@@ -9,7 +9,8 @@ import {
 
 const ZERO_SHA = /^0+$/;
 
-export type ReleaseTarget = 'core' | 'create-stitchkit';
+export type ReleaseTarget = 'core' | 'create-stitchkit' | 'tui';
+export type ReleaseScope = 'core' | 'starter' | 'tui';
 
 export interface ReleasePlan {
   target: ReleaseTarget;
@@ -88,6 +89,17 @@ export function shouldRunStarterHeadLane(
 }
 
 export function releasePlanForTag(tag: string): ReleasePlan {
+  if (tag.startsWith('stitchkit-tui-v')) {
+    const version = tag.slice('stitchkit-tui-v'.length);
+    if (!version) throw new Error('stitchkit TUI release tag is missing a version');
+    return {
+      target: 'tui',
+      packageName: '@stitchkit/tui',
+      packageDir: 'packages/tui',
+      changelog: 'packages/tui/CHANGELOG.md',
+      version,
+    };
+  }
   if (tag.startsWith('create-stitchkit-v')) {
     const version = tag.slice('create-stitchkit-v'.length);
     if (!version) throw new Error('create-stitchkit release tag is missing a version');
@@ -224,6 +236,7 @@ export interface MigrationChannel {
 export const MIGRATION_CHANNELS: Record<ReleaseTarget, MigrationChannel> = {
   core: { guidePath: 'docs/guide/upgrading.md', floor: '0.44.0' },
   'create-stitchkit': { guidePath: 'packages/create-stitchkit/UPGRADING.md', floor: '0.4.0' },
+  tui: { guidePath: 'packages/tui/UPGRADING.md', floor: '0.1.0' },
 };
 
 function comparePreOneVersions(left: string, right: string): number {
@@ -359,7 +372,11 @@ export function classifyPrePush(input: string): PrePushPlan {
     }
     if (remoteRef.startsWith('refs/tags/')) {
       const tag = remoteRef.slice('refs/tags/'.length);
-      if (tag.startsWith('v') || tag.startsWith('create-stitchkit-v')) {
+      if (
+        tag.startsWith('v') ||
+        tag.startsWith('create-stitchkit-v') ||
+        tag.startsWith('stitchkit-tui-v')
+      ) {
         // `git push origin <sha>:refs/tags/vX` sends a SHA the local tag name
         // may not point at — classify by what is on the wire.
         releaseTags.set(tag, localSha);
@@ -380,7 +397,7 @@ export function classifyPrePush(input: string): PrePushPlan {
  * cheap moment to prove the starter template still builds on HEAD.
  */
 export function isReleaseCommitSubject(subject: string): boolean {
-  return /^release\((?:core|starter)\):/.test(subject.trim());
+  return /^release\((?:core|starter|tui)\):/.test(subject.trim());
 }
 
 /** What the local gate runs for one push. */
@@ -421,8 +438,10 @@ export function assertTagOnReleaseHead(tagSha: string, remoteHeadSha: string): v
 }
 
 /** The commit-subject scope each tag namespace must carry. */
-export function releaseScopeForTag(tag: string): 'core' | 'starter' {
-  return tag.startsWith('create-stitchkit-v') ? 'starter' : 'core';
+export function releaseScopeForTag(tag: string): ReleaseScope {
+  if (tag.startsWith('create-stitchkit-v')) return 'starter';
+  if (tag.startsWith('stitchkit-tui-v')) return 'tui';
+  return 'core';
 }
 
 /**
@@ -485,7 +504,7 @@ export async function prePushMetadataGate(
 export function assertReleaseCommitSubject(
   subject: string,
   version: string,
-  scope: 'core' | 'starter',
+  scope: ReleaseScope,
 ): void {
   const trimmed = subject.trim();
   const expected = `release(${scope})`;
@@ -612,10 +631,10 @@ export function readFromCommit(sha: string): ReleaseTreeReader {
 }
 
 /** Which package a `release(<scope>): …` subject is releasing. */
-export function releaseScopeForSubject(subject: string): 'core' | 'starter' {
-  const match = /^release\((core|starter)\):/.exec(subject.trim());
+export function releaseScopeForSubject(subject: string): ReleaseScope {
+  const match = /^release\((core|starter|tui)\):/.exec(subject.trim());
   const scope = match?.[1];
-  if (scope !== 'core' && scope !== 'starter') {
+  if (scope !== 'core' && scope !== 'starter' && scope !== 'tui') {
     throw new Error(`not a release commit subject: ${JSON.stringify(subject.trim())}`);
   }
   return scope;
@@ -624,11 +643,13 @@ export function releaseScopeForSubject(subject: string): 'core' | 'starter' {
 const PACKAGE_DIR_FOR_SCOPE = {
   core: 'packages/core',
   starter: 'packages/create-stitchkit',
+  tui: 'packages/tui',
 } as const;
 
 /** The tag a scope and version would be released under. */
-export function releaseTagFor(scope: 'core' | 'starter', version: string): string {
-  return scope === 'core' ? `v${version}` : `create-stitchkit-v${version}`;
+export function releaseTagFor(scope: ReleaseScope, version: string): string {
+  if (scope === 'core') return `v${version}`;
+  return scope === 'starter' ? `create-stitchkit-v${version}` : `stitchkit-tui-v${version}`;
 }
 
 /** Stable identity shared by an in-flight CI attempt and later publication. */
@@ -636,7 +657,7 @@ export function releaseCandidateIdentity(
   plan: ReleasePlan,
   sha: string,
 ): ReleaseCandidateIdentity {
-  const scope = plan.target === 'core' ? 'core' : 'starter';
+  const scope = plan.target === 'core' ? 'core' : plan.target === 'tui' ? 'tui' : 'starter';
   const tag = releaseTagFor(scope, plan.version);
   return {
     schemaVersion: 1,
@@ -785,7 +806,12 @@ async function release(target: ReleaseTarget): Promise<void> {
   const remoteHead = await output(['git', 'rev-parse', `origin/${branch}`]);
   if (head !== remoteHead) throw new Error(`HEAD must equal origin/${branch}`);
 
-  const packageDir = target === 'core' ? 'packages/core' : 'packages/create-stitchkit';
+  const packageDir =
+    target === 'core'
+      ? 'packages/core'
+      : target === 'tui'
+        ? 'packages/tui'
+        : 'packages/create-stitchkit';
   const manifest: unknown = JSON.parse(
     await readFile(join(root, packageDir, 'package.json'), 'utf8'),
   );
@@ -797,7 +823,7 @@ async function release(target: ReleaseTarget): Promise<void> {
       ? Reflect.get(manifest, 'version')
       : null;
   if (version === null) throw new Error(`${packageDir}/package.json has no string version`);
-  const tag = target === 'core' ? `v${version}` : `create-stitchkit-v${version}`;
+  const tag = releaseTagFor(target === 'create-stitchkit' ? 'starter' : target, version);
   await validateReleaseTag(root, tag);
   // The commit about to be tagged must itself be the release commit — a green
   // follow-up fix on top of it is NOT a release (see assertReleaseCommitSubject).
@@ -866,8 +892,8 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'release') {
-    if (argument !== 'core' && argument !== 'create-stitchkit') {
-      throw new Error('Usage: release-plan.ts release <core|create-stitchkit>');
+    if (argument !== 'core' && argument !== 'create-stitchkit' && argument !== 'tui') {
+      throw new Error('Usage: release-plan.ts release <core|create-stitchkit|tui>');
     }
     await release(argument);
     return;

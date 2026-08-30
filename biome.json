@@ -18,6 +18,7 @@
       "!**/next-env.d.ts",
       "!**/generated",
       "!!packages/create-stitchkit/template",
+      "!!packages/create-stitchkit/templates/agent",
       "!!packages/create-stitchkit/examples/*/project.json"
     ]
   },
@@ -160,6 +161,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["packages/tui/src/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUnknownAttribute": "off"
+          }
+        }
+      }
+    },
     {
       "includes": [
         "packages/core/src/**/*.ts",

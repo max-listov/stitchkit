@@ -504,6 +504,17 @@ describe('a superseded record is not conversation, in every walker that reads hi
       source: { type: 'source', sourceId: 's1' },
       'tool-call': { type: 'tool-call', callId: 'c1', toolName: 't', input: {} },
       'tool-result': { type: 'tool-result', callId: 'c1', toolName: 't', outcome: 'success' },
+      'tool-approval-request': {
+        type: 'tool-approval-request',
+        approvalId: 'approval-1',
+        callId: 'c2',
+        signature: 'signed',
+      },
+      'tool-approval-response': {
+        type: 'tool-approval-response',
+        approvalId: 'approval-1',
+        approved: true,
+      },
       provider: {
         type: 'provider',
         envelope: { schemaVersion: 1, provider: 'p', data: {} },
@@ -516,10 +527,12 @@ describe('a superseded record is not conversation, in every walker that reads hi
       conversationId: 'conversation-1',
       role: 'assistant',
       status: 'completed',
-      parts: types.map((type) => {
+      parts: types.flatMap((type) => {
         const part = sample[type];
         if (!part) throw new Error(`no sample for part type "${type}" — add one`);
-        return part;
+        return type === 'tool-approval-request'
+          ? [{ type: 'tool-call', callId: 'c2', toolName: 'approved', input: {} }, part]
+          : [part];
       }),
       createdAt: at,
       updatedAt: at,

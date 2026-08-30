@@ -222,33 +222,82 @@ provider-reported input usage and cost to decide whether the extra search round
 is beneficial. Controller evidence intentionally omits query text, prompts,
 arguments and application context. → ADR 0129.
 
-### Executable headless harness and capability map
+### Published headless harness and structured runner
 
-[`packages/core/examples/headless-agent-harness.ts`](../../packages/core/examples/headless-agent-harness.ts)
-is the complete resource-aware recipe. It accepts injected protocol, model,
-tool and store ports, validates resources plus diagnostics, carries provenance
-into the prompt and delegates execution to `createAgentRuntime`. Importing the
-example starts no process, opens no database and discovers no filesystem path.
+`stitchkit/agent-runtime/harness` publishes the resource-aware composition over
+`createAgentRuntime`. `createHeadlessAgentHarness` accepts the existing protocol and store,
+caller-provided model resolution, bounded instruction/skill/resource loading, direct tools and a
+prompt-budget callback. Resource names are unique; count, UTF-8 bytes and diagnostics are bounded.
+Invalid resources fail before a provider request. Diagnostics are evidence for the caller: their
+observer is isolated, and the loader decides whether a reported condition is fatal.
+
+`createAgentHarnessFileResources` is the optional filesystem implementation. It reads only
+caller-declared absolute roots, refuses symlinks and reports provenance as
+`rootId:relative/path`. Instructions enter the prompt immediately. Skills and ordinary resources
+enter as bounded name/description summaries; `read_resource` loads one exact body later as
+a normal direct typed tool. Custom loaders remain supported unchanged.
+
+Each run may resolve a different provider adapter without changing the harness. The
+`profile-applied` observation records the actual `AgentModelDescriptor`, resource kind/name/
+provenance and sorted direct tool names; it intentionally contains no resource text, prompts,
+arguments or credentials. Observer failure never changes the canonical run outcome.
+
+[`packages/core/examples/headless-agent-runner.ts`](../../packages/core/examples/headless-agent-runner.ts)
+is a reference structured control loop for `submit`, `interrupt`, `snapshot` and bounded `close`.
+It starts no process and chooses no framing, authentication or transport. Importing either example
+has no side effect; an external supervisor owns process placement and restart.
 
 | Concern | Public Stitchkit composition | Boundary |
 | --- | --- | --- |
 | execution loop | `createAgentRuntime` | already available; do not copy a second loop |
 | model choice | `defineModelRegistry` and `models.resolve` | provider credentials/discovery stay application-owned |
-| resources | injected loader → `composeAgentPrompt` sections | paths, trust, precedence and watching stay application-owned |
+| resources | `createHeadlessAgentHarness` → `composeAgentPrompt` | paths, trust, precedence and watching stay application-owned |
 | tools | `mountAgent` + `createAgentToolFenceLifecycle` | auth and domain effects stay application-owned |
 | follow-up | `runs.inputPolicy: 'queue'` | durable FIFO after the current run |
 | interrupt | `interrupt` or `interrupt-next` | `interrupt-next` terminates the active run and gives the new durable admission next priority |
 | recovery | `runtime.recover` + `scanRecoverable` | replay safety and context reconstruction are explicit callbacks |
-| reconnect | canonical snapshot + `advanceAgentRuntimeEventCursor` | transient deltas are replaceable; durable event IDs deduplicate |
+| reconnect | canonical snapshot + `advanceAgentMultiSessionCursor` | conversation/run-scoped gaps require resync |
 | persistence | memory reference, public driver, or SQLite leaf | product rows/outbox remain outside the runtime store |
+| executable lifecycle | structured runner example | framing, auth, process placement, restart and OS isolation stay host-owned |
 
-Pi's steering queue waits for the current tool calls and injects the steering
-message at its next loop boundary. It is therefore not an alias for
-`interrupt-next`: Stitchkit requests termination of the active durable run,
-waits for its terminal settlement, and executes the prioritized successor.
-Pi follow-up is closest to Stitchkit `queue`, while JSONL trees, branching,
-workspace discovery, permissions and terminal UI remain embedding-application
-features rather than runtime requirements.
+`createAgentHarnessControlServer` adds transport-neutral correlated requests, shared observers and
+one exclusive controller lease per conversation. `close()` on a connection detaches only that
+client; it never closes the harness. Normal `event` delivery stays serialized. A bounded slow
+consumer is detached and receives `resync-required` through the required synchronous
+`onOverflow` callback; that callback closes/aborts the underlying transport, which then reconnects
+and requests a fresh snapshot. It never writes a second frame concurrently with a blocked
+`deliver`. Browser code uses `createAgentControlView`,
+`reduceAgentControlSnapshot` and `reduceAgentControlEvent`; the reducer owns no renderer and marks a
+conversation `resyncRequired` after a transient sequence gap.
+
+Configure `loop.toolApproval` to use the installed AI SDK approval policy and
+`loop.toolApprovalSecret` to sign exact requests. A request is stored on the terminal assistant
+before any effect. `pendingApprovals()` derives unresolved requests from canonical messages;
+`respondToApproval()` writes one tool-role approval response and queues a successor. The SDK
+revalidates the signature/tool call/input before the original direct tool reaches its existing
+fence. Reconnect and SQLite reopen require no promise registry. Remembered policy and a stronger
+cross-crash exactly-once guarantee remain application concerns.
+
+`stitchkit/agent-runtime/coding-tools` returns ordinary direct runtime tools named `read_file`,
+`write_file`, `search_files`, `apply_patch`, `run_command` and optional `read_output`. Every call passes a
+required host authorization callback. File paths are relative, bounded and contained after
+realpath resolution; writes/edits reject symlink targets, content is strict UTF-8 and retained
+bytes are finite. Shell accepts a finite alias mapped by the host to an absolute executable plus an
+argument array — never a shell command string — and uses only the explicitly supplied environment.
+Arguments, output and time are bounded, while cancellation terminates the child. The configured
+root and cwd are path boundaries, not a security sandbox: isolate the process when an executable
+must not access the rest of the machine.
+
+`apply_patch` binds the exact source to `baseSha256`, supports dry-run, authorizes the exact
+replacement count, result digest and byte size, then rechecks the base under a per-target lock
+before same-directory atomic replacement. It deliberately does not claim
+multi-file atomicity. With an optional `AgentCodingArtifactStore`, shell output beyond the inline
+preview continues into an opaque bounded artifact and `read_output` reads slices without
+exposing a host path. Without a store, the previous finite output-limit behavior is unchanged.
+
+One `createAgentHarnessFileResources` instance represents one immutable discovery generation:
+concurrent and repeated `load()` calls share it, so a direct resource read cannot cross into a
+new catalog unexpectedly. Construct a new loader to refresh after filesystem changes.
 
 Runtime events preserve reasoning/text/tool lifecycle order. Durable admission,
 checkpoint, run-state and terminal events carry stable identities; transient

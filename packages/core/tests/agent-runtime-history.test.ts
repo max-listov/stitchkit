@@ -6,6 +6,69 @@ import {
 } from '../src/agent-runtime';
 
 describe('agent history projection', () => {
+  test('opts failed terminal evidence in with an explicit non-success marker', async () => {
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'failed-user',
+      conversationId: 'failed-conversation',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'inspect' }],
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    });
+    const failed = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'failed-assistant',
+      conversationId: 'failed-conversation',
+      runId: 'failed-run',
+      role: 'assistant',
+      status: 'failed',
+      parts: [{ type: 'text', text: 'The decisive finding survived.' }],
+      createdAt: '2026-08-30T00:00:01.000Z',
+      updatedAt: '2026-08-30T00:00:01.000Z',
+    });
+    expect(await projectAgentHistory([user, failed])).toHaveLength(1);
+    const projected = await projectAgentHistory([user, failed], {
+      evidencePolicy: { failedAssistant: 'assistant-marked' },
+    });
+    expect(JSON.stringify(projected)).toContain('The decisive finding survived.');
+    expect(JSON.stringify(projected)).toContain('did not complete successfully');
+  });
+
+  test('fails closed when opted-in failed evidence has incomplete tool chronology', async () => {
+    const at = '2026-08-30T00:00:00.000Z';
+    const user = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'failed-tool-user',
+      conversationId: 'failed-tool-conversation',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'inspect' }],
+      createdAt: at,
+      updatedAt: at,
+    });
+    const failed = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'failed-tool-assistant',
+      conversationId: 'failed-tool-conversation',
+      runId: 'failed-tool-run',
+      role: 'assistant',
+      status: 'failed',
+      parts: [{ type: 'tool-call', callId: 'uncertain', toolName: 'effect', input: {} }],
+      createdAt: at,
+      updatedAt: at,
+    });
+    const projected = await projectAgentHistoryDetailed([user, failed], {
+      evidencePolicy: { failedAssistant: 'assistant-marked' },
+    });
+    expect(projected.messages).toHaveLength(1);
+    expect(projected.decisions[1]).toMatchObject({
+      action: 'omitted',
+      reason: 'incomplete-tool-turn',
+    });
+  });
+
   test('round-trips provider-required tool-call metadata into AI SDK messages', async () => {
     const message = AgentMessageSchema.parse({
       schemaVersion: 1,

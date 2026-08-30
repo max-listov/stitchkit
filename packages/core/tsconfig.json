@@ -13,6 +13,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "stitchkit/agent-runtime": ["./src/agent-runtime.ts"],
+      "stitchkit/agent-runtime/harness": ["./src/agent-runtime-harness.ts"],
+      "stitchkit/agent-runtime/coding-tools": ["./src/agent-runtime-coding-tools.ts"],
       "stitchkit/application": ["./src/application.ts"],
       "stitchkit/application/grammy": ["./src/application-grammy.ts"],
       "stitchkit/tools": ["./src/tools.ts"]

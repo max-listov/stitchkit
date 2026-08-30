@@ -1,10 +1,15 @@
 import { type FilePart, type ModelMessage, modelMessageSchema } from 'ai';
+import { modelMessageWithApprovalSignature } from '../internal/ai-sdk-typed';
 import type { AgentMessage, AgentMessagePart, AgentProviderEnvelope } from './schemas';
-import { isSpeakableAssistantStatus } from './terminal-status';
+import {
+  type AgentHistoryEvidencePolicy,
+  isAssistantHistoryEvidence,
+} from './terminal-status';
 
 type PartType = AgentMessagePart['type'];
 
 export interface AgentHistoryProjectionOptions {
+  evidencePolicy?: AgentHistoryEvidencePolicy;
   resolveFile?(
     part: Extract<AgentMessagePart, { type: 'file' }>,
     message: AgentMessage,
@@ -138,6 +143,8 @@ function decide(
  * newer input ended.
  */
 const INTERRUPTION_NOTE = '[interrupted: this turn was cut off before it finished]';
+const FAILURE_NOTE =
+  '[failed: partial evidence from a run that did not complete successfully]';
 
 async function userMessage(
   message: AgentMessage,
@@ -186,7 +193,7 @@ async function userMessage(
 
 function assistantMessages(
   message: AgentMessage,
-  interrupted: boolean,
+  marker: 'interrupted' | 'failed' | undefined,
 ): { messages: ModelMessage[]; rendered: Set<PartType> } {
   const rendered = new Set<PartType>();
   const messages: ModelMessage[] = [];
@@ -194,7 +201,7 @@ function assistantMessages(
   let content: unknown[] = [];
   const flush = (): void => {
     if (!role || content.length === 0) return;
-    messages.push(modelMessageSchema.parse({ role, content }));
+    messages.push(modelMessageWithApprovalSignature({ role, content }));
     content = [];
   };
   const append = (nextRole: 'assistant' | 'tool', part: unknown): void => {
@@ -240,9 +247,31 @@ function assistantMessages(
       });
       rendered.add('tool-result');
     }
+    if (part.type === 'tool-approval-request') {
+      append('assistant', {
+        type: 'tool-approval-request',
+        approvalId: part.approvalId,
+        toolCallId: part.callId,
+        ...(part.isAutomatic !== undefined && { isAutomatic: part.isAutomatic }),
+        ...(part.signature && { signature: part.signature }),
+      });
+      rendered.add('tool-approval-request');
+    }
+    if (part.type === 'tool-approval-response') {
+      append('tool', {
+        type: 'tool-approval-response',
+        approvalId: part.approvalId,
+        approved: part.approved,
+        ...(part.reason && { reason: part.reason }),
+      });
+      rendered.add('tool-approval-response');
+    }
   }
-  if (interrupted && (messages.length > 0 || content.length > 0)) {
-    append('assistant', { type: 'text', text: INTERRUPTION_NOTE });
+  if (marker && (messages.length > 0 || content.length > 0)) {
+    append('assistant', {
+      type: 'text',
+      text: marker === 'interrupted' ? INTERRUPTION_NOTE : FAILURE_NOTE,
+    });
     // The note stands for the marker, so a `control` part is now represented
     // rather than silently dropped.
     rendered.add('control');
@@ -282,6 +311,11 @@ function completeToolChronology(message: AgentMessage): boolean {
       completed.add(part.callId);
       resultsStarted = true;
     }
+    if (part.type === 'tool-approval-request') {
+      if (!pending.delete(part.callId)) return false;
+      completed.add(part.callId);
+      resultsStarted = true;
+    }
   }
   return pending.size === 0;
 }
@@ -300,7 +334,10 @@ export async function projectAgentHistoryDetailed(
     // One home for "may this record still be spoken to the model", asked here,
     // by compaction, and by the token budget. Each used to answer it with its
     // own inline list, and the lists disagreed.
-    if (message.role === 'assistant' && !isSpeakableAssistantStatus(message.status)) {
+    if (
+      message.role === 'assistant' &&
+      !isAssistantHistoryEvidence(message.status, options.evidencePolicy)
+    ) {
       decisions.push(
         decide(
           message,
@@ -310,7 +347,11 @@ export async function projectAgentHistoryDetailed(
       );
       continue;
     }
-    if (message.status === 'streaming' || message.status === 'failed') {
+    if (
+      message.status === 'streaming' ||
+      (message.status === 'failed' &&
+        options.evidencePolicy?.failedAssistant !== 'assistant-marked')
+    ) {
       decisions.push(decide(message, 'omitted', 'draft-or-failed'));
       continue;
     }
@@ -367,7 +408,10 @@ export async function projectAgentHistoryDetailed(
       decisions.push(decide(message, 'omitted', 'incomplete-tool-turn'));
       continue;
     }
-    const assistant = assistantMessages(message, interrupted);
+    const assistant = assistantMessages(
+      message,
+      interrupted ? 'interrupted' : message.status === 'failed' ? 'failed' : undefined,
+    );
     projected.push(...assistant.messages);
     decisions.push(
       assistant.messages.length > 0

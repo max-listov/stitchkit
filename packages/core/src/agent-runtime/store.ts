@@ -156,6 +156,19 @@ export type RequestRunInterrupt = z.infer<typeof RequestRunInterruptSchema>;
 export type RecoverAgentRun = z.infer<typeof RecoverAgentRunSchema>;
 export type ReplaceCompactedRange = z.infer<typeof ReplaceCompactedRangeSchema>;
 
+export const AgentRecoverableDescriptorSchema = z.object({
+  conversationId: AgentRecordIdSchema,
+  run: AgentRunSchema,
+});
+
+export const AgentRecoverablePageSchema = z.object({
+  items: z.array(AgentRecoverableDescriptorSchema),
+  nextCursor: z.string().min(1).optional(),
+});
+
+export type AgentRecoverableDescriptor = z.infer<typeof AgentRecoverableDescriptorSchema>;
+export type AgentRecoverablePage = z.infer<typeof AgentRecoverablePageSchema>;
+
 export interface AgentRuntimeStore {
   /**
    * The whole conversation — every message and every run.
@@ -194,8 +207,5 @@ export interface AgentRuntimeStore {
    * member of the same name has the same shape, so an adapter implements this
    * once at whichever level it plugs in.
    */
-  scanRecoverable(input: {
-    cursor?: string;
-    limit: number;
-  }): Promise<import('./store-driver').AgentRecoverablePage>;
+  scanRecoverable(input: { cursor?: string; limit: number }): Promise<AgentRecoverablePage>;
 }

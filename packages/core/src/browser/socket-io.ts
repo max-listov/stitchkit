@@ -59,7 +59,8 @@ interface RealtimeRequestTrace {
   readonly requestId: string;
   readonly event: string;
   readonly startedAt: number;
-  readonly observe: RealtimeRequestPhaseHook;
+  readonly observeClient?: RealtimeRequestPhaseHook;
+  readonly observeRequest?: RealtimeRequestPhaseHook;
   nativeKey?: string;
   closed: boolean;
 }
@@ -76,11 +77,18 @@ function observeRealtimeRequestPhase(
     phase,
     elapsedMs: performance.now() - trace.startedAt,
   };
-  try {
-    const result = trace.observe(observation);
-    if (result) void Promise.resolve(result).catch(() => undefined);
-  } catch {
-    // Observability is isolated: a broken observer cannot change request truth.
+  const observers =
+    trace.observeRequest && trace.observeRequest !== trace.observeClient
+      ? [trace.observeClient, trace.observeRequest]
+      : [trace.observeClient ?? trace.observeRequest];
+  for (const observer of observers) {
+    if (!observer) continue;
+    try {
+      const result = observer(observation);
+      if (result) void Promise.resolve(result).catch(() => undefined);
+    } catch {
+      // Observability is isolated: a broken observer cannot change request truth.
+    }
   }
 }
 
@@ -557,7 +565,7 @@ export function bindRealtimeClient<
     if (!definition?.ack) {
       throw new Error(`Realtime request "${event}" has no acknowledgement schema`);
     }
-    const pending = transport.emitWithAck(event, parsedArgs, { timeoutMs });
+    const pending = transport.emitWithAck(event, parsedArgs, options);
     const trace = realtimeRequestTraces.get(pending);
     if (trace) realtimeRequestTraces.delete(pending);
     const value = await pending;
@@ -652,6 +660,7 @@ function createSocketIOClientInternal<
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const pendingRequestDisconnects = new Set<() => void>();
   const requestTracesByNativeKey = new Map<string, RealtimeRequestTrace>();
+  const observedRequestEngines = new WeakSet<object>();
   let startingRequestTrace: RealtimeRequestTrace | null = null;
   const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
   const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
@@ -674,6 +683,31 @@ function createSocketIOClientInternal<
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+  }
+
+  function attachRequestPhaseEngineListeners(target: ClientSocket): void {
+    const engine = target.io.engine;
+    if (!engine || observedRequestEngines.has(engine)) return;
+    observedRequestEngines.add(engine);
+    engine.on('packetCreate', (packet) => {
+      if (!startingRequestTrace || packet.type !== 'message') return;
+      const identity = socketIoPacketIdentity(packet.data, 'event');
+      if (!identity) return;
+      const key = packetIdentityKey(identity);
+      startingRequestTrace.nativeKey = key;
+      requestTracesByNativeKey.set(key, startingRequestTrace);
+      observeRealtimeRequestPhase(startingRequestTrace, 'engine-handoff');
+    });
+    engine.on('packet', (packet) => {
+      if (packet.type !== 'message') return;
+      const identity = socketIoPacketIdentity(packet.data, 'ack');
+      if (!identity) return;
+      const key = packetIdentityKey(identity);
+      const trace = requestTracesByNativeKey.get(key);
+      if (!trace || trace.closed) return;
+      observeRealtimeRequestPhase(trace, 'engine-ack-received');
+      requestTracesByNativeKey.delete(key);
+    });
   }
 
   // Build the underlying socket once the peer `io` factory has loaded. A
@@ -700,27 +734,7 @@ function createSocketIOClientInternal<
 
     if (onRequestPhase) {
       socket.io.on('open', () => {
-        const engine = socket?.io.engine;
-        if (!engine) return;
-        engine.on('packetCreate', (packet) => {
-          if (!startingRequestTrace || packet.type !== 'message') return;
-          const identity = socketIoPacketIdentity(packet.data, 'event');
-          if (!identity) return;
-          const key = packetIdentityKey(identity);
-          startingRequestTrace.nativeKey = key;
-          requestTracesByNativeKey.set(key, startingRequestTrace);
-          observeRealtimeRequestPhase(startingRequestTrace, 'engine-handoff');
-        });
-        engine.on('packet', (packet) => {
-          if (packet.type !== 'message') return;
-          const identity = socketIoPacketIdentity(packet.data, 'ack');
-          if (!identity) return;
-          const key = packetIdentityKey(identity);
-          const trace = requestTracesByNativeKey.get(key);
-          if (!trace || trace.closed) return;
-          observeRealtimeRequestPhase(trace, 'engine-ack-received');
-          requestTracesByNativeKey.delete(key);
-        });
+        if (socket) attachRequestPhaseEngineListeners(socket);
       });
     }
 
@@ -888,15 +902,17 @@ function createSocketIOClientInternal<
     },
 
     emitWithAck(event, args, options) {
-      const trace: RealtimeRequestTrace | undefined = onRequestPhase
-        ? {
-            requestId: crypto.randomUUID(),
-            event,
-            startedAt: performance.now(),
-            observe: onRequestPhase,
-            closed: false,
-          }
-        : undefined;
+      const trace: RealtimeRequestTrace | undefined =
+        onRequestPhase || options.onPhase
+          ? {
+              requestId: crypto.randomUUID(),
+              event,
+              startedAt: performance.now(),
+              observeClient: onRequestPhase,
+              observeRequest: options.onPhase,
+              closed: false,
+            }
+          : undefined;
       const closeTrace = (phase: 'timeout' | 'disconnected'): void => {
         if (!trace || trace.closed) return;
         trace.closed = true;
@@ -910,6 +926,7 @@ function createSocketIOClientInternal<
         if (trace) realtimeRequestTraces.set(pending, trace);
         return pending;
       }
+      if (trace) attachRequestPhaseEngineListeners(active);
       const pending = new Promise<unknown>((resolve, reject) => {
         let settled = false;
         const finish = (result: () => void): void => {

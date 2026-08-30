@@ -110,6 +110,7 @@ describe('release plan', () => {
     // packages happen to sit on the same version.
     expect(releaseScopeForTag('v0.3.3')).toBe('core');
     expect(releaseScopeForTag('create-stitchkit-v0.3.3')).toBe('starter');
+    expect(releaseScopeForTag('stitchkit-tui-v0.1.0')).toBe('tui');
     expect(() =>
       assertReleaseCommitSubject(
         'release(starter): scaffolder fixes in 0.3.3',
@@ -169,6 +170,11 @@ describe('release plan', () => {
     expect(releasePlanForTag('create-stitchkit-v2.0.0')).toMatchObject({
       target: 'create-stitchkit',
       version: '2.0.0',
+    });
+    expect(releasePlanForTag('stitchkit-tui-v0.1.0')).toMatchObject({
+      target: 'tui',
+      packageName: '@stitchkit/tui',
+      version: '0.1.0',
     });
     expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');
   });
@@ -611,6 +617,7 @@ describe('a release commit is checked before it costs a gate', () => {
   test('names the tag a scope and version would be released under', () => {
     expect(releaseTagFor('core', '1.2.3')).toBe('v1.2.3');
     expect(releaseTagFor('starter', '1.2.3')).toBe('create-stitchkit-v1.2.3');
+    expect(releaseTagFor('tui', '1.2.3')).toBe('stitchkit-tui-v1.2.3');
   });
 
   test('one candidate identity separates exact-SHA CI from tag publication', () => {

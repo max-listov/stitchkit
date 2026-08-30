@@ -59,10 +59,12 @@ jobs:
       - run: bun run smoke:next-ssr
       - run: bun run smoke:node
       - run: bun run consumer-lane
+      - run: bun run tui-packed-lane
       - name: Pack the exact validated publication inputs
         run: |
           mkdir -p release-artifacts
           (cd packages/core && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
+          (cd packages/tui && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
           (cd packages/create-stitchkit && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
       - name: Verify the packed docs match the tree
         # `prepack` synchronises README/llms into the package — a divergence

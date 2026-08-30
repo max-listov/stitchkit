@@ -2,8 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { createHeadlessAgentHarness } from '../examples/headless-agent-harness';
 import { createMemoryAgentRuntimeStore, defineAgentProtocol } from '../src/agent-runtime';
+import {
+  type AgentHarnessProfileEvent,
+  createHeadlessAgentHarness,
+} from '../src/agent-runtime-harness';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -13,6 +16,7 @@ const usage = {
 describe('executable headless agent harness example', () => {
   test('isolates scoped resources and reports their diagnostics', async () => {
     const diagnostics: string[] = [];
+    const profiles: AgentHarnessProfileEvent[] = [];
     const model = new MockLanguageModelV4({
       doStream: async () => ({
         stream: simulateReadableStream({
@@ -46,7 +50,12 @@ describe('executable headless agent harness example', () => {
       resources: {
         load: ({ context }) => ({
           resources: [
-            { name: 'instructions', text: context.resource, provenance: 'fixture:injected' },
+            {
+              kind: 'instruction',
+              name: 'instructions',
+              text: context.resource,
+              provenance: 'fixture:injected',
+            },
           ],
           diagnostics: [
             { resource: 'instructions', severity: 'warning', message: context.resource },
@@ -65,6 +74,9 @@ describe('executable headless agent harness example', () => {
       }),
       estimateResourceTokens: () => ({ value: 1, provenance: 'measured' }),
       tools: () => ({}),
+      onProfile: (event) => {
+        profiles.push(event);
+      },
     });
 
     const submit = (conversationId: string, resource: string) =>
@@ -92,6 +104,14 @@ describe('executable headless agent harness example', () => {
       ),
     ).toBe(true);
     expect(diagnostics.sort()).toEqual(['RESOURCE_A', 'RESOURCE_B']);
+    expect(profiles).toHaveLength(2);
+    expect(profiles.map(({ model }) => model.modelId)).toEqual(['headless', 'headless']);
+    expect(
+      profiles.every(
+        ({ resources, toolNames }) =>
+          resources[0]?.provenance === 'fixture:injected' && toolNames.length === 0,
+      ),
+    ).toBe(true);
     await runtime.close();
   });
 });

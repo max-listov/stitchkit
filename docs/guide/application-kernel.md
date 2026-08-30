@@ -414,6 +414,54 @@ replenishes once; it is flow-control credit, not a durable acknowledgement. The
 application snapshot sink now shares the same latest-value mechanics without
 changing its revision or status contract. → ADR 0119.
 
+### Bounded local diagnostic journal
+
+Use `createDiagnosticJournal` when a process needs finite, ordered local metadata evidence and the
+deployment log pipeline is not the right boundary:
+
+```ts
+import { createDiagnosticJournal } from 'stitchkit/application'
+import { z } from 'zod'
+
+const journal = await createDiagnosticJournal({
+  eventSchema: z.object({
+    kind: z.enum(['resource_failed', 'recovery_started']),
+    resource: z.string().max(80),
+  }).strict(),
+  path: '/var/lib/example/diagnostic.jsonl', // operator configuration, never request data
+  limits: {
+    maxEventBytes: 4 * 1024,
+    maxPendingItems: 128,
+    maxPendingBytes: 512 * 1024,
+    maxFileBytes: 8 * 1024 * 1024,
+    maxFiles: 4,
+  },
+  onFailure: (failure) => internalLogger.error(failure),
+})
+
+const result = journal.submit({ kind: 'recovery_started', resource: 'database' })
+if (result.outcome === 'refused') internalCounter.add(1, { reason: result.reason })
+
+// During managed-resource close. Timeout ends this wait, not the physical append.
+await journal.close({ timeoutMs: 5_000 })
+```
+
+The owner schema and JSON serialization run synchronously before admission. Accepted frames carry
+a process epoch and contiguous sequence and retain their complete bytes inside both pending limits
+until their append attempt settles. Capacity, invalid, oversized, closed and terminal-failure
+refusals are explicit; accepted ordered frames are never evicted.
+
+The absolute path's parent must already exist and be operator-controlled. One manager owns it via
+an exclusive `.lock`; new files use mode `0600` by default. `maxFiles` includes the active file,
+and a non-newline startup tail is rotated intact rather than guessed or repaired. An abrupt process
+death may leave the lock for an operator to remove only after proving the former owner is gone.
+
+`flush()` means every accepted append through that call's boundary settled. It is not `fsync`, a
+durable receipt, exactly-once execution or remote delivery. Timeout/cancellation bound only the
+waiter; the writer retains physical capacity until settlement. There is no reader or upload API.
+Use a durable application store or deployment-owned log collector when restart recovery, replay or
+aggregation is required. → [ADR 0134](../decisions/0134-diagnostic-journal-is-bounded-local-evidence.md).
+
 Shutdown performs one phase barrier at a time: stop admission everywhere,
 cancel future schedules, drain admitted work, then close in reverse stable
 topological order. Every hook shares the same grace deadline. Forced cleanup

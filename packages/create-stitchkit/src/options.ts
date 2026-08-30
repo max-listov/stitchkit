@@ -1,6 +1,7 @@
 export interface CliOptions {
   destination: string;
   install: boolean;
+  template: 'application' | 'agent';
   example?: 'repository';
   displayName?: string;
 }
@@ -8,10 +9,11 @@ export interface CliOptions {
 const HELP = `Create a production-shaped Stitchkit application.
 
 Usage:
-  bun create stitchkit <directory> [--display-name "Product Name"] [--example repository] [--no-install]
+  bun create stitchkit <directory> [--template application|agent] [--display-name "Product Name"] [--example repository] [--no-install]
 
 Options:
   --no-install  Generate files without installing dependencies
+  --template    Select the project shape (default: application)
   --example     Add an isolated runnable example (supported: repository)
   --display-name  Set the initial public application name
   --help        Show this help
@@ -28,6 +30,7 @@ export function parseOptions(args: string[]): CliOptions | 'help' {
     (arg) =>
       arg.startsWith('-') &&
       arg !== '--no-install' &&
+      arg !== '--template' &&
       arg !== '--example' &&
       arg !== '--display-name',
   );
@@ -44,6 +47,18 @@ export function parseOptions(args: string[]): CliOptions | 'help' {
     throw new Error(`Unknown example: ${example}`);
   }
 
+  const templateFlagIndex = args.indexOf('--template');
+  const template = templateFlagIndex === -1 ? 'application' : args[templateFlagIndex + 1];
+  if (templateFlagIndex !== -1 && template === undefined) {
+    throw new Error('--template requires a value');
+  }
+  if (template !== 'application' && template !== 'agent') {
+    throw new Error(`Unknown template: ${template}`);
+  }
+  if (template === 'agent' && example !== undefined) {
+    throw new Error('--example is only supported by the application template');
+  }
+
   const displayNameFlagIndex = args.indexOf('--display-name');
   const displayName = displayNameFlagIndex === -1 ? undefined : args[displayNameFlagIndex + 1];
   if (displayNameFlagIndex !== -1 && displayName === undefined) {
@@ -51,11 +66,13 @@ export function parseOptions(args: string[]): CliOptions | 'help' {
   }
 
   const consumedExampleIndex = exampleFlagIndex === -1 ? -1 : exampleFlagIndex + 1;
+  const consumedTemplateIndex = templateFlagIndex === -1 ? -1 : templateFlagIndex + 1;
   const consumedDisplayNameIndex = displayNameFlagIndex === -1 ? -1 : displayNameFlagIndex + 1;
   const positionals = args.filter(
     (arg, index) =>
       !arg.startsWith('-') &&
       index !== consumedExampleIndex &&
+      index !== consumedTemplateIndex &&
       index !== consumedDisplayNameIndex,
   );
   if (positionals.length !== 1) {
@@ -67,6 +84,7 @@ export function parseOptions(args: string[]): CliOptions | 'help' {
   return {
     destination,
     install: !args.includes('--no-install'),
+    template,
     ...(example && { example }),
     ...(displayName && { displayName }),
   };

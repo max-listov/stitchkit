@@ -1,7 +1,11 @@
 import type { Instructions } from 'ai';
 import { z } from 'zod';
 import { type AgentMessage, AgentProvenanceSchema } from './schemas';
-import { isSpeakableAssistantStatus } from './terminal-status';
+import {
+  type AgentHistoryEvidencePolicy,
+  isAssistantHistoryEvidence,
+  isCompleteAgentHistoryTurn,
+} from './terminal-status';
 
 /**
  * A token count made *before* a request, and how it came to be known.
@@ -78,6 +82,7 @@ export interface SelectAgentHistoryOptions {
   messages: readonly AgentMessage[];
   availableTokens: number;
   keepRecentTurns?: number;
+  evidencePolicy?: AgentHistoryEvidencePolicy;
   estimateMessage(message: AgentMessage): AgentTokenCount | Promise<AgentTokenCount>;
 }
 
@@ -87,28 +92,19 @@ interface BudgetTurn {
   protectedSystem: boolean;
 }
 
-function completeTurn(messages: readonly AgentMessage[]): boolean {
-  if (messages[0]?.role !== 'user') return false;
-  const assistant = messages.find((message) => message.role === 'assistant');
-  if (assistant?.status !== 'completed') return false;
-  const calls = new Set(
-    assistant.parts.filter((part) => part.type === 'tool-call').map((part) => part.callId),
-  );
-  const results = new Set(
-    assistant.parts.filter((part) => part.type === 'tool-result').map((part) => part.callId),
-  );
-  return (
-    [...calls].every((callId) => results.has(callId)) &&
-    [...results].every((callId) => calls.has(callId))
-  );
-}
-
-function budgetTurns(messages: readonly AgentMessage[]): BudgetTurn[] {
+function budgetTurns(
+  messages: readonly AgentMessage[],
+  evidencePolicy: AgentHistoryEvidencePolicy | undefined,
+): BudgetTurn[] {
   const turns: BudgetTurn[] = [];
   let current: AgentMessage[] = [];
   const flush = (): void => {
     if (current.length === 0) return;
-    turns.push({ messages: current, complete: completeTurn(current), protectedSystem: false });
+    turns.push({
+      messages: current,
+      complete: isCompleteAgentHistoryTurn(current, evidencePolicy),
+      protectedSystem: false,
+    });
     current = [];
   };
   for (const message of messages) {
@@ -147,7 +143,9 @@ export async function selectAgentHistory(
   // permanently reserved budget. The question has one home now, and this is one
   // of the three walkers that asks it.
   const spoken = options.messages.filter(
-    (message) => message.role !== 'assistant' || isSpeakableAssistantStatus(message.status),
+    (message) =>
+      message.role !== 'assistant' ||
+      isAssistantHistoryEvidence(message.status, options.evidencePolicy),
   );
   const counts = new Map<string, AgentTokenCount>();
   let total = 0;
@@ -162,11 +160,13 @@ export async function selectAgentHistory(
         decisions: options.messages.map((candidate) => ({
           messageId: candidate.id,
           action:
-            candidate.role === 'assistant' && !isSpeakableAssistantStatus(candidate.status)
+            candidate.role === 'assistant' &&
+            !isAssistantHistoryEvidence(candidate.status, options.evidencePolicy)
               ? 'removed'
               : 'kept',
           reason:
-            candidate.role === 'assistant' && !isSpeakableAssistantStatus(candidate.status)
+            candidate.role === 'assistant' &&
+            !isAssistantHistoryEvidence(candidate.status, options.evidencePolicy)
               ? 'unspeakable'
               : 'token-count-unavailable',
           tokens: counts.get(candidate.id) ?? { provenance: 'unavailable' },
@@ -178,7 +178,7 @@ export async function selectAgentHistory(
     total += value;
     if (count.provenance === 'estimated') estimated = true;
   }
-  const turns = budgetTurns(spoken);
+  const turns = budgetTurns(spoken, options.evidencePolicy);
   const completeIndexes = turns
     .map((turn, index) => ({ turn, index }))
     .filter(({ turn }) => turn.complete && !turn.protectedSystem)
@@ -196,7 +196,10 @@ export async function selectAgentHistory(
   }
   const messages = spoken.filter((message) => !removed.has(message.id));
   const decisions = options.messages.map((message): AgentHistoryBudgetDecision => {
-    if (message.role === 'assistant' && !isSpeakableAssistantStatus(message.status)) {
+    if (
+      message.role === 'assistant' &&
+      !isAssistantHistoryEvidence(message.status, options.evidencePolicy)
+    ) {
       return {
         messageId: message.id,
         action: 'removed',

@@ -29,6 +29,7 @@ export const VERIFY_STEPS = [
   'smoke:next-ssr',
   'smoke:node',
   'consumer-lane',
+  'tui-packed-lane',
   'starter-lane',
   // The supervised lane used to be the one gate CI ran and `verify` did not,
   // because it needed `pm2` on PATH. The supervisor is a pinned devDependency
