@@ -24,6 +24,11 @@ the Agent starter then correctly exposed its next clean dependency: its file-lin
 `@stitchkit/tui` resolves the public package export, so TUI must also be built after core and before
 nested checks.
 
+The first clean run to complete every code lane then exposed a publication-only collision: the
+core verification glob `stitchkit-*.tgz` also matched the new `stitchkit-tui-*.tgz`. The extractor
+received two arguments and treated the TUI archive name as a member requested from the core
+archive. Core artifact selection must remain unambiguous as sibling packages are added.
+
 ## Result
 
 A normal root `bun install` prepares workspace-owned core and TUI artifacts plus both independently
@@ -39,6 +44,8 @@ mechanically so a clean checkout cannot accidentally rely on a maintainer's igno
 - [x] Reproduce a clean-artifact check and complete the exact release gate.
 - [x] Keep the failed candidate untagged and hand a replacement commit to the exact-SHA release
       conveyor.
+- [x] Select the core publication archive without colliding with sibling package filenames and
+      hold that rule mechanically.
 
 ## Acceptance
 
@@ -47,6 +54,8 @@ mechanically so a clean checkout cannot accidentally rely on a maintainer's igno
 - [x] TUI source keeps importing the public Stitchkit entrypoints rather than private source aliases.
 - [x] Release planning still requires successful exact-SHA CI before creating any tag; the failed
       candidate has no release tag.
+- [x] Packed-doc verification extracts exactly the core archive even when the TUI archive is beside
+      it.
 
 ## Что сделано
 
@@ -64,3 +73,7 @@ mechanically so a clean checkout cannot accidentally rely on a maintainer's igno
       green.
 - [x] Exact-SHA publication remains gated on the replacement release commit's successful CI run;
       failed candidate `8ab190a61ad3471d926dd1f7e4ba5a8941a33123` receives no tag.
+- [x] [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) selects
+      `stitchkit-[0-9]*.tgz`; [`scripts/gate-parity.test.ts`](../../../scripts/gate-parity.test.ts)
+      case `core package verification cannot consume the overlapping TUI archive name` prevents
+      the ambiguous glob from returning.

@@ -128,4 +128,9 @@ describe('CI is a superset of the local gate, and that is checked', () => {
     const onCi = [...coreJobSteps(), ...supervisedJobSteps()];
     expect(onCi.filter((step) => !known.has(step))).toEqual([]);
   });
+
+  test('core package verification cannot consume the overlapping TUI archive name', () => {
+    expect(CI).toContain("-name 'stitchkit-[0-9]*.tgz'");
+    expect(CI).not.toContain('tar -xzf release-artifacts/stitchkit-*.tgz');
+  });
 });

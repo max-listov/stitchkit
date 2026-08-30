@@ -71,7 +71,9 @@ jobs:
         # here means a docs fix would ship stale, so it fails the build.
         run: |
           mkdir -p /tmp/pack-verify
-          tar -xzf release-artifacts/stitchkit-*.tgz -C /tmp/pack-verify
+          core_archive="$(find release-artifacts -maxdepth 1 -type f -name 'stitchkit-[0-9]*.tgz' -print -quit)"
+          test -n "$core_archive"
+          tar -xzf "$core_archive" -C /tmp/pack-verify
           diff /tmp/pack-verify/package/README.md README.md
           diff /tmp/pack-verify/package/llms.txt packages/core/llms.txt
           diff /tmp/pack-verify/package/llms-full.txt packages/core/llms-full.txt

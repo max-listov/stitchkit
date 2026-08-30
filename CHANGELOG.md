@@ -61,6 +61,9 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   core and TUI public exports in dependency order, then installs both independently locked starter
   trees. TUI and Agent-starter checks can no longer depend on ignored `dist` or nested
   `node_modules` output from an earlier local build.
+- **Core publication verification selects only the core archive.** The release artifact check uses
+  a version-leading filename pattern, so the new `stitchkit-tui-*.tgz` package cannot be expanded
+  as a second argument to the core `tar` command.
 
 - **A bounded ordered diagnostic journal captures finite local metadata evidence.**
   `createDiagnosticJournal` validates an owner-supplied Zod schema synchronously, admits complete
