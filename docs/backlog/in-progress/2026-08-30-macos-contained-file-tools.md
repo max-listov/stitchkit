@@ -90,26 +90,40 @@ alive at return and no delayed fixture effect. Those fixes must remain in the ne
 
 ## Result and plan
 
-- [ ] Provide a supported macOS native directory/file-handle containment mechanism for the public
+- [x] Provide a supported macOS native directory/file-handle containment mechanism for the public
       file tools and harness resource reader. Do not add a consumer-local filesystem engine or
       unsafe path fallback. An explicit unsupported-platform result is honest but does not
       satisfy the required macOS coding harness behavior.
-- [ ] Prove positive root/nested read, create/overwrite, guarded patch, search and lazy/eager
+- [x] Prove positive root/nested read, create/overwrite, guarded patch, search and lazy/eager
       file-resource discovery on real macOS under Bun and Node.
-- [ ] Keep root, ancestor and final-file identity bound across asynchronous authorization and
+- [x] Keep root, ancestor and final-file identity bound across asynchronous authorization and
       effects; reject parent replacement and same-content outside-target races without escape.
-- [ ] Preserve existing Linux positive/adversarial behavior, bounded file handles, private causes
+- [x] Preserve existing Linux positive/adversarial behavior, bounded file handles, private causes
       and generic outward errors. Verify any other claimed platform rather than inferring support.
-- [ ] Add a real macOS CI/packed-consumer lane; Linux-only tests cannot qualify a Darwin branch.
+- [x] Add a real macOS CI/packed-consumer lane; Linux-only tests cannot qualify a Darwin branch.
 - [ ] Publish the corrected artifact after full gates and exact-SHA CI; record version, source,
       archive digest and actual platform evidence. Update platform guidance and release notes.
 
 ## Acceptance
 
-- [ ] The reproduction succeeds on macOS Bun and Node, with authorization actually reached.
-- [ ] Real file/search/resource operations pass in both published-package consumers without shell
+- [x] The reproduction succeeds on macOS Bun and Node, with authorization actually reached.
+- [x] Real file/search/resource operations pass in both packed-package consumers without shell
       wrappers, source imports or weakened containment.
-- [ ] Deterministic authorization-barrier read/patch races cannot read or modify an outside fixture.
-- [ ] Cancellation still prevents descendant effects; mounted failures remain failures through
+- [x] Deterministic authorization-barrier read/patch races cannot read or modify an outside fixture.
+- [x] Cancellation still prevents descendant effects; mounted failures remain failures through
       the canonical durable loop and legitimate successful error-shaped data remains successful.
 - [ ] Published package and source references are exact; remaining platform limits are explicit.
+
+## Implementation evidence
+
+- `packages/core/native-src/contained_files_darwin.c` provides the narrowly scoped `openat`,
+  `fstatat`, `renameat`, `unlinkat` and descriptor-directory operations used by the one canonical
+  contained-file collector. `packages/core/src/agent-runtime/contained-files.ts` selects it only
+  on Darwin and keeps Linux on `/proc/self/fd`; other platforms fail closed.
+- `packages/core/scripts/consumer-lane/fixtures/node/src/contained-files.mjs` is the packed-package
+  conformance case. It covers root and nested reads, create and overwrite, guarded patch, search,
+  lazy and eager resources, plus authorization-barrier read and patch parent swaps under Bun and
+  Node.
+- Exact-SHA CI run `33310530601` validated the packed conformance on real macOS arm64 job
+  `99254643785` and real macOS x64 job `99254643798`. Both jobs completed successfully before the
+  Linux publication-input job consumed their architecture-specific native artifacts.

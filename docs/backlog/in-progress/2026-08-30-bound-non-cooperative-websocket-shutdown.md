@@ -51,8 +51,8 @@ budget solely because one idle realtime peer stays connected.
 - [x] `managedServerResource` inside `createApplication` no longer returns
       `forced`/`cleanupComplete=false` solely because an idle socket ignored the
       close handshake.
-- [ ] Source tests, packed Bun/Node consumer tests, docs and changelog are green;
-      publish a patch release with exact SHA, package version and CI evidence.
+- [x] Source tests, packed Bun/Node consumer tests, docs and changelog are green.
+- [ ] Publish a patch release with exact SHA, package version and CI evidence.
 
 ## Implementation evidence
 
@@ -67,3 +67,5 @@ budget solely because one idle realtime peer stays connected.
 - `packages/core/tests/application-server-resource-start.test.ts` proves a bounded realtime
   termination remains a clean, complete application shutdown and that the resource policy reaches
   the managed server.
+- Exact-SHA CI run `33310530601` completed successfully across the framework, Node, packed
+  consumer, supervised and starter lanes before the release gate.

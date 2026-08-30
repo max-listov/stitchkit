@@ -27,7 +27,7 @@ remain tokenless OIDC publications.
 - [x] Build and validate the exact TUI tarball in clean exact-SHA CI.
 - [x] Download the CI artifact and verify its SHA-1 is
       `7dfbd10bd14c9bef18426cd9d48b9d6893c05c68`.
-- [ ] Cut the complete public package/import surface over to `stitchkit-tui` without aliases.
+- [x] Cut the complete public package/import surface over to `stitchkit-tui` without aliases.
 - [ ] Publish the exact `0.1.1` CI tarball as public through an interactive npm session.
 - [ ] Bind `max-listov/stitchkit`, `release.yml`, environment `npm-production` as the package's
       trusted GitHub publisher with publish permission.
