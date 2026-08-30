@@ -151,6 +151,7 @@ These records were consolidated from the project's internal design notes on
 | [0134](0134-diagnostic-journal-is-bounded-local-evidence.md) | Diagnostic journal is bounded local evidence | Accepted — one finite FIFO local writer without durable-delivery claims or a second observability framework |
 | [0135](0135-contained-files-use-native-darwin-capabilities.md) | Contained files use native Darwin directory capabilities | Accepted — packaged openat leaf, one JS policy and real macOS artifact proof |
 | [0136](0136-one-exact-tree-drives-a-package-aware-release-train.md) | One exact tree drives a package-aware release train | Accepted — one manifest, one exact-SHA CI and target-aware evidence lanes for every selected package |
+| [0137](0137-live-state-opens-one-continuous-source-generation.md) | Live state opens one continuous source generation | Accepted — browser-safe bounded snapshot/event synchronization without owning transport retry, cursors or storage |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

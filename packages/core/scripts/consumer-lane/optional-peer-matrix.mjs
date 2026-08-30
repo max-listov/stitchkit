@@ -46,6 +46,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    id: 'root-live-state',
+    subpath: '.',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit', 'createLiveStateController'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'react-query',
     subpath: './react',
     fixture: 'full',

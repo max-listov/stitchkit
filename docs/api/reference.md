@@ -57,6 +57,16 @@ The browser-and-server entrypoint. Re-exports everything from
 | `defineRealtimeContract` | function | Zod-first shared Socket.IO event contract — [guide](../guide/realtime.md#zod-first-event-contract) |
 | `createRealtimeClient` | function | inferred, runtime-validated Socket.IO client — [guide](../guide/realtime.md#client--createrealtimeclient) |
 | `bindRealtimeClient` | function | bind contract validation and typed acknowledgements to an existing Stitchkit client transport without owning its lifecycle |
+| `createLiveStateController` | function | keep typed application state current across one source-owned snapshot/event generation with finite pre-snapshot buffering, generation fencing and explicit resync — [guide](../guide/realtime.md#snapshot--event-state-synchronization) |
+| `LiveStateController` | _type_ | renderer-neutral `start` / `resync` / `getSnapshot` / `subscribe` / `close` handle |
+| `LiveStateControllerConfig` | _type_ | typed source, reducer, explicit event/byte bounds, event sizing and isolated error hooks |
+| `LiveStateControllerSnapshot` / `LiveStateControllerStatus` | _types_ | current value plus phase, generation, buffer and application/duplicate/gap/refusal counters |
+| `LiveStateControllerStatusSchema` | schema | strict runtime validation for controller status metadata |
+| `LiveStatePhaseSchema` / `LiveStatePhase` | schema / _type_ | `idle`, `opening`, `live`, `resync-required`, `unavailable` or `closed` |
+| `LiveStateStopReasonSchema` / `LiveStateStopReason` | schema / _type_ | explicit gap, overflow, source loss, controller failure and bounded `controller-capacity` reasons |
+| `LiveStateEventDecision` | _type_ | provider-owned reducer result: applied state, duplicate or gap |
+| `LiveStateSource` / `LiveStateSourceOpenInput` / `LiveStateSourceOpenResult` | _types_ | host binding for one continuous snapshot/event boundary; transport retry and cursor semantics remain host-owned |
+| `LiveStateControllerError` / `LiveStateSubscriberError` | _types_ | isolated observer failure payloads that do not change source or subscriber truth |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON; blank keep-alives are skipped and `finalLine: 'require-newline'` can make the delimiter mandatory — [guide](../guide/client.md#ndjson) |
@@ -96,7 +106,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RealtimeEmitArguments` | _type_ | emit arguments including an inferred acknowledgement callback |
 | `RealtimeEventHandler` | _type_ | handler inferred from an event definition |
 | `InferRealtimeEventMap` | _type_ | inferred Socket.IO-compatible event map |
-| `RealtimeRejectDirection` | _type_ | server/client inbound/outbound rejection direction |
+| `RealtimeRejectDirection` / `RealtimeRejectPhase` / `RealtimeRejectReason` / `RealtimeRejectFault` | _types_ | canonical inferred rejection direction, validation phase, reason and fault classification |
 | `RealtimeRejectedEvent` | _type_ | structured rejected event with event, direction, phase, reason and fault |
 | `RealtimeRejectedEventHook` | _type_ | sync/async observer for structured realtime rejections |
 | `ValidatedRealtimeSocket` | _type_ | runtime-validating `on`/`emit` surface inferred from registries; `emit` returns "accepted by the transport" (`false` only for a client-side disconnected drop) |
@@ -794,7 +804,7 @@ and introduces no store, queue or model-provider implementation of its own.
 | `AgentHarnessFileResources` | _type_ | loader plus direct `read_resource` definition for lazy exact content |
 | `createAgentHarnessControlServer` | function | transport-neutral correlated requests, observer attachments and exclusive controller leases |
 | `AgentHarnessControlServer` / `AgentHarnessControlConnection` | _type_ | host server and detachable connection lifecycle; `deliver` is serialized, while required out-of-band `onOverflow` closes/aborts a slow transport before reconnect |
-| `AgentHarnessControlServerConfig` | _type_ | explicit per-connection pending-event bound for failure-isolated control delivery |
+| `AgentHarnessControlServerConfig` | _type_ | explicit per-connection pending-event and server-wide concurrent attachment-snapshot bounds for failure-isolated control delivery |
 | `AgentHarnessPendingApproval` / `AgentHarnessApprovalDecision` | _type_ | exact durable pending request and allow/deny successor input |
 
 Resources default to at most 64 entries, 1 MiB of total UTF-8 text and 128 diagnostics. Duplicate
@@ -1289,7 +1299,7 @@ handler pipeline without opening a TCP port.
 | `DefineRealtimeProbeConfig` | _type_ | name, canonical scenario, explicit fixture and expected realtime outcome |
 | `CreateRealtimeProbeDriverConfig` | _type_ | per-scenario foreign-transport binder and optional handler-call counter |
 | `RealtimeProbeAdapter` | _type_ | connected-state observation, scenario invocation and subscription-only cleanup |
-| `RealtimeProbeFixture` / `RealtimeProbeScenario` | _type_ | driver input and supported event/ack/invalid/disconnect/timeout scenario vocabulary |
+| `RealtimeProbeFixture` / `RealtimeProbeScenario` | _type_ | driver input and supported event/ack/local-invalid/peer-refusal/disconnect/timeout scenario vocabulary |
 | `RealtimeRejectionObservation` | _type_ | parsed structured realtime rejection observation |
 | `RealtimeDisconnectObservation` | _type_ | normalized physical timing of a realtime disconnect |
 | `TransportObservation` | _type_ | validated normalized driver result |
@@ -1339,6 +1349,11 @@ machine-readable statement a repository makes about itself, read by the project,
 by the scaffolder that writes the first copy, and by whatever builds a source and
 binds the artifact into a deployment. It ships from the framework so those
 readers cannot hold different copies of the same schema.
+
+`identity` identifies the repository-local buildable source/artifact, not a product project, checkout
+or harness workspace. Product↔repository membership is explicit and many-to-many, owned by an
+external registry; dependency edges do not establish membership. Private companion context is never
+required in this public schema. See [identity boundaries](../guide/declaration.md#identity-is-not-product-membership).
 
 **Declaring yourself is optional.** A project with no `project.json` is a
 complete project: nothing else in the framework imports this entrypoint, no

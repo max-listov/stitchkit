@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { AppError } from '../contract/errors';
 
 export interface RealtimeEventDefinition<
@@ -59,28 +59,34 @@ export type InferRealtimeEventMap<TRegistry extends RealtimeEventRegistry> = {
   [TEvent in keyof TRegistry]: RealtimeEventHandler<TRegistry[TEvent]>;
 };
 
-export type RealtimeRejectDirection =
-  | 'client-inbound'
-  | 'client-outbound'
-  | 'server-inbound'
-  | 'server-outbound';
+export const RealtimeRejectDirectionSchema = z.enum([
+  'client-inbound',
+  'client-outbound',
+  'server-inbound',
+  'server-outbound',
+]);
+export const RealtimeRejectPhaseSchema = z.enum(['arguments', 'acknowledgement']);
+export const RealtimeRejectReasonSchema = z.enum([
+  'unknown-event',
+  'invalid-arguments',
+  'invalid-acknowledgement-value',
+  'missing-acknowledgement',
+  'rejected-by-peer',
+]);
+export const RealtimeRejectFaultSchema = z.enum(['peer', 'local']);
+
+export type RealtimeRejectDirection = z.infer<typeof RealtimeRejectDirectionSchema>;
+export type RealtimeRejectPhase = z.infer<typeof RealtimeRejectPhaseSchema>;
+export type RealtimeRejectReason = z.infer<typeof RealtimeRejectReasonSchema>;
+export type RealtimeRejectFault = z.infer<typeof RealtimeRejectFaultSchema>;
 
 export interface RealtimeRejectedEvent {
   event: string;
   direction: RealtimeRejectDirection;
-  phase: 'arguments' | 'acknowledgement';
-  reason:
-    | 'unknown-event'
-    | 'invalid-arguments'
-    | 'invalid-acknowledgement-value'
-    | 'missing-acknowledgement'
-    /**
-     * The PEER refused our frame against its own copy of the contract, and
-     * said so. Reported on the sender, where a silent drop used to leave
-     * nothing but an expiring deadline.
-     */
-    | 'rejected-by-peer';
-  fault: 'peer' | 'local';
+  phase: RealtimeRejectPhase;
+  /** Includes `rejected-by-peer` when the peer refused our frame against its contract. */
+  reason: RealtimeRejectReason;
+  fault: RealtimeRejectFault;
   error: AppError<'REALTIME_CONTRACT_VIOLATION'>;
 }
 

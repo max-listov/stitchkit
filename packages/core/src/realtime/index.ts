@@ -12,6 +12,9 @@ export {
   type RealtimeRejectDirection,
   type RealtimeRejectedEvent,
   type RealtimeRejectedEventHook,
+  type RealtimeRejectFault,
+  type RealtimeRejectPhase,
+  type RealtimeRejectReason,
   type RealtimeRequestArguments,
 } from './contract';
 export {

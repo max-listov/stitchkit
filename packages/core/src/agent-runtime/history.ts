@@ -1,5 +1,10 @@
 import { type FilePart, type ModelMessage, modelMessageSchema } from 'ai';
 import { modelMessageWithApprovalSignature } from '../internal/ai-sdk-typed';
+import {
+  advanceToolChronology,
+  canProjectToolChronology,
+  createToolChronology,
+} from './history-chronology';
 import type { AgentMessage, AgentMessagePart, AgentProviderEnvelope } from './schemas';
 import {
   type AgentHistoryEvidencePolicy,
@@ -292,34 +297,6 @@ function interruptedSystemNote(message: AgentMessage): {
   return { text: `[interrupted] partial response: ${text}`, rendered };
 }
 
-function completeToolChronology(message: AgentMessage): boolean {
-  const pending = new Set<string>();
-  const completed = new Set<string>();
-  let resultsStarted = false;
-  for (const part of message.parts) {
-    if (part.type === 'tool-call') {
-      // Once a round has started returning results, every outstanding parallel
-      // call must settle before a dependent round may begin. Otherwise no
-      // provider-valid assistant/tool grouping can preserve the stored order.
-      if (resultsStarted && pending.size > 0) return false;
-      if (pending.size === 0) resultsStarted = false;
-      if (pending.has(part.callId) || completed.has(part.callId)) return false;
-      pending.add(part.callId);
-    }
-    if (part.type === 'tool-result') {
-      if (!pending.delete(part.callId)) return false;
-      completed.add(part.callId);
-      resultsStarted = true;
-    }
-    if (part.type === 'tool-approval-request') {
-      if (!pending.delete(part.callId)) return false;
-      completed.add(part.callId);
-      resultsStarted = true;
-    }
-  }
-  return pending.size === 0;
-}
-
 /** Project history and retain a decision for every canonical record. */
 export async function projectAgentHistoryDetailed(
   messages: readonly AgentMessage[],
@@ -330,7 +307,14 @@ export async function projectAgentHistoryDetailed(
   const decisions: AgentHistoryProjectionDecision[] = [];
   const interruptedRule = options.interruptedAssistant ?? 'assistant-marked';
   let observedUser = false;
+  let chronology = createToolChronology();
+  let conversationId: string | undefined;
   for (const message of messages) {
+    if (message.conversationId !== conversationId) {
+      conversationId = message.conversationId;
+      chronology = createToolChronology();
+      observedUser = false;
+    }
     // One home for "may this record still be spoken to the model", asked here,
     // by compaction, and by the token budget. Each used to answer it with its
     // own inline list, and the lists disagreed.
@@ -357,6 +341,9 @@ export async function projectAgentHistoryDetailed(
     }
     if (message.role === 'user') {
       const user = await userMessage(message, options);
+      // An intervening user message is not an approval cancellation. Keep any
+      // unresolved request; only a settled turn can release its call identities.
+      if (chronology.pending === 0) chronology = createToolChronology();
       observedUser = true;
       if (user.message) {
         projected.push(user.message);
@@ -401,7 +388,8 @@ export async function projectAgentHistoryDetailed(
       }
       continue;
     }
-    if (!completeToolChronology(message)) {
+    const nextChronology = advanceToolChronology(chronology, message.parts);
+    if (!nextChronology || !canProjectToolChronology(nextChronology)) {
       if (options.incompleteToolTurn === 'error') {
         throw new Error(`Assistant message ${message.id} has incomplete tool chronology`);
       }
@@ -412,6 +400,7 @@ export async function projectAgentHistoryDetailed(
       message,
       interrupted ? 'interrupted' : message.status === 'failed' ? 'failed' : undefined,
     );
+    chronology = nextChronology;
     projected.push(...assistant.messages);
     decisions.push(
       assistant.messages.length > 0

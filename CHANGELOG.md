@@ -15,6 +15,45 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.2] — 2026-08-30
+
+### Added
+
+- **Browser-safe live state can install one snapshot and its continuous following events without
+  an attach race.** `createLiveStateController` accepts a host-owned typed source and reducer,
+  finitely buffers events emitted while the snapshot opens, rejects gaps and overflow, fences late
+  generations and exposes headless `getSnapshot` / `subscribe` / explicit `resync`. Socket.IO
+  reconnect, HTTP framing, opaque cursor policy, replay, storage and rendering remain outside the
+  controller. Real source and packed-consumer fixtures cover Socket.IO and single-generation
+  NDJSON boundaries, ordered records, replaceable progress, gap/resync, scope isolation, managed
+  shutdown and React Query projection; the unsafe separate snapshot-then-subscribe shape is
+  retained as a negative proof. Pending source open/close work is bounded and exposes
+  `controller-capacity` without adding a retry loop. → ADR 0137.
+
+### Fixed
+
+- **Multipart uploads preserve Unicode filenames in both buffered and streaming delivery.**
+  Bounded MIME metadata no longer passes through ByteString-only HTTP `Headers`. UTF-8 extended
+  filenames take precedence, while malformed/duplicate headers, invalid encoding, control-character
+  injection and ambiguous declared sizes fail with a typed bad request before receivers run.
+- **Declaration identity is explicitly repository/artifact-local.** Product membership is an external,
+  explicit many-to-many relation, not implied by dependencies, checkouts or harness workspaces.
+  The optional schema and its exports are unchanged and require no private companion metadata.
+- **Sequential Agent approvals retain their exact history across runs and SQLite reopen.**
+  Automatic approval is a suspension/decision, not a completed tool result. Projection and
+  complete-turn selection share call/request/response/result validation across canonical records,
+  preserving the next signed request after a previous result. Unknown or duplicate responses,
+  mismatched results and invalid active continuations fail closed; SDK signing and tool fencing
+  remain intact. Packed Bun and Node fixtures exercise real coding effects without replay.
+- **Realtime conformance can normalize a refusal sent by the actual peer.** The observation schema
+  now accepts canonical `rejected-by-peer` events and the explicit `peer_rejection` scenario runs
+  through the existing driver without weakening local invalid-argument or acknowledgement cases.
+- **Agent control attachment no longer leaves a snapshot-before-listener gap.** The server installs
+  observer/controller attachment before awaiting its authoritative snapshot and rolls that state
+  back if snapshot acquisition fails, so a host can buffer concurrent deliveries behind the same
+  live-state boundary instead of silently missing them. Concurrent attachment snapshots are
+  bounded across the control server by `maxPendingAttachments`.
+
 ## [0.70.1] — 2026-08-30
 
 ### Fixed
@@ -4960,7 +4999,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.70.2...HEAD
+[0.70.2]: https://github.com/max-listov/stitchkit/compare/v0.70.1...v0.70.2
 [0.67.0]: https://github.com/max-listov/stitchkit/compare/v0.66.1...v0.67.0
 [0.66.1]: https://github.com/max-listov/stitchkit/compare/v0.66.0...v0.66.1
 [0.66.0]: https://github.com/max-listov/stitchkit/compare/v0.65.1...v0.66.0

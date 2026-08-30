@@ -23,7 +23,10 @@
 import {
   asRealtimeRejection,
   createClient,
+  createLiveStateController,
   defineContract,
+  type LiveStateEventDecision,
+  type LiveStateSource,
   type ParseNDJSONOptions,
   parseNDJSON,
   parseSSE,
@@ -32,6 +35,7 @@ import {
   type RealtimeRejectionReport,
   RealtimeRequestRejectedError,
 } from 'stitchkit';
+import { createApplication, defineManagedResource } from 'stitchkit/application';
 import {
   createServer,
   DEFAULT_STREAM_HEARTBEAT_MS,
@@ -45,6 +49,30 @@ import {
   streamingRoute,
 } from 'stitchkit/server';
 import { z } from 'zod';
+
+const LiveStateSchema = z
+  .object({ revision: z.number().int().nonnegative(), values: z.array(z.string()) })
+  .strict();
+const LiveEventSchema = z
+  .object({ revision: z.number().int().positive(), value: z.string() })
+  .strict();
+const LiveFrameSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('snapshot'), state: LiveStateSchema }).strict(),
+  z.object({ type: z.literal('event'), event: LiveEventSchema }).strict(),
+]);
+type LiveState = z.infer<typeof LiveStateSchema>;
+type LiveEvent = z.infer<typeof LiveEventSchema>;
+
+const ProgressStateSchema = z
+  .object({ revision: z.number().int().nonnegative(), scope: z.string(), percent: z.number() })
+  .strict();
+const ProgressEventSchema = ProgressStateSchema;
+const ProgressFrameSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('snapshot'), state: ProgressStateSchema }).strict(),
+  z.object({ type: z.literal('event'), event: ProgressEventSchema }).strict(),
+]);
+type ProgressState = z.infer<typeof ProgressStateSchema>;
+type ProgressEvent = z.infer<typeof ProgressEventSchema>;
 
 function fail(what: string): never {
   throw new Error(`[minimal] streaming subscription: ${what}`);
@@ -93,6 +121,139 @@ async function* threeFrames(): AsyncGenerator<unknown> {
   yield { n: 3 };
 }
 
+async function* liveFrames(
+  _request: Request,
+  { signal }: StreamingSourceContext,
+): AsyncGenerator<unknown> {
+  yield { type: 'snapshot', state: { revision: 1, values: ['snapshot'] } };
+  yield { type: 'event', event: { revision: 2, value: 'same-stream' } };
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
+let progressGeneration = 0;
+let releaseProgressGap = (): void => undefined;
+const progressGapGate = new Promise<void>((resolve) => {
+  releaseProgressGap = resolve;
+});
+async function* progressFrames(
+  _request: Request,
+  { signal }: StreamingSourceContext,
+): AsyncGenerator<unknown> {
+  progressGeneration += 1;
+  if (progressGeneration === 1) {
+    yield { type: 'snapshot', state: { revision: 1, scope: 'first', percent: 10 } };
+    await progressGapGate;
+    yield { type: 'event', event: { revision: 3, scope: 'first', percent: 30 } };
+    return;
+  }
+  yield { type: 'snapshot', state: { revision: 4, scope: 'second', percent: 40 } };
+  yield { type: 'event', event: { revision: 5, scope: 'second', percent: 55 } };
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
+function liveSource(url: string): LiveStateSource<LiveState, LiveEvent> {
+  return {
+    async open({ signal, onEvent, onUnavailable }) {
+      const request = new AbortController();
+      const abort = () => request.abort(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      const frames = parseNDJSON<unknown>(await fetch(url, { signal: request.signal }));
+      const first = await frames.next();
+      const parsed = first.done ? undefined : LiveFrameSchema.safeParse(first.value);
+      if (!parsed?.success || parsed.data.type !== 'snapshot') {
+        request.abort();
+        throw new TypeError('live stream did not begin with a valid snapshot');
+      }
+      const completion = (async () => {
+        try {
+          for await (const value of frames) {
+            const frame = LiveFrameSchema.parse(value);
+            if (frame.type !== 'event') throw new TypeError('duplicate snapshot frame');
+            onEvent(frame.event);
+          }
+          if (!request.signal.aborted) onUnavailable();
+        } catch {
+          if (!request.signal.aborted) onUnavailable();
+        }
+      })();
+      return {
+        snapshot: parsed.data.state,
+        async close() {
+          signal.removeEventListener('abort', abort);
+          request.abort();
+          await frames.return(undefined);
+          await completion;
+        },
+      };
+    },
+  };
+}
+
+function reduceLiveState(
+  state: LiveState,
+  event: LiveEvent,
+): LiveStateEventDecision<LiveState> {
+  if (event.revision <= state.revision) return { outcome: 'duplicate' };
+  if (event.revision !== state.revision + 1) return { outcome: 'gap' };
+  return {
+    outcome: 'applied',
+    state: { revision: event.revision, values: [...state.values, event.value] },
+  };
+}
+
+function progressSource(url: string): LiveStateSource<ProgressState, ProgressEvent> {
+  return {
+    async open({ signal, onEvent, onUnavailable }) {
+      const request = new AbortController();
+      const abort = () => request.abort(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      const frames = parseNDJSON<unknown>(await fetch(url, { signal: request.signal }));
+      const first = await frames.next();
+      const parsed = first.done ? undefined : ProgressFrameSchema.safeParse(first.value);
+      if (!parsed?.success || parsed.data.type !== 'snapshot') {
+        request.abort();
+        throw new TypeError('progress stream did not begin with a valid snapshot');
+      }
+      const completion = (async () => {
+        try {
+          for await (const value of frames) {
+            const frame = ProgressFrameSchema.parse(value);
+            if (frame.type !== 'event') throw new TypeError('duplicate progress snapshot');
+            onEvent(frame.event);
+          }
+          if (!request.signal.aborted) onUnavailable();
+        } catch {
+          if (!request.signal.aborted) onUnavailable();
+        }
+      })();
+      return {
+        snapshot: parsed.data.state,
+        async close() {
+          signal.removeEventListener('abort', abort);
+          request.abort();
+          await frames.return(undefined);
+          await completion;
+        },
+      };
+    },
+  };
+}
+
+function reduceProgress(
+  state: ProgressState,
+  event: ProgressEvent,
+): LiveStateEventDecision<ProgressState> {
+  if (event.revision <= state.revision) return { outcome: 'duplicate' };
+  if (event.revision !== state.revision + 1) return { outcome: 'gap' };
+  return { outcome: 'applied', state: event };
+}
+
 // `RawRoute` from `stitchkit/server` is already bound to the Bun server type —
 // it is an alias, not a generic. Naming it here is the point: a route helper
 // whose result cannot be annotated with the type the entrypoint actually
@@ -108,6 +269,12 @@ const frames: RawRoute = ndjsonRoute({
   path: '/frames',
   heartbeatMs: 25,
   source: threeFrames,
+});
+
+const liveFramesRoute: RawRoute = ndjsonRoute({ path: '/live-state', source: liveFrames });
+const progressFramesRoute: RawRoute = ndjsonRoute({
+  path: '/progress-state',
+  source: progressFrames,
 });
 
 const sse: RawRoute = sseRoute({ path: '/sse', source: threeFrames });
@@ -159,7 +326,7 @@ const typedService = implement(typedContract, {
 const server = createServer({
   port: 0,
   services: [typedService],
-  rawRoutes: [events, frames, sse, general],
+  rawRoutes: [events, frames, liveFramesRoute, progressFramesRoute, sse, general],
 });
 const origin = `http://127.0.0.1:${server.port}`;
 
@@ -243,7 +410,80 @@ if (
   fail(`typed stream returned ${JSON.stringify(typedValues)}`);
 }
 
-// 8. The realtime refusal surface: the names resolve from the published
+// 8. A packed peer-free consumer uses the browser-safe controller over one
+//    validated HTTP stream generation; no Socket.IO or application peer leaks in.
+const live = createLiveStateController({
+  source: liveSource(`${origin}/live-state`),
+  applyEvent: reduceLiveState,
+  maxBufferedEvents: 4,
+  maxBufferedBytes: 1_024,
+  sizeOfEvent: (event) => event.value.length + 8,
+});
+await live.start();
+const liveDeadline = Date.now() + 1_000;
+while (live.getSnapshot().appliedEvents === 0 && Date.now() < liveDeadline) await sleep(5);
+const liveSnapshot = live.getSnapshot();
+if (
+  liveSnapshot.value?.revision !== 2 ||
+  liveSnapshot.value.values.join(',') !== 'snapshot,same-stream'
+) {
+  fail(`live state returned ${JSON.stringify(liveSnapshot)}`);
+}
+await live.close();
+
+// 9. A second packed composition replaces absolute progress state, detects a
+//    real stream gap, resynchronizes into a different scope and is owned by the
+//    existing managed application lifecycle.
+const progress = createLiveStateController({
+  source: progressSource(`${origin}/progress-state`),
+  applyEvent: reduceProgress,
+  maxBufferedEvents: 4,
+  maxBufferedBytes: 1_024,
+  sizeOfEvent: () => 32,
+});
+const progressApplication = createApplication({
+  id: 'packed-live-progress',
+  resources: [
+    defineManagedResource({
+      id: 'progress-receiver',
+      async start() {
+        const snapshot = await progress.start();
+        if (snapshot.phase !== 'live' || !snapshot.hasValue) {
+          throw new Error('progress receiver did not reach live readiness');
+        }
+      },
+      async close() {
+        await progress.close();
+      },
+    }),
+  ],
+});
+await progressApplication.start();
+releaseProgressGap();
+const gapDeadline = Date.now() + 1_000;
+while (progress.getSnapshot().phase !== 'resync-required' && Date.now() < gapDeadline) {
+  await sleep(5);
+}
+if (progress.getSnapshot().reason !== 'gap') {
+  fail(`progress gap was not visible ${JSON.stringify(progress.getSnapshot())}`);
+}
+await progress.resync();
+const progressDeadline = Date.now() + 1_000;
+while (progress.getSnapshot().appliedEvents === 0 && Date.now() < progressDeadline) {
+  await sleep(5);
+}
+const progressSnapshot = progress.getSnapshot();
+if (
+  progressSnapshot.value?.revision !== 5 ||
+  progressSnapshot.value.scope !== 'second' ||
+  progressSnapshot.value.percent !== 55
+) {
+  fail(`progress resync leaked an old scope ${JSON.stringify(progressSnapshot)}`);
+}
+await progressApplication.shutdown();
+if (progress.getSnapshot().phase !== 'closed') fail('managed shutdown left progress open');
+
+// 10. The realtime refusal surface: the names resolve from the published
 //    entrypoint and the recogniser behaves. A refusal is recognised before any
 //    acknowledgement schema is consulted, so a consumer can classify one
 //    without knowing anything about Zod's internals.

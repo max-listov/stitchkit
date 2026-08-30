@@ -1087,6 +1087,14 @@ for a custom raw transport. It uses the same descriptor and returns
 `{ files, fields, rollback }`; contract endpoints should prefer the automatic
 dispatcher path.
 
+Both delivery modes preserve UTF-8 `filename` metadata, including browser `FormData` names. For
+interoperability, a UTF-8 percent-encoded `filename*` parameter takes precedence over `filename`;
+unsupported charsets or malformed encoding are rejected rather than falling back silently. Literal
+percent sequences in ordinary `filename` are not decoded. Filenames remain untrusted metadata,
+not safe filesystem paths. Part headers have a 64 KiB byte limit, are case-insensitive and reject
+duplicates, folding, invalid header names and control characters. Disposition parameters reject
+duplicates and unsafe field names; declared part sizes must be nonnegative safe decimal integers.
+
 ### Rate limiting
 
 ```ts

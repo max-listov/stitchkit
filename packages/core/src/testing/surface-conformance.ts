@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import type { RealtimeRejectedEvent, RealtimeRejectedEventHook } from '../realtime/contract';
+import {
+  RealtimeRejectDirectionSchema,
+  type RealtimeRejectedEvent,
+  type RealtimeRejectedEventHook,
+  RealtimeRejectFaultSchema,
+  RealtimeRejectPhaseSchema,
+  RealtimeRejectReasonSchema,
+} from '../realtime/contract';
 import {
   RealtimeRequestDisconnectedError,
   RealtimeRequestInvalidAcknowledgementError,
@@ -9,20 +16,10 @@ import type { OpenApiDocument } from '../server/openapi';
 import { type SurfaceManifest, serializeSurfaceValue } from './surface-manifest';
 
 export const RealtimeRejectionObservationSchema = z.object({
-  direction: z.enum([
-    'client-inbound',
-    'client-outbound',
-    'server-inbound',
-    'server-outbound',
-  ]),
-  phase: z.enum(['arguments', 'acknowledgement']),
-  reason: z.enum([
-    'unknown-event',
-    'invalid-arguments',
-    'invalid-acknowledgement-value',
-    'missing-acknowledgement',
-  ]),
-  fault: z.enum(['peer', 'local']),
+  direction: RealtimeRejectDirectionSchema,
+  phase: RealtimeRejectPhaseSchema,
+  reason: RealtimeRejectReasonSchema,
+  fault: RealtimeRejectFaultSchema,
 });
 
 const ObservationFields = {
@@ -87,6 +84,7 @@ export type RealtimeProbeScenario =
   | 'acknowledgement'
   | 'invalid_arguments'
   | 'invalid_acknowledgement'
+  | 'peer_rejection'
   | 'disconnected'
   | 'in_flight_disconnect'
   | 'timeout';
@@ -128,7 +126,11 @@ export interface CreateRealtimeProbeDriverConfig<TFixture> {
 
 function scenarioOutcome(scenario: RealtimeProbeScenario): TransportObservation['outcome'] {
   if (scenario === 'event' || scenario === 'acknowledgement') return 'success';
-  if (scenario === 'invalid_arguments' || scenario === 'invalid_acknowledgement') {
+  if (
+    scenario === 'invalid_arguments' ||
+    scenario === 'invalid_acknowledgement' ||
+    scenario === 'peer_rejection'
+  ) {
     return 'realtime_rejected';
   }
   if (scenario === 'disconnected' || scenario === 'in_flight_disconnect') {
@@ -158,6 +160,15 @@ function assertScenarioExpectation(
   if (scenario === 'invalid_arguments' && expected.handlerCalls !== 0) {
     throw new TypeError(
       'Realtime probe scenario "invalid_arguments" requires handlerCalls: 0',
+    );
+  }
+  if (
+    scenario === 'peer_rejection' &&
+    (expected.outcome !== 'realtime_rejected' ||
+      expected.rejection.reason !== 'rejected-by-peer')
+  ) {
+    throw new TypeError(
+      'Realtime probe scenario "peer_rejection" requires a rejected-by-peer outcome',
     );
   }
   if (expected.outcome === 'disconnected') {

@@ -1,15 +1,26 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createRealtimeClient, createSocketIOClient } from '../src/browser/socket-io';
-import { defineRealtimeContract, RealtimeRequestRejectedError } from '../src/realtime';
+import { AppError } from '../src/contract/errors';
+import {
+  defineRealtimeContract,
+  type RealtimeRejectedEventHook,
+  RealtimeRequestRejectedError,
+} from '../src/realtime';
 import {
   asRealtimeRejection,
   MAX_REJECTION_ISSUES,
   REALTIME_REJECTION_KEY,
 } from '../src/realtime/rejected-frame';
+import { parseRealtimeRequestArguments } from '../src/realtime/socket';
 import { createServer } from '../src/server/bun';
 import { bindRealtimeServer } from '../src/server/realtime';
 import { createSocketIOServer } from '../src/server/socket-io';
+import {
+  createRealtimeProbeDriver,
+  defineRealtimeProbe,
+  runSurfaceProbes,
+} from '../src/testing';
 
 /**
  * Two peers that disagree about the contract — the shape a protocol generation
@@ -60,6 +71,7 @@ function clientContractAtGeneration(generation: number) {
 
 let url = '';
 let stop: () => Promise<unknown>;
+let replicateHandlerCalls = 0;
 
 beforeAll(async () => {
   const handle = await createSocketIOServer({ cors: { origin: '*' } });
@@ -69,6 +81,7 @@ beforeAll(async () => {
   });
   realtime.onConnection(({ events }) => {
     events.on('replicate', (payload, acknowledge) => {
+      replicateHandlerCalls += 1;
       acknowledge({ stored: payload.id.length > 0 });
     });
     events.on('announce', () => undefined);
@@ -83,11 +96,14 @@ beforeAll(async () => {
 
 afterAll(() => stop());
 
-async function connect(generation: number) {
+async function connect(
+  generation: number,
+  onRejected: RealtimeRejectedEventHook = () => undefined,
+) {
   const client = createRealtimeClient(clientContractAtGeneration(generation), {
     url,
     transports: ['websocket'],
-    onRejected: () => undefined,
+    onRejected,
   });
   const live = new Promise<void>((resolve, reject) => {
     const off = client.onConnectionChange((connected) => {
@@ -103,6 +119,47 @@ async function connect(generation: number) {
 }
 
 describe('a schema rejection is visible to the sender', () => {
+  test('retains exact local outcomes for unknown events and missing acknowledgements', () => {
+    const registry = defineRealtimeContract({
+      serverToClient: {},
+      clientToServer: {
+        notice: { args: z.tuple([z.string()]) },
+      },
+    }).clientToServer;
+    const outcomes = [
+      () => parseRealtimeRequestArguments(registry, 'missing', 'client-outbound', []),
+      () => parseRealtimeRequestArguments(registry, 'notice', 'client-outbound', ['ready']),
+    ];
+
+    for (const [index, invoke] of outcomes.entries()) {
+      let failure: unknown;
+      try {
+        invoke?.();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(AppError);
+      if (!(failure instanceof AppError)) throw new Error(`Missing rejection ${index}`);
+      expect(failure.details).toMatchObject(
+        index === 0
+          ? {
+              event: 'missing',
+              direction: 'client-outbound',
+              phase: 'arguments',
+              reason: 'unknown-event',
+              fault: 'local',
+            }
+          : {
+              event: 'notice',
+              direction: 'client-outbound',
+              phase: 'acknowledgement',
+              reason: 'missing-acknowledgement',
+              fault: 'local',
+            },
+      );
+    }
+  });
+
   test('an in-generation request still gets its acknowledgement', async () => {
     // The control. Without it, an implementation that answered EVERY frame with
     // a refusal would pass every assertion below.
@@ -140,6 +197,45 @@ describe('a schema rejection is visible to the sender', () => {
     } finally {
       client.disconnect();
     }
+  });
+
+  test('a real peer refusal is normalized by the realtime conformance driver', async () => {
+    let observeRejection: RealtimeRejectedEventHook = () => undefined;
+    const client = await connect(1, (event) => observeRejection(event));
+    const driver = createRealtimeProbeDriver<string>({
+      bind: (onRejected) => {
+        observeRejection = onRejected;
+        return {
+          connected: () => client.connected,
+          invoke: () =>
+            client.request('replicate', { v: 1, id: 'probe' }, { timeoutMs: 5_000 }),
+          dispose: () => client.disconnect(),
+        };
+      },
+      handlerCalls: () => replicateHandlerCalls,
+    });
+
+    await runSurfaceProbes({
+      probes: [
+        defineRealtimeProbe({
+          name: 'real peer refusal',
+          scenario: 'peer_rejection',
+          fixture: 'generation-skew',
+          expected: {
+            outcome: 'realtime_rejected',
+            code: 'REALTIME_CONTRACT_VIOLATION',
+            rejection: {
+              direction: 'client-inbound',
+              phase: 'arguments',
+              reason: 'rejected-by-peer',
+              fault: 'local',
+            },
+            handlerCalls: 0,
+          },
+        }),
+      ],
+      drivers: { REALTIME: driver },
+    });
   });
 
   test('the refusal arrives well inside a deadline it would otherwise have consumed', async () => {

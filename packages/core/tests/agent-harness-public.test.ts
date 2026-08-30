@@ -214,6 +214,171 @@ describe('published headless Agent harness', () => {
     await harness.close();
   });
 
+  test('attaches before snapshot settlement so a concurrent Agent event is not missed', async () => {
+    const harness = createHeadlessAgentHarness({
+      protocol: defineAgentProtocol({
+        context: z.object({}),
+        inputMetadata: z.object({}),
+        terminalAcceptance: 'require-output',
+      }),
+      store: createMemoryAgentRuntimeStore(),
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'fixture',
+            modelId: 'attach-race',
+            contextWindow: 8_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4({ doStream: [textStream('during-attach')] }),
+        }),
+      },
+      resources: { load: () => ({ resources: [], diagnostics: [] }) },
+      promptBudget: ({ contextWindow }) => budget(contextWindow),
+      tools: () => ({}),
+    });
+    const snapshotCaptured = Promise.withResolvers<void>();
+    const releaseSnapshot = Promise.withResolvers<void>();
+    const closeSnapshotCaptured = Promise.withResolvers<void>();
+    const releaseCloseSnapshot = Promise.withResolvers<void>();
+    let closeSnapshotCalls = 0;
+    const originalSnapshot = harness.snapshot.bind(harness);
+    const delayedHarness = new Proxy(harness, {
+      get(target, property, receiver) {
+        if (property !== 'snapshot') return Reflect.get(target, property, receiver);
+        return async (conversationId: string) => {
+          const snapshot = await originalSnapshot(conversationId);
+          if (conversationId === 'attach-race') {
+            snapshotCaptured.resolve();
+            await releaseSnapshot.promise;
+          }
+          if (conversationId === 'close-race') {
+            closeSnapshotCalls += 1;
+            if (closeSnapshotCalls === 2) {
+              closeSnapshotCaptured.resolve();
+              await releaseCloseSnapshot.promise;
+            }
+          }
+          return snapshot;
+        };
+      },
+    });
+    const delivered: string[] = [];
+    const terminal = Promise.withResolvers<void>();
+    const server = createAgentHarnessControlServer(delayedHarness, {
+      maxPendingAttachments: 1,
+    });
+    const observer = server.connect({
+      id: 'attach-race-observer',
+      deliver: ({ event }) => {
+        delivered.push(event.type);
+        if (event.type === 'terminal') terminal.resolve();
+      },
+      onOverflow: () => undefined,
+    });
+    const attaching = observer.request({
+      schemaVersion: 1,
+      requestId: 'attach-race',
+      operation: 'attach',
+      conversationId: 'attach-race',
+      access: 'observe',
+    });
+    await snapshotCaptured.promise;
+    const capacityProbe = server.connect({
+      id: 'capacity-probe',
+      deliver: () => undefined,
+      onOverflow: () => undefined,
+    });
+    expect(
+      await capacityProbe.request({
+        schemaVersion: 1,
+        requestId: 'parallel-other-conversation',
+        operation: 'attach',
+        conversationId: 'another-conversation',
+        access: 'observe',
+      }),
+    ).toMatchObject({ outcome: 'error', error: { code: 'ATTACHMENT_CAPACITY' } });
+    capacityProbe.close();
+    expect(
+      await observer.request({
+        schemaVersion: 1,
+        requestId: 'parallel-attach',
+        operation: 'attach',
+        conversationId: 'attach-race',
+        access: 'control',
+      }),
+    ).toMatchObject({ outcome: 'error', error: { code: 'ATTACH_IN_PROGRESS' } });
+    expect(
+      await observer.request({
+        schemaVersion: 1,
+        requestId: 'parallel-detach',
+        operation: 'detach',
+        conversationId: 'attach-race',
+      }),
+    ).toMatchObject({ outcome: 'error', error: { code: 'ATTACH_IN_PROGRESS' } });
+
+    const run = harness.submit({
+      conversationId: 'attach-race',
+      idempotencyKey: 'during-attach',
+      context: {},
+      parts: [{ type: 'text', text: 'run while snapshot response is delayed' }],
+      metadata: {},
+    });
+    expect((await run.result).reason).toBe('success');
+    await terminal.promise;
+    releaseSnapshot.resolve();
+
+    expect(await attaching).toMatchObject({ outcome: 'ok' });
+    expect(delivered).toContain('terminal');
+
+    const closing = server.connect({
+      id: 'closing-during-attach',
+      deliver: () => undefined,
+      onOverflow: () => undefined,
+    });
+    expect(
+      await closing.request({
+        schemaVersion: 1,
+        requestId: 'closing-observe',
+        operation: 'attach',
+        conversationId: 'close-race',
+        access: 'observe',
+      }),
+    ).toMatchObject({ outcome: 'ok' });
+    const closingAttach = closing.request({
+      schemaVersion: 1,
+      requestId: 'closing-attach',
+      operation: 'attach',
+      conversationId: 'close-race',
+      access: 'control',
+    });
+    await closeSnapshotCaptured.promise;
+    closing.close();
+    releaseCloseSnapshot.resolve();
+    expect(await closingAttach).toMatchObject({
+      outcome: 'error',
+      error: { code: 'CONNECTION_CLOSED' },
+    });
+    const replacement = server.connect({
+      id: 'replacement-after-pending-close',
+      deliver: () => undefined,
+      onOverflow: () => undefined,
+    });
+    expect(
+      await replacement.request({
+        schemaVersion: 1,
+        requestId: 'replacement-attach',
+        operation: 'attach',
+        conversationId: 'close-race',
+        access: 'control',
+      }),
+    ).toMatchObject({ outcome: 'ok' });
+    replacement.close();
+    observer.close();
+    server.close();
+    await harness.close();
+  });
+
   test('discovers explicit roots with lazy exact skill reads and opaque provenance', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-resources-'));
     roots.push(root);

@@ -4,7 +4,7 @@ description: One machine-readable statement a repository makes about itself — 
 type: architecture
 status: active
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-08-30
 ---
 
 # Project declaration
@@ -38,6 +38,32 @@ interpreting it partially — a half-understood declaration is the one failure
 mode that produces a running, wrong deployment rather than an error.
 
 ## Why declare yourself
+
+### Identity is not product membership
+
+The exported names `ProjectDeclaration` and `ProjectIdentity` describe the buildable source/artifact
+declared by a repository. A singular `identity` does **not** make a product project and a repository
+the same entity, nor does it identify a local checkout or a harness session.
+
+| Entity | Meaning and owner |
+| --- | --- |
+| Product project | A product boundary whose repository membership is explicitly maintained outside this declaration |
+| Repository | Versioned source; its declaration describes roles, build outputs and release requirements |
+| Checkout | A local working copy of a repository revision; local paths and credentials belong to its host |
+| Harness workspace | The host-selected working scope for a session, not an implied product or membership registry |
+
+Membership is many-to-many. For example, an external registry may declare product A includes
+repositories `service-a` and `shared-library`, while product B includes `service-b` and the same
+`shared-library`. Both products can read the library's unchanged declaration. Installing that library
+as a dependency, placing a checkout beside another, or naming a harness workspace does not create
+membership. The embedding product/registry owns these explicit relationships and their access policy.
+
+A private companion repository can be part of a product without becoming a separate product. Its
+relationship and working context stay in an authorized private registry, never in a potentially public
+library declaration. No registry or membership fields are required here; the declaration remains
+optional. Existing exports and schema version 1 are unchanged.
+
+### One statement, several readers
 
 Because the statements exist either way, and without a schema they exist three
 times. A repository already says how many roles it runs (in a process file),

@@ -439,6 +439,21 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             evidencePolicy: config.history.evidencePolicy,
           }),
         });
+        for (const decision of detailed.decisions) {
+          if (
+            decision.action === 'omitted' &&
+            run.inputMessageIds.includes(decision.messageId) &&
+            source.messages.some(
+              (message) => message.id === decision.messageId && message.role === 'tool',
+            )
+          ) {
+            // Omitting old partial evidence is allowed. Silently discarding the
+            // active approval decision would turn an invalid command into a new model turn.
+            throw new Error(
+              `Invalid approval continuation ${decision.messageId}: ${decision.reason}`,
+            );
+          }
+        }
         carriedSystem = detailed.system;
         return [...detailed.messages];
       };

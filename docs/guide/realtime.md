@@ -247,6 +247,171 @@ The bound handle intentionally has no `connect()` or `disconnect()`. Its
 `on`/`emit`/`request`, rejection and timeout semantics are exactly the path used
 by `createRealtimeClient`; only transport construction/lifecycle differs.
 
+## Snapshot + event state synchronization
+
+`createLiveStateController` is the optional browser-safe state machine between a
+validated transport binding and any renderer. It solves one problem: install a
+snapshot and every event after that snapshot's consistency point without a race.
+It does not create a socket, choose a cursor, retry a transport, store history or
+invent ordering for the application.
+
+```ts
+import {
+  createLiveStateController,
+  type LiveStateEventDecision,
+  type LiveStateSource,
+} from 'stitchkit'
+
+type View = { revision: number; rows: readonly Row[] }
+type Change = { revision: number; row: Row }
+
+const applyChange = (state: View, event: Change): LiveStateEventDecision<View> => {
+  if (event.revision <= state.revision) return { outcome: 'duplicate' }
+  if (event.revision !== state.revision + 1) return { outcome: 'gap' }
+  return {
+    outcome: 'applied',
+    state: { revision: event.revision, rows: [...state.rows, event.row] },
+  }
+}
+
+const live = createLiveStateController({
+  source,
+  applyEvent: applyChange,
+  maxBufferedEvents: 128,
+  maxBufferedBytes: 256 * 1024,
+  sizeOfEvent: encodedChangeBytes,
+})
+
+const unsubscribe = live.subscribe(render)
+await live.start()
+// On a gap/overflow or source loss, choose when the UI should resync.
+const status = live.getSnapshot()
+if (status.phase === 'resync-required' || status.phase === 'unavailable') {
+  await live.resync()
+}
+
+unsubscribe()
+await live.close()
+```
+
+The source boundary is the important part:
+
+```ts
+interface LiveStateSource<State, Event> {
+  open(input: {
+    signal: AbortSignal
+    onEvent(event: Event): void
+    onUnavailable(): void
+  }): Promise<{ snapshot: State; close(): void | Promise<void> }>
+}
+```
+
+`onEvent` is available before `open()` begins asynchronous work. By the time
+`open()` resolves, the source guarantees that every event after the returned
+snapshot's consistency point has already been or will be passed to that callback.
+The controller buffers early events within both explicit limits, installs the
+snapshot, drains in order, then becomes `live`. A late result from an earlier
+`resync()` generation is fenced. Non-cooperative caller-owned cleanup is asked to
+stop but cannot hold controller settlement.
+
+`subscribe()` listeners are synchronous external-store notifications: read the
+published snapshot and schedule rendering elsewhere. A listener that returns a
+Promise is removed after its first call, preventing unresolved UI work from
+accumulating per event. Source `close()` must be idempotent because an abort-aware
+binding may have started cleanup before the controller calls it.
+
+At most two physical source `open()` / `close()` operations in total may remain
+unsettled. If a caller-owned source ignores cancellation beyond that operation
+bound, `resync()` returns
+`unavailable/controller-capacity` without opening another generation. When a slot
+settles, the controller publishes `resync-required/controller-capacity`; the host
+may retry explicitly. This bounds controller-retained work without inventing a
+transport retry loop.
+
+### Socket.IO binding
+
+Use an acknowledged operation whose server handler establishes the subscription
+before it captures/returns the snapshot. For example, the server can join the
+socket to the resource room, capture revision `N`, then acknowledge that snapshot;
+ordered Socket.IO frames after that point reach the already-installed handler:
+
+```ts
+const source: LiveStateSource<View, Change> = {
+  async open({ signal, onEvent, onUnavailable }) {
+    const offEvent = socket.on('view:changed', onEvent)
+    const offConnection = socket.onConnectionChange((connected) => {
+      if (!connected) onUnavailable()
+    })
+    let closed = false
+    const close = () => {
+      if (closed) return
+      closed = true
+      offEvent()
+      offConnection()
+    }
+    signal.addEventListener('abort', close, { once: true })
+
+    try {
+      const snapshot = await socket.request('view:open', { timeoutMs: 5_000 })
+      return { snapshot, close }
+    } catch (error) {
+      close()
+      throw error
+    }
+  },
+}
+```
+
+Socket.IO still owns physical reconnect. A reconnected transport only means the
+connection is open; call `resync()` when application state needs a fresh
+generation. If the application has replay, its source may resume from its opaque
+cursor and return an accepted consistency point. If history expired or a cursor is
+incompatible, the source must acquire a fresh authoritative snapshot or reject the
+open; the controller does not classify or compare opaque cursors itself.
+
+### One-way HTTP stream binding
+
+NDJSON/SSE can use the same receiver semantics when **one response generation**
+starts with a schema-validated snapshot frame and every later frame is a validated
+event. Attach `parseNDJSON` or the typed contract-stream reader, parse the first
+frame before resolving `open()`, and pump remaining frames into `onEvent`. Abort
+that response in `close()`.
+
+A separate `GET /snapshot` followed by `GET /events` is not this boundary: a
+change can land between the two requests and disappear unless the application
+supplies a watermark/replay protocol. The controller intentionally cannot make
+that uncoordinated recipe safe.
+
+### Rendering, cache and process lifecycle
+
+For replaceable progress, let the reducer replace the absolute view at each
+accepted revision. For ordered records, append only the exact next revision and
+return `gap` otherwise. Both use the same controller; their ordering policy stays
+in their reducers. `getSnapshot()` + `subscribe()` works headlessly and with
+`useSyncExternalStore`. A React Query application can update its existing query
+cache from a subscriber after `phase === 'live'`; no second hook or store adapter
+is required. Cache `markFresh` windows suppress local echoes, while revision/cursor
+classification detects duplicates—those are different policies.
+
+A server process that owns such a receiver can place `start()` and `close()` in
+an existing `defineManagedResource` and include it in `createApplication`.
+Readiness follows a successful `live` snapshot; shutdown calls `close()`. Stitchkit
+does not add another supervisor, reconnect loop or durable event database.
+
+When migrating a hand-written receiver, remove only the superseded attach/snapshot
+race loop, retry timer and listener bookkeeping. Keep the application's schemas,
+authorization, reducer, cursor/replay policy and durable storage. Development
+proxying and Vite HMR remain frontend tooling; they are described in
+[frontend integrations](./frontend-integrations.md) and never travel through live
+application event envelopes.
+
+The Agent harness control server follows the same ordering: it installs the
+conversation attachment before awaiting the authoritative snapshot and rolls the
+attachment back if that read fails. A host adapter installs its delivery callback,
+issues `attach`, and supplies the returned snapshot through its live-state source;
+the existing Agent cursor and view reducers still own runtime epochs, durable
+versions and transcript projection.
+
 ### Request-response over realtime
 
 For an event with an `ack` schema, `request()` is the Promise form of the same

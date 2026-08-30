@@ -14,6 +14,7 @@ import {
 import { AppError } from 'stitchkit/contract';
 import { defineRuntimeTool, mountAgent } from 'stitchkit/tools';
 import { z } from 'zod';
+import './approval-chronology.mjs';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

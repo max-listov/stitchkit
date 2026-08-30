@@ -30,6 +30,24 @@ export {
   type RequestOptions,
   type UnauthorizedMatcher,
 } from './browser/http';
+export {
+  createLiveStateController,
+  type LiveStateController,
+  type LiveStateControllerConfig,
+  type LiveStateControllerError,
+  type LiveStateControllerSnapshot,
+  type LiveStateControllerStatus,
+  LiveStateControllerStatusSchema,
+  type LiveStateEventDecision,
+  type LiveStatePhase,
+  LiveStatePhaseSchema,
+  type LiveStateSource,
+  type LiveStateSourceOpenInput,
+  type LiveStateSourceOpenResult,
+  type LiveStateStopReason,
+  LiveStateStopReasonSchema,
+  type LiveStateSubscriberError,
+} from './browser/live-state';
 export type {
   BindRealtimeClientOptions,
   BoundRealtimeClient,

@@ -10,7 +10,21 @@ const DEFAULT_MAX_PARTS = 1000;
 const CRLF = new Uint8Array([13, 10]);
 const HEADER_END = new Uint8Array([13, 10, 13, 10]);
 const decoder = new TextDecoder();
+const headerDecoder = new TextDecoder('utf-8', { fatal: true });
 const encoder = new TextEncoder();
+const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+function hasControl(value: string, allowTab = false): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if ((code < 32 && !(allowTab && code === 9)) || code === 127) return true;
+  }
+  return false;
+}
+
+function trimWhitespace(value: string): string {
+  return value.replace(/^[ \t]+|[ \t]+$/g, '');
+}
 
 export interface MultipartLifecycle {
   rollback(): Promise<void>;
@@ -73,9 +87,47 @@ function parseBoundary(req: Request): string {
 }
 
 function parseDisposition(value: string | undefined): { name: string; filename?: string } {
-  if (!value || !/^form-data(?:;|$)/i.test(value)) badRequest('Invalid multipart disposition');
-  const name = /(?:^|;)\s*name="([^"]*)"/i.exec(value)?.[1];
-  const filename = /(?:^|;)\s*filename="([^"]*)"/i.exec(value)?.[1];
+  if (!value) badRequest('Invalid multipart disposition');
+  const separator = value.indexOf(';');
+  const kind = separator < 0 ? value : value.slice(0, separator);
+  if (trimWhitespace(kind).toLowerCase() !== 'form-data') {
+    badRequest('Invalid multipart disposition');
+  }
+  const parameters = new Map<string, string>();
+  let rest = separator < 0 ? '' : value.slice(separator);
+  while (rest.length > 0) {
+    const match =
+      /^;[ \t]*([^=; \t]+)[ \t]*=[ \t]*(?:"((?:[^"\\]|\\.)*)"|([^; \t]+))[ \t]*/.exec(rest);
+    if (!match?.[1]) badRequest('Invalid multipart disposition parameter');
+    const key = match[1].toLowerCase();
+    if (!TOKEN.test(key) || parameters.has(key)) {
+      badRequest('Invalid or duplicate multipart disposition parameter');
+    }
+    const quoted = match[2];
+    const raw = match[3] ?? '';
+    if (quoted === undefined && !TOKEN.test(raw)) {
+      badRequest('Invalid multipart disposition parameter');
+    }
+    const decoded = quoted === undefined ? raw : quoted.replace(/\\(.)/g, '$1');
+    if (hasControl(decoded)) badRequest('Invalid multipart disposition parameter');
+    parameters.set(key, decoded);
+    rest = rest.slice(match[0].length);
+  }
+  const name = parameters.get('name');
+  let filename = parameters.get('filename');
+  const extended = parameters.get('filename*');
+  if (extended !== undefined) {
+    const match = /^utf-8'[A-Za-z0-9-]*'((?:[!#$&+.^_`|~0-9A-Za-z-]|%[0-9A-Fa-f]{2})*)$/i.exec(
+      extended,
+    );
+    if (!match) badRequest('Invalid multipart extended filename');
+    try {
+      filename = decodeURIComponent(match[1] ?? '');
+    } catch {
+      badRequest('Invalid multipart extended filename');
+    }
+    if (hasControl(filename)) badRequest('Invalid multipart extended filename');
+  }
   if (!name || isUnsafeKey(name)) badRequest('Invalid multipart field name');
   return filename === undefined ? { name } : { name, filename };
 }
@@ -83,21 +135,32 @@ function parseDisposition(value: string | undefined): { name: string; filename?:
 function parsePartHeaders(bytes: Uint8Array): ParsedHeaders {
   let text: string;
   try {
-    text = decoder.decode(bytes);
+    text = headerDecoder.decode(bytes);
   } catch {
     badRequest('Invalid multipart headers');
   }
-  const headers = new Headers();
+  // MIME part metadata is UTF-8, not the ByteString HTTP Headers boundary.
+  // The reader already caps the entire block at DEFAULT_MAX_HEADER_BYTES.
+  const headers = new Map<string, string>();
   for (const line of text.split('\r\n')) {
     const separator = line.indexOf(':');
     if (separator <= 0) badRequest('Invalid multipart header');
-    headers.append(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+    const name = line.slice(0, separator).toLowerCase();
+    const value = trimWhitespace(line.slice(separator + 1));
+    if (!TOKEN.test(name) || hasControl(value, true)) {
+      badRequest('Invalid multipart header');
+    }
+    if (headers.has(name)) badRequest('Duplicate multipart header');
+    headers.set(name, value);
   }
   const disposition = parseDisposition(headers.get('content-disposition') ?? undefined);
   const rawContentType = headers.get('content-type');
   const contentType = rawContentType?.split(';', 1)[0]?.trim().toLowerCase();
   const rawSize = headers.get('content-length');
-  const declaredSize = rawSize === null ? undefined : Number(rawSize);
+  if (rawSize !== undefined && !/^[0-9]+$/.test(rawSize)) {
+    badRequest('Invalid multipart part content-length');
+  }
+  const declaredSize = rawSize === undefined ? undefined : Number(rawSize);
   if (
     declaredSize !== undefined &&
     (!Number.isSafeInteger(declaredSize) || declaredSize < 0)

@@ -12,7 +12,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { QueryClient } from '@tanstack/react-query';
 import { MockLanguageModelV4 } from 'ai/test';
-import { ApiError } from 'stitchkit';
+import { ApiError, createLiveStateController } from 'stitchkit';
 import {
   AgentContextOverflowError,
   composeAgentPrompt,
@@ -75,6 +75,43 @@ check(
   'managed shutdown exposes a separate realtime close bound',
   ShutdownOptionsSchema.parse({}).realtimeCloseTimeoutMs === 1_000,
 );
+
+let deliverProgress = (_event: { revision: number; percent: number }): void => undefined;
+const packedLiveQuery = new QueryClient();
+const packedProgress = createLiveStateController<
+  { revision: number; percent: number },
+  { revision: number; percent: number }
+>({
+  source: {
+    open: async ({ onEvent }) => {
+      deliverProgress = onEvent;
+      return { snapshot: { revision: 1, percent: 10 }, close: () => undefined };
+    },
+  },
+  applyEvent: (state, event: { revision: number; percent: number }) =>
+    event.revision === state.revision + 1
+      ? { outcome: 'applied' as const, state: event }
+      : event.revision <= state.revision
+        ? { outcome: 'duplicate' as const }
+        : { outcome: 'gap' as const },
+  maxBufferedEvents: 4,
+  maxBufferedBytes: 256,
+  sizeOfEvent: () => 16,
+});
+const unsubscribePackedProgress = packedProgress.subscribe((snapshot) => {
+  if (snapshot.phase === 'live' && snapshot.value) {
+    packedLiveQuery.setQueryData(['progress'], snapshot.value);
+  }
+});
+await packedProgress.start();
+deliverProgress({ revision: 2, percent: 25 });
+check(
+  'live-state projects a validated absolute view into the existing React Query cache',
+  packedLiveQuery.getQueryData<{ revision: number; percent: number }>(['progress'])
+    ?.percent === 25,
+);
+unsubscribePackedProgress();
+await packedProgress.close();
 
 const packedRaceTrace = createAgentRaceTrace();
 packedRaceTrace.record('admission');

@@ -365,6 +365,13 @@ try {
             `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
           );
         }
+        const multipartOutput = step(`node: Unicode multipart (${runtime})`, () =>
+          run(runtime, ['src/multipart-unicode.mjs'], dir),
+        );
+        if (!multipartOutput.includes('packed multipart Unicode: ok')) {
+          failed = true;
+          console.error(`[consumer-lane] node: ${runtime} multipart produced no proof`);
+        }
         const harnessOutput = step(`node: headless harness (${runtime})`, () =>
           run(runtime, ['src/headless-harness.mjs'], dir),
         );

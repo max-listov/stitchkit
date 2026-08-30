@@ -278,6 +278,12 @@ revalidates the signature/tool call/input before the original direct tool reache
 fence. Reconnect and SQLite reopen require no promise registry. Remembered policy and a stronger
 cross-crash exactly-once guarantee remain application concerns.
 
+Approval requests suspend a call; they do not settle its result. History carries exact call and
+approval identity across assistant/tool records, so an approved result can precede the next signed
+request in a successor run. Automatic decisions follow the same chronology. Unknown/duplicate
+responses and results with a different call or tool name are invalid; dropping an invalid active
+approval input fails the run with a private diagnostic rather than starting a fresh model turn.
+
 `stitchkit/agent-runtime/coding-tools` returns ordinary direct runtime tools named `read_file`,
 `write_file`, `search_files`, `apply_patch`, `run_command` and optional `read_output`. Every call passes a
 required host authorization callback. File paths are relative, bounded and contained after

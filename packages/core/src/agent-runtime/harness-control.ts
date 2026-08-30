@@ -7,6 +7,7 @@ import {
 } from './control-schema';
 import { type AgentRuntimeEventSink, createAgentRuntimeEventSink } from './events';
 import type { HeadlessAgentHarness } from './harness-contract';
+import type { AgentSnapshot } from './schemas';
 
 export interface AgentHarnessControlConnection {
   request(input: AgentControlRequest): Promise<AgentControlResponse>;
@@ -25,6 +26,8 @@ export interface AgentHarnessControlServer {
 
 export interface AgentHarnessControlServerConfig {
   maxPendingEvents?: number;
+  /** Maximum concurrent snapshot-backed attachment requests across this server. */
+  maxPendingAttachments?: number;
 }
 
 /** Transport-neutral correlated control with observer attachments and exclusive mutation leases. */
@@ -32,15 +35,21 @@ export function createAgentHarnessControlServer<CONTEXT>(
   harness: HeadlessAgentHarness<CONTEXT>,
   config: AgentHarnessControlServerConfig = {},
 ): AgentHarnessControlServer {
+  const maxPendingAttachments = config.maxPendingAttachments ?? 32;
+  if (!Number.isSafeInteger(maxPendingAttachments) || maxPendingAttachments <= 0) {
+    throw new TypeError('maxPendingAttachments must be a positive safe integer');
+  }
   const connections = new Map<
     string,
     {
       attached: Map<string, 'observe' | 'control'>;
+      pendingAttachments: Set<string>;
       sink: AgentRuntimeEventSink;
       overflowed: boolean;
     }
   >();
   const controllers = new Map<string, string>();
+  let pendingAttachments = 0;
   let closed = false;
   const unsubscribe = harness.subscribe((event) => {
     for (const connection of connections.values()) {
@@ -52,8 +61,8 @@ export function createAgentHarnessControlServer<CONTEXT>(
   const detach = (connectionId: string): void => {
     const connection = connections.get(connectionId);
     if (!connection) return;
-    for (const [conversationId, access] of connection.attached) {
-      if (access === 'control' && controllers.get(conversationId) === connectionId) {
+    for (const conversationId of connection.attached.keys()) {
+      if (controllers.get(conversationId) === connectionId) {
         controllers.delete(conversationId);
       }
     }
@@ -67,6 +76,7 @@ export function createAgentHarnessControlServer<CONTEXT>(
         throw new Error('Agent harness control connection id is duplicate');
       const state = {
         attached: new Map<string, 'observe' | 'control'>(),
+        pendingAttachments: new Set<string>(),
         overflowed: false,
         sink: createAgentRuntimeEventSink({
           write: (event) => deliver({ schemaVersion: 1, type: 'event', event }),
@@ -99,21 +109,82 @@ export function createAgentHarnessControlServer<CONTEXT>(
             return fail('CONNECTION_CLOSED', 'Connection is closed');
           try {
             if (request.operation === 'attach') {
+              if (state.pendingAttachments.has(request.conversationId)) {
+                return fail(
+                  'ATTACH_IN_PROGRESS',
+                  'Wait for the current attachment request to settle',
+                );
+              }
+              if (pendingAttachments >= maxPendingAttachments) {
+                return fail(
+                  'ATTACHMENT_CAPACITY',
+                  'Too many attachment snapshots are pending on this control server',
+                );
+              }
               const owner = controllers.get(request.conversationId);
               if (request.access === 'control' && owner && owner !== id) {
                 return fail('LEASE_CONFLICT', 'Conversation already has a controller');
               }
-              const snapshot = await harness.snapshot(request.conversationId);
+              const previousAccess = state.attached.get(request.conversationId);
+              const previousController = controllers.get(request.conversationId);
+              pendingAttachments += 1;
+              state.pendingAttachments.add(request.conversationId);
+              // A new observer must receive events while its snapshot is pending. An
+              // existing attachment already receives them and keeps its committed access
+              // until the replacement snapshot succeeds.
+              if (!previousAccess) state.attached.set(request.conversationId, request.access);
               if (request.access === 'control') controllers.set(request.conversationId, id);
-              else if (controllers.get(request.conversationId) === id)
-                controllers.delete(request.conversationId);
+              // Attach before reading: a transport adapter can install its delivery callback,
+              // issue this request and finitely buffer every event after the snapshot point.
+              // Snapshot-then-attach silently loses an event in the await between them.
+              let snapshot: AgentSnapshot;
+              try {
+                snapshot = await harness.snapshot(request.conversationId);
+              } catch (error) {
+                if (connections.get(id) === state) {
+                  if (previousAccess)
+                    state.attached.set(request.conversationId, previousAccess);
+                  else state.attached.delete(request.conversationId);
+                  if (
+                    request.access === 'control' &&
+                    controllers.get(request.conversationId) === id &&
+                    previousController
+                  ) {
+                    controllers.set(request.conversationId, previousController);
+                  } else if (
+                    request.access === 'control' &&
+                    controllers.get(request.conversationId) === id
+                  ) {
+                    controllers.delete(request.conversationId);
+                  }
+                }
+                throw error;
+              } finally {
+                pendingAttachments -= 1;
+                state.pendingAttachments.delete(request.conversationId);
+              }
+              if (closed || connections.get(id) !== state) {
+                return fail('CONNECTION_CLOSED', 'Connection is closed');
+              }
               state.attached.set(request.conversationId, request.access);
+              if (
+                request.access === 'observe' &&
+                controllers.get(request.conversationId) === id
+              ) {
+                controllers.delete(request.conversationId);
+              }
               return AgentControlResponseSchema.parse({
                 schemaVersion: 1,
                 requestId: request.requestId,
                 outcome: 'ok',
                 snapshot,
               });
+            }
+            if (state.pendingAttachments.has(request.conversationId)) {
+              return fail(
+                'ATTACH_IN_PROGRESS',
+                'Wait for the current attachment request to settle',
+              );
             }
             if (request.operation === 'detach') {
               if (controllers.get(request.conversationId) === id)

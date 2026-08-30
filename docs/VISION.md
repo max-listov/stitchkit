@@ -4,7 +4,7 @@ description: Contract-first backend framework for Bun and Node, with optional pr
 type: vision
 status: active
 created: 2025-05-01
-updated: 2026-08-25
+updated: 2026-08-30
 ---
 
 # stitchkit
@@ -25,6 +25,11 @@ application kernel. It composes resources inside one process; durable work,
 provider policy, process supervision and deployment remain outside Stitchkit.
 Applications may also attach a bounded local diagnostic journal to that server-only boundary; its
 ordered files are finite process evidence, never canonical or durable domain state.
+
+Browser and headless clients that repeat snapshot/event synchronization may opt into a small
+renderer-neutral live-state controller. It consumes one host-owned continuous consistency
+boundary, finitely buffers early events and fences stale generations; transport reconnect,
+application schemas, cursors, replay and storage remain with the application.
 
 ## The problem
 
@@ -50,6 +55,9 @@ client. One source of truth; the transports cannot drift.
 - **Thin over what you already use.** WebSocket is Socket.IO; the React data
   layer is `react-query-kit`. stitchkit owns the contract and the transport —
   it does not ship a competing WebSocket engine or hook library.
+- **Synchronization is not transport.** A typed snapshot plus its continuous following events may
+  share one bounded controller without turning physical reconnect into a freshness claim or adding
+  another wire protocol.
 - **Inspectable.** A focused core with explicit adapters and no generated
   application code or framework build step in the consuming app. Public
   behaviour is pinned by source tests, runtime smoke tests and packed-consumer
@@ -89,8 +97,8 @@ host with one controller, durable model selection and authenticated local attach
 dependencies and provider/tool policy stay outside core; applications can keep using the headless
 runtime or `mountAgent` directly.
 
-A project also describes itself once. `stitchkit/declaration` ships the project
-declaration — identity, roles, build, runtime requirements, release steps and
+A repository may also describe its buildable source/artifact once. `stitchkit/declaration` ships the
+project declaration — identity, roles, build, runtime requirements, release steps and
 the names of the variables a deployment supplies — so the project, the
 scaffolder and whatever binds an artifact into a deployment read one versioned
 schema instead of three copies. Its boundary is held by two different things,
@@ -98,7 +106,9 @@ and only one of them is a guarantee: **structure** — the schema has no field
 for a port, a host, an address, a machine path or a supervision policy, so
 nothing in it ever *requires* one — and **hygiene**, a filter that refuses the
 known shapes of a machine name where a value could still be smuggled in. The
-first cannot be worked around; the second catches what it recognises.
+first cannot be worked around; the second catches what it recognises. Product membership is a
+separate, explicit M:N relation outside the declaration; dependencies, checkouts and harness
+workspaces do not establish membership or require private companion metadata in public source.
 
 The additive managed application kernel is the equivalent server-only
 composition surface for ordinary process resources. It builds on the existing
@@ -126,5 +136,8 @@ the published package before release.
 - Remove copied process lifecycle, timer, admission and operational-projection
   mechanics through an optional provider-neutral application entrypoint, while
   retaining the lower-level server and signal primitives.
+- Remove copied client snapshot/event race handling through the browser-safe live-state controller,
+  while keeping Socket.IO reconnect, HTTP framing, opaque cursors, replay and rendering in their
+  existing owners.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).

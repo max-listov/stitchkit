@@ -1,6 +1,10 @@
 /**
  * The project declaration — the one machine-readable statement a repository
  * chooses to make about itself.
+ * Identity names its buildable source/artifact, not product membership, a
+ * checkout or a harness workspace. Explicit product↔repository membership is
+ * many-to-many and belongs to an external registry with its own access policy;
+ * dependencies do not create membership or require private companion metadata.
  *
  * The schema lives in the published framework, not in the repository that fills
  * it in, because it has readers that must never disagree: the project itself,

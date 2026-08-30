@@ -1,3 +1,4 @@
+import { advanceToolChronology, createToolChronology } from './history-chronology';
 import type { AgentMessage, AgentTerminalReason } from './schemas';
 /**
  * The terminal reason a run ended with → the status its assistant message takes.
@@ -52,46 +53,18 @@ export function isCompleteAgentHistoryTurn(
   policy: AgentHistoryEvidencePolicy | undefined,
 ): boolean {
   if (messages[0]?.role !== 'user') return false;
-  const calls = new Set<string>();
-  const completed = new Set<string>();
-  const approvals = new Map<string, { callId: string; answered: boolean }>();
+  let chronology = createToolChronology();
   let assistantCount = 0;
   for (const message of messages) {
     if (message.role === 'assistant') {
       if (!isAssistantHistoryEvidence(message.status, policy)) return false;
       assistantCount += 1;
     }
-    for (const part of message.parts) {
-      if (part.type === 'tool-call') {
-        if (calls.has(part.callId)) return false;
-        calls.add(part.callId);
-      } else if (part.type === 'tool-approval-request') {
-        if (
-          !calls.has(part.callId) ||
-          completed.has(part.callId) ||
-          approvals.has(part.approvalId)
-        )
-          return false;
-        if ([...approvals.values()].some((approval) => approval.callId === part.callId))
-          return false;
-        approvals.set(part.approvalId, { callId: part.callId, answered: false });
-      } else if (part.type === 'tool-approval-response') {
-        const approval = approvals.get(part.approvalId);
-        if (!approval || approval.answered) return false;
-        approval.answered = true;
-      } else if (part.type === 'tool-result') {
-        if (!calls.has(part.callId) || completed.has(part.callId)) return false;
-        const approval = [...approvals.values()].find((entry) => entry.callId === part.callId);
-        if (approval && !approval.answered) return false;
-        completed.add(part.callId);
-      }
-    }
+    const next = advanceToolChronology(chronology, message.parts);
+    if (!next) return false;
+    chronology = next;
   }
-  return (
-    assistantCount > 0 &&
-    calls.size === completed.size &&
-    [...approvals.values()].every((approval) => approval.answered)
-  );
+  return assistantCount > 0 && chronology.pending === 0;
 }
 
 export function assistantStatus(reason: AgentTerminalReason): AgentMessage['status'] {
