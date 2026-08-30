@@ -7,7 +7,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks && bun --filter stitchkit build && bun --filter stitchkit-tui build && bun scripts/prepare-starter.ts",
     "dev": "bun --filter stitchkit dev",
-    "check": "bun --filter stitchkit check && bun --filter stitchkit-tui check && bun --filter create-stitchkit check && bun run check:template && bun run check:agent-template && bun run check:scripts",
+    "check": "bun --filter stitchkit check && bun --filter stitchkit-tui check && bun --filter create-stitchkit check && bun run check:scripts",
     "check:template": "cd packages/create-stitchkit/template && bun run check",
     "check:agent-template": "cd packages/create-stitchkit/templates/agent && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
@@ -27,6 +27,7 @@
     "consumer-lane": "bun --filter stitchkit consumer-lane",
     "contained-files-packed-lane": "bun --filter stitchkit consumer-lane --contained-files-only",
     "tui-packed-lane": "bun scripts/tui-packed-lane.ts",
+    "agent-template-lane": "cd packages/create-stitchkit/templates/agent && bun install --frozen-lockfile --ignore-scripts && bun run check && bun test && bun run build",
     "starter-lane": "bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=target --variant=repository --browser=all",
     "starter-head-lane": "bun scripts/starter-lane.ts --mode=head --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=head --variant=repository --browser=all",
     "test:agent-store-postgres": "bun scripts/agent-store-postgres-lane.ts",

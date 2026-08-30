@@ -141,8 +141,8 @@ jobs:
       - run: bun --filter create-stitchkit check
       - run: bun --filter create-stitchkit test
       - run: bun --filter create-stitchkit build
-      - run: bun run check:template
-      - run: bun run check:agent-template
+      - run: bun --filter stitchkit-tui build
+      - run: bun run agent-template-lane
 
   darwin-contained-files:
     name: Packed contained files / ${{ matrix.arch }}

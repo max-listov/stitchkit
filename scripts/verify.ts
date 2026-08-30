@@ -31,6 +31,7 @@ export const VERIFY_STEPS = [
   'smoke:node',
   'consumer-lane',
   'tui-packed-lane',
+  'agent-template-lane',
   'starter-lane',
   // The supervised lane used to be the one gate CI ran and `verify` did not,
   // because it needed `pm2` on PATH. The supervisor is a pinned devDependency
@@ -149,7 +150,8 @@ async function releaseProfile(): Promise<VerifyProfile> {
     );
   }
   if (targets.has('tui')) lanes.push('tui-packed-lane');
-  if (targets.has('create-stitchkit')) lanes.push('starter-lane', 'supervised-lane');
+  if (targets.has('create-stitchkit'))
+    lanes.push('agent-template-lane', 'starter-lane', 'supervised-lane');
   const uniqueLanes = [...new Set(lanes)];
   const targetKey = train.releases
     .map((release) => release.target)

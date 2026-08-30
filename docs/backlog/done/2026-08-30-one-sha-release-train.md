@@ -70,5 +70,8 @@ work and repeats equivalent work on identical bytes.
 - The next clean runner exposed a developer-only `.env` masking the template source name before
   scaffolding. `ensureLocalEnvironment` now reads `_env.example` in the framework tree and the
   renamed `.env.example` in generated projects; its regression test covers both paths.
+- Direct source-template checks were removed from the package job: the generated starter matrix
+  already owns that evidence. The distinct Agent template keeps an explicit frozen-install,
+  check, test and build lane shared by local release verification and CI.
 - `bun run starter-lane` and `bun run supervised-lane` passed concurrently on the selected
   starter-only release surface; the release conveyor owns the final exact-tree memo proof.

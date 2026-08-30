@@ -47,6 +47,13 @@ describe('target-aware CI graph', () => {
     );
   });
 
+  test('generated starter matrices replace source-template duplication while Agent stays explicit', () => {
+    const scaffolder = section('starter-package', 'darwin-contained-files');
+    expect(scaffolder).not.toContain('bun run check:template');
+    expect(scaffolder).toContain('bun --filter stitchkit-tui build');
+    expect(scaffolder).toContain('bun run agent-template-lane');
+  });
+
   test('portable validation starts after planning, never after Darwin', () => {
     expect(section('portable', 'tui')).toContain('needs: plan');
     expect(section('portable', 'tui')).not.toContain('needs: darwin-contained-files');
