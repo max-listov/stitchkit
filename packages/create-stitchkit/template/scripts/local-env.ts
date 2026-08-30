@@ -3,8 +3,11 @@ import { resolve } from 'node:path';
 import { appIdentity } from '../packages/config/src/app-identity.generated';
 
 /**
- * Create `.env` from `.env.example` on first run, rendering the application
- * identity into the database name.
+ * Create `.env` from the public `.env.example` on first run, rendering the
+ * application identity into the database name. The framework repository keeps
+ * that same source as `_env.example` until the scaffolder performs its rename,
+ * so clean source-tree checks use it directly instead of depending on an
+ * ignored developer `.env`.
  *
  * Identity, not the whole declaration: this needs one slug, and the identity
  * module carries no dependencies. That matters here more than elsewhere —
@@ -19,7 +22,11 @@ import { appIdentity } from '../packages/config/src/app-identity.generated';
 export function ensureLocalEnvironment(root: string): void {
   const destination = resolve(root, '.env');
   if (existsSync(destination)) return;
-  const example = readFileSync(resolve(root, '.env.example'), 'utf8');
+  const publicExample = resolve(root, '.env.example');
+  const example = readFileSync(
+    existsSync(publicExample) ? publicExample : resolve(root, '_env.example'),
+    'utf8',
+  );
   const databaseName = appIdentity.slug.replaceAll('-', '_');
   writeFileSync(destination, example.replaceAll('stitchkit_starter', databaseName));
 }

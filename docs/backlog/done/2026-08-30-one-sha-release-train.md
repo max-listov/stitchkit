@@ -67,5 +67,8 @@ work and repeats equivalent work on identical bytes.
 - The first clean exact-SHA run exposed that repository contract tests imported the built public
   declaration entrypoint before that job built it. The repository job now builds that entrypoint
   immediately before the script contracts, and the workflow test holds the order.
+- The next clean runner exposed a developer-only `.env` masking the template source name before
+  scaffolding. `ensureLocalEnvironment` now reads `_env.example` in the framework tree and the
+  renamed `.env.example` in generated projects; its regression test covers both paths.
 - `bun run starter-lane` and `bun run supervised-lane` passed concurrently on the selected
   starter-only release surface; the release conveyor owns the final exact-tree memo proof.

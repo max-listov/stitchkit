@@ -30,4 +30,19 @@ describe('ensureLocalEnvironment', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test('a clean framework source tree reads the pre-scaffold example name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sk-source-env-'));
+    try {
+      await writeFile(
+        join(root, '_env.example'),
+        'DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter\n',
+      );
+      ensureLocalEnvironment(root);
+      const databaseName = appDeclaration.identity.slug.replaceAll('-', '_');
+      expect(await readFile(join(root, '.env'), 'utf8')).toContain(`5432/${databaseName}`);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
