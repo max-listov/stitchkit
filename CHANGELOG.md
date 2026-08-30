@@ -55,6 +55,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   model context capacity and only usage present in the durable snapshot. Hosts may replace or
   disable those rows without replacing the runtime controller.
 
+### Fixed
+
+- **Clean workspace installs prepare Stitchkit before sibling packages resolve its public
+  exports.** Root `prepare` now builds the core package before nested workspace preparation, so
+  TUI checks and tests cannot accidentally depend on ignored `dist` output from an earlier local
+  build.
+
 - **A bounded ordered diagnostic journal captures finite local metadata evidence.**
   `createDiagnosticJournal` validates an owner-supplied Zod schema synchronously, admits complete
   JSONL frames within item/byte limits, preserves one process epoch and contiguous accepted

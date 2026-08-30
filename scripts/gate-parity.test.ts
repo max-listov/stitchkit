@@ -16,6 +16,9 @@ import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify';
  * So the list is data (`VERIFY_STEPS`) and this reads the workflow.
  */
 const CI = readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8');
+const ROOT_PACKAGE = JSON.parse(
+  readFileSync(join(import.meta.dir, '../package.json'), 'utf8'),
+) as { scripts?: Record<string, string> };
 
 /** Every `bun run <script>` the core job executes, in order. */
 function coreJobSteps(): string[] {
@@ -56,6 +59,17 @@ describe('the hook and the gate agree on what the gate accepts', () => {
     );
     expect(passed.length).toBeGreaterThan(0);
     expect(passed.filter((flag) => !accepted.has(flag))).toEqual([]);
+  });
+});
+
+describe('a clean workspace prepares public package dependencies before sibling checks', () => {
+  test('root prepare builds Stitchkit before it prepares nested workspaces', () => {
+    const prepare = ROOT_PACKAGE.scripts?.prepare ?? '';
+    const coreBuild = prepare.indexOf('bun --filter stitchkit build');
+    const nestedPrepare = prepare.indexOf('bun scripts/prepare-starter.ts');
+
+    expect(coreBuild).toBeGreaterThanOrEqual(0);
+    expect(nestedPrepare).toBeGreaterThan(coreBuild);
   });
 });
 

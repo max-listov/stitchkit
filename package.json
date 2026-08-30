@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks && bun scripts/prepare-starter.ts",
+    "prepare": "git config core.hooksPath .githooks && bun --filter stitchkit build && bun scripts/prepare-starter.ts",
     "dev": "bun --filter stitchkit dev",
     "check": "bun --filter stitchkit check && bun --filter @stitchkit/tui check && bun --filter create-stitchkit check && bun run check:template && bun run check:agent-template && bun run check:scripts",
     "check:template": "cd packages/create-stitchkit/template && bun run check",
