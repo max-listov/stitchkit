@@ -16,6 +16,7 @@ import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify';
  * So the list is data (`VERIFY_STEPS`) and this reads the workflow.
  */
 const CI = readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8');
+const PREPARE_STARTER = readFileSync(join(import.meta.dir, 'prepare-starter.ts'), 'utf8');
 const ROOT_PACKAGE = JSON.parse(
   readFileSync(join(import.meta.dir, '../package.json'), 'utf8'),
 ) as { scripts?: Record<string, string> };
@@ -70,6 +71,14 @@ describe('a clean workspace prepares public package dependencies before sibling 
 
     expect(coreBuild).toBeGreaterThanOrEqual(0);
     expect(nestedPrepare).toBeGreaterThan(coreBuild);
+  });
+
+  test('nested preparation installs both independently locked starter trees', () => {
+    expect(PREPARE_STARTER).toContain("packages/create-stitchkit/template'");
+    expect(PREPARE_STARTER).toContain("packages/create-stitchkit/templates/agent'");
+    expect(PREPARE_STARTER.match(/\['bun', 'install', '--frozen-lockfile'\]/g)).toHaveLength(
+      2,
+    );
   });
 });
 

@@ -57,10 +57,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ### Fixed
 
-- **Clean workspace installs prepare Stitchkit before sibling packages resolve its public
-  exports.** Root `prepare` now builds the core package before nested workspace preparation, so
-  TUI checks and tests cannot accidentally depend on ignored `dist` output from an earlier local
-  build.
+- **Clean workspace installs prepare every package used by root gates.** Root `prepare` now builds
+  the core package before sibling checks resolve its public exports and installs both independently
+  locked starter trees. TUI and Agent-starter checks can no longer depend on ignored `dist` or
+  nested `node_modules` output from an earlier local build.
 
 - **A bounded ordered diagnostic journal captures finite local metadata evidence.**
   `createDiagnosticJournal` validates an owner-supplied Zod schema synchronously, admits complete

@@ -5,6 +5,7 @@ import { parse } from 'dotenv';
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = resolve(repositoryRoot, 'packages/create-stitchkit/template');
+const agentTemplateRoot = resolve(repositoryRoot, 'packages/create-stitchkit/templates/agent');
 
 // The DEV WORKSPACE keeps the example under its pre-scaffold name
 // (`_env.example` — the scaffolder renames it to `.env.example` in generated
@@ -18,9 +19,9 @@ if (!existsSync(environmentPath)) {
 }
 const environment = parse(await readFile(environmentPath, 'utf8'));
 
-async function run(command: string[], env = Bun.env): Promise<void> {
+async function run(command: string[], cwd: string, env = Bun.env): Promise<void> {
   const child = Bun.spawn(command, {
-    cwd: templateRoot,
+    cwd,
     env,
     stdin: 'inherit',
     stdout: 'inherit',
@@ -32,5 +33,6 @@ async function run(command: string[], env = Bun.env): Promise<void> {
   }
 }
 
-await run(['bun', 'install', '--frozen-lockfile']);
-await run(['bun', 'run', 'db:generate'], { ...Bun.env, ...environment });
+await run(['bun', 'install', '--frozen-lockfile'], templateRoot);
+await run(['bun', 'run', 'db:generate'], templateRoot, { ...Bun.env, ...environment });
+await run(['bun', 'install', '--frozen-lockfile'], agentTemplateRoot);
