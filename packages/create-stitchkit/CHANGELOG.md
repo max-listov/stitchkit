@@ -12,6 +12,15 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-08-30
+
+### Changed
+
+- **The generated project now targets the published `stitchkit@0.70.1` line and includes the
+  maintained `stitchkit-tui` Agent profile.** The catalog and frozen lockfile move together, so a
+  fresh scaffold receives the macOS contained-file fix, bounded realtime shutdown and the terminal
+  harness package already validated by the same release train.
+
 ### Added
 
 - **An explicit Agent template opens a durable OpenRouter coding session in the terminal.**

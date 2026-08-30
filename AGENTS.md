@@ -54,8 +54,8 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   `docs/backlog/inbox/`. See `docs/README.md`.
 - A completed backlog item may claim test coverage only by naming the exact
   test file and test case in its `Что сделано` section.
-- **ALWAYS** run `bun run verify` before a **release commit**, and let the
-  `pre-push` hook decide the rest — see *What runs where* below. `verify` is the
+- **ALWAYS** run `bun scripts/verify.ts --release` before a **release commit**, and let the
+  `pre-push` hook reuse that exact-tree result — see *What runs where* below. `verify` is the
   whole portable local gate and it runs **every portable gate CI runs**: lint, typecheck, tests,
   the Postgres agent-store lane, build, the Next-SSR and Node smokes, the packed
   consumer lane, the packed starter lanes and the supervised PM2 lane. Its
@@ -87,6 +87,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 bun run dev            # watch-rebuild packages/core/dist
 bun run verify         # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
 bun run verify:fast    # lint · check · test — what an ordinary push runs
+bun scripts/verify.ts --release # release-train targets, max two independent heavy lanes
 bun run build          # build dist/ + generate llms.txt
 bun run lint:fix       # auto-fix formatting / safe lint
 bun run update:starter # move the template's framework range + lockfile together
@@ -97,14 +98,13 @@ The full annotated command list, setup and git hooks are in
 
 ### What runs where
 
-CI runs the **same portable work** as `verify`, arranged differently, plus the real macOS
-qualification named above: the
-lint/check/test/agent-store/build/smokes/consumer lane in one job, the supervised
-lane in its own, and the starter work sharded across eight (two modes x two
-scaffold variants x two browsers, of which `verify` runs the four target-mode
-ones and the release path adds the rest). It answers in about two and a half minutes because
-those lanes are parallel by nature. One machine walks them in single file and
-takes two to three times longer to reach the same answer.
+CI plans evidence from changed paths or `release-train.json`. Portable core,
+TUI, starter, supervised and real-Darwin lanes start independently after the
+small planner; only publication assembly waits for selected evidence and native
+binaries. A starter release runs published-target compatibility, a core release
+runs packed HEAD, and scheduled/manual CI retains the complete target × HEAD
+matrix. Darwin packs the public package but executes only the platform-specific
+contained-files proof. → ADR 0136.
 
 So the local gate **complements** CI instead of copying it, and `pre-push`
 picks by what a red run would cost on the commit being pushed:
@@ -112,7 +112,7 @@ picks by what a red run would cost on the commit being pushed:
 | Push | Local gate | Why |
 | --- | --- | --- |
 | ordinary branch push | `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| push carrying the `release(...)` commit | that commit's release metadata, then the whole of `verify`, then the packed HEAD lane | a red run here cannot be repaired in place |
+| push carrying the `release(...)` commit | metadata, then `verify --release` for the selected train (heavy concurrency 2) | a red run here cannot be repaired in place |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
 The release row is the whole argument. `assert-subject` requires a tag to sit
@@ -133,7 +133,7 @@ release commit, a second gate and a second CI run. 0.67.0 paid that. The order
 now lives in one observed function (`prePushMetadataGate`) rather than in the
 sequence of statements around it.
 
-All three profiles — fast, full and the packed HEAD lane — remember the last
+All profiles — fast, full, packed HEAD and each exact release target set — remember the last
 green run **by what they actually checked** (`scripts/gate-memo.ts`): an
 unchanged tree is not gated twice, any edit to any file runs it again, and a
 skip always prints which run answers for it. A green full run also satisfies the
@@ -249,17 +249,18 @@ return shape, changed default, stricter validation):
 
 ## Releasing
 
-Tag-driven and independent (npm via OIDC trusted publishing + GitHub Releases).
+Tag-driven and independently published (npm via OIDC trusted publishing + GitHub Releases),
+but coordinated by one exact-tree release train.
 The tag flow lives in the `.github/workflows/release.yml` header; `ci.yml`
 carries the branch and pull-request gate:
 
 - **stitchkit:** bump only `packages/core/package.json`, roll the root
-  `CHANGELOG.md`, run `bun run verify`, then tag `vX.Y.Z`. CI checks the core
+  `CHANGELOG.md`, add the target to `release-train.json`, then tag `vX.Y.Z`. CI checks the core
   version, publishes only `stitchkit` and reads the root changelog.
 - **create-stitchkit:** update the template's single `catalog.stitchkit` target
   and lockfile — `bun run update:starter` moves both and restores every
   `"stitchkit": "catalog:"` reference a raw `bun update` would dissolve — pass
-  both `starter-lane` and `starter-head-lane`, bump only
+  the planner-selected compatibility lane, bump only
   `packages/create-stitchkit/package.json`, roll its own `CHANGELOG.md`, promote
   every `## Unreleased migration:` heading in its own
   `packages/create-stitchkit/UPGRADING.md`, then tag `create-stitchkit-vX.Y.Z`.
@@ -283,15 +284,16 @@ spending a minor on it would strand consumers on the fixes shipped beside it
 question at release time is not "is there a `### Added` section" but "is there a
 `### ⚠️ Breaking changes` section" — that one alone moves the minor.
 
-**Order inside a release.** The release commit is the LAST commit of the
-release: land every fix first, make the release commit, wait for a green run,
-then tag it. Pushing the release commit before it is green forces the tag onto
+**Order inside a release.** `release-train.json` lists every package/version to publish. The
+`release(train): …` commit is the LAST commit of the release: land every fix first, run the
+package-aware local gate once, make the release commit, wait for one green exact-SHA run, then
+push all selected tags with `bun run release:train`. Pushing the release commit before it is green forces the tag onto
 whatever fix lands next — `git show <tag>` then points at the wrong change, and
 the release commit keeps a red run forever (that is what 0.55.0 did). Two gates
 hold the shape, both in the publishing workflow, so neither depends on local
 hooks: `assert-head` keeps the tag on the branch head, and `assert-subject`
-requires that head to be the `release(<scope>): … in X.Y.Z` commit for the tag's
-own namespace and exact version. The `pre-push` hook runs the **subject** check
+requires that head to be a `release(train): …` commit whose manifest selects the tag's
+own package and exact version. The `pre-push` hook runs the **subject** check
 earlier, before the expensive gate; it deliberately does not run `assert-head`,
 which needs the remote head and belongs where the remote is authoritative. So a
 tag pointing at a superseded release commit passes `pre-push` and fails in the
@@ -327,32 +329,9 @@ against a case whose answer you already know before you start waiting on it.**
 An empty result from a filter you have never seen return a row is not evidence
 that the event has not happened.
 
-**Releasing both packages from one tree.** Two independent tags plus
-`assert-head` means two tags need two branch heads, so the tree has to be split
-into two release commits and the split has to be decided before the first push.
-One rule governs it, and everything else follows:
-
-> **Every pushed commit is a tree that was gated whole.**
-
-Not "every commit contains only its own package's files" — that is the
-plausible-sounding rule, and it is wrong. Splitting a release so the core commit
-carries no starter changes gives a core commit whose *own* tests fail, because
-this repository's gate reads the starter template from the same tree. The unit
-being released is the package version, not the file set.
-
-So:
-
-1. **Make the core release commit first**, carrying everything the tree needs to
-   be green — including starter-template changes, if a core test reads them.
-   Push, wait for green, tag `vX.Y.Z`.
-2. **Make the starter release commit second**, carrying whatever is left. Push,
-   wait for green, tag `create-stitchkit-vA.B.C`.
-
-**A file that belongs to both** — `packages/create-stitchkit/package.json`
-holding a `files` fix the core commit's test needs *and* the starter version
-bump — goes **whole into the earlier commit**. That is not a compromise, it is
-what the gates ask for: `validateReleaseTag` requires the version to be *in the
-tree at the tag*, and `assertReleaseCommitSubject` requires the tagged commit's
-*subject* to name it. Neither requires the bump to be introduced by that commit.
-A starter version that rises one commit early publishes nothing — the tag
-publishes, not the number in the tree.
+**Releasing several packages from one tree.** Put every target in
+`release-train.json`; one `release(train)` commit carries the complete green
+tree and every selected tag points at it. `assert-head` and manifest membership
+refuse a tag on another commit or a package/version absent from the train.
+Publication remains independent per package, but validation is paid once per
+tree rather than once per tag. → ADR 0136.

@@ -2,9 +2,10 @@
 title: Bound shutdown of non-cooperative WebSocket peers
 description: Prevent an idle WebSocket that does not complete the close handshake from consuming the entire application grace period.
 type: task
-status: in-progress
+status: done
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
 priority: high
 ---
 
@@ -52,7 +53,7 @@ budget solely because one idle realtime peer stays connected.
       `forced`/`cleanupComplete=false` solely because an idle socket ignored the
       close handshake.
 - [x] Source tests, packed Bun/Node consumer tests, docs and changelog are green.
-- [ ] Publish a patch release with exact SHA, package version and CI evidence.
+- [x] Publish a patch release with exact SHA, package version and CI evidence.
 
 ## Implementation evidence
 
@@ -69,3 +70,7 @@ budget solely because one idle realtime peer stays connected.
   the managed server.
 - Exact-SHA CI run `33310530601` completed successfully across the framework, Node, packed
   consumer, supervised and starter lanes before the release gate.
+- Published as `stitchkit@0.70.1` from
+  `c9a86d4962178debc017a821d7034aed18bd91da`; exact-SHA CI `33311317355` and release workflow
+  `33311583783` are green. npm integrity is
+  `sha512-UySE/DO1p7XZDmbISX3+U9RCYpepqsElovnL4IgUu0C9BpsFXGbYpoF0nL38vpY8SLV2frLiZXyy05gmmyrhrg==`.

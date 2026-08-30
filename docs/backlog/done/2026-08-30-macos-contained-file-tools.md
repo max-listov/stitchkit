@@ -2,9 +2,10 @@
 title: Contained coding files and harness resources fail on macOS
 description: Restore safe macOS file operations without treating dev-fd paths as traversable directory capabilities or weakening containment.
 type: task
-status: in-progress
+status: done
 created: 2026-08-30
 updated: 2026-08-30
+completed: 2026-08-30
 priority: P1
 related: ../done/2026-08-30-coding-file-parent-swap-containment.md
 ---
@@ -101,7 +102,7 @@ alive at return and no delayed fixture effect. Those fixes must remain in the ne
 - [x] Preserve existing Linux positive/adversarial behavior, bounded file handles, private causes
       and generic outward errors. Verify any other claimed platform rather than inferring support.
 - [x] Add a real macOS CI/packed-consumer lane; Linux-only tests cannot qualify a Darwin branch.
-- [ ] Publish the corrected artifact after full gates and exact-SHA CI; record version, source,
+- [x] Publish the corrected artifact after full gates and exact-SHA CI; record version, source,
       archive digest and actual platform evidence. Update platform guidance and release notes.
 
 ## Acceptance
@@ -112,7 +113,7 @@ alive at return and no delayed fixture effect. Those fixes must remain in the ne
 - [x] Deterministic authorization-barrier read/patch races cannot read or modify an outside fixture.
 - [x] Cancellation still prevents descendant effects; mounted failures remain failures through
       the canonical durable loop and legitimate successful error-shaped data remains successful.
-- [ ] Published package and source references are exact; remaining platform limits are explicit.
+- [x] Published package and source references are exact; remaining platform limits are explicit.
 
 ## Implementation evidence
 
@@ -127,3 +128,7 @@ alive at return and no delayed fixture effect. Those fixes must remain in the ne
 - Exact-SHA CI run `33310530601` validated the packed conformance on real macOS arm64 job
   `99254643785` and real macOS x64 job `99254643798`. Both jobs completed successfully before the
   Linux publication-input job consumed their architecture-specific native artifacts.
+- Published as `stitchkit@0.70.1` from
+  `c9a86d4962178debc017a821d7034aed18bd91da`; exact-SHA CI `33311317355` and release workflow
+  `33311583783` are green. The registry archive is 753080 bytes with SHA-256
+  `6d1bacd4d84f0da5cb1317e39f9f96cffb65f3582002ab72982f97bb96b54ea0`.

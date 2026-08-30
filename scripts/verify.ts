@@ -11,6 +11,7 @@ import {
   worktreeTreeHash,
   writeGreenGate,
 } from './gate-memo';
+import { readReleaseTrain } from './release-train';
 
 /**
  * The whole repository gate, in order, as one list.
@@ -89,7 +90,7 @@ export const HEAD_STEPS = ['starter-head-lane'] as const;
 export const HEAD_GATE = 'verify:head';
 
 /** Every flag this script accepts — the list `pre-push` is held against. */
-export const VERIFY_FLAGS = ['--if-changed', '--fast', '--head'] as const;
+export const VERIFY_FLAGS = ['--if-changed', '--fast', '--head', '--release'] as const;
 
 export const PROFILES: Record<'full' | 'fast' | 'head', VerifyProfile> = {
   full: { gate: VERIFY_GATE, steps: VERIFY_STEPS, satisfiedBy: [], usesLaneEnvironment: true },
@@ -114,6 +115,54 @@ async function runStep(step: string): Promise<void> {
   if (code !== 0) throw new Error(`verify: \`bun run ${step}\` exited with ${code}`);
 }
 
+/** Run independent heavy lanes without turning a developer machine into the CI fleet. */
+export async function runBounded(
+  steps: readonly string[],
+  concurrency: number,
+  execute: (step: string) => Promise<void> = runStep,
+): Promise<void> {
+  const queue = [...steps];
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), queue.length) },
+    async () => {
+      while (queue.length > 0) {
+        const step = queue.shift();
+        if (step) await execute(step);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
+
+async function releaseProfile(): Promise<VerifyProfile> {
+  const train = await readReleaseTrain(root);
+  const targets = new Set(train.releases.map((release) => release.target));
+  const lanes: string[] = [];
+  if (targets.has('core')) {
+    lanes.push(
+      'test:agent-store-postgres',
+      'smoke:next-ssr',
+      'smoke:node',
+      'consumer-lane',
+      'starter-head-lane',
+      'supervised-lane',
+    );
+  }
+  if (targets.has('tui')) lanes.push('tui-packed-lane');
+  if (targets.has('create-stitchkit')) lanes.push('starter-lane', 'supervised-lane');
+  const uniqueLanes = [...new Set(lanes)];
+  const targetKey = train.releases
+    .map((release) => release.target)
+    .sort()
+    .join('+');
+  return {
+    gate: `verify:release:${targetKey}`,
+    steps: ['lint', 'check', 'test', 'build', ...uniqueLanes],
+    satisfiedBy: [],
+    usesLaneEnvironment: uniqueLanes.length > 0,
+  };
+}
+
 async function greenRecordFor(
   profile: VerifyProfile,
   key: string,
@@ -130,11 +179,13 @@ async function main(): Promise<void> {
   const args = Bun.argv.slice(2);
   const ifChanged = args.includes('--if-changed');
   const flags = new Set(args);
-  const profile = flags.has('--head')
-    ? PROFILES.head
-    : flags.has('--fast')
-      ? PROFILES.fast
-      : PROFILES.full;
+  const profile = flags.has('--release')
+    ? await releaseProfile()
+    : flags.has('--head')
+      ? PROFILES.head
+      : flags.has('--fast')
+        ? PROFILES.fast
+        : PROFILES.full;
   const known = new Set<string>(VERIFY_FLAGS);
   const unknown = args.filter((argument) => !known.has(argument));
   if (unknown.length > 0) {
@@ -145,8 +196,11 @@ async function main(): Promise<void> {
   // Checked, not resolved by precedence: two profiles asked for at once is a
   // caller that does not know which gate it wants, and quietly running one of
   // them tells nobody.
-  if (flags.has('--fast') && flags.has('--head')) {
-    throw new Error('verify.ts: --fast and --head select different gates; pass one');
+  const selectedProfiles = ['--fast', '--head', '--release'].filter((flag) => flags.has(flag));
+  if (selectedProfiles.length > 1) {
+    throw new Error(
+      `verify.ts: ${selectedProfiles.join(' and ')} select different gates; pass one`,
+    );
   }
 
   const memo = gateMemoPath();
@@ -169,10 +223,18 @@ async function main(): Promise<void> {
     }
   }
 
-  for (const step of profile.steps) {
+  const buildIndex = profile.steps.indexOf('build');
+  const sequential =
+    buildIndex === -1 ? profile.steps : profile.steps.slice(0, buildIndex + 1);
+  const heavy = buildIndex === -1 ? [] : profile.steps.slice(buildIndex + 1);
+  for (const step of sequential) {
     process.stderr.write(`[gate] ${step}\n`);
     await runStep(step);
   }
+  await runBounded(heavy, 2, async (step) => {
+    process.stderr.write(`[gate] ${step}\n`);
+    await runStep(step);
+  });
 
   // The record is of the tree the run STARTED from — the input it actually
   // checked. If a step regenerated a committed artifact the tree has moved on,

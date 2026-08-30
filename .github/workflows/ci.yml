@@ -1,29 +1,152 @@
-# Branch and pull-request validation. Release tags are handled by release.yml
-# only after this workflow has completed successfully for the exact commit SHA.
-#
-# The release-critical path is deliberately flat and capacity-aligned: one
-# framework/Node/artifact job plus every starter mode/variant/browser group.
-# GitHub's workflow conclusion is the fail-closed aggregate consumed by the
-# exact-SHA publisher.
+# Target-aware branch validation. One planner maps an exact tree to distinct
+# evidence lanes; scheduled/manual runs deliberately select the whole matrix.
 name: CI
 
 on:
   push:
     branches: [master, main]
   pull_request:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A newer branch/PR SHA supersedes the older result. Tag publication has its
-# own non-cancellable concurrency boundary in release.yml.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Evidence plan
+    runs-on: ubuntu-latest
+    outputs:
+      portable: ${{ steps.plan.outputs.portable }}
+      tui: ${{ steps.plan.outputs.tui }}
+      starter: ${{ steps.plan.outputs.starter }}
+      supervised: ${{ steps.plan.outputs.supervised }}
+      darwin: ${{ steps.plan.outputs.darwin }}
+      artifacts: ${{ steps.plan.outputs.artifacts }}
+      targets: ${{ steps.plan.outputs.targets }}
+      starter-modes: ${{ steps.plan.outputs.starter-modes }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Select distinct evidence lanes
+        id: plan
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_HEAD_SHA: ${{ github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          plan="$(bun scripts/ci-plan.ts)"
+          echo "portable=$(echo "$plan" | jq -r .portable)" >> "$GITHUB_OUTPUT"
+          echo "tui=$(echo "$plan" | jq -r .tui)" >> "$GITHUB_OUTPUT"
+          echo "starter=$(echo "$plan" | jq -r .starter)" >> "$GITHUB_OUTPUT"
+          echo "supervised=$(echo "$plan" | jq -r .supervised)" >> "$GITHUB_OUTPUT"
+          echo "darwin=$(echo "$plan" | jq -r .darwin)" >> "$GITHUB_OUTPUT"
+          echo "artifacts=$(echo "$plan" | jq -r .artifacts)" >> "$GITHUB_OUTPUT"
+          echo "targets=$(echo "$plan" | jq -c .targets)" >> "$GITHUB_OUTPUT"
+          echo "starter-modes=$(echo "$plan" | jq -c .starterModes)" >> "$GITHUB_OUTPUT"
+          echo "$plan" | jq .
+
+  repository:
+    name: Repository contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run lint
+      - run: bun run check:scripts
+      - run: bun test scripts/*.test.ts
+
+  portable:
+    name: Framework portable surface
+    if: needs.plan.outputs.portable == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun --filter stitchkit check
+      - run: bun --filter stitchkit test
+      - run: bun --filter stitchkit build
+      - run: bun run test:agent-store-postgres
+      - run: bun run smoke:next-ssr
+      - run: bun run smoke:node
+      - run: bun run consumer-lane
+
+  tui:
+    name: Terminal package
+    if: needs.plan.outputs.tui == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun --filter stitchkit build
+      - run: bun --filter stitchkit-tui check
+      - run: bun --filter stitchkit-tui test
+      - run: bun --filter stitchkit-tui build
+      - run: bun run tui-packed-lane
+
+  starter-package:
+    name: Scaffolder package
+    if: needs.plan.outputs.starter == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun --filter stitchkit build
+      - run: bun --filter create-stitchkit check
+      - run: bun --filter create-stitchkit test
+      - run: bun --filter create-stitchkit build
+      - run: bun run check:template
+      - run: bun run check:agent-template
+
   darwin-contained-files:
     name: Packed contained files / ${{ matrix.arch }}
+    if: needs.plan.outputs.darwin == 'true'
+    needs: plan
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -41,12 +164,12 @@ jobs:
           node-version: 22
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun --filter stitchkit build:native-contained-files
       - run: test "$(node -p process.arch)" = "${{ matrix.arch }}"
       - run: bun --filter stitchkit build
-      - run: bun --filter stitchkit consumer-lane
+      - run: bun run contained-files-packed-lane
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: darwin-contained-files-${{ matrix.arch }}
@@ -54,84 +177,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  core:
-    name: Framework, Node and publication artifacts
-    runs-on: ubuntu-latest
-    needs: darwin-contained-files
-    timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_DB: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
-    env:
-      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          pattern: darwin-contained-files-*
-          path: packages/core/native
-          merge-multiple: true
-      - name: Require both validated Darwin backends in the publication input
-        run: test -f packages/core/native/darwin-arm64.node && test -f packages/core/native/darwin-x64.node
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run check
-      - run: bun run test
-      - run: bun run test:agent-store-postgres
-      - run: bun run build
-      - run: bun run smoke:next-ssr
-      - run: bun run smoke:node
-      - run: bun run consumer-lane
-      - run: bun run tui-packed-lane
-      - name: Pack the exact validated publication inputs
-        run: |
-          mkdir -p release-artifacts
-          (cd packages/core && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
-          (cd packages/tui && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
-          (cd packages/create-stitchkit && bun pm pack --destination "$GITHUB_WORKSPACE/release-artifacts")
-      - name: Verify the packed docs match the tree
-        # `prepack` synchronises README/llms into the package — a divergence
-        # here means a docs fix would ship stale, so it fails the build.
-        run: |
-          mkdir -p /tmp/pack-verify
-          core_archive="$(find release-artifacts -maxdepth 1 -type f -name 'stitchkit-[0-9]*.tgz' -print -quit)"
-          test -n "$core_archive"
-          tar -xzf "$core_archive" -C /tmp/pack-verify
-          diff /tmp/pack-verify/package/README.md README.md
-          diff /tmp/pack-verify/package/llms.txt packages/core/llms.txt
-          diff /tmp/pack-verify/package/llms-full.txt packages/core/llms-full.txt
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: release-packages
-          path: release-artifacts/*.tgz
-          if-no-files-found: error
-          retention-days: 30
-
   supervised:
     name: Supervised roles under PM2
+    if: needs.plan.outputs.supervised == 'true'
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Everything this repository knows about supervised behaviour was found by
-    # RUNNING it — a launcher duplicating the stop signal, a kill timeout below
-    # the drain budget, a rename leaving two pairs fighting for one port. None
-    # of it is visible in a diff, so the check has to execute.
     services:
       postgres:
         image: postgres:18-alpine
@@ -139,42 +190,32 @@ jobs:
           POSTGRES_DB: postgres
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
+          --health-interval 2s --health-timeout 3s --health-retries 20
     env:
       STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
-      # The supervisor is a pinned devDependency, so it arrives with this
-      # install — the lane still runs the generated project's own `pm2:prod`
-      # through the REAL supervisor, at a version this repository chose rather
-      # than whatever npm serves during the run. A live install here would put a
-      # third-party publication on the release-critical path, which is the same
-      # reason the Playwright image is pinned by digest and Bun by tarball hash.
+          bun-version: 1.3.14
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run supervised-lane
 
   starter:
     name: Starter ${{ matrix.mode }} / ${{ matrix.variant }} / ${{ matrix.browser }}
+    if: needs.plan.outputs.starter == 'true'
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # v1.62.1-noble, pinned to the immutable multi-platform index. The image
-    # carries the exact lockfile browser revisions and their system libraries,
-    # so release latency cannot depend on eight live apt/browser provisions.
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     strategy:
       fail-fast: false
       matrix:
-        mode: [target, head]
+        mode: ${{ fromJSON(needs.plan.outputs.starter-modes) }}
         variant: [blank, repository]
         browser: [chromium, webkit]
     services:
@@ -184,16 +225,11 @@ jobs:
           POSTGRES_DB: postgres
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
+          --health-interval 2s --health-timeout 3s --health-retries 20
     env:
-      # Service containers share the job-container network and are addressed by
-      # their service label, not through a host-published loopback port.
       STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@postgres:5432/postgres
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       BUN_VERSION: 1.3.14
@@ -204,10 +240,6 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install the starter-pinned Bun runtime
-        # setup-bun delegates ZIP extraction to a host `unzip` executable that
-        # the intentionally lean Playwright image does not carry. The official
-        # platform package is a tarball and its npm integrity is verified before
-        # the binary enters PATH, with no apt/npm bootstrap.
         run: |
           archive="$RUNNER_TEMP/bun-linux-x64.tgz"
           curl --fail --silent --show-error --location \
@@ -219,14 +251,55 @@ jobs:
           ln --symbolic /usr/local/bin/bun /usr/local/bin/bunx
           test "$(bun --version)" = "$BUN_VERSION"
           test "$(bunx --version)" = "$BUN_VERSION"
-      # The lane creates and prepares its own disposable scaffold. Running the
-      # repository prepare hook here would install/generate the persistent
-      # template a second time without contributing to the isolated proof.
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Run one isolated starter surface
+      - run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
+
+  artifacts:
+    name: Exact release artifacts
+    if: always() && needs.plan.outputs.artifacts == 'true'
+    needs: [plan, repository, portable, tui, starter-package, darwin-contained-files, supervised, starter]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require every selected evidence lane
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          if [ "$STARTER_LANE_MODE" = "head" ] && [ "$(bun scripts/release-plan.ts starter-head)" = "skip" ]; then
-            echo "Skipping packed HEAD for an exact-version deferred starter review; target remains mandatory and scripts/starter-head-review.json owns the migration debt."
-            exit 0
+          if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
+            echo "A selected evidence lane failed: $RESULTS"
+            exit 1
           fi
-          bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: needs.plan.outputs.darwin == 'true'
+        with:
+          pattern: darwin-contained-files-*
+          path: packages/core/native
+          merge-multiple: true
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun scripts/pack-release-train.ts
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-packages
+          path: release-artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+  result:
+    name: Required evidence complete
+    if: always()
+    needs: [plan, repository, portable, tui, starter-package, darwin-contained-files, supervised, starter, artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed on any selected lane
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
+            echo "CI evidence is incomplete: $RESULTS"
+            exit 1
+          fi
+          echo "CI evidence complete: $RESULTS"

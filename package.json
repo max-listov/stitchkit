@@ -11,7 +11,7 @@
     "check:template": "cd packages/create-stitchkit/template && bun run check",
     "check:agent-template": "cd packages/create-stitchkit/templates/agent && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
-    "test": "bun --filter stitchkit test && bun --filter stitchkit-tui test && bun --filter create-stitchkit test && bun test scripts/*.test.ts && bun run test:template && bun run test:agent-template",
+    "test": "bun --filter stitchkit test && bun --filter stitchkit-tui test && bun --filter create-stitchkit test && bun test scripts/*.test.ts",
     "gen:llms": "bun scripts/gen-llms.ts",
     "build": "bun run gen:llms && bun run gen:example-declarations && bun --filter stitchkit build && bun --filter stitchkit-tui build && bun --filter create-stitchkit build",
     "lint": "biome check --error-on-warnings . && bun run lint:template && bun run lint:agent-template",
@@ -25,6 +25,7 @@
     "smoke:node": "bun --filter stitchkit smoke:node",
     "smoke:next-ssr": "bun --filter stitchkit smoke:next-ssr",
     "consumer-lane": "bun --filter stitchkit consumer-lane",
+    "contained-files-packed-lane": "bun --filter stitchkit consumer-lane --contained-files-only",
     "tui-packed-lane": "bun scripts/tui-packed-lane.ts",
     "starter-lane": "bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=target --variant=repository --browser=all",
     "starter-head-lane": "bun scripts/starter-lane.ts --mode=head --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=head --variant=repository --browser=all",
@@ -35,6 +36,7 @@
     "release:core": "bun scripts/release-plan.ts release core",
     "release:starter": "bun scripts/release-plan.ts release create-stitchkit",
     "release:tui": "bun scripts/release-plan.ts release tui",
+    "release:train": "bun scripts/release-plan.ts release train",
     "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms",
     "test:template": "cd packages/create-stitchkit/template && bun test scripts",
     "test:agent-template": "cd packages/create-stitchkit/templates/agent && bun test",
@@ -51,6 +53,7 @@
     "pg": "^8.23.0",
     "pm2": "^7.0.4",
     "prisma": "^7.9.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "^4.4.3"
   }
 }

@@ -39,7 +39,9 @@ bun run starter-head-lane  # both scaffold variants against packed framework HEA
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
 bun run verify    # every portable CI gate, including the supervised PM2 lane
 bun run verify:fast    # lint + check + test, the part that is faster to learn locally
+bun scripts/verify.ts --release # package-aware release train gate, max two heavy lanes
 bun run update:starter # move the template's framework range and lockfile together
+bun run release:train # push every tag selected by release-train.json after green exact-SHA CI
 bun run lint:fix  # auto-fix formatting / safe lint
 ```
 
@@ -50,12 +52,12 @@ be arranged by hand: a reachable **PostgreSQL** named by
 devDependency, so `bun install` is all it takes. `bun run verify:fast` needs
 none of them.
 
-`bun run verify` must be green before a **release commit**. For an ordinary
-change, the `pre-push` hook runs `verify:fast` and CI runs the whole matrix —
-it is a superset of `verify`, sharded across its runners, and adds real macOS arm64/x64
-packed-consumer qualification that another local kernel cannot reproduce. It answers faster
-than one machine walking the same lanes in single file. The reasoning and the
-per-push table are in [`AGENTS.md`](./AGENTS.md#what-runs-where).
+Before a **release commit**, run `bun scripts/verify.ts --release`. It reads
+`release-train.json`, runs structural steps once and schedules only the selected
+heavy lanes with concurrency two. `pre-push` repeats the same command with
+`--if-changed`, so the exact-tree memo makes that second invocation a named
+skip. Ordinary changes still use `verify:fast`; scheduled/manual CI owns the
+complete package and starter-mode cross-product.
 
 The gate remembers its last green run by working-tree content, so a push whose
 tree is unchanged is not gated twice; any edit to any file runs it again, and a
@@ -147,14 +149,14 @@ When it fails it keeps its work directory and prints the path — reproduce by
 hand there. Adding a public API? Name its types in a fixture; that is what keeps
 the export honest.
 
-### Independent releases
+### Release trains
 
 - `vX.Y.Z` must match `packages/core/package.json`; it publishes only
   `stitchkit` and reads release notes from the root `CHANGELOG.md`.
 - `create-stitchkit-vX.Y.Z` must match
   `packages/create-stitchkit/package.json`; it publishes only the scaffolder and
   reads `packages/create-stitchkit/CHANGELOG.md`.
-- The two versions never need to match. A scaffolder release advances its
+- Package versions never need to match. A scaffolder release advances its
   Stitchkit target only after the target version already exists on npm and both
   starter lanes are green.
 - For a pre-1.0 hard cut, the core release commit keeps the currently published
@@ -165,12 +167,13 @@ the export honest.
   publication, migrate the starter, advance its catalog and remove the review;
   both lanes are mandatory before any scaffolder release.
 
-Prepare versions and changelogs in an ordinary commit and wait for the exact-SHA
-branch CI to pass. Then run `bun run release:core` or
-`bun run release:starter`. The runner proves a clean current `master`/`main`,
-validates the package version and changelog, and pushes only the matching tag.
-The tag workflow downloads the already-validated tarball; it does not rebuild or
-rerun the expensive gates.
+List the packages being published in `release-train.json`, prepare each selected
+version and changelog, run the package-aware release gate once, then make the
+last commit with a `release(train): …` subject. After its exact-SHA push CI is
+green, run `bun run release:train`. Every selected tag points at that same SHA;
+each tag workflow downloads its matching already-validated tarball and neither
+rebuilds nor reruns expensive gates. The legacy single-package commands remain
+available for an isolated release.
 
 An external observer identifies release intent from the committed tree instead
 of treating every push as a candidate:
@@ -201,14 +204,14 @@ root `prepare` script):
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
   tag first, then picks the local gate by what a red CI run would cost on the
-  commit being pushed: `verify:fast` for an ordinary branch push, the whole of
-  `verify` plus the packed HEAD lane for a push carrying the `release(...)`
-  commit, nothing further for a tag-only push. The table and the reasoning are
+  commit being pushed: `verify:fast` for an ordinary branch push, the
+  package-aware `verify --release` DAG for a pushed `release(...)` commit, and
+  nothing further for a tag-only push. The table and the reasoning are
   in [`AGENTS.md`](./AGENTS.md#what-runs-where). The preflight checks the
   package version, the release notes, the calibre (a `### ⚠️ Breaking changes`
   section may not ride a patch bump), the presence of the matching
-  `## Released migration: X.Y.Z` in the upgrade guide for a breaking core
-  release, the `release(<scope>): … in X.Y.Z` subject of the pushed SHA, and —
+  `## Released migration: X.Y.Z` in the matching upgrade guide, membership and
+  exact version in `release-train.json`, the `release(train): …` subject, and —
   for a scaffolder tag only — that the template lockfile resolves the newest
   published framework version its own range allows.
   Deletion-only pushes run no build.

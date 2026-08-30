@@ -1,6 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  packageDirectory,
+  type ReleaseTarget,
+  ReleaseTrainSchema,
+  readReleaseTrain,
+  releaseTrainEntry,
+} from './release-train';
+import {
   assertStarterLockfileIsCurrent,
   type FetchLike,
   type ReleaseTreeReader,
@@ -9,8 +16,7 @@ import {
 
 const ZERO_SHA = /^0+$/;
 
-export type ReleaseTarget = 'core' | 'create-stitchkit' | 'tui';
-export type ReleaseScope = 'core' | 'starter' | 'tui';
+export type ReleaseScope = 'core' | 'starter' | 'tui' | 'train';
 
 export interface ReleasePlan {
   target: ReleaseTarget;
@@ -233,11 +239,17 @@ export interface MigrationChannel {
   floor: string;
 }
 
-export const MIGRATION_CHANNELS: Record<ReleaseTarget, MigrationChannel> = {
+export const MIGRATION_CHANNELS = {
   core: { guidePath: 'docs/guide/upgrading.md', floor: '0.44.0' },
   'create-stitchkit': { guidePath: 'packages/create-stitchkit/UPGRADING.md', floor: '0.4.0' },
   tui: { guidePath: 'packages/tui/UPGRADING.md', floor: '0.1.0' },
-};
+} satisfies Record<ReleaseTarget, MigrationChannel>;
+
+function migrationChannelFor(target: ReleaseTarget): MigrationChannel {
+  if (target === 'core') return MIGRATION_CHANNELS.core;
+  if (target === 'tui') return MIGRATION_CHANNELS.tui;
+  return MIGRATION_CHANNELS['create-stitchkit'];
+}
 
 function comparePreOneVersions(left: string, right: string): number {
   const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
@@ -261,7 +273,7 @@ export function assertMigrationSection(
   guide: string,
   version: string,
   releaseNotes: string,
-  channel: MigrationChannel = MIGRATION_CHANNELS.core,
+  channel: MigrationChannel = migrationChannelFor('core'),
 ): void {
   if (!BREAKING_HEADING.test(releaseNotes)) return;
   if (comparePreOneVersions(version, channel.floor) < 0) return;
@@ -397,7 +409,7 @@ export function classifyPrePush(input: string): PrePushPlan {
  * cheap moment to prove the starter template still builds on HEAD.
  */
 export function isReleaseCommitSubject(subject: string): boolean {
-  return /^release\((?:core|starter|tui)\):/.test(subject.trim());
+  return /^release\((?:core|starter|tui|train)\):/.test(subject.trim());
 }
 
 /** What the local gate runs for one push. */
@@ -513,6 +525,7 @@ export function assertReleaseCommitSubject(
       `release tag must point at a "${expected}: … in ${version}" commit — its subject is ${trimmed === '' ? '(empty)' : JSON.stringify(trimmed)}. Land fixes first, make the release commit last, wait for green, then tag.`,
     );
   }
+  if (scope === 'train') return;
   const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (!new RegExp(`(?<![\\d.])${escaped}(?![\\d.\\-+])`).test(trimmed)) {
     throw new Error(
@@ -599,7 +612,7 @@ export async function validateReleaseTag(
   // the operator of a GENERATED project — the steps a new version needs before
   // it will start — which is a different reader from the framework's, and a
   // reason for a second guide rather than an argument against one.
-  const channel = MIGRATION_CHANNELS[plan.target];
+  const channel = migrationChannelFor(plan.target);
   assertMigrationSection(await read(channel.guidePath), plan.version, notes, channel);
   // A starter release is the range AND the lockfile. Only the release channel
   // checks this: outside a release a lockfile lagging its range is ordinary and
@@ -632,9 +645,9 @@ export function readFromCommit(sha: string): ReleaseTreeReader {
 
 /** Which package a `release(<scope>): …` subject is releasing. */
 export function releaseScopeForSubject(subject: string): ReleaseScope {
-  const match = /^release\((core|starter|tui)\):/.exec(subject.trim());
+  const match = /^release\((core|starter|tui|train)\):/.exec(subject.trim());
   const scope = match?.[1];
-  if (scope !== 'core' && scope !== 'starter' && scope !== 'tui') {
+  if (scope !== 'core' && scope !== 'starter' && scope !== 'tui' && scope !== 'train') {
     throw new Error(`not a release commit subject: ${JSON.stringify(subject.trim())}`);
   }
   return scope;
@@ -690,10 +703,54 @@ export async function validateReleaseCommit(
 ): Promise<ReleasePlan & { notes: string }> {
   const scope = releaseScopeForSubject(commit.subject);
   const read = options.read ?? readFromCommit(commit.sha);
+  if (scope === 'train') {
+    const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
+    assertReleaseCommitSubject(commit.subject, '', 'train');
+    let first: (ReleasePlan & { notes: string }) | undefined;
+    for (const release of train.releases) {
+      const plan = await validateReleaseTag(
+        root,
+        releaseTagForTarget(release.target, release.version),
+        {
+          ...options,
+          read,
+        },
+      );
+      first ??= plan;
+    }
+    if (!first) throw new Error('release train has no targets');
+    return first;
+  }
   const packageDir = PACKAGE_DIR_FOR_SCOPE[scope];
   const version = manifestVersion(await read(`${packageDir}/package.json`), packageDir);
   assertReleaseCommitSubject(commit.subject, version, scope);
   return validateReleaseTag(root, releaseTagFor(scope, version), { ...options, read });
+}
+
+function releaseTagForTarget(target: ReleaseTarget, version: string): string {
+  return releaseTagFor(target === 'create-stitchkit' ? 'starter' : target, version);
+}
+
+export async function assertReleaseSubjectForTag(
+  root: string,
+  subject: string,
+  tag: string,
+  version: string,
+  read?: ReleaseTreeReader,
+): Promise<void> {
+  if (!/^release\(train\):/.test(subject.trim())) {
+    assertReleaseCommitSubject(subject, version, releaseScopeForTag(tag));
+    return;
+  }
+  const plan = releasePlanForTag(tag);
+  const train = read
+    ? ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')))
+    : await readReleaseTrain(root);
+  const entry = releaseTrainEntry(train, plan.target);
+  if (!entry || entry.version !== version) {
+    throw new Error(`release train does not select ${plan.target}@${version}`);
+  }
+  assertReleaseCommitSubject(subject, '', 'train');
 }
 
 /**
@@ -806,12 +863,7 @@ async function release(target: ReleaseTarget): Promise<void> {
   const remoteHead = await output(['git', 'rev-parse', `origin/${branch}`]);
   if (head !== remoteHead) throw new Error(`HEAD must equal origin/${branch}`);
 
-  const packageDir =
-    target === 'core'
-      ? 'packages/core'
-      : target === 'tui'
-        ? 'packages/tui'
-        : 'packages/create-stitchkit';
+  const packageDir = packageDirectory(target);
   const manifest: unknown = JSON.parse(
     await readFile(join(root, packageDir, 'package.json'), 'utf8'),
   );
@@ -827,13 +879,40 @@ async function release(target: ReleaseTarget): Promise<void> {
   await validateReleaseTag(root, tag);
   // The commit about to be tagged must itself be the release commit — a green
   // follow-up fix on top of it is NOT a release (see assertReleaseCommitSubject).
-  assertReleaseCommitSubject(
+  await assertReleaseSubjectForTag(
+    root,
     await output(['git', 'log', '-1', '--format=%s', head]),
+    tag,
     version,
-    releaseScopeForTag(tag),
   );
   await run(['git', 'tag', tag, head]);
   await run(['git', 'push', 'origin', `refs/tags/${tag}`]);
+}
+
+async function releaseTrain(): Promise<void> {
+  const root = join(import.meta.dir, '..');
+  const branch = await output(['git', 'branch', '--show-current']);
+  if (branch !== 'master' && branch !== 'main')
+    throw new Error('Releases must run from master or main');
+  if ((await output(['git', 'status', '--porcelain'])) !== '') {
+    throw new Error('Release metadata must be committed before tagging');
+  }
+  await run(['git', 'fetch', 'origin', branch]);
+  const head = await output(['git', 'rev-parse', 'HEAD']);
+  const remoteHead = await output(['git', 'rev-parse', `origin/${branch}`]);
+  if (head !== remoteHead) throw new Error(`HEAD must equal origin/${branch}`);
+  const subject = await output(['git', 'log', '-1', '--format=%s', head]);
+  assertReleaseCommitSubject(subject, '', 'train');
+  const train = await readReleaseTrain(root);
+  const tags: string[] = [];
+  for (const entry of train.releases) {
+    const tag = releaseTagForTarget(entry.target, entry.version);
+    await validateReleaseTag(root, tag);
+    await assertReleaseSubjectForTag(root, subject, tag, entry.version);
+    await run(['git', 'tag', tag, head]);
+    tags.push(`refs/tags/${tag}`);
+  }
+  await run(['git', 'push', 'origin', ...tags]);
 }
 
 async function main(): Promise<void> {
@@ -849,6 +928,23 @@ async function main(): Promise<void> {
     if (!argument) throw new Error('Usage: release-plan.ts candidate <sha>');
     const sha = await output(['git', 'rev-parse', `${argument}^{commit}`]);
     const subject = await output(['git', 'log', '-1', '--format=%s', sha]);
+    if (releaseScopeForSubject(subject) === 'train') {
+      await validateReleaseCommit(root, { sha, subject });
+      const read = readFromCommit(sha);
+      const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
+      const releases = await Promise.all(
+        train.releases.map(async (entry) => {
+          const plan = await validateReleaseTag(
+            root,
+            releaseTagForTarget(entry.target, entry.version),
+            { read },
+          );
+          return releaseCandidateIdentity(plan, sha);
+        }),
+      );
+      process.stdout.write(JSON.stringify({ schemaVersion: 1, sha, releases }));
+      return;
+    }
     const plan = await validateReleaseCommit(root, { sha, subject });
     process.stdout.write(JSON.stringify(releaseCandidateIdentity(plan, sha)));
     return;
@@ -858,10 +954,12 @@ async function main(): Promise<void> {
     const { profile } = await prePushMetadataGate(plan, {
       validateTag: async (tag, sha) => {
         const validated = await validateReleaseTag(root, tag);
-        assertReleaseCommitSubject(
+        await assertReleaseSubjectForTag(
+          root,
           await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]),
+          tag,
           validated.version,
-          releaseScopeForTag(tag),
+          readFromCommit(sha),
         );
       },
       releaseCommits: releaseCommitsIn,
@@ -874,24 +972,15 @@ async function main(): Promise<void> {
       await run(['bun', 'scripts/verify.ts', '--fast', '--if-changed']);
     }
     if (profile === 'full') {
-      await run(['bun', 'scripts/verify.ts', '--if-changed']);
-      // A release commit is the last cheap moment to learn that the starter
-      // template no longer builds on HEAD. `verify` runs only the target lane,
-      // so without this the answer arrives from a red CI run on the release
-      // commit itself — the one commit whose run must be green before it is
-      // tagged. Same policy as CI: a hard-cut minor may outrun the template
-      // only after an exact-version review records the deferred migration debt.
-      if ((await starterHeadDecision(root)) === 'run') {
-        await run(['bun', 'scripts/verify.ts', '--head', '--if-changed']);
-      } else {
-        process.stderr.write(
-          '[release] skipping packed HEAD for an exact-version deferred starter review; target remains mandatory and scripts/starter-head-review.json owns the migration debt.\n',
-        );
-      }
+      await run(['bun', 'scripts/verify.ts', '--release', '--if-changed']);
     }
     return;
   }
   if (command === 'release') {
+    if (argument === 'train') {
+      await releaseTrain();
+      return;
+    }
     if (argument !== 'core' && argument !== 'create-stitchkit' && argument !== 'tui') {
       throw new Error('Usage: release-plan.ts release <core|create-stitchkit|tui>');
     }
@@ -900,7 +989,7 @@ async function main(): Promise<void> {
   }
   if (command === 'assert-subject') {
     const [, subject, version, tag] = Bun.argv.slice(2);
-    assertReleaseCommitSubject(subject ?? '', version ?? '', releaseScopeForTag(tag ?? ''));
+    await assertReleaseSubjectForTag(root, subject ?? '', tag ?? '', version ?? '');
     return;
   }
   if (command === 'assert-head') {

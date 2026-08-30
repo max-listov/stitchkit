@@ -5,6 +5,7 @@ import {
   assertBreakingAudience,
   assertMigrationSection,
   assertReleaseCommitSubject,
+  assertReleaseSubjectForTag,
   assertTagOnReleaseHead,
   assertVersionCalibre,
   classifyPrePush,
@@ -30,6 +31,36 @@ const ZERO = '0'.repeat(40);
 const BREAKING = '### \u26a0\ufe0f Breaking changes';
 
 describe('release plan', () => {
+  test('one train subject authorizes only exact manifest entries', async () => {
+    const root = resolve(import.meta.dir, '..');
+    const readTrain = async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        releases: [
+          { target: 'tui', version: '0.1.1' },
+          { target: 'create-stitchkit', version: '0.4.4' },
+        ],
+      });
+    await expect(
+      assertReleaseSubjectForTag(
+        root,
+        'release(train): publish terminal and starter packages',
+        'stitchkit-tui-v0.1.1',
+        '0.1.1',
+        readTrain,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertReleaseSubjectForTag(
+        root,
+        'release(train): publish terminal and starter packages',
+        'v0.70.1',
+        '0.70.1',
+        readTrain,
+      ),
+    ).rejects.toThrow(/does not select core/);
+  });
+
   test('classifies branch, tag, deletion and mixed pushes without duplicate gates', () => {
     expect(classifyPrePush(`refs/heads/topic ${SHA} refs/heads/topic ${ZERO}\n`)).toEqual({
       verify: true,

@@ -150,6 +150,7 @@ These records were consolidated from the project's internal design notes on
 | [0133](0133-agent-tui-is-an-optional-package-over-one-controller.md) | Agent TUI is an optional package over one controller | Accepted — reusable terminal mechanics stay outside core and local attachment enters the host's only controller |
 | [0134](0134-diagnostic-journal-is-bounded-local-evidence.md) | Diagnostic journal is bounded local evidence | Accepted — one finite FIFO local writer without durable-delivery claims or a second observability framework |
 | [0135](0135-contained-files-use-native-darwin-capabilities.md) | Contained files use native Darwin directory capabilities | Accepted — packaged openat leaf, one JS policy and real macOS artifact proof |
+| [0136](0136-one-exact-tree-drives-a-package-aware-release-train.md) | One exact tree drives a package-aware release train | Accepted — one manifest, one exact-SHA CI and target-aware evidence lanes for every selected package |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

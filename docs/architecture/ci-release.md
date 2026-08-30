@@ -1,142 +1,89 @@
 ---
 title: CI and exact-SHA release pipeline
-description: Parallel release gates, immutable publication inputs and the three-minute branch CI budget.
+description: Package-aware evidence lanes, one-SHA release trains and immutable publication inputs.
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-30
 ---
 
 # CI and exact-SHA release pipeline
 
-Stitchkit separates validation from publication. Branch CI builds the package
-tarballs and proves every supported runtime and starter surface. A tag workflow
-may publish only those already validated tarballs from the exact successful
-commit SHA; it never rebuilds publication inputs.
+Validation and publication are separate. Branch CI proves an exact tree and uploads immutable
+tarballs; tag workflows may only publish those tarballs from the successful push run for the same
+SHA. They never rebuild publication input.
 
-## Branch CI graph
+## One release train
 
-Every platform qualification is eligible to start at workflow time zero. Publication assembly in
-`core` waits for the two small validated Darwin artifacts because the exact tarball must contain
-the same binaries the real macOS consumers executed:
-
-| Job | Guarantee |
-|---|---|
-| `darwin-contained-files / arm64,x64` | native backend build plus packed Bun and Node file/search/resource/race proof on real macOS |
-| `core` | lint, TypeScript, unit/integration tests, package build, real Next 16.3 production SSR smoke, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and immutable release tarballs containing both validated Darwin leaves |
-| `starter / target / blank / chromium` | blank published-target scaffold in desktop and mobile Chromium |
-| `starter / target / blank / webkit` | blank published-target scaffold in WebKit |
-| `starter / target / repository / chromium` | repository published-target example in desktop and mobile Chromium |
-| `starter / target / repository / webkit` | repository published-target example in WebKit |
-| `starter / head / blank / chromium` | blank packed-HEAD scaffold in desktop and mobile Chromium |
-| `starter / head / blank / webkit` | blank packed-HEAD scaffold in WebKit |
-| `starter / head / repository / chromium` | repository packed-HEAD example in desktop and mobile Chromium |
-| `starter / head / repository / webkit` | repository packed-HEAD example in WebKit |
-
-Each starter cell owns its generated workspace and PostgreSQL database. The
-matrix keeps `fail-fast: false`, so one failure does not hide results from the
-other seven surfaces. Across the matrix the existing 33 blank and 42 repository
-browser cases run in both modes: 150 browser cases, including Chromium, WebKit
-and the mobile project.
-
-Browser revisions come from the frozen lockfile. Every starter cell runs in the
-official Playwright image for that exact version, pinned by immutable OCI digest.
-The image already contains Chromium, WebKit and their system libraries; branch CI
-therefore performs no live `apt` provisioning or browser download. Chromium and
-WebKit execution still proceed on separate runners, but setup latency no longer
-depends on package-mirror or browser-CDN variance. The repository install also
-skips its development-only prepare hook: the lane itself creates, installs and
-validates its own disposable scaffold.
-
-The container intentionally has no `unzip`, so starter cells do not invoke
-`setup-bun` (which delegates ZIP extraction to that host executable) or install
-another OS package. They fetch Bun's official platform tarball at the repository
-starter `packageManager` version, verify the registry-published SHA-512 integrity
-and expose both standard `bun` and `bunx` command names from that exact binary on
-`PATH`. The workflow test binds this version to the starter manifest.
-
-There is no serial summary job. GitHub marks the workflow successful only when
-every matrix cell and the framework job succeeds. The publisher selects
-that successful completed workflow for the exact commit SHA, so the workflow's
-native conclusion is already the fail-closed aggregate.
-
-One narrow bridge exists for an intentional pre-1.0 hard cut. When the current
-core release notes contain the exact breaking-changes heading and the canonical
-starter still targets another `^0.minor`, target cells remain mandatory and HEAD
-still runs by default. A skip requires the exact-version deferred review record
-described below. This makes incompatibility debt visible on the creating SHA
-without forcing the published starter to consume a core version absent from npm.
-After core publication, the separate starter migration advances its catalog
-target and removes the record; all eight cells are mandatory again. Additive
-releases, unknown range forms and ordinary commits never qualify for the bridge.
-
-Superseded branch or pull-request runs are cancelled. Tag publication is a
-separate non-cancellable workflow, so an in-progress npm publication can never
-be interrupted by a newer commit.
-
-## Performance budget
-
-The successful branch workflow has a wall-clock budget of three minutes on the
-normal GitHub-hosted runner path. No gate may be removed to meet the budget. A
-regression is diagnosed from the longest parallel job's step timings; the fix
-must remove duplicated setup or serial dependency rather than weaken coverage.
-The graph has one framework/Node/artifact job, two Darwin matrix cells, one supervised job and
-eight starter cells. Node smoke and the portable packed consumer lane reuse the core checkout;
-the Darwin cells are intentionally separate because only their kernels can qualify `openat`.
-The pinned Playwright image is advanced together with the lockfile browser
-version; a version mismatch fails browser launch instead of silently downloading
-a different runtime.
-
-## Publication boundary
-
-`core` packs `stitchkit` and `create-stitchkit` once and uploads the
-`release-packages` artifact. The tag workflow then:
-
-1. validates the tag, package version and changelog entry;
-2. requires a successful branch CI run for the exact tag SHA;
-3. downloads `release-packages` from that run ID;
-4. publishes only the tarball whose name and version match the validated plan;
-5. creates the GitHub release from the same changelog entry.
-
-Workflow permissions default to `contents: read`. OIDC `id-token: write` exists
-only in the protected `npm-production` publish job. Every third-party action is
-pinned to a full commit SHA.
-
-## Local equivalents
-
-`bun run verify` remains the complete portable local framework gate and composes both
-target starter variants. `bun run starter-head-lane` composes both HEAD variants.
-An unaligned breaking core release no longer skips HEAD silently: the packed
-local-core lane runs by default and exposes template drift on the creating SHA.
-When one template source genuinely cannot compile against both the published
-target and the hard-cut HEAD, `scripts/starter-head-review.json` may record the
-bridge explicitly:
+`release-train.json` is the source of truth for a release commit. It lists one or more package
+targets and their exact versions. A release commit uses the subject `release(train): …`; every tag
+selected by the manifest points at that same branch head and consumes the same CI run:
 
 ```json
 {
-  "coreVersion": "0.57.0",
-  "outcome": "deferred",
-  "reason": "The target lane remains on the published minor until core ships."
+  "schemaVersion": 1,
+  "releases": [
+    { "target": "core", "version": "0.71.0" },
+    { "target": "create-stitchkit", "version": "0.4.5" }
+  ]
 }
 ```
 
-Only an exact core version, the literal `deferred` outcome and a non-empty
-reason permit the skip. Missing, stale or unknown records fail closed by running
-HEAD; invalid JSON fails the release-plan command. Target lanes always remain
-mandatory, and HEAD still consumes the locally packed core rather than requiring
-the unpublished version from npm. Remove the record when the starter target is
-advanced.
-For a focused lane, call the executable directly with one explicit combination:
+The pre-push and tag gates parse the manifest, require each version to equal its package manifest,
+validate that package's changelog/migration channel and refuse a tag not selected by the train.
+`bun run release:train` creates and pushes all selected tags after the exact-SHA push CI is green.
+Single-package legacy commands remain valid, but a coordinated release never needs bookkeeping
+commits between tags.
 
-```bash
-bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all
-bun scripts/starter-lane.ts --mode=head --variant=repository --browser=webkit
-```
+## Target-aware CI graph
 
-Missing, duplicate or unknown mode/variant/browser arguments fail before a
-workspace is created, preventing an accidentally partial CI gate.
+`scripts/ci-plan.ts` maps either the release train or ordinary changed paths to named evidence.
+Every job starts after the small planner, not after another platform:
 
-The Darwin binary cannot be qualified from Linux. CI therefore builds each supported architecture
-on a real macOS runner, packs the package, and runs the same contained-files consumer fixture under
-Bun and Node. This is the sole CI-only platform qualifier; ADR 0135 records why it cannot be folded
-into `verify` without replacing evidence with cross-compilation.
+| Job | Runs when | Guarantee |
+| --- | --- | --- |
+| `repository` | always | workflow/release contracts, formatting and script types/tests |
+| `portable` | core/shared change | core types/tests/build, PostgreSQL adapter, smokes and packed consumer |
+| `tui` | TUI target/change | terminal package types/tests/build and packed host |
+| `starter-package` | starter compatibility is selected | scaffolder and authored template types |
+| `darwin-contained-files` | core target/change | real arm64/x64 native build and narrow packed Bun/Node file/search/resource/race proof |
+| `supervised` | core or starter | generated roles under the pinned PM2 supervisor |
+| `starter` | core or starter | two variants × two browsers on the compatibility edge that can differ |
+| `artifacts` | release train | waits for selected evidence, downloads Darwin leaves only for core, packs selected packages |
+| `result` | always | fails closed if any selected job failed or was cancelled |
+
+A starter-only release runs published-target mode. A core release runs packed-HEAD mode. The full
+target × HEAD cross-product runs nightly and on `workflow_dispatch`; it remains the audit for the
+planner and for interactions that no package diff predicts. Chromium and WebKit still use the
+lockfile-matched Playwright image pinned by immutable digest and the exact pinned Bun tarball hash.
+
+The portable core job has no Darwin dependency. Real macOS qualification still packs and installs
+the public package, but `--contained-files-only` executes only the surface whose implementation is
+platform-specific. Artifact assembly is the sole consumer of both validated native leaves.
+
+## Local gate
+
+`bun run verify` remains the exhaustive portable gate. Ordinary pushes use `verify:fast`. A release
+push uses `bun scripts/verify.ts --release --if-changed`: structural steps and build run once, then
+independent selected heavy lanes execute with maximum concurrency two. The green memo is keyed by
+the exact working-tree hash, toolchain, lane environment and selected target set, so pre-push reuses
+the one final run and any edit invalidates it.
+
+Template unit tests are not run again at root after the generated starter lane has executed the
+same tests from the packed scaffold. Authored template type checks remain separate because they
+catch source drift before generation.
+
+## Publication boundary
+
+The tag workflow:
+
+1. validates tag, package version, changelog and membership in the train;
+2. requires successful `ci.yml` push CI for the exact tag SHA;
+3. downloads that run's `release-packages` artifact;
+4. publishes only the matching tarball, idempotently refusing different bytes at an existing
+   version;
+5. creates the GitHub release from the validated changelog entry.
+
+Workflow permissions default to `contents: read`. OIDC `id-token: write` exists only in the
+protected `npm-production` publication job. Every third-party action is pinned to a full commit
+SHA. Superseded branch/PR runs are cancellable; tag publication is not.

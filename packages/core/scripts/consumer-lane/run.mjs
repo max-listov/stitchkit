@@ -19,7 +19,10 @@
  * declaration budget and execution policy. Adding an export without adding a
  * matrix row is therefore a release-gate failure rather than an implicit choice.
  *
- * Usage: `bun scripts/consumer-lane/run.mjs` from `packages/core`, after a build.
+ * Usage: `bun scripts/consumer-lane/run.mjs [--contained-files-only]` from
+ * `packages/core`, after a build. The narrow mode is the real-macOS qualifier:
+ * it still packs and installs the public package, but executes only the surface
+ * whose platform implementation differs.
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -45,7 +48,17 @@ const pkgRoot = join(here, '..', '..');
  */
 const ACCEPTED_UNRESOLVED = ['Bun', 'bun', 'node:http', 'socket.io', '@socket.io/bun-engine'];
 
-const FIXTURES = ['minimal', 'nodenext', 'full', 'node', 'grammy'];
+const arguments_ = process.argv.slice(2);
+const unknownArguments = arguments_.filter(
+  (argument) => argument !== '--contained-files-only',
+);
+if (unknownArguments.length > 0) {
+  throw new Error(`Unknown consumer-lane option: ${unknownArguments.join(', ')}`);
+}
+const containedFilesOnly = arguments_.includes('--contained-files-only');
+const FIXTURES = containedFilesOnly
+  ? ['node']
+  : ['minimal', 'nodenext', 'full', 'node', 'grammy'];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -147,6 +160,21 @@ try {
     writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
+
+    if (containedFilesOnly) {
+      for (const runtime of ['bun', 'node']) {
+        const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
+          run(runtime, ['src/contained-files.mjs'], dir),
+        );
+        if (!containedFilesOutput.includes('packed contained files')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+          );
+        }
+      }
+      continue;
+    }
 
     if (name === 'node' && existsSync(join(dir, 'node_modules', '@types', 'bun'))) {
       failed = true;
@@ -373,33 +401,38 @@ try {
     }
   }
 
-  try {
-    step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
-  } catch (error) {
-    failed = true;
-    console.error(error instanceof Error ? error.message : error);
-  }
+  if (!containedFilesOnly)
+    try {
+      step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
+    } catch (error) {
+      failed = true;
+      console.error(error instanceof Error ? error.message : error);
+    }
 
-  try {
-    step('self-contained socket artifact', () =>
-      runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
-    );
-  } catch (error) {
-    failed = true;
-    console.error(error instanceof Error ? error.message : error);
-  }
+  if (!containedFilesOnly)
+    try {
+      step('self-contained socket artifact', () =>
+        runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
+      );
+    } catch (error) {
+      failed = true;
+      console.error(error instanceof Error ? error.message : error);
+    }
 
-  try {
-    await asyncStep('self-contained socket client artifact', () =>
-      runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
-    );
-  } catch (error) {
-    failed = true;
-    console.error(error instanceof Error ? error.message : error);
-  }
+  if (!containedFilesOnly)
+    try {
+      await asyncStep('self-contained socket client artifact', () =>
+        runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
+      );
+    } catch (error) {
+      failed = true;
+      console.error(error instanceof Error ? error.message : error);
+    }
 
-  const unexpected = [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
-  const gone = ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
+  const unexpected = containedFilesOnly
+    ? []
+    : [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
+  const gone = containedFilesOnly ? [] : ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
   if (unexpected.length > 0) {
     failed = true;
     console.error(
@@ -423,4 +456,8 @@ try {
 }
 
 if (failed) process.exit(1);
-console.log('[consumer-lane] the published package works for a consumer');
+console.log(
+  containedFilesOnly
+    ? '[consumer-lane] packed contained files work for a macOS consumer'
+    : '[consumer-lane] the published package works for a consumer',
+);
