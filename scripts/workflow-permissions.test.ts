@@ -37,6 +37,16 @@ describe('workflow trust boundary', () => {
 });
 
 describe('target-aware CI graph', () => {
+  test('repository contract tests build the public declaration entrypoint first', () => {
+    const repository = section('repository', 'portable');
+    expect(repository.indexOf('bun --filter stitchkit build')).toBeGreaterThan(
+      repository.indexOf('bun run check:scripts'),
+    );
+    expect(repository.indexOf('bun test scripts/*.test.ts')).toBeGreaterThan(
+      repository.indexOf('bun --filter stitchkit build'),
+    );
+  });
+
   test('portable validation starts after planning, never after Darwin', () => {
     expect(section('portable', 'tui')).toContain('needs: plan');
     expect(section('portable', 'tui')).not.toContain('needs: darwin-contained-files');

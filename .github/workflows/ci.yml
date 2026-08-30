@@ -68,6 +68,7 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run lint
       - run: bun run check:scripts
+      - run: bun --filter stitchkit build
       - run: bun test scripts/*.test.ts
 
   portable:

@@ -64,5 +64,8 @@ work and repeats equivalent work on identical bytes.
 - `scripts/ci-plan.test.ts`, `scripts/verify.test.ts`, `scripts/gate-parity.test.ts`,
   `scripts/workflow-permissions.test.ts` and `scripts/release-plan.test.ts` cover the planner, bound,
   workflow graph and train subject/membership.
+- The first clean exact-SHA run exposed that repository contract tests imported the built public
+  declaration entrypoint before that job built it. The repository job now builds that entrypoint
+  immediately before the script contracts, and the workflow test holds the order.
 - `bun run starter-lane` and `bun run supervised-lane` passed concurrently on the selected
   starter-only release surface; the release conveyor owns the final exact-tree memo proof.
