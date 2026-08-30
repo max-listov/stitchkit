@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-08-30
+
+### Fixed
+
+- The official terminal package publishes as `stitchkit-tui`, matching the existing unscoped
+  `stitchkit` and `create-stitchkit` family. The unavailable `@stitchkit` registry namespace is
+  not part of the public package identity.
+
 ## [0.1.0] — 2026-08-30
 
 ### Added
@@ -14,7 +22,7 @@
   bounded metadata-only lifecycle journal per terminal session.
 - Terminal-native default chrome, executable keyboard-owned slash suggestions and replaceable
   typed status rows with selected-model context capacity and durable usage.
-- Renderer-neutral `@stitchkit/tui/core` collection, feed, pane, command and operation state
+- Renderer-neutral `stitchkit-tui/core` collection, feed, pane, command and operation state
   machines for richer terminal applications that do not import the official agent view.
 - Searchable bounded model picker, identity-checked concurrent conversation switching, independent
   atomic model-selection records and packed Bun/Node plus PTY lifecycle proofs.

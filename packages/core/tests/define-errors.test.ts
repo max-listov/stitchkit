@@ -174,14 +174,17 @@ describe('domain error transport normalization', () => {
     expect(JSON.stringify(mcp.content)).toContain('Wait for the current window to expire');
     await client.close();
 
-    const agent = await executable(mountAgent([service]), 'quota_check')(
-      {},
-      { toolCallId: 'quota', messages: [], context: undefined },
-    );
-    expect(agent).toEqual({
-      error: 'QUOTA_EXCEEDED',
-      details: { retryAfterSeconds: 30 },
-      _hint: 'Wait for the current window to expire',
+    await expect(
+      executable(mountAgent([service]), 'quota_check')(
+        {},
+        { toolCallId: 'quota', messages: [], context: undefined },
+      ),
+    ).rejects.toMatchObject({
+      output: {
+        error: 'QUOTA_EXCEEDED',
+        details: { retryAfterSeconds: 30 },
+        _hint: 'Wait for the current window to expire',
+      },
     });
   });
 
@@ -288,16 +291,18 @@ describe('defineErrors — declared message', () => {
         throw registry.errors.QUOTA_EXCEEDED({ details: { retryAfterSeconds: 30 } });
       },
     });
-    const result = await executable(mountAgent([service]), 'quota_message_check')(
-      {},
-      { toolCallId: 'quota-message', messages: [], context: undefined },
-    );
-
     // A code WITH a details schema shows the model no text at all: the envelope
     // is `{ error, details?, _hint? }` and its `details` is the parsed payload.
-    expect(result).toEqual({
-      error: 'QUOTA_EXCEEDED',
-      details: { retryAfterSeconds: 30 },
+    await expect(
+      executable(mountAgent([service]), 'quota_message_check')(
+        {},
+        { toolCallId: 'quota-message', messages: [], context: undefined },
+      ),
+    ).rejects.toMatchObject({
+      output: {
+        error: 'QUOTA_EXCEEDED',
+        details: { retryAfterSeconds: 30 },
+      },
     });
   });
 
@@ -328,19 +333,26 @@ describe('defineErrors — declared message', () => {
     // This is the branch the declared message actually changes on the tool path:
     // the framework fills `details` with `{ message }` when a code declares no
     // details schema. It used to be the code itself.
-    expect(
-      await executable(mountAgent([withMessage]), 'session_touch')(
+    await expect(
+      executable(mountAgent([withMessage]), 'session_touch')(
         {},
         { toolCallId: 'touch-1', messages: [], context: undefined },
       ),
-    ).toEqual({ error: 'SESSION_EXPIRED', details: { message: 'Your session expired' } });
+    ).rejects.toMatchObject({
+      output: {
+        error: 'SESSION_EXPIRED',
+        details: { message: 'Your session expired' },
+      },
+    });
 
     // A code that declares no message is unchanged — `details.message` is the code.
-    expect(
-      await executable(mountAgent([withoutMessage]), 'session_touch')(
+    await expect(
+      executable(mountAgent([withoutMessage]), 'session_touch')(
         {},
         { toolCallId: 'touch-2', messages: [], context: undefined },
       ),
-    ).toEqual({ error: 'PLAIN', details: { message: 'PLAIN' } });
+    ).rejects.toMatchObject({
+      output: { error: 'PLAIN', details: { message: 'PLAIN' } },
+    });
   });
 });

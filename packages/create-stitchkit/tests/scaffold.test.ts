@@ -560,8 +560,8 @@ describe('scaffoldProject', () => {
     const manifest = JSON.parse(await readFile(join(destination, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: 'terminal-agent',
-      catalog: { stitchkit: '^0.68.6', '@stitchkit/tui': '^0.1.0' },
-      dependencies: { stitchkit: 'catalog:', '@stitchkit/tui': 'catalog:' },
+      catalog: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.1.1' },
+      dependencies: { stitchkit: 'catalog:', 'stitchkit-tui': 'catalog:' },
     });
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
     expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();

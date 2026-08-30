@@ -13,6 +13,7 @@ export const AgentCodingToolLimitsSchema = z
     maxSearchFiles: z.int().positive(),
     maxSearchDepth: z.int().nonnegative(),
     shellTimeoutMs: z.int().positive(),
+    shellTerminationGraceMs: z.int().positive(),
   })
   .strict();
 
@@ -194,6 +195,7 @@ const DEFAULT_LIMITS: AgentCodingToolLimits = {
   maxSearchFiles: 10_000,
   maxSearchDepth: 32,
   shellTimeoutMs: 30_000,
+  shellTerminationGraceMs: 250,
 };
 
 export function resolveCodingToolLimits(

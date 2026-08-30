@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { simulateReadableStream } from 'ai';
@@ -259,6 +259,23 @@ describe('published headless Agent harness', () => {
     });
     expect((await refreshed.load()).resources[0]?.name).toBe('changed');
   });
+
+  if (process.platform !== 'win32') {
+    test('resource discovery refuses a symlinked ancestor instead of reading outside its root', async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-resource-containment-'));
+      roots.push(root);
+      const resources = path.join(root, 'resources');
+      const outside = path.join(root, 'outside');
+      await mkdir(resources);
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'secret.md'), 'outside secret');
+      await symlink(outside, path.join(resources, 'escaped'), 'dir');
+      const discovered = createAgentHarnessFileResources({
+        roots: [{ id: 'resources', path: resources, kind: 'resource' }],
+      });
+      await expect(discovered.load()).rejects.toThrow('refuses symlink');
+    });
+  }
 
   test('signals control resync on bounded-delivery overflow without blocking a run', async () => {
     const harness = createHeadlessAgentHarness({

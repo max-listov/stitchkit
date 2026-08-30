@@ -1,5 +1,6 @@
 import { lstat, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { forbidden } from '../contract';
 import {
   type AgentCodingToolAuthorization,
   AgentCodingToolAuthorizationSchema,
@@ -22,6 +23,11 @@ function inputPath(root: string, requested: string, maxPathBytes: number): strin
   const resolved = path.resolve(root, requested);
   if (!within(root, resolved)) throw new Error('Coding tool path escapes its root');
   return resolved;
+}
+
+export function boundedCodingRelativePath(requested: string, maxPathBytes: number): string {
+  inputPath(path.parse(process.cwd()).root, requested, maxPathBytes);
+  return requested;
 }
 
 export async function existingCodingPath(
@@ -70,7 +76,7 @@ export async function authorizeCodingTool(
   request: AgentCodingToolAuthorization,
 ): Promise<void> {
   const parsed = AgentCodingToolAuthorizationSchema.parse(request);
-  if (!(await config.authorize(parsed))) throw new Error('Coding tool permission denied');
+  if (!(await config.authorize(parsed))) forbidden('Coding tool permission denied');
 }
 
 export async function atomicCodingReplace(

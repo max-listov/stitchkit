@@ -6,9 +6,9 @@
       "name": "stitchkit-agent-starter",
       "dependencies": {
         "@openrouter/ai-sdk-provider": "^3.0.0",
-        "@stitchkit/tui": "file:../../../tui",
         "ai": "^7.0.84",
         "stitchkit": "file:../../../core",
+        "stitchkit-tui": "file:../../../tui",
         "zod": "4.4.3",
       },
       "devDependencies": {
@@ -69,8 +69,6 @@
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
-
-    "@stitchkit/tui": ["@stitchkit/tui@file:../../../tui", { "dependencies": { "@opentui/core": "^0.5.9", "@opentui/react": "^0.5.9", "react": "^19.2.8", "stitchkit": "^0.68.11", "zod": "^4.4.3" }, "devDependencies": { "@types/bun": "^1.4.0", "@types/react": "^19.2.18", "typescript": "^7.0.2" }, "bin": { "stitchkit-agent": "./dist/cli.js" } }],
 
     "@tanstack/query-core": ["@tanstack/query-core@5.102.3", "", {}, "sha512-5O2VEceonqC4uaTLUGglb0hgPouWCJ4K1ykVWyeV8aThhdNCzwpwu01bYoaRNJ9mgFUXS7Kf9utJ46ysT8m+bw=="],
 
@@ -376,6 +374,8 @@
 
     "stitchkit": ["stitchkit@file:../../../core", { "dependencies": { "ky": "^2.0.2" }, "devDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/ext-apps": "^1.7.5", "@modelcontextprotocol/server": "^2.0.0", "@openrouter/ai-sdk-provider": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@socket.io/bun-engine": "^0.1.1", "@socket.io/component-emitter": "^3.1.2", "@tanstack/react-query": "5.102.3", "@types/bun": "^1.4.0", "@types/json-schema": "^7.0.15", "@types/react": "^19.2.18", "@typescript/typescript6": "^6.0.2", "ai": "^7.0.79", "grammy": "^1.45.1", "react": "^19.2.8", "react-query-kit": "^3.3.4", "socket.io": "^4.8.3", "socket.io-client": "^4.8.3", "srvx": "^0.12.7", "typescript": "^7.0.2", "zod": "^4.4.3" }, "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.7.2", "@modelcontextprotocol/server": "^2.0.0", "@openrouter/ai-sdk-provider": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@socket.io/bun-engine": "^0.1.1", "@socket.io/component-emitter": "^3.1.2", "@tanstack/react-query": ">=5", "@types/bun": "^1.3.14", "ai": "^7.0.0", "grammy": "^1.45.1", "react": ">=18", "react-query-kit": "^3.3.3", "socket.io": "^4.8.3", "socket.io-client": "^4.8.3", "srvx": "^0.12.5", "zod": "^4.4.3" }, "optionalPeers": ["@modelcontextprotocol/ext-apps", "@modelcontextprotocol/server", "@openrouter/ai-sdk-provider", "@opentelemetry/api", "@socket.io/bun-engine", "@socket.io/component-emitter", "@tanstack/react-query", "@types/bun", "ai", "grammy", "react", "react-query-kit", "socket.io", "socket.io-client", "srvx"] }],
 
+    "stitchkit-tui": ["stitchkit-tui@file:../../../tui", { "dependencies": { "@opentui/core": "^0.5.9", "@opentui/react": "^0.5.9", "react": "^19.2.8", "stitchkit": "^0.68.11", "zod": "^4.4.3" }, "devDependencies": { "@types/bun": "^1.4.0", "@types/react": "^19.2.18", "typescript": "^7.0.2" }, "bin": { "stitchkit-agent": "./dist/cli.js" } }],
+
     "string-width": ["string-width@7.2.0", "", { "dependencies": { "emoji-regex": "^10.3.0", "get-east-asian-width": "^1.0.0", "strip-ansi": "^7.1.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
     "strip-ansi": ["strip-ansi@7.1.2", "", { "dependencies": { "ansi-regex": "^6.0.1" } }, "sha512-gmBGslpoQJtgnMAvOVqGZpEz9dyoKTCzy2nfz/n8aIFhN/jCE/rCmcxabB6jOOHV+0WNnylOxaxBQPSvcWklhA=="],
@@ -422,10 +422,6 @@
 
     "@modelcontextprotocol/server/zod": ["zod@4.5.4", "", {}, "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="],
 
-    "@stitchkit/tui/stitchkit": ["stitchkit@0.68.11", "", { "dependencies": { "ky": "^2.0.2" }, "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.7.2", "@modelcontextprotocol/server": "^2.0.0", "@openrouter/ai-sdk-provider": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@socket.io/bun-engine": "^0.1.1", "@socket.io/component-emitter": "^3.1.2", "@tanstack/react-query": ">=5", "@types/bun": "^1.3.14", "ai": "^7.0.0", "grammy": "^1.45.1", "react": ">=18", "react-query-kit": "^3.3.3", "socket.io": "^4.8.3", "socket.io-client": "^4.8.3", "srvx": "^0.12.5", "zod": "^4.4.3" }, "optionalPeers": ["@modelcontextprotocol/ext-apps", "@modelcontextprotocol/server", "@openrouter/ai-sdk-provider", "@opentelemetry/api", "@socket.io/bun-engine", "@socket.io/component-emitter", "@tanstack/react-query", "@types/bun", "ai", "grammy", "react", "react-query-kit", "socket.io", "socket.io-client", "srvx"] }, "sha512-xqA3RGbGBG2mAWjAf9TZYDftZtULkqIZCWOxkarONwZQGFWCZTHDIrcomvsP0xRFKiGATY04CwWyvq00cNLfXQ=="],
-
-    "@stitchkit/tui/zod": ["zod@4.5.4", "", {}, "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="],
-
     "body-parser/content-type": ["content-type@2.1.0", "", {}, "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag=="],
 
     "express/accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "^3.0.0", "negotiator": "^1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
@@ -437,6 +433,10 @@
     "send/mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
 
     "stitchkit/zod": ["zod@4.5.4", "", {}, "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="],
+
+    "stitchkit-tui/stitchkit": ["stitchkit@0.68.11", "", { "dependencies": { "ky": "^2.0.2" }, "peerDependencies": { "@modelcontextprotocol/ext-apps": "^1.7.2", "@modelcontextprotocol/server": "^2.0.0", "@openrouter/ai-sdk-provider": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@socket.io/bun-engine": "^0.1.1", "@socket.io/component-emitter": "^3.1.2", "@tanstack/react-query": ">=5", "@types/bun": "^1.3.14", "ai": "^7.0.0", "grammy": "^1.45.1", "react": ">=18", "react-query-kit": "^3.3.3", "socket.io": "^4.8.3", "socket.io-client": "^4.8.3", "srvx": "^0.12.5", "zod": "^4.4.3" }, "optionalPeers": ["@modelcontextprotocol/ext-apps", "@modelcontextprotocol/server", "@openrouter/ai-sdk-provider", "@opentelemetry/api", "@socket.io/bun-engine", "@socket.io/component-emitter", "@tanstack/react-query", "@types/bun", "ai", "grammy", "react", "react-query-kit", "socket.io", "socket.io-client", "srvx"] }, "sha512-xqA3RGbGBG2mAWjAf9TZYDftZtULkqIZCWOxkarONwZQGFWCZTHDIrcomvsP0xRFKiGATY04CwWyvq00cNLfXQ=="],
+
+    "stitchkit-tui/zod": ["zod@4.5.4", "", {}, "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="],
 
     "type-is/content-type": ["content-type@2.1.0", "", {}, "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag=="],
 

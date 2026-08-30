@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { open, realpath, stat, writeFile } from 'node:fs/promises';
+import { type FileHandle, lstat, realpath, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import {
   type AgentCodingToolConfig,
@@ -14,14 +14,16 @@ import {
 import {
   atomicCodingReplace,
   authorizeCodingTool,
-  existingCodingPath,
-  writableCodingPath,
+  boundedCodingRelativePath,
 } from './coding-tool-paths';
+import {
+  assertContainedFileCurrent,
+  assertContainedParentCurrent,
+  openContainedFile,
+  openContainedParent,
+} from './contained-files';
 
-async function digestFile(
-  handle: Awaited<ReturnType<typeof open>>,
-  size: number,
-): Promise<string> {
+async function digestFile(handle: FileHandle, size: number): Promise<string> {
   const hash = createHash('sha256');
   const chunk = Buffer.alloc(Math.min(64 * 1024, Math.max(1, size)));
   for (let position = 0; position < size; ) {
@@ -47,14 +49,15 @@ export function createFileCodingTools(
     transports: ['AGENT'],
     handler: async ({ input }) => {
       const root = await realpath(config.root);
-      const target = await existingCodingPath(root, input.path, limits.maxPathBytes);
-      await authorizeCodingTool(config, { operation: 'read', path: target.relative });
+      const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      const handle = await openContainedFile(root, relative);
       const maximum = Math.min(input.maxBytes ?? limits.maxReadBytes, limits.maxReadBytes);
-      const handle = await open(target.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
       let selected: Buffer;
       let size: number;
       let sha256: string;
       try {
+        await authorizeCodingTool(config, { operation: 'read', path: relative });
+        await assertContainedFileCurrent(root, relative, handle);
         const metadata = await handle.stat();
         if (!metadata.isFile()) throw new Error('Coding read path is not a regular file');
         size = metadata.size;
@@ -70,7 +73,7 @@ export function createFileCodingTools(
       const end = input.offset + selected.byteLength;
       const truncated = end < size;
       return {
-        path: target.relative,
+        path: relative,
         text,
         bytes: selected.byteLength,
         sha256,
@@ -89,23 +92,32 @@ export function createFileCodingTools(
     transports: ['AGENT'],
     handler: async ({ input }) => {
       const root = await realpath(config.root);
-      const target = await writableCodingPath(root, input.path, limits.maxPathBytes);
+      const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
       const bytes = Buffer.byteLength(input.content);
       if (bytes > limits.maxWriteBytes)
         throw new Error('Coding tool write exceeds maxWriteBytes');
-      await authorizeCodingTool(config, {
-        operation: 'write',
-        path: target.relative,
-        bytes,
-        overwrite: input.overwrite,
-      });
-      if (input.overwrite) {
-        const current = await stat(target.absolute).catch(() => null);
-        await atomicCodingReplace(target.absolute, input.content, current?.mode);
-      } else {
-        await writeFile(target.absolute, input.content, { flag: 'wx' });
+      const parent = await openContainedParent(root, relative);
+      const target = path.join(parent.path, parent.basename);
+      try {
+        await authorizeCodingTool(config, {
+          operation: 'write',
+          path: relative,
+          bytes,
+          overwrite: input.overwrite,
+        });
+        await assertContainedParentCurrent(root, relative, parent.handle);
+        if (input.overwrite) {
+          const current = await lstat(target).catch(() => null);
+          if (current?.isSymbolicLink())
+            throw new Error('Coding tools do not overwrite symlinks');
+          await atomicCodingReplace(target, input.content, current?.mode);
+        } else {
+          await writeFile(target, input.content, { flag: 'wx' });
+        }
+      } finally {
+        await parent.handle.close();
       }
-      return { path: target.relative, bytes };
+      return { path: relative, bytes };
     },
   });
 

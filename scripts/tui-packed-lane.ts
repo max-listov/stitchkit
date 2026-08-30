@@ -43,7 +43,7 @@ try {
         private: true,
         type: 'module',
         dependencies: {
-          '@stitchkit/tui': `file:${tuiArchive}`,
+          'stitchkit-tui': `file:${tuiArchive}`,
           stitchkit: `file:${coreArchive}`,
           typescript: '^7.0.0',
         },
@@ -57,8 +57,8 @@ try {
   );
   await writeFile(
     join(consumer, 'probe.ts'),
-    `import { defineAgentTui, listAgentTuiSessions } from '@stitchkit/tui';\n` +
-      `import { createTerminalCollection, reduceTerminalCollection, createTerminalPaneState, visibleTerminalPanes } from '@stitchkit/tui/core';\n` +
+    `import { defineAgentTui, listAgentTuiSessions } from 'stitchkit-tui';\n` +
+      `import { createTerminalCollection, reduceTerminalCollection, createTerminalPaneState, visibleTerminalPanes } from 'stitchkit-tui/core';\n` +
       `import { searchAgentModelCatalog } from 'stitchkit/agent-runtime';\n` +
       `const config = defineAgentTui({ title: 'Packed probe', context: () => ({}), modelCatalog: { load: async () => ({ schemaVersion: 1, source: 'probe', observedAt: new Date().toISOString(), completeness: 'complete', diagnostics: [], models: [] }) }, createRuntime: async () => { throw new Error('not started'); } });\n` +
       `if (config.title !== 'Packed probe') throw new Error('config export failed');\n` +
@@ -73,13 +73,13 @@ try {
   );
   await writeFile(
     join(consumer, 'core-probe.mjs'),
-    `import { createTerminalCollection, reduceTerminalCollection } from '@stitchkit/tui/core';\n` +
+    `import { createTerminalCollection, reduceTerminalCollection } from 'stitchkit-tui/core';\n` +
       `let state = createTerminalCollection(['a', 'b', 'c'], 2, 'b');\n` +
       `state = reduceTerminalCollection(state, { type: 'reconcile', keys: ['c', 'b', 'a'] });\n` +
       `if (state.selectedKey !== 'b') throw new Error('Node core selection drifted');\n` +
       `console.log('packed TUI core Node consumer: ok');\n`,
   );
-  const ptyFixture = `import { defineAgentTui } from '@stitchkit/tui';
+  const ptyFixture = `import { defineAgentTui } from 'stitchkit-tui';
 import { AgentSnapshotSchema, type AgentRuntimeInput } from 'stitchkit/agent-runtime';
 import type { AgentHarnessApprovalDecision, HeadlessAgentHarness } from 'stitchkit/agent-runtime/harness';
 const at = new Date().toISOString();

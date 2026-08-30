@@ -1,6 +1,6 @@
 {
-  "name": "@stitchkit/tui",
-  "version": "0.1.0",
+  "name": "stitchkit-tui",
+  "version": "0.1.1",
   "description": "Composable terminal UI for the Stitchkit headless agent runtime",
   "license": "MIT",
   "author": "Max Listov <maxlistov@gmail.com>",

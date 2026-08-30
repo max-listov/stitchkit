@@ -94,7 +94,7 @@ export function releasePlanForTag(tag: string): ReleasePlan {
     if (!version) throw new Error('stitchkit TUI release tag is missing a version');
     return {
       target: 'tui',
-      packageName: '@stitchkit/tui',
+      packageName: 'stitchkit-tui',
       packageDir: 'packages/tui',
       changelog: 'packages/tui/CHANGELOG.md',
       version,

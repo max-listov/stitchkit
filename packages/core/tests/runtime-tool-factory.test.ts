@@ -136,12 +136,14 @@ describe('createRuntimeToolFactory', () => {
       hooks,
     });
 
-    const result = await executable(tools, 'context_guard')(
+    const result = executable(tools, 'context_guard')(
       {},
       { toolCallId: 'guard', messages: [], context: undefined },
     );
 
-    expect(result).toMatchObject({ error: 'VALIDATION_ERROR' });
+    await expect(result).rejects.toMatchObject({
+      output: { error: 'VALIDATION_ERROR' },
+    });
     expect(handlerCalls).toBe(0);
     expect(terminal).toEqual(['error', 'VALIDATION_ERROR']);
   });

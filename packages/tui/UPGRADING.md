@@ -1,4 +1,4 @@
-# Upgrading @stitchkit/tui
+# Upgrading stitchkit-tui
 
 ## Released migration: 0.1.0
 

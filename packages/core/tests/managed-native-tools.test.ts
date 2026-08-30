@@ -345,12 +345,12 @@ describe('managed generic native tools', () => {
       expect(resultText(mcpSafe)).not.toContain('/srv/private');
 
       const agent = mountAgent([], { runtimeTools: [safeDefinition, internalDefinition] });
-      expect(
-        await executable(agent, 'safe_upload')(
+      await expect(
+        executable(agent, 'safe_upload')(
           { path: 'file.bin' },
           { toolCallId: 'safe', messages: [], context: undefined },
         ),
-      ).toMatchObject({ error: 'FILE_NOT_FOUND' });
+      ).rejects.toMatchObject({ output: { error: 'FILE_NOT_FOUND' } });
 
       const mcpInternal = await client.callTool({
         name: 'internal_upload',

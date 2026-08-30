@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentTuiDiagnostics } from '@stitchkit/tui';
 import {
   type AgentLanguageModelProvider,
   type AgentModelCatalog,
@@ -16,6 +15,7 @@ import {
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun';
 import { mountAgent } from 'stitchkit/tools';
+import type { AgentTuiDiagnostics } from 'stitchkit-tui';
 import { z } from 'zod';
 import type { AgentConfig } from './config';
 

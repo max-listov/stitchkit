@@ -19,6 +19,7 @@ async function runShell(input: {
   environment: Readonly<Record<string, string>>;
   signal?: AbortSignal;
   timeoutMs: number;
+  terminationGraceMs: number;
   maxOutputBytes: number;
   maxArtifactBytes: number;
   artifacts?: AgentCodingToolConfig['artifacts'];
@@ -29,11 +30,23 @@ async function runShell(input: {
     input.maxArtifactBytes - stdoutHeader.byteLength - stderrHeader.byteLength;
   if (input.artifacts && artifactPayloadLimit < 0)
     throw new Error('maxArtifactBytes is smaller than the shell artifact envelope');
+  if (input.signal?.aborted) {
+    return ShellOutputSchema.parse({
+      executable: input.executableName,
+      exitCode: null,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      outcome: 'cancelled',
+    });
+  }
   return await new Promise<z.infer<typeof ShellOutputSchema>>((resolve, reject) => {
+    const ownsProcessGroup = process.platform !== 'win32';
     const child = spawn(input.executable, input.args, {
       cwd: input.cwd,
       env: input.environment,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: ownsProcessGroup,
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
@@ -43,45 +56,20 @@ async function runShell(input: {
     let artifactBytes = 0;
     let outcome: z.infer<typeof ShellOutputSchema>['outcome'] = 'exited';
     let settled = false;
-    const terminate = (reason: typeof outcome) => {
-      if (settled || outcome !== 'exited') return;
-      outcome = reason;
-      child.kill('SIGKILL');
-    };
-    const timer = setTimeout(() => terminate('timeout'), input.timeoutMs);
-    timer.unref();
+    let settlementTimer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => terminate('cancelled');
-    const retain = (target: Buffer[], artifactTarget: Buffer[], chunk: Buffer) => {
-      const remaining = Math.max(0, input.maxOutputBytes - retained);
-      if (remaining > 0) {
-        const kept = chunk.subarray(0, remaining);
-        target.push(kept);
-        retained += kept.byteLength;
-      }
-      if (input.artifacts) {
-        const artifactRemaining = Math.max(0, artifactPayloadLimit - artifactBytes);
-        if (artifactRemaining > 0) {
-          const kept = chunk.subarray(0, artifactRemaining);
-          artifactTarget.push(kept);
-          artifactBytes += kept.byteLength;
-        }
-        if (chunk.byteLength > artifactRemaining) terminate('output-limit');
-      } else if (chunk.byteLength > remaining) terminate('output-limit');
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (settlementTimer) clearTimeout(settlementTimer);
+      input.signal?.removeEventListener('abort', cancel);
     };
-    child.stdout.on('data', (chunk: Buffer) => retain(stdout, artifactStdout, chunk));
-    child.stderr.on('data', (chunk: Buffer) => retain(stderr, artifactStderr, chunk));
-    child.on('error', (error) => {
+    const persistAndResolve = async (
+      exitCode: number | null,
+      signal: NodeJS.Signals | null,
+    ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      input.signal?.removeEventListener('abort', cancel);
-      reject(error);
-    });
-    child.on('close', async (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      input.signal?.removeEventListener('abort', cancel);
+      cleanup();
       try {
         const hasArtifact = input.artifacts && artifactBytes > input.maxOutputBytes;
         const artifactData = hasArtifact
@@ -113,7 +101,68 @@ async function runShell(input: {
       } catch (error) {
         reject(error);
       }
+    };
+    const killOwnedProcessGroup = (): boolean => {
+      if (!ownsProcessGroup || child.pid === undefined) return false;
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const boundStreamSettlement = () => {
+      if (settlementTimer) return;
+      settlementTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        void persistAndResolve(child.exitCode, child.signalCode);
+      }, input.terminationGraceMs);
+    };
+    const terminate = (reason: typeof outcome) => {
+      if (settled || outcome !== 'exited') return;
+      outcome = reason;
+      if (!killOwnedProcessGroup()) child.kill('SIGKILL');
+      boundStreamSettlement();
+    };
+    const timer = setTimeout(() => terminate('timeout'), input.timeoutMs);
+    timer.unref();
+    const retain = (target: Buffer[], artifactTarget: Buffer[], chunk: Buffer) => {
+      const remaining = Math.max(0, input.maxOutputBytes - retained);
+      if (remaining > 0) {
+        const kept = chunk.subarray(0, remaining);
+        target.push(kept);
+        retained += kept.byteLength;
+      }
+      if (input.artifacts) {
+        const artifactRemaining = Math.max(0, artifactPayloadLimit - artifactBytes);
+        if (artifactRemaining > 0) {
+          const kept = chunk.subarray(0, artifactRemaining);
+          artifactTarget.push(kept);
+          artifactBytes += kept.byteLength;
+        }
+        if (chunk.byteLength > artifactRemaining) terminate('output-limit');
+      } else if (chunk.byteLength > remaining) terminate('output-limit');
+    };
+    child.stdout.on('data', (chunk: Buffer) => retain(stdout, artifactStdout, chunk));
+    child.stderr.on('data', (chunk: Buffer) => retain(stderr, artifactStderr, chunk));
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
     });
+    child.on('exit', (exitCode, signal) => {
+      // A finite command owns every descendant that remains in its POSIX process group.
+      // Killing the group after a normal parent exit prevents a background child from
+      // retaining the pipes and turning an exited command into an unbounded operation.
+      if (outcome === 'exited') killOwnedProcessGroup();
+      boundStreamSettlement();
+      if (child.stdout.destroyed && child.stderr.destroyed) {
+        void persistAndResolve(exitCode, signal);
+      }
+    });
+    child.on('close', (exitCode, signal) => void persistAndResolve(exitCode, signal));
     input.signal?.addEventListener('abort', cancel, { once: true });
     if (input.signal?.aborted) cancel();
   });
@@ -165,6 +214,7 @@ export function createShellCodingTool(
         environment: config.environment ?? {},
         ...(signal && { signal }),
         timeoutMs: limits.shellTimeoutMs,
+        terminationGraceMs: limits.shellTerminationGraceMs,
         maxOutputBytes: limits.maxShellOutputBytes,
         maxArtifactBytes: limits.maxArtifactBytes,
         ...(config.artifacts && { artifacts: config.artifacts }),

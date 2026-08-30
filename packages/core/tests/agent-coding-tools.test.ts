@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ToolSet } from 'ai';
+import { ShellOutputSchema } from '../src/agent-runtime/coding-tool-contract';
 import {
   type AgentCodingToolAuthorization,
   createAgentCodingTools,
@@ -20,6 +22,18 @@ function executable(tools: ToolSet, name: string) {
   const execute = tools[name]?.execute;
   if (!execute) throw new Error(`expected executable tool ${name}`);
   return execute;
+}
+
+async function expectProcessGone(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await Bun.sleep(10);
+  }
+  throw new Error(`descendant process ${pid} remained alive`);
 }
 
 describe('host-authorized Agent coding tools', () => {
@@ -68,7 +82,7 @@ describe('host-authorized Agent coding tools', () => {
     expect(await readFile(path.join(root, 'source.txt'), 'utf8')).toBe('alpha\ngamma\n');
     const originalError = console.error;
     console.error = () => undefined;
-    const stale = await executable(tools, 'apply_patch')(
+    const stale = executable(tools, 'apply_patch')(
       {
         path: 'source.txt',
         baseSha256,
@@ -79,7 +93,7 @@ describe('host-authorized Agent coding tools', () => {
       options,
     );
     console.error = originalError;
-    expect(stale).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
+    await expect(stale).rejects.toMatchObject({ output: { error: 'CONFLICT' } });
     expect(await readFile(path.join(root, 'source.txt'), 'utf8')).toBe('alpha\ngamma\n');
   });
 
@@ -134,7 +148,7 @@ describe('host-authorized Agent coding tools', () => {
     const baseSha256 = createHash('sha256').update('base').digest('hex');
     const originalError = console.error;
     console.error = () => undefined;
-    const results = await Promise.all([
+    const results = await Promise.allSettled([
       execute(
         { path: 'source.txt', baseSha256, oldText: 'base', newText: 'one', dryRun: false },
         options,
@@ -145,8 +159,15 @@ describe('host-authorized Agent coding tools', () => {
       ),
     ]);
     console.error = originalError;
-    expect(results.filter((result) => 'applied' in result && result.applied)).toHaveLength(1);
-    expect(results.filter((result) => 'error' in result)).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === 'fulfilled' && result.value.applied),
+    ).toHaveLength(1);
+    expect(
+      results.filter(
+        (result) =>
+          result.status === 'rejected' && result.reason?.output?.error === 'CONFLICT',
+      ),
+    ).toHaveLength(1);
     expect(['one', 'two']).toContain(await readFile(path.join(root, 'source.txt'), 'utf8'));
     const patchAuthorizations = authorizations.filter(
       (request): request is Extract<AgentCodingToolAuthorization, { operation: 'patch' }> =>
@@ -158,6 +179,111 @@ describe('host-authorized Agent coding tools', () => {
       true,
     );
   });
+
+  if (process.platform !== 'win32') {
+    test('refuses read, new-file write and patch when authorization loses parent identity', async () => {
+      const operation = async (kind: 'read' | 'write' | 'patch') => {
+        const fixture = await mkdtemp(path.join(tmpdir(), `stitchkit-coding-parent-${kind}-`));
+        roots.push(fixture);
+        const root = path.join(fixture, 'workspace');
+        const nested = path.join(root, 'nested');
+        const original = path.join(root, 'original-nested');
+        const outside = path.join(fixture, 'outside');
+        await mkdir(root);
+        await mkdir(nested);
+        await mkdir(outside);
+        await writeFile(path.join(nested, 'source.txt'), 'inside');
+        await writeFile(path.join(outside, 'source.txt'), 'outside');
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const tools = mountAgent([], {
+          runtimeTools: createAgentCodingTools({
+            root,
+            authorize: async () => {
+              entered.resolve();
+              await release.promise;
+              return true;
+            },
+          }),
+        });
+        const options = { toolCallId: `parent-${kind}`, messages: [], context: undefined };
+        const baseSha256 = createHash('sha256').update('inside').digest('hex');
+        const call =
+          kind === 'read'
+            ? executable(tools, 'read_file')({ path: 'nested/source.txt' }, options)
+            : kind === 'write'
+              ? executable(tools, 'write_file')(
+                  { path: 'nested/new.txt', content: 'escaped', overwrite: false },
+                  options,
+                )
+              : executable(tools, 'apply_patch')(
+                  {
+                    path: 'nested/source.txt',
+                    baseSha256,
+                    oldText: 'inside',
+                    newText: 'changed',
+                    dryRun: false,
+                  },
+                  options,
+                );
+        const settled = call.then(
+          (value: unknown) => ({ status: 'fulfilled', value }),
+          (reason: unknown) => ({ status: 'rejected', reason }),
+        );
+        await entered.promise;
+        await rename(nested, original);
+        await symlink(outside, nested, 'dir');
+        const originalError = console.error;
+        console.error = () => undefined;
+        release.resolve();
+        const result = await settled;
+        console.error = originalError;
+        expect(result).toMatchObject({
+          status: 'rejected',
+          reason: { output: { error: 'INTERNAL_SERVER_ERROR' } },
+        });
+        expect(await readFile(path.join(outside, 'source.txt'), 'utf8')).toBe('outside');
+        expect(await readFile(path.join(original, 'source.txt'), 'utf8')).toBe('inside');
+        expect(existsSync(path.join(outside, 'new.txt'))).toBeFalse();
+        expect(existsSync(path.join(original, 'new.txt'))).toBeFalse();
+      };
+
+      await operation('read');
+      await operation('write');
+      await operation('patch');
+    });
+
+    test('search skips a parent replaced by an outside symlink after authorization', async () => {
+      const fixture = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-search-parent-'));
+      roots.push(fixture);
+      const root = path.join(fixture, 'workspace');
+      const nested = path.join(root, 'nested');
+      const outside = path.join(fixture, 'outside');
+      await mkdir(root);
+      await mkdir(nested);
+      await mkdir(outside);
+      await writeFile(path.join(nested, 'inside.txt'), 'inside-only');
+      await writeFile(path.join(outside, 'outside.txt'), 'outside-secret');
+      const tools = mountAgent([], {
+        runtimeTools: createAgentCodingTools({
+          root,
+          authorize: async (request) => {
+            if (request.operation === 'search') {
+              await rename(nested, path.join(root, 'original-nested'));
+              await symlink(outside, nested, 'dir');
+            }
+            return true;
+          },
+        }),
+      });
+      const result = await executable(tools, 'search_files')(
+        { query: 'outside-secret', mode: 'content' },
+        { toolCallId: 'search-parent', messages: [], context: undefined },
+      );
+      expect(result.matches).toEqual([]);
+      expect(result.skippedSymlinks).toBe(1);
+    });
+  }
 
   test('preserves large shell output behind an opaque readable artifact', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-artifact-'));
@@ -305,23 +431,19 @@ describe('host-authorized Agent coding tools', () => {
     const options = { toolCallId: 'denied', messages: [], context: undefined };
     const originalError = console.error;
     console.error = () => undefined;
-    const denied = await executable(tools, 'write_file')(
-      { path: 'denied.txt', content: 'changed', overwrite: true },
-      options,
-    );
-    const traversal = await executable(tools, 'read_file')(
-      { path: '../outside.txt' },
-      options,
-    );
-    const symlinkEscape = await executable(tools, 'read_file')(
-      { path: 'escape.txt' },
-      options,
-    );
+    await expect(
+      executable(tools, 'write_file')(
+        { path: 'denied.txt', content: 'changed', overwrite: true },
+        options,
+      ),
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    await expect(
+      executable(tools, 'read_file')({ path: '../outside.txt' }, options),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    await expect(
+      executable(tools, 'read_file')({ path: 'escape.txt' }, options),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
     console.error = originalError;
-
-    expect(denied).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
-    expect(traversal).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
-    expect(symlinkEscape).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
     expect(await readFile(path.join(root, 'denied.txt'), 'utf8')).toBe('unchanged');
   });
 
@@ -366,6 +488,139 @@ describe('host-authorized Agent coding tools', () => {
     expect(await cancelled).toMatchObject({ executable: 'sleep', outcome: 'cancelled' });
   });
 
+  test('does not spawn a command for a pre-aborted invocation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-pre-abort-'));
+    roots.push(root);
+    const marker = path.join(root, 'spawned.txt');
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        executables: { bash: '/bin/bash' },
+      }),
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const result = await executable(tools, 'run_command')(
+      { executable: 'bash', args: ['-c', 'printf spawned > "$1"', '--', marker] },
+      {
+        toolCallId: 'pre-aborted',
+        messages: [],
+        context: undefined,
+        abortSignal: controller.signal,
+      },
+    );
+    expect(result).toMatchObject({ executable: 'bash', outcome: 'cancelled' });
+    expect(existsSync(marker)).toBeFalse();
+
+    const brokenTools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        executables: { missing: path.join(root, 'missing-executable') },
+        limits: { shellTimeoutMs: 20, shellTerminationGraceMs: 20 },
+      }),
+    });
+    const originalError = console.error;
+    console.error = () => undefined;
+    const failedAt = performance.now();
+    await expect(
+      executable(brokenTools, 'run_command')(
+        { executable: 'missing', args: [] },
+        { toolCallId: 'spawn-error', messages: [], context: undefined },
+      ),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    console.error = originalError;
+    expect(performance.now() - failedAt).toBeLessThan(500);
+  });
+
+  if (process.platform !== 'win32') {
+    test('kills owned descendants and bounds retained pipes on exit, timeout, abort and output limit', async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-process-group-'));
+      roots.push(root);
+      const tools = mountAgent([], {
+        runtimeTools: createAgentCodingTools({
+          root,
+          authorize: () => true,
+          executables: { bash: '/bin/bash' },
+          limits: {
+            maxShellOutputBytes: 64,
+            shellTimeoutMs: 40,
+            shellTerminationGraceMs: 80,
+          },
+        }),
+      });
+      const options = { toolCallId: 'process-group', messages: [], context: undefined };
+
+      const startedAt = performance.now();
+      const timedOut = ShellOutputSchema.parse(
+        await executable(tools, 'run_command')(
+          { executable: 'bash', args: ['-c', 'sleep 10 & echo $!; wait'] },
+          options,
+        ),
+      );
+      expect(performance.now() - startedAt).toBeLessThan(500);
+      expect(timedOut).toMatchObject({ executable: 'bash', outcome: 'timeout' });
+      const timeoutPid = Number(timedOut.stdout.trim());
+      expect(Number.isSafeInteger(timeoutPid)).toBeTrue();
+      await expectProcessGone(timeoutPid);
+
+      const controller = new AbortController();
+      const abortStartedAt = performance.now();
+      const cancelled = executable(tools, 'run_command')(
+        { executable: 'bash', args: ['-c', 'sleep 10 & echo $!; wait'] },
+        {
+          toolCallId: 'process-group-abort',
+          messages: [],
+          context: undefined,
+          abortSignal: controller.signal,
+        },
+      );
+      setTimeout(() => controller.abort(), 20);
+      const cancelledResult = ShellOutputSchema.parse(await cancelled);
+      expect(performance.now() - abortStartedAt).toBeLessThan(500);
+      expect(cancelledResult).toMatchObject({ executable: 'bash', outcome: 'cancelled' });
+      const cancelledPid = Number(cancelledResult.stdout.trim());
+      expect(Number.isSafeInteger(cancelledPid)).toBeTrue();
+      await expectProcessGone(cancelledPid);
+
+      const exitedAt = performance.now();
+      const exited = ShellOutputSchema.parse(
+        await executable(tools, 'run_command')(
+          { executable: 'bash', args: ['-c', 'sleep 10 & echo $!'] },
+          options,
+        ),
+      );
+      expect(performance.now() - exitedAt).toBeLessThan(500);
+      expect(exited).toMatchObject({ executable: 'bash', outcome: 'exited', exitCode: 0 });
+      const exitedPid = Number(exited.stdout.trim());
+      expect(Number.isSafeInteger(exitedPid)).toBeTrue();
+      await expectProcessGone(exitedPid);
+
+      const limitedTools = mountAgent([], {
+        runtimeTools: createAgentCodingTools({
+          root,
+          authorize: () => true,
+          executables: { bash: '/bin/bash' },
+          limits: {
+            maxShellOutputBytes: 4,
+            shellTimeoutMs: 2_000,
+            shellTerminationGraceMs: 80,
+          },
+        }),
+      });
+      const limitedAt = performance.now();
+      const limited = ShellOutputSchema.parse(
+        await executable(limitedTools, 'run_command')(
+          { executable: 'bash', args: ['-c', 'printf 12345; sleep 10 & wait'] },
+          options,
+        ),
+      );
+      expect(performance.now() - limitedAt).toBeLessThan(500);
+      expect(limited).toMatchObject({ executable: 'bash', outcome: 'output-limit' });
+    });
+  }
+
   test('rejects shell arguments whose aggregate encoding exceeds its byte budget', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-args-'));
     roots.push(root);
@@ -379,11 +634,12 @@ describe('host-authorized Agent coding tools', () => {
     });
     const originalError = console.error;
     console.error = () => undefined;
-    const result = await executable(tools, 'run_command')(
-      { executable: 'printf', args: ['12345'] },
-      { toolCallId: 'args', messages: [], context: undefined },
-    );
+    await expect(
+      executable(tools, 'run_command')(
+        { executable: 'printf', args: ['12345'] },
+        { toolCallId: 'args', messages: [], context: undefined },
+      ),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
     console.error = originalError;
-    expect(result).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
   });
 });

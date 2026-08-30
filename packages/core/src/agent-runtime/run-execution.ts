@@ -8,6 +8,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
+import { isAgentToolError } from '../tools/agent-tool-error';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
 import { deferredToolRepair } from './deferred-tools-internal';
@@ -674,13 +675,16 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             });
             throw part.error;
           }
+          const output = isAgentToolError(part.error)
+            ? jsonValue(part.error.output)
+            : { message: 'Tool execution failed' };
           parts.push(
             AgentMessagePartSchema.parse({
               type: 'tool-result',
               callId: part.toolCallId,
               toolName: part.toolName,
               outcome: 'error',
-              output: { message: 'Tool execution failed' },
+              output,
             }),
           );
           await publish({
@@ -692,7 +696,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             callId: part.toolCallId,
             toolName: part.toolName,
             status: 'failed',
-            output: { message: 'Tool execution failed' },
+            output,
             emittedAt: now().toISOString(),
           });
         } else if (part.type === 'tool-output-denied') {

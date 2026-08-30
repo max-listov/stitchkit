@@ -109,8 +109,8 @@ continuations and reconnectable control compose there. Bounded direct file, sear
 shell and opaque-artifact tools live in the peer-free
 `stitchkit/agent-runtime/coding-tools` leaf. Neither surface owns process placement,
 restart, credentials, model catalogs or OS isolation.
-The separately installed `@stitchkit/tui` package adds a maintained Bun/OpenTUI host over those
-headless contracts; its `@stitchkit/tui/core` entrypoint exposes renderer-neutral terminal state
+The separately installed `stitchkit-tui` package adds a maintained Bun/OpenTUI host over those
+headless contracts; its `stitchkit-tui/core` entrypoint exposes renderer-neutral terminal state
 without React, OpenTUI or agent-runtime imports. Neither enters the core dependency graph.
 
 ## Managed application kernel
@@ -437,7 +437,7 @@ peer — an install pulls in only what the project actually uses.
 | `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
 | Headless harness | optional surface | `stitchkit/agent-runtime/harness`; uses the same optional `ai` peer and canonical runtime. |
 | Agent coding tools | optional surface | `stitchkit/agent-runtime/coding-tools`; peer-free, host-authorized direct file and shell tools. |
-| `@stitchkit/tui` | separate optional package | Renderer-neutral `./core` state plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
+| `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
 | `grammy` | peer, optional | Only `stitchkit/application/grammy`; the neutral application kernel does not resolve it. |
@@ -477,7 +477,7 @@ cp .env.example .env
 bun run dev
 ```
 
-Its editable `stitchkit.agent.ts` composes `@stitchkit/tui`, OpenRouter, durable SQLite history,
+Its editable `stitchkit.agent.ts` composes `stitchkit-tui`, OpenRouter, durable SQLite history,
 lazy skills and direct approval-gated coding tools over the same headless Agent harness. `/model`
 searches the full tool-capable catalog and shows weekly popularity independently from sourced
 benchmark observations. `/status` exposes the local session ID so another process can `send` or

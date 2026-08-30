@@ -2,6 +2,7 @@ import type { ToolExecutionOptions, ToolSet } from 'ai';
 import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
+import { AgentToolError } from './agent-tool-error';
 import {
   type ErrorHintFn,
   isToolExecutionControlError,
@@ -72,14 +73,17 @@ export function mountAgent(
     });
     const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
       const args = isRecord(rawArgs) ? rawArgs : {};
-      try {
-        const result = await runTool(mountable, args, { signal: options.abortSignal });
-        if (result.ok) return result.data;
-        return formatToolError(result, mountable.name, config.errorHint);
-      } catch (err) {
+      const result = await runTool(mountable, args, {
+        signal: options.abortSignal,
+      }).catch((err: unknown) => {
         if (isToolExecutionControlError(err)) throw err;
-        return formatToolError(toolResultFromError(err), mountable.name, config.errorHint);
-      }
+        throw new AgentToolError(
+          formatToolError(toolResultFromError(err), mountable.name, config.errorHint),
+          err,
+        );
+      });
+      if (result.ok) return result.data;
+      throw new AgentToolError(formatToolError(result, mountable.name, config.errorHint));
     };
 
     const presenter = entry.kind === 'runtime' ? entry.definition.present?.agent : undefined;

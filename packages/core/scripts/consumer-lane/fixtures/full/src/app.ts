@@ -743,10 +743,15 @@ if (!execute) {
 const originalError = console.error;
 const suppressed: unknown[] = [];
 console.error = (...args: unknown[]) => void suppressed.push(args[0]);
-const failure: unknown = await execute(
-  { id: 'boom', name: 'x' },
-  { toolCallId: 't1', messages: [], context: undefined },
-);
+let failure: unknown;
+try {
+  await execute(
+    { id: 'boom', name: 'x' },
+    { toolCallId: 't1', messages: [], context: undefined },
+  );
+} catch (error) {
+  failure = error;
+}
 const success: unknown = await execute(
   { id: 'w1', name: 'x' },
   { toolCallId: 't2', messages: [], context: undefined },
@@ -758,7 +763,7 @@ check(
   suppressed.length === 1,
   suppressed,
 );
-check('a failing tool returns an envelope, not a throw', failure !== undefined);
+check('a failing Agent tool rejects through the SDK error channel', failure !== undefined);
 check('a working tool still returns', success !== undefined);
 
 check('onToolError fired once', seenByOnToolError.length === 1, seenByOnToolError.length);
@@ -768,9 +773,9 @@ check('afterToolCall ran for both calls', seenByAfterToolCall.length === 2);
 check('the failed call carried the raw value', seenByAfterToolCall[0]?.error === thrown);
 check('the successful call carried none', seenByAfterToolCall[1]?.error === undefined);
 check(
-  'the caller still gets the scrubbed envelope',
-  JSON.stringify(seenByAfterToolCall[0]?.result).includes('INTERNAL_SERVER_ERROR'),
-  seenByAfterToolCall[0]?.result,
+  'the SDK error carries the scrubbed envelope',
+  JSON.stringify(failure).includes('INTERNAL_SERVER_ERROR'),
+  failure,
 );
 
 // The audit hook is asynchronous by design — let its detached write land.

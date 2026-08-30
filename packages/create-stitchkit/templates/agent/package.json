@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "catalog": {
-    "@stitchkit/tui": "^0.1.0"
+    "stitchkit-tui": "^0.1.1"
   },
   "scripts": {
     "dev": "bun --watch src/index.ts",
@@ -16,7 +16,7 @@
     "build": "bun build src/index.ts --outdir dist --target bun --packages external"
   },
   "dependencies": {
-    "@stitchkit/tui": "file:../../../tui",
+    "stitchkit-tui": "file:../../../tui",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "ai": "^7.0.84",
     "stitchkit": "file:../../../core",

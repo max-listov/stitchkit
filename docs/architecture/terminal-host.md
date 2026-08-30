@@ -9,12 +9,12 @@ updated: 2026-08-30
 
 # Composable terminal host
 
-`@stitchkit/tui` is an optional package with three ownership layers:
+`stitchkit-tui` is an optional package with three ownership layers:
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
-| `@stitchkit/tui/core` | pure collection, feed, pane, command and operation state | React, OpenTUI, agent records, processes |
-| root `@stitchkit/tui` | official OpenTUI agent projection, controller and authenticated local attachment | provider policy, tools, process supervision |
+| `stitchkit-tui/core` | pure collection, feed, pane, command and operation state | React, OpenTUI, agent records, processes |
+| root `stitchkit-tui` | official OpenTUI agent projection, controller and authenticated local attachment | provider policy, tools, process supervision |
 | embedding application | model catalog, context, harness composition, workspace and terminal product shell | durable agent transitions already owned by the harness |
 
 The core entrypoint imports only Zod. A session supervisor can keep its own renderer, cards,

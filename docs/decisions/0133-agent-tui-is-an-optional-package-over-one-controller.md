@@ -1,6 +1,6 @@
 ---
 title: "ADR 0133: Agent TUI is an optional package over one controller"
-description: "Terminal product mechanics live in @stitchkit/tui while the headless runtime remains provider-neutral and owns the only execution loop."
+description: "Terminal product mechanics live in stitchkit-tui while the headless runtime remains provider-neutral and owns the only execution loop."
 type: decision
 status: accepted
 created: 2026-08-30
@@ -22,7 +22,7 @@ start another model loop beside the terminal host.
 
 ## Decision
 
-Publish `@stitchkit/tui` as an optional Bun/OpenTUI package. It consumes a typed
+Publish `stitchkit-tui` as an optional Bun/OpenTUI package. It consumes a typed
 `defineAgentTui()` config and the existing headless harness. The application supplies the model
 catalog, runtime bundle, context, tools and policy; the package supplies the terminal controller,
 full transcript, multiline composer, commands, model/conversation pickers and presentation state.

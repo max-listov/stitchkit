@@ -6,7 +6,7 @@
 # Tags:
 #   vX.Y.Z                    publishes stitchkit
 #   create-stitchkit-vX.Y.Z   publishes create-stitchkit
-#   stitchkit-tui-vX.Y.Z      publishes @stitchkit/tui
+#   stitchkit-tui-vX.Y.Z      publishes stitchkit-tui
 name: Release
 
 on:

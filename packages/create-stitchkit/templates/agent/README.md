@@ -24,7 +24,7 @@ you are leaving.
 
 - `stitchkit.agent.ts` — the small, typed composition point for theme, catalog and runtime policy.
 - `src/runtime.ts` — host policy and composition of published Stitchkit primitives.
-- `@stitchkit/tui` — commands, transcript, model/session pickers and local attach protocol.
+- `stitchkit-tui` — commands, transcript, model/session pickers and local attach protocol.
 - `instructions/` — eager instructions with explicit provenance.
 - `skills/*/SKILL.md` — lazily discoverable skills read through the direct `read_resource` tool.
 - `.stitchkit/` — ignored local durable state, session descriptors, bounded metadata diagnostics

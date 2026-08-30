@@ -809,17 +809,19 @@ artifact store is supplied, `read_output`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions |
+| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions; filesystem operations require Linux `/proc/self/fd` or macOS/FreeBSD `/dev/fd` descriptor paths and otherwise fail closed |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
 | `AgentCodingToolConfig` | _type_ | absolute root, required authorization callback, finite executable alias map, exact child environment and optional limits |
 | `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |
-| `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout ceilings |
+| `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout/termination-grace ceilings |
 | `AgentCodingArtifactStore` | _type_ | host-owned opaque artifact write and bounded read boundary |
 | `FileReadInputSchema` / `FileReadOutputSchema` | schema | bounded strict-UTF-8 byte slice; offsets must align with UTF-8 code-point boundaries |
 | `FileWriteInputSchema` / `FileWriteOutputSchema` | schema | create-only by default or explicit atomic replacement; symlink targets fail closed |
 | `createShellInputSchema` / `ShellOutputSchema` | schema | enumerated executable alias plus arguments and concrete relative cwd; explicit exited/timeout/output-limit/cancelled outcome |
 
-The default ceilings are 4,096 path bytes, 256 KiB read/write/output, 128 shell arguments, 64 KiB
+File/search operations pin directory descriptors across authorization and the actual effect;
+resource discovery uses the same ancestor-safe traversal. This closes parent rename/symlink races
+without claiming an executable sandbox. The default ceilings are 4,096 path bytes, 256 KiB read/write/output, 128 shell arguments, 64 KiB
 of aggregate argument text, 4 MiB per artifact and 30 seconds. The root is a path-resolution
 boundary, not an OS sandbox; executable behavior, process
 isolation, credentials and external-effect idempotency remain host responsibilities.
@@ -868,7 +870,7 @@ loaded by the neutral, browser or Node runtime surfaces.
 
 ---
 
-## `@stitchkit/tui`
+## `stitchkit-tui`
 
 Separate optional evolving Bun/OpenTUI package over a caller-composed headless harness.
 
@@ -895,7 +897,7 @@ The slash palette owns its highlighted selection: Up/Down move it, Tab completes
 the exact command and Escape dismisses it. Partial input is never submitted while the palette is
 active; unknown slash text with no match remains an ordinary model prompt.
 
-### `@stitchkit/tui/core`
+### `stitchkit-tui/core`
 
 Renderer-neutral state only. This entrypoint imports neither React/OpenTUI nor the agent runtime.
 
@@ -1020,7 +1022,7 @@ payload.
 | `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
 | `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
 | `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
-| `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service; failed executions reject through the SDK tool-error channel with a safe typed envelope, while successful output is never classified by field name — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use peer-free `stitchkit/tools/invoker`, or the full `stitchkit/tools` adapter barrel — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |

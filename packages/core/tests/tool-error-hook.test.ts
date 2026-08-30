@@ -392,7 +392,9 @@ describe('onToolError — reaches the real mounts', () => {
 
     const execute = tools.update_widget?.execute;
     if (!execute) throw new Error('expected the update_widget tool');
-    await quietly(() => execute({}, { toolCallId: 't1', messages: [], context: undefined }));
+    await expect(
+      quietly(() => execute({}, { toolCallId: 't1', messages: [], context: undefined })),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.error).toBe(thrown);

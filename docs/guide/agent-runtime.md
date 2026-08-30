@@ -281,8 +281,13 @@ cross-crash exactly-once guarantee remain application concerns.
 `stitchkit/agent-runtime/coding-tools` returns ordinary direct runtime tools named `read_file`,
 `write_file`, `search_files`, `apply_patch`, `run_command` and optional `read_output`. Every call passes a
 required host authorization callback. File paths are relative, bounded and contained after
-realpath resolution; writes/edits reject symlink targets, content is strict UTF-8 and retained
-bytes are finite. Shell accepts a finite alias mapped by the host to an absolute executable plus an
+descriptor-relative resolution: each ancestor is opened without following symlinks and remains
+pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
+writes and patches revalidate the pinned parent identity; search and resource discovery descend
+only through opened directories. Linux uses `/proc/self/fd`; macOS and FreeBSD use `/dev/fd`.
+Other platforms fail these filesystem operations closed because Node exposes no equivalent
+portable directory-handle-relative API. Writes/edits reject symlink targets, content is strict
+UTF-8 and retained bytes are finite. Shell accepts a finite alias mapped by the host to an absolute executable plus an
 argument array — never a shell command string — and uses only the explicitly supplied environment.
 Arguments, output and time are bounded, while cancellation terminates the child. The configured
 root and cwd are path boundaries, not a security sandbox: isolate the process when an executable
@@ -295,9 +300,19 @@ multi-file atomicity. With an optional `AgentCodingArtifactStore`, shell output 
 preview continues into an opaque bounded artifact and `read_output` reads slices without
 exposing a host path. Without a store, the previous finite output-limit behavior is unchanged.
 
+`run_command` treats every invocation as finite. `shellTimeoutMs` bounds normal execution and
+`shellTerminationGraceMs` bounds settlement after timeout, caller cancellation, output overflow or
+parent exit. POSIX hosts launch a dedicated process group and kill every descendant remaining in
+that group; a process that deliberately escapes the group is outside the guarantee. Node's
+portable Windows child-process API cannot kill a complete descendant tree without invoking a
+second host executable, so Windows kills the direct child, destroys retained pipes at the grace
+deadline and makes no descendant-cleanup claim. A signal already aborted before execution returns
+`cancelled` without spawning.
+
 One `createAgentHarnessFileResources` instance represents one immutable discovery generation:
 concurrent and repeated `load()` calls share it, so a direct resource read cannot cross into a
-new catalog unexpectedly. Construct a new loader to refresh after filesystem changes.
+new catalog unexpectedly. Discovery uses the same descriptor-anchored traversal as coding search;
+construct a new loader to refresh after filesystem changes.
 
 Runtime events preserve reasoning/text/tool lifecycle order. Durable admission,
 checkpoint, run-state and terminal events carry stable identities; transient
@@ -724,7 +739,9 @@ or silently accept an unknown future version.
 - `assistant-checkpoint` follows a successful checkpoint CAS;
 - `run-state` follows durable queue/acquire/interrupt transitions;
 - `tool-status` is transient lifecycle presentation with JSON-safe input on
-  start and output on completion; internal tool failures remain generic;
+  start and output on completion. A mounted typed failure carries the same safe
+  `{ error, details?, _hint? }` envelope as the durable result; an unknown
+  internal cause remains generic and stays in local observability only;
 - `terminal` follows the winning terminal CAS.
 
 These are post-commit notifications, not a transactional outbox: a process can
@@ -839,6 +856,14 @@ Always compose `toolFenceLifecycle` into `mountAgent`. It checks ownership
 before a managed side effect and again before accepting its result. Fence loss
 uses an internal control signal: it stops the old loop and is not sent to the
 model as a tool error.
+
+`mountAgent` sends failed runner outcomes through the AI SDK's tool-error
+channel. AgentRuntime persists them with `outcome: 'error'`, publishes the same
+safe envelope, and replays them as an error result on later turns. Classification
+comes from the execution channel, never from inspecting output fields: a valid
+successful result such as `{ error: 'domain value' }` remains successful. Typed
+`AppError` codes and safe details may reach the model; arbitrary thrown causes
+are retained for local hooks and reduced to `INTERNAL_SERVER_ERROR` outside.
 
 The framework cannot undo an already-started non-cooperative external effect.
 Pass the stable call/run idempotency identity into business mutations when the

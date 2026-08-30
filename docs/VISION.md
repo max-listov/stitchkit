@@ -84,7 +84,7 @@ packed Bun/Node proof ship as one coherent slice; consumer-owned database, domai
 policy remain outside core. Its headless facade packages lazy resources, signed approval
 continuations and reconnectable control without becoming a process supervisor; its isolated
 coding-tool leaf requires host authorization and explicit search, patch, output and time bounds.
-An optional `@stitchkit/tui` package projects those headless contracts into a maintained terminal
+An optional `stitchkit-tui` package projects those headless contracts into a maintained terminal
 host with one controller, durable model selection and authenticated local attachment. Rendering
 dependencies and provider/tool policy stay outside core; applications can keep using the headless
 runtime or `mountAgent` directly.
@@ -121,7 +121,7 @@ the published package before release.
   server-only additive harness, while retaining `createAgentRuntime` and `mountAgent` as smaller
   independent composition paths and keeping process placement, model catalogs, credentials and
   workspace isolation with the embedding host. Reuse optional terminal mechanics through
-  the renderer-neutral `@stitchkit/tui/core` state layer or the maintained root agent host,
+  the renderer-neutral `stitchkit-tui/core` state layer or the maintained root agent host,
   not copied application shells, a second loop or an integrated god factory.
 - Remove copied process lifecycle, timer, admission and operational-projection
   mechanics through an optional provider-neutral application entrypoint, while

@@ -260,8 +260,8 @@ export async function scaffoldProject(
       return {
         ...dependencies,
         ...(dependencies.stitchkit?.startsWith('file:') && { stitchkit: 'catalog:' }),
-        ...(dependencies['@stitchkit/tui']?.startsWith('file:') && {
-          '@stitchkit/tui': 'catalog:',
+        ...(dependencies['stitchkit-tui']?.startsWith('file:') && {
+          'stitchkit-tui': 'catalog:',
         }),
       };
     };

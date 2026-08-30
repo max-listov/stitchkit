@@ -80,21 +80,20 @@ describe('framework runtime tools', () => {
       { id: 'one' },
       { toolCallId: 'one', messages: [], context: undefined },
     );
-    const invalid = await execute(
-      { id: 42 },
-      { toolCallId: 'invalid', messages: [], context: undefined },
-    );
+    await expect(
+      execute({ id: 42 }, { toolCallId: 'invalid', messages: [], context: undefined }),
+    ).rejects.toMatchObject({ output: { error: 'VALIDATION_ERROR' } });
     const originalError = console.error;
     console.error = () => undefined;
-    const failed = await execute(
-      { id: 'two', fail: true },
-      { toolCallId: 'two', messages: [], context: undefined },
-    );
+    await expect(
+      execute(
+        { id: 'two', fail: true },
+        { toolCallId: 'two', messages: [], context: undefined },
+      ),
+    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
     console.error = originalError;
 
     expect(success).toEqual({ id: 'one', ok: true });
-    expect(invalid).toMatchObject({ error: 'VALIDATION_ERROR' });
-    expect(failed).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
     expect(handlerCalls).toBe(2);
     expect(stripped).toEqual([['internal']]);
     expect(terminal).toEqual([
@@ -304,12 +303,12 @@ describe('framework runtime tools', () => {
       },
     });
 
-    const result = await executable(tools, 'runtime_denied')(
+    const result = executable(tools, 'runtime_denied')(
       {},
       { toolCallId: 'denied', messages: [], context: undefined },
     );
 
-    expect(result).toMatchObject({ error: 'FORBIDDEN' });
+    await expect(result).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
     expect(handlerCalls).toBe(0);
     expect(terminalCalls).toBe(1);
   });

@@ -1,4 +1,4 @@
-# @stitchkit/tui
+# stitchkit-tui
 
 The official composable terminal host for `stitchkit/agent-runtime`.
 
@@ -15,7 +15,7 @@ import {
   createTerminalCollection,
   reduceTerminalCollection,
   createTerminalPaneState,
-} from '@stitchkit/tui/core';
+} from 'stitchkit-tui/core';
 
 let sessions = createTerminalCollection(['one', 'two'], 8, 'two');
 sessions = reduceTerminalCollection(sessions, {
@@ -31,7 +31,7 @@ const panes = createTerminalPaneState({
 });
 ```
 
-`@stitchkit/tui/core` imports no React, OpenTUI or agent-runtime code. It owns only identity-stable
+`stitchkit-tui/core` imports no React, OpenTUI or agent-runtime code. It owns only identity-stable
 collections, feed viewport state, split panes, command selection and confirmed operations. Session
 cards, process supervision, restart policy and runtime adapters remain with the embedding product.
 
@@ -40,7 +40,7 @@ an earlier conversation, and `/clear` to leave the current one resumable while s
 Embedding hosts that intentionally want a fixed identity may set `initialConversationId`.
 
 ```ts
-import { defineAgentTui, runAgentTui } from '@stitchkit/tui';
+import { defineAgentTui, runAgentTui } from 'stitchkit-tui';
 
 const config = defineAgentTui({
   context: () => ({}),

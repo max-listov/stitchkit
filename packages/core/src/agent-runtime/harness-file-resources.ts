@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import type { AgentCodingToolDefinition } from './coding-tool-contract';
-import { readContainedUtf8File, walkContainedFiles } from './contained-files';
+import { walkContainedFiles } from './contained-files';
 import type { AgentHarnessResource, AgentHarnessResourceResult } from './harness-contract';
 
 export const AgentHarnessFileRootSchema = z
@@ -117,11 +117,13 @@ export function createAgentHarnessFileResources(config: {
         root: resolvedRoot,
         maxDepth: limits.maxDepth,
         maxFiles: limits.maxFiles - fileCount,
+        readMaxBytes: limits.maxFileBytes,
       });
       fileCount += files.length;
       for (const file of files) {
         if (root.kind === 'skill' && path.basename(file.absolute) !== 'SKILL.md') continue;
-        const read = await readContainedUtf8File(file.absolute, limits.maxFileBytes);
+        const read = file.content;
+        if (!read) throw new Error('Agent harness resource content is unavailable');
         totalBytes += read.bytes;
         if (totalBytes > limits.maxTotalBytes) {
           throw new Error('Agent harness resources exceed maxTotalBytes');

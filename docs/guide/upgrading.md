@@ -16,6 +16,21 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.70.0
+
+### Descriptor-backed Agent filesystem containment
+
+Built-in coding file/search tools and `createAgentHarnessFileResources` now require a runtime
+that can address an opened directory descriptor: Linux `/proc/self/fd`, or macOS/FreeBSD
+`/dev/fd`. This is what keeps a mutable parent rename or outside-symlink replacement from changing
+the authorized target between validation and the actual effect.
+
+No call-site change is needed on those platforms. On Windows or another platform without that
+boundary, move the built-in filesystem operations to a supported worker or replace them with
+application-owned tools backed by an equivalent native handle API. They fail closed rather than
+falling back to path spelling. `run_command` remains separately available under its explicit
+executable alias and authorization policy; this change does not claim an executable sandbox.
+
 ## Released migration: 0.69.0
 
 ### Direct coding-tool operation names

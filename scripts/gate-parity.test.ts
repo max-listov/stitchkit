@@ -67,7 +67,7 @@ describe('a clean workspace prepares public package dependencies before sibling 
   test('root prepare builds Stitchkit before it prepares nested workspaces', () => {
     const prepare = ROOT_PACKAGE.scripts?.prepare ?? '';
     const coreBuild = prepare.indexOf('bun --filter stitchkit build');
-    const tuiBuild = prepare.indexOf('bun --filter @stitchkit/tui build');
+    const tuiBuild = prepare.indexOf('bun --filter stitchkit-tui build');
     const nestedPrepare = prepare.indexOf('bun scripts/prepare-starter.ts');
 
     expect(coreBuild).toBeGreaterThanOrEqual(0);

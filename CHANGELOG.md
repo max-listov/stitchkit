@@ -15,6 +15,41 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.0] — 2026-08-30
+
+### ⚠️ Breaking changes
+
+**Who must act:** consumers invoking Agent coding file/search tools or harness file-resource
+discovery on Windows or another host without `/proc/self/fd` or `/dev/fd` descriptor paths.
+
+- **Contained Agent filesystem operations now require descriptor-relative path resolution.** This
+  binds every opened ancestor through authorization and the actual read/write/patch/search or
+  resource-discovery effect; a host that cannot expose an opened directory as a path fails closed
+  instead of making a path-spelling-only containment claim. Move those filesystem operations to a
+  supported Linux, macOS or FreeBSD runtime, or supply application-owned tools with an equivalent
+  native handle boundary: `// before: createAgentCodingTools({ root, authorize }) // file tools ran on Windows` →
+  `// after: run built-in file tools on Linux/macOS/FreeBSD; run_command remains host-authorized separately`.
+
+### Fixed
+
+- **Mounted Agent tool failures remain failures across the whole durable loop.** `mountAgent`
+  now rejects failed executions through the AI SDK error channel instead of returning a
+  successful-looking `{ error }` value. AgentRuntime records and publishes the same safe typed
+  envelope, replays it as an error result and still treats legitimate successful output that has
+  an `error` field as success. Expected coding authorization and stale-patch refusals now retain
+  `FORBIDDEN` and `CONFLICT`; unknown causes remain generic and private.
+- **Coding file containment survives mutable ancestor directories.** Reads pin the target file;
+  writes and patches pin their parent directory; search and harness resource traversal open each
+  directory before descending. After asynchronous authorization, changed file/parent identity is
+  refused, and same-directory temporary replacement stays attached to the authorized directory
+  even if its visible path is renamed or replaced by an outside symlink.
+- **Finite coding commands own and bound descendant cleanup.** On POSIX, `run_command` starts one
+  process group and kills that group on timeout, caller cancellation, output overflow or normal
+  parent exit, so a descendant cannot retain stdout/stderr and keep the tool open. The explicit
+  `shellTerminationGraceMs` ceiling bounds stream settlement after termination; a pre-aborted call
+  never spawns. Windows cannot provide the same process-group guarantee through Node's portable
+  child-process API, but still destroys retained pipes and settles after the configured grace.
+
 ## [0.69.0] — 2026-08-30
 
 ### ⚠️ Breaking changes

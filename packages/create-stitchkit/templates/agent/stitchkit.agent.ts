@@ -1,5 +1,5 @@
-import { defineAgentTui } from '@stitchkit/tui';
 import { openRouterModelCatalog } from 'stitchkit/agent-runtime/openrouter';
+import { defineAgentTui } from 'stitchkit-tui';
 import { readAgentConfig } from './src/config';
 import { createStarterHarness } from './src/runtime';
 

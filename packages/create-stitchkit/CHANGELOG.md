@@ -24,7 +24,7 @@ step is overwritten by the next release.
   windows directly from OpenRouter. → ADR 0132.
 - **The Agent template now composes the official terminal package instead of copying a product
   shell.** `stitchkit.agent.ts` is the editable typed entrypoint; `/model`, durable sessions,
-  approvals, scrolling and local `send`/`interrupt` attachment come from `@stitchkit/tui`. The
+  approvals, scrolling and local `send`/`interrupt` attachment come from `stitchkit-tui`. The
   generated manifest receives portable catalog dependencies while the repository fixture tests
   both packages from source. → ADR 0133.
 

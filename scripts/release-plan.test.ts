@@ -173,7 +173,7 @@ describe('release plan', () => {
     });
     expect(releasePlanForTag('stitchkit-tui-v0.1.0')).toMatchObject({
       target: 'tui',
-      packageName: '@stitchkit/tui',
+      packageName: 'stitchkit-tui',
       version: '0.1.0',
     });
     expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');

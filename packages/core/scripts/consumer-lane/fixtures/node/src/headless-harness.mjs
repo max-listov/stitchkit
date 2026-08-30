@@ -11,7 +11,8 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
-import { mountAgent } from 'stitchkit/tools';
+import { AppError } from 'stitchkit/contract';
+import { defineRuntimeTool, mountAgent } from 'stitchkit/tools';
 import { z } from 'zod';
 
 const usage = {
@@ -110,6 +111,23 @@ try {
           chunks: [
             {
               type: 'tool-call',
+              toolCallId: 'guarded-1',
+              toolName: 'guarded_operation',
+              input: '{}',
+            },
+            {
+              type: 'finish',
+              finishReason: { unified: 'tool-calls', raw: undefined },
+              usage,
+            },
+          ],
+        }),
+      },
+      {
+        stream: simulateReadableStream({
+          chunks: [
+            {
+              type: 'tool-call',
               toolCallId: 'shell-1',
               toolName: 'run_command',
               input: JSON.stringify({
@@ -147,10 +165,19 @@ try {
   });
   const profiles = [];
   const artifacts = new Map();
+  const guardedOperation = defineRuntimeTool({
+    name: 'guarded_operation',
+    description: 'Produce one typed safe refusal',
+    identity: { serviceName: 'packed', action: 'guard', method: 'POST' },
+    input: z.object({}),
+    handler: () => {
+      throw new AppError('CONFLICT', 'Packed operation is stale', 409, { revision: 7 });
+    },
+  });
   const codingTools = createAgentCodingTools({
     root,
     authorize: () => true,
-    executables: { printf: '/usr/bin/printf' },
+    executables: { bash: '/bin/bash', printf: '/usr/bin/printf' },
     artifacts: {
       write: ({ data }) => {
         artifacts.set('packed-output', data);
@@ -162,8 +189,22 @@ try {
         return { data: data.subarray(offset, offset + maxBytes), totalBytes: data.byteLength };
       },
     },
-    limits: { maxShellOutputBytes: 8, maxArtifactBytes: 128 },
+    limits: {
+      maxShellOutputBytes: 8,
+      maxArtifactBytes: 128,
+      shellTimeoutMs: 40,
+      shellTerminationGraceMs: 80,
+    },
   });
+  const command = codingTools.find(({ name }) => name === 'run_command');
+  assert.ok(command);
+  const commandStartedAt = performance.now();
+  const boundedCommand = await command.handler({
+    params: undefined,
+    input: { executable: 'bash', args: ['-c', 'sleep 10 & wait'], cwd: '.' },
+  });
+  assert.equal(boundedCommand.outcome, 'timeout');
+  assert.ok(performance.now() - commandStartedAt < 500);
   const fileResources = createAgentHarnessFileResources({
     roots: [
       { id: 'instructions', path: instructionRoot, kind: 'instruction' },
@@ -200,7 +241,7 @@ try {
     estimateResourceTokens: () => ({ value: 4, provenance: 'measured' }),
     tools: (context) =>
       mountAgent([], {
-        runtimeTools: [...codingTools, ...fileResources.runtimeTools],
+        runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
         lifecycle: context.toolFenceLifecycle,
       }),
     loop: {
@@ -272,6 +313,16 @@ try {
         part.type === 'tool-result' &&
         part.toolName === 'apply_patch' &&
         part.outcome === 'success',
+    ),
+    true,
+  );
+  assert.equal(
+    parts.some(
+      (part) =>
+        part.type === 'tool-result' &&
+        part.toolName === 'guarded_operation' &&
+        part.outcome === 'error' &&
+        part.output.error === 'CONFLICT',
     ),
     true,
   );
