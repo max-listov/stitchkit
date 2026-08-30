@@ -56,14 +56,15 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   test file and test case in its `Что сделано` section.
 - **ALWAYS** run `bun run verify` before a **release commit**, and let the
   `pre-push` hook decide the rest — see *What runs where* below. `verify` is the
-  whole local gate and it runs **everything CI runs**: lint, typecheck, tests,
+  whole portable local gate and it runs **every portable gate CI runs**: lint, typecheck, tests,
   the Postgres agent-store lane, build, the Next-SSR and Node smokes, the packed
   consumer lane, the packed starter lanes and the supervised PM2 lane. Its
   prerequisites are listed in `CONTRIBUTING.md` and all of them arrive with
   `bun install` except a reachable PostgreSQL and the Playwright browsers.
 
-  There is deliberately **no** gate that runs on CI and not here. Two used to
-  be: the agent-store lane, until it turned a release run red, and the
+  The only CI-only qualifier is work another kernel cannot execute: real macOS arm64/x64 builds
+  and packed Bun/Node contained-files probes (ADR 0135). Two portable gaps used to be: the
+  agent-store lane, until it turned a release run red, and the
   supervised lane, until the supervisor became a pinned devDependency instead of
   a global install. Both gaps fell on the release commit — the one commit whose
   red run cannot be repaired in place (see *Order inside a release*) — and
@@ -96,7 +97,8 @@ The full annotated command list, setup and git hooks are in
 
 ### What runs where
 
-CI runs the **same** work as `verify`, arranged differently: the
+CI runs the **same portable work** as `verify`, arranged differently, plus the real macOS
+qualification named above: the
 lint/check/test/agent-store/build/smokes/consumer lane in one job, the supervised
 lane in its own, and the starter work sharded across eight (two modes x two
 scaffold variants x two browsers, of which `verify` runs the four target-mode

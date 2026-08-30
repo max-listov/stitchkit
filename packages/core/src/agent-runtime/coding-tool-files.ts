@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { type FileHandle, lstat, realpath, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import {
   type AgentCodingToolConfig,
@@ -11,19 +10,18 @@ import {
   FileWriteInputSchema,
   FileWriteOutputSchema,
 } from './coding-tool-contract';
-import {
-  atomicCodingReplace,
-  authorizeCodingTool,
-  boundedCodingRelativePath,
-} from './coding-tool-paths';
+import { authorizeCodingTool, boundedCodingRelativePath } from './coding-tool-paths';
 import {
   assertContainedFileCurrent,
   assertContainedParentCurrent,
+  type ContainedFileHandle,
+  containedEntryMetadata,
   openContainedFile,
   openContainedParent,
+  writeContainedFile,
 } from './contained-files';
 
-async function digestFile(handle: FileHandle, size: number): Promise<string> {
+async function digestFile(handle: ContainedFileHandle, size: number): Promise<string> {
   const hash = createHash('sha256');
   const chunk = Buffer.alloc(Math.min(64 * 1024, Math.max(1, size)));
   for (let position = 0; position < size; ) {
@@ -97,7 +95,6 @@ export function createFileCodingTools(
       if (bytes > limits.maxWriteBytes)
         throw new Error('Coding tool write exceeds maxWriteBytes');
       const parent = await openContainedParent(root, relative);
-      const target = path.join(parent.path, parent.basename);
       try {
         await authorizeCodingTool(config, {
           operation: 'write',
@@ -107,12 +104,17 @@ export function createFileCodingTools(
         });
         await assertContainedParentCurrent(root, relative, parent.handle);
         if (input.overwrite) {
-          const current = await lstat(target).catch(() => null);
+          const current = await containedEntryMetadata(parent);
           if (current?.isSymbolicLink())
             throw new Error('Coding tools do not overwrite symlinks');
-          await atomicCodingReplace(target, input.content, current?.mode);
+          await writeContainedFile({
+            parent,
+            content: input.content,
+            replace: true,
+            ...(current && { mode: current.mode }),
+          });
         } else {
-          await writeFile(target, input.content, { flag: 'wx' });
+          await writeContainedFile({ parent, content: input.content, replace: false });
         }
       } finally {
         await parent.handle.close();

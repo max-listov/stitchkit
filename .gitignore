@@ -9,6 +9,7 @@ next-env.d.ts
 .dev
 .stitchkit
 *.tgz
+packages/core/native/*.node
 
 # generated consumer-agent entry points (built from docs/ by gen:llms)
 packages/core/llms.txt

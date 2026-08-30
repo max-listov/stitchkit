@@ -13,6 +13,7 @@ export type ShutdownState = z.infer<typeof ShutdownStateSchema>;
 
 export const ShutdownOptionsSchema = z.object({
   gracePeriodMs: z.number().int().nonnegative().default(30_000),
+  realtimeCloseTimeoutMs: z.number().int().nonnegative().default(1_000),
   forceTimeoutMs: z.number().int().nonnegative().default(5_000),
   retryAfterSeconds: z.number().int().nonnegative().default(5),
   signal: z
@@ -66,6 +67,7 @@ export interface ShutdownAdapter {
   pendingRequests(): number;
   pendingWebSockets(): number;
   closeRealtime(): Promise<void>;
+  terminateRealtime(): Promise<number>;
   stopGracefully(): Promise<void>;
   forceStop(): Promise<void>;
 }
@@ -109,6 +111,37 @@ function untilAbort(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) =>
     signal.addEventListener('abort', () => resolve(), { once: true }),
   );
+}
+
+function closeRealtimeWithin(
+  adapter: ShutdownAdapter,
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<'closed' | 'timeout' | 'aborted'> {
+  if (signal.aborted) return Promise.resolve('aborted');
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (outcome: 'closed' | 'timeout' | 'aborted') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      resolve(outcome);
+    };
+    const onAbort = () => finish('aborted');
+    const timer = setTimeout(() => finish('timeout'), timeoutMs);
+    signal.addEventListener('abort', onAbort, { once: true });
+    adapter.closeRealtime().then(
+      () => finish('closed'),
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -173,6 +206,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
       const phaseAbort = new AbortController();
       let forcedReason: 'deadline' | 'signal' | 'error' | undefined;
       let phaseError: unknown;
+      let forcedWebSockets = 0;
       const force = (reason: 'deadline' | 'signal' | 'error') => {
         if (forcedReason) return;
         forcedReason = reason;
@@ -193,7 +227,21 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
           await waitForZero(() => pendingApplicationRequests, phaseAbort.signal);
           if (!forcedReason) {
             state = 'closing-realtime';
-            await Promise.race([adapter.closeRealtime(), untilAbort(phaseAbort.signal)]);
+            const realtimeOutcome = await closeRealtimeWithin(
+              adapter,
+              parsed.realtimeCloseTimeoutMs,
+              phaseAbort.signal,
+            );
+            if (
+              !forcedReason &&
+              realtimeOutcome === 'timeout' &&
+              adapter.pendingWebSockets() > 0
+            ) {
+              forcedWebSockets += await Promise.race([
+                adapter.terminateRealtime(),
+                untilAbort(phaseAbort.signal).then(() => 0),
+              ]);
+            }
           }
           if (!forcedReason) {
             state = 'stopping-runtime';
@@ -212,6 +260,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
           state = 'stopping-runtime';
           pendingRequestsAtForce = adapter.pendingRequests();
           pendingWebSocketsAtForce = adapter.pendingWebSockets();
+          forcedWebSockets += pendingWebSocketsAtForce;
           let forceError: unknown;
           let forceFailed = false;
           try {
@@ -253,7 +302,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
             pendingRequestsAtForce,
             pendingWebSocketsAtForce,
             abortedRequests: pendingRequestsAtForce,
-            forcedWebSockets: pendingWebSocketsAtForce,
+            forcedWebSockets,
             durationMs: performance.now() - startedAt,
           }),
         );

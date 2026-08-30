@@ -284,7 +284,9 @@ required host authorization callback. File paths are relative, bounded and conta
 descriptor-relative resolution: each ancestor is opened without following symlinks and remains
 pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
-only through opened directories. Linux uses `/proc/self/fd`; macOS and FreeBSD use `/dev/fd`.
+only through opened directories. Linux traverses `/proc/self/fd`; macOS uses the package's
+architecture-specific Node-API `openat` backend. Unsupported platforms, including FreeBSD until a
+real backend is qualified, fail closed. The package needs no install-time compiler or script.
 Other platforms fail these filesystem operations closed because Node exposes no equivalent
 portable directory-handle-relative API. Writes/edits reject symlink targets, content is strict
 UTF-8 and retained bytes are finite. Shell accepts a finite alias mapped by the host to an absolute executable plus an

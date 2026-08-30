@@ -1,4 +1,4 @@
-import { lstat, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { forbidden } from '../contract';
 import {
@@ -77,24 +77,6 @@ export async function authorizeCodingTool(
 ): Promise<void> {
   const parsed = AgentCodingToolAuthorizationSchema.parse(request);
   if (!(await config.authorize(parsed))) forbidden('Coding tool permission denied');
-}
-
-export async function atomicCodingReplace(
-  target: string,
-  content: string,
-  mode?: number,
-): Promise<void> {
-  const temporary = path.join(
-    path.dirname(target),
-    `.${path.basename(target)}.${process.pid}.${crypto.randomUUID()}.tmp`,
-  );
-  try {
-    await writeFile(temporary, content, { flag: 'wx', ...(mode !== undefined && { mode }) });
-    await rename(temporary, target);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
 }
 
 const codingPathLocks = new Map<string, Promise<void>>();

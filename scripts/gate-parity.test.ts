@@ -13,7 +13,8 @@ import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify';
  * `verify` and not to `ci.yml`, the claim would quietly become false and the
  * step would run nowhere that gates a release.
  *
- * So the list is data (`VERIFY_STEPS`) and this reads the workflow.
+ * So the portable list is data (`VERIFY_STEPS`) and this reads the workflow. Real-OS
+ * qualification is named separately because another kernel cannot be reproduced locally.
  */
 const CI = readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8');
 const PREPARE_STARTER = readFileSync(join(import.meta.dir, 'prepare-starter.ts'), 'utf8');
@@ -118,15 +119,23 @@ describe('CI is a superset of the local gate, and that is checked', () => {
     expect(PROFILES.head.usesLaneEnvironment).toBe(true);
   });
 
-  test('CI runs nothing the local gate does not know about', () => {
-    // The other direction, and there is now no exception. A step that runs only
-    // on CI is a gap between "green here" and "green there", and this
-    // repository has closed the last one it had — the supervised lane, which
-    // needed a globally installed supervisor until the supervisor was pinned.
-    // A new gap should be a decision, not a surprise.
+  test('shared bun-run steps stay inside the local gate vocabulary', () => {
+    // The Darwin qualifier deliberately uses package-scoped commands and is held by ADR 0135.
+    // Every portable root command remains symmetric with the local gate.
     const known = new Set<string>(VERIFY_STEPS);
     const onCi = [...coreJobSteps(), ...supervisedJobSteps()];
     expect(onCi.filter((step) => !known.has(step))).toEqual([]);
+  });
+
+  test('the explicit CI-only qualifier is real packed macOS, not a platform guess', () => {
+    const darwin = CI.slice(
+      CI.indexOf('\n  darwin-contained-files:'),
+      CI.indexOf('\n  core:'),
+    );
+    expect(darwin).toContain('runner: macos-15');
+    expect(darwin).toContain('runner: macos-15-intel');
+    expect(darwin).toContain('bun --filter stitchkit build:native-contained-files');
+    expect(darwin).toContain('bun --filter stitchkit consumer-lane');
   });
 
   test('core package verification cannot consume the overlapping TUI archive name', () => {

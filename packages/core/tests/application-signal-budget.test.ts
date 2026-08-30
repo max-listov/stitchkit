@@ -218,6 +218,11 @@ describe('the declared shutdown budget on the signal path', () => {
     const declared = Object.keys(ShutdownOptionsSchema.shape)
       .filter((key) => key !== 'signal')
       .sort();
-    expect(declared).toEqual(['forceTimeoutMs', 'gracePeriodMs', 'retryAfterSeconds']);
+    expect(declared).toEqual([
+      'forceTimeoutMs',
+      'gracePeriodMs',
+      'realtimeCloseTimeoutMs',
+      'retryAfterSeconds',
+    ]);
   });
 });

@@ -328,6 +328,15 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
+          run(runtime, ['src/contained-files.mjs'], dir),
+        );
+        if (!containedFilesOutput.includes('packed contained files')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+          );
+        }
         const harnessOutput = step(`node: headless harness (${runtime})`, () =>
           run(runtime, ['src/headless-harness.mjs'], dir),
         );

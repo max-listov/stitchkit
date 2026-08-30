@@ -70,6 +70,8 @@ describe('workflow publish rights', () => {
 });
 
 describe('CI release-critical graph', () => {
+  const darwinSection = () =>
+    ci.slice(ci.indexOf('  darwin-contained-files:'), ci.indexOf('  core:'));
   const coreSection = () => ci.slice(ci.indexOf('  core:'), ci.indexOf('  supervised:'));
   const supervisedSection = () =>
     ci.slice(ci.indexOf('  supervised:'), ci.indexOf('  starter:'));
@@ -83,16 +85,23 @@ describe('CI release-critical graph', () => {
     expect(topLevel).toContain('cancel-in-progress: true');
   });
 
-  test('every job runs on its own, with no heavy-job dependency between them', () => {
-    for (const section of [coreSection(), supervisedSection(), starterSection()]) {
+  test('only publication assembly waits for the native binaries it packages', () => {
+    expect(coreSection()).toContain('needs: darwin-contained-files');
+    for (const section of [darwinSection(), supervisedSection(), starterSection()]) {
       expect(section).not.toMatch(/^\s+needs:/m);
     }
   });
 
-  test('the graph is three job definitions and keeps the runtime consumer gates', () => {
+  test('the graph has one Darwin qualifier and keeps the runtime consumer gates', () => {
     const jobsSection = ci.slice(ci.indexOf('jobs:'));
-    expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(3);
+    expect(jobsSection.match(/^ {2}[a-z][a-z0-9-]+:\n/gm)).toHaveLength(4);
     expect(ci).not.toContain('\n  node-smoke:');
+
+    const darwin = darwinSection();
+    expect(darwin).toContain('runner: macos-15');
+    expect(darwin).toContain('runner: macos-15-intel');
+    expect(darwin).toContain('bun --filter stitchkit build:native-contained-files');
+    expect(darwin).toContain('bun --filter stitchkit consumer-lane');
 
     const coreSection = ci.slice(ci.indexOf('  core:'), ci.indexOf('  supervised:'));
     expect(coreSection).toContain(
@@ -103,6 +112,8 @@ describe('CI release-critical graph', () => {
     expect(coreSection).toContain('- run: bun run smoke:next-ssr');
     expect(coreSection).toContain('- run: bun run smoke:node');
     expect(coreSection).toContain('- run: bun run consumer-lane');
+    expect(coreSection).toContain('pattern: darwin-contained-files-*');
+    expect(coreSection).toContain('merge-multiple: true');
     expect(ci.match(/- run: bun run build\n/g)).toHaveLength(1);
   });
 

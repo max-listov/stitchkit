@@ -16,11 +16,14 @@ commit SHA; it never rebuilds publication inputs.
 
 ## Branch CI graph
 
-Every expensive gate is eligible to start at workflow time zero:
+Every platform qualification is eligible to start at workflow time zero. Publication assembly in
+`core` waits for the two small validated Darwin artifacts because the exact tarball must contain
+the same binaries the real macOS consumers executed:
 
 | Job | Guarantee |
 |---|---|
-| `core` | lint, TypeScript, unit/integration tests, package build, real Next 16.3 production SSR smoke, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and the two immutable release tarballs |
+| `darwin-contained-files / arm64,x64` | native backend build plus packed Bun and Node file/search/resource/race proof on real macOS |
+| `core` | lint, TypeScript, unit/integration tests, package build, real Next 16.3 production SSR smoke, Node 22 imports/runtime smoke, packed external-consumer lane, packed docs and immutable release tarballs containing both validated Darwin leaves |
 | `starter / target / blank / chromium` | blank published-target scaffold in desktop and mobile Chromium |
 | `starter / target / blank / webkit` | blank published-target scaffold in WebKit |
 | `starter / target / repository / chromium` | repository published-target example in desktop and mobile Chromium |
@@ -77,10 +80,9 @@ The successful branch workflow has a wall-clock budget of three minutes on the
 normal GitHub-hosted runner path. No gate may be removed to meet the budget. A
 regression is diagnosed from the longest parallel job's step timings; the fix
 must remove duplicated setup or serial dependency rather than weaken coverage.
-The graph expands to nine jobs: one framework/Node/artifact job and eight
-starter cells. Node smoke and the packed consumer lane reuse the core checkout,
-install and build instead of creating a tenth job that must wait when the
-repository has nine concurrent GitHub-hosted runners.
+The graph has one framework/Node/artifact job, two Darwin matrix cells, one supervised job and
+eight starter cells. Node smoke and the portable packed consumer lane reuse the core checkout;
+the Darwin cells are intentionally separate because only their kernels can qualify `openat`.
 The pinned Playwright image is advanced together with the lockfile browser
 version; a version mismatch fails browser launch instead of silently downloading
 a different runtime.
@@ -102,7 +104,7 @@ pinned to a full commit SHA.
 
 ## Local equivalents
 
-`bun run verify` remains the complete local framework gate and composes both
+`bun run verify` remains the complete portable local framework gate and composes both
 target starter variants. `bun run starter-head-lane` composes both HEAD variants.
 An unaligned breaking core release no longer skips HEAD silently: the packed
 local-core lane runs by default and exposes template drift on the creating SHA.
@@ -133,3 +135,8 @@ bun scripts/starter-lane.ts --mode=head --variant=repository --browser=webkit
 
 Missing, duplicate or unknown mode/variant/browser arguments fail before a
 workspace is created, preventing an accidentally partial CI gate.
+
+The Darwin binary cannot be qualified from Linux. CI therefore builds each supported architecture
+on a real macOS runner, packs the package, and runs the same contained-files consumer fixture under
+Bun and Node. This is the sole CI-only platform qualifier; ADR 0135 records why it cannot be folded
+into `verify` without replacing evidence with cross-compilation.

@@ -6,6 +6,7 @@ import {
   createSocketIOServer,
   type HandlerConfig,
   type RawRoute,
+  ShutdownOptionsSchema,
   serveNode,
 } from 'stitchkit/node';
 
@@ -19,6 +20,10 @@ const handler = createHandler(config);
 
 void createSocketIOServer;
 void serveNode;
+const shutdownDefaults = ShutdownOptionsSchema.parse({});
+if (shutdownDefaults.realtimeCloseTimeoutMs !== 1_000) {
+  throw new Error('node consumer: missing realtime close bound');
+}
 void handler;
 const application = createApplication({ id: 'node-types' });
 const result: Promise<ApplicationShutdownResult> = application.shutdown();

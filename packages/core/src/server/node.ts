@@ -46,6 +46,18 @@ export async function serveNode(config: NodeServerConfig): Promise<NodeServerHan
     if (sockets.size === 0) return Promise.resolve();
     return new Promise<void>((resolve) => socketDrainWaiters.add(resolve));
   };
+  const waitForUpgradedSocketDrain = () => {
+    if (upgradedSockets.size === 0) return Promise.resolve();
+    return Promise.all(
+      [...upgradedSockets].map(
+        (activeSocket) =>
+          new Promise<void>((resolve) => {
+            if (activeSocket.closed) resolve();
+            else activeSocket.once('close', () => resolve());
+          }),
+      ),
+    ).then(() => undefined);
+  };
   const requireRuntime = (): NodeRuntimeServer => {
     if (!runtime) throw new Error('[stitchkit] Node server lifecycle started before srvx');
     return runtime;
@@ -63,6 +75,13 @@ export async function serveNode(config: NodeServerConfig): Promise<NodeServerHan
     // lifecycle truth on Node.
     pendingWebSockets: () => upgradedSockets.size,
     closeRealtime: () => socket?.close() ?? Promise.resolve(),
+    async terminateRealtime() {
+      const count = upgradedSockets.size;
+      const physicalClose = waitForUpgradedSocketDrain();
+      for (const activeSocket of [...upgradedSockets]) activeSocket.destroy();
+      await physicalClose;
+      return count;
+    },
     async stopGracefully() {
       const runtimeClose = socket ? Promise.resolve() : requireRuntime().close(false);
       // Once listener close has begun, proactively close idle keep-alive

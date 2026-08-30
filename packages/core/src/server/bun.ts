@@ -201,6 +201,13 @@ export function createServer(config: BunServerConfig): BunServerHandle {
       for (const ws of openSockets) ws.close(1001, 'Server shutting down');
       await Promise.all([logicalClose, waitForSocketDrain()]);
     },
+    async terminateRealtime() {
+      const count = openSockets.size;
+      const physicalClose = waitForSocketDrain();
+      for (const ws of [...openSockets]) ws.terminate();
+      await physicalClose;
+      return count;
+    },
     async stopGracefully() {
       // After all accepted work and tracked WebSockets are physically gone,
       // stop(true) only closes idle keep-alive transports; it cannot abort

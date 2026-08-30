@@ -37,7 +37,7 @@ bun run consumer-lane  # install the packed tarball into a fixture app and use i
 bun run starter-lane       # both scaffold variants against the published Stitchkit target
 bun run starter-head-lane  # both scaffold variants against packed framework HEAD
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
-bun run verify    # every gate CI runs, including the supervised PM2 lane
+bun run verify    # every portable CI gate, including the supervised PM2 lane
 bun run verify:fast    # lint + check + test, the part that is faster to learn locally
 bun run update:starter # move the template's framework range and lockfile together
 bun run lint:fix  # auto-fix formatting / safe lint
@@ -52,7 +52,8 @@ none of them.
 
 `bun run verify` must be green before a **release commit**. For an ordinary
 change, the `pre-push` hook runs `verify:fast` and CI runs the whole matrix —
-it is a superset of `verify`, sharded across ten runners, and it answers faster
+it is a superset of `verify`, sharded across its runners, and adds real macOS arm64/x64
+packed-consumer qualification that another local kernel cannot reproduce. It answers faster
 than one machine walking the same lanes in single file. The reasoning and the
 per-push table are in [`AGENTS.md`](./AGENTS.md#what-runs-where).
 

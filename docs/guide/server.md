@@ -261,21 +261,26 @@ const server = createServer({ services, socket })
 
 const result = await server.shutdown({
   gracePeriodMs: 30_000,
+  realtimeCloseTimeoutMs: 1_000,
   forceTimeoutMs: 5_000,
   retryAfterSeconds: 5,
   signal: shutdownController.signal,
 })
 ```
 
-The first call closes HTTP and Socket.IO admission, then gives the complete
-graceful request/realtime/runtime chain one `gracePeriodMs` budget. If that
-budget or the external signal forces destructive teardown, `forceTimeoutMs`
-bounds physical completion separately. Repeated calls return the same Promise;
+The first call closes HTTP and Socket.IO admission, then gives admitted HTTP/application work the
+full `gracePeriodMs` budget. Once that work drains, `realtimeCloseTimeoutMs` (default `1_000`)
+bounds WebSocket close handshakes inside the same outer deadline. Any upgraded sockets still open
+at that boundary are terminated without shortening HTTP grace, and graceful runtime shutdown
+continues. If the outer grace budget or external signal forces destructive teardown,
+`forceTimeoutMs` bounds physical completion separately. Repeated calls return the same Promise;
 the first options win. New
 ordinary HTTP work receives `503`, `Retry-After` and `Connection: close` outside
 `wrapFetch`. `result.outcome` is `clean` or `forced`; a forced result preserves
 the pending snapshot and reason while final pending counters describe the
-post-close transport state. A graceful phase error still runs forced cleanup and
+post-close transport state. `forcedWebSockets` counts both sockets terminated at the dedicated
+realtime bound and sockets terminated by outer force; `pendingWebSocketsAtForce` is only the latter
+snapshot, so a clean result can truthfully report a bounded realtime termination. A graceful phase error still runs forced cleanup and
 then rejects with the original error; a forced transport that cannot confirm
 completion before `forceTimeoutMs` rejects instead of reporting a false zero.
 `runtime` is a diagnostics escape hatch, not a second canonical stop path.

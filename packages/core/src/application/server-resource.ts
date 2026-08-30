@@ -24,6 +24,7 @@ export interface ManagedServerResourceConfig<TRuntime> {
   readonly dependsOn?: readonly ManagedResourceDependency[];
   readonly required?: boolean;
   readonly retryAfterSeconds?: number;
+  readonly realtimeCloseTimeoutMs?: number;
 }
 
 /**
@@ -140,6 +141,9 @@ export function managedServerResource<TRuntime>(
       // The failure was byte-for-byte the reported one, and worse: the server
       // is never closed, so the process hangs.
       retryAfterSeconds: grace(config.retryAfterSeconds ?? 5),
+      ...(config.realtimeCloseTimeoutMs !== undefined && {
+        realtimeCloseTimeoutMs: grace(config.realtimeCloseTimeoutMs),
+      }),
       signal: context.signal,
     };
     // Synchronous when the server is already in hand, which is every case but a

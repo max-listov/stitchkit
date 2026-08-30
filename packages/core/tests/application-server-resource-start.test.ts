@@ -58,6 +58,33 @@ function fakeServer(calls: ShutdownOptions[]): ManagedServerHandle<undefined> {
 }
 
 describe('managedServerResource owns when the server exists', () => {
+  test('keeps application shutdown clean after a bounded realtime termination', async () => {
+    const calls: ShutdownOptions[] = [];
+    const boundedServer = fakeServer(calls);
+    boundedServer.shutdown = (options) => {
+      calls.push(options ?? {});
+      return Promise.resolve({ ...cleanResult, forcedWebSockets: 1 });
+    };
+    const app = createApplication({
+      id: 'bounded-realtime-close',
+      resources: [
+        managedServerResource({
+          id: 'http',
+          server: boundedServer,
+          realtimeCloseTimeoutMs: 25,
+        }),
+      ],
+    });
+
+    await app.start();
+    const result = await app.shutdown({ gracePeriodMs: 2_000, forceTimeoutMs: 1_000 });
+
+    expect(calls[0]?.realtimeCloseTimeoutMs).toBe(25);
+    expect(result.outcome).toBe('clean');
+    expect(result.cleanupComplete).toBe(true);
+    expect(result.resources).toEqual([{ id: 'http', state: 'closed', failures: [] }]);
+  });
+
   test('a factory reads its declared dependency value and startup signal', async () => {
     const calls: ShutdownOptions[] = [];
     const database = defineManagedResource({

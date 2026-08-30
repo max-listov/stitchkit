@@ -182,6 +182,9 @@ export function bindProcessSignals<TResult = ShutdownResult>(
     ...(requested.forceTimeoutMs !== undefined && {
       forceTimeoutMs: validated.forceTimeoutMs,
     }),
+    ...(requested.realtimeCloseTimeoutMs !== undefined && {
+      realtimeCloseTimeoutMs: validated.realtimeCloseTimeoutMs,
+    }),
     ...(requested.retryAfterSeconds !== undefined && {
       retryAfterSeconds: validated.retryAfterSeconds,
     }),

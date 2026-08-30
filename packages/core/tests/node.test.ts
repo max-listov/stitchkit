@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { connect } from 'node:net';
 import { z } from 'zod';
 import { defineContract } from '../src/contract';
 import { implement } from '../src/server/implement';
-import { serveNode } from '../src/server/node';
+import { type NodeSocketLifecycle, serveNode } from '../src/server/node';
 
 const contract = defineContract(
   { prefix: '/api' },
@@ -143,5 +144,63 @@ describe('serveNode', () => {
     expect(result.pendingRequestsAtForce).toBeGreaterThan(0);
     expect(result.pendingRequests).toBe(0);
     await request;
+  });
+
+  test('bounds an upgraded Node socket whose owner never completes close', async () => {
+    const serverSawUpgrade = Promise.withResolvers<void>();
+    const socketLifecycle: NodeSocketLifecycle = {
+      attach(httpServer) {
+        httpServer.on('upgrade', () => {
+          serverSawUpgrade.resolve();
+        });
+      },
+      beginShutdown() {
+        // Admission is owned by the fixture lifecycle.
+      },
+      close: () => new Promise(() => undefined),
+      connections: () => 1,
+    };
+    const managed = await serveNode({ port: 0, socket: socketLifecycle });
+    const peer = connect({ host: 'localhost', port: managed.port });
+    await new Promise<void>((resolve) => peer.once('connect', resolve));
+    peer.write(
+      [
+        'GET /socket HTTP/1.1',
+        `Host: localhost:${managed.port}`,
+        'Connection: Upgrade',
+        'Upgrade: websocket',
+        'Sec-WebSocket-Version: 13',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        '',
+        '',
+      ].join('\r\n'),
+    );
+    await Promise.race([
+      serverSawUpgrade.promise,
+      Bun.sleep(500).then(() => {
+        throw new Error('fixture upgrade did not complete');
+      }),
+    ]);
+    expect(managed.status.pendingWebSockets).toBe(1);
+    const beganAt = performance.now();
+
+    const result = await Promise.race([
+      managed.shutdown({
+        gracePeriodMs: 2_000,
+        realtimeCloseTimeoutMs: 20,
+        forceTimeoutMs: 1_000,
+      }),
+      Bun.sleep(500).then(() => {
+        throw new Error(
+          `fixture shutdown did not complete: ${JSON.stringify(managed.status)}`,
+        );
+      }),
+    ]);
+
+    expect(result.outcome).toBe('clean');
+    expect(result.pendingWebSocketsAtForce).toBe(0);
+    expect(result.forcedWebSockets).toBe(1);
+    expect(result.pendingWebSockets).toBe(0);
+    expect(performance.now() - beganAt).toBeLessThan(500);
   });
 });

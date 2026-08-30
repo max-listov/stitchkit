@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.70.0",
+  "version": "0.70.1",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -38,6 +38,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "native/*.node",
     "llms.txt",
     "llms-full.txt",
     "README.md",
@@ -141,6 +142,7 @@
     "access": "public"
   },
   "scripts": {
+    "build:native-contained-files": "node scripts/build-contained-files-native.mjs",
     "check": "bun x tsc --noEmit",
     "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts src/declaration.ts src/agent-runtime-browser.ts --outdir dist --target node --packages external --splitting --root src",
     "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/tool-invoker.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-harness.ts src/agent-runtime-coding-tools.ts src/agent-runtime-openrouter.ts src/agent-runtime-sqlite-bun.ts src/agent-runtime-sqlite-node.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts --outdir dist --target node --packages external --splitting --root src",

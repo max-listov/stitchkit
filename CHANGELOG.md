@@ -15,6 +15,27 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.1] — 2026-08-30
+
+### Fixed
+
+- **Contained Agent file, search and harness-resource operations work safely on macOS.** The package
+  now carries arm64 and x64 Node-API leaves for descriptor-relative `openat` traversal and atomic
+  replacement, used by both Bun and Node behind the existing collector. Parent/file identity stays
+  pinned through asynchronous authorization; no mutable absolute-path fallback returns. Real macOS
+  packed-consumer jobs exercise root/nested read, create/overwrite, guarded patch, search, lazy and
+  eager resources plus parent-swap races on both runtimes. Linux retains `/proc/self/fd`; FreeBSD
+  was incorrectly inferred from its `/dev/fd` spelling in 0.70.0 and is explicitly unsupported
+  until separately qualified. → ADR 0135.
+- **A non-cooperative WebSocket can no longer consume the whole application grace period.**
+  `ShutdownOptions.realtimeCloseTimeoutMs` (default `1_000`) bounds the close handshake. Bun and
+  Node terminate only upgraded sockets still open at that boundary, then continue graceful runtime
+  shutdown. `forcedWebSockets` reports those bounded terminations even when the overall outcome is
+  clean; `pendingWebSocketsAtForce` remains reserved for the outer deadline/signal snapshot. HTTP
+  work still owns the full `gracePeriodMs`, while external abort and `forceTimeoutMs` remain
+  authoritative. `managedServerResource({ realtimeCloseTimeoutMs })` exposes the same policy inside
+  `createApplication`.
+
 ## [0.70.0] — 2026-08-30
 
 ### ⚠️ Breaking changes

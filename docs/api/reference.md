@@ -262,9 +262,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `UnixListenConfig` | _type_ | unix listener — a socket path, or `{ path, mode }` to tighten the file mode after listen |
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |
-| `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | one graceful budget, bounded forced-completion timeout, retry hint and optional external abort signal |
+| `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | HTTP/application grace, a separate WebSocket close-handshake bound, bounded forced-completion timeout, retry hint and optional external abort signal |
 | `ShutdownStatusSchema` / `ShutdownStatus` | schema / _type_ | live state and request/WebSocket counters |
-| `ShutdownResultSchema` / `ShutdownResult` | schema / _type_ | clean/forced result with final counters and at-force snapshots |
+| `ShutdownResultSchema` / `ShutdownResult` | schema / _type_ | clean/forced result with final counters, outer-force snapshots and `forcedWebSockets` including bounded realtime terminations |
 | `ShutdownStateSchema` / `ShutdownState` | schema / _type_ | managed lifecycle state machine |
 | `ServiceDef` | _type_ | the result of `implement` |
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
@@ -452,7 +452,7 @@ cutovers are covered by the executable
 | `ManagedResourceDependency` | _type_ | a dependency named by id or given as the resource itself — the second form is what `context.use(...)` can type |
 | `ManagedResourcePublished` | _type_ | the value type `context.use(resource)` returns, recovered from that resource's own `start` |
 | `ManagedResourcePublishesNoValue` | _type_ | what `context.use(...)` returns for a resource that publishes nothing — a branded refusal rather than `never`, so reading it does not silently compile |
-| `ManagedServerResourceConfig` | _type_ | the server or a sync/async factory receiving `ManagedResourceContext`, plus stable ID, dependencies and shutdown policy for `managedServerResource` |
+| `ManagedServerResourceConfig` | _type_ | the server or a sync/async factory receiving `ManagedResourceContext`, plus stable ID, dependencies and server shutdown policy (`retryAfterSeconds`, `realtimeCloseTimeoutMs`) |
 | `ManagedServerResource` | _type_ | the resource `managedServerResource` returns, whose `start` publishes the `ManagedServerHandle` |
 | `ApplicationHealthHandlerOptions` / `ApplicationHealthHandlerOptionsSchema` | _type_ / schema | liveness/readiness selection and sanitized `Retry-After` policy |
 | `ApplicationOperationalHandlers` / `ApplicationOperationalHandlersOptions` / `ApplicationOperationalHandlersOptionsSchema` | _type_ / schema | conventional status/readiness/liveness route surface and shared retry policy |
@@ -809,7 +809,7 @@ artifact store is supplied, `read_output`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions; filesystem operations require Linux `/proc/self/fd` or macOS/FreeBSD `/dev/fd` descriptor paths and otherwise fail closed |
+| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions; filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
 | `AgentCodingToolConfig` | _type_ | absolute root, required authorization callback, finite executable alias map, exact child environment and optional limits |
 | `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |

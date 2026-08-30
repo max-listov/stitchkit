@@ -21,11 +21,13 @@ current one *up to* your target, and apply each snippet.
 ### Descriptor-backed Agent filesystem containment
 
 Built-in coding file/search tools and `createAgentHarnessFileResources` now require a runtime
-that can address an opened directory descriptor: Linux `/proc/self/fd`, or macOS/FreeBSD
-`/dev/fd`. This is what keeps a mutable parent rename or outside-symlink replacement from changing
+that can address an opened directory descriptor: Linux `/proc/self/fd`, or the packaged macOS
+Node-API backend added in 0.70.1. This is what keeps a mutable parent rename or outside-symlink replacement from changing
 the authorized target between validation and the actual effect.
 
-No call-site change is needed on those platforms. On Windows or another platform without that
+No call-site change is needed on those platforms. The 0.70.0 notes incorrectly inferred macOS and
+FreeBSD support from `/dev/fd`; macOS is restored by 0.70.1 and FreeBSD remains unsupported. On
+Windows or another platform without that
 boundary, move the built-in filesystem operations to a supported worker or replace them with
 application-owned tools backed by an equivalent native handle API. They fail closed rather than
 falling back to path spelling. `run_command` remains separately available under its explicit

@@ -13,6 +13,7 @@ function createAdapter(overrides: Partial<ShutdownAdapter> = {}): ShutdownAdapte
     pendingRequests: () => 0,
     pendingWebSockets: () => 0,
     closeRealtime: () => Promise.resolve(),
+    terminateRealtime: () => Promise.resolve(0),
     stopGracefully: () => Promise.resolve(),
     forceStop: () => Promise.resolve(),
     ...overrides,
@@ -23,6 +24,7 @@ describe('managed server lifecycle failure containment', () => {
   test('the public options keep separate graceful and forced-completion budgets', () => {
     expect(ShutdownOptionsSchema.parse({})).toMatchObject({
       gracePeriodMs: 30_000,
+      realtimeCloseTimeoutMs: 1_000,
       forceTimeoutMs: 5_000,
     });
   });
@@ -40,6 +42,92 @@ describe('managed server lifecycle failure containment', () => {
     expect(result.outcome).toBe('forced');
     expect(result.reason).toBe('deadline');
     expect(performance.now() - beganAt).toBeLessThan(500);
+  });
+
+  test('bounds an uncooperative realtime close without spending the application grace', async () => {
+    let pendingWebSockets = 1;
+    let terminateCalls = 0;
+    const adapter = createAdapter({
+      pendingWebSockets: () => pendingWebSockets,
+      closeRealtime: () => new Promise(() => undefined),
+      terminateRealtime: () => {
+        terminateCalls += 1;
+        pendingWebSockets = 0;
+        return Promise.resolve(1);
+      },
+    });
+    const lifecycle = createServerLifecycle(() => adapter);
+    const beganAt = performance.now();
+
+    const result = await lifecycle.shutdown({
+      gracePeriodMs: 2_000,
+      realtimeCloseTimeoutMs: 20,
+      forceTimeoutMs: 1_000,
+    });
+
+    expect(result.outcome).toBe('clean');
+    expect(result.pendingWebSocketsAtForce).toBe(0);
+    expect(result.forcedWebSockets).toBe(1);
+    expect(result.pendingWebSockets).toBe(0);
+    expect(terminateCalls).toBe(1);
+    expect(performance.now() - beganAt).toBeGreaterThanOrEqual(15);
+    expect(performance.now() - beganAt).toBeLessThan(500);
+  });
+
+  test('a cooperative realtime peer closes without bounded termination', async () => {
+    let pendingWebSockets = 1;
+    let terminateCalls = 0;
+    const adapter = createAdapter({
+      pendingWebSockets: () => pendingWebSockets,
+      closeRealtime: () => {
+        pendingWebSockets = 0;
+        return Promise.resolve();
+      },
+      terminateRealtime: () => {
+        terminateCalls += 1;
+        return Promise.resolve(0);
+      },
+    });
+    const lifecycle = createServerLifecycle(() => adapter);
+
+    const result = await lifecycle.shutdown({
+      gracePeriodMs: 2_000,
+      realtimeCloseTimeoutMs: 20,
+    });
+
+    expect(result.outcome).toBe('clean');
+    expect(result.forcedWebSockets).toBe(0);
+    expect(terminateCalls).toBe(0);
+  });
+
+  test('the outer deadline stays authoritative over the realtime bound', async () => {
+    let pendingWebSockets = 1;
+    let boundedTerminateCalls = 0;
+    const adapter = createAdapter({
+      pendingWebSockets: () => pendingWebSockets,
+      closeRealtime: () => new Promise(() => undefined),
+      terminateRealtime: () => {
+        boundedTerminateCalls += 1;
+        return Promise.resolve(1);
+      },
+      forceStop: () => {
+        pendingWebSockets = 0;
+        return Promise.resolve();
+      },
+    });
+    const lifecycle = createServerLifecycle(() => adapter);
+
+    const result = await lifecycle.shutdown({
+      gracePeriodMs: 10,
+      realtimeCloseTimeoutMs: 1_000,
+      forceTimeoutMs: 1_000,
+    });
+
+    expect(result.outcome).toBe('forced');
+    expect(result.reason).toBe('deadline');
+    expect(result.pendingWebSocketsAtForce).toBe(1);
+    expect(result.forcedWebSockets).toBe(1);
+    expect(boundedTerminateCalls).toBe(0);
   });
 
   for (const phase of ['closeRealtime', 'stopGracefully'] satisfies Array<

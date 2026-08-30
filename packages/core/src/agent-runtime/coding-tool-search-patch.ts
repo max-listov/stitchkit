@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { conflict } from '../contract';
@@ -11,7 +10,6 @@ import type {
   AgentCodingToolLimits,
 } from './coding-tool-contract';
 import {
-  atomicCodingReplace,
   authorizeCodingTool,
   boundedCodingRelativePath,
   textOccurrences,
@@ -20,8 +18,10 @@ import {
 import {
   assertContainedParentCurrent,
   openContainedParent,
+  openContainedParentFile,
   readContainedUtf8Handle,
   scanContainedFiles,
+  writeContainedFile,
 } from './contained-files';
 
 const DEFAULT_EXCLUDED_DIRECTORIES = [
@@ -150,8 +150,7 @@ export function createSearchAndPatchCodingTools(
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
       const parent = await openContainedParent(root, relative);
       try {
-        const target = path.join(parent.path, parent.basename);
-        const initial = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+        const initial = await openContainedParentFile(parent);
         const read = await readContainedUtf8Handle(initial, limits.maxWriteBytes).finally(() =>
           initial.close(),
         );
@@ -182,17 +181,19 @@ export function createSearchAndPatchCodingTools(
         await assertContainedParentCurrent(root, relative, parent.handle);
         if (!input.dryRun) {
           await withCodingPathLock(`${root}:${relative}`, async () => {
-            const currentHandle = await open(
-              target,
-              constants.O_RDONLY | constants.O_NOFOLLOW,
-            );
+            const currentHandle = await openContainedParentFile(parent);
             const current = await readContainedUtf8Handle(
               currentHandle,
               limits.maxWriteBytes,
             ).finally(() => currentHandle.close());
             if (sha256(current.text) !== baseSha256)
               conflict('Coding patch base digest became stale before apply');
-            await atomicCodingReplace(target, changed, current.mode);
+            await writeContainedFile({
+              parent,
+              content: changed,
+              replace: true,
+              mode: current.mode,
+            });
           });
         }
         return {
