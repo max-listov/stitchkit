@@ -356,6 +356,13 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const streamShutdownOutput = step(`node: stream shutdown (${runtime})`, () =>
+          run(runtime, ['src/stream-shutdown.mjs'], dir),
+        );
+        if (!streamShutdownOutput.includes('packed stream shutdown: ok')) {
+          failed = true;
+          console.error(`[consumer-lane] node: ${runtime} stream shutdown produced no proof`);
+        }
         const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
           run(runtime, ['src/contained-files.mjs'], dir),
         );

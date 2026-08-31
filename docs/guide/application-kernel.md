@@ -351,6 +351,12 @@ try {
 `release()` is idempotent. Admission and counter increment are atomic, so work
 cannot slip between the shutdown check and drain accounting.
 
+`managedServerResource` already owns contract/streaming-route response lifetimes. It cancels
+their supplied signals at admission close and awaits source cleanup before dependent resources
+close. Do not add application admission leases or a second cancellation registry for those
+streams. A source that ignores cancellation or fails its cleanup prevents a clean shutdown;
+the existing grace and force budgets still bound the result.
+
 ### Bounded operation admission
 
 Compose `createBoundedAdmission` when accepted work also competes for a finite

@@ -42,6 +42,11 @@
 
 import type { HttpMethod } from '../contract/define';
 import { normalizeError } from '../internal/errors';
+import {
+  isStreamCancellation,
+  ownHttpStream,
+  settleStreamCleanup,
+} from './http-stream-lifetime';
 import type { RawRoute, RawRouteContext } from './types';
 
 /** How a value becomes bytes on the wire. The only thing the two formats differ in. */
@@ -248,8 +253,24 @@ export function streamingRoute<TServer = unknown>(
     handler: async (request, context) => {
       applyIdleTimeout(context.server, request, idleTimeoutSeconds);
       const departed = new AbortController();
-      const iterable = await options.source(request, { ...context, signal: departed.signal });
-      const iterator = iterable[Symbol.asyncIterator]();
+      const settled = Promise.withResolvers<void>();
+      void settled.promise.catch(() => undefined);
+      const pumped = Promise.withResolvers<void>();
+      void pumped.promise.catch(() => undefined);
+      let cancel = () => departed.abort();
+      ownHttpStream(request, { cancel: () => cancel(), settled: settled.promise });
+      let iterator: AsyncIterator<unknown>;
+      try {
+        const iterable = await options.source(request, {
+          ...context,
+          signal: departed.signal,
+        });
+        iterator = iterable[Symbol.asyncIterator]();
+      } catch (error) {
+        departed.abort();
+        settled.reject(error);
+        throw error;
+      }
       const encoder = new TextEncoder();
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let closed = false;
@@ -274,21 +295,27 @@ export function streamingRoute<TServer = unknown>(
       const release = (): void => {
         if (closed) return;
         closed = true;
+        stopHeartbeat();
+        signalDemand();
+        request.signal.removeEventListener('abort', onRequestAbort);
+        departed.abort();
+        // Transport cancellation is synchronous; managed cleanup observes the
+        // actual iterator return, including a finally block that is still waiting.
+        const hook = Promise.withResolvers<void>();
         try {
           options.onClose?.();
-          stopHeartbeat();
-          // A pump parked on backpressure must not stay parked: nothing will
-          // ever ask for more once the consumer is gone.
-          signalDemand();
-          // Tells a waiting source to stop. This is the half that works when
-          // the source is parked on its next value (→ `StreamingSourceContext`).
-          departed.abort();
-          // And this is the half that works when it is parked on a `yield`.
-          void Promise.resolve(iterator.return?.(undefined)).catch(() => undefined);
-        } catch {
-          // A source that cannot be closed cleanly is still closed as far as
-          // this response is concerned.
+          hook.resolve();
+        } catch (error) {
+          hook.reject(error);
         }
+        void settleStreamCleanup([
+          hook.promise,
+          pumped.promise,
+          Promise.resolve().then(() => iterator.return?.(undefined)),
+        ]).then(
+          () => settled.resolve(),
+          (error: unknown) => settled.reject(error),
+        );
       };
 
       // Resolved by `pull` — the stream machinery's own "I have room now".
@@ -298,6 +325,7 @@ export function streamingRoute<TServer = unknown>(
         demand = null;
         resolve?.();
       };
+      const onRequestAbort = () => cancel();
 
       const stream = new ReadableStream(
         {
@@ -327,15 +355,16 @@ export function streamingRoute<TServer = unknown>(
             // check has to come first: a request whose consumer left before the
             // handler ran would otherwise leave a heartbeat and an open
             // iterator behind with nothing left to stop them.
-            if (request.signal.aborted) {
+            cancel = () => {
               release();
               finish();
+            };
+            if (request.signal.aborted || departed.signal.aborted) {
+              pumped.resolve();
+              cancel();
               return;
             }
-            request.signal.addEventListener('abort', () => {
-              release();
-              finish();
-            });
+            request.signal.addEventListener('abort', onRequestAbort, { once: true });
 
             // Point 3, and it happens before anything else can take time: the
             // headers are on the wire at open, so a consumer's `fetch` resolves
@@ -417,8 +446,11 @@ export function streamingRoute<TServer = unknown>(
                 // send. The envelope is the same one `errorResponse` would have
                 // produced, normalised so an internal failure never reaches the
                 // wire raw.
-                if (!closed) send(framing.frame(normalizeError(error).toJSON()));
+                if (closed) {
+                  if (!isStreamCancellation(error, departed.signal)) pumped.reject(error);
+                } else send(framing.frame(normalizeError(error).toJSON()));
               } finally {
+                pumped.resolve();
                 release();
                 finish();
               }

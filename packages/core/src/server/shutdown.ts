@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHttpStreamTracker } from './http-stream-lifetime';
 import type { FetchHandler } from './types';
 
 export const ShutdownStateSchema = z.enum([
@@ -167,6 +168,9 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
   let pendingApplicationRequests = 0;
   let retryAfterSeconds = 5;
   let shutdownPromise: Promise<ShutdownResult> | undefined;
+  const streams = createHttpStreamTracker();
+  const pendingRequests = () =>
+    Math.max(getAdapter().pendingRequests(), streams.pendingRequests);
 
   const status = (): ShutdownStatus => {
     const adapter = getAdapter();
@@ -174,7 +178,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
       state,
       acceptedRequests,
       completedRequests,
-      pendingRequests: adapter.pendingRequests(),
+      pendingRequests: pendingRequests(),
       pendingWebSockets: adapter.pendingWebSockets(),
     });
   };
@@ -184,11 +188,14 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
       if (state !== 'running') return rejectedResponse(retryAfterSeconds);
       acceptedRequests += 1;
       pendingApplicationRequests += 1;
+      const complete = streams.bind(request, () => {
+        completedRequests += 1;
+      });
       try {
         return await handler(request, server);
       } finally {
         pendingApplicationRequests -= 1;
-        completedRequests += 1;
+        complete();
       }
     };
   };
@@ -201,6 +208,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
     const adapter = getAdapter();
     state = 'draining-http';
     adapter.beginShutdown(retryAfterSeconds);
+    streams.cancel();
 
     shutdownPromise = new Promise<ShutdownResult>((resolve, reject) => {
       const phaseAbort = new AbortController();
@@ -224,7 +232,11 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
 
       void (async () => {
         try {
-          await waitForZero(() => pendingApplicationRequests, phaseAbort.signal);
+          await waitForZero(
+            () => pendingApplicationRequests + streams.pendingRequests,
+            phaseAbort.signal,
+          );
+          streams.assertClean();
           if (!forcedReason) {
             state = 'closing-realtime';
             const realtimeOutcome = await closeRealtimeWithin(
@@ -258,14 +270,14 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
         let pendingWebSocketsAtForce = 0;
         if (forcedReason) {
           state = 'stopping-runtime';
-          pendingRequestsAtForce = adapter.pendingRequests();
+          pendingRequestsAtForce = pendingRequests();
           pendingWebSocketsAtForce = adapter.pendingWebSockets();
           forcedWebSockets += pendingWebSocketsAtForce;
           let forceError: unknown;
           let forceFailed = false;
           try {
             await withTimeout(
-              adapter.forceStop(),
+              Promise.all([adapter.forceStop(), streams.drain()]),
               parsed.forceTimeoutMs,
               `[stitchkit] forced shutdown did not complete within ${parsed.forceTimeoutMs}ms`,
             );
@@ -297,7 +309,7 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
             ...(forcedReason && { reason: forcedReason }),
             acceptedRequests,
             completedRequests,
-            pendingRequests: adapter.pendingRequests(),
+            pendingRequests: pendingRequests(),
             pendingWebSockets: adapter.pendingWebSockets(),
             pendingRequestsAtForce,
             pendingWebSocketsAtForce,

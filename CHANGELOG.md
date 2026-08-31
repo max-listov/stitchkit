@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.5] — 2026-08-31
+
+### Fixed
+
+- **Managed shutdown cancels and drains owned HTTP stream sources.** Contract NDJSON/SSE and
+  `streamingRoute` sources receive their existing cancellation signal when admission closes;
+  source iteration and `finally` cleanup settle before the runtime and dependent resources close.
+  Finite HTTP work retains its grace budget. Uncooperative sources remain visibly pending and
+  bounded force rejects instead of claiming clean cleanup; cleanup errors are retained.
+  Bun TCP/Unix and Node share the same Fetch-clean ownership boundary, without consumer wiring.
+
 ## [0.70.4] — 2026-08-31
 
 ### Fixed

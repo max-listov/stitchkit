@@ -273,7 +273,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |
 | `ShutdownOptionsSchema` / `ShutdownOptions` | schema / _type_ | HTTP/application grace, a separate WebSocket close-handshake bound, bounded forced-completion timeout, retry hint and optional external abort signal |
-| `ShutdownStatusSchema` / `ShutdownStatus` | schema / _type_ | live state and request/WebSocket counters |
+| `ShutdownStatusSchema` / `ShutdownStatus` | schema / _type_ | live state and request/WebSocket counters; owned streams remain pending through source cleanup |
 | `ShutdownResultSchema` / `ShutdownResult` | schema / _type_ | clean/forced result with final counters, outer-force snapshots and `forcedWebSockets` including bounded realtime terminations |
 | `ShutdownStateSchema` / `ShutdownState` | schema / _type_ | managed lifecycle state machine |
 | `ServiceDef` | _type_ | the result of `implement` |

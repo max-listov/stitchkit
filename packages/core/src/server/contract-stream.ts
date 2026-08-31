@@ -4,6 +4,11 @@ import {
   type EndpointStreamDescriptor,
 } from '../contract';
 import { normalizeError } from '../internal/errors';
+import {
+  isStreamCancellation,
+  ownHttpStream,
+  settleStreamCleanup,
+} from './http-stream-lifetime';
 import { streamingRoute } from './streaming-route';
 import type { RawRouteContext } from './types';
 
@@ -32,9 +37,32 @@ export function contractStreamResponse(
 ): Promise<Response> {
   const format = descriptor.format ?? 'ndjson';
   const maxFrameBytes = descriptor.maxFrameBytes ?? DEFAULT_CONTRACT_STREAM_FRAME_BYTES;
+  const iterator = source[Symbol.asyncIterator]();
+  let pendingNext: Promise<IteratorResult<unknown>> | undefined;
+  const settled = Promise.withResolvers<void>();
+  void settled.promise.catch(() => undefined);
   let lifetime: ReturnType<typeof setTimeout> | undefined;
   let lifetimeExpired = false;
-  if (descriptor.lifetimeMs !== undefined) {
+  let closing = false;
+  const closeSource = (cancelled = operationAbort.signal.aborted) => {
+    if (closing) return;
+    closing = true;
+    if (lifetime !== undefined) clearTimeout(lifetime);
+    operationAbort.abort();
+    // Wire completion and source cleanup have different lifetimes. A source
+    // ignoring its deadline must not keep the response open or appear cleaned up.
+    void settleStreamCleanup([
+      Promise.resolve(pendingNext).catch((error: unknown) => {
+        if (cancelled && !isStreamCancellation(error, operationAbort.signal)) throw error;
+      }),
+      Promise.resolve().then(() => iterator.return?.(undefined)),
+    ]).then(
+      () => settled.resolve(),
+      (error: unknown) => settled.reject(error),
+    );
+  };
+  ownHttpStream(request, { cancel: () => closeSource(true), settled: settled.promise });
+  if (descriptor.lifetimeMs !== undefined && !closing) {
     lifetime = setTimeout(() => {
       lifetimeExpired = true;
       operationAbort.abort(new Error('Stream lifetime expired'));
@@ -43,12 +71,13 @@ export function contractStreamResponse(
   }
 
   const frames = async function* () {
-    const iterator = source[Symbol.asyncIterator]();
+    if (closing) return;
     const aborted = waitForAbort(operationAbort.signal);
     let terminalSeen = descriptor.terminal === undefined;
     try {
       for (;;) {
-        const next = await Promise.race([iterator.next(), aborted]);
+        pendingNext = Promise.resolve(iterator.next());
+        const next = await Promise.race([pendingNext, aborted]);
         if (next.done) break;
         const parsed = descriptor.item.safeParse(next.value);
         if (!parsed.success) {
@@ -108,8 +137,7 @@ export function contractStreamResponse(
       yield { type: 'error', error: normalizeError(error).toJSON().error };
     } finally {
       if (lifetime !== undefined) clearTimeout(lifetime);
-      operationAbort.abort();
-      void Promise.resolve(iterator.return?.(undefined)).catch(() => undefined);
+      closeSource();
     }
   };
 

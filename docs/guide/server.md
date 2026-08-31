@@ -268,8 +268,11 @@ const result = await server.shutdown({
 })
 ```
 
-The first call closes HTTP and Socket.IO admission, then gives admitted HTTP/application work the
-full `gracePeriodMs` budget. Once that work drains, `realtimeCloseTimeoutMs` (default `1_000`)
+The first call closes HTTP and Socket.IO admission and cancels owned contract streams and
+`streamingRoute` / `ndjsonRoute` / `sseRoute` sources. Their supplied `signal` is the lifetime:
+waiting producers must honour it, and their iterator cleanup must finish. No separate application
+abort controller or copied shutdown loop is required. Admitted finite HTTP/application work and
+stream cleanup share the full `gracePeriodMs` budget. Once that work drains, `realtimeCloseTimeoutMs` (default `1_000`)
 bounds WebSocket close handshakes inside the same outer deadline. Any upgraded sockets still open
 at that boundary are terminated without shortening HTTP grace, and graceful runtime shutdown
 continues. If the outer grace budget or external signal forces destructive teardown,
@@ -278,11 +281,18 @@ the first options win. New
 ordinary HTTP work receives `503`, `Retry-After` and `Connection: close` outside
 `wrapFetch`. `result.outcome` is `clean` or `forced`; a forced result preserves
 the pending snapshot and reason while final pending counters describe the
-post-close transport state. `forcedWebSockets` counts both sockets terminated at the dedicated
+post-close transport state and any still-owned stream cleanup. A streaming request increments
+`completedRequests` only after its source cleanup settles, not when its `Response` is returned.
+`abortedRequests` counts requests pending at outer force, not subscriptions closed cooperatively
+during grace. `forcedWebSockets` counts both sockets terminated at the dedicated
 realtime bound and sockets terminated by outer force; `pendingWebSocketsAtForce` is only the latter
 snapshot, so a clean result can truthfully report a bounded realtime termination. A graceful phase error still runs forced cleanup and
 then rejects with the original error; a forced transport that cannot confirm
-completion before `forceTimeoutMs` rejects instead of reporting a false zero.
+completion before `forceTimeoutMs` rejects instead of reporting a false zero. An uncooperative
+stream stays pending even if its connection is gone; a cleanup error rejects shutdown.
+Standalone `createHandler` and arbitrary raw `Response` bodies have no managed source ownership:
+their embedding host/producer owns cancellation. Request identity must be retained by `wrapFetch`
+when forwarding to owned streaming routes; it is also required by native timeout/upgrade APIs.
 `runtime` is a diagnostics escape hatch, not a second canonical stop path.
 
 ### Trusted HTTPS in development
