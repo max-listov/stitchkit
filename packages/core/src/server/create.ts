@@ -24,6 +24,7 @@ import {
   parseRequestPayloadInto,
 } from './context';
 import { contractStreamResponse } from './contract-stream';
+import { dispatchErrorHooks } from './error-dispatch';
 import {
   buildLogFields,
   levelForStatus,
@@ -52,7 +53,13 @@ import {
   validateRawRoutes,
   validateRoutes,
 } from './router';
-import type { FetchHandler, HandlerConfig, MethodDef, StitchLogger } from './types';
+import type {
+  FetchHandler,
+  HandlerConfig,
+  LifecycleHooks,
+  MethodDef,
+  StitchLogger,
+} from './types';
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const MAX_REQUEST_ABORT_CAUSE_DEPTH = 8;
@@ -287,13 +294,13 @@ export function createHandler<TServer = unknown>(
       }
     };
 
-    // One error path — `onError` first (same envelope as the project chooses),
-    // else the framework default. Used by raw routes, contract routes and the
-    // unmatched-route 404 alike, so every error response has one shape.
+    // Matched group policy, global policy, then the framework envelope. Routes
+    // with no contract match have no group; transport cancellation bypasses both.
     const respondError = async (
       err: unknown,
       errCtx?: RuntimeContext,
       endpoint?: MethodDef,
+      group?: LifecycleHooks,
     ): Promise<Response> => {
       if (isClientClosedRequest(req, err)) {
         const response = applyCors(
@@ -326,27 +333,22 @@ export function createHandler<TServer = unknown>(
         });
       };
 
-      if (hooks?.onError) {
-        try {
-          const response = await hooks.onError(
-            errCtx ?? buildErrorContext(req, url, traceId, clientIp),
-            err,
-            endpoint,
-          );
-          if (response instanceof Response) {
-            recordFailure();
-            const withCors = applyCors(response, cors, req);
-            // The hook owns the response, but the access log still wants the
-            // error's code — derive it from the original error (no normalize /
-            // no log), so `logging: true` shows it even with a custom `onError`.
-            complete(withCors.status, errorCode(err));
-            return withCors;
-          }
-        } catch {
-          // `onError` itself failed — fall through to the framework default
-          // so a broken error hook can never crash the request.
-        }
-      }
+      const customResponse = await dispatchErrorHooks({
+        context: errCtx ?? buildErrorContext(req, url, traceId, clientIp),
+        error: err,
+        endpoint,
+        group,
+        global: hooks,
+        logger: customLogger,
+        respond: (response) => {
+          recordFailure();
+          const withCors = applyCors(response, cors, req);
+          // Hook responses keep the original error code without normalizing/logging it again.
+          complete(withCors.status, errorCode(err));
+          return withCors;
+        },
+      });
+      if (customResponse) return customResponse;
       const appErr = normalizeError(err);
       recordFailure(appErr);
       complete(appErr.status, appErr.code);
@@ -595,7 +597,7 @@ export function createHandler<TServer = unknown>(
       return body;
     } catch (err) {
       await multipartLifecycle?.rollback();
-      return respondError(err, ctx, method);
+      return respondError(err, ctx, method, groupHooks);
     }
   }
 

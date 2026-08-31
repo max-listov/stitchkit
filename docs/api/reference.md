@@ -283,7 +283,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `LifecycleHooks` | _type_ | `onRequest` / pre-body `authorize` / `beforeHandle` / `afterHandle` / `onError` |
 | `composeLifecycleHooks` | function | compose HTTP lifecycle phases in declaration order with short-circuit/fallthrough semantics |
 | `AuthorizationContext` | _type_ | HTTP pre-body context with validated params, `input: undefined` and no files |
-| `RouteGroup` | _type_ | a prefixed group of services with its own hooks |
+| `RouteGroup` | _type_ | a prefixed group of services with its own hooks; matched errors try group `onError` → global `onError` → standard envelope, keeping the original error on fallback — [precedence](../guide/server.md#lifecycle-hooks) |
 | `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context |
 | `RawRouteContext` | _type_ | the Bun-bound routing context a raw handler receives |
 | `BunServer` | _type_ | the `Bun.serve` instance type |

@@ -372,6 +372,15 @@ try {
           failed = true;
           console.error(`[consumer-lane] node: ${runtime} multipart produced no proof`);
         }
+        const groupErrorOutput = step(`node: route group errors (${runtime})`, () =>
+          run(runtime, ['src/route-group-error.mjs'], dir),
+        );
+        if (!groupErrorOutput.includes('packed route group errors: ok')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} route group errors produced no proof`,
+          );
+        }
         const harnessOutput = step(`node: headless harness (${runtime})`, () =>
           run(runtime, ['src/headless-harness.mjs'], dir),
         );

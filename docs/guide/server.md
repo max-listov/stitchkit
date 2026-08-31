@@ -526,10 +526,18 @@ createServer({
   preconditions here, not authentication.
 - **`afterHandle`** — receives the handler result; return a replacement to
   transform it.
-- **`onError`** — receives any thrown error; return a `Response` to customise
-  the error body. Without it, errors render through the standard envelope. A
-  confirmed client disconnect is a transport cancellation rather than an
-  application error and deliberately bypasses this hook.
+- **`onError`** — for a matched contract route, the group's hook runs first,
+  then the global hook, then the standard error envelope. The first returned
+  `Response` wins (including its status and headers); an absent hook, `undefined`
+  return or thrown/rejected hook continues to the next level with the **original
+  error** and the same context and endpoint. A failing hook is diagnosed through
+  `logging.logger.error` (or the internal console fallback), never substituted
+  into the client response. This covers path/body validation, authorization,
+  before/after hooks and handler errors, including raw-response contract handlers.
+  Global `onRequest` failures, `rawRoutes` and unmatched 404/405 have no matched
+  contract group and use only the global hook. A confirmed client disconnect
+  deliberately bypasses both hooks; errors after streaming headers have been
+  sent keep their existing stream-error path.
 
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
 That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).

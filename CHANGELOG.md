@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.3] — 2026-08-31
+
+### Fixed
+
+- **Matched route groups now dispatch their declared `onError` hook.** Group policy runs before
+  global policy and the standard envelope, retaining the original error, context and endpoint on
+  fallback. The first response wins; absent, declining or failed hooks continue to the next level.
+  Hook failures reach the internal diagnostic sink without replacing the client error. Authorization,
+  validation, lifecycle and handler errors share the same path; CORS, request tracing, cancellation
+  and single-completion observability retain their semantics. Packed Bun and Node HTTP consumers
+  verify custom group responses (including `Cache-Control: no-store`) and failure fallback.
+
 ## [0.70.2] — 2026-08-30
 
 ### Added
@@ -4999,7 +5011,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.70.2...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.70.3...HEAD
+[0.70.3]: https://github.com/max-listov/stitchkit/compare/v0.70.2...v0.70.3
 [0.70.2]: https://github.com/max-listov/stitchkit/compare/v0.70.1...v0.70.2
 [0.67.0]: https://github.com/max-listov/stitchkit/compare/v0.66.1...v0.67.0
 [0.66.1]: https://github.com/max-listov/stitchkit/compare/v0.66.0...v0.66.1

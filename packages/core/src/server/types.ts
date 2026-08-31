@@ -272,6 +272,12 @@ export interface LifecycleHooks {
     result: unknown,
     endpoint: MethodDef,
   ) => unknown | Promise<unknown>;
+  /**
+   * Matched contract errors try group then global, stopping at the first Response.
+   * Undefined or a throw falls through with the original error; hook failures are
+   * internally diagnosed. Raw/unmatched/pre-route errors use only the global hook.
+   * Confirmed client cancellation bypasses error hooks.
+   */
   onError?: (
     ctx: RuntimeContext,
     error: unknown,
