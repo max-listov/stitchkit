@@ -127,6 +127,8 @@ const SERVER_SOURCE = [
   "handle.io.on('connection', (socket) => {",
   '  let snapshots = 0;',
   "  socket.on('ping', (data, acknowledge) => acknowledge({ n: data.n + 1 }));",
+  "  socket.on('diagnosticLate', (acknowledge) => setTimeout(() => acknowledge({ n: 7 }), 40));",
+  "  socket.on('diagnosticDrop', () => socket.disconnect(true));",
   "  socket.on('snapshot', (acknowledge) => {",
   '    snapshots += 1;',
   '    if (snapshots === 1) {',
@@ -212,7 +214,7 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
     );
   }
   dependencies.zod = peers.zod;
-  for (const name of ['socket.io', 'socket.io-client', '@socket.io/bun-engine']) {
+  for (const name of ['socket.io', 'socket.io-client', '@socket.io/bun-engine', 'srvx']) {
     const range = peers[name];
     if (!range) {
       throw new Error(
@@ -239,6 +241,13 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
   );
   execFileSync('bun', ['install'], { cwd: source, stdio: 'pipe' });
   writeFileSync(join(source, 'server.ts'), SERVER_SOURCE);
+  for (const fixture of [
+    'observation.mjs',
+    'observation-runtime.mjs',
+    'transport-policy.mjs',
+  ]) {
+    copyFileSync(join(import.meta.dirname, 'fixtures/socket', fixture), join(source, fixture));
+  }
 
   // Both runtimes, because both are how this is deployed: Node has no
   // auto-install at all, and Bun's must be OFF for the check to mean anything.
@@ -256,6 +265,17 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
   const server = await startServer(source);
   try {
     const url = `http://127.0.0.1:${server.port}`;
+    for (const runtime of runtimes) {
+      for (const [fixture, marker] of [
+        ['transport-policy.mjs', 'packed socket transport policy: ok'],
+        ['observation-runtime.mjs', 'packed insecure-context observation: ok'],
+      ]) {
+        const result = runIn(source, runtime.command, [fixture, url]);
+        if (result.failed || !result.output.includes(marker)) {
+          throw new Error(`[socket regression] ${runtime.label} ${fixture}: ${result.output}`);
+        }
+      }
+    }
     for (const runtime of runtimes) {
       for (const inject of [true, false]) {
         const name = `${runtime.label}-${inject ? 'injected' : 'default'}`;

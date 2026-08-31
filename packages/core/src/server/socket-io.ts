@@ -247,6 +247,14 @@ export async function createSocketIOServer<
   let closePromise: Promise<void> | undefined;
   const consumerAllowRequest = config.allowRequest;
   const checkRequest = async (request: Request): Promise<void> => {
+    // The Bun engine has no transport allowlist option. Its request-policy hook
+    // gates new handshakes, polling requests and upgrades before admitting them.
+    if (onBun) {
+      const requested = new URL(request.url).searchParams.get('transport');
+      if (!transports.some((transport) => transport === requested)) {
+        throw new Error('Transport rejected by the configured Socket.IO policy');
+      }
+    }
     if (consumerAllowRequest && !(await consumerAllowRequest(request))) {
       throw new Error('Request rejected by the configured Socket.IO policy');
     }

@@ -10,7 +10,7 @@ export const RealtimeRequestPhaseSchema = z.enum([
   'disconnected',
 ]);
 
-/** Metadata-only observation: no arguments, acknowledgement or packet bytes. */
+/** Metadata-only observation: opaque local IDs (not a UUID contract), no payload or packet bytes. */
 export const RealtimeRequestPhaseEventSchema = z
   .object({
     requestId: z.string().min(1),

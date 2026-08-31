@@ -9,6 +9,8 @@
  * A span id is unique to a single operation within that trace.
  */
 
+import { randomHex } from '../internal/random-hex';
+
 /** A point in a distributed trace — one trace, one span, an optional parent. */
 export interface TraceContext {
   /** 32-hex trace id — stable across every span of one logical request. */
@@ -26,15 +28,6 @@ export interface TraceContext {
 }
 
 const TRACEPARENT_RE = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(.*)$/i;
-
-/** `bytes` cryptographically-random bytes as a lowercase hex string. */
-function randomHex(bytes: number): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  let hex = '';
-  for (const byte of arr) hex += byte.toString(16).padStart(2, '0');
-  return hex;
-}
 
 /** A fresh root trace — a new trace id, a new span id, no parent. */
 export function createTraceContext(): TraceContext {

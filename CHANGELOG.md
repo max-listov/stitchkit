@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.4] — 2026-08-31
+
+### Fixed
+
+- **Bun Socket.IO enforces the configured transport allowlist.** Its Engine.IO request-policy
+  boundary refuses disallowed polling and WebSocket handshakes/upgrades before consumer
+  authorization. Allowed transports, acknowledgements, CORS, shutdown admission and the existing
+  runtime defaults remain intact; Node retains its native transport enforcement.
+- **Realtime request observation works on non-localhost HTTP browser origins.** Opaque local
+  request IDs share the browser-compatible random-byte generator used by trace context, without
+  requiring `crypto.randomUUID`. Client-wide and per-request hooks retain independent identities,
+  terminal cleanup and unchanged success/timeout/disconnect semantics; unobserved calls allocate
+  no diagnostic identity. No credential or public payload changes.
+
 ## [0.70.3] — 2026-08-31
 
 ### Fixed
@@ -5011,7 +5025,8 @@ First public release.
 - `createCacheBridge()` — sync socket events into the TanStack Query cache;
   transport-agnostic.
 
-[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.70.3...HEAD
+[Unreleased]: https://github.com/max-listov/stitchkit/compare/v0.70.4...HEAD
+[0.70.4]: https://github.com/max-listov/stitchkit/compare/v0.70.3...v0.70.4
 [0.70.3]: https://github.com/max-listov/stitchkit/compare/v0.70.2...v0.70.3
 [0.70.2]: https://github.com/max-listov/stitchkit/compare/v0.70.1...v0.70.2
 [0.67.0]: https://github.com/max-listov/stitchkit/compare/v0.66.1...v0.67.0

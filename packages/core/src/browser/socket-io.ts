@@ -21,6 +21,7 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 import { isModuleNotFound } from '../internal/optional-peer';
+import { randomHex } from '../internal/random-hex';
 import type { StitchLogger } from '../logger';
 import type {
   RealtimeAcknowledgedEvent,
@@ -905,7 +906,7 @@ function createSocketIOClientInternal<
       const trace: RealtimeRequestTrace | undefined =
         onRequestPhase || options.onPhase
           ? {
-              requestId: crypto.randomUUID(),
+              requestId: randomHex(16),
               event,
               startedAt: performance.now(),
               observeClient: onRequestPhase,

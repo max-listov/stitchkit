@@ -103,7 +103,7 @@ export interface SocketIOServerConfig<TParsed = any, TData = TParsed> {
   cors?: { origin: string | string[]; credentials?: boolean };
   /** Socket.IO endpoint path. Default `/socket.io/`. */
   path?: string;
-  /** Transports offered to clients; the runtime supplies its own default. */
+  /** Admitted transports. Bun defaults to both; Node defaults to websocket only. */
   transports?: Array<'websocket' | 'polling'>;
   /** Heartbeat: ms without a pong before the connection is dropped. */
   pingTimeout?: number;

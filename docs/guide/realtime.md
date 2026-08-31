@@ -187,6 +187,13 @@ the typed **`handshake`** identity gate (schema + verify →
 [typed `socket.data`](#handshake-auth--cookie-or-token)). `allowRequest` is the
 transport gate (composed with managed-shutdown admission on both Bun and Node);
 `handshake` is the identity gate that runs after it.
+`transports` is an admission allowlist: `['websocket']` refuses polling,
+`['polling']` refuses WebSocket handshakes/upgrades, and both explicitly enabled
+transports remain usable. Defaults are both transports on Bun and WebSocket-only
+on Node. Bun enforces this before consumer authorization through the engine's
+request-policy extension (including existing sessions); Node uses native Engine.IO
+enforcement. Bun's native upgrade hints do not override the allowlist. CORS
+preflight is not transport admission and keeps its ordinary behavior.
 For anything else socket.io's `ServerOptions` exposes, use the
 typed **`serverOptions`** passthrough — most often `maxHttpBufferSize` to lift the
 1 MB default for large emits:
@@ -469,6 +476,12 @@ closed phase:
 | `settled` | the acknowledgement callback ran and Stitchkit finished acknowledgement validation |
 | `timeout` | the existing native acknowledgement timeout won |
 | `disconnected` | the request began disconnected or an in-flight disconnect won |
+
+Observation also works on non-localhost HTTP origins: identity generation uses
+browser-compatible `crypto.getRandomValues`, not secure-context-only
+`crypto.randomUUID`. A `requestId` is opaque local diagnostic identity, not a
+promised UUID format, authentication token or transmitted field. Bun and Node
+use the same mechanism; enabling observation adds no HTTPS requirement.
 
 When a caller needs to join those phases to its own invocation, put `onPhase`
 on that request's options and keep the caller identity in the hook's closure:

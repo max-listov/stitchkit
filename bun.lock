@@ -20,7 +20,7 @@
     },
     "packages/core": {
       "name": "stitchkit",
-      "version": "0.70.3",
+      "version": "0.70.4",
       "dependencies": {
         "ky": "^2.0.2",
       },
