@@ -54,6 +54,21 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   `docs/backlog/inbox/`. See `docs/README.md`.
 - A completed backlog item may claim test coverage only by naming the exact
   test file and test case in its `Что сделано` section.
+- **ALWAYS** make a declared option load-bearing, and prove it. A typed option
+  that is accepted and then not honoured on some path is this repository's most
+  repeated defect — six shipped instances, four of them in three releases:
+  `transports: ['websocket']` did not refuse polling, a route group's `onError`
+  was never dispatched, `managedServerResource` never started the server it was
+  handed a thunk for, `bindProcessSignals` substituted schema defaults over the
+  application's declared budget. Every one of them typechecked, because a type
+  proves an option can be **passed** and says nothing about whether passing it
+  changes anything. `packages/core/tests/option-effects.test.ts` enumerates the
+  members of the covered configuration types through the TypeScript checker and
+  refuses one with no registered test; the registry names a real test, so it
+  cannot drift into a list of claims. It proves a named test *claims* the
+  option, not that the test is good — the same contract `reference-coverage`
+  has. Covered surfaces are chosen by failure mode: a wrong `port` fails loudly
+  on the first request, an unenforced allowlist looks exactly like success.
 - **ALWAYS** run `bun scripts/verify.ts --release` before a **release commit**, and let the
   `pre-push` hook reuse that exact-tree result — see *What runs where* below. `verify` is the
   whole portable local gate and it runs **every portable gate CI runs**: lint, typecheck, tests,

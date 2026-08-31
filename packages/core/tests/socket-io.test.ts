@@ -977,6 +977,46 @@ describe('Socket.IO ServerOptions passthrough', () => {
   });
 });
 
+// ─── Ping heartbeat reaches the hand-built Bun engine ───────────────────────
+
+describe('Socket.IO ping heartbeat', () => {
+  /** The Engine.IO open packet — what the client is actually told. */
+  async function openPacket(config: SocketIOServerConfig): Promise<{
+    pingInterval: number;
+    pingTimeout: number;
+  }> {
+    const handle = await createSocketIOServer<ServerEvents, ClientEvents>(config);
+    const server = createServer({ port: 0, socket: handle });
+    const response = await fetch(
+      `http://localhost:${server.port}/socket.io/?EIO=4&transport=polling`,
+    );
+    const body = await response.text();
+    await handle.close();
+    await server.shutdown();
+    // `0` is the Engine.IO OPEN packet type; the rest of the frame is its JSON.
+    const open: unknown = JSON.parse(body.slice(body.indexOf('{')));
+    return z.object({ pingInterval: z.number(), pingTimeout: z.number() }).parse(open);
+  }
+
+  test('a configured ping heartbeat reaches the Bun engine handshake', async () => {
+    // socket.io forwards engine-level options only when it builds the engine
+    // itself, which is the Node path. On Bun the engine is hand-built, so these
+    // two are passed explicitly — and a value that silently fell back to the
+    // default would look exactly like a working configuration.
+    const observed = await openPacket({
+      cors: { origin: '*' },
+      pingInterval: 3_000,
+      pingTimeout: 7_000,
+    });
+    expect(observed).toEqual({ pingInterval: 3_000, pingTimeout: 7_000 });
+  });
+
+  test('the default ping heartbeat is the documented one when omitted', async () => {
+    const observed = await openPacket({ cors: { origin: '*' } });
+    expect(observed).toEqual({ pingInterval: 10_000, pingTimeout: 20_000 });
+  });
+});
+
 // ─── CORS is optional (same-origin needs no allow-list) ─────────────────────
 
 describe('Socket.IO CORS', () => {

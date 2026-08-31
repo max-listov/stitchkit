@@ -2,9 +2,9 @@
 title: Bootstrap the TUI npm package and bind its trusted publisher
 description: Publish the first stitchkit-tui registry version, then hand all later releases to the existing OIDC workflow.
 type: task
-status: icebox
+status: planned
 created: 2026-08-30
-updated: 2026-08-30
+updated: 2026-08-31
 priority: P0
 ---
 
@@ -21,6 +21,18 @@ The public package identity is therefore the available unscoped `stitchkit-tui`,
 `stitchkit` and `create-stitchkit`; `@stitchkit` is not an owned namespace. The first publication
 needs one interactive 2FA-authenticated bootstrap from the exact CI artifact. Later versions
 remain tokenless OIDC publications.
+
+## Почему это не icebox
+
+Icebox is for work frozen by choice, with a defrost condition. This is neither:
+it is a P0 with one open step, and the step is an action only the repository
+owner can take — an interactive 2FA npm session to bind the trusted publisher.
+Parked in icebox it was invisible to the backlog conveyor, which never reads
+that directory, while the next `stitchkit-tui-vX.Y.Z` tag would fail at
+`npm publish` exactly as `0.1.0` already did.
+
+**Blocked on:** Max — bind the trusted publisher, or confirm it is already bound
+so this record can be closed instead.
 
 ## Plan
 
