@@ -147,6 +147,14 @@ export {
   hasAgentTerminalOutput,
 } from './agent-runtime/protocol';
 export {
+  AgentConversationPurgedError,
+  type AgentConversationPurgeInput,
+  AgentConversationPurgeInputSchema,
+  type AgentConversationPurgeResult,
+  AgentConversationPurgeResultSchema,
+  purgeAgentConversation,
+} from './agent-runtime/purge';
+export {
   type AgentRuntime,
   type AgentRuntimeAdmission,
   type AgentRuntimeConfig,
@@ -209,6 +217,7 @@ export {
   createAgentRuntimeStore,
   createMemoryAgentRuntimeStore,
 } from './agent-runtime/store-driver';
+export type { AgentConversationPurgeDriver } from './agent-runtime/store-purge';
 export { AgentRuntimeConflictError } from './agent-runtime/terminal-commit';
 export {
   type AgentHistoryEvidencePolicy,

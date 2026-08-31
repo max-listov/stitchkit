@@ -5,6 +5,7 @@ import {
   type AgentConversationReader,
 } from './conversations';
 import { AgentMessageSchema, AgentRunSchema } from './schemas';
+import { initializeSqliteConversationPurge, sqliteConversationPurge } from './sqlite-purge';
 import { AgentRecoverableDescriptorSchema, AgentRecoverablePageSchema } from './store';
 import {
   AgentAdmissionReceiptSchema,
@@ -182,6 +183,7 @@ export function initializeAgentRuntimeSqlite(database: AgentRuntimeSqliteDatabas
           `Refusing a partial Stitchkit agent-runtime SQLite schema; missing ${missingTables.join(', ')}`,
         );
       }
+      initializeSqliteConversationPurge(database);
       database.exec('COMMIT');
       return;
     }
@@ -227,6 +229,7 @@ export function initializeAgentRuntimeSqlite(database: AgentRuntimeSqliteDatabas
       );
       INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '1');
     `);
+    initializeSqliteConversationPurge(database);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
@@ -263,6 +266,7 @@ export function createSqliteAgentRuntimeStore(
   };
 
   const driver: AgentRuntimeStoreDriver<AgentRuntimeSqliteDatabase> = {
+    conversations: sqliteConversationPurge(database),
     transaction: (work) =>
       serial(async () => {
         database.exec('BEGIN IMMEDIATE');

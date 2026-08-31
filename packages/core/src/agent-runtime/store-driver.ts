@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentConversationPurgedError } from './purge';
 import {
   type AgentMessage,
   AgentMessageSchema,
@@ -33,6 +34,10 @@ import {
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
 } from './store';
+import {
+  type AgentConversationPurgeDriver,
+  createStoreConversationPurge,
+} from './store-purge';
 import { assistantStatus } from './terminal-status';
 
 export const AgentRuntimeHeadSchema = z.object({
@@ -85,6 +90,7 @@ export type AgentStoreCompareAndSwapResult =
   | { outcome: 'conflict'; actualVersion: number };
 
 export interface AgentRuntimeStoreDriver<TRANSACTION> {
+  conversations?: AgentConversationPurgeDriver<TRANSACTION>;
   transaction<RESULT>(work: (transaction: TRANSACTION) => Promise<RESULT>): Promise<RESULT>;
   head: {
     load(
@@ -951,6 +957,9 @@ export function createAgentRuntimeStore<TRANSACTION>(
   const mutate = (operation: StoreOperation): Promise<AgentStoreMutationResult> =>
     driver.transaction(async (transaction) => {
       const conversationId = operationConversationId(operation);
+      if (await driver.conversations?.isPurged(transaction, conversationId)) {
+        throw new AgentConversationPurgedError();
+      }
       const operationRunId =
         operation.type === 'accept'
           ? operation.input.coalesceIntoRunId
@@ -1080,6 +1089,9 @@ export function createAgentRuntimeStore<TRANSACTION>(
     loadSnapshot,
     loadRun,
     listActiveRuns,
+    ...(driver.conversations && {
+      purgeConversation: createStoreConversationPurge(driver, driver.conversations),
+    }),
     acceptInputAndAssignRun: (input) =>
       mutate({
         type: 'accept',
@@ -1114,6 +1126,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
 }
 
 interface MemoryTransaction {
+  purged: Set<string>;
   heads: Map<string, AgentRuntimeHead>;
   runs: Map<string, Map<string, AgentStoredRun>>;
   admissions: Map<string, Map<string, AgentAdmissionReceipt>>;
@@ -1152,6 +1165,7 @@ function cloneHistoryMap(source: ReadonlyMap<string, readonly AgentMessage[]>) {
 
 /** In-memory reference adapter backed by the same reducer and driver contract as durable stores. */
 export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
+  let purged = new Set<string>();
   let heads = new Map<string, AgentRuntimeHead>();
   let runs = new Map<string, Map<string, AgentStoredRun>>();
   let admissions = new Map<string, Map<string, AgentAdmissionReceipt>>();
@@ -1165,6 +1179,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       transactionTail = previous.catch(() => undefined).then(() => release.promise);
       await previous.catch(() => undefined);
       const transaction = {
+        purged: new Set(purged),
         heads: cloneHeadMap(heads),
         runs: cloneNestedMap(runs, (record) =>
           AgentStoredRunSchema.parse(structuredClone(record)),
@@ -1176,6 +1191,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       };
       try {
         const result = await work(transaction);
+        purged = transaction.purged;
         heads = transaction.heads;
         runs = transaction.runs;
         admissions = transaction.admissions;
@@ -1184,6 +1200,18 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       } finally {
         release.resolve();
       }
+    },
+    conversations: {
+      async isPurged(transaction, conversationId) {
+        return transaction.purged.has(conversationId);
+      },
+      async remove(transaction, conversationId) {
+        transaction.purged.add(conversationId);
+        transaction.heads.delete(conversationId);
+        transaction.runs.delete(conversationId);
+        transaction.admissions.delete(conversationId);
+        transaction.histories.delete(conversationId);
+      },
     },
     head: {
       async load(transaction, conversationId) {

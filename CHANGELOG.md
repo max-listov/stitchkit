@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.70.6] — 2026-08-31
+
+### Added
+
+- **Atomic conversation purge** through `purgeAgentConversation` and optional
+  `AgentRuntimeStore.purgeConversation`, with input/result schemas, types and
+  `AgentConversationPurgedError`. Memory and Bun/Node SQLite stores refuse active/queued runs,
+  support expected-version checks, remove all runtime-owned payloads and reserve purged IDs against
+  stale admissions, checkpoints and recovery. SQLite initialization adds transactional tombstones
+  and guards for older writers without changing application tables. Custom stores remain valid
+  and explicitly return `unsupported` through the helper; normalized drivers can opt in via
+  `AgentConversationPurgeDriver`. External files, metadata and secure backup erasure remain host-owned.
+
+### Fixed
+
+- Runtime admission refusal can be observed through either admission or result without leaving
+  the accepted ticket projection as an unhandled rejection in a controller host.
+
 ## [0.70.5] — 2026-08-31
 
 ### Fixed

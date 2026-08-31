@@ -520,6 +520,9 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         updatedAt: nowIso,
       });
       const outerAccepted = Promise.withResolvers<void>();
+      // Admission/result are alternative observations of the same refusal. A client
+      // awaiting either must not leave the accepted projection unhandled.
+      void outerAccepted.promise.catch(() => undefined);
       const outerAdmission = Promise.withResolvers<AgentRuntimeAdmission>();
       void outerAdmission.promise.catch(() => undefined);
       const outerResult = Promise.withResolvers<AgentRuntimeResult>();

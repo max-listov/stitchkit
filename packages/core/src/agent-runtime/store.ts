@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AgentConversationPurgeInput, AgentConversationPurgeResult } from './purge';
 import {
   AgentMessageSchema,
   AgentRecordIdSchema,
@@ -170,6 +171,10 @@ export type AgentRecoverableDescriptor = z.infer<typeof AgentRecoverableDescript
 export type AgentRecoverablePage = z.infer<typeof AgentRecoverablePageSchema>;
 
 export interface AgentRuntimeStore {
+  /** Optional atomic deletion. Active runs refuse deletion; purged IDs cannot be reused. */
+  purgeConversation?(
+    input: AgentConversationPurgeInput,
+  ): Promise<AgentConversationPurgeResult>;
   /**
    * The whole conversation — every message and every run.
    *

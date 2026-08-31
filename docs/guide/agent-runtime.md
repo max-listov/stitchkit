@@ -732,6 +732,61 @@ boundary, validate with the exported schema, and write only the current
 version. Core deliberately does not guess an application's database migration
 or silently accept an unknown future version.
 
+### Purging a conversation
+
+```ts
+import { purgeAgentConversation } from 'stitchkit/agent-runtime';
+
+const result = await purgeAgentConversation(store, {
+  conversationId,
+  expectedVersion: snapshot.version, // optional stale-intent protection
+});
+```
+
+The optional `AgentRuntimeStore.purgeConversation` capability is implemented by the memory and
+initialized Bun/Node SQLite stores. The helper returns `unsupported` for stores without it; it
+never pretends deletion succeeded. Other outcomes are `purged`, `already_purged`,
+`active` (with `runIds`), or `conflict` (with `actualVersion`). Storage failures reject.
+
+Purge refuses queued, running and interrupt-requested runs. It does not interrupt, force-abandon
+or wait for a provider. Authorize the destructive request in the host, close its conversation
+ingress/attachments, then settle runs through normal interruption or explicitly justified recovery.
+Retry purge after they are terminal. An optional expected version must match the current snapshot;
+a version conflict requires a fresh deletion decision, not blind retry with a new version.
+
+Successful purge atomically removes messages (including compacted inactive rows), all runs and
+retained terminal assistants, admissions/idempotency receipts, conversation heads and their owned
+indexes. It retains only a permanent conversation-ID tombstone. Purging an unknown ID reserves it
+as well, so a submit paused before admission cannot create it later. Repeating the call returns
+`already_purged`, regardless of the original expected version. A lost response is safely retried
+with the same ID; **new chats require a new ID**.
+
+Every later runtime mutation rejects with `AgentConversationPurgedError`, including fresh and
+duplicate admissions, checkpoints, recovery and compaction. Existing controller leases grant no
+exception. Existing reads return empty snapshots, absent runs and empty message pages; purged
+conversations disappear from the SQLite catalog and recovery scans. Snapshots retain their
+existing empty `version: 0` shape; use the purge result, not an empty snapshot, as deletion evidence.
+
+SQLite commits the tombstone and all deletions in one `BEGIN IMMEDIATE` transaction. Failure before
+commit rolls everything back; reopen/recovery cannot restore committed deleted records. Same-thread
+connection contention rejects promptly without effects; retry after the competing operation settles.
+Initialization adds the tombstone table and write guards to schema v1 transactionally, without
+changing application tables or `user_version`. Guards also fence older writers. `initialize: false`
+on an original v1 database does not add purge capability; open an initialized writer first.
+
+Consumer-owned model selections, projections, attachment files, delivery/outbox records and event
+logs remain outside this boundary. Retain an authorized cleanup intent plus any needed opaque file
+references in consumer storage, purge first, then retry idempotent consumer cleanup. Invalidate local
+caches/subscriptions so an old delivered event cannot repopulate a UI. The library never traverses
+paths, revokes remote artifacts or claims a cross-store transaction. Nor does logical purge securely
+wipe database free pages, WAL or backups. Memory tombstones last only for that store instance.
+
+Custom normalized drivers may opt in through `AgentConversationPurgeDriver` on `driver.conversations`.
+Their transaction must serialize `isPurged`, head/active-run checks, `remove`, and **all** mutations
+for the same ID, including absent-ID admission. An optimistic head CAS alone is insufficient. `remove`
+must delete every owned payload/index and preserve the tombstone; errors must roll back the entire
+transaction. Drivers without this guarantee must leave the capability absent. See ADR 0138.
+
 ## Events and reconnect
 
 `publish` receives event classes with different guarantees:

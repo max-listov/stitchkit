@@ -356,6 +356,15 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const purgeOutput = step(`node: conversation purge (${runtime})`, () =>
+          run(runtime, ['src/conversation-purge.mjs'], dir),
+        );
+        if (!purgeOutput.includes('packed conversation purge: ok')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} conversation purge produced no proof`,
+          );
+        }
         const streamShutdownOutput = step(`node: stream shutdown (${runtime})`, () =>
           run(runtime, ['src/stream-shutdown.mjs'], dir),
         );

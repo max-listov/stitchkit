@@ -632,6 +632,11 @@ Server-only optional application runtime. See the
 | `AgentHistoryMutationSchema` | schema | typed canonical message mutation applied inside the winning state transaction |
 | `RecoverAgentRunSchema` | schema | explicit abandon/requeue recovery decision; acquired runs require replay-safe evidence |
 | `createMemoryAgentRuntimeStore` | function | process-local reference adapter, not production durability |
+| `purgeAgentConversation` | function | dispatch optional atomic deletion; returns `unsupported`, `active`, `conflict`, `purged` or `already_purged` |
+| `AgentConversationPurgeInputSchema` / `AgentConversationPurgeInput` | schema / _type_ | conversation ID and optional expected snapshot version |
+| `AgentConversationPurgeResultSchema` / `AgentConversationPurgeResult` | schema / _type_ | typed deletion/refusal outcomes; active refusal includes run IDs |
+| `AgentConversationPurgedError` | class | runtime mutation rejected because its conversation ID is permanently purged |
+| `AgentConversationPurgeDriver` | _type_ | optional `driver.conversations` capability: serialized tombstone read and atomic removal of all owned records |
 | `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
 | `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
 | `AgentModelCatalogSchema` / `AgentModelCatalog` | schema / _type_ | provider-neutral complete/partial model catalog with separately sourced popularity, metrics, prices and observation time |
@@ -732,6 +737,12 @@ neither grows with the length of the conversation, and neither needs anything ne
 `AgentRuntimeStoreDriver`. `loadSnapshot` and every mutation result still carry the whole
 conversation — that is what the store's reducer validates against, and what the runtime builds a
 prompt from (→ ADR 0112).
+
+`AgentRuntimeStore.purgeConversation` is optional; `purgeAgentConversation(store, input)` explicitly
+handles unsupported stores. Official memory and initialized SQLite stores refuse active runs,
+remove every owned payload and reserve the conversation ID permanently. Empty snapshots are not
+deletion receipts. Consumer metadata, files, event logs and UI cache invalidation remain outside
+the transaction. See [purging a conversation](../guide/agent-runtime.md#purging-a-conversation).
 
 Store command/result exports are `AcceptInputAndAssignRun`, `AcceptInputAndAssignRunSchema`,
 `AcquireAgentRun`, `AcquireAgentRunSchema`, `CheckpointRunAssistant`,
