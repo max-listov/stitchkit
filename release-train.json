@@ -3,11 +3,7 @@
   "releases": [
     {
       "target": "core",
-      "version": "0.72.3"
-    },
-    {
-      "target": "create-stitchkit",
-      "version": "0.5.1"
+      "version": "0.72.4"
     }
   ]
 }

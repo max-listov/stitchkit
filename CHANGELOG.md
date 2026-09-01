@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.4] — 2026-09-01
+
+### Fixed
+
+- **A graceful shutdown no longer reports `forced` for work that already
+  drained**, on any server that has ever upgraded a connection. Bun's `stop()`
+  Promise never settles after an upgrade — the adapter knew that and guarded the
+  branch it takes when nothing is pending, while awaiting `stop(false)`
+  unguarded on the branch it takes when something is. So a finite response still
+  in flight beside a WebSocket turned every clean shutdown into a deadline
+  force: `outcome: 'forced'`, `reason: 'deadline'`, and counters that
+  contradicted it — `pendingRequests` 0, `abortedRequests` 0, nothing forced.
+
+  A shutdown that lies about being forced is worse than a slow one: an operator
+  reading it goes looking for work that does not exist. The stop is now driven
+  by the work draining rather than by a Promise that cannot settle, and it stays
+  bounded — the orchestrator races this phase against the caller's grace
+  deadline, so work that genuinely does not finish still ends as a truthful
+  force.
+
+  Reported by a consuming application with an exact reproduction and a negative
+  control; both are now `packages/core/tests/shutdown-upgraded-connection.test.ts`.
+
 ## [0.72.3] — 2026-09-01
 
 ### Added

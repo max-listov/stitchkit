@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.72.3",
+  "version": "0.72.4",
   "description": "Contract-first backend framework \u2014 one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",

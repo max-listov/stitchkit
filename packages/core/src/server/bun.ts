@@ -167,6 +167,21 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     if (openSockets.size === 0) return Promise.resolve();
     return new Promise<void>((resolve) => socketDrainWaiters.add(resolve));
   };
+  /**
+   * Wait until Bun reports no request in flight.
+   *
+   * Reporting that is exactly what `stop(false)` is for, and after an upgraded connection its
+   * Promise never settles — the same behaviour `forceStop` already records for `stop(true)`. A
+   * socket close callback gives `waitForSocketDrain` a real edge to wait on; requests have no
+   * such callback here, so the count is polled. The wait is bounded from outside: the shutdown
+   * orchestrator races `stopGracefully` against the caller's grace deadline, so work that never
+   * finishes ends as a force with a truthful reason rather than as a hang.
+   */
+  const waitForRequestDrain = async (server: BunServer): Promise<void> => {
+    while (server.pendingRequests > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  };
   const trackedWebSocket: typeof websocket = websocket
     ? {
         ...websocket,
@@ -221,7 +236,19 @@ export function createServer(config: BunServerConfig): BunServerHandle {
         else void stopping.catch(() => undefined);
         return;
       }
-      await server.stop(false);
+      // Pending work at entry. `stop(false)` still performs the graceful stop — it refuses new
+      // connections and lets in-flight requests finish — but its Promise cannot be the
+      // completion signal here for the same reason the branch above refuses to await
+      // `stop(true)`: one upgrade in this server's lifetime leaves it pending for good. That
+      // guard existed on one branch and not on the other, so a finite response in flight beside
+      // a WebSocket turned every clean shutdown into a deadline force.
+      const stopping = server.stop(false);
+      if (!hadWebSockets) {
+        await stopping;
+        return;
+      }
+      void stopping.catch(() => undefined);
+      await waitForRequestDrain(server);
     },
     async forceStop() {
       const logicalClose = socket?.close();
