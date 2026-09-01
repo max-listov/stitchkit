@@ -61,9 +61,13 @@ const ceiling =
 ```
 
 A shape carrying members of both branches — `{ maxKeys, maxConcurrent, limits }` —
-is refused at construction. It does *not* fail to typecheck: an excess-property
-check against a union admits any property some member declares, so this one is
-caught by `createBoundedAdmission`, not by `tsc`.
+is refused. **In 0.72.0 and 0.72.1 that refusal came only from
+`createBoundedAdmission`**, not from `tsc`: an excess-property check against a
+union admits any property some member declares, so the mixed shape typechecked
+and threw when the admission was built. From **0.72.2** each branch declares the
+other's members as `never`, so it is a compile error. Nothing about the runtime
+changed — both branches always refused it — but on a path your tests do not
+construct, the earlier versions would have told you in production.
 
 ### If you build a snapshot or a status by hand
 

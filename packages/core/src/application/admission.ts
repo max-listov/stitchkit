@@ -46,10 +46,16 @@ export const BoundedAdmissionPolicySchema = z
         rate: BoundedRateBudgetSchema.optional(),
       })
       .strict(),
-    // One ceiling for every key, or one resolved from the key — never both. The union carries
-    // the exclusivity; a shape with members of both branches satisfies neither strict object and
-    // is refused at construction. It does not fail to typecheck: an excess-property check
-    // against a union admits any property some member declares.
+    // One ceiling for every key, or one resolved from the key — never both.
+    //
+    // The `never` members are what make that exclusive to the COMPILER. Without them the union
+    // refuses a mixed shape only at construction, because an excess-property check against a
+    // union admits any property some member declares — so `{ maxKeys, maxConcurrent, limits }`
+    // typechecks and throws when the admission is built. A consuming session found the cost of
+    // that: their tests happened to construct an admission, so it surfaced; on a path exercised
+    // only in production it would have surfaced there. `limits?: never` on the flat branch and
+    // `maxConcurrent?: never` / `rate?: never` on the resolver branch move the refusal to `tsc`
+    // and change nothing at runtime, where both branches already refused it.
     perKey: z
       .union([
         z
@@ -57,12 +63,15 @@ export const BoundedAdmissionPolicySchema = z
             maxConcurrent: PositiveSafeIntegerSchema,
             maxKeys: PositiveSafeIntegerSchema,
             rate: BoundedRateBudgetSchema.optional(),
+            limits: z.never().optional(),
           })
           .strict(),
         z
           .object({
             maxKeys: PositiveSafeIntegerSchema,
             limits: PerKeyLimitResolverSchema,
+            maxConcurrent: z.never().optional(),
+            rate: z.never().optional(),
           })
           .strict(),
       ])
@@ -260,9 +269,10 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   const resolveKeyLimits = (key: string): BoundedAdmissionPerKeyLimits | undefined => {
     const perKey = policy.perKey;
     if (!perKey) return undefined;
-    if ('limits' in perKey) {
-      return BoundedAdmissionPerKeyLimitsSchema.parse(perKey.limits(key));
-    }
+    // Narrowed on the resolver itself rather than on the key: both branches now declare
+    // `limits`, one of them as `never`, so `'limits' in perKey` no longer tells them apart.
+    const resolver = perKey.limits;
+    if (resolver) return BoundedAdmissionPerKeyLimitsSchema.parse(resolver(key));
     return BoundedAdmissionPerKeyLimitsSchema.parse({
       maxConcurrent: perKey.maxConcurrent,
       ...(perKey.rate && { rate: perKey.rate }),

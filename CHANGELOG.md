@@ -15,6 +15,23 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.2] — 2026-09-01
+
+### Changed
+
+- **A `perKey` policy mixing the flat ceiling with a resolver is now a type
+  error, not a construction error.** The two forms were already exclusive and a
+  mixed shape was already refused — but only by the schema, when the admission
+  was built, because an excess-property check against a union admits any
+  property some member declares. Each branch now declares the other's members as
+  `never`, so `tsc` refuses the mixed shape wherever it is written, including
+  through an intermediate variable. Runtime behaviour is unchanged.
+
+  The distance between those two is the point, and it was named by a consuming
+  application upgrading across this release: their tests happened to construct
+  an admission, so a mistake here would have surfaced in the suite. On a path
+  exercised only in production, it would have surfaced there.
+
 ## [0.72.1] — 2026-09-01
 
 ### Changed

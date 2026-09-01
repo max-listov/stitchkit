@@ -119,13 +119,12 @@ describe('per-key admission with a key-dependent ceiling', () => {
     expect(resolved).toEqual(['tenant', 'tenant']);
   });
 
-  test('a resolver and a flat ceiling are mutually exclusive at construction', () => {
+  test('a resolver and a flat ceiling are mutually exclusive, to the compiler first', () => {
     expect(() =>
       createBoundedAdmission({
         policy: {
           global: { maxConcurrent: 1 },
-          // TypeScript's excess-property check against a union admits a property declared by
-          // any member, so this shape reaches the schema; both strict branches then refuse it.
+          // @ts-expect-error the two forms are exclusive in the type, not only in the schema
           perKey: { maxKeys: 1, maxConcurrent: 1, limits: () => ({ maxConcurrent: 1 }) },
         },
       }),
