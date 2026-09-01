@@ -279,6 +279,8 @@ export const AgentCostValueSchema = z.object({
   ]),
 });
 
+export type AgentUsageValue = z.infer<typeof AgentUsageValueSchema>;
+
 export const AgentUsageSchema = z.object({
   inputTokens: AgentUsageValueSchema,
   outputTokens: AgentUsageValueSchema,

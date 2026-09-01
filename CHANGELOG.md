@@ -15,6 +15,149 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.71.0] — 2026-09-01
+
+Five defects in the Agent coding tools, all found by watching nine models of
+different classes work one task. The theme is the same in every one: the tools
+were correct and the model could not tell.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone implementing `AgentCodingToolConfig.authorize`, and the
+worst case is the one the compiler does not catch. An exhaustive matcher fails to
+compile and is easy; a matcher with a default branch does not — with default-allow
+it silently authorizes `edit`, `list` and `glob`, which the host never approved,
+and with default-deny it silently kills `edit_file`. Handle the three new
+operations explicitly; the `patch` branch is dead. Anyone calling `apply_patch`
+renames it and may delete the two-call protocol around it. Anyone keying policy
+on the string `apply_patch` — an approval list, a UI label — updates the key.
+Everyone else re-reads two values: `write_file` now returns `createdDirectories`,
+and refusals now carry codes other than `INTERNAL_SERVER_ERROR`.
+
+- **`apply_patch` is now `edit_file`, and one call.** `baseSha256` was mandatory
+  and `dryRun` defaulted to `true`, so an edit was two calls carrying a 64-hex
+  digest between them — a protocol the schema never showed, and half of the
+  observed models never completed one. The digest is now the optional
+  `expectedSha256` (`oldText` is itself a freshness guard for the region being
+  changed), `dryRun` defaults to `false`, and the result returns the new
+  `sha256` so the next edit chains without re-reading.
+  `// before: apply_patch({ path, baseSha256, oldText, newText, dryRun: false })` →
+  `// after: edit_file({ path, oldText, newText })`
+
+- **`AgentCodingToolAuthorization` gains `edit`, `list` and `glob`, and loses
+  `patch`.** The `edit` payload is the old `patch` payload unchanged, so a host
+  keeps every lever it had. `write` gains `createsDirectories`, naming what the
+  call would create before it creates anything.
+  `// before: if (request.operation === 'patch') …` →
+  `// after: if (request.operation === 'edit') …  // plus 'list' and 'glob'`
+
+### Added
+
+- **`list_directory` and `glob`.** The two questions a model asks every turn and
+  could only answer through a shell, where one existed. Listings mark excluded
+  directories rather than hiding them — hiding is a lie about the disk — and
+  `glob` reports `skippedDirectories` beside its results, because an empty list
+  from a tree whose files all live under `dist/` is not "no files". Both bound
+  their output and say when they cut it; `glob` distinguishes a result that was
+  truncated from a tree that was not fully walked. → ADR 0139
+
+- **`search_files` takes `regex`, `context` and `include`.** Context lines end
+  the read-after-every-match round trip. Regex is bounded by refusing
+  backreferences and lookaround and capping line length, not by a timeout: a
+  JavaScript `RegExp` cannot be interrupted, and catastrophic backtracking on one
+  line hangs the thread no matter what clock watches it.
+
+- **A step can see how full the context is.** `AgentRuntimeRunContext.contextUsage`
+  carries the **last completed step's** prompt size with its provenance beside the
+  model's window. Not the cumulative total, which counts every step's prompt
+  again and reads as overflow while the model has room; and `unavailable` before
+  the first step lands, which is a different fact from zero. In the observed run
+  a model went to a hard overflow without changing behaviour once — it had no way
+  to know. No fraction is exposed: dividing is one line where it is rendered.
+  → ADR 0140
+
+- **A provider refusal has a name, and says what the name rests on.**
+  `classifyProviderFailure` returns the reason — `insufficient-credits`,
+  `rate-limited`, `model-unavailable`, `context-overflow`, `timeout`,
+  `cancelled`, `unknown` — with the provider's status when it gave one, whether
+  the same request is retryable unchanged, and the evidence: a status is the
+  provider stating its own answer, a message match is us reading its prose, and
+  `none` refuses to guess. The core does not phrase: the sentence a user reads is
+  the application's, and an unrecognised failure is never retryable, because a
+  retry loop built on a guess is how one broken request becomes a bill.
+  `isToolResultFailure` recognises a failure carried inside a *successful* tool
+  result. Both are plain functions and need no runtime. → ADR 0141
+
+- **`normalizeOpenRouterUsage` is exported.** It always ran inside
+  `openRouterProvider`, which meant it was reachable only by adopting the whole
+  runtime — durable store and execution protocol included. An application that
+  calls the SDK directly and wants an honest number for its own ledger now uses
+  the same implementation instead of deriving the provenance rules again.
+
+- **`selectCompactableHistory`, and a rule for what else leaves the runtime.**
+  Compaction shipped months ago as `structuredCompaction`, which takes a store
+  and writes back under a version check — so an application driving the model
+  itself could not reach it, and wrote its own. The *selection* inside it needs
+  neither: given a message list it returns the oldest whole complete turns that
+  may be summarised away, the summary already at the head, and everything the
+  model must still hear. A turn holding a tool call whose result never arrived
+  is never eligible — half a turn is a call with no result, which most providers
+  refuse. `structuredCompaction` now calls it rather than repeating it, so the
+  two cannot drift. The rule deciding this and the two primitives it **refuses**
+  to publish are in → ADR 0142.
+
+- **`stitchkit/telegram` — Mini App verification and Bot API failure
+  classification, peer-free.** `verifyTelegramInitData` checks the signature in
+  constant time and *before* reading anything out of the string, including its
+  expiry: a timestamp inside an unverified payload is a number the sender chose.
+  It refuses with a reason — `missing-hash`, `signature-mismatch`, `malformed`,
+  `expired` — because an application answers a stale string differently from a
+  forged one. `classifyTelegramSendFailure` answers two questions that a list of
+  substrings cannot answer at once: whether to retry *this send*
+  (`retryable`) and whether to stop addressing *this recipient*
+  (`recipientUnreachable`). A message Telegram could not parse is our payload's
+  fault and implicates nobody; an unrecognised refusal never marks a recipient
+  unreachable, because dropping a working subscriber forever costs more than one
+  wasted send. Importing it resolves no bot library — `stitchkit/application/grammy`
+  stays the lifecycle adapter. → ADR 0143
+
+- **`isPublicIp` beside `extractIp`.** Whether an address belongs to the public
+  internet, over the full IANA special-purpose set rather than the three blocks
+  everyone remembers — carrier-grade NAT (`100.64/10`) is a real client address
+  nothing routes back to, and `169.254/16` is what a host answers with when DHCP
+  failed. IPv6 is judged by the one rule that cannot age: global unicast is
+  `2000::/3` and everything else is outside it. Anything unparseable is **not**
+  public, so a malformed header is refused rather than trusted by accident.
+
+### Fixed
+
+- **`write_file` creates missing parent directories.** Writing
+  `packages/shared/src/schemas/currency.ts` into a fresh project failed, and the
+  model could not see why; after two such answers it concluded writing was
+  unavailable, wrote everything into the root, then stopped writing code. The
+  walk that finds the missing directories runs **before** authorization and
+  reports them to the host, so no mutation precedes approval, and
+  `createdDirectories` names what appeared — auto-creation turns a typo from an
+  error into a successful write into a tree nobody meant, and that is the only
+  signal by which a model catches its own.
+
+- **An ordinary coding-tool outcome no longer looks like a server fault.** A
+  missing file, an ambiguous snippet, an existing file, a path outside the root,
+  a symlink, a directory where a file was asked for: each now carries a typed
+  code and an instructive hint the model can act on. Host-level causes — a root
+  that vanished, a broken native backend, an artifact store breaking its
+  contract — are still scrubbed to `INTERNAL_SERVER_ERROR` and still name
+  nothing outside the workspace. `packages/core/tests/coding-tool-refusals.test.ts`
+  enumerates the tools mechanically and asserts the serialized envelope, because
+  a gate checking only the code passes on a refusal whose sentence was displaced
+  by its own structured details. → ADR 0139
+
+- **A concurrent `edit_file` cannot erase another's work.** The read, the
+  occurrence count and the construction of the new content happen inside one
+  lock, so two edits of different snippets in one file no longer both build a
+  file from the same base. The lock is process-local: nine agents in one process
+  are covered, two processes over one workspace are not.
+
 ## [0.70.6] — 2026-08-31
 
 ### Added

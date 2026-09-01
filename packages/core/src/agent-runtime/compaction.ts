@@ -81,17 +81,61 @@ function groupProviderTurns(
   return turns;
 }
 
-function eligibleForCompaction(
-  messages: readonly AgentMessage[],
-  keepRecentTurns: number,
-  evidencePolicy: AgentHistoryEvidencePolicy | undefined,
-): AgentMessage[] {
-  const withoutLeadingSummary = messages[0]?.role === 'summary' ? messages.slice(1) : messages;
-  const turns = groupProviderTurns(withoutLeadingSummary, evidencePolicy);
+export interface SelectCompactableHistoryOptions {
+  messages: readonly AgentMessage[];
+  /** Whole turns kept out of reach of compaction, counted from the newest. */
+  keepRecentTurns: number;
+  evidencePolicy?: AgentHistoryEvidencePolicy;
+}
+
+export interface CompactableHistory {
+  /**
+   * The summary already at the head of this history, when there is one.
+   *
+   * A second compaction replaces it rather than stacking another summary on
+   * top; a caller that appends instead grows a chain of summaries of summaries.
+   */
+  leadingSummary?: AgentMessage;
+  /** The oldest whole complete turns, safe to replace with a summary. */
+  compactable: readonly AgentMessage[];
+  /** Everything the model must still hear verbatim, in order. */
+  retained: readonly AgentMessage[];
+}
+
+/**
+ * Which of a conversation's records may be summarised away, without the store.
+ *
+ * This is the half of compaction that is arithmetic over a message list: it
+ * needs no snapshot version, no CAS and no runtime, so it is reachable by an
+ * application that drives the model itself (→ ADR 0142). `structuredCompaction`
+ * is the other half — it exists to write the result back under a version check,
+ * and it calls this function rather than repeating it.
+ *
+ * The rule it enforces is the one a hand-written compactor gets wrong: a turn
+ * is cut whole or not at all, and only after it is *complete*. A turn holding a
+ * tool call whose result never arrived is not evidence of anything and is never
+ * eligible — summarising it away hides an unfinished exchange, and keeping half
+ * of it hands the provider a call with no result, which most of them refuse.
+ */
+export function selectCompactableHistory(
+  options: SelectCompactableHistoryOptions,
+): CompactableHistory {
+  if (!Number.isSafeInteger(options.keepRecentTurns) || options.keepRecentTurns < 0) {
+    throw new TypeError('keepRecentTurns must be a non-negative safe integer');
+  }
+  const leadingSummary =
+    options.messages[0]?.role === 'summary' ? options.messages[0] : undefined;
+  const rest = leadingSummary ? options.messages.slice(1) : options.messages;
+  const turns = groupProviderTurns(rest, options.evidencePolicy);
   const firstIncomplete = turns.findIndex((turn) => !turn.complete);
   const completeTurns = firstIncomplete === -1 ? turns : turns.slice(0, firstIncomplete);
-  const eligibleCount = Math.max(0, completeTurns.length - keepRecentTurns);
-  return completeTurns.slice(0, eligibleCount).flatMap((turn) => turn.messages);
+  const eligibleCount = Math.max(0, completeTurns.length - options.keepRecentTurns);
+  const compactable = completeTurns.slice(0, eligibleCount).flatMap((turn) => turn.messages);
+  return {
+    ...(leadingSummary !== undefined && { leadingSummary }),
+    compactable,
+    retained: rest.slice(compactable.length),
+  };
 }
 
 function mutationSnapshot(
@@ -130,17 +174,15 @@ export function structuredCompaction<SUMMARY_SCHEMA extends ZodType>(
       if (!(await config.threshold(snapshot))) {
         return { outcome: 'not_needed', snapshot, attempts: attempt };
       }
-      const eligibleMessages = eligibleForCompaction(
-        snapshot.messages,
-        config.keepRecentTurns,
-        config.evidencePolicy,
-      );
+      const { leadingSummary, compactable: eligibleMessages } = selectCompactableHistory({
+        messages: snapshot.messages,
+        keepRecentTurns: config.keepRecentTurns,
+        ...(config.evidencePolicy !== undefined && { evidencePolicy: config.evidencePolicy }),
+      });
       if (eligibleMessages.length === 0) {
         return { outcome: 'nothing_eligible', snapshot, attempts: attempt };
       }
 
-      const leadingSummary =
-        snapshot.messages[0]?.role === 'summary' ? snapshot.messages[0] : undefined;
       const previousSummary =
         leadingSummary && config.readPreviousSummary
           ? config.schema.parse(config.readPreviousSummary(leadingSummary))

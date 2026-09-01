@@ -8,7 +8,16 @@ import {
   type Stats,
   write as writeDescriptor,
 } from 'node:fs';
-import { lstat, open, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rename,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +57,7 @@ interface DarwinBinding {
   openDirectoryAt(directory: number, name: string): number;
   openFileAt(directory: number, name: string): number;
   createFileAt(directory: number, name: string, mode: number): number;
+  createDirectoryAt(directory: number, name: string, mode: number): boolean;
   statAt(directory: number, name: string): Omit<DarwinEntry, 'name'> | null;
   listAt(directory: number): readonly DarwinEntry[];
   renameAt(directory: number, source: string, target: string): void;
@@ -92,6 +102,7 @@ function loadDarwinBinding(): DarwinBinding {
     'openDirectoryAt',
     'openFileAt',
     'createFileAt',
+    'createDirectoryAt',
     'statAt',
     'listAt',
     'renameAt',
@@ -204,6 +215,8 @@ async function openFileAt(
 
 interface ContainedEntryMetadata {
   mode: number;
+  /** Byte length for a regular file; absent where the platform did not report one. */
+  size?: number;
   isDirectory(): boolean;
   isFile(): boolean;
   isSymbolicLink(): boolean;
@@ -216,9 +229,10 @@ interface ContainedDirectoryEntry {
   isSymbolicLink(): boolean;
 }
 
-function entryMetadata(mode: number): ContainedEntryMetadata {
+function entryMetadata(mode: number, size?: number): ContainedEntryMetadata {
   return {
     mode,
+    ...(size !== undefined && { size }),
     isDirectory: () => modeIs(mode, FILE_TYPE_DIRECTORY),
     isFile: () => modeIs(mode, FILE_TYPE_REGULAR),
     isSymbolicLink: () => modeIs(mode, FILE_TYPE_SYMLINK),
@@ -231,7 +245,7 @@ async function statAt(
 ): Promise<ContainedEntryMetadata | null> {
   if (process.platform === 'darwin') {
     const metadata = loadDarwinBinding().statAt(directory.fd, name);
-    return metadata ? entryMetadata(metadata.mode) : null;
+    return metadata ? entryMetadata(metadata.mode, metadata.size) : null;
   }
   return lstat(path.join(descriptorPath(directory), name)).catch(
     (error: NodeJS.ErrnoException) => {
@@ -252,15 +266,140 @@ async function listAt(
   return readdir(descriptorPath(directory), { withFileTypes: true });
 }
 
+/** One directory's direct children, read through pinned descriptors. */
+export async function listContainedDirectory(
+  root: string,
+  relative: string,
+  maxEntries: number,
+): Promise<{
+  entries: {
+    name: string;
+    kind: 'file' | 'directory' | 'symlink' | 'other';
+    bytes?: number;
+  }[];
+  truncated: boolean;
+}> {
+  let current = await openPinnedDirectory(root);
+  try {
+    if (relative !== '.') {
+      for (const segment of safeSegments(relative)) {
+        const next = await openDirectoryAt(current, segment);
+        const metadata = await next.stat();
+        if (!metadata.isDirectory()) {
+          await next.close();
+          throw new Error('Contained ancestor is not a directory');
+        }
+        await current.close();
+        current = next;
+      }
+    }
+    const raw = [...(await listAt(current))];
+    raw.sort((left, right) => left.name.localeCompare(right.name));
+    const entries: {
+      name: string;
+      kind: 'file' | 'directory' | 'symlink' | 'other';
+      bytes?: number;
+    }[] = [];
+    for (const entry of raw.slice(0, maxEntries)) {
+      const kind = entry.isDirectory()
+        ? 'directory'
+        : entry.isSymbolicLink()
+          ? 'symlink'
+          : entry.isFile()
+            ? 'file'
+            : 'other';
+      if (kind !== 'file') {
+        entries.push({ name: entry.name, kind });
+        continue;
+      }
+      const metadata = await statAt(current, entry.name);
+      entries.push({
+        name: entry.name,
+        kind,
+        ...(metadata && { bytes: metadata.size }),
+      });
+    }
+    // Directories first, then files — the order a reader scans a tree in.
+    entries.sort((left, right) => {
+      if (left.kind === right.kind) return left.name.localeCompare(right.name);
+      return left.kind === 'directory' ? -1 : right.kind === 'directory' ? 1 : 0;
+    });
+    return { entries, truncated: raw.length > maxEntries };
+  } finally {
+    await current.close();
+  }
+}
+
 export interface ContainedParent {
   handle: ContainedFileHandle;
   basename: string;
 }
 
 /** Pin every ancestor as a directory descriptor before returning the final parent capability. */
+/** Create one directory through the pinned parent; `false` when it already exists. */
+async function createDirectoryAt(
+  directory: ContainedFileHandle,
+  name: string,
+): Promise<boolean> {
+  if (process.platform === 'darwin') {
+    return loadDarwinBinding().createDirectoryAt(directory.fd, name, 0o777);
+  }
+  try {
+    await mkdir(path.join(descriptorPath(directory), name));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
+}
+
+/**
+ * Which ancestors of `relative` do not exist yet, outermost first.
+ *
+ * Read-only on purpose: the caller authorizes the mutation before any of it
+ * happens, and cannot do that without knowing what would be created.
+ */
+export async function missingContainedDirectories(
+  root: string,
+  relative: string,
+): Promise<string[]> {
+  const segments = safeSegments(relative);
+  segments.pop();
+  const missing: string[] = [];
+  let current = await openPinnedDirectory(root);
+  try {
+    let walked: string[] = [];
+    for (const segment of segments) {
+      walked = [...walked, segment];
+      if (missing.length > 0) {
+        // Once one ancestor is missing every deeper one is too, and there is
+        // nothing left to open.
+        missing.push(walked.join(path.sep));
+        continue;
+      }
+      const next = await openDirectoryAt(current, segment).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        },
+      );
+      if (!next) {
+        missing.push(walked.join(path.sep));
+        continue;
+      }
+      await current.close();
+      current = next;
+    }
+    return missing;
+  } finally {
+    await current.close();
+  }
+}
+
 export async function openContainedParent(
   root: string,
   relative: string,
+  options: { create?: boolean } = {},
 ): Promise<ContainedParent> {
   const segments = safeSegments(relative);
   const basename = segments.pop();
@@ -268,6 +407,11 @@ export async function openContainedParent(
   let current = await openPinnedDirectory(root);
   try {
     for (const segment of segments) {
+      if (options.create) await createDirectoryAt(current, segment);
+      // Containment is established by this open, not by the create above:
+      // `mkdirat` has no `O_NOFOLLOW`, and `openDirectoryAt` refuses a symlink.
+      // A racing writer that wins the create is therefore harmless — whatever is
+      // there is opened and checked like any other ancestor.
       const next = await openDirectoryAt(current, segment);
       const metadata = await next.stat();
       if (!metadata.isDirectory()) {

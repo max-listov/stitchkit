@@ -17,7 +17,7 @@ import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
-import type { AgentRuntimeConfig } from './runtime';
+import type { AgentContextUsage, AgentRuntimeConfig } from './runtime';
 import {
   abortTerminalReason,
   addUsage,
@@ -41,6 +41,7 @@ import {
   AgentSnapshotSchema,
   type AgentTerminalReason,
   type AgentUsage,
+  type AgentUsageValue,
   runStateForTerminalReason,
 } from './schemas';
 import {
@@ -388,11 +389,23 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
         }),
       });
+      // The prompt size of the last completed step — the one number that says
+      // how full the window is. Cumulative `usage.inputTokens` counts every
+      // step's prompt again and is several times this; substituting it would
+      // report a model as overflowing while it had room.
+      let lastPromptTokens: AgentUsageValue = { provenance: 'unavailable' };
       const runtimeContext = {
         context: input.context,
         run,
         signal: executionSignal,
         toolFenceLifecycle,
+        // A getter, because a step reads it after the previous step landed and a
+        // snapshot taken here would be one step stale for the whole run.
+        get contextUsage(): AgentContextUsage | undefined {
+          const descriptor = selectedModel?.descriptor;
+          if (!descriptor) return undefined;
+          return { usedTokens: lastPromptTokens, contextWindow: descriptor.contextWindow };
+        },
       };
       selectedModel = await config.models.resolve({
         context: input.context,
@@ -829,6 +842,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               usage: part.usage,
               providerMetadata: part.providerMetadata,
             }) ?? normalizeSdkUsage(part.usage);
+          lastPromptTokens = stepUsage.inputTokens;
           modelUsage = addUsage(modelUsage, stepUsage);
           usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
           config.observe?.emit({

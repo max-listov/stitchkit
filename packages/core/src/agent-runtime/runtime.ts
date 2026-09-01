@@ -42,6 +42,7 @@ import {
   type AgentRun,
   AgentRunSchema,
   type AgentSnapshot,
+  type AgentUsageValue,
 } from './schemas';
 import type {
   AgentRecoverableDescriptor,
@@ -123,11 +124,42 @@ export interface AgentRuntimeInterruptInput {
   conversationKey?: string;
 }
 
+/**
+ * How full the model's context is, as the runtime knows it.
+ *
+ * The runtime is the only party that knows: the consumer counts what it sends,
+ * the provider reports what it received, and neither sees both. Observed
+ * consequence of not saying: a model ran to a hard context overflow without
+ * changing its behaviour on a single step before it, because nothing had told
+ * it there was a limit approaching.
+ *
+ * `usedTokens` is the **prompt size of the last completed step**, not the run's
+ * cumulative usage: cumulative input tokens count every step's prompt again and
+ * are several times the context fill. Before any step completes there is no
+ * provider-reported number and the value is `unavailable` — which is a
+ * different fact from zero, and is reported as one.
+ *
+ * No fraction is exposed. Dividing is one line at the point of rendering, and a
+ * quotient of an estimated numerator would need its own provenance to be honest
+ * about what it is. The output reserve is not here either: the runtime does not
+ * choose it — the consumer's prompt budget does — and reporting a number this
+ * layer does not own would be a second copy that can disagree.
+ */
+export interface AgentContextUsage {
+  usedTokens: AgentUsageValue;
+  contextWindow: number;
+}
+
 export interface AgentRuntimeRunContext<CONTEXT> {
   context: CONTEXT;
   run: AgentRun;
   signal: AbortSignal;
   toolFenceLifecycle: ToolLifecycle;
+  /**
+   * Absent until a model is resolved for the run; then present on every step,
+   * with `usedTokens.provenance === 'unavailable'` until the first step lands.
+   */
+  contextUsage?: AgentContextUsage;
 }
 
 export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends ToolSet = ToolSet> = (

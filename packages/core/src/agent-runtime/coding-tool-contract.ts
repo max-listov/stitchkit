@@ -9,6 +9,7 @@ export const AgentCodingToolLimitsSchema = z
     maxShellArgumentBytes: z.int().positive(),
     maxShellOutputBytes: z.int().positive(),
     maxArtifactBytes: z.int().positive(),
+    maxListEntries: z.int().positive(),
     maxSearchResults: z.int().positive(),
     maxSearchFiles: z.int().positive(),
     maxSearchDepth: z.int().nonnegative(),
@@ -25,6 +26,8 @@ export const AgentCodingToolAuthorizationSchema = z.discriminatedUnion('operatio
       path: z.string().min(1),
       bytes: z.int().nonnegative(),
       overwrite: z.boolean(),
+      /** Workspace-relative directories this write would create, outermost first. */
+      createsDirectories: z.array(z.string().min(1)),
     })
     .strict(),
   z
@@ -36,13 +39,21 @@ export const AgentCodingToolAuthorizationSchema = z.discriminatedUnion('operatio
     .strict(),
   z
     .object({
-      operation: z.literal('patch'),
+      operation: z.literal('edit'),
       path: z.string().min(1),
       baseSha256: z.string().length(64),
       resultSha256: z.string().length(64),
       resultBytes: z.int().nonnegative(),
       replacements: z.int().positive(),
       dryRun: z.boolean(),
+    })
+    .strict(),
+  z.object({ operation: z.literal('list'), path: z.string().min(1) }).strict(),
+  z
+    .object({
+      operation: z.literal('glob'),
+      pattern: z.string().min(1),
+      path: z.string().min(1),
     })
     .strict(),
   z
@@ -140,7 +151,19 @@ export const FileWriteInputSchema = z
   .strict();
 
 export const FileWriteOutputSchema = z
-  .object({ path: z.string().min(1), bytes: z.int().nonnegative() })
+  .object({
+    path: z.string().min(1),
+    bytes: z.int().nonnegative(),
+    /**
+     * Directories this write created, outermost first.
+     *
+     * Creating them silently trades one failure for another: a typo stops being
+     * an error and becomes a successful write into a tree nobody meant to make.
+     * Naming what appeared is the only signal by which a model catches its own
+     * `packags/` — cheap, and it keeps the model's picture of the disk true.
+     */
+    createdDirectories: z.array(z.string().min(1)),
+  })
   .strict();
 
 export function createShellInputSchema(executableNames: readonly string[]) {
@@ -191,6 +214,7 @@ const DEFAULT_LIMITS: AgentCodingToolLimits = {
   maxShellArgumentBytes: 65_536,
   maxShellOutputBytes: 262_144,
   maxArtifactBytes: 4_194_304,
+  maxListEntries: 500,
   maxSearchResults: 100,
   maxSearchFiles: 10_000,
   maxSearchDepth: 32,

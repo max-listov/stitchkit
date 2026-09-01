@@ -90,13 +90,15 @@ try {
             {
               type: 'tool-call',
               toolCallId: 'patch-1',
-              toolName: 'apply_patch',
+              toolName: 'edit_file',
               input: JSON.stringify({
                 path: 'proof.txt',
-                baseSha256: proofSha256,
+                // Optional now, and kept here on purpose: the packed harness is
+                // where the digest fence has to keep working, not only the
+                // one-call default.
+                expectedSha256: proofSha256,
                 oldText: 'direct',
                 newText: 'approved',
-                dryRun: false,
               }),
             },
             {
@@ -246,7 +248,7 @@ try {
         lifecycle: context.toolFenceLifecycle,
       }),
     loop: {
-      toolApproval: { apply_patch: 'user-approval' },
+      toolApproval: { edit_file: 'user-approval' },
       toolApprovalSecret: 'packed-approval-secret',
     },
     onProfile: (event) => {
@@ -312,7 +314,7 @@ try {
     parts.some(
       (part) =>
         part.type === 'tool-result' &&
-        part.toolName === 'apply_patch' &&
+        part.toolName === 'edit_file' &&
         part.outcome === 'success',
     ),
     true,

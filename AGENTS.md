@@ -47,6 +47,15 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   repository only one tool can bring up is a fork, not a dependency. → ADR 0104
 - **ALWAYS** keep the core generic — no domain model. Scopes are free strings,
   there is no billing, `source` is transport-only. → ADR 0002
+- **NEVER** publish a runtime internal because it looks useful. A primitive
+  leaves `agent-runtime` for an application that drives the model itself only
+  when it needs no store, needs no run protocol, and already exists inside
+  proven by tests — and it must be typed against what the caller already holds,
+  because a symbol can be public while the thing it does is still behind the
+  store (`selectAgentHistory` was exported for months and unreachable in
+  practice). A rule that cannot refuse is not a rule: the two named refusals are
+  a context-pressure ratio and a model → context-window catalog, both of which
+  consuming applications hand-write and neither of which we will own. → ADR 0142
 - Transport and hooks use `RuntimeContext` (loose); handlers use
   `HandlerContext` (typed). Do not cast between them. → ADR 0003
 - A new architectural decision → a new ADR in `docs/decisions/` **and a row in

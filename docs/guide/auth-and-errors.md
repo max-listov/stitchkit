@@ -304,6 +304,68 @@ const payload = await verifyJwt(token, env.JWT_SECRET)
 `extractToken(req, cookieName?)` reads a bearer token from the `Authorization`
 header, or from the named cookie.
 
+## Telegram Mini Apps
+
+A Mini App hands its backend an `initData` query string that Telegram signed
+with a key derived from the bot token. `verifyTelegramInitData` checks that
+signature and reports what the string says — and refuses with a **reason**,
+because an application answers a stale string differently from a forged one.
+
+```ts
+import { verifyTelegramInitData } from 'stitchkit/telegram'
+import { unauthorized } from 'stitchkit/contract'
+import { env } from './env'
+
+const result = await verifyTelegramInitData({
+  initData,
+  botToken: env.BOT_TOKEN,
+  maxAgeSeconds: 3600,          // a signed string is otherwise valid forever
+})
+if (!result.valid) {
+  // 'missing-hash' | 'signature-mismatch' | 'malformed' | 'expired'
+  throw unauthorized(result.reason === 'expired' ? 'Reopen the app' : 'Invalid session')
+}
+const telegramId = result.data.user?.id
+```
+
+Three things it does that a hand-written check usually does not:
+
+- the **signature is checked first**, before `auth_date` or anything else is
+  read — an expiry inside an unverified payload is a number the sender chose;
+- digests are compared **without an early exit**, so the time a rejection takes
+  is not a measurement of how much of the digest was right;
+- `raw` keeps every signed pair, so a field Telegram adds after this release
+  does not need a release to reach.
+
+`maxAgeSeconds` is optional and there is no default: only the application knows
+how long its own session is worth. Omitting it means the string never expires,
+which is a decision rather than an oversight.
+
+The module is server-only and pulls in no bot library — the token never belongs
+in a browser bundle. `stitchkit/application/grammy` remains the lifecycle
+adapter for an injected grammY bot. Its companion,
+`classifyTelegramSendFailure`, names why a send was refused and separates *retry
+this send* from *stop addressing this recipient*:
+
+```ts
+import { classifyTelegramSendFailure } from 'stitchkit/telegram'
+
+try {
+  await bot.api.sendMessage(chatId, text)
+} catch (error) {
+  const failure = classifyTelegramSendFailure(error)
+  if (failure.recipientUnreachable) await markUnreachable(chatId, failure.reason)
+  else if (failure.retryable) await requeue(chatId, failure.retryAfterSeconds)
+}
+```
+
+The two flags are separate because one answer cannot serve both. A rate limit is
+retryable and implicates nobody; a blocked user is unreachable and no retry
+helps; a message Telegram could not parse is *neither* — the recipient is fine
+and our payload is wrong, which is the case a list of substrings quietly counts
+against the user. An unrecognised refusal leaves the recipient reachable: losing
+a working subscriber forever costs more than one wasted send.
+
 ## Cookies
 
 ```ts

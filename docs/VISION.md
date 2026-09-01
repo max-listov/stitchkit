@@ -75,7 +75,8 @@ client. One source of truth; the transports cannot drift.
 - **Every entrypoint says how settled it is.** The contract, HTTP, client, tool,
   CLI, observability and testing surfaces are **stable**: they change rarely and
   only for a reason worth a migration. The declaration, the agent runtime (including its harness
-  and coding-tool leaves) and the application kernel are **evolving**: their shape is still being found and may be redefined
+  and coding-tool leaves), the application kernel and the peer-free Telegram platform leaf are
+  **evolving**: their shape is still being found and may be redefined
   in any minor, always with a marked breaking change and a migration section,
   never silently. Both are legitimate to build on — the declaration exists so
   the choice is informed rather than discovered. Promoting a surface from

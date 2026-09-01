@@ -1,6 +1,8 @@
 {
   "ShutdownOptions": {
-    "gracePeriodMs": { "test": "forwards the declared budgets and owns the abort signal" },
+    "gracePeriodMs": {
+      "test": "forwards the declared budgets and owns the abort signal"
+    },
     "forceTimeoutMs": {
       "test": "one passed key does not drag the other away from the declaration"
     },
@@ -10,18 +12,32 @@
     "retryAfterSeconds": {
       "test": "closes admission outside wrapFetch, drains accepted work and reuses one Promise"
     },
-    "signal": { "test": "an already-aborted external signal forces immediately" }
+    "signal": {
+      "test": "an already-aborted external signal forces immediately"
+    }
   },
   "ProcessSignalsOptions": {
-    "signals": { "test": "registers only the signals it was given" },
-    "shutdown": { "test": "a budget nobody passed never reaches shutdown()" },
-    "signalSource": { "test": "registers only the signals it was given" },
-    "onShutdown": { "test": "onShutdown runs before shutdown and onComplete after it" },
+    "signals": {
+      "test": "registers only the signals it was given"
+    },
+    "shutdown": {
+      "test": "a budget nobody passed never reaches shutdown()"
+    },
+    "signalSource": {
+      "test": "registers only the signals it was given"
+    },
+    "onShutdown": {
+      "test": "onShutdown runs before shutdown and onComplete after it"
+    },
     "onComplete": {
       "test": "a failing onComplete keeps the chain resolved and reports separately"
     },
-    "onError": { "test": "a rejected shutdown reaches onError and does not go unhandled" },
-    "onRepeatedSignal": { "test": "forces a shutdown that is already in flight" },
+    "onError": {
+      "test": "a rejected shutdown reaches onError and does not go unhandled"
+    },
+    "onRepeatedSignal": {
+      "test": "forces a shutdown that is already in flight"
+    },
     "onEscalationBlocked": {
       "test": "an escalation that cannot restore the default reports it"
     }
@@ -33,42 +49,88 @@
     "allowRequest": {
       "test": "keeps Socket.IO transport outside application admission and composes handshake policy"
     },
-    "path": { "test": "server handle exposes a ready named /socket.io/*socketPath route" },
-    "cors": { "test": "a supplied origin is still allowed, with credentials defaulted on" },
-    "pingTimeout": { "test": "a configured ping heartbeat reaches the Bun engine handshake" },
-    "pingInterval": { "test": "a configured ping heartbeat reaches the Bun engine handshake" },
+    "path": {
+      "test": "server handle exposes a ready named /socket.io/*socketPath route"
+    },
+    "cors": {
+      "test": "a supplied origin is still allowed, with credentials defaulted on"
+    },
+    "pingTimeout": {
+      "test": "a configured ping heartbeat reaches the Bun engine handshake"
+    },
+    "pingInterval": {
+      "test": "a configured ping heartbeat reaches the Bun engine handshake"
+    },
     "serverOptions": {
       "test": "maxHttpBufferSize reaches the Bun engine (websocket.maxPayloadLength)"
     },
     "handshake": {
       "test": "a valid handshake delivers the typed identity to onConnection and app middleware"
     },
-    "peers": { "test": "an injected loader is the one that is used, and it really connects" }
+    "peers": {
+      "test": "an injected loader is the one that is used, and it really connects"
+    }
   },
   "RouteGroup": {
     "pathPrefix": {
       "test": "validates params before authorize and preserves global/group order"
     },
-    "hooks": { "test": "group authorize failure uses group onError before the global hook" },
+    "hooks": {
+      "test": "group authorize failure uses group onError before the global hook"
+    },
     "services": {
       "test": "validates params before authorize and preserves global/group order"
     }
   },
   "LifecycleHooks": {
-    "onRequest": { "test": "onRequest can return early Response" },
-    "authorize": { "test": "a global rejection stops group authorize and payload lifecycle" },
-    "beforeHandle": { "test": "authorized input is parsed before beforeHandle and handler" },
-    "afterHandle": { "test": "hooks fire in order" },
-    "onError": { "test": "group authorize failure uses group onError before the global hook" }
+    "onRequest": {
+      "test": "onRequest can return early Response"
+    },
+    "authorize": {
+      "test": "a global rejection stops group authorize and payload lifecycle"
+    },
+    "beforeHandle": {
+      "test": "authorized input is parsed before beforeHandle and handler"
+    },
+    "afterHandle": {
+      "test": "hooks fire in order"
+    },
+    "onError": {
+      "test": "group authorize failure uses group onError before the global hook"
+    }
   },
   "ManagedServerResourceConfig": {
-    "id": { "test": "validates the whole graph before side effects" },
-    "server": { "test": "a thunk binds the port during start, not during shutdown" },
-    "dependsOn": { "test": "an async thunk is awaited before dependants start" },
-    "required": { "test": "optional failure degrades without claiming healthy" },
-    "retryAfterSeconds": { "test": "an absent deadline is not a spent one" },
+    "id": {
+      "test": "validates the whole graph before side effects"
+    },
+    "server": {
+      "test": "a thunk binds the port during start, not during shutdown"
+    },
+    "dependsOn": {
+      "test": "an async thunk is awaited before dependants start"
+    },
+    "required": {
+      "test": "optional failure degrades without claiming healthy"
+    },
+    "retryAfterSeconds": {
+      "test": "an absent deadline is not a spent one"
+    },
     "realtimeCloseTimeoutMs": {
       "test": "the public options keep separate graceful and forced-completion budgets"
+    }
+  },
+  "VerifyTelegramInitDataOptions": {
+    "initData": {
+      "test": "an authentic string yields the user, in this surface s own naming"
+    },
+    "botToken": {
+      "test": "another bot s token does not verify this bot s string"
+    },
+    "maxAgeSeconds": {
+      "test": "maxAgeSeconds bounds a signature that would otherwise last forever"
+    },
+    "now": {
+      "test": "maxAgeSeconds bounds a signature that would otherwise last forever"
     }
   }
 }

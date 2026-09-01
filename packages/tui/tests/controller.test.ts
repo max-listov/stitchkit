@@ -167,7 +167,7 @@ describe('Agent TUI controller model selection', () => {
         messageId: 'assistant-1',
         approvalId: 'approval-1',
         callId: 'call-1',
-        toolName: 'apply_patch',
+        toolName: 'edit_file',
         input: { path: 'README.md' },
       },
     });

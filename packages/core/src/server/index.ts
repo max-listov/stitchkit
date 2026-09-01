@@ -149,6 +149,7 @@ export {
   extractIp,
   generateTraceId,
   getClientInfo,
+  isPublicIp,
   resolveSocketIp,
   resolveTraceId,
 } from './request';

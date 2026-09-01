@@ -7,6 +7,7 @@ import {
   resolveCodingToolLimits,
 } from './coding-tool-contract';
 import { createFileCodingTools } from './coding-tool-files';
+import { createListingCodingTools } from './coding-tool-listing';
 import { authorizeCodingTool } from './coding-tool-paths';
 import { createSearchAndPatchCodingTools } from './coding-tool-search-patch';
 import { createShellCodingTool } from './coding-tool-shell';
@@ -14,7 +15,9 @@ import { createShellCodingTool } from './coding-tool-shell';
 export * from './coding-tool-contract';
 
 export const AGENT_CODING_TOOL_NAMES = {
-  applyPatch: 'apply_patch',
+  editFile: 'edit_file',
+  glob: 'glob',
+  listDirectory: 'list_directory',
   readFile: 'read_file',
   readOutput: 'read_output',
   runCommand: 'run_command',
@@ -102,6 +105,7 @@ export function createAgentCodingTools(
     : [];
   return [
     ...createFileCodingTools(config, limits),
+    ...createListingCodingTools(config, limits),
     ...createSearchAndPatchCodingTools(config, limits),
     ...commandTools,
     ...artifactTools,

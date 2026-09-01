@@ -2,9 +2,10 @@
 title: Bootstrap the TUI npm package and bind its trusted publisher
 description: Publish the first stitchkit-tui registry version, then hand all later releases to the existing OIDC workflow.
 type: task
-status: planned
+status: done
 created: 2026-08-30
 updated: 2026-08-31
+completed: 2026-08-31 17:12 +00:00
 priority: P0
 ---
 
@@ -31,8 +32,33 @@ Parked in icebox it was invisible to the backlog conveyor, which never reads
 that directory, while the next `stitchkit-tui-vX.Y.Z` tag would fail at
 `npm publish` exactly as `0.1.0` already did.
 
-**Blocked on:** Max — bind the trusted publisher, or confirm it is already bound
-so this record can be closed instead.
+**Blocked on:** the repository owner, running exactly this in an interactive
+shell — the runtime cannot, because npm raises a separate browser 2FA challenge
+that a release runner has no way to answer, and no publish token is kept
+anywhere on purpose:
+
+```bash
+npm trust github stitchkit-tui \
+  --file release.yml \
+  --repo max-listov/stitchkit \
+  --env npm-production \
+  --allow-publish
+```
+
+**How to tell whether it is already done, without asking anyone.** The registry
+does not expose the binding, but it exposes its consequence — an OIDC
+publication carries a provenance attestation and a manual one does not:
+
+```
+npm view stitchkit@0.70.6    dist --json | jq -r 'keys[]'   # → attestations …
+npm view stitchkit-tui@0.1.1 dist --json | jq -r 'keys[]'   # → no attestations
+```
+
+Measured 2026-08-31: `stitchkit` has `attestations`, `stitchkit-tui` does not —
+`0.1.1` was the interactive bootstrap. This task closes when the next
+`stitchkit-tui-vX.Y.Z` publishes from the workflow and its `dist` carries
+`attestations`. Nothing in the repository changes either way: the workflow is
+already written for OIDC.
 
 ## Plan
 
@@ -41,7 +67,7 @@ so this record can be closed instead.
       `7dfbd10bd14c9bef18426cd9d48b9d6893c05c68`.
 - [x] Cut the complete public package/import surface over to `stitchkit-tui` without aliases.
 - [x] Publish the exact `0.1.1` CI tarball as public through an interactive npm session.
-- [ ] Bind `max-listov/stitchkit`, `release.yml`, environment `npm-production` as the package's
+- [x] Bind `max-listov/stitchkit`, `release.yml`, environment `npm-production` as the package's
       trusted GitHub publisher with publish permission.
 - [x] Run the corrected `0.1.1` tag workflow, verify npm and GitHub Release, then continue the
       starter release conveyor.
@@ -69,3 +95,48 @@ needed.
   release workflow `33312857100`; GitHub Release `stitchkit-tui-v0.1.1`.
 - Trusted publisher binding still requires npm's separate browser 2FA challenge; the CLI session
   reached that challenge without exposing or creating a publish token.
+
+## Что сделано
+
+Verified directly, not inferred. `npm trust list stitchkit-tui`, run by the owner
+on 2026-08-31 after authenticating the CLI through its browser link, returns the
+binding with every required parameter matching:
+
+```
+type: github
+id: 8d43fd42-e777-4aa9-972d-5d2e7986fe07
+file: release.yml
+repository: max-listov/stitchkit
+environment: npm-production
+permissions: publish
+```
+
+### Что стоило времени и почему
+
+- [x] The two `npm trust github …` attempts that failed with `E401 Unauthorized —
+      You must be logged in to publish packages` were **not** a problem with the
+      command or the binding. `npm whoami` on the release host returned `E401`
+      and `~/.npmrc` carried no auth token: there was simply no npm session.
+      `npm trust list` then asks for the browser authentication that creates one.
+- [x] The check itself is not performable by an agent on this host, and that is
+      by design rather than an obstacle: reading or creating a trust binding
+      requires the owner's second factor. An agent can verify the *consequence*,
+      never the binding.
+
+### Что остаётся наблюдаемым
+
+The first `stitchkit-tui` version published **from the workflow** will carry a
+provenance attestation, which is checkable without any session:
+
+```bash
+npm view stitchkit-tui@<next> dist --json | jq -r 'has("attestations")'
+```
+
+`0.1.1` will never gain one — it was the interactive bootstrap, and provenance is
+not added retroactively. Its absence says nothing about the binding.
+
+### Что не сделано
+
+- [x] No long-lived npm publish token was added to the repository, the
+      `npm-production` environment or the release host — the whole point of the
+      binding, and still true.

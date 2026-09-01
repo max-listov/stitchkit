@@ -1,7 +1,10 @@
 export {
   type AgentCompactionContext,
   type AgentCompactionResult,
+  type CompactableHistory,
+  type SelectCompactableHistoryOptions,
   type StructuredCompactionConfig,
+  selectCompactableHistory,
   structuredCompaction,
 } from './agent-runtime/compaction';
 export { AgentContextOverflowError } from './agent-runtime/context-refusal';
@@ -147,6 +150,12 @@ export {
   hasAgentTerminalOutput,
 } from './agent-runtime/protocol';
 export {
+  type AgentProviderFailure,
+  type AgentProviderFailureReason,
+  classifyProviderFailure,
+  isToolResultFailure,
+} from './agent-runtime/provider-failure';
+export {
   AgentConversationPurgedError,
   type AgentConversationPurgeInput,
   AgentConversationPurgeInputSchema,
@@ -155,6 +164,7 @@ export {
   purgeAgentConversation,
 } from './agent-runtime/purge';
 export {
+  type AgentContextUsage,
   type AgentRuntime,
   type AgentRuntimeAdmission,
   type AgentRuntimeConfig,

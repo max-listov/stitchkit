@@ -306,7 +306,23 @@ function readCost(metadata: unknown): number | undefined {
     : undefined;
 }
 
-function normalizeOpenRouterUsage(
+/**
+ * Read OpenRouter's token counts and cost out of one SDK step, with provenance.
+ *
+ * Exported, and that is the point of it existing here at all. The same function
+ * has always run inside `openRouterProvider`, which means it was reachable only
+ * by building the whole agent runtime — durable store, execution protocol and
+ * recovery included. An application that calls `generateText` directly, and only
+ * wants an honest number for its own ledger, could not reach it and derived it
+ * again; two of them did, and more than half of the two files agree line for
+ * line.
+ *
+ * What is easy to get wrong when deriving it again is not the arithmetic but the
+ * provenance: a number the provider reported, a number nobody reported and a
+ * zero are three different facts, and a value invented for a missing field is
+ * the one that reads as true and is not.
+ */
+export function normalizeOpenRouterUsage(
   usage: LanguageModelUsage,
   providerMetadata: unknown,
 ): AgentUsage {

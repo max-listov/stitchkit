@@ -285,7 +285,8 @@ responses and results with a different call or tool name are invalid; dropping a
 approval input fails the run with a private diagnostic rather than starting a fresh model turn.
 
 `stitchkit/agent-runtime/coding-tools` returns ordinary direct runtime tools named `read_file`,
-`write_file`, `search_files`, `apply_patch`, `run_command` and optional `read_output`. Every call passes a
+`write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command` and optional
+`read_output`. Every call passes a
 required host authorization callback. File paths are relative, bounded and contained after
 descriptor-relative resolution: each ancestor is opened without following symlinks and remains
 pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
@@ -301,10 +302,32 @@ Arguments, output and time are bounded, while cancellation terminates the child.
 root and cwd are path boundaries, not a security sandbox: isolate the process when an executable
 must not access the rest of the machine.
 
-`apply_patch` binds the exact source to `baseSha256`, supports dry-run, authorizes the exact
-replacement count, result digest and byte size, then rechecks the base under a per-target lock
-before same-directory atomic replacement. It deliberately does not claim
-multi-file atomicity. With an optional `AgentCodingArtifactStore`, shell output beyond the inline
+`edit_file` replaces one exact snippet. `oldText` is itself the freshness guard for the region it
+changes, so the digest is the optional `expectedSha256` and an edit is one call; pass the digest
+`read_file` returned when you want the whole-file guarantee, and read the `sha256` it returns to
+chain the next edit without re-reading. The read, the occurrence count and the construction of the
+new content all happen inside one per-target lock, so two concurrent edits of different snippets in
+one file cannot each build a file from the same base and have the second erase the first — the lock
+is process-local, which covers many agents in one process and not two processes over one workspace.
+It authorizes the exact replacement count, result digest and byte size, and deliberately does not
+claim multi-file atomicity.
+
+`write_file` creates missing parent directories inside the root and names them in
+`createdDirectories`; the walk that finds them runs before authorization and reports them in the
+authorization payload, so no directory is created before a host approves it.
+
+**Every ordinary outcome is a refusal a model can act on** — a missing file is `NOT_FOUND`, an
+existing file without `overwrite` is `CONFLICT`, an ambiguous snippet is `CONFLICT` carrying its
+occurrence count, a path outside the root is `FORBIDDEN` — each with a `hint` naming the next move.
+Host-level causes stay scrubbed to `INTERNAL_SERVER_ERROR` and name nothing outside the workspace.
+→ ADR 0139
+
+`list_directory` marks excluded directories rather than hiding them, and `glob` reports
+`skippedDirectories` beside its matches: an empty result from a tree whose files all live under an
+excluded directory is not "no files", and a model told only "nothing found" concludes the wrong
+thing. `search_files` takes `regex`, `context` lines and an `include` pattern; regex is bounded by
+refusing backreferences and lookaround and capping line length rather than by a timeout, because a
+JavaScript `RegExp` cannot be interrupted once it starts backtracking. With an optional `AgentCodingArtifactStore`, shell output beyond the inline
 preview continues into an opaque bounded artifact and `read_output` reads slices without
 exposing a host path. Without a store, the previous finite output-limit behavior is unchanged.
 
@@ -990,6 +1013,40 @@ and prompt. Pass `previousSummary` for a direct call, or configure
 replace a leading summary on the next compaction.
 Set `maxAttempts` to allow bounded conflict recovery. Every retry reloads the snapshot, reselects the
 eligible range and recomputes the summary; the stale summary is never retried.
+
+### Compacting without the store
+
+The *selection* inside compaction needs no store, no version and no runtime, so
+it is published on its own as `selectCompactableHistory` — for an application
+that drives the model itself and keeps its own history (→ ADR 0142):
+
+```ts
+import { selectCompactableHistory } from 'stitchkit/agent-runtime'
+
+const { leadingSummary, compactable, retained } = selectCompactableHistory({
+  messages,
+  keepRecentTurns: 3,
+})
+if (compactable.length > 0) {
+  const summary = await summarize(compactable, leadingSummary)
+  messages = [summary, ...retained]     // replace the old summary, never stack one
+}
+```
+
+`compactable` is the oldest **whole complete** turns and `retained` is
+everything the model must still hear; together they are the input, in order. A
+turn holding a tool call whose result never arrived is never eligible, and
+neither is anything after it: half a turn hands the provider a call with no
+result, which most of them refuse outright.
+
+`structuredCompaction` calls this same function, so the published selection and
+the runtime's cannot drift into two behaviours. What it adds is the part that
+does need the store — writing the result back under a version check.
+
+Deciding *when* to compact is yours: `AgentRuntimeRunContext.contextUsage`
+carries the last step's prompt size beside the model's window, and dividing them
+is one line where the threshold is decided. The core does not own that ratio, on
+purpose — see ADR 0142 for what it publishes and what it declines to.
 
 ## Observability
 

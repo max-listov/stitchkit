@@ -48,17 +48,17 @@ describe('host-authorized Agent coding tools', () => {
     expect(
       await executable(tools, 'search_files')({ query: 'beta', mode: 'content' }, options),
     ).toEqual({
-      matches: [{ path: 'source.txt', line: 2 }],
+      matches: [{ path: 'source.txt', line: 2, text: 'beta' }],
       truncated: false,
       scannedFiles: 1,
       skippedDirectories: 0,
       skippedSymlinks: 0,
     });
     const baseSha256 = createHash('sha256').update('alpha\nbeta\n').digest('hex');
-    const dryRun = await executable(tools, 'apply_patch')(
+    const dryRun = await executable(tools, 'edit_file')(
       {
         path: 'source.txt',
-        baseSha256,
+        expectedSha256: baseSha256,
         oldText: 'beta',
         newText: 'gamma',
         dryRun: true,
@@ -68,10 +68,10 @@ describe('host-authorized Agent coding tools', () => {
     expect(dryRun).toMatchObject({ path: 'source.txt', applied: false, replacements: 1 });
     expect(await readFile(path.join(root, 'source.txt'), 'utf8')).toBe('alpha\nbeta\n');
     expect(
-      await executable(tools, 'apply_patch')(
+      await executable(tools, 'edit_file')(
         {
           path: 'source.txt',
-          baseSha256,
+          expectedSha256: baseSha256,
           oldText: 'beta',
           newText: 'gamma',
           dryRun: false,
@@ -82,10 +82,10 @@ describe('host-authorized Agent coding tools', () => {
     expect(await readFile(path.join(root, 'source.txt'), 'utf8')).toBe('alpha\ngamma\n');
     const originalError = console.error;
     console.error = () => undefined;
-    const stale = executable(tools, 'apply_patch')(
+    const stale = executable(tools, 'edit_file')(
       {
         path: 'source.txt',
-        baseSha256,
+        expectedSha256: baseSha256,
         oldText: 'gamma',
         newText: 'stale',
         dryRun: false,
@@ -143,18 +143,30 @@ describe('host-authorized Agent coding tools', () => {
         },
       }),
     });
-    const execute = executable(tools, 'apply_patch');
+    const execute = executable(tools, 'edit_file');
     const options = { toolCallId: 'race', messages: [], context: undefined };
     const baseSha256 = createHash('sha256').update('base').digest('hex');
     const originalError = console.error;
     console.error = () => undefined;
     const results = await Promise.allSettled([
       execute(
-        { path: 'source.txt', baseSha256, oldText: 'base', newText: 'one', dryRun: false },
+        {
+          path: 'source.txt',
+          expectedSha256: baseSha256,
+          oldText: 'base',
+          newText: 'one',
+          dryRun: false,
+        },
         options,
       ),
       execute(
-        { path: 'source.txt', baseSha256, oldText: 'base', newText: 'two', dryRun: false },
+        {
+          path: 'source.txt',
+          expectedSha256: baseSha256,
+          oldText: 'base',
+          newText: 'two',
+          dryRun: false,
+        },
         options,
       ),
     ]);
@@ -170,10 +182,13 @@ describe('host-authorized Agent coding tools', () => {
     ).toHaveLength(1);
     expect(['one', 'two']).toContain(await readFile(path.join(root, 'source.txt'), 'utf8'));
     const patchAuthorizations = authorizations.filter(
-      (request): request is Extract<AgentCodingToolAuthorization, { operation: 'patch' }> =>
-        request.operation === 'patch',
+      (request): request is Extract<AgentCodingToolAuthorization, { operation: 'edit' }> =>
+        request.operation === 'edit',
     );
-    expect(patchAuthorizations).toHaveLength(2);
+    // One, not two: the loser's stale digest is refused inside the lock BEFORE
+    // the host is asked. Authorization describes a mutation that will happen,
+    // and an edit built on a superseded read never will.
+    expect(patchAuthorizations).toHaveLength(1);
     expect(patchAuthorizations.every((request) => request.resultBytes === 3)).toBe(true);
     expect(patchAuthorizations.every((request) => request.resultSha256.length === 64)).toBe(
       true,
@@ -182,7 +197,7 @@ describe('host-authorized Agent coding tools', () => {
 
   if (process.platform !== 'win32') {
     test('refuses read, new-file write and patch when authorization loses parent identity', async () => {
-      const operation = async (kind: 'read' | 'write' | 'patch') => {
+      const operation = async (kind: 'read' | 'write' | 'edit') => {
         const fixture = await mkdtemp(path.join(tmpdir(), `stitchkit-coding-parent-${kind}-`));
         roots.push(fixture);
         const root = path.join(fixture, 'workspace');
@@ -216,10 +231,10 @@ describe('host-authorized Agent coding tools', () => {
                   { path: 'nested/new.txt', content: 'escaped', overwrite: false },
                   options,
                 )
-              : executable(tools, 'apply_patch')(
+              : executable(tools, 'edit_file')(
                   {
                     path: 'nested/source.txt',
-                    baseSha256,
+                    expectedSha256: baseSha256,
                     oldText: 'inside',
                     newText: 'changed',
                     dryRun: false,
@@ -238,10 +253,13 @@ describe('host-authorized Agent coding tools', () => {
         release.resolve();
         const result = await settled;
         console.error = originalError;
-        expect(result).toMatchObject({
-          status: 'rejected',
-          reason: { output: { error: 'INTERNAL_SERVER_ERROR' } },
-        });
+        // Fails closed — that is the property. The code is no longer
+        // `INTERNAL_SERVER_ERROR` for every one of these: an ordinary outcome now
+        // says what it is, and a swapped parent reads as a segment that is not a
+        // directory. What must never change is that the refusal happens and that
+        // it names nothing outside the workspace.
+        expect(result).toMatchObject({ status: 'rejected' });
+        expect(String((result as { reason: unknown }).reason)).not.toContain(fixture);
         expect(await readFile(path.join(outside, 'source.txt'), 'utf8')).toBe('outside');
         expect(await readFile(path.join(original, 'source.txt'), 'utf8')).toBe('inside');
         expect(existsSync(path.join(outside, 'new.txt'))).toBeFalse();
@@ -250,7 +268,7 @@ describe('host-authorized Agent coding tools', () => {
 
       await operation('read');
       await operation('write');
-      await operation('patch');
+      await operation('edit');
     });
 
     test('search skips a parent replaced by an outside symlink after authorization', async () => {
@@ -378,12 +396,12 @@ describe('host-authorized Agent coding tools', () => {
         { path: 'created.txt', content: 'one two' },
         options,
       ),
-    ).toEqual({ path: 'created.txt', bytes: 7 });
+    ).toEqual({ path: 'created.txt', bytes: 7, createdDirectories: [] });
     expect(
-      await executable(tools, 'apply_patch')(
+      await executable(tools, 'edit_file')(
         {
           path: 'created.txt',
-          baseSha256: createHash('sha256').update('one two').digest('hex'),
+          expectedSha256: createHash('sha256').update('one two').digest('hex'),
           oldText: 'two',
           newText: 'three',
           dryRun: false,
@@ -406,11 +424,11 @@ describe('host-authorized Agent coding tools', () => {
       outcome: 'exited',
     });
 
-    expect(lifecycle).toEqual(['read_file', 'write_file', 'apply_patch', 'run_command']);
+    expect(lifecycle).toEqual(['read_file', 'write_file', 'edit_file', 'run_command']);
     expect(authorizations.map(({ operation }) => operation)).toEqual([
       'read',
       'write',
-      'patch',
+      'edit',
       'shell',
     ]);
   });
@@ -437,12 +455,14 @@ describe('host-authorized Agent coding tools', () => {
         options,
       ),
     ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    // Both escapes are still refused, and now they say so. An empty server
+    // fault taught a model nothing about the one boundary it must learn.
     await expect(
       executable(tools, 'read_file')({ path: '../outside.txt' }, options),
-    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
     await expect(
       executable(tools, 'read_file')({ path: 'escape.txt' }, options),
-    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
     console.error = originalError;
     expect(await readFile(path.join(root, 'denied.txt'), 'utf8')).toBe('unchanged');
   });

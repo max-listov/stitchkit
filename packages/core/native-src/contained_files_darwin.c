@@ -253,11 +253,53 @@ static napi_value unlink_at(napi_env env, napi_callback_info info) {
   return result;
 }
 
+/*
+ * Create one directory through the pinned parent descriptor.
+ *
+ * `mkdirat` has no `O_NOFOLLOW` equivalent, so containment is not established
+ * here: it is established by the `openDirectoryAt` that follows, which refuses
+ * a symlink. `EEXIST` is returned to the caller rather than swallowed, because
+ * a racing writer and an occupied name are different answers and only the
+ * caller can tell them apart by opening what is there.
+ */
+static napi_value create_directory_at(napi_env env, napi_callback_info info) {
+  napi_value values[3];
+  size_t count = 3;
+  if (napi_get_cb_info(env, info, &count, values, NULL, NULL) != napi_ok || count != 3) {
+    napi_throw_type_error(env, NULL, "Expected directory, entry name and mode");
+    return NULL;
+  }
+  int directory;
+  int32_t mode;
+  char *name = NULL;
+  if (!integer_argument(env, values[0], &directory) || !entry_argument(env, values[1], &name) ||
+      napi_get_value_int32(env, values[2], &mode) != napi_ok) {
+    free(name);
+    napi_throw_type_error(env, NULL, "Expected an integer mode");
+    return NULL;
+  }
+  int outcome = mkdirat(directory, name, (mode_t)mode);
+  int saved = errno;
+  free(name);
+  napi_value result;
+  if (outcome < 0) {
+    if (saved == EEXIST) {
+      napi_get_boolean(env, false, &result);
+      return result;
+    }
+    errno = saved;
+    return fail(env, "mkdirat");
+  }
+  napi_get_boolean(env, true, &result);
+  return result;
+}
+
 static napi_value initialize(napi_env env, napi_value exports) {
   const napi_property_descriptor methods[] = {
       {"openDirectoryAt", NULL, open_directory_at, NULL, NULL, NULL, napi_default, NULL},
       {"openFileAt", NULL, open_file_at, NULL, NULL, NULL, napi_default, NULL},
       {"createFileAt", NULL, create_file_at, NULL, NULL, NULL, napi_default, NULL},
+      {"createDirectoryAt", NULL, create_directory_at, NULL, NULL, NULL, napi_default, NULL},
       {"statAt", NULL, stat_at, NULL, NULL, NULL, napi_default, NULL},
       {"listAt", NULL, list_at, NULL, NULL, NULL, napi_default, NULL},
       {"renameAt", NULL, rename_at, NULL, NULL, NULL, napi_default, NULL},

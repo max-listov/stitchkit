@@ -120,7 +120,7 @@ export async function createStarterHarness(
         search_files: 'approved',
         read_resource: 'approved',
         write_file: 'user-approval',
-        apply_patch: 'user-approval',
+        edit_file: 'user-approval',
         run_command: 'user-approval',
       },
       toolApprovalSecret: await persistentApprovalSecret(stateDirectory),

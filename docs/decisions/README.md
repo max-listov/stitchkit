@@ -153,6 +153,11 @@ These records were consolidated from the project's internal design notes on
 | [0136](0136-one-exact-tree-drives-a-package-aware-release-train.md) | One exact tree drives a package-aware release train | Accepted — one manifest, one exact-SHA CI and target-aware evidence lanes for every selected package |
 | [0137](0137-live-state-opens-one-continuous-source-generation.md) | Live state opens one continuous source generation | Accepted — browser-safe bounded snapshot/event synchronization without owning transport retry, cursors or storage |
 | [0138](0138-conversation-purge-reserves-identity-atomically.md) | Conversation purge reserves identity atomically | Accepted — optional atomic payload deletion with active-run refusal and permanent ID fencing |
+| [0139](0139-a-coding-tool-refusal-is-something-a-model-can-act-on.md) | A coding-tool refusal is something a model can act on | Accepted — ordinary outcomes become typed; host causes stay scrubbed, and `edit_file` replaces `apply_patch` |
+| [0140](0140-the-runtime-tells-a-step-how-full-the-context-is.md) | The runtime tells a step how full the context is | Accepted — the last step's prompt size with provenance, never the cumulative total |
+| [0141](0141-a-provider-refusal-is-classified-not-phrased.md) | A provider refusal is classified, not phrased | Accepted — the core names the failure and its evidence; the wording stays with the application |
+| [0142](0142-a-primitive-leaves-the-runtime-when-nothing-in-it-needs-the-runtime.md) | A primitive leaves the runtime when nothing in it needs the runtime | Accepted — three conditions decide what is published, and two named refusals prove they can fail |
+| [0143](0143-telegram-platform-primitives-need-no-bot-library.md) | Telegram platform primitives need no bot library | Accepted — `stitchkit/telegram` holds Mini App verification and Bot API failure classification, peer-free and server-only |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

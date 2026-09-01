@@ -6,6 +6,7 @@ import {
   AgentCodingToolAuthorizationSchema,
   type AgentCodingToolConfig,
 } from './coding-tool-contract';
+import { codingRefusal } from './coding-tool-refusals';
 
 function within(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -17,16 +18,41 @@ function within(root: string, target: string): boolean {
 
 function inputPath(root: string, requested: string, maxPathBytes: number): string {
   if (new TextEncoder().encode(requested).byteLength > maxPathBytes) {
-    throw new Error('Coding tool path exceeds maxPathBytes');
+    codingRefusal('BAD_REQUEST', `Path exceeds the ${maxPathBytes}-byte limit`, {
+      details: { maxPathBytes },
+      hint: 'Use a shorter workspace-relative path.',
+    });
   }
-  if (path.isAbsolute(requested)) throw new Error('Coding tool paths must be relative');
+  if (path.isAbsolute(requested)) {
+    codingRefusal('BAD_REQUEST', 'Paths must be relative to the workspace root', {
+      details: { path: requested },
+      hint: 'Drop the leading slash and pass a path relative to the workspace root.',
+    });
+  }
   const resolved = path.resolve(root, requested);
-  if (!within(root, resolved)) throw new Error('Coding tool path escapes its root');
+  if (!within(root, resolved)) {
+    codingRefusal('FORBIDDEN', 'Path escapes the workspace root', {
+      details: { path: requested },
+      hint: 'Stay inside the workspace; `..` segments that leave the root are refused.',
+    });
+  }
   return resolved;
 }
 
 export function boundedCodingRelativePath(requested: string, maxPathBytes: number): string {
   inputPath(path.parse(process.cwd()).root, requested, maxPathBytes);
+  // Segment shape is checked HERE, in the tool layer, and not where the walk
+  // happens: `contained-files` is the shared containment layer and stays
+  // `AppError`-free, so a `..` reaching it came back to the model as an empty
+  // internal error — a probe of a wrong path taught it nothing, and the refusal
+  // it most needs to understand was the one refusal with no words.
+  const segments = requested.split(/[\\/]/u);
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    codingRefusal('FORBIDDEN', 'Path segments must name real entries under the root', {
+      details: { path: requested },
+      hint: 'Pass a plain workspace-relative path — `.`, `..` and empty segments are refused.',
+    });
+  }
   return requested;
 }
 

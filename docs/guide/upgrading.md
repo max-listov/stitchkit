@@ -16,6 +16,94 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.71.0
+
+The Agent coding tools. Two of the three changes are visible to the compiler;
+the third is the one to read carefully, because nothing will point at it.
+
+### If you implement `authorize`
+
+The operation union gained `edit`, `list` and `glob` and lost `patch`. An
+exhaustive matcher stops compiling and the compiler shows you every arm. **A
+matcher with a default branch does not**, and that is the dangerous case:
+
+```ts
+// before — and after this upgrade, silently wrong in both directions
+if (request.operation === 'patch') return reviewPatch(request)
+return true            // now also authorizes edit, list and glob
+// …or: return false   // now also kills edit_file
+```
+
+```ts
+// after
+switch (request.operation) {
+  case 'edit':   return reviewEdit(request)   // the old `patch` payload, unchanged
+  case 'list':
+  case 'glob':   return true                  // or your own policy
+  // …existing read / write / search / shell / artifact-read arms
+}
+```
+
+`write` gained `createsDirectories` — the workspace-relative directories the
+call would create, outermost first, reported **before** anything is created. A
+host that wants to refuse implicit directory creation now can.
+
+### If you call `apply_patch`
+
+It is `edit_file`, and it is one call:
+
+```ts
+// before
+const read = await readFile({ path })
+await applyPatch({ path, baseSha256: read.sha256, oldText, newText, dryRun: true })
+await applyPatch({ path, baseSha256: read.sha256, oldText, newText, dryRun: false })
+
+// after
+await editFile({ path, oldText, newText })
+```
+
+`expectedSha256` is optional and still refuses a stale base with `CONFLICT` when
+you pass it; `edit_file` returns the resulting `sha256`, so a chain of edits
+never needs to re-read. If you key an approval policy or a UI label on the string
+`apply_patch`, update the key — nothing will fail loudly.
+
+### If you match on `INTERNAL_SERVER_ERROR` from a coding tool
+
+Ordinary outcomes no longer arrive that way. A missing file is `NOT_FOUND`, an
+existing file without `overwrite` is `CONFLICT`, an ambiguous snippet is
+`CONFLICT` with the occurrence count, a path outside the root is `FORBIDDEN`.
+Code that treated any coding-tool failure as an internal fault will now see
+codes it did not before; code that showed the model an empty error now has a
+sentence and a `hint` to show it. Host-level causes are unchanged and still
+scrubbed.
+
+### If you write files into new directories
+
+Nothing to change: `write_file` creates missing parents inside the root. Read
+`createdDirectories` in the result if you want to notice a typo — a path that
+was a failure before is now a successful write into a new tree.
+
+### If you want a step to know its context budget
+
+Opt in by reading it; nothing is injected for you:
+
+```ts
+loop: {
+  prepareStep: ({ contextUsage }) => {
+    const used = contextUsage?.usedTokens
+    if (used?.provenance === 'unavailable') return {}      // no step has landed yet
+    const fraction = (used?.value ?? 0) / (contextUsage?.contextWindow ?? 1)
+    // …render it wherever you put it
+    return {}
+  },
+}
+```
+
+Put it at the **tail** of the conversation rather than in the system
+instructions unless you have a reason: changing the system prompt on every step
+invalidates the provider's prefix cache for the whole conversation, and on a long
+run that is a multiple of the input cost.
+
 ## Released migration: 0.70.0
 
 ### Descriptor-backed Agent filesystem containment

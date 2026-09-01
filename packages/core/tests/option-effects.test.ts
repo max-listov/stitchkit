@@ -40,6 +40,7 @@ const COVERED: Record<string, string> = {
   RouteGroup: 'server/index.ts',
   LifecycleHooks: 'server/index.ts',
   ManagedServerResourceConfig: 'application.ts',
+  VerifyTelegramInitDataOptions: 'telegram.ts',
 };
 
 const EntrySchema = z.union([

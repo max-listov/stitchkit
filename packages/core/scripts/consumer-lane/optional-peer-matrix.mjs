@@ -324,6 +324,31 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'telegram',
+    subpath: './telegram',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/telegram', 'verifyTelegramInitData'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    // Verification runs on Web Crypto, which is the one global whose presence
+    // differs between the two runtimes we publish for. Proving it on Node is
+    // the point of the second row, not symmetry.
+    id: 'telegram-node',
+    subpath: './telegram',
+    fixture: 'node',
+    installedPeers: FIXTURE_PEERS.node,
+    target: 'node',
+    source: featureSource('stitchkit/telegram', 'classifyTelegramSendFailure'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'declaration',
     subpath: './declaration',
     fixture: 'minimal',

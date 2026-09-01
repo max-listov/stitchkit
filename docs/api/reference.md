@@ -402,6 +402,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `generateTraceId` | function | a fresh trace id |
 | `resolveTraceId` | function | the default per-request trace-id resolver |
 | `extractIp` | function | the caller IP from a request |
+| `isPublicIp` | function | whether an address belongs to the public internet; anything unparseable is not |
 | `resolveSocketIp` | function | the caller IP for a Socket.IO handshake (proxy-aware) |
 | `getClientInfo` | function | caller IP + user-agent |
 | `EventBus` | _type_ | the `createEventBus` handle |
@@ -656,6 +657,8 @@ Server-only optional application runtime. See the
 | `AgentConversationMessagePageSchema` / `AgentConversationMessagePage` | schema / _type_ | cursor-paged durable message history |
 | `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware signed context budget; irreducible reservation deficits are `oversized`, not compactable history |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
+| `selectCompactableHistory` | function | which oldest whole complete turns may be summarised away — the half of compaction that needs no store (→ ADR 0142) |
+| `SelectCompactableHistoryOptions` / `CompactableHistory` | _type_ | message list, retained-turn count and evidence policy in; `leadingSummary`, `compactable` and `retained` out |
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
 | `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
@@ -683,6 +686,29 @@ transport adapters validate the same records. Runtime composition types are `Age
 `AgentInputPolicy`, `AgentStopReason`, `AgentCoordinatedRun`, `AgentRunTicket`,
 `AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult` and
 `StructuredCompactionConfig`.
+
+A provider refusal is classified rather than phrased. `classifyProviderFailure` returns an
+`AgentProviderFailure` — an `AgentProviderFailureReason` (`insufficient-credits`, `rate-limited`,
+`model-unavailable`, `context-overflow`, `timeout`, `cancelled`, `unknown`), the provider's `status`
+when it supplied one, whether the same request is `retryable` unchanged, and the `evidence` the
+answer rests on: `status` is the provider stating its own answer, `message` is us reading its prose,
+and `none` is an honest refusal to guess. The sentence a user reads stays with the application —
+its tone and its decision about what to admit are not the core's to make. `isToolResultFailure`
+recognises a failure carried inside a *successful* tool result, in both the bare and the
+`{ value: … }` envelope. Both are plain functions and need no runtime. → ADR 0141
+
+`normalizeOpenRouterUsage` is the same normalisation `openRouterProvider`
+applies, exported so an application calling the SDK directly gets provenance-correct numbers
+without adopting the runtime.
+
+`AgentContextUsage` reaches every step through `AgentRuntimeRunContext.contextUsage`: how full the
+model's context is, as `usedTokens` (an `AgentUsageValue`, so it carries the provenance that says
+where the number came from) beside the model's declared `contextWindow`. It is the **last completed
+step's prompt size**, not the run's cumulative input tokens — cumulative counts every step's prompt
+again and is a multiple of the real fill. Before the first step lands there is no provider-reported
+number and the provenance is `unavailable`, which is a different fact from zero. No fraction is
+exposed: dividing is one line where it is rendered, and the output reserve belongs to the
+consumer's prompt budget rather than to this layer.
 
 Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentTerminalAcceptance`,
 `AgentTerminalAcceptanceInput`, `hasAgentTerminalOutput`, `AgentRecordIdSchema`, `AgentRecordVersionSchema`,
@@ -825,12 +851,14 @@ explicit policy; use the Bun or Node SQLite leaf for durable reopen.
 ## `stitchkit/agent-runtime/coding-tools`
 
 Server-only evolving, peer-free direct runtime tools. `createAgentCodingTools(config)` returns
-`read_file`, `write_file`, `search_files`, `apply_patch`, optional `run_command` and, when an
+`read_file`, `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, optional
+`run_command` and, when an
 artifact store is supplied, `read_output`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentCodingTools` | function | construct direct host-authorized bounded file, search, guarded patch, shell and artifact runtime-tool definitions; filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
+| `createAgentCodingTools` | function | construct direct host-authorized bounded file, listing, glob, search, exact-snippet edit, shell and artifact runtime-tool definitions; every ordinary refusal is a typed code with an instructive `hint`, and filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
+| `AGENT_CODING_TOOL_NAMES` | const | the mounted tool names — `read_file`, `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command`, `read_output` |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
 | `AgentCodingToolConfig` | _type_ | absolute root, required authorization callback, finite executable alias map, exact child environment and optional limits |
 | `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |
@@ -1350,6 +1378,26 @@ available from `stitchkit/contract`.
 | `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable boundary failures; registered `FILE_*` mistakes are caller-safe while `FILE_IO_ERROR` remains internal |
 | `ManagedFileInspector` | _type_ | bounded-prefix read/write inspection callback with a finite cancellation signal that cannot own path or size |
 | `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
+
+---
+
+## `stitchkit/telegram`
+
+Peer-free server-only Telegram platform primitives. Importing this resolves no
+bot library; `stitchkit/application/grammy` remains the lifecycle adapter for an
+injected grammY bot. → ADR 0143
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `verifyTelegramInitData` | function | verify a Mini App `initData` signature against the bot token in constant time, before reading anything out of it |
+| `VerifyTelegramInitDataOptions` | _type_ | raw `initData`, bot token, optional `maxAgeSeconds` bound and injected clock |
+| `TelegramInitDataVerification` | _type_ | `{ valid: true, data }` or a refusal carrying its reason |
+| `TelegramInitData` | _type_ | verified `user`/`receiver`, `authDate`, `ageSeconds`, `queryId`, `startParam`, `chatType`, `chatInstance` and every signed pair in `raw` |
+| `TelegramInitDataUser` | _type_ | camelCase user record inferred from Telegram's signed `user` payload |
+| `TelegramInitDataRefusal` | _type_ | `missing-hash` / `signature-mismatch` / `malformed` / `expired` — an expired string is not a forged one |
+| `classifyTelegramSendFailure` | function | name a refused Bot API send and separate "retry this send" from "stop addressing this recipient" |
+| `TelegramSendFailure` | _type_ | reason, `status`, Telegram-stated `retryAfterSeconds`, `retryable`, `recipientUnreachable` and which evidence produced the answer |
+| `TelegramSendFailureReason` | _type_ | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `unknown` |
 
 ---
 

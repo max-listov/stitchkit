@@ -11,11 +11,13 @@ import {
   FileWriteOutputSchema,
 } from './coding-tool-contract';
 import { authorizeCodingTool, boundedCodingRelativePath } from './coding-tool-paths';
+import { codingPathRefusal, refuseMissingCodingPath } from './coding-tool-refusals';
 import {
   assertContainedFileCurrent,
   assertContainedParentCurrent,
   type ContainedFileHandle,
   containedEntryMetadata,
+  missingContainedDirectories,
   openContainedFile,
   openContainedParent,
   writeContainedFile,
@@ -48,7 +50,9 @@ export function createFileCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
-      const handle = await openContainedFile(root, relative);
+      const handle = await openContainedFile(root, relative).catch((error: unknown) =>
+        refuseMissingCodingPath(error, relative),
+      );
       const maximum = Math.min(input.maxBytes ?? limits.maxReadBytes, limits.maxReadBytes);
       let selected: Buffer;
       let size: number;
@@ -57,7 +61,11 @@ export function createFileCodingTools(
         await authorizeCodingTool(config, { operation: 'read', path: relative });
         await assertContainedFileCurrent(root, relative, handle);
         const metadata = await handle.stat();
-        if (!metadata.isFile()) throw new Error('Coding read path is not a regular file');
+        if (!metadata.isFile()) {
+          codingPathRefusal('BAD_REQUEST', 'This path is not a regular file', relative, {
+            hint: 'Use list_directory to see what is here.',
+          });
+        }
         size = metadata.size;
         const length = Math.min(maximum, Math.max(0, size - input.offset));
         selected = Buffer.alloc(length);
@@ -92,21 +100,73 @@ export function createFileCodingTools(
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
       const bytes = Buffer.byteLength(input.content);
-      if (bytes > limits.maxWriteBytes)
-        throw new Error('Coding tool write exceeds maxWriteBytes');
-      const parent = await openContainedParent(root, relative);
+      if (bytes > limits.maxWriteBytes) {
+        codingPathRefusal(
+          'BAD_REQUEST',
+          `The content is ${bytes} bytes, over the ${limits.maxWriteBytes}-byte limit`,
+          relative,
+          {
+            details: { bytes, maxWriteBytes: limits.maxWriteBytes },
+            hint: 'Write a smaller file, or split it.',
+          },
+        );
+      }
+      // Read what would be created BEFORE anything is created: the host cannot
+      // authorize a mutation it has not been told about, and `openContainedParent`
+      // used to run ahead of `authorize` entirely.
+      const createsDirectories = await missingContainedDirectories(root, relative).catch(
+        (error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') {
+            codingPathRefusal(
+              'CONFLICT',
+              'A segment of this path is not a directory',
+              relative,
+              {
+                hint: 'Write under a different path, or remove the file blocking it.',
+              },
+            );
+          }
+          throw error;
+        },
+      );
+      await authorizeCodingTool(config, {
+        operation: 'write',
+        path: relative,
+        bytes,
+        overwrite: input.overwrite,
+        createsDirectories,
+      });
+      const parent = await openContainedParent(root, relative, { create: true }).catch(
+        (error: unknown) => {
+          // The one shape a caller can act on: a segment of the requested path is
+          // occupied by something that is not a directory.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (
+            code === 'ENOTDIR' ||
+            (error instanceof Error && error.message.includes('ancestor is not a directory'))
+          ) {
+            codingPathRefusal(
+              'CONFLICT',
+              'A segment of this path is not a directory',
+              relative,
+              {
+                details: { createsDirectories },
+                hint: 'Write under a different path, or remove the file blocking it.',
+              },
+            );
+          }
+          throw error;
+        },
+      );
       try {
-        await authorizeCodingTool(config, {
-          operation: 'write',
-          path: relative,
-          bytes,
-          overwrite: input.overwrite,
-        });
         await assertContainedParentCurrent(root, relative, parent.handle);
+        const current = await containedEntryMetadata(parent);
         if (input.overwrite) {
-          const current = await containedEntryMetadata(parent);
-          if (current?.isSymbolicLink())
-            throw new Error('Coding tools do not overwrite symlinks');
+          if (current?.isSymbolicLink()) {
+            codingPathRefusal('FORBIDDEN', 'This path is a symlink', relative, {
+              hint: 'Coding tools never write through symlinks; write to the target directly.',
+            });
+          }
           await writeContainedFile({
             parent,
             content: input.content,
@@ -114,12 +174,17 @@ export function createFileCodingTools(
             ...(current && { mode: current.mode }),
           });
         } else {
+          if (current) {
+            codingPathRefusal('CONFLICT', 'This file already exists', relative, {
+              hint: 'Pass overwrite: true to replace it, or edit_file to change part of it.',
+            });
+          }
           await writeContainedFile({ parent, content: input.content, replace: false });
         }
       } finally {
         await parent.handle.close();
       }
-      return { path: relative, bytes };
+      return { path: relative, bytes, createdDirectories: createsDirectories };
     },
   });
 

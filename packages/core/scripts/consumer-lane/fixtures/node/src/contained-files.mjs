@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,33 +33,39 @@ async function ordinaryOperations() {
   });
   const read = execute(tools, 'read_file');
   const write = execute(tools, 'write_file');
-  const patch = execute(tools, 'apply_patch');
+  const edit = execute(tools, 'edit_file');
   const search = execute(tools, 'search_files');
 
   assert.equal((await read({ path: 'root.txt' }, options)).text, 'root value');
   assert.equal((await read({ path: 'nested/file.txt' }, options)).text, 'nested value');
   await write({ path: 'nested/new.txt', content: 'created', overwrite: false }, options);
   await write({ path: 'nested/new.txt', content: 'overwritten', overwrite: true }, options);
-  const baseSha256 = createHash('sha256').update('nested value').digest('hex');
-  assert.equal(
-    (
-      await patch(
-        {
-          path: 'nested/file.txt',
-          baseSha256,
-          oldText: 'nested',
-          newText: 'patched',
-          dryRun: false,
-        },
-        options,
-      )
-    ).applied,
-    true,
+  // One call, no digest and no dry-run round trip: `oldText` is itself the
+  // freshness guard for the region being changed.
+  const edited = await edit(
+    { path: 'nested/file.txt', oldText: 'nested', newText: 'patched' },
+    options,
   );
+  assert.equal(edited.applied, true);
+  assert.equal(edited.replacements, 1);
+  // A content match now carries the line itself, so a model does not have to
+  // read the file back to see what it found.
   assert.deepEqual(
     (await search({ query: 'patched value', mode: 'content' }, options)).matches,
-    [{ path: path.join('nested', 'file.txt'), line: 1 }],
+    [{ path: path.join('nested', 'file.txt'), line: 1, text: 'patched value' }],
   );
+  // The digest the edit returned chains the next one without re-reading.
+  const chained = await edit(
+    {
+      path: 'nested/file.txt',
+      expectedSha256: edited.sha256,
+      oldText: 'patched value',
+      newText: 'chained value',
+    },
+    options,
+  );
+  assert.equal(chained.applied, true);
+  assert.equal(await readFile(path.join(root, 'nested', 'file.txt'), 'utf8'), 'chained value');
   assert.equal(await readFile(path.join(root, 'nested', 'new.txt'), 'utf8'), 'overwritten');
 
   const instructions = path.join(root, 'instructions');
@@ -90,7 +95,7 @@ async function ordinaryOperations() {
   assert.equal(exact.text.includes('Exact body'), true);
   assert.ok(authorizations.includes('read'));
   assert.ok(authorizations.includes('write'));
-  assert.ok(authorizations.includes('patch'));
+  assert.ok(authorizations.includes('edit'));
   assert.ok(authorizations.includes('search'));
 }
 
@@ -121,14 +126,8 @@ async function parentSwap(kind) {
   const call =
     kind === 'read'
       ? execute(tools, 'read_file')({ path: 'nested/source.txt' }, options)
-      : execute(tools, 'apply_patch')(
-          {
-            path: 'nested/source.txt',
-            baseSha256: createHash('sha256').update('same content').digest('hex'),
-            oldText: 'same',
-            newText: 'changed',
-            dryRun: false,
-          },
+      : execute(tools, 'edit_file')(
+          { path: 'nested/source.txt', oldText: 'same', newText: 'changed' },
           options,
         );
   const settled = call.then(
@@ -150,7 +149,7 @@ async function parentSwap(kind) {
 try {
   await ordinaryOperations();
   await parentSwap('read');
-  await parentSwap('patch');
+  await parentSwap('edit');
   console.log(`packed contained files (${process.platform}/${process.arch}): ok`);
 } finally {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
