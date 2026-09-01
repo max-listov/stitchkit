@@ -64,6 +64,16 @@ describe('managed Bun server shutdown', () => {
     expect(server.status.state).toBe('clean');
   });
 
+  /**
+   * The harness budget has to exceed the budget the test hands the code.
+   *
+   * This test grants `forceTimeoutMs: 5_000` and used to run under Bun's default 5 s per-test
+   * timeout, so it passed only while forcing finished far inside its own allowance — and the
+   * bound below already permitted 5.5 s, a range the harness could never reach. On a loaded CI
+   * runner the two deadlines met: the run died as "timed out after 5000ms" plus an unhandled
+   * "forced shutdown did not complete within 5000ms", which reads like a product hang and is
+   * really a test racing itself. The explicit timeout keeps the assertion the thing that fails.
+   */
   test('forces after the grace budget and preserves the pending snapshot', async () => {
     const started = Promise.withResolvers<void>();
     const service = implement(contract, {
@@ -87,7 +97,7 @@ describe('managed Bun server shutdown', () => {
     expect(elapsedMs).toBeGreaterThanOrEqual(20);
     expect(elapsedMs).toBeLessThan(5_500);
     await request;
-  });
+  }, 20_000);
 
   test('an already-aborted external signal forces immediately', async () => {
     const server = createServer({ port: 0 });
