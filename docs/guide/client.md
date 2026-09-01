@@ -662,3 +662,46 @@ selects tolerant skip-and-report behaviour.
 Set `finalLine: 'require-newline'` when the final newline is part of the
 protocol's truncation proof. The default `allow` continues to accept one valid
 final JSON document without a newline.
+
+## Resumable streams
+
+A stream that survives a dropped connection needs four things beyond opening it:
+re-open, back off before retrying, resume from where it stopped rather than
+restart, and stop for good on a terminal item. `resumableIterator` owns those
+four; your code keeps every decision that is about your data.
+
+```ts
+import { resumableIterator } from 'stitchkit'
+
+for await (const event of resumableIterator<Event, string>({
+  async open(cursor) {
+    const url = cursor ? `/api/events?after=${cursor}` : '/api/events'
+    return parseNDJSON(await fetch(url, { signal }))
+  },
+  advance: (event) => event.id,          // what "where it stopped" means
+  isTerminal: (event) => event.done,     // which item ends the stream
+  retry: { minDelayMs: 500, maxDelayMs: 30_000, jitter: 0.5 },
+  signal,
+  onAttempt: ({ number, delayMs, error }) => log.warn({ number, delayMs, error }),
+})) {
+  render(event)
+}
+```
+
+`open` receives the cursor produced by the last **delivered** item, so a source
+that fails after three items re-opens after the third, not from the beginning.
+A source that simply ends without a terminal item is treated as a dropped
+connection — that is the case a hand-written loop usually mistakes for
+completion, and it is why the stream stops resuming.
+
+**Jitter is not a detail.** Without it every consumer that lost the same server
+retries at the same instant and the fleet arrives together on a server that has
+just come back. The randomisation only ever *shortens* a delay, so `maxDelayMs`
+stays a real ceiling. `createBackoff({ minDelayMs, maxDelayMs, jitter })` is the
+same policy as a standalone value — `next()` and `reset()` — when you need the
+delays without the iterator.
+
+A delivered item resets the backoff, so a stream that reconnects, works for an
+hour and drops again starts its next retry at `minDelayMs` rather than the
+ceiling it reached last time. Aborting the signal ends the iteration promptly,
+including in the middle of a wait.

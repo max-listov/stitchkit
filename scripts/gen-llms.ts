@@ -57,6 +57,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'process-local resources, readiness, admission, schedules, projections and optional provider adapters',
   ],
   [
+    'primitives.md',
+    'Generic application primitives',
+    'lifecycle transitions, owner scope, permissions, exact money and quantities, deadlines, audit, delivery and exports — declared, not persisted',
+  ],
+  [
     'application-migration-recipes.md',
     'Application migration recipes',
     'executable database, poller, queue-consumer and operational publishing cutovers',

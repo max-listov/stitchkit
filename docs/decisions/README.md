@@ -11,6 +11,17 @@ marked `Superseded`, so the reasoning is never lost.
 These records were consolidated from the project's internal design notes on
 2026-05-20; the dates on each ADR are when the decision was effectively made.
 
+## What earns an ADR
+
+An architectural choice between alternatives, with lasting consequences — and
+also **a practice or an incident whose lesson outlives the change that taught
+it**. This repository keeps no task tracker, so an ADR is the only place a
+reader can find out why a rule exists rather than merely that it does. A record
+kept for history is not edited when it stops being current; it is superseded by
+a later ADR that says so.
+
+A bug fix or a small addition earns a changelog line, not an ADR.
+
 ## Index
 
 | ADR | Decision | Status |
@@ -158,6 +169,8 @@ These records were consolidated from the project's internal design notes on
 | [0141](0141-a-provider-refusal-is-classified-not-phrased.md) | A provider refusal is classified, not phrased | Accepted — the core names the failure and its evidence; the wording stays with the application |
 | [0142](0142-a-primitive-leaves-the-runtime-when-nothing-in-it-needs-the-runtime.md) | A primitive leaves the runtime when nothing in it needs the runtime | Accepted — three conditions decide what is published, and two named refusals prove they can fail |
 | [0143](0143-telegram-platform-primitives-need-no-bot-library.md) | Telegram platform primitives need no bot library | Accepted — `stitchkit/telegram` holds Mini App verification and Bot API failure classification, peer-free and server-only |
+| [0144](0144-generic-application-primitives-declare-facts-not-infrastructure.md) | Generic application primitives declare facts, not infrastructure | Accepted — one browser-safe declaration leaf with application-owned persistence and execution |
+| [0145](0145-a-reclaimed-lock-is-proven-never-assumed.md) | A reclaimed lock is proven, never assumed | Accepted — liveness proof reclaims an abandoned journal lock; no age or heartbeat variant is offered |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

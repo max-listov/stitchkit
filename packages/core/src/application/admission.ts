@@ -12,6 +12,32 @@ export const BoundedRateBudgetSchema = z
   .readonly();
 export type BoundedRateBudget = z.infer<typeof BoundedRateBudgetSchema>;
 
+export const BoundedAdmissionPerKeyLimitsSchema = z
+  .object({
+    maxConcurrent: PositiveSafeIntegerSchema,
+    rate: BoundedRateBudgetSchema.optional(),
+  })
+  .strict()
+  .readonly();
+export type BoundedAdmissionPerKeyLimits = z.infer<typeof BoundedAdmissionPerKeyLimitsSchema>;
+
+/**
+ * A ceiling declared per key rather than once for all keys.
+ *
+ * Resolved on a key's first admission and cached with its record, so a resolver that reads
+ * configuration is called once per live key rather than once per acquire. Eviction under
+ * `maxKeys` drops the record and the cached ceiling together, which is also how a changed
+ * configuration is adopted: evict the key, and the next admission resolves it again.
+ */
+export type BoundedAdmissionPerKeyLimitResolver = (
+  key: string,
+) => BoundedAdmissionPerKeyLimits;
+
+const PerKeyLimitResolverSchema = z.custom<BoundedAdmissionPerKeyLimitResolver>(
+  (value) => typeof value === 'function',
+  { message: 'perKey.limits must be a function of the key' },
+);
+
 export const BoundedAdmissionPolicySchema = z
   .object({
     global: z
@@ -20,13 +46,26 @@ export const BoundedAdmissionPolicySchema = z
         rate: BoundedRateBudgetSchema.optional(),
       })
       .strict(),
+    // One ceiling for every key, or one resolved from the key — never both. The union carries
+    // the exclusivity; a shape with members of both branches satisfies neither strict object and
+    // is refused at construction. It does not fail to typecheck: an excess-property check
+    // against a union admits any property some member declares.
     perKey: z
-      .object({
-        maxConcurrent: PositiveSafeIntegerSchema,
-        maxKeys: PositiveSafeIntegerSchema,
-        rate: BoundedRateBudgetSchema.optional(),
-      })
-      .strict()
+      .union([
+        z
+          .object({
+            maxConcurrent: PositiveSafeIntegerSchema,
+            maxKeys: PositiveSafeIntegerSchema,
+            rate: BoundedRateBudgetSchema.optional(),
+          })
+          .strict(),
+        z
+          .object({
+            maxKeys: PositiveSafeIntegerSchema,
+            limits: PerKeyLimitResolverSchema,
+          })
+          .strict(),
+      ])
       .optional(),
   })
   .strict()
@@ -176,6 +215,8 @@ interface RateSample {
 interface KeyRecord {
   active: number;
   readonly rate: RateSample[];
+  /** Resolved once when this record was created; dropped with it on eviction. */
+  readonly limits: BoundedAdmissionPerKeyLimits | undefined;
 }
 
 /** Process-local, no-queue admission with explicit finite concurrency/rate budgets. */
@@ -210,6 +251,24 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
     return value;
   };
 
+  /**
+   * The ceiling for one key, taken from whichever form the policy declares.
+   *
+   * A resolver's answer goes through the same schema as a declared limit, so a resolver reading
+   * configuration cannot install a ceiling the policy itself would have refused.
+   */
+  const resolveKeyLimits = (key: string): BoundedAdmissionPerKeyLimits | undefined => {
+    const perKey = policy.perKey;
+    if (!perKey) return undefined;
+    if ('limits' in perKey) {
+      return BoundedAdmissionPerKeyLimitsSchema.parse(perKey.limits(key));
+    }
+    return BoundedAdmissionPerKeyLimitsSchema.parse({
+      maxConcurrent: perKey.maxConcurrent,
+      ...(perKey.rate && { rate: perKey.rate }),
+    });
+  };
+
   const pruneRate = (samples: RateSample[], intervalMs: number, at: number): void => {
     let expired = 0;
     while (expired < samples.length && at - (samples[expired]?.at ?? at) >= intervalMs) {
@@ -221,8 +280,8 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   const prune = (at: number): void => {
     if (policy.global.rate) pruneRate(globalRate, policy.global.rate.intervalMs, at);
     for (const [key, record] of keys) {
-      if (policy.perKey?.rate) {
-        pruneRate(record.rate, policy.perKey.rate.intervalMs, at);
+      if (record.limits?.rate) {
+        pruneRate(record.rate, record.limits.rate.intervalMs, at);
       }
       if (record.active === 0 && record.rate.length === 0) keys.delete(key);
     }
@@ -282,7 +341,7 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
     let keyRecord = key === undefined ? undefined : keys.get(key);
     if (policy.perKey && key !== undefined) {
       if (!keyRecord && keys.size >= policy.perKey.maxKeys) return refuse('key-capacity');
-      if (keyRecord && keyRecord.active >= policy.perKey.maxConcurrent) {
+      if (keyRecord?.limits && keyRecord.active >= keyRecord.limits.maxConcurrent) {
         return refuse('key-concurrency');
       }
     }
@@ -290,20 +349,17 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
     if (policy.global.rate && globalRate.length >= policy.global.rate.limit) {
       return refuse('global-rate', retryAfter(globalRate, policy.global.rate, at));
     }
-    if (
-      policy.perKey?.rate &&
-      keyRecord &&
-      keyRecord.rate.length >= policy.perKey.rate.limit
-    ) {
-      return refuse('key-rate', retryAfter(keyRecord.rate, policy.perKey.rate, at));
+    const keyRate = keyRecord?.limits?.rate;
+    if (keyRate && keyRecord && keyRecord.rate.length >= keyRate.limit) {
+      return refuse('key-rate', retryAfter(keyRecord.rate, keyRate, at));
     }
 
     if (key !== undefined && !keyRecord) {
-      keyRecord = { active: 0, rate: [] };
+      keyRecord = { active: 0, rate: [], limits: resolveKeyLimits(key) };
       keys.set(key, keyRecord);
     }
     const globalSample = policy.global.rate ? { at } : undefined;
-    const keySample = policy.perKey?.rate && keyRecord ? { at } : undefined;
+    const keySample = keyRecord?.limits?.rate ? { at } : undefined;
     active += 1;
     if (keyRecord) keyRecord.active += 1;
     if (globalSample) globalRate.push(globalSample);

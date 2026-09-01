@@ -518,7 +518,7 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
   contributors; [CONTRIBUTING.md](./CONTRIBUTING.md) points here.
 - **[Architecture decisions](./docs/decisions/)** — the *why* behind the design.
 - **[Roadmap](./ROADMAP.md)** · **[Changelog](./CHANGELOG.md)** ·
-  **[Backlog](./docs/backlog/)** · security via **[SECURITY.md](./SECURITY.md)**.
+  security via **[SECURITY.md](./SECURITY.md)**.
 
 ## License
 

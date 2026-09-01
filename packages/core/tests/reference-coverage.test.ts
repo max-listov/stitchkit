@@ -22,6 +22,7 @@ const SURFACE_SNAPSHOT = `${import.meta.dir}/fixtures/public-surface.json`;
 const ENTRYPOINTS: Record<string, string> = {
   stitchkit: 'index.ts',
   'stitchkit/contract': 'contract/index.ts',
+  'stitchkit/primitives': 'primitives.ts',
   'stitchkit/server': 'server/index.ts',
   'stitchkit/tools': 'tools.ts',
   'stitchkit/tools/invoker': 'tool-invoker.ts',

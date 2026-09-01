@@ -28,6 +28,13 @@ const APPLICATION_TERMS = [
   'ManagedSchedule',
   'bindProcessSignals',
   'ApplicationSnapshot',
+  // The entry is more than the kernel: its admission, credit and journal primitives are public
+  // from the same entrypoint, and a consumer of one is a consumer of `stitchkit/application`.
+  // Leaving them out let the table read "stable for five minors" in the very release that broke
+  // one of them.
+  'BoundedAdmission',
+  'CreditWindow',
+  'DiagnosticJournal',
 ] as const;
 
 test('counts a minor once however many patches broke it', () => {
@@ -71,14 +78,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 10 of the 16 minors since 0.56.2, most recently 0.69.0');
+  expect(sentence).toBe('redefined in 10 of the 17 minors since 0.56.2, most recently 0.69.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 3 of the 16 minors since 0.56.2, most recently 0.67.0',
+    'redefined in 4 of the 17 minors since 0.56.2, most recently 0.72.0',
   );
   expect(guide).toContain(`_${application}_`);
 });

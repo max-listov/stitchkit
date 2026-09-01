@@ -40,6 +40,7 @@ function fakeStorage(
   return {
     frames,
     storage: {
+      reclaimedStale: false,
       async append(bytes) {
         frames.push(new TextDecoder().decode(bytes));
         if (options.hold) await options.hold;
@@ -75,7 +76,12 @@ describe('bounded ordered diagnostic journal', () => {
     const held = deferred();
     const { storage, frames } = fakeStorage({ hold: held.promise });
     const journal = createDiagnosticJournalManager(
-      { eventSchema: EventSchema, epoch, limits },
+      {
+        eventSchema: EventSchema,
+        epoch,
+        limits,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
+      },
       storage,
     );
 
@@ -112,6 +118,7 @@ describe('bounded ordered diagnostic journal', () => {
       {
         eventSchema: z.unknown().pipe(EventSchema),
         epoch,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
         limits: { ...limits, maxEventBytes: 16, maxPendingItems: 8, maxPendingBytes: 180 },
       },
       storage,
@@ -146,6 +153,7 @@ describe('bounded ordered diagnostic journal', () => {
       {
         eventSchema: EventSchema,
         epoch,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
         limits,
         onFailure: ({ phase }) => {
           failures.push(phase);
@@ -177,7 +185,12 @@ describe('bounded ordered diagnostic journal', () => {
     const held = deferred();
     const { storage } = fakeStorage({ hold: held.promise });
     const journal = createDiagnosticJournalManager(
-      { eventSchema: EventSchema, epoch, limits },
+      {
+        eventSchema: EventSchema,
+        epoch,
+        limits,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
+      },
       storage,
     );
     journal.submit({ message: 'held' });
@@ -197,7 +210,12 @@ describe('bounded ordered diagnostic journal', () => {
     const held = deferred();
     const { storage } = fakeStorage({ hold: held.promise });
     const journal = createDiagnosticJournalManager(
-      { eventSchema: EventSchema, epoch, limits },
+      {
+        eventSchema: EventSchema,
+        epoch,
+        limits,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
+      },
       storage,
     );
     journal.submit({ message: 'held' });

@@ -98,10 +98,9 @@ This repo's own fixtures shipped illegal names (`do_thing_/test`, `list_/items`,
   name still fail in production.
 - **Normalise without validating.** Rejected — an explicit `toolName` still ships
   illegal, and an all-separator prefix ships as `get_`.
-- **An `onIncompatibleSchema`-style policy knob.** Rejected per decision 3. Noted
-  for the record: `docs/backlog/done/2026-06-22-flatten-field-collision-unsatisfiable.md`
-  flags raw mount-time throws as a defect in the *representability* context, which
-  is precisely the distinction drawn here.
+- **An `onIncompatibleSchema`-style policy knob.** Rejected per decision 3. Raw
+  mount-time throws are a defect in the *representability* context, which is
+  precisely the distinction drawn here.
 
 ## Consequences
 

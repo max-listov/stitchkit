@@ -63,8 +63,7 @@ describe('createServer + implement', () => {
       cors: { origin: '*' },
     });
     PORT = server.port ?? 0;
-    // The kernel assigned it — a fixed number would be a scheduled flake, see
-    // docs/backlog/done/2026-08-05-fixed-test-ports-are-flaky.md.
+    // The kernel assigned it — a fixed number would be a scheduled flake.
     expect(PORT).toBeGreaterThan(0);
   });
 

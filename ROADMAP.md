@@ -32,7 +32,7 @@ The core is shipped and hardened through real consumers:
   event bus.
 - **Release verification** — lint, types, tests, builds, Node HTTP/Socket.IO
   smoke tests and
-  [packed minimal/full/Node consumer lanes](./docs/backlog/done/2026-08-06-the-published-package-is-tested-as-a-consumer-uses-it.md).
+  packed minimal/full/Node consumer lanes.
 
 Shipped and **evolving** — released, used, and still finding its shape. Each may
 be redefined in a minor, always with a marked breaking change and a migration
@@ -86,7 +86,7 @@ The 1.0 milestone is **API stability**, not new surface. Before it ships:
 - **Documentation quality.** Keep the guide, API reference, upgrade path and
   generated LLM docs synchronized. A rendered documentation site remains a
   separately scoped idea in
-  [`docs/backlog/inbox/2026-05-20-docs-site.md`](./docs/backlog/inbox/2026-05-20-docs-site.md).
+  an open idea, not a commitment.
 
 When the public API has held steady across several consumers, 1.0 locks it
 under semantic versioning — breaking changes only on a major bump.
@@ -109,5 +109,7 @@ Deliberate non-goals — considered and declined, so they are not re-proposed:
 
 ## Contributing to the roadmap
 
-Ideas start as a file in [`docs/backlog/inbox/`](./docs/backlog/). Open an issue
-to discuss anything here — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Open an issue to discuss anything here — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+An idea that changes the design ends up as an ADR in
+[`docs/decisions/`](./docs/decisions/), which is where this project keeps its
+reasoning.

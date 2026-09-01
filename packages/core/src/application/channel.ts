@@ -257,6 +257,8 @@ export const CreditWindowSnapshotSchema = z
     acquired: z.number().int().nonnegative(),
     refused: z.number().int().nonnegative(),
     replenishedBytes: z.number().int().nonnegative(),
+    /** Producers parked in the waiting form. A number that only grows is a stalled consumer. */
+    waiting: z.number().int().nonnegative(),
   })
   .strict()
   .readonly();
@@ -275,10 +277,45 @@ export type CreditAcquireResult =
       readonly reason: 'closed' | 'larger-than-window' | 'insufficient-credit';
     };
 
+/**
+ * A waiting acquire's refusals.
+ *
+ * `insufficient-credit` is absent by construction: waiting is what the caller asked for instead
+ * of that answer. What remains are the conditions no amount of waiting changes — a closed window
+ * and a request larger than the window — plus the two ways a wait ends on the caller's terms.
+ */
+export type CreditWaitRefusalReason =
+  | 'closed'
+  | 'larger-than-window'
+  | 'timed-out'
+  | 'aborted';
+
+export type CreditWaitResult =
+  | { readonly outcome: 'leased'; readonly lease: CreditLease }
+  | { readonly outcome: 'refused'; readonly reason: CreditWaitRefusalReason };
+
+export interface CreditAcquireWaitOptions {
+  readonly signal?: AbortSignal;
+  /** Caller wait budget. Absent means wait until credit, close or abort. */
+  readonly timeoutMs?: number;
+}
+
 export interface CreditWindow {
+  /** Non-blocking: grants or refuses against the credit available right now. */
   acquire(bytes: number): CreditAcquireResult;
+  /**
+   * Waiting: resolves when the consumer replenishes enough credit, or refuses with a named
+   * reason. Waiters are served in arrival order, so a large request ahead of a small one delays
+   * it rather than being overtaken — predictable ordering is worth more here than throughput.
+   */
+  acquire(bytes: number, options: CreditAcquireWaitOptions): Promise<CreditWaitResult>;
   close(): CreditWindowSnapshot;
   getSnapshot(): CreditWindowSnapshot;
+}
+
+interface CreditWaiter {
+  readonly bytes: number;
+  settle(result: CreditWaitResult): void;
 }
 
 /** Finite byte permission; release is local accounting, not delivery acknowledgement. */
@@ -289,6 +326,7 @@ export function createCreditWindow(config: { readonly capacityBytes: number }): 
   let acquired = 0;
   let refused = 0;
   let replenishedBytes = 0;
+  const waiters = new Set<CreditWaiter>();
 
   const snapshot = (): CreditWindowSnapshot =>
     CreditWindowSnapshotSchema.parse({
@@ -299,45 +337,140 @@ export function createCreditWindow(config: { readonly capacityBytes: number }): 
       acquired,
       refused,
       replenishedBytes,
+      waiting: waiters.size,
     });
 
-  return {
-    acquire(bytes) {
-      const requested = PositiveSafeIntegerSchema.parse(bytes);
-      if (state === 'closed') {
-        refused += 1;
-        return { outcome: 'refused', reason: 'closed' };
-      }
-      if (requested > capacityBytes) {
-        refused += 1;
-        return { outcome: 'refused', reason: 'larger-than-window' };
-      }
-      if (requested > availableBytes) {
-        refused += 1;
-        return { outcome: 'refused', reason: 'insufficient-credit' };
-      }
-      availableBytes -= requested;
-      acquired += 1;
-      let leaseReleased = false;
-      const lease: CreditLease = {
+  /**
+   * Hand freed credit to whoever has been waiting longest, and stop at the first waiter that
+   * still does not fit. Skipping it to serve a smaller request behind it is how a large producer
+   * starves on a busy window, so the queue blocks instead of reordering.
+   */
+  const serveWaiters = (): void => {
+    for (const waiter of waiters) {
+      if (waiter.bytes > availableBytes) return;
+      waiter.settle({ outcome: 'leased', lease: lease(waiter.bytes) });
+    }
+  };
+
+  const lease = (requested: number): CreditLease => {
+    availableBytes -= requested;
+    acquired += 1;
+    let leaseReleased = false;
+    return {
+      bytes: requested,
+      get released() {
+        return leaseReleased;
+      },
+      release() {
+        if (leaseReleased) return;
+        leaseReleased = true;
+        availableBytes += requested;
+        replenishedBytes += requested;
+        if (availableBytes > capacityBytes) {
+          throw new Error('Credit window accounting exceeded its capacity');
+        }
+        serveWaiters();
+      },
+    };
+  };
+
+  /**
+   * The decision, with no bookkeeping.
+   *
+   * The waiting form asks the same question and must not be charged a refusal for the answer
+   * that sends it to the queue: `insufficient-credit` is why it waits, not what it returns.
+   */
+  const tryLease = (requested: number): CreditAcquireResult => {
+    if (state === 'closed') return { outcome: 'refused', reason: 'closed' };
+    if (requested > capacityBytes) {
+      return { outcome: 'refused', reason: 'larger-than-window' };
+    }
+    if (requested > availableBytes) {
+      return { outcome: 'refused', reason: 'insufficient-credit' };
+    }
+    return { outcome: 'leased', lease: lease(requested) };
+  };
+
+  const acquireNow = (requested: number): CreditAcquireResult => {
+    const result = tryLease(requested);
+    if (result.outcome === 'refused') refused += 1;
+    return result;
+  };
+
+  const acquireWaiting = (
+    requested: number,
+    options: CreditAcquireWaitOptions,
+  ): Promise<CreditWaitResult> => {
+    const timeoutMs =
+      options.timeoutMs === undefined
+        ? undefined
+        : PositiveSafeIntegerSchema.parse(options.timeoutMs);
+
+    // Anything a wait cannot change is answered before one is created.
+    const immediate = tryLease(requested);
+    if (immediate.outcome === 'leased') return Promise.resolve(immediate);
+    if (immediate.reason !== 'insufficient-credit') {
+      refused += 1;
+      return Promise.resolve({ outcome: 'refused', reason: immediate.reason });
+    }
+    if (options.signal?.aborted) {
+      refused += 1;
+      return Promise.resolve({ outcome: 'refused', reason: 'aborted' });
+    }
+
+    return new Promise<CreditWaitResult>((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // Every ending goes through one door, and the counting lives inside it. A budget that
+      // expires, an abort and a close all race each other by construction; counting at each
+      // call site is how one wait becomes two refusals in the snapshot.
+      const waiter: CreditWaiter = {
         bytes: requested,
-        get released() {
-          return leaseReleased;
-        },
-        release() {
-          if (leaseReleased) return;
-          leaseReleased = true;
-          availableBytes += requested;
-          replenishedBytes += requested;
-          if (availableBytes > capacityBytes) {
-            throw new Error('Credit window accounting exceeded its capacity');
-          }
+        settle(result) {
+          if (settled) return;
+          settled = true;
+          if (timer !== undefined) clearTimeout(timer);
+          options.signal?.removeEventListener('abort', onAbort);
+          waiters.delete(waiter);
+          if (result.outcome === 'refused') refused += 1;
+          resolve(result);
         },
       };
-      return { outcome: 'leased', lease };
-    },
+      function onAbort(): void {
+        waiter.settle({ outcome: 'refused', reason: 'aborted' });
+      }
+      waiters.add(waiter);
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          waiter.settle({ outcome: 'refused', reason: 'timed-out' });
+        }, timeoutMs);
+      }
+    });
+  };
+
+  function acquire(bytes: number): CreditAcquireResult;
+  function acquire(
+    bytes: number,
+    options: CreditAcquireWaitOptions,
+  ): Promise<CreditWaitResult>;
+  function acquire(
+    bytes: number,
+    options?: CreditAcquireWaitOptions,
+  ): CreditAcquireResult | Promise<CreditWaitResult> {
+    const requested = PositiveSafeIntegerSchema.parse(bytes);
+    return options === undefined ? acquireNow(requested) : acquireWaiting(requested, options);
+  }
+
+  return {
+    acquire,
     close() {
       state = 'closed';
+      // A parked waiter is not woken by a closed window unless someone says so; leaving them
+      // parked is the defect this pair exists to remove.
+      for (const waiter of [...waiters]) {
+        waiter.settle({ outcome: 'refused', reason: 'closed' });
+      }
       return snapshot();
     },
     getSnapshot: snapshot,

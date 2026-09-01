@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.71.0",
+  "version": "0.72.0",
   "description": "Contract-first backend framework \u2014 one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -72,6 +72,10 @@
     "./contract": {
       "types": "./dist/contract/index.d.ts",
       "import": "./dist/contract/index.js"
+    },
+    "./primitives": {
+      "types": "./dist/primitives.d.ts",
+      "import": "./dist/primitives.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
@@ -148,7 +152,7 @@
   "scripts": {
     "build:native-contained-files": "node scripts/build-contained-files-native.mjs",
     "check": "bun x tsc --noEmit",
-    "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts src/declaration.ts src/agent-runtime-browser.ts --outdir dist --target node --packages external --splitting --root src",
+    "build:browser": "bun build src/index.ts src/react.ts src/contract/index.ts src/primitives.ts src/declaration.ts src/agent-runtime-browser.ts --outdir dist --target node --packages external --splitting --root src",
     "build:server": "bun build src/server/index.ts src/node.ts src/tools.ts src/tool-invoker.ts src/cli.ts src/remote.ts src/files.ts src/testing.ts src/observability/index.ts src/agent-runtime.ts src/agent-runtime-harness.ts src/agent-runtime-coding-tools.ts src/agent-runtime-openrouter.ts src/agent-runtime-sqlite-bun.ts src/agent-runtime-sqlite-node.ts src/application.ts src/application-grammy.ts src/application-opentelemetry.ts src/telegram.ts --outdir dist --target node --packages external --splitting --root src",
     "build:js": "bun run build:browser && bun run build:server && bun scripts/preserve-webpack-ignore.mjs",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly && bun scripts/rewrite-declaration-specifiers.mjs",

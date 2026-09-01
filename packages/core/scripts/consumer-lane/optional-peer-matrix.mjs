@@ -140,6 +140,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    id: 'primitives',
+    subpath: './primitives',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/primitives', 'defineLifecycle'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'server-signals',
     subpath: './server',
     fixture: 'minimal',

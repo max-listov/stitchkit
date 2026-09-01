@@ -2,7 +2,11 @@ import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { isRecord } from '../internal/typed';
-import type { DiagnosticJournalFailurePhase } from './diagnostic-journal-contract';
+import type {
+  DiagnosticJournalFailurePhase,
+  DiagnosticJournalLockPolicy,
+} from './diagnostic-journal-contract';
+import { acquireDiagnosticJournalLock } from './diagnostic-journal-lock';
 
 export interface DiagnosticJournalStorageSnapshot {
   readonly currentFileBytes: number;
@@ -17,6 +21,8 @@ export interface DiagnosticJournalStorageAppendResult
 }
 
 export interface DiagnosticJournalStorage {
+  /** This storage took its lock by reclaiming one whose owner was provably gone. */
+  readonly reclaimedStale: boolean;
   append(bytes: Uint8Array): Promise<DiagnosticJournalStorageAppendResult>;
   snapshot(): DiagnosticJournalStorageSnapshot;
   close(): Promise<void>;
@@ -38,6 +44,7 @@ interface RotatingStorageConfig {
   readonly maxFileBytes: number;
   readonly maxFiles: number;
   readonly mode: number;
+  readonly lock: DiagnosticJournalLockPolicy;
 }
 
 function isMissing(error: unknown): boolean {
@@ -93,7 +100,11 @@ export async function createRotatingDiagnosticJournalStorage(
   const journalPath = resolve(parent, basename(config.path));
 
   const lockPath = `${journalPath}.lock`;
-  const lock = await open(lockPath, 'wx', config.mode);
+  const { handle: lock, reclaimedStale } = await acquireDiagnosticJournalLock(
+    lockPath,
+    config.mode,
+    config.lock,
+  );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let currentFileBytes = 0;
   let retainedFiles = 1;
@@ -186,6 +197,7 @@ export async function createRotatingDiagnosticJournalStorage(
   });
 
   return {
+    reclaimedStale,
     async append(bytes) {
       if (closed || !handle) {
         throw new DiagnosticJournalStorageError(

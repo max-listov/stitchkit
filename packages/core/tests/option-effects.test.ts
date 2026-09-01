@@ -20,7 +20,7 @@
  * The covered surfaces are chosen by failure mode, not by importance. A wrong
  * `port` fails loudly on the first request; an unenforced allowlist, a
  * never-dispatched hook and an unapplied grace period all look exactly like
- * success. → `docs/backlog/done/2026-08-31-a-declared-option-must-be-load-bearing.md`
+ * success.
  */
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -40,6 +40,10 @@ const COVERED: Record<string, string> = {
   RouteGroup: 'server/index.ts',
   LifecycleHooks: 'server/index.ts',
   ManagedServerResourceConfig: 'application.ts',
+  DiagnosticJournalConfig: 'application.ts',
+  CreditAcquireWaitOptions: 'application.ts',
+  BoundedAdmissionPerKeyLimits: 'application.ts',
+  ResumableIteratorConfig: 'index.ts',
   VerifyTelegramInitDataOptions: 'telegram.ts',
 };
 

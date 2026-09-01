@@ -51,7 +51,6 @@ How stitchkit is built and why.
   the optional [`terminal host`](./architecture/terminal-host.md) layering.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
   One file per ADR. Index: [`decisions/README.md`](./decisions/README.md).
-- [`backlog/`](./backlog/) — task tracking — the **what**.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) — how to build, test and contribute.
 
 ### Layout
@@ -62,74 +61,49 @@ docs/
 ├── api/           the API reference
 ├── architecture/  current subsystem design — the how
 ├── VISION.md      what stitchkit is, its principles, its direction
-├── decisions/     architecture decision records — one file per ADR
-└── backlog/       task tracking — the "what"
-    ├── inbox/     raw ideas, not yet worked out
-    ├── planned/   worked out, has a plan, ready to pick up
-    ├── in-progress/ actively being implemented and validated
-    ├── icebox/    consciously frozen, each with a concrete defrost trigger
-    └── done/      completed task records
+└── decisions/     architecture decision records — one file per ADR
 ```
 
-### The backlog flow
+### Where a change is recorded
 
 ```
-idea ─▶ inbox/ ─▶ planned/ ─▶ in-progress/ ─▶ done/
-                        │            │
-                        └──▶ icebox/ ┘  (frozen; `defrost:` says when it returns)
-                                     │
-   architectural decision ─▶ decisions/ (a new ADR file)
-   released change        ─▶ CHANGELOG.md (repo root)
+architectural decision ─▶ decisions/     (a new ADR file + a row in its index)
+shipped, user-visible  ─▶ CHANGELOG.md   (repo root)
+breaking               ─▶ CHANGELOG.md `### ⚠️ Breaking changes`
+                          + docs/guide/upgrading.md
 ```
 
-- **New idea** → a file in `inbox/`. One idea, one file.
-- **Worked out, has a plan** → `git mv` it to `planned/`.
-- **Being implemented** → it may move to an `in-progress/` folder while active.
-- **Finished** → `git mv` to `done/` and add a `## Что сделано` section — the
-  heading the records actually use, grouped by affected layer, every item
-  pointing at a file or other inspectable evidence.
-- **Consciously frozen** → `git mv` to `icebox/` with a `defrost:` field naming
-  the concrete event or date that brings it back. Not a place for things merely
-  not started.
-- **An architectural decision** taken along the way → also a new ADR section in
-  `decisions/`.
+- **An architectural decision** → a new ADR in `decisions/`, and a row in
+  [`decisions/README.md`](./decisions/README.md) so the index never lags.
 - **A shipped, user-visible change** → a line in the root `CHANGELOG.md`.
+- **A breaking change** → the same line under `### ⚠️ Breaking changes`, plus a
+  mechanical migration in [`guide/upgrading.md`](./guide/upgrading.md). Both are
+  gated; see `AGENTS.md`.
 
-`done/` holds completed task records — from the first release onward it fills
-normally as work ships.
-
-### Decisions vs. backlog
-
-- **`decisions/`** records the **why** — architectural decisions, as immutable
-  ADRs. An ADR weighs alternatives and explains a choice; once written it is
-  not edited, only superseded by a later ADR.
-- **`backlog/`** records the **what** — the work pipeline, from idea to done.
-
-Not every completed task is an ADR. A routine task — a bug fix, a small
-feature — just lives in `done/`. Write an ADR only when a real architectural
-decision was made (a choice between alternatives, with lasting consequences).
-
-See [`decisions/README.md`](./decisions/README.md) for the ADR format and index.
+This repository keeps **decisions**, not a task tracker. Day-to-day planning
+happens outside it and is not part of what the package delivers — so an ADR is
+the only durable answer to *why the code looks like this*, and anything worth
+knowing later has to become one. Not every change earns an ADR: a bug fix or a
+small addition is a changelog line. Write one when a real choice was made
+between alternatives, with lasting consequences.
 
 ### File conventions
 
-- **One idea, one file.** Don't append to a shared list.
-- **Backlog filenames start with a date** — `YYYY-MM-DD-slug.md` — so they sort
-  chronologically.
-- **Move between stages with `git mv`**, never copy-delete, so history follows.
-- **`done/` is immutable** — a completed record is not rewritten.
-- Every backlog file opens with frontmatter:
+- **One decision, one file.** Don't append to a shared list.
+- **ADR filenames start with a number** — `NNNN-slug.md` — and the number is
+  never reused.
+- **An ADR is immutable** — once written it is not edited, only superseded by a
+  later ADR that says so.
+- Every documentation file opens with frontmatter:
 
 ```yaml
 ---
 title: Short title
 description: One sentence — what this is and why
-type: task
-status: inbox | planned | in-progress | icebox | done
+type: decision | architecture | vision
+status: accepted | active | superseded
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
-completed: YYYY-MM-DD   # done only
-defrost: what brings it back   # icebox only
 ---
 ```
 

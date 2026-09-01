@@ -15,6 +15,9 @@ export const DiagnosticJournalLimitsSchema = z
   .readonly();
 export type DiagnosticJournalLimits = z.infer<typeof DiagnosticJournalLimitsSchema>;
 
+export const DiagnosticJournalLockPolicySchema = z.enum(['refuse', 'reclaim-stale']);
+export type DiagnosticJournalLockPolicy = z.infer<typeof DiagnosticJournalLockPolicySchema>;
+
 export const DiagnosticJournalStateSchema = z.enum(['open', 'draining', 'closed', 'failed']);
 export type DiagnosticJournalState = z.infer<typeof DiagnosticJournalStateSchema>;
 
@@ -52,6 +55,14 @@ export const DiagnosticJournalStatusSchema = z
     state: DiagnosticJournalStateSchema,
     epoch: z.uuid(),
     limits: DiagnosticJournalLimitsSchema,
+    lock: z
+      .object({
+        policy: DiagnosticJournalLockPolicySchema,
+        /** This journal started by reclaiming a lock whose owner was provably gone. */
+        reclaimedStale: z.boolean(),
+      })
+      .strict()
+      .readonly(),
     received: z.number().int().nonnegative(),
     accepted: z.number().int().nonnegative(),
     refused: z.number().int().nonnegative(),
@@ -153,6 +164,14 @@ export interface DiagnosticJournalConfig<SCHEMA extends z.ZodType> {
   readonly limits: DiagnosticJournalLimits;
   /** Created file and lock permissions. Default `0o600`. */
   readonly mode?: number;
+  /**
+   * What to do about a lock that is already present. Default `refuse`.
+   *
+   * `reclaim-stale` reclaims it only when the recorded owner is provably gone — a liveness
+   * check, never an age heuristic, because a slow writer and a dead one are indistinguishable
+   * by time and the lock exists for exactly that case.
+   */
+  readonly lock?: DiagnosticJournalLockPolicy;
   /** Diagnostics are isolated and are never written back into this journal. */
   readonly onFailure?: (failure: DiagnosticJournalFailure) => void | Promise<void>;
 }

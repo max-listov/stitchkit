@@ -44,12 +44,23 @@ export interface PublicationPrivacyConventions {
   linuxHomeNames: readonly string[];
   macHomeNames: readonly string[];
   credentialPairs: readonly string[];
+  /**
+   * This package's own name, from which the private working companion's name is
+   * derived rather than written down.
+   *
+   * The rule is that public source never reveals the companion — so a gate that
+   * forbade the literal string would have to contain it, and would be the leak
+   * it was added to prevent. Deriving the shape keeps the name out of the tree
+   * while still refusing it.
+   */
+  packageName: string;
 }
 
 export const DEFAULT_PUBLICATION_CONVENTIONS: PublicationPrivacyConventions = {
   linuxHomeNames: ['example-user', 'fixture-user', 'runner', 'build'],
   macHomeNames: ['example-user', 'fixture-user'],
   credentialPairs: ['example-user:example-password'],
+  packageName: 'example-package',
 };
 
 const TEXT_FILE = /\.(?:cjs|css|grit|html|js|json|jsonc|md|mjs|sh|ts|tsx|txt|ya?ml)$/i;
@@ -90,6 +101,14 @@ export function privateShapes(
       rule: 'private fleet-style node identity',
       pattern:
         /\b[A-Z][A-Z0-9]+-(?:DEV|PROD|PRODUCTION|STAGING|HOST|SERVER|NODE)(?:-[A-Z0-9]+)*\b/,
+    },
+    {
+      // The private working repository holds this project's planning; the
+      // source must not name it, require its checkout, or hint at its path.
+      // Its path is already refused by the home-directory shapes above — this
+      // is the bare name, which they do not see.
+      rule: 'private working companion of this repository',
+      pattern: new RegExp(`\\b${literal(conventions.packageName)}-dev\\b`, 'i'),
     },
     {
       rule: 'credential embedded in a URL',
@@ -254,6 +273,9 @@ export const STITCHKIT_CONVENTIONS: PublicationPrivacyConventions = {
     'USER:PASSWORD',
     'user:password',
   ],
+  // The framework package. The companion's name is this plus a suffix, and
+  // deriving it is the point: writing it out here would publish it.
+  packageName: 'stitchkit',
 };
 
 /**

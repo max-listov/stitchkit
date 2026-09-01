@@ -39,17 +39,6 @@ const ROOT = `${import.meta.dir}/..`;
  */
 const EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
   {
-    file: 'docs/backlog/done/2026-06-05-mcp-build-per-session-cache.md',
-    rule: 'private fleet-style node identity',
-    because:
-      'A measurement note naming the host it was taken on. Already published, so removing it from HEAD would not unpublish it; kept as the record while the gate stops the next one. Redacting it is a separate decision, because done/ is immutable by rule.',
-  },
-  {
-    file: 'docs/backlog/done/2026-08-05-fixed-test-ports-are-flaky.md',
-    rule: 'private fleet-style node identity',
-    because: 'Same measurement note, same reasoning — two occurrences in one file.',
-  },
-  {
     file: 'scripts/publication-privacy.test.ts',
     rule: 'non-synthetic Linux home path',
     because:
@@ -78,16 +67,6 @@ const EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
     rule: 'agent or session routing metadata',
     because:
       'The scanner states that shape as a literal pattern, so it matches itself. A rule cannot be written without writing it down.',
-  },
-  {
-    file: 'docs/backlog/done/2026-08-24-post-audit-hardening.md',
-    rule: 'credential embedded in a URL',
-    because: 'Records the fixture a redaction test feeds in, so the record has to contain it.',
-  },
-  {
-    file: 'docs/backlog/done/2026-08-25-texts-say-exactly-what-the-code-does.md',
-    rule: 'credential embedded in a URL',
-    because: 'Records the fixture a redaction test feeds in, so the record has to contain it.',
   },
   {
     file: 'packages/core/tests/error-hook.test.ts',
@@ -130,6 +109,45 @@ const EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
       'Not a credential at all: both halves are template placeholders interpolated at runtime. The shape cannot tell a template from a literal, and a value assembled from variables is by construction not a secret.',
   },
 ];
+
+describe('the private working companion is never named here', () => {
+  // Its **path** was already refused by the home-directory shapes; its bare
+  // name was not, and a name is all it takes to tell a reader that a private
+  // planning repository exists and what it is called.
+  //
+  // Every string below is BUILT from the package name rather than written out,
+  // for the same reason the shape is derived rather than listed: a gate that
+  // spelled the companion would be the disclosure it exists to prevent.
+  const shapes = privateShapes(STITCHKIT_CONVENTIONS);
+  const companion = `${STITCHKIT_CONVENTIONS.packageName}-dev`;
+  const inspect = (text: string) =>
+    inspectPublicationText('docs/example.md', text, { shapes });
+
+  test('the bare name is refused, wherever it appears', () => {
+    for (const text of [
+      `planning lives in ${companion}`,
+      `see https://github.com/owner/${companion}`,
+      `clone ${companion} first`,
+    ]) {
+      expect(inspect(text).map((finding) => finding.rule)).toContain(
+        'private working companion of this repository',
+      );
+    }
+  });
+
+  test('it does not fire on the package itself or on an unrelated name', () => {
+    // The shape has to be narrow enough to live in a repository that says its
+    // own name on almost every page.
+    for (const text of [
+      `install ${STITCHKIT_CONVENTIONS.packageName} from npm`,
+      `import { defineContract } from '${STITCHKIT_CONVENTIONS.packageName}'`,
+      'a-different-project-dev-landing is unrelated',
+      'run in dev mode',
+    ]) {
+      expect(inspect(text)).toEqual([]);
+    }
+  });
+});
 
 describe('nothing private is in what git carries', () => {
   test('the scanner recognises each shape it claims to', () => {

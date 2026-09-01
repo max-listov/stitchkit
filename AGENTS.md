@@ -17,8 +17,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 > release flow**. The hands-on contributor workflow (setup, commands, git hooks,
 > local development against a consuming app, PRs) is in
 > [`CONTRIBUTING.md`](./CONTRIBUTING.md). Design rationale per rule is an ADR in
-> [`docs/decisions/`](./docs/decisions/); tasks live in
-> [`docs/backlog/`](./docs/backlog/).
+> [`docs/decisions/`](./docs/decisions/).
 
 ---
 
@@ -59,10 +58,17 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 - Transport and hooks use `RuntimeContext` (loose); handlers use
   `HandlerContext` (typed). Do not cast between them. → ADR 0003
 - A new architectural decision → a new ADR in `docs/decisions/` **and a row in
-  `docs/decisions/README.md`** (keep the index in sync). A new idea → a file in
-  `docs/backlog/inbox/`. See `docs/README.md`.
-- A completed backlog item may claim test coverage only by naming the exact
-  test file and test case in its `Что сделано` section.
+  `docs/decisions/README.md`** (keep the index in sync). See `docs/README.md`.
+- A new idea or a bug → an issue. This repository tracks decisions, not tasks,
+  so an ADR is the **only** durable record of why the code looks the way it
+  does — and the bar for writing one is therefore lower than "architecture".
+  **An ADR may record a practice or an incident**, not just a design: ADR 0011
+  describes a release arrangement that has since been replaced and is kept as
+  history, and the release protocol in this file is mostly scar tissue from runs
+  that went wrong. If a change teaches something a future reader would otherwise
+  relearn the expensive way, that lesson has nowhere else to live — write the
+  ADR. What does *not* earn one is unchanged: a bug fix or a small addition is a
+  changelog line.
 - **ALWAYS** make a declared option load-bearing, and prove it. A typed option
   that is accepted and then not honoured on some path is this repository's most
   repeated defect — six shipped instances, four of them in three releases:
@@ -221,7 +227,7 @@ entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by
   longer passes). Bodies use real newlines — a literal `\n` is refused by the
   `commit-msg` hook.
 - **Never name a private/consuming project** in committed docs, ADRs, the
-  CHANGELOG or backlog — write "a consuming project". The public repo carries no
+  CHANGELOG — write "a consuming project". The public repo carries no
   downstream names.
 
 (The Zod-first / no-`as` / Web-Fetch-clean code conventions are the **Rules**

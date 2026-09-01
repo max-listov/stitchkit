@@ -132,5 +132,64 @@
     "now": {
       "test": "maxAgeSeconds bounds a signature that would otherwise last forever"
     }
+  },
+  "DiagnosticJournalConfig": {
+    "eventSchema": {
+      "test": "invalid, oversized and byte-capacity refusals consume no sequence"
+    },
+    "path": {
+      "test": "rotates finite files, owns one path and marks a partial-tail restart"
+    },
+    "limits": {
+      "test": "orders accepted frames and refuses pressure before memory grows"
+    },
+    "mode": {
+      "test": "rotates finite files, owns one path and marks a partial-tail restart"
+    },
+    "onFailure": {
+      "test": "writer failure is terminal, drains leases and isolates its observer"
+    },
+    "lock": {
+      "test": "reclaims a lock whose recorded owner is provably gone, and says so"
+    }
+  },
+  "CreditAcquireWaitOptions": {
+    "signal": {
+      "test": "an aborted signal ends the wait, before and during it"
+    },
+    "timeoutMs": {
+      "test": "refuses with a distinguishable reason when the wait budget runs out"
+    }
+  },
+  "BoundedAdmissionPerKeyLimits": {
+    "maxConcurrent": {
+      "test": "enforces a different ceiling for each key from one resolver"
+    },
+    "rate": {
+      "test": "resolves a rate budget per key and keeps the aggregate snapshot intact"
+    }
+  },
+  "ResumableIteratorConfig": {
+    "open": {
+      "test": "re-opens from the last delivered cursor rather than restarting"
+    },
+    "advance": {
+      "test": "re-opens from the last delivered cursor rather than restarting"
+    },
+    "isTerminal": {
+      "test": "a terminal item ends iteration instead of triggering a re-open"
+    },
+    "retry": {
+      "test": "a repeatedly failing source keeps its attempt counter growing until a delivery"
+    },
+    "signal": {
+      "test": "an aborted signal ends iteration promptly, mid-wait"
+    },
+    "onAttempt": {
+      "test": "a repeatedly failing source keeps its attempt counter growing until a delivery"
+    },
+    "random": {
+      "test": "doubles to the ceiling and subtracts jitter without exceeding it"
+    }
   }
 }

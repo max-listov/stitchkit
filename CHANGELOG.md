@@ -15,6 +15,85 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.0] — 2026-09-01
+
+Four requests from a consuming application, all of the same shape: a primitive
+that ships the non-blocking, single-valued or default half of a problem, leaving
+the other half to be hand-written beside it — and the hand-written half is where
+the interesting defects live.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who *reads* `BoundedAdmissionPolicy['perKey']` off the
+declared type rather than only passing one, and anyone who constructs a
+`CreditWindowSnapshot` or `DiagnosticJournalStatus` by hand — a test double, most
+likely. Both are compiler-visible: passing an existing policy still typechecks
+unchanged, and no export was removed or renamed.
+
+- **`perKey` is a union of two shapes.** It is either the flat ceiling it always
+  was, or `{ maxKeys, limits }` — never both. Passing the flat form is unchanged;
+  reading it now needs narrowing.
+  `// before: const ceiling = policy.perKey?.maxConcurrent` →
+  `// after: const ceiling = policy.perKey && !('limits' in policy.perKey) ? policy.perKey.maxConcurrent : undefined`
+
+- **`CreditWindowSnapshot` gained `waiting`, `DiagnosticJournalStatus` gained
+  `lock`.** Both are returned by the framework, so reading code is unaffected;
+  a hand-built object stops compiling until it carries the new field.
+  `// before: { state: 'open', capacityBytes: 100, /* … */ }` →
+  `// after: { state: 'open', capacityBytes: 100, /* … */ waiting: 0 }`
+
+### Added
+
+- **`createDiagnosticJournal` accepts `lock: 'refuse' | 'reclaim-stale'`
+  (default `refuse`, unchanged).** A journal whose process was killed abruptly
+  leaves its `.lock` behind, and until now recovery meant a human deleting a
+  file — a daemon that will not restart without a person. `reclaim-stale`
+  reclaims the lock only when the recorded owner is **provably gone**: the lock
+  now carries its owner's process identity and host, and the check is liveness,
+  never age. A slow writer and a dead one are indistinguishable by time, which
+  is exactly the case the lock exists for, so no timeout-based reclaim is
+  offered. PID reuse can only make a dead owner look alive, so the residual risk
+  is a refusal, never a reclaim over a live writer. `getStatus().lock` reports
+  the policy and whether this journal started by reclaiming.
+
+- **`perKey` admission can resolve the ceiling from the key.** Where each key
+  carries its own limit — a per-tenant quota, a per-plan rate, a per-operation
+  budget read from configuration — `perKey: { maxKeys, limits: (key) => … }`
+  replaces the `Map<key, BoundedAdmission>` an application had to hand-roll,
+  and keeps the aggregate snapshot, the per-reason refusal counters, `maxKeys`
+  eviction and `drain`/`force` across keys. The ceiling is resolved on a key's
+  first admission and cached with its record; eviction drops both, which is also
+  how a changed configuration is adopted.
+
+- **`createCreditWindow().acquire` has a waiting form.**
+  `acquire(bytes, { signal, timeoutMs })` returns a promise that resolves when
+  the consumer replenishes, matching `BoundedAdmission.run`'s option names. Its
+  refusals are `closed`, `larger-than-window`, `timed-out` and `aborted` —
+  `insufficient-credit` is absent by construction, since waiting is what the
+  caller asked for instead of that answer. Waiters are served in arrival order,
+  `close()` resolves every pending waiter rather than parking it, and one wait
+  is exactly one refusal in the snapshot however it ends. The new `waiting`
+  counter makes a stalled consumer visible.
+
+- **`resumableIterator` and `createBackoff`** on the browser-safe entrypoint.
+  Re-opening a long-lived stream is what every consumer of one writes next, and
+  backoff already existed in the package but only inside `createHttpClient`'s
+  `retry` and the polling helper, neither reachable from an
+  `AsyncIterableIterator`. The caller keeps every domain decision — `open`,
+  `advance`, `isTerminal` — and the framework keeps the part that is the same
+  everywhere: jittered delay within a real ceiling, resume from the last
+  delivered cursor, reset on delivery, prompt abort, and an `onAttempt` observer
+  because a silent reconnect loop is the shape this defect always takes. A
+  source that ends without a terminal item is treated as a dropped connection,
+  not as completion.
+
+- **`stitchkit/primitives` declares reusable application facts without importing a domain.** It
+  includes immutable lifecycle transitions and events, identity-derived owner scope, exhaustive
+  permission matrices, exact money and quantities, timezone-aware deadline projections, explicit
+  audit decisions, application-owned domain-event delivery and managed-file export results. The
+  leaf is browser-safe; storage, transactions, transports, schedules and document generation stay
+  with the application.
+
 ### Changed
 
 - **Developed and tested against `zod@4.5.4`.** The peer range is unchanged

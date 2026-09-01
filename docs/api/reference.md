@@ -70,6 +70,8 @@ The browser-and-server entrypoint. Re-exports everything from
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
 | `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
 | `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON; blank keep-alives are skipped and `finalLine: 'require-newline'` can make the delimiter mandatory — [guide](../guide/client.md#ndjson) |
+| `resumableIterator` | function | re-open a long-lived stream from the last delivered cursor, with jittered backoff, a caller-owned terminal item and prompt abort — [guide](../guide/client.md#resumable-streams) |
+| `createBackoff` | function | exponential backoff with subtractive jitter as a value: `next()` / `reset()` |
 | `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | default on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
 | `ContractStreamFraming` / `ContractStreamCompletion` | _types_ | opt-in item-vs-envelope framing and terminal-vs-stream-end completion policies |
 | `StreamFinalLinePolicy` | _type_ | permissive or newline-required final NDJSON line policy |
@@ -113,6 +115,10 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RetainedTopics` | _type_ | the `createRetainedTopics` handle |
 | `ParseSSEOptions` | _type_ | options for `parseSSE` |
 | `ParseNDJSONOptions` | _type_ | options for `parseNDJSON` |
+| `BackoffPolicySchema` / `BackoffPolicy` | schema / _type_ | `minDelayMs`, `maxDelayMs` and a `0`–`1` jitter fraction; a ceiling below the floor is refused |
+| `Backoff` | _type_ | the backoff handle returned by `createBackoff` |
+| `ResumableIteratorConfig` | _type_ | caller-owned `open` / `advance` / `isTerminal`, retry policy, abort signal and `onAttempt` observer |
+| `ResumableAttempt` | _type_ | attempt number, the delay about to be waited and the error that caused it |
 
 ### Trace (client)
 
@@ -221,6 +227,51 @@ from the root `stitchkit`.
 | `Paginated` | _type_ | the cursor-pagination envelope |
 | `encodeCursor` | function | encode a keyset value into an opaque `nextCursor` string (base64url, UTF-8-safe) |
 | `decodeCursor` | function | decode + Zod-validate a cursor back to its value (`null` if missing/invalid) |
+
+---
+
+## `stitchkit/primitives`
+
+Browser-and-server-safe declarations for facts an application wants to define once. See the
+[primitives guide](../guide/primitives.md). Storage, transactions, data-adapter predicates,
+schedules, transports and file generation remain application-owned.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineLifecycle` | function | immutable finite-state transition declaration, role/payload validation, available-action projection and transition event |
+| `LifecycleState` / `LifecycleTransitionDefinition` / `LifecycleDefinition` | _types_ | branded state value and the declaration inferred from application strings |
+| `LifecycleTransitionInput` / `LifecycleTransitionResult` / `LifecycleTransitionSuccess` / `LifecycleTransitionFailure` | _types_ | typed execution input and distinct transition/state, role and payload outcomes |
+| `LifecycleTransitionEventSchema` / `LifecycleTransitionEvent` | schema / _type_ | canonical event returned for application-atomic persistence |
+| `defineOwnerScope` | function | resolve one owner from identity or require the explicit `acrossAllOwners` capability |
+| `OwnerScope` / `OwnerScopeDefinition` / `OwnerScopeResolution` | _types_ | branded adapter input and its resolved/refused outcomes |
+| `definePermissionMatrix` | function | exhaustive role × operation decisions with server check and client capability projection |
+| `PermissionGrantMatrix` / `PermissionCheckResult` | _types_ | compile-time complete matrix and unknown/allowed/denied runtime result |
+| `defineMoney` / `createMoneySchema` | functions | fixed-currency JSON-safe minor-unit value and Zod schema |
+| `addMoney` / `subtractMoney` / `multiplyMoney` / `shareMoney` / `splitMoney` | functions | exact same-currency arithmetic with explicit indivisible remainder |
+| `Money` / `MoneyShare` / `MoneySplit` | _types_ | currency-literal value and remainder-bearing operation results |
+| `defineUnitSystem` / `createQuantitySchema` / `addQuantity` | functions | exact decimal quantities and caller-declared finite conversions |
+| `Quantity` / `UnitConversion` / `QuantityProjection` | _types_ | unit-literal value, rational conversion and recorded/derived provenance |
+| `QuantityProjectionSchema` | schema | transport-safe recorded/derived quantity union |
+| `defineDeadlinePolicy` | function | elapsed- or calendar-day projection with explicit timezone, threshold, current time and caller category keys |
+| `DeadlineResultSchema` / `DeadlineResult` | schema / _type_ | due instant, remaining/overdue days and projected category |
+| `audit` | constant | constructors for explicit `record(changeSchema)` or `omit(reason)` endpoint metadata |
+| `assertAuditDeclared` | function | refuse a contract operation with no audit decision |
+| `createAuditRecord` | function | validate one declared change and return the canonical event value |
+| `AuditPolicy` / `AuditRecordPolicy` / `AuditOmitPolicy` / `CreateAuditRecordInput` | _types_ | audit declaration and record input contracts |
+| `AuditRecordSchema` / `AuditRecord` | schema / _type_ | domain-event-shaped audit record |
+| `createDomainEventSchema` | function | wrap a typed payload in the canonical event envelope |
+| `DomainEventSchema` / `DomainEvent` | schema / _type_ | generic event with stable id, time, subject and optional actor |
+| `DomainEventActorSchema` / `DomainEventActor` | schema / _type_ | structured actor identity and application role |
+| `DomainEventSubjectSchema` / `DomainEventSubject` | schema / _type_ | generic subject type/id pair |
+| `defineDomainEventDelivery` | function | plan routes and dispatch only application-outbox claims by committed event id |
+| `DomainEventDestinationSchema` / `DomainEventDestination` | schema / _type_ | transport-neutral destination identity |
+| `DomainEventDeliveryOutcomeSchema` / `DomainEventDeliveryOutcome` | schema / _type_ | delivered, retryable, terminal or unknown transport result |
+| `DomainEventDeliveryClaimSchema` / `DomainEventDeliveryClaim` | schema / _type_ | application-owned atomic outbox claim |
+| `DomainEventOutbox` / `DomainEventRoute` / `DomainEventTransport` | _types_ | host capabilities composed by process-local delivery |
+| `DomainEventDeliveryPlan` / `DomainEventDispatchResult` | _types_ | transaction input and bounded dispatch summary |
+| `defineExportOperation` / `createExportResultSchema` | functions | one typed contract operation returning a ready managed file or pending operation id |
+| `scanMoneyNumberRisks` / `scanOwnerFilterRisks` | functions | source-text migration diagnostics with caller-owned identifiers |
+| `SourceText` / `SourceRisk` | _types_ | migration scanner input and exact path/line evidence |
 
 ---
 
@@ -473,7 +524,9 @@ cutovers are covered by the executable
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createBoundedAdmission` | function | process-local no-queue global/per-key concurrency and rate leases, optionally composed with application admission |
-| `BoundedAdmissionPolicySchema` / `BoundedAdmissionPolicy` | schema / _type_ | finite global budget and optional finite per-key budget with `maxKeys` |
+| `BoundedAdmissionPolicySchema` / `BoundedAdmissionPolicy` | schema / _type_ | finite global budget and optional finite per-key budget with `maxKeys`, declared either as one flat ceiling or as a resolver — never both |
+| `BoundedAdmissionPerKeyLimitsSchema` / `BoundedAdmissionPerKeyLimits` | schema / _type_ | one key's resolved ceiling: `maxConcurrent` and optional `rate` |
+| `BoundedAdmissionPerKeyLimitResolver` | _type_ | `(key) => limits`, resolved on a key's first admission and cached until the key is evicted |
 | `BoundedRateBudgetSchema` / `BoundedRateBudget` | schema / _type_ | `{ limit, intervalMs }` monotonic sliding-window budget |
 | `BoundedAdmissionStateSchema` / `BoundedAdmissionState` | schema / _type_ | `accepting \| draining \| closed` |
 | `BoundedAdmissionRefusalReasonSchema` / `BoundedAdmissionRefusalReason` | schema / _type_ | exact local/upstream refusal vocabulary |
@@ -500,6 +553,8 @@ cutovers are covered by the executable
 | `createCreditWindow` | function | finite byte-credit lease window with exact once-only replenishment |
 | `CreditWindow` / `CreditWindowSnapshot` / `CreditWindowSnapshotSchema` | _type_ / schema | byte-credit handle and absolute accounting record |
 | `CreditAcquireResult` / `CreditLease` | _type_ | reasoned refusal or idempotently releasable byte-credit lease |
+| `CreditAcquireWaitOptions` | _type_ | `signal` / `timeoutMs` for the waiting `acquire` overload; absent budget waits until credit, close or abort |
+| `CreditWaitResult` / `CreditWaitRefusalReason` | _type_ | waiting-acquire outcome; `insufficient-credit` is absent by construction, `timed-out` and `aborted` replace it |
 
 ### Bounded diagnostic journal
 
@@ -508,6 +563,7 @@ cutovers are covered by the executable
 | `createDiagnosticJournal` | function | create one schema-owned FIFO JSONL writer with bounded retained memory, exclusive local path ownership and finite rotation |
 | `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
 | `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
+| `DiagnosticJournalLockPolicySchema` / `DiagnosticJournalLockPolicy` | schema / _type_ | `refuse` (default) or `reclaim-stale`, which reclaims only a lock whose recorded owner is provably gone |
 | `DiagnosticJournalSubmitResultSchema` / `DiagnosticJournalSubmitResult` | schema / _type_ | accepted epoch/sequence or explicit invalid, oversized, capacity, closed or failed refusal |
 | `DiagnosticJournalStatusSchema` / `DiagnosticJournalStatus` | schema / _type_ | state, limits, exact admission/write/failure counters, pending ownership, rotations, partial tails and last safe sequences |
 | `DiagnosticJournalFrameSchema` / `DiagnosticJournalFrame` | schema / _type_ | version-1 JSONL frame carrying process epoch, contiguous accepted sequence and schema-validated JSON event |

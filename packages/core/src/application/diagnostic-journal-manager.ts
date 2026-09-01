@@ -10,6 +10,7 @@ import {
   DiagnosticJournalLimitsSchema,
   type DiagnosticJournalRefusalReason,
   type DiagnosticJournalState,
+  type DiagnosticJournalStatus,
   DiagnosticJournalStatusSchema,
   DiagnosticJournalSubmitResultSchema,
   type DiagnosticJournalWaitOptions,
@@ -24,6 +25,7 @@ interface DiagnosticJournalManagerConfig<SCHEMA extends z.ZodType> {
   readonly eventSchema: SCHEMA;
   readonly epoch: string;
   readonly limits: DiagnosticJournalLimits;
+  readonly lock: DiagnosticJournalStatus['lock'];
   readonly onFailure?: (failure: DiagnosticJournalFailure) => void | Promise<void>;
 }
 
@@ -184,6 +186,7 @@ export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
       state,
       epoch: config.epoch,
       limits,
+      lock: config.lock,
       received,
       accepted,
       refused,

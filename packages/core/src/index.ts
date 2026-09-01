@@ -48,6 +48,15 @@ export {
   LiveStateStopReasonSchema,
   type LiveStateSubscriberError,
 } from './browser/live-state';
+export {
+  type Backoff,
+  type BackoffPolicy,
+  BackoffPolicySchema,
+  createBackoff,
+  type ResumableAttempt,
+  type ResumableIteratorConfig,
+  resumableIterator,
+} from './browser/resumable';
 export type {
   BindRealtimeClientOptions,
   BoundRealtimeClient,

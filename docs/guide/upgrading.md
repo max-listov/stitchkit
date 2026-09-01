@@ -16,6 +16,45 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.72.0
+
+Nothing you *pass* changed. Both items are about types you read or build, and
+both stop the compiler rather than surprising you at runtime.
+
+### If you read `perKey` off `BoundedAdmissionPolicy`
+
+`perKey` is now a union: the flat ceiling it always was, or `{ maxKeys, limits }`
+where the ceiling is resolved from the key. Declaring one is unchanged; reading
+one needs a narrowing.
+
+```ts
+// before
+const ceiling = policy.perKey?.maxConcurrent
+
+// after
+const ceiling =
+  policy.perKey && !('limits' in policy.perKey) ? policy.perKey.maxConcurrent : undefined
+```
+
+A shape carrying members of both branches — `{ maxKeys, maxConcurrent, limits }` —
+is refused at construction. It does *not* fail to typecheck: an excess-property
+check against a union admits any property some member declares, so this one is
+caught by `createBoundedAdmission`, not by `tsc`.
+
+### If you build a snapshot or a status by hand
+
+`CreditWindowSnapshot` gained `waiting` (producers parked in the new waiting
+`acquire`) and `DiagnosticJournalStatus` gained `lock`. Both are produced by the
+framework, so reading them is unaffected — but a test double stops compiling:
+
+```ts
+// before
+const snapshot: CreditWindowSnapshot = { state: 'open', capacityBytes: 100, /* … */ }
+
+// after
+const snapshot: CreditWindowSnapshot = { state: 'open', capacityBytes: 100, /* … */ waiting: 0 }
+```
+
 ## Released migration: 0.71.0
 
 The Agent coding tools. Two of the three changes are visible to the compiler;
