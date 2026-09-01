@@ -16,6 +16,30 @@ additive** — adopting it changes nothing in your code. (See
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## What your range does, and does not, do for you
+
+A caret range (`"stitchkit": "^0.71.0"`) is a real gate: it resolves `< 0.72.0`,
+so a plain `install` picks up every patch — fixes, new API, no code changes —
+and **never** crosses a minor. Crossing one is always something you chose.
+
+**An exact pin (`"stitchkit": "0.71.0"`) is a different arrangement, and it is
+easy to mistake for a safer version of the same one.** It does not opt you out
+of breaking changes; it opts you out of *every* change, patches included. No
+install will move you, nothing will warn you, and the gap grows quietly — a
+project pinned exactly for a few months is typically several minors behind and
+has had no signal at all that this is so. That is a legitimate choice, but it
+makes one thing your job rather than the resolver's:
+
+- **Check deliberately.** `npm view stitchkit version` against your pin, on
+  whatever cadence suits the project. Nothing else will raise it.
+- **Then upgrade across the whole gap at once**, exactly as below: apply the
+  `### ⚠️ Breaking changes` of every version above your pin up to your target,
+  in order. A pin held across four minors is four migrations, not one, and
+  three of them may be a single snippet each.
+
+The mechanical part is identical either way. Only the *noticing* differs, and an
+exact pin moves it onto you.
+
 ## Released migration: 0.72.0
 
 Nothing you *pass* changed. Both items are about types you read or build, and

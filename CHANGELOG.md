@@ -15,6 +15,22 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.1] — 2026-09-01
+
+### Changed
+
+- **The upgrade guide now says what a dependency range does and does not do for
+  you.** It was written as though every consumer used a caret, where the range
+  itself is the gate that makes crossing a minor a deliberate act. A consumer on
+  an **exact** pin has a different arrangement that is easy to mistake for a
+  safer version of the same one: it opts out not of breaking changes but of
+  every change, patches included, and nothing will ever raise the version or say
+  that a gap has opened. The guide now names that case, and the two things it
+  makes the consumer's job — checking the registry deliberately, and applying
+  every intermediate minor's breaking section when the gap is finally closed.
+  Reported by a consumer pinned exactly across two minors, reading the 0.72.0
+  migration section this shipped beside.
+
 ## [0.72.0] — 2026-09-01
 
 Four requests from a consuming application, all of the same shape: a primitive
