@@ -767,9 +767,11 @@
     "EntityCacheMembershipPolicy",
     "EntityCacheTotalDeltaInput",
     "EntityCacheTotalPolicy",
+    "RealtimeCacheBridgeConfig",
     "createCacheBridge",
     "createCursorQuery",
-    "createEntityCacheHandlers"
+    "createEntityCacheHandlers",
+    "createRealtimeCacheBridge"
   ],
   "stitchkit/node": [
     "AppError",

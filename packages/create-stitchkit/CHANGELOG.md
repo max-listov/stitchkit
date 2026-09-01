@@ -12,6 +12,48 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-09-01
+
+Three findings from someone setting up a new application on the starter from
+scratch, as a consumer who had never seen it. All of them live between "the
+scaffold is green" and "my first feature renders".
+
+### Fixed
+
+- **The generated `.env` no longer looks ready when it is not.** `local-env.ts`
+  rendered the database name and left `USER:PASSWORD` literal, in a file a
+  generator had just written — and a generated file reads as finished.
+  `assertUsableEnvironment` now names the file, the line and the variable, and
+  covers `ACCEPTANCE_DATABASE_URL` as well as `DATABASE_URL`. It runs before the
+  supervisor check, so an unusable environment is reported instead of a pm2
+  error, and on every run rather than only the one that created the file.
+  Rendering still succeeds: a generator that refuses to generate would break
+  `--no-install` scaffolding.
+
+- **`CREATEDB` is named where `DATABASE_URL` is named.** `prisma migrate dev`
+  creates a shadow database, so a least-privilege role — the sensible default
+  on a shared server — fails `db:migrate` with `P3014`. Neither the README nor
+  `_env.example` mentioned it.
+
+- **`check:authored` no longer refuses `as const`.** The gate exists to catch a
+  cast that can *launder* a type; a const-assertion only narrows, introduces no
+  name and cannot widen. Five of the first fifteen findings on a real adoption
+  were this false positive. Findings now also name the sanctioned alternative
+  instead of only the sin.
+
+- **`ADDING_A_FEATURE.md` no longer points at files the scaffold lacks.** Steps
+  4 and 5 referenced `lib/api/client.ts` and a "shared realtime source" that a
+  generated project does not contain, phrased as "the same pattern used by the
+  application's other contracts" — of which there were none. Both steps now
+  create what they need, with the transport file given in full.
+
+### Added
+
+- **`check:guides`**, part of `check`: every repository path a guide names must
+  exist, unless the guide declares it with `(created in this step)`. The guide
+  had five such references and three of them were legitimate; only a gate tells
+  those apart reliably.
+
 ## [0.5.0] — 2026-09-01
 
 ### ⚠️ Breaking changes

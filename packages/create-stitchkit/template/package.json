@@ -11,8 +11,9 @@
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "check": "bun run db:generate && bun run check:authored && bun x tsc -p tsconfig.json --noEmit && bun run --filter '*' check",
+    "check": "bun run db:generate && bun run check:authored && bun run check:guides && bun x tsc -p tsconfig.json --noEmit && bun run --filter '*' check",
     "check:authored": "bun scripts/check-authored.ts",
+    "check:guides": "bun scripts/guide-paths.ts",
     "test": "bun test scripts && bun run --filter '*' test",
     "build": "bun scripts/build-inputs.ts && bun run db:generate && bun --filter @app/backend build && bun --filter @app/frontend build && bun scripts/build-stamp.ts",
     "start:api": "bun --filter @app/backend start",

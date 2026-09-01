@@ -1,4 +1,7 @@
 NODE_ENV=development
+# Replace USER:PASSWORD before the first `bun run dev` — it refuses to start
+# while they are here. The role also needs CREATEDB if it will run
+# `db:migrate`: `prisma migrate dev` creates a shadow database to diff against.
 DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/stitchkit_starter
 # The throwaway database `bun run acceptance:local` creates and writes to. The
 # runtime gates WRITE, so they get one of their own: the harness refuses to

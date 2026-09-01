@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.3] — 2026-09-01
+
+### Added
+
+- **`createRealtimeCacheBridge`** — the cache bridge fed by a validated realtime
+  contract instead of a raw socket. A realtime registry maps an event name to
+  its *definition* (`{ args, ack }`), while the bridge's event map wants the
+  *handler function* at that position; a validated socket satisfies the looser
+  type structurally, so the combination the guide prescribes compiled and
+  inferred every payload as `never` — and the error then landed on the
+  consumer's own property access rather than on the seam. The mapping type
+  already existed (`InferRealtimeEventMap`) and nothing performed it, which is
+  why the fix needs no cast: the types meet once the mapping is done.
+
+  A separate function rather than an overload, deliberately: an overload would
+  be resolved structurally, and an existing caller passing its event map
+  explicitly (`createCacheBridge<Events>(…)`) would bind to whichever signature
+  came first and stop compiling.
+  `// before: createCacheBridge({ socket: realtimeClient, … })` →
+  `// after: createRealtimeCacheBridge({ socket: realtimeClient, … })`
+
+  Reported by a consumer who built a live page strictly by the documented
+  doctrine and could not compile it.
+
 ## [0.72.2] — 2026-09-01
 
 ### Changed

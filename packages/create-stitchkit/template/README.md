@@ -29,6 +29,17 @@ Point `DATABASE_URL` in `.env` at an existing PostgreSQL database, then run:
 bun run dev
 ```
 
+`.env` is generated on first run with the database name filled in and the
+credentials left as `USER:PASSWORD`. Replace them: `dev` refuses to start while
+the placeholder is there, naming the file and the line, rather than letting the
+driver fail on the first request.
+
+**The role that runs `bun run db:migrate` needs `CREATEDB`.** `prisma migrate
+dev` creates a throwaway shadow database to diff against, so a least-privilege
+role — the sensible default for a shared server — fails with `P3014: could not
+create the shadow database`. Grant `CREATEDB` to the development role, or point
+Prisma at a shadow database you create yourself.
+
 The command validates the environment, generates the Prisma client, applies any
 database migrations you add and launches:
 

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { appDeclaration } from '../packages/config/src/declaration';
-import { ensureLocalEnvironment } from './local-env';
+import { assertUsableEnvironment, ensureLocalEnvironment } from './local-env';
 import { awaitRolesAnswering, declaredRoleReadiness } from './readiness';
 import { runDeclaredReleaseSteps } from './release-steps';
 import { inheritToolingEnvironment } from './tooling-env';
@@ -21,9 +21,14 @@ async function run(command: string[], environment?: Record<string, string>): Pro
 
 export async function runDevelopment(environment?: Record<string, string>): Promise<void> {
   ensureLocalEnvironment(root);
+  // Before pm2, before anything: an unusable environment is the reader's problem to fix, and
+  // making them read a supervisor error first only delays the sentence that matters.
+  assertUsableEnvironment(root);
   assertToolAvailable('pm2', 'Install PM2 with `bun add --global pm2`, then rerun.');
   await run(['pm2', 'ping']);
   const environmentForRun = await developmentEnvironment(environment);
+  // Kept for an environment supplied from the shell rather than from `.env`, which the file
+  // check above cannot see.
   if (environmentForRun.DATABASE_URL?.includes('USER:PASSWORD')) {
     throw new Error(
       'DATABASE_URL still contains the starter placeholder. Create a PostgreSQL database, update DATABASE_URL in .env, then rerun `bun run dev`.',

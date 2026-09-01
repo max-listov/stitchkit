@@ -16,6 +16,9 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
 /** Minimal emitter — subscribe to an event, get an unsubscribe back. */
+import type { InferRealtimeEventMap, RealtimeEventRegistry } from '../realtime/contract';
+import type { ValidatedRealtimeSocket } from '../realtime/socket';
+
 export interface CacheBridgeSocket<TEvents> {
   on<K extends keyof TEvents & string>(event: K, handler: TEvents[K]): () => void;
 }
@@ -59,6 +62,20 @@ export interface CacheBridge {
   markFresh(key: QueryKey): void;
   /** Forget every freshness marker without changing socket subscriptions. */
   clearFresh(): void;
+}
+
+/**
+ * The bridge, fed by a validated realtime contract instead of a raw socket.
+ *
+ * A realtime registry maps an event name to its DEFINITION — `{ args, ack }` — while the bridge's
+ * event map wants the handler FUNCTION at that position. Structurally the socket still matched,
+ * so the generic bound to the registry and every payload inferred as `never`: the combination
+ * `AGENTS.md` prescribes did not compile, and the error pointed at the consumer's own property
+ * access rather than at the seam. Naming the mapping is the whole fix; nothing runs differently.
+ */
+export interface RealtimeCacheBridgeConfig<TInbound extends RealtimeEventRegistry>
+  extends Omit<CacheBridgeConfig<InferRealtimeEventMap<TInbound>>, 'socket'> {
+  socket: ValidatedRealtimeSocket<TInbound, RealtimeEventRegistry>;
 }
 
 export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): CacheBridge {
@@ -147,4 +164,22 @@ export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): 
 
     clearFresh,
   };
+}
+
+/**
+ * The same bridge, fed by a validated realtime contract instead of a raw socket.
+ *
+ * A separate function rather than an overload, deliberately. A validated socket also satisfies
+ * the looser `CacheBridgeSocket`, so an overload would be decided structurally — and worse, an
+ * existing caller that passes its event map explicitly (`createCacheBridge<NoteEvents>(…)`) would
+ * bind to whichever signature came first and stop compiling. Two names cost one line at the call
+ * site and break nobody.
+ */
+export function createRealtimeCacheBridge<TInbound extends RealtimeEventRegistry>(
+  config: RealtimeCacheBridgeConfig<TInbound>,
+): CacheBridge {
+  // No cast: `ValidatedRealtimeSocket.on` already takes `RealtimeEventHandler<TInbound[K]>`,
+  // which is exactly what `InferRealtimeEventMap` puts at that key. The old failure was that
+  // nothing ever performed this mapping, so the generic bound to the registry itself.
+  return createCacheBridge<InferRealtimeEventMap<TInbound>>(config);
 }

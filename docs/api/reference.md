@@ -1599,6 +1599,7 @@ and `react-query-kit` peers.
 |--------|------|---------|
 | `createCursorQuery` | function | a cursor-paginated infinite query — [guide](../guide/client.md#cursor-pagination) |
 | `createCacheBridge` | function | sync socket events into the Query cache — [guide](../guide/realtime.md#cache-bridge) |
+| `createRealtimeCacheBridge` | function | the same bridge fed by a **validated realtime contract**; the payload comes from the contract's args tuple instead of inferring `never` |
 | `createEntityCacheHandlers` | function | created/updated/deleted cache handlers for one entity — [guide](../guide/realtime.md#entity-cache-handlers) |
 | `EntityCacheConfig` | _type_ | config for `createEntityCacheHandlers` |
 | `EntityCacheMembership` / `EntityCacheMembershipPolicy` | _type_ | per-exact-query `include | exclude | unknown` filter decision and unknown invalidation policy |
@@ -1612,6 +1613,7 @@ and `react-query-kit` peers.
 | `CursorQueryConfig` | _type_ | config for `createCursorQuery` |
 | `CacheBridge` | _type_ | the `createCacheBridge` handle |
 | `CacheBridgeConfig` | _type_ | config for `createCacheBridge` |
+| `RealtimeCacheBridgeConfig` | _type_ | config for `createRealtimeCacheBridge` — same fields, a `ValidatedRealtimeSocket` in place of the raw socket |
 | `CacheBridgeContext` | _type_ | the `ctx` a bridge handler receives |
 | `CacheBridgeHandler` | _type_ | one event-to-cache handler |
 | `CacheBridgeHandlers` | _type_ | the handler map |

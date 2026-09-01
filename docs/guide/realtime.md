@@ -686,6 +686,26 @@ leaving the handshake waiting forever.
 
 ## Cache bridge
 
+**Using a validated realtime contract? Use `createRealtimeCacheBridge`.** A
+realtime registry maps an event name to its *definition* (`{ args, ack }`),
+while the plain bridge's event map expects the *handler function* at that
+position. A validated socket satisfies the looser type structurally, so passing
+one to `createCacheBridge` compiled and inferred every payload as `never` —
+the error then landed on your own property access rather than on the seam.
+`createRealtimeCacheBridge` performs the mapping; nothing runs differently.
+
+```ts
+import { createRealtimeCacheBridge } from 'stitchkit/react'
+
+const bridge = createRealtimeCacheBridge<typeof contract.serverToClient>({
+  socket: realtimeClient,
+  queryClient,
+  handlers: {
+    noteUpdated: (note, { queryClient: qc }) => qc.setQueryData(noteKey(note.id), note),
+  },
+})
+```
+
 `createCacheBridge` syncs socket events into the TanStack Query cache — a server
 push updates the UI with no refetch. It is transport-agnostic: it takes any
 emitter with `on(event, handler) => unsubscribe`, which the

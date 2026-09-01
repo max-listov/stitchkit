@@ -20,15 +20,42 @@ function lineAt(source: string, offset: number): number {
   return source.slice(0, offset).split('\n').length;
 }
 
-function inspect(path: string, source: string): string[] {
+/**
+ * `as const` is not the assertion this gate exists for.
+ *
+ * The gate refuses a cast because a cast can LAUNDER a type — claim something the value has not
+ * been shown to be. A const-assertion cannot: it only narrows, it introduces no name, and it
+ * cannot widen. Refusing it made five of the first fifteen findings on a real adoption false, in
+ * a gate whose whole value is that its findings are worth acting on.
+ *
+ * `const` is a reserved word, so no type can be named `const` — the check has no false positive
+ * of its own.
+ */
+function isConstAssertion(node: { typeAnnotation?: unknown }): boolean {
+  const annotation = node.typeAnnotation;
+  if (!isRecord(annotation) || annotation.type !== 'TSTypeReference') return false;
+  const typeName = annotation.typeName;
+  return isRecord(typeName) && typeName.type === 'Identifier' && typeName.name === 'const';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** What to do instead — a finding that only names the sin costs the reader a search. */
+const ASSERTION_REMEDY =
+  'type assertion — use `satisfies` to check a literal against a type, or parse the value with its schema at the boundary';
+
+export function inspect(path: string, source: string): string[] {
   const result = parseSync(path, source);
   const failures = result.errors.map((error) => `${path}: parse error: ${error.message}`);
   const visitor = new Visitor({
     TSAsExpression(node) {
-      failures.push(`${path}:${lineAt(source, node.start)}: type assertion`);
+      if (isConstAssertion(node)) return;
+      failures.push(`${path}:${lineAt(source, node.start)}: ${ASSERTION_REMEDY}`);
     },
     TSTypeAssertion(node) {
-      failures.push(`${path}:${lineAt(source, node.start)}: type assertion`);
+      failures.push(`${path}:${lineAt(source, node.start)}: ${ASSERTION_REMEDY}`);
     },
     TSAnyKeyword(node) {
       failures.push(`${path}:${lineAt(source, node.start)}: explicit any`);
@@ -91,21 +118,25 @@ async function visitDirectory(directory: string): Promise<string[]> {
   return failures;
 }
 
-const failures = [
-  ...(await Promise.all(roots.map(visitDirectory))).flat(),
-  ...(
-    await Promise.all(
-      rootFiles.map(async (path) => inspect(path, await readFile(path, 'utf8'))),
-    )
-  ).flat(),
-];
-const webPackage = await readFile('packages/frontend/package.json', 'utf8');
-if (webPackage.includes(replacedThemePackage)) {
-  failures.push(
-    'packages/frontend/package.json: use @wrksz/themes as the single theme runtime',
-  );
-}
-if (failures.length > 0) {
-  for (const failure of failures) console.error(failure);
-  process.exit(1);
+// Guarded so the module can be imported by its own test without running the gate over the
+// repository — importing a script that scans the tree and exits is not a testable unit.
+if (import.meta.main) {
+  const failures = [
+    ...(await Promise.all(roots.map(visitDirectory))).flat(),
+    ...(
+      await Promise.all(
+        rootFiles.map(async (path) => inspect(path, await readFile(path, 'utf8'))),
+      )
+    ).flat(),
+  ];
+  const webPackage = await readFile('packages/frontend/package.json', 'utf8');
+  if (webPackage.includes(replacedThemePackage)) {
+    failures.push(
+      'packages/frontend/package.json: use @wrksz/themes as the single theme runtime',
+    );
+  }
+  if (failures.length > 0) {
+    for (const failure of failures) console.error(failure);
+    process.exit(1);
+  }
 }
