@@ -21,7 +21,6 @@
  */
 import { writeSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import process from 'node:process';
 import { safeJsonParse } from '../internal/safe-json';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';

@@ -205,7 +205,18 @@ contract:
 Every endpoint callable exposes a `withOptions` method accepting required
 `ClientRequestOptions`. The ordinary callable contains only contract arguments,
 so it can be passed directly to callback APIs such as `react-query-kit` without
-mistaking their callback context for Stitchkit transport options:
+mistaking their callback context for Stitchkit transport options.
+
+**That safety has a cost worth knowing before it bites you.** `api.thing(args,
+{ signal })` — the shape everyone reaches for first — is not an error: the second
+argument is ignored, in silence, and the request runs to completion while the
+caller believes it was cancelled or bounded. TypeScript refuses the extra
+argument at a typed call site and says nothing at an untyped one, which is where
+the mistake actually happens. Nothing can catch it at runtime either: probing the
+second argument is exactly what the callback safety above forbids, since reading
+a foreign object's `signal` may execute someone else's getter. So the rule is
+simply this — **per-call options only ever go through `withOptions`**, and a
+cancellation that appears to do nothing is the first thing to check.
 
 ```ts
 const controller = new AbortController()

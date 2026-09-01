@@ -15,6 +15,35 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.72.5] — 2026-09-01
+
+### Fixed
+
+- **Importing `stitchkit/cli` no longer truncates the process's stdout.** A CLI
+  emitting more than 64 KiB of `--json` lost everything past 65 536 bytes when
+  the reader was slow — silently, exit code 0, empty stderr — and the module only
+  had to be in the process's graph; nothing had to call a command. The cause is
+  not ours: `import process from 'node:process'` switches Bun's stdout to the
+  Node-compatible stream, and the truncation follows. Measured on two lines with
+  no framework code in them, against a control in the same run: 200 001 bytes
+  without the import, 65 536 with it. The import bought nothing — the global
+  `process` is the same object — so it is gone, and
+  `packages/core/tests/cli-stdout-integrity.test.ts` pins it through the same
+  shell pipeline the defect was found with. Reported by a consuming application
+  whose `--json` transcript was being cut mid-document, where the transport
+  looked guilty and the real culprit was an import in a neighbouring command.
+
+- **The client guide now names what a misplaced per-call option costs.**
+  `api.thing(args, { signal })` is ignored in silence — the plain callable takes
+  contract arguments only — and the request then runs to completion while the
+  caller believes it was cancelled. A consuming application spent an
+  investigation on a transport that was working, and this repository's own
+  attempt to make the wrong form throw was rejected by its own test: an endpoint
+  callable must stay safe to hand to `react-query-kit`, and probing the second
+  argument would execute a foreign object's getter. So the answer is a sentence
+  in the guide rather than a runtime check, and `withOptions` remains the only
+  door for options.
+
 ## [0.72.4] — 2026-09-01
 
 ### Fixed

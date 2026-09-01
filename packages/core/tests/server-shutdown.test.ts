@@ -86,16 +86,20 @@ describe('managed Bun server shutdown', () => {
     const server = createServer({ port: 0, services: [service] });
     const request = fetch(`${server.url}/lifecycle`).catch(() => undefined);
     await started.promise;
-    const beganAt = performance.now();
     const result = await server.shutdown({ gracePeriodMs: 25, forceTimeoutMs: 5_000 });
     expect(result.outcome).toBe('forced');
     expect(result.reason).toBe('deadline');
     expect(result.pendingRequestsAtForce).toBeGreaterThan(0);
     expect(result.abortedRequests).toBeGreaterThan(0);
     expect(result.pendingRequests).toBe(0);
-    const elapsedMs = performance.now() - beganAt;
-    expect(elapsedMs).toBeGreaterThanOrEqual(20);
-    expect(elapsedMs).toBeLessThan(5_500);
+    // Measured on the framework's own clock, not the test's wall clock, and against a bound that
+    // actually discriminates. `< 5_500` did neither: forcing at the FORCE deadline would take
+    // grace + force ≈ 5_025 ms and pass it too, so the assertion excluded nothing it appeared to
+    // exclude — while being tight enough to redden under load and teach a re-run. Forcing at the
+    // grace deadline measures 25-27 ms here against a 25 ms grace, so 1 s is forty times the
+    // expected value and five times below the outcome being ruled out.
+    expect(result.durationMs).toBeGreaterThanOrEqual(20);
+    expect(result.durationMs).toBeLessThan(1_000);
     await request;
   }, 20_000);
 
