@@ -6,7 +6,7 @@
     "hasInput": false,
     "hasOutput": true,
     "inputShape": null,
-    "outputShape": "49c1f81a53ca82ad",
+    "outputShape": "05d1386c30d82f6a",
     "http": [
       {
         "method": "GET",
@@ -26,7 +26,7 @@
     "hasInput": false,
     "hasOutput": true,
     "inputShape": null,
-    "outputShape": "49c1f81a53ca82ad",
+    "outputShape": "05d1386c30d82f6a",
     "http": [
       {
         "method": "POST",

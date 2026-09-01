@@ -118,6 +118,8 @@ export async function createStarterHarness(
       toolApproval: {
         read_file: 'approved',
         search_files: 'approved',
+        list_directory: 'approved',
+        glob: 'approved',
         read_resource: 'approved',
         write_file: 'user-approval',
         edit_file: 'user-approval',

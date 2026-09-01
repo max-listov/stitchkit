@@ -16,11 +16,11 @@
     "build": "bun build src/index.ts --outdir dist --target bun --packages external"
   },
   "dependencies": {
-    "stitchkit-tui": "file:../../../tui",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "ai": "^7.0.84",
+    "ai": "^7.0.87",
     "stitchkit": "file:../../../core",
-    "zod": "4.4.3"
+    "stitchkit-tui": "file:../../../tui",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260707.2",

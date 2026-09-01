@@ -151,9 +151,15 @@ describe('conservative discriminated-union join', () => {
     expect(mixed.additionalProperties).toEqual({});
   });
 
-  test('plain unions remain unions', () => {
-    const schema = flatten(z.union([z.string(), z.number()]));
-    expect(Array.isArray(schema.anyOf)).toBe(true);
+  test('a plain union is passed through, not joined into an object', () => {
+    // The join exists for discriminated unions of objects; a union of scalars
+    // has nothing to join. The guard is that flatten returns it **unchanged**,
+    // asserted against its own input rather than against a shape zod happens to
+    // emit — 4.5 writes this union as `type: ['string','number']` where 4.4
+    // wrote `anyOf`. Both are unions, and neither is flatten's business.
+    const input = toJsonSchema(z.union([z.string(), z.number()]), 'input', 'any');
+    expect(flattenToolJsonSchema(input)).toEqual(input);
+    expect(flattenToolJsonSchema(input).type).not.toBe('object');
   });
 
   test('an optional discriminator is not flattened into a required field', () => {

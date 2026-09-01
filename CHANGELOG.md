@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Changed
+
+- **Developed and tested against `zod@4.5.4`.** The peer range is unchanged
+  (`^4.4.3` already allowed it), so nothing about installing Stitchkit changes —
+  but two things about 4.5 are worth knowing before a consumer's own `install`
+  picks it up. `z.iso.datetime()` now requires seconds, so an endpoint that
+  accepted `2026-08-08T00:15Z` refuses it; and `z.toJSONSchema` writes a
+  nullable as `type: ["string","null"]` where 4.4 wrote `anyOf`, which moves
+  any fingerprint taken over that document. Neither is Stitchkit's change, and
+  both arrive through a range Stitchkit declares — so they are recorded here
+  rather than left to be discovered.
+
 ## [0.71.0] — 2026-09-01
 
 Five defects in the Agent coding tools, all found by watching nine models of

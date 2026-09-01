@@ -60,6 +60,71 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Released migration: 0.5.0
+
+### the approval policy names a tool that no longer exists
+
+One code edit, and one thing to do to a machine that was left mid-question.
+
+1. **Rename the key.** In `src/runtime.ts`, inside `loop.toolApproval`, replace
+   `apply_patch: 'user-approval'` with `edit_file: 'user-approval'`. While you
+   are in that object, add `list_directory: 'approved'` and `glob: 'approved'`
+   beside `read_file` and `search_files` — 0.71.0 added both, they are read-only,
+   and an unlisted tool is governed by the framework's default rather than by
+   this file.
+
+   Do this **before** you start the upgraded agent, not after. The failure mode
+   is silent in the direction that costs you: a key matching no tool does not
+   raise, it simply stops gating, so the first edit after the upgrade is applied
+   without asking and looks exactly like an edit you approved.
+
+2. **Operator step — a durable session left waiting on the old tool cannot be
+   answered.** If an agent was interrupted while a `apply_patch` approval was
+   pending, that approval names a call for a tool the framework no longer
+   defines: approving it cannot execute anything, and the run will not move.
+   Interrupt that run, or drop the local state directory — `.stitchkit/` holds
+   `agent.sqlite`, the approval secret and the TUI logs, all of it local and
+   regenerated on the next start. There is nothing durable in it that a server
+   owns.
+
+   A session with no pending approval needs none of this and resumes normally.
+
+3. **The framework's own move is separate.** Going from a `0.70.x` line to
+   `0.71.0` is a Stitchkit upgrade with its own breaking notes — the coding-tool
+   surface changed for anyone calling it directly, not only through this
+   template. Read
+   [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md), section
+   `Released migration: 0.71.0`.
+
+### the timestamp your API accepts got narrower
+
+Zod moved to 4.5, and `z.iso.datetime()` now requires seconds. This is not a
+code change — it is a change in what your endpoints admit, and it arrives the
+moment you install.
+
+1. **Decide before you deploy, not after.** If any client sends
+   `2026-08-08T00:15Z`, it now receives `BAD_REQUEST` where it used to receive
+   `200`. Search your schemas for `z.iso.datetime()` and check who fills those
+   fields. A machine-to-machine caller you control is a one-line fix on its
+   side; a caller you do not control is a decision, and the honest form of it is
+   an explicit schema that accepts what you mean to accept — not a pinned Zod
+   version, which only moves the same day to a later one.
+
+2. **Regenerate your surface snapshot in the same commit.** 4.5 encodes a
+   nullable as `type: ["string","null"]` where 4.4 wrote `anyOf`, so the shape
+   fingerprints in `packages/backend/src/surface.snapshot.json` move without any
+   operation changing. Run `bun run surface:snapshot` and read the diff: only
+   `inputShape` / `outputShape` values may differ. If an operation appeared,
+   vanished, or changed its HTTP or tool exposure, that is **your** change and
+   Zod did not cause it.
+
+3. **Move one Zod, not several.** If your project vendors or links packages that
+   depend on Zod themselves, they must resolve the same minor. Two minors are
+   two incompatible type systems, and what surfaces is
+   `TS2589: Type instantiation is excessively deep` in a file you did not touch.
+   No operator step: nothing about a running machine changes.
+
+
 ## Released migration: 0.4.1
 
 ### a release refuses a stale artifact, and cleanup is bounded

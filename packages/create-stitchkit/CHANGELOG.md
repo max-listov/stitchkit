@@ -12,6 +12,59 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-01
+
+### ⚠️ Breaking changes
+
+**Who must act:** two audiences. Anyone holding a generated **Agent** project
+changes one key in one object, and nothing reports it when it goes wrong.
+**Everyone** re-reads the Zod item: an API that accepted a timestamp without
+seconds stops accepting it, which is a change in what your endpoints admit, not
+in what your code compiles to.
+
+- **The Agent approval policy keys `edit_file`, not `apply_patch`.** Stitchkit
+  0.71.0 replaced `apply_patch` with a one-call `edit_file`, and `toolApproval`
+  names tools by string. A key matching no tool is not an error — an unlisted
+  tool falls through to "no approval required", so the effect of leaving the old
+  name is not that editing breaks. It is that editing stops asking: the one tool
+  the policy existed to gate now runs unattended, and the only visible sign is an
+  approval prompt that never appears.
+  `// before: toolApproval: { apply_patch: 'user-approval' }` →
+  `// after: toolApproval: { edit_file: 'user-approval' }`
+
+- **Zod 4.5 makes seconds mandatory in `z.iso.datetime()`.** The template moves
+  to `zod@4.5.4`, and the tightening travels with it: `2026-08-08T00:15Z`
+  validated before and is refused now. Nothing in the generated code changes —
+  what changes is the set of inputs your API accepts, so a client that omitted
+  seconds starts receiving `BAD_REQUEST`. If you need the old latitude, say so
+  in the schema rather than by holding the version back:
+  `// before: z.iso.datetime()` → `// after: z.iso.datetime()  // seconds now required`
+  The same release regenerates the committed **surface snapshots**: 4.5 encodes
+  a nullable as `type: ['string','null']` where 4.4 wrote `anyOf`, so every
+  affected shape fingerprint moves. A project of your own carrying
+  `surface.snapshot.json` regenerates it with `bun run surface:snapshot` and
+  reviews the diff — the hashes move, the operations do not.
+
+### Changed
+
+- **The generated project targets the published `stitchkit@0.71.0` line.** The
+  catalog target and the frozen lockfile move together, so a fresh scaffold
+  receives `edit_file`, `list_directory`, `glob`, the typed coding-tool refusals
+  a model can act on, the context usage a step reports, and the peer-free
+  `stitchkit/telegram` leaf.
+- **The whole toolchain moves to its current releases** — Zod 4.5.4 (see the
+  breaking note above), Biome 2.5.11, `@types/node` 26.4.0, and `ai` 7.0.87 in
+  the Agent template. One Zod resolves across the repository and both templates,
+  which is now a gate rather than a coincidence: two minors of Zod are two
+  incompatible type systems, and the error that surfaces names neither Zod nor
+  the file that moved it.
+- **The Agent approval policy is exhaustive again.** 0.71.0 added
+  `list_directory` and `glob`; both are read-only and both were therefore
+  running under the framework's default rather than under the project's own
+  policy. They are now named `'approved'` beside `read_file` and `search_files`.
+  Nothing about what happens changes — what changes is that the file says so,
+  which is the whole reason the map is written out rather than defaulted.
+
 ## [0.4.4] — 2026-08-30
 
 ### Changed
