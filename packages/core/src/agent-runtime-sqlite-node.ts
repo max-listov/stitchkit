@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type AgentRuntimeSqliteDatabase,
-  type AgentRuntimeSqliteValue,
   createSqliteAgentRuntimeStore,
   type SqliteAgentRuntimeStore,
+  type SqliteDatabase,
+  type SqliteValue,
 } from './agent-runtime/sqlite';
 
 export interface NodeSqliteAgentRuntimeStoreConfig {
@@ -23,14 +23,14 @@ export function createNodeSqliteAgentRuntimeStore(
     readOnly: config.readOnly ?? false,
   });
   database.exec('PRAGMA busy_timeout = 0; PRAGMA foreign_keys = ON;');
-  const boundary: AgentRuntimeSqliteDatabase = {
+  const boundary: SqliteDatabase = {
     exec: (sql) => database.exec(sql),
     prepare(sql) {
       const statement = database.prepare(sql);
       return {
-        get: (...parameters: AgentRuntimeSqliteValue[]) => statement.get(...parameters),
-        all: (...parameters: AgentRuntimeSqliteValue[]) => statement.all(...parameters),
-        run: (...parameters: AgentRuntimeSqliteValue[]) => {
+        get: (...parameters: SqliteValue[]) => statement.get(...parameters),
+        all: (...parameters: SqliteValue[]) => statement.all(...parameters),
+        run: (...parameters: SqliteValue[]) => {
           const result = statement.run(...parameters);
           return { changes: Number(result.changes) };
         },
@@ -45,11 +45,11 @@ export function createNodeSqliteAgentRuntimeStore(
 }
 
 export type {
-  AgentRuntimeSqliteDatabase,
-  AgentRuntimeSqliteStatement,
-  AgentRuntimeSqliteValue,
   SqliteAgentRuntimeStore,
   SqliteAgentRuntimeStoreConfig,
+  SqliteDatabase,
+  SqliteStatement,
+  SqliteValue,
 } from './agent-runtime/sqlite';
 export {
   createSqliteAgentRuntimeStore,

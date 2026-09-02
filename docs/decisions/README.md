@@ -175,6 +175,10 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0147](0147-machine-identity-not-host-name-decides-whose-pid-this-is.md) | Machine identity, not host name, decides whose pid this is | Accepted — refines 0145: a renamed machine reclaims its own lock, and a refusal says which refusal it is |
 | [0148](0148-a-refusal-that-never-left-the-process-is-a-validation-error.md) | A refusal that never left the process is a `VALIDATION_ERROR` with status 0 | Accepted — one shape and one timing for every local refusal, and argument validation stays on the server |
 | [0149](0149-a-zombie-owner-is-gone-and-it-is-the-safer-half-of-gone.md) | A zombie owner is gone, and it is the safer half of gone | Accepted — refines 0147: a signal probe reports a table entry, and an unreaped pid cannot have been reused |
+| [0150](0150-an-event-declaration-projects-onto-the-socket-we-already-run.md) | An event declaration projects onto the socket we already run | Accepted — `defineEvents` declares topics and delivery modes; the wire stays the existing realtime contract, and ADR 0008 is not reopened |
+| [0151](0151-a-trust-fence-names-its-lanes-because-one-of-them-bypasses-hooks.md) | A trust fence names its lanes, because one of them bypasses hooks entirely | Accepted — authority comparison at `onRequest` and at `allowRequest`; the socket lane never reaches the hooks on either runtime |
+| [0152](0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md) | A keyspace is memory that nothing reaches before it is durable | Accepted — backend, then memory, then the change event; opened as a managed resource because the kernel cannot register one later |
+| [0153](0153-a-watched-read-is-one-read-per-question.md) | A watched read is one read per question, and the question is not a function | Accepted — single-flight per key is the ordering guarantee, and the client is built from the contract because a method carries no identity |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

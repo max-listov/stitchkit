@@ -1,4 +1,4 @@
-import type { AgentRuntimeSqliteDatabase } from './sqlite';
+import type { SqliteDatabase } from './sqlite';
 import type { AgentConversationPurgeDriver } from './store-purge';
 
 const OWNED_TABLES = [
@@ -9,7 +9,7 @@ const OWNED_TABLES = [
 ];
 
 /** Additive v1 feature; install inside the schema initialization transaction. */
-export function initializeSqliteConversationPurge(database: AgentRuntimeSqliteDatabase): void {
+export function initializeSqliteConversationPurge(database: SqliteDatabase): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS stitchkit_agent_runtime_purged (
       conversation_id TEXT PRIMARY KEY
@@ -33,8 +33,8 @@ export function initializeSqliteConversationPurge(database: AgentRuntimeSqliteDa
 
 /** Uninitialized v1/read-only connections remain readable without claiming purge support. */
 export function sqliteConversationPurge(
-  database: AgentRuntimeSqliteDatabase,
-): AgentConversationPurgeDriver<AgentRuntimeSqliteDatabase> | undefined {
+  database: SqliteDatabase,
+): AgentConversationPurgeDriver<SqliteDatabase> | undefined {
   const table = database
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stitchkit_agent_runtime_purged'",

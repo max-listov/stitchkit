@@ -131,6 +131,20 @@ export {
   createApplication,
 } from './application/kernel';
 export {
+  defineKeyspace,
+  type KeyspaceBackend,
+  type KeyspaceChange,
+  type KeyspaceDeclaration,
+  type KeyspaceResourceConfig,
+  keyspaceResource,
+  memoryKeyspaceBackend,
+  type OpenKeyspace,
+} from './application/keyspace';
+export {
+  type SqliteKeyspaceBackendConfig,
+  sqliteKeyspaceBackend,
+} from './application/keyspace-sqlite';
+export {
   type ApplicationSnapshotSink,
   type ApplicationSnapshotSinkConfig,
   type ApplicationSnapshotSinkError,
@@ -193,3 +207,13 @@ export {
   type ManagedServerResourceConfig,
   managedServerResource,
 } from './application/server-resource';
+export {
+  type AttachedWatcher,
+  createWatchHub,
+  type WatchHub,
+  type WatchHubConfig,
+  type WatchOperation,
+  type WatchSubscriber,
+  watchKey,
+} from './application/watch-hub';
+export type { SqliteDatabase, SqliteStatement, SqliteValue } from './internal/sqlite';

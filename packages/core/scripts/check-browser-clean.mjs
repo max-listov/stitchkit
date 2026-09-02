@@ -17,7 +17,9 @@ import { dirname, join } from 'node:path';
 const DIST = new URL('../dist/', import.meta.url);
 const ENTRIES = [
   'index.js',
+  'live.js',
   'react.js',
+  'primitives.js',
   'contract/index.js',
   'declaration.js',
   'agent-runtime-browser.js',

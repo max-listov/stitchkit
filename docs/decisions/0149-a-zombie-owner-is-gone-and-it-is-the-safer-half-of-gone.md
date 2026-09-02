@@ -66,3 +66,22 @@ and that a lock recorded under one was refused.
 - `packages/core/tests/diagnostic-journal-lock.test.ts` drives the branch with a real zombie, with
   this running process as the negative control, and through a seam for the `ps` fallback and for a
   command name containing a parenthesis — the case that makes "take the third field" wrong.
+
+## Confirmed on the platform this suite cannot execute
+
+The `ps` branch exists for darwin, and a Linux run reaches it only through the seam. The consuming
+application that reported the defect ran it on real macOS against the published 0.74.1, with a real
+zombie and waiting for the state rather than for a duration:
+
+```
+own lock, zombie owner -> RECLAIMED
+own lock, LIVE owner   -> REFUSED
+pre-identity lock      -> REFUSED
+```
+
+The second line is why the first means anything: the guarantee did not weaken, a running owner is
+still refused. The third is theirs rather than ours — a lock carrying no identity is `unattributable`
+and deliberately not probed here, so they probe it on their side, and there a zombie is named as one.
+
+Recorded because the note above says "through a seam", and a later reader would otherwise be right to
+think the darwin path had never run.

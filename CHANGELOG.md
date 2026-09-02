@@ -15,6 +15,87 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-09-02
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who declared `onRequest` on a **route group** (it was never dispatched —
+the change makes that visible instead of silent), and anyone who names the SQLite boundary type
+from `stitchkit/agent-runtime/sqlite/bun` or `/node` in their own annotations. Nothing about a
+passing request, a running agent store or a successful call moves.
+
+- **A route group can no longer declare `onRequest`.** `RouteGroup.hooks` is now
+  `RouteGroupHooks` — `LifecycleHooks` without `onRequest` — and a group that declares one is
+  refused at startup. It was accepted, typechecked and **dispatched nowhere**: the only
+  `onRequest` the framework ever ran is the server-level one. It cannot be repaired by
+  dispatching it, because `onRequest` runs before routing and a group is only known after
+  routing; honouring it would mean matching group prefixes a second time, in a second router,
+  ahead of the real one. An option that cannot be honoured must not be expressible.
+
+  ```ts
+  // before: groups: [{ pathPrefix: '/admin', services, hooks: { onRequest: gate } }]
+  // after:  hooks: { onRequest: gate }                       // server-level, before routing
+  // or:     groups: [{ pathPrefix: '/admin', services, hooks: { authorize: gate } }]
+  ```
+
+- **`AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` are
+  now `SqliteDatabase` / `SqliteStatement` / `SqliteValue`.** The boundary stopped belonging to
+  the agent runtime the moment a second thing used it — a keyspace typed against an
+  `AgentRuntime*` boundary reads as a dependency on the agent runtime, which it is not. Same
+  three methods, same structural compatibility with `bun:sqlite` and a `node:sqlite` wrapper, same
+  two entrypoints. There is no alias under the old name.
+
+  ```ts
+  // before: import type { AgentRuntimeSqliteDatabase } from 'stitchkit/agent-runtime/sqlite/bun';
+  // after:  import type { SqliteDatabase } from 'stitchkit/agent-runtime/sqlite/bun';
+  ```
+
+### Added
+
+- **`stitchkit/live` — an event declaration beside the operation contract.** `defineEvents`
+  declares topics: a wire name, one payload schema, and how the topic reaches listeners in this
+  process. `toRealtimeContract` projects it onto the realtime contract, so the existing validated
+  socket carries it — there is no second transport, no second validator and no second `on()`.
+  Subscribing is `bindRealtimeClient`; announcing is `bindRealtimeServer`.
+
+  Delivery modes are `emit` (announce and continue), `serial` (one listener at a time, awaited)
+  and `decision` (listeners vote `allow`/`deny`/`defer`). `createEventBus` gains `emitSerial`
+  and `decide` to match, and passing `topics` from the declaration closes the bus: an undeclared
+  topic is refused, and a topic is delivered only by the verb its declaration chose.
+  `whenAllDefer` and `listenerTimeoutMs` are required rather than defaulted — either default
+  would be a standing decision made silently. → ADR 0150.
+
+- **Watched reads — `createWatchHub` (`stitchkit/application`) and `createWatchClient`
+  (`stitchkit/live`).** A GET the server re-runs when a declared topic announces a change,
+  shared by every subscriber asking the same question: eight panels on one conversation are eight
+  subscriptions and one read. One read is in flight per key, and an invalidation arriving during
+  it marks the key dirty rather than starting a second — which is what makes the answer ordered,
+  not merely cheaper. Failure arrives in the read's own code and message, retried on the existing
+  `createBackoff`; the state vocabulary is `LiveStatePhase`, so `opening` is distinguishable
+  from `unavailable`. → ADR 0153.
+
+- **`defineKeyspace` / `keyspaceResource` (`stitchkit/application`).** Authoritative memory in
+  front of a durable backend: `get`/`list` synchronous, `put`/`delete` through one serialised
+  chain, and the order is backend → memory → change event. The backend port is four methods and
+  no SQL; `memoryKeyspaceBackend` and `sqliteKeyspaceBackend` ship, the latter over a
+  caller-owned database it does not close. Opened as a `ManagedResource`, because the kernel
+  resolves its graph in the constructor and cannot register one later. The SQLite boundary types
+  are exported from this entrypoint too, so a keyspace backend needs no agent-runtime import.
+  → ADR 0152.
+
+- **`createTrustFence` (`stitchkit/server`).** Refuses a request whose `Host` is not a declared
+  authority, with WHATWG normalisation, an `Origin`/`Host` agreement check and a
+  `sec-fetch-site: cross-site` refusal — as `hooks` for HTTP **and** `allowRequest` for the
+  Socket.IO lane, which never reaches the hooks on either runtime. `isLoopbackAddress` ships
+  beside it for the auth rule a privileged operation belongs in. → ADR 0151.
+
+### Fixed
+
+- **A bus listener that unsubscribed during a dispatch is no longer called.** `createEventBus`
+  snapshotted its subscription set and called everything in it, so a listener removed by an
+  earlier listener still ran. Harmless-looking for `emit`; on a `decision` topic it is a vote
+  cast by a listener that had said it was no longer listening.
+
 ## [0.74.1] — 2026-09-02
 
 ### Fixed

@@ -74,6 +74,19 @@ function descriptorPath(rootDirectory: string, sessionId: string): string {
   return path.join(sessionsDirectory(rootDirectory), `${sessionId}.json`);
 }
 
+/**
+ * Reachability, which is NOT liveness — and here that is enough only because of what it is paired
+ * with. `process.kill(pid, 0)` succeeds for a zombie: an exited child its parent has not reaped
+ * keeps its table entry, so this answers "alive" for a process that is finished (→ ADR 0149, where
+ * the journal lock had to stop believing it). A session descriptor survives that only because
+ * `listAgentTuiSessions` requires a socket round trip as well, and a zombie answers nothing.
+ *
+ * So this check cannot carry the decision on its own — and that is enforced rather than requested:
+ * `packages/tui/tests/session.test.ts::does not publish a stale descriptor merely because its pid
+ * was reused` writes a descriptor holding a genuinely live pid and a socket that answers nothing,
+ * and dropping the `probeDescriptor` half of the condition reddens exactly that test. Verified by
+ * removing it, not by reading.
+ */
 function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);

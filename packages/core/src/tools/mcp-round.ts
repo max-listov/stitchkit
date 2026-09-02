@@ -15,6 +15,7 @@ import {
   type McpCallContext,
   type McpRoundOutcome,
 } from '../contract';
+import { argumentsDigest } from '../internal/stable-digest';
 import { isRecord } from '../internal/typed';
 import type { ToolResult } from './execute';
 import { validateMcpRoundPolicy } from './mcp-round-policy';
@@ -83,24 +84,6 @@ function transportContext(
       ...(round !== undefined && { round }),
     },
   };
-}
-
-function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value === null || typeof value !== 'object') return value;
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) {
-    result[key] = stableValue(Reflect.get(value, key));
-  }
-  return result;
-}
-
-async function argumentsDigest(args: Record<string, unknown>): Promise<string> {
-  const bytes = new TextEncoder().encode(JSON.stringify(stableValue(args)));
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  let binary = '';
-  for (const byte of digest) binary += String.fromCodePoint(byte);
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
 function operationIdentity(tool: MountableTool): RoundOperationIdentity {

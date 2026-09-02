@@ -73,6 +73,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'Socket.IO server/client wrappers, handshake auth, the cache bridge, a raw WebSocket lane',
   ],
   [
+    'live.md',
+    'Live data',
+    'defineEvents beside the contract, watched reads shared by every subscriber, keyspaces with authoritative memory, and the trust fence',
+  ],
+  [
     'auth-and-errors.md',
     'Auth & errors',
     'scopes, createAuthHook, JWT/cookies, the AppError model, the stitch error-code registry',

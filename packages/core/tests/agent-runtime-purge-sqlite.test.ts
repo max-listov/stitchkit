@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentConversationPurgedError, purgeAgentConversation } from '../src/agent-runtime';
 import {
-  type AgentRuntimeSqliteDatabase,
   createBunSqliteAgentRuntimeStore,
   createSqliteAgentRuntimeStore,
+  type SqliteDatabase,
 } from '../src/agent-runtime-sqlite-bun';
 import { completePurgeFixture, purgeAdmission } from './fixtures/agent-purge';
 
@@ -18,7 +18,7 @@ test('SQLite purge rolls back after each deletion and commit failure, then survi
   const filename = join(root, 'runtime.sqlite');
   const database = new Database(filename);
   let failAt = '';
-  const boundary: AgentRuntimeSqliteDatabase = {
+  const boundary: SqliteDatabase = {
     exec(sql) {
       if (failAt === 'commit' && sql === 'COMMIT') throw new Error('injected commit failure');
       database.exec(sql);

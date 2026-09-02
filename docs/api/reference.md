@@ -233,6 +233,30 @@ from the root `stitchkit`.
 
 ---
 
+## `stitchkit/live`
+
+**Evolving.** Browser-and-server-safe declarations for the things that change while a caller is
+watching: announcements, and reads the server re-runs. It owns no transport — the wire is the
+realtime contract from `stitchkit`, and the server halves live in `stitchkit/application`.
+→ [ADR 0150](../decisions/0150-an-event-declaration-projects-onto-the-socket-we-already-run.md),
+[ADR 0153](../decisions/0153-a-watched-read-is-one-read-per-question.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineEvents` | function | declare topics: a wire name, one payload schema and how the topic is delivered to in-process listeners |
+| `toRealtimeContract` | function | project a declaration onto `RealtimeContract`, so the existing validated socket carries it |
+| `EventDeliveryMode` / `EventDecision` / `EventUndecided` | _types_ | `emit` / `serial` / `decision`, one listener's vote, and the outcome when every listener defers |
+| `EventTopicDeclaration` / `EventTopicRegistry` / `EventsConfig` / `EventsDeclaration` | _types_ | one topic's schema, mode, `whenAllDefer` and `listenerTimeoutMs`, and the declaration they compose into |
+| `EventPayloads` / `EventTopicsOfMode` / `WireTopic` | _types_ | payload map keyed by wire topic, the topics of one mode, and the `prefix.name` a topic is addressed by |
+| `createWatchClient` | function | contract-shaped watch client: `watch.action(args)` returns a ref-counted handle sharing one subscription |
+| `WatchHandle` / `WatchListeners` / `WatchClientConfig` / `WatchTransport` / `TypedWatchClient` | _types_ | subscribe/close, the value and state listeners, hold window and open deadline, and the bound realtime client it rides |
+| `watchContract` | const | the four-event realtime contract a watched read travels on |
+| `WATCH_OPEN` / `WATCH_CLOSE` / `WATCH_VALUE` / `WATCH_STATE` | const | the event names of that contract |
+| `WatchKey` / `WatchKeySchema` / `watchKeyString` | type / schema / function | `(service, action, arguments digest)` — the identity both ends compute the same way |
+| `WatchValueFrame` / `WatchValueSchema` / `WatchStateFrame` / `WatchStateSchema` | _types_ | a value with its monotonic revision, and a phase from `LiveStatePhase` with the read's own code and message |
+
+---
+
 ## `stitchkit/primitives`
 
 Browser-and-server-safe declarations for facts an application wants to define once. See the
@@ -487,6 +511,21 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 ---
 
+### Trust fence
+
+Refuses a request whose `Host` is not a declared authority, at both admission points — the socket
+lane never reaches the hooks on either runtime.
+→ [ADR 0151](../decisions/0151-a-trust-fence-names-its-lanes-because-one-of-them-bypasses-hooks.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createTrustFence` | function | `hooks` for the HTTP lane and `allowRequest` for the Socket.IO lane; a bare 403 that never says which rule refused |
+| `isLoopbackAddress` | function | whether an address is this machine — for the auth rule a privileged operation belongs in, not for the fence |
+| `TrustFence` / `TrustFenceConfig` / `TrustRefusal` / `TrustRefusalReason` / `TrustLane` | _types_ | the two admission points, the declared authorities, and why and where a request was refused |
+| `RouteGroupHooks` | _type_ | a route group's hooks — `LifecycleHooks` without `onRequest`, which runs before the group is known |
+
+---
+
 ## `stitchkit/application`
 
 Server-only process-local application composition. See the
@@ -635,6 +674,20 @@ The entrypoint exports each Zod schema beside its inferred type:
 the function that derives it from a snapshot,
 `ApplicationResourceShutdownSchema` / `ApplicationResourceShutdown`, and
 `ApplicationShutdownResultSchema` / `ApplicationShutdownResult`.
+
+### Keyspace and watched reads
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineKeyspace` / `keyspaceResource` | function | a named record set read synchronously from memory and written through one serialised chain; backend first, then memory, then the change event |
+| `KeyspaceBackend` / `KeyspaceDeclaration` / `KeyspaceChange` / `KeyspaceResourceConfig` / `OpenKeyspace` | _types_ | the four-method durability port, the declaration, the announced change, the resource's options and the published handle |
+| `memoryKeyspaceBackend` / `sqliteKeyspaceBackend` / `SqliteKeyspaceBackendConfig` | function / type | a disposable in-process backend, and one table with a key and a JSON payload over a caller-owned database |
+| `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _types_ | the minimal synchronous SQLite boundary the framework types against |
+| `createWatchHub` / `watchKey` | function | one read per question however many are asking: single-flight per key, re-read on a declared topic, publish only what changed |
+| `WatchHub` / `WatchHubConfig` / `WatchOperation` / `WatchSubscriber` / `AttachedWatcher` | _types_ | the hub, its read/watchable/invalidation policy, the operation identity, and one connection's attachment |
+
+→ [ADR 0152](../decisions/0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md),
+[ADR 0153](../decisions/0153-a-watched-read-is-one-read-per-question.md).
 
 ## `stitchkit/application/grammy`
 
@@ -974,7 +1027,7 @@ loaded by the neutral, browser or Node runtime surfaces.
 | `BunSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional create and initialization policies |
 | `createSqliteAgentRuntimeStore` | function | build the normalized store over an injected synchronous SQLite boundary |
 | `initializeAgentRuntimeSqlite` | function | initialize or validate only Stitchkit's namespaced SQLite schema |
-| `AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
+| `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
 | `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
 
 ---
@@ -1029,7 +1082,7 @@ the Bun leaf but imports only `node:sqlite`.
 | `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate schema v1 and return `{ store, close }` |
 | `NodeSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional read-only and initialization policies; read-only requires an initialized schema |
 | `createSqliteAgentRuntimeStore` / `initializeAgentRuntimeSqlite` | function | shared normalized adapter and namespaced schema lifecycle |
-| `AgentRuntimeSqliteDatabase` / `AgentRuntimeSqliteStatement` / `AgentRuntimeSqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
+| `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
 | `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
 
 ## `stitchkit/observability`

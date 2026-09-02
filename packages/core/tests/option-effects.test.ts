@@ -39,11 +39,18 @@ const COVERED: Record<string, string> = {
   SocketIOServerConfig: 'server/index.ts',
   RouteGroup: 'server/index.ts',
   LifecycleHooks: 'server/index.ts',
+  TrustFenceConfig: 'server/index.ts',
+  EventBusOptions: 'server/index.ts',
   ManagedServerResourceConfig: 'application.ts',
   DiagnosticJournalConfig: 'application.ts',
   CreditAcquireWaitOptions: 'application.ts',
   BoundedAdmissionPerKeyLimits: 'application.ts',
+  KeyspaceResourceConfig: 'application.ts',
+  SqliteKeyspaceBackendConfig: 'application.ts',
+  WatchHubConfig: 'application.ts',
   ResumableIteratorConfig: 'index.ts',
+  EventTopicDeclaration: 'live.ts',
+  WatchClientConfig: 'live.ts',
   VerifyTelegramInitDataOptions: 'telegram.ts',
 };
 

@@ -285,10 +285,26 @@ export interface LifecycleHooks {
   ) => Response | undefined | Promise<Response | undefined>;
 }
 
+/**
+ * The hooks a route group may declare.
+ *
+ * `onRequest` is deliberately absent. It runs **before routing** — that is what
+ * makes it the place to refuse a request without dispatching it — and a group is
+ * not known until routing has chosen one, so a per-group `onRequest` could only
+ * be honoured by matching the group prefix a second time, in a second router,
+ * ahead of the real one. It was declarable here for a long time and dispatched
+ * nowhere: it typechecked, it ran, and it fenced nothing. Refusing it in the type
+ * is the honest repair — an option that cannot be honoured must not be
+ * expressible. Refuse a request before dispatch with the server-level
+ * `hooks.onRequest`; gate a group with `authorize`, which runs once the
+ * endpoint is known.
+ */
+export type RouteGroupHooks = Omit<LifecycleHooks, 'onRequest'>;
+
 export interface RouteGroup {
   pathPrefix?: string;
   services: ServiceDef[];
-  hooks?: LifecycleHooks;
+  hooks?: RouteGroupHooks;
 }
 
 /**

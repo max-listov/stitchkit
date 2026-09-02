@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SqliteDatabase, SqliteValue } from '../internal/sqlite';
 import {
   AgentConversationMessagePageSchema,
   AgentConversationPageSchema,
@@ -16,29 +17,16 @@ import {
   createAgentRuntimeStore,
 } from './store-driver';
 
-export type AgentRuntimeSqliteValue = string | number | bigint | null | Uint8Array;
-
-export interface AgentRuntimeSqliteStatement {
-  get(...parameters: AgentRuntimeSqliteValue[]): unknown;
-  all(...parameters: AgentRuntimeSqliteValue[]): readonly unknown[];
-  run(...parameters: AgentRuntimeSqliteValue[]): { changes: number };
-}
-
-/** Minimal synchronous SQLite boundary implemented by the Bun and Node leaf entrypoints. */
-export interface AgentRuntimeSqliteDatabase {
-  exec(sql: string): void;
-  prepare(sql: string): AgentRuntimeSqliteStatement;
-  close(): void;
-}
+export type { SqliteDatabase, SqliteStatement, SqliteValue } from '../internal/sqlite';
 
 export interface SqliteAgentRuntimeStoreConfig {
-  database: AgentRuntimeSqliteDatabase;
+  database: SqliteDatabase;
   /** Create or validate Stitchkit's namespaced schema. Default true. */
   initialize?: boolean;
 }
 
 export interface SqliteAgentRuntimeStore {
-  store: ReturnType<typeof createAgentRuntimeStore<AgentRuntimeSqliteDatabase>>;
+  store: ReturnType<typeof createAgentRuntimeStore<SqliteDatabase>>;
   conversations: AgentConversationReader;
   /** Refuse new work, wait for queued operations, then close the owned connection. */
   close(): Promise<void>;
@@ -147,7 +135,7 @@ function messagePreview(message: z.infer<typeof AgentMessageSchema>): string {
  * Create Stitchkit's schema without claiming an application's tables or SQLite user_version.
  * An orphaned partial Stitchkit schema is refused rather than destructively repaired.
  */
-export function initializeAgentRuntimeSqlite(database: AgentRuntimeSqliteDatabase): void {
+export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
   const existing = database
     .prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'stitchkit_agent_runtime_%' ORDER BY name`,
@@ -265,7 +253,7 @@ export function createSqliteAgentRuntimeStore(
     return result;
   };
 
-  const driver: AgentRuntimeStoreDriver<AgentRuntimeSqliteDatabase> = {
+  const driver: AgentRuntimeStoreDriver<SqliteDatabase> = {
     conversations: sqliteConversationPurge(database),
     transaction: (work) =>
       serial(async () => {
@@ -527,7 +515,7 @@ export function createSqliteAgentRuntimeStore(
     scanRecoverable: (input) =>
       serial(async () => {
         const cursor = input.cursor ? parseRecoveryCursor(input.cursor) : undefined;
-        const values: AgentRuntimeSqliteValue[] = cursor
+        const values: SqliteValue[] = cursor
           ? [cursor[0], cursor[0], cursor[1], input.limit + 1]
           : [input.limit + 1];
         const rows = database
@@ -573,7 +561,7 @@ export function createSqliteAgentRuntimeStore(
             ...(cursor ? ['conversation_id > ?'] : []),
             ...(search ? ['instr(conversation_id, ?) > 0'] : []),
           ];
-          const parameters: AgentRuntimeSqliteValue[] = [
+          const parameters: SqliteValue[] = [
             ...(cursor ? [cursor] : []),
             ...(search ? [search] : []),
             input.limit + 1,

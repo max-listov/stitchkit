@@ -40,6 +40,51 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.75.0
+
+Two mechanical renames and one option that has to move. Nothing about a passing
+request changes.
+
+### 1. A route group's `onRequest`
+
+```bash
+rg -n "hooks:\s*\{[^}]*onRequest" --glob '*.ts'
+```
+
+Any match **inside a `groups: [...]` entry** must move. The hook was accepted and
+never dispatched, so the behaviour you have today is "no hook"; the fix is to
+decide which one you meant:
+
+```ts
+// refuse before dispatch, for the whole server
+createServer({ groups, hooks: { onRequest: gate } });
+
+// gate this group once the endpoint is known
+groups: [{ pathPrefix: '/admin', services, hooks: { authorize: gate } }]
+```
+
+A group that still declares `onRequest` fails at startup with that message.
+
+### 2. The SQLite boundary type
+
+```bash
+rg -l "AgentRuntimeSqlite(Database|Statement|Value)" | xargs sed -i \
+  -e 's/AgentRuntimeSqliteDatabase/SqliteDatabase/g' \
+  -e 's/AgentRuntimeSqliteStatement/SqliteStatement/g' \
+  -e 's/AgentRuntimeSqliteValue/SqliteValue/g'
+```
+
+Type-only: the same three methods, the same structural compatibility with
+`bun:sqlite` and a `node:sqlite` wrapper, imported from the same entrypoints.
+`initializeAgentRuntimeSqlite` keeps its name — it really is the agent runtime's
+schema.
+
+### 3. Nothing else
+
+`stitchkit/live`, the watch hub, the keyspace and the trust fence are all
+additive. Adopt them when you want them; the guide is
+[Live data](./live.md).
+
 ## Released migration: 0.74.0
 
 One change, and it only reaches you if you catch a refusal the **client** raised — one it made while

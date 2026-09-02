@@ -200,6 +200,7 @@ packages/core/src/
 ├── tools/      createMcpHandler/mountMcp, mountAgent, execute
 ├── agent-runtime/  durable runs, history, prompts, models, fencing (evolving)
 ├── application/    resource graph, readiness, admission, schedules (evolving)
+├── live/       event declarations and the watched-read client (evolving)
 ├── realtime/   typed Socket.IO contracts and rejection reporting
 ├── observability/  request/tool events, sanitising, trace context
 ├── files/      managed file boundary, byte ranges, inspection
@@ -207,10 +208,10 @@ packages/core/src/
 └── internal/   error normalization, typed helpers
 ```
 
-Entrypoints: `stitchkit` (browser-safe) · `/server` · `/node` · `/tools` ·
+Entrypoints: `stitchkit` (browser-safe) · `/live` · `/server` · `/node` · `/tools` ·
 `/cli` · `/react` · `/contract` · `/observability` · `/remote` · `/files` ·
 `/testing` · `/declaration` · `/agent-runtime` (+`/openrouter`) · `/application`
-(+`/grammy`, `/opentelemetry`). `/declaration`, `/agent-runtime` and
+(+`/grammy`, `/opentelemetry`). `/declaration`, `/live`, `/agent-runtime` and
 `/application` are declared **evolving** (→ ADR 0103). The user guide is in
 `docs/guide/`, the full public API in `docs/api/reference.md`. The consumer
 entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by

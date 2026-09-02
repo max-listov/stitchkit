@@ -194,5 +194,112 @@
     "random": {
       "test": "doubles to the ceiling and subtracts jitter without exceeding it"
     }
+  },
+  "TrustFenceConfig": {
+    "trustedHosts": {
+      "test": "an untrusted authority is refused and the handler never runs"
+    },
+    "onRefused": {
+      "test": "a refusal names which lane it came from"
+    },
+    "logger": {
+      "test": "a supplied logger is warned, with the reason and the lane"
+    }
+  },
+  "EventBusOptions": {
+    "onListenerError": {
+      "test": "a listener that throws is isolated, reported, and does not stop the others"
+    },
+    "topics": {
+      "test": "an undeclared topic is refused rather than delivered to nobody"
+    }
+  },
+  "KeyspaceResourceConfig": {
+    "backend": {
+      "test": "a write the backend refuses changes nothing and returns the reason"
+    },
+    "onChanged": {
+      "test": "a write that has not been acknowledged is neither visible nor announced"
+    },
+    "maxPendingWrites": {
+      "test": "the queue is bounded, and the refusal says so rather than growing"
+    },
+    "onUnwritten": {
+      "test": "closing with writes still queued reports how many, as a number"
+    },
+    "id": {
+      "test": "the id defaults to the keyspace name and can be given explicitly"
+    },
+    "dependsOn": {
+      "test": "a declared dependency reaches the resource, so the graph can order it"
+    }
+  },
+  "SqliteKeyspaceBackendConfig": {
+    "database": {
+      "test": "a record survives a restart of the keyspace over the same table"
+    },
+    "table": {
+      "test": "a table name that is not a bare identifier stops startup"
+    },
+    "initialize": {
+      "test": "initialize false leaves the schema to whoever owns the migrations"
+    }
+  },
+  "WatchHubConfig": {
+    "read": {
+      "test": "two subscribers to the same question cause one read"
+    },
+    "watchable": {
+      "test": "an operation that is not watchable is refused by name"
+    },
+    "invalidatedBy": {
+      "test": "a declared topic re-reads; another topic does not"
+    },
+    "subscribe": {
+      "test": "a declared topic re-reads; another topic does not"
+    },
+    "maxWatchesPerSubscriber": {
+      "test": "a connection past its limit is refused, and the refusal says the number"
+    },
+    "holdMs": {
+      "test": "holdMs keeps a key alive after its last subscriber, and it is reused"
+    },
+    "backoff": {
+      "test": "the failure carries its code and message, and a later success clears it"
+    },
+    "same": {
+      "test": "a supplied comparator decides what counts as a change"
+    },
+    "logger": {
+      "test": "a supplied logger hears about a failed read"
+    }
+  },
+  "WatchClientConfig": {
+    "transport": {
+      "test": "two subscribers open one watch, and the last one closes it"
+    },
+    "holdMs": {
+      "test": "a re-subscribe inside the hold window paints from memory, synchronously"
+    },
+    "openTimeoutMs": {
+      "test": "openTimeoutMs is the deadline the open acknowledgement is asked for"
+    },
+    "onRefused": {
+      "test": "a refusal reaches the subscriber in the words the server used"
+    }
+  },
+  "EventTopicDeclaration": {
+    "schema": {
+      "test": "a frame injected past the validating wrapper is refused and names the field"
+    },
+    "mode": {
+      "test": "a topic is delivered by the verb its declaration chose, and no other"
+    },
+    "whenAllDefer": {
+      "test": "when every listener defers, the declared outcome decides"
+    },
+    "listenerTimeoutMs": {
+      "test": "a listener that never settles is reported at its deadline and the next still runs"
+    }
   }
 }

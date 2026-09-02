@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentMessageSchema, AgentRunSchema } from '../src/agent-runtime';
 import {
-  type AgentRuntimeSqliteDatabase,
-  type AgentRuntimeSqliteValue,
   createBunSqliteAgentRuntimeStore,
   createSqliteAgentRuntimeStore,
+  type SqliteDatabase,
+  type SqliteValue,
 } from '../src/agent-runtime-sqlite-bun';
 import { runAgentStoreConformance } from '../src/testing';
 
@@ -142,7 +142,7 @@ describe('SQLite agent-runtime store', () => {
     const firstDatabase = new Database(filename, { create: true, readwrite: true });
     firstDatabase.exec('PRAGMA busy_timeout = 0');
     const firstWriteLock = Promise.withResolvers<void>();
-    const firstBoundary: AgentRuntimeSqliteDatabase = {
+    const firstBoundary: SqliteDatabase = {
       exec(sql) {
         firstDatabase.exec(sql);
         if (sql === 'BEGIN IMMEDIATE') firstWriteLock.resolve();
@@ -150,9 +150,9 @@ describe('SQLite agent-runtime store', () => {
       prepare(sql) {
         const statement = firstDatabase.query(sql);
         return {
-          get: (...parameters: AgentRuntimeSqliteValue[]) => statement.get(...parameters),
-          all: (...parameters: AgentRuntimeSqliteValue[]) => statement.all(...parameters),
-          run: (...parameters: AgentRuntimeSqliteValue[]) => {
+          get: (...parameters: SqliteValue[]) => statement.get(...parameters),
+          all: (...parameters: SqliteValue[]) => statement.all(...parameters),
+          run: (...parameters: SqliteValue[]) => {
             const result = statement.run(...parameters);
             return { changes: result.changes };
           },
@@ -246,14 +246,14 @@ describe('SQLite agent-runtime store', () => {
     const filename = databasePath('rollback');
     const database = new Database(filename, { create: true, readwrite: true });
     let failHistoryWrite = true;
-    const boundary: AgentRuntimeSqliteDatabase = {
+    const boundary: SqliteDatabase = {
       exec: (sql) => database.exec(sql),
       prepare(sql) {
         const statement = database.query(sql);
         return {
-          get: (...parameters: AgentRuntimeSqliteValue[]) => statement.get(...parameters),
-          all: (...parameters: AgentRuntimeSqliteValue[]) => statement.all(...parameters),
-          run: (...parameters: AgentRuntimeSqliteValue[]) => {
+          get: (...parameters: SqliteValue[]) => statement.get(...parameters),
+          all: (...parameters: SqliteValue[]) => statement.all(...parameters),
+          run: (...parameters: SqliteValue[]) => {
             const result = statement.run(...parameters);
             if (
               failHistoryWrite &&

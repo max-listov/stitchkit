@@ -448,6 +448,15 @@ is turned into a `400 VALIDATION_ERROR` automatically — and it carries the
 offending fields as structured `details.issues`, so a machine client matches on
 them instead of parsing the text `message`:
 
+`path` and `code` are the framework's. **`message` is not** — it is `issue.message`
+as Zod produced it, so for a `.refine()` it is whatever the schema's author wrote.
+The framework never puts a submitted value into it, and its own messages describe
+types rather than values (`expected string, received undefined`, `Invalid UUID`),
+but that is a property of today's messages, not a guarantee anyone is in a
+position to make: the text belongs to whoever declared the schema. Forward `path`
+and `code` to an end user freely; treat `message` as internal unless you wrote
+every refine in the contract.
+
 ```json
 {
   "error": {

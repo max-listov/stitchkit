@@ -146,6 +146,17 @@ export function createHandler<TServer = unknown>(
     }
   };
 
+  // A route group cannot carry `onRequest`: it runs before routing, and the
+  // group is only known after it. The type refuses it (`RouteGroupHooks`); this
+  // gives a JavaScript consumer the same answer at startup rather than a hook
+  // that typechecks in an editor, runs, and fences nothing.
+  for (const group of config.groups ?? []) {
+    if (group.hooks && 'onRequest' in group.hooks) {
+      throw new Error(
+        '[stitchkit] a route group cannot declare `onRequest` — it runs before routing, so the group it belongs to is not known yet and the hook would never be dispatched. Refuse before dispatch with the server-level `hooks.onRequest`, or gate the group with its `authorize`, which runs once the endpoint is known.',
+      );
+    }
+  }
   const routeMap = buildRouteMap(normalizeGroups(config));
   validateRoutes(routeMap);
   validateRawRoutes(config.rawRoutes);

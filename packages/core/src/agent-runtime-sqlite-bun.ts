@@ -1,9 +1,9 @@
 import { Database } from 'bun:sqlite';
 import {
-  type AgentRuntimeSqliteDatabase,
-  type AgentRuntimeSqliteValue,
   createSqliteAgentRuntimeStore,
   type SqliteAgentRuntimeStore,
+  type SqliteDatabase,
+  type SqliteValue,
 } from './agent-runtime/sqlite';
 
 export interface BunSqliteAgentRuntimeStoreConfig {
@@ -21,14 +21,14 @@ export function createBunSqliteAgentRuntimeStore(
     readwrite: true,
   });
   database.exec('PRAGMA busy_timeout = 0; PRAGMA foreign_keys = ON;');
-  const boundary: AgentRuntimeSqliteDatabase = {
+  const boundary: SqliteDatabase = {
     exec: (sql) => database.exec(sql),
     prepare(sql) {
       const statement = database.query(sql);
       return {
-        get: (...parameters: AgentRuntimeSqliteValue[]) => statement.get(...parameters),
-        all: (...parameters: AgentRuntimeSqliteValue[]) => statement.all(...parameters),
-        run: (...parameters: AgentRuntimeSqliteValue[]) => {
+        get: (...parameters: SqliteValue[]) => statement.get(...parameters),
+        all: (...parameters: SqliteValue[]) => statement.all(...parameters),
+        run: (...parameters: SqliteValue[]) => {
           const result = statement.run(...parameters);
           return { changes: result.changes };
         },
@@ -43,11 +43,11 @@ export function createBunSqliteAgentRuntimeStore(
 }
 
 export type {
-  AgentRuntimeSqliteDatabase,
-  AgentRuntimeSqliteStatement,
-  AgentRuntimeSqliteValue,
   SqliteAgentRuntimeStore,
   SqliteAgentRuntimeStoreConfig,
+  SqliteDatabase,
+  SqliteStatement,
+  SqliteValue,
 } from './agent-runtime/sqlite';
 export {
   createSqliteAgentRuntimeStore,

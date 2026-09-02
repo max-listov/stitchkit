@@ -118,6 +118,15 @@ export {
   DEFAULT_CORS_EXPOSE_HEADERS,
 } from './middleware/cors';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from './middleware/pkce';
+export {
+  createTrustFence,
+  isLoopbackAddress,
+  type TrustFence,
+  type TrustFenceConfig,
+  type TrustLane,
+  type TrustRefusal,
+  type TrustRefusalReason,
+} from './middleware/trust-fence';
 export { type MultipartLifecycle, type MultipartResult, parseMultipart } from './multipart';
 export {
   generateOpenApiDocument,
@@ -197,6 +206,7 @@ export type {
   MultipartReceiverResult,
   OperationIdentity,
   RouteGroup,
+  RouteGroupHooks,
   ScopeContexts,
   ScopedHandlers,
   ServiceDef,
