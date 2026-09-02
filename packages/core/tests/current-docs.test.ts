@@ -17,15 +17,27 @@ const currentDirectories = [
   'packages/create-stitchkit/template/docs',
 ];
 
+/**
+ * The named files fail loudly on their own — `readFileSync` throws when one
+ * moves. The globbed directories do not: a renamed `docs/guide` yields nothing,
+ * every caller below sees a shorter list, and each reports an empty offender
+ * array, which is indistinguishable from documentation that is simply clean.
+ * So a directory contributing nothing is an error here rather than a silently
+ * narrower scan — a check that quietly switches itself off has stopped being a
+ * check.
+ */
 function currentDocumentation(): Array<{ path: string; source: string }> {
   const paths = [...currentFiles];
   const glob = new Glob('**/*.md');
   for (const directory of currentDirectories) {
+    let found = 0;
     for (const file of glob.scanSync({ cwd: join(root, directory), absolute: true })) {
       const path = relative(root, file);
+      found += 1;
       if (path === 'docs/guide/upgrading.md') continue;
       paths.push(path);
     }
+    if (found === 0) throw new Error(`${directory} contributed no documentation to scan`);
   }
   return paths.map((path) => ({ path, source: readFileSync(join(root, path), 'utf8') }));
 }

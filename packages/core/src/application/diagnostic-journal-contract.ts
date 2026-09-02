@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isRecord } from '../internal/typed';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
 const FileModeSchema = z.number().int().min(0).max(0o777);
@@ -172,6 +173,17 @@ export interface DiagnosticJournalConfig<SCHEMA extends z.ZodType> {
    * by time and the lock exists for exactly that case.
    */
   readonly lock?: DiagnosticJournalLockPolicy;
+  /**
+   * This machine's stable identity, overriding platform detection.
+   *
+   * The lock records it so a machine that renames itself is still recognised as itself — a host
+   * name is mutable state, and treating it as identity left a renamed machine unable to reclaim
+   * its own abandoned lock. Detection covers `/etc/machine-id` and the macOS platform UUID; state
+   * it here on a platform that offers neither, or when the deployment knows better. It must be
+   * stable across restarts and distinct per machine: a value shared by two machines is the one
+   * mistake this guard exists to prevent.
+   */
+  readonly machineIdentity?: string;
   /** Diagnostics are isolated and are never written back into this journal. */
   readonly onFailure?: (failure: DiagnosticJournalFailure) => void | Promise<void>;
 }
@@ -188,4 +200,33 @@ export interface DiagnosticJournal<INPUT> {
 
 export function parseDiagnosticJournalMode(mode: number | undefined): number {
   return FileModeSchema.parse(mode ?? 0o600);
+}
+
+/*
+ * The lock diagnosis lives with the contract, not with the lock.
+ *
+ * It is a shape a consumer reads and a pure projection off a thrown value — no
+ * file handle, no spawn, nothing from `node:`. Exporting it from the lock module
+ * pulled that whole module into the published declarations, and with it
+ * `AcquiredDiagnosticJournalLock`, whose `handle` is typed off `node:fs/promises`
+ * `open`. A consumer without Node types then cannot resolve the package's own
+ * `.d.ts`, which the consumer lane caught as a reference it could not settle.
+ */
+
+/** Why a present lock was not reclaimed. Attached to the thrown `EEXIST`, never thrown itself. */
+export interface DiagnosticJournalLockDiagnosis {
+  readonly attribution: 'this-machine' | 'another-machine' | 'unattributable';
+  readonly liveness: 'alive' | 'gone' | 'not-probed';
+  readonly owner: { pid: number; host: string; acquiredAt: string; machine?: string } | null;
+}
+
+/** Read the diagnosis a refused acquisition attached to its error, if it carried one. */
+export function readDiagnosticJournalLockDiagnosis(
+  error: unknown,
+): DiagnosticJournalLockDiagnosis | undefined {
+  if (!isRecord(error)) return undefined;
+  const diagnosis = error.journalLock;
+  return isRecord(diagnosis)
+    ? (diagnosis as unknown as DiagnosticJournalLockDiagnosis)
+    : undefined;
 }

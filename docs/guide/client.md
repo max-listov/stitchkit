@@ -102,6 +102,18 @@ proves that the remote operation did not begin; Stitchkit never silently retries
 an ambiguous write. Response consumption/cancellation belongs to the operation,
 and `close()` interrupts active work and destroys owned connections.
 
+**A caller's cancellation reaches the server on both lanes.** The transport picks
+a raw-socket lane under Bun and `node:http` elsewhere, and both propagate
+`AbortSignal` the same way: aborting the request tears the connection down, and
+the handler's `ctx.signal` fires — measured at roughly 300 ms for a 200 ms abort
+over either lane, matching plain TCP. `close()` is a different thing: it ends the
+*transport*, not one request, and a request-level abort does not close it.
+
+The one way to see cancellation appear not to work is to pass the signal to the
+plain callable — `api.thing(args, { signal })` — where options are ignored in
+silence. See [per-call cancellation](#per-call-cancellation): `withOptions` is the
+only door.
+
 The response total is a unary-body policy, not a stream-buffer measurement. A
 long-lived NDJSON/SSE client opts into streaming explicitly instead of choosing
 an arbitrarily large integer:
@@ -175,6 +187,28 @@ including an explicitly declared empty `200` or `205`. A missing body for a
 declared output, or a body for an endpoint with no output, fails loudly instead
 of changing the typed result.
 
+Validation runs in one direction. The response is checked against the endpoint's
+`output` schema before it reaches the caller; arguments are **not** checked
+against `input` or `params` before the request is sent. A value the contract
+forbids travels to the server and comes back as a `VALIDATION_ERROR` — `400`,
+naming every offending field in the `message` and again in `details.issues` as
+`{ path, code, message }`. That holds for a JSON body, a query string and a path
+parameter alike, so a rejected argument always costs a round trip.
+
+An application that needs a local refusal can parse the schema itself before
+calling — `contract.endpoints.<name>.input` is the same Zod object the server
+validates with:
+
+```ts
+const parsed = contract.endpoints.create.input.safeParse(args)
+if (!parsed.success) return refuse(parsed.error)
+await api.create(args)
+```
+
+It then owns a second error shape beside this one, so make the local refusal name
+the offending fields too. A caller who receives a bare code with no text cannot
+tell which gate refused or why — and reads it as a refusal of permission.
+
 An explicit contract `HEAD` operation is exposed like any other typed method.
 Because HEAD endpoints are `rawResponse`, it resolves to the untouched
 `Response`, giving the caller direct access to status and headers without JSON
@@ -212,11 +246,22 @@ mistaking their callback context for Stitchkit transport options.
 argument is ignored, in silence, and the request runs to completion while the
 caller believes it was cancelled or bounded. TypeScript refuses the extra
 argument at a typed call site and says nothing at an untyped one, which is where
-the mistake actually happens. Nothing can catch it at runtime either: probing the
-second argument is exactly what the callback safety above forbids, since reading
-a foreign object's `signal` may execute someone else's getter. So the rule is
-simply this — **per-call options only ever go through `withOptions`**, and a
-cancellation that appears to do nothing is the first thing to check.
+the mistake actually happens. Nothing can catch it at runtime **on the bare
+callable**: probing its second argument is exactly what the callback safety above
+forbids, since reading a foreign object's `signal` may execute someone else's
+getter. So the rule is simply this — **per-call options only ever go through
+`withOptions`**, and a cancellation that appears to do nothing is the first thing
+to check.
+
+`withOptions` itself is guarded, because there the count settles it without
+reading anything. Its arity depends on the endpoint — one argument when there is
+no contract input, two when there is — and a call carrying more throws a
+`TypeError` naming the endpoint and the correct shape. That guard exists because
+the silent version of this mistake is expensive: the options are dropped, the
+request goes out uncancelled, the caller still receives `REQUEST_ABORTED`
+(cancellation is decided from the signal it was handed, not from what the
+transport did), and the server runs the operation to its own deadline. Every
+symptom then points at the transport, and the investigation goes there.
 
 ```ts
 const controller = new AbortController()

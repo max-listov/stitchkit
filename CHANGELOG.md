@@ -15,6 +15,111 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.73.0] — 2026-09-02
+
+### Fixed
+
+- **A machine that renames itself can reclaim its own abandoned journal lock.**
+  `reclaim-stale` compared `os.hostname()` by string before probing the pid, so a
+  host name change — a Tailscale or VPN transition, DHCP handing out a different
+  name, a container or pod restart — made a machine foreign to itself and its own
+  lock unreclaimable. Observed as a supervisor restarting a service 127 times in
+  1h47m against a pid that had not existed for hours, recovered only by a human
+  deleting the file: the precise outcome the policy was added to remove. The lock
+  now records a stable machine identity (`/etc/machine-id` and its dbus fallback,
+  the macOS platform UUID, or a declared `machineIdentity`) and the host name is
+  no longer identity. The guarantee is unchanged: a live owner still refuses, and
+  a genuinely different machine still refuses even when that pid is absent here.
+
+- **`createHttpClient` no longer hides why a request failed, and `ApiError.cause`
+  now reaches it.** An error raised by the transport — a refused connection, a
+  DNS failure, an injected `ClientFetch` adapter's own rejection — arrived as
+  `message: "API Error: UNKNOWN_ERROR"` with no `cause` at all, its real text
+  filed under `details.message` alone. The bare-fetch client
+  (`createClient(contract, { baseUrl })`) answered the same failure with the
+  transport's own words and the original error as `cause`: one client, one
+  failure, two stories — and the divergent one is the documented transport.
+
+  The missing `cause` is the graver half. `docs/guide/client.md` builds a
+  dispatch-safety rule on it — never replay an effect from `UNKNOWN_ERROR` alone,
+  inspect the owned adapter's `cause`, retry only when it proves dispatch did not
+  happen — and on this path `cause` was `undefined`, so that procedure could
+  never reach its own conclusion. The guide was describing a client only the
+  other path was.
+
+  Both paths now pass the message and the cause alike, and `details.message` is
+  unchanged, so nothing that already read it moves.
+  `packages/core/tests/client-parity.test.ts` compares the two against each other
+  rather than pinning either one's wording — a future divergence reddens even
+  when the runtime rewords the text — and pins the adapter's own error object,
+  not a copy of its text, as the `cause` the guide's decision reads a field off.
+
+### Added
+
+- **`readDiagnosticJournalLockDiagnosis`** reads why a `reclaim-stale`
+  acquisition refused off the `EEXIST` it threw: `owner alive`, `another
+  machine`, or `unattributable` — a lock this host cannot place, which is what a
+  pre-identity lock under a different name now reports. The three used to be one
+  silence, and a consumer that met the last one printed "another process is
+  running against this state", a sentence it had no evidence for. The error keeps
+  its shape; the diagnosis rides on it.
+
+- **`DiagnosticJournalConfig.machineIdentity`** states this machine's identity
+  where the platform offers none or the deployment knows better. It must be
+  stable across restarts and distinct per machine — a value shared by two
+  machines is the one mistake the guard exists to prevent.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone calling `withOptions` from a call site that is not typed
+— a `Record<string, …>` view of the client, a hand-written double, a dynamic
+dispatch — where the wrong arity used to be dropped in silence and now throws;
+and anyone matching the exact text of `ApiError.message`, which should have been
+`err.code` all along. A typed `withOptions` call is unaffected, an error carrying
+a real message is unchanged, and no export was removed or renamed.
+
+- **`withOptions` now refuses an argument it would have to drop.** Its arity
+  depends on the endpoint: `withOptions(options)` when the endpoint declares no
+  input, `withOptions(args, options)` when it does. Passing the two-argument
+  shape to a no-input endpoint used to succeed silently — the options were
+  discarded, so the request went out **uncancelled**, the caller still received
+  `REQUEST_ABORTED` (the cancellation wrapper reads the signal it was handed,
+  whatever the transport did), and the server ran the operation to its own
+  deadline. Every symptom points at the transport, which is where it was
+  reported and where two sessions looked before the measurements cleared all
+  five layers. TypeScript already refuses the wrong arity at a typed call site;
+  the reports come from call sites that are not typed.
+
+  `// before: api.ping.withOptions({}, { signal })  // options dropped, request uncancelled` →
+  `// after: api.ping.withOptions({ signal })`
+
+  The call now throws a `TypeError` naming the endpoint
+  and the correct shape instead of dropping the extra argument. A call that was
+  already the right shape is unaffected. The guard counts arguments and never
+  reads them, so a method handed a foreign callback context still behaves as
+  before.
+
+- **An `ApiError` nothing explained now says so, instead of restating its code.**
+  Where no message reached the error — an origin that answered a code and no
+  text, a body outside the stitchkit envelope, a throw that was not an `Error` —
+  the message was synthesized as `API Error: ${code}`. That reads like an
+  explanation and is not one: a caller could not tell an origin that explained a
+  failure from one that said nothing, because `message` was a plausible non-empty
+  string either way. Reported by a consuming application that read a bare code as
+  a refusal of permission. It compounds one hop out, which is why the fix is in
+  the text and not in a field beside it: `implementRemote` copies `message` into
+  the `AppError` it re-throws, so a synthesized line crossed to the *next*
+  consumer as though the origin had written it. An empty string now counts as
+  unsupplied for the same reason `??` alone did not: it explains nothing either.
+
+  `// before: err.message === 'API Error: INVALID_INPUT'` →
+  `// after: err.message === 'INVALID_INPUT (no message supplied)'  // better: match err.code`
+
+  Match `err.code` instead — it is the contract, and it did not change. An error carrying a real
+  message is untouched, which `packages/core/tests/client-parity.test.ts` pins as
+  its own case: a fallback that fired unconditionally would satisfy every other
+  assertion in that file while destroying every explanation an origin sent.
+
 ## [0.72.5] — 2026-09-01
 
 ### Fixed

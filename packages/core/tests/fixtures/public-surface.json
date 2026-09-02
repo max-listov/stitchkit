@@ -1423,6 +1423,7 @@
     "DiagnosticJournalFrameSchema",
     "DiagnosticJournalLimits",
     "DiagnosticJournalLimitsSchema",
+    "DiagnosticJournalLockDiagnosis",
     "DiagnosticJournalLockPolicy",
     "DiagnosticJournalLockPolicySchema",
     "DiagnosticJournalRefusalReason",
@@ -1477,7 +1478,8 @@
     "defineManagedResource",
     "managedResourceDependencyId",
     "managedServerResource",
-    "projectApplicationStatus"
+    "projectApplicationStatus",
+    "readDiagnosticJournalLockDiagnosis"
   ],
   "stitchkit/application/grammy": [
     "GrammyPollingResourceConfig",

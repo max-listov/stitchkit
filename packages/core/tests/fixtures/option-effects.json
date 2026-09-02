@@ -151,6 +151,9 @@
     },
     "lock": {
       "test": "reclaims a lock whose recorded owner is provably gone, and says so"
+    },
+    "machineIdentity": {
+      "test": "reclaims a lock recorded under a name this machine no longer carries"
     }
   },
   "CreditAcquireWaitOptions": {

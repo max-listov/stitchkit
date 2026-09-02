@@ -329,15 +329,56 @@ function createEndpointMethod<K extends string>(
     const method = (requestArgs: unknown) =>
       execute(readClientRequestArgs(requestArgs), undefined);
     return Object.assign(method, {
-      withOptions: (requestArgs: unknown, options: unknown) =>
-        execute(readClientRequestArgs(requestArgs), readClientRequestOptions(options)),
+      withOptions: (...args: unknown[]) => {
+        refuseExtraWithOptionsArguments(endpoint, args.length, 2);
+        return execute(readClientRequestArgs(args[0]), readClientRequestOptions(args[1]));
+      },
     });
   }
 
   const method = () => execute({}, undefined);
   return Object.assign(method, {
-    withOptions: (options: unknown) => execute({}, readClientRequestOptions(options)),
+    withOptions: (...args: unknown[]) => {
+      refuseExtraWithOptionsArguments(endpoint, args.length, 1);
+      return execute({}, readClientRequestOptions(args[0]));
+    },
   });
+}
+
+/**
+ * `withOptions` takes one argument for an endpoint with no input and two for an
+ * endpoint that has one, and calling the wrong shape used to be silent: the
+ * extra argument was dropped, the request went out **uncancelled**, and the
+ * caller still saw `REQUEST_ABORTED` because the cancellation wrapper reads the
+ * signal it was handed regardless. The server then ran the operation to its own
+ * deadline. That reads as "cancellation does not work over this transport" and
+ * costs a transport investigation; it was reported as one, and reproduced by
+ * four separate mis-calls of this method while the report was being chased.
+ *
+ * TypeScript refuses the wrong arity at a typed call site, which is why this
+ * went unguarded — but the reports come from call sites that are not typed:
+ * generated wrappers, dynamic dispatch, JavaScript.
+ *
+ * The count is read, never the value. `arguments.length` cannot trip a getter,
+ * so this stays compatible with the rule that a client method must survive being
+ * handed a foreign callback context (`client-cancellation.test.ts`). That rule
+ * is about the bare callable — `api.op` passed to `map` — and a throwing getter
+ * in argument two is exactly why the guard must not look at what it counts.
+ */
+function refuseExtraWithOptionsArguments(
+  endpoint: EndpointDef,
+  received: number,
+  expected: 1 | 2,
+): void {
+  if (received <= expected) return;
+  const shape = expected === 1 ? 'withOptions(options)' : 'withOptions(args, options)';
+  throw new TypeError(
+    `${endpoint.method} ${endpoint.path}: this endpoint declares ${
+      expected === 1 ? 'no input' : 'an input'
+    }, so its method is ${shape} — it received ${received} arguments. ` +
+      'An extra argument here is dropped, and a request options object in the dropped position ' +
+      'sends the request without them: an abort signal placed there never reaches the server.',
+  );
 }
 
 function createHttpExecutor<K extends string>(

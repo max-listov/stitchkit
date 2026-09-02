@@ -564,6 +564,7 @@ cutovers are covered by the executable
 | `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
 | `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
 | `DiagnosticJournalLockPolicySchema` / `DiagnosticJournalLockPolicy` | schema / _type_ | `refuse` (default) or `reclaim-stale`, which reclaims only a lock whose recorded owner is provably gone |
+| `readDiagnosticJournalLockDiagnosis` / `DiagnosticJournalLockDiagnosis` | function / _type_ | why a `reclaim-stale` acquisition refused — owner alive, another machine, or a lock this host cannot attribute — read off the thrown `EEXIST` |
 | `DiagnosticJournalSubmitResultSchema` / `DiagnosticJournalSubmitResult` | schema / _type_ | accepted epoch/sequence or explicit invalid, oversized, capacity, closed or failed refusal |
 | `DiagnosticJournalStatusSchema` / `DiagnosticJournalStatus` | schema / _type_ | state, limits, exact admission/write/failure counters, pending ownership, rotations, partial tails and last safe sequences |
 | `DiagnosticJournalFrameSchema` / `DiagnosticJournalFrame` | schema / _type_ | version-1 JSONL frame carrying process epoch, contiguous accepted sequence and schema-validated JSON event |

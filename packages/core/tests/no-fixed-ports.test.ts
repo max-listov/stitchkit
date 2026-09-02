@@ -40,8 +40,11 @@ const FIXED_PORT =
 describe('no test binds a fixed port', () => {
   test('every server in tests/ and scripts/ uses port 0', () => {
     const offenders: string[] = [];
+    const scanned = new Map<string, number>();
     for (const root of ROOTS) {
+      scanned.set(root, 0);
       for (const file of new Glob('**/*.{ts,mjs}').scanSync({ cwd: root, absolute: true })) {
+        scanned.set(root, (scanned.get(root) ?? 0) + 1);
         if (file.endsWith('no-fixed-ports.test.ts')) continue;
         readFileSync(file, 'utf8')
           .split('\n')
@@ -50,6 +53,12 @@ describe('no test binds a fixed port', () => {
           });
       }
     }
+    // The denominator, per root rather than in total, because the realistic
+    // failure is one of the three moving — not all of them. A total floor would
+    // still be met by the other two while the moved one silently stopped being
+    // checked, and this file's own header is about a gate that passed by not
+    // running: 697 pass where 700 were expected. Same shape, one level out.
+    expect([...scanned].filter(([, count]) => count === 0)).toEqual([]);
     expect(offenders).toEqual([]);
   });
 });

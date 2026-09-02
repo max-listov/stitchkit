@@ -51,7 +51,7 @@ own, recorded as an ADR.
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the store and managed-resource conformance kits |
 | `stitchkit/declaration` | build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser | stable | `createCursorQuery`, `createCacheBridge` |
-| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 10 of the 17 minors since 0.56.2, most recently 0.69.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 10 of the 18 minors since 0.56.2, most recently 0.69.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/harness` | server | evolving | resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
 | `stitchkit/agent-runtime/coding-tools` | server (Bun or Node) | evolving | bounded host-authorized direct file and shell tools; a root boundary, not an OS sandbox |
 | `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
@@ -59,7 +59,7 @@ own, recorded as an ADR.
 | `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit-tui` | terminal (Bun) | evolving | optional official OpenTUI host over a caller-composed headless runtime |
-| `stitchkit/application` | server | evolving<br>_redefined in 4 of the 17 minors since 0.56.2, most recently 0.72.0_ | managed resource graph, readiness, admission, schedules and bounded shutdown |
+| `stitchkit/application` | server | evolving<br>_redefined in 4 of the 18 minors since 0.56.2, most recently 0.72.0_ | managed resource graph, readiness, admission, schedules and bounded shutdown |
 | `stitchkit/application/grammy` | server | evolving | isolated grammY polling and webhook lifecycle adapters |
 | `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
 

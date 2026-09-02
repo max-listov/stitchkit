@@ -33,6 +33,31 @@ export type UnauthorizedMatcher = (pathname: string) => boolean;
  */
 const API_ERROR_BRAND = Symbol.for('stitchkit.ApiError');
 
+/**
+ * The text an `ApiError` carries when nothing supplied one.
+ *
+ * The old fallback was `API Error: ${code}`, which reads like an explanation and
+ * is not one: a caller could not tell "the origin explained this failure" from
+ * "nothing explained it", because `message` was a plausible non-empty string
+ * either way. Those are different answers, and merging them is what sent one
+ * consumer hunting a permission refusal that never happened — the code alone
+ * read as one.
+ *
+ * Fixed in the text rather than in a field beside it, because the text is the
+ * channel that survives a hop: `implementRemote` copies `message` into the
+ * `AppError` it re-throws, so a fabricated line crosses to the NEXT consumer as
+ * though the origin had written it, while a structural flag would stop at the
+ * boundary — dead exactly where it is needed.
+ *
+ * An empty string counts as unsupplied: it explains nothing either, and `??`
+ * alone would have let it through.
+ */
+function messageForCode(code: string, message: string | undefined): string {
+  return message !== undefined && message.length > 0
+    ? message
+    : `${code} (no message supplied)`;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly code: string,
@@ -43,7 +68,7 @@ export class ApiError extends Error {
     public readonly traceId?: string,
     options?: ErrorOptions,
   ) {
-    super(message ?? `API Error: ${code}`, options);
+    super(messageForCode(code, message), options);
     this.name = 'ApiError';
     // Non-enumerable — invisible to JSON / spread, present for `is()`.
     Object.defineProperty(this, API_ERROR_BRAND, { value: true });
@@ -407,13 +432,20 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       const response = isHTTPError(error) ? error.response : undefined;
       const status = response?.status ?? 0;
       const msg = error instanceof Error ? error.message : undefined;
+      // The message and the `cause` go to the same places the bare-fetch path
+      // sends them (`createFetchExecutor`). This path used to pass `undefined`
+      // for both and file the real text under `details.message` alone, so the
+      // ky adapter answered `API Error: UNKNOWN_ERROR` where the bare-fetch
+      // path answered "Unable to connect" — same failure, same client, two
+      // different stories.
       throw new ApiError(
         'UNKNOWN_ERROR',
         status,
         msg ? { message: msg } : undefined,
-        undefined,
+        msg,
         undefined,
         responseTraceId(response),
+        { cause: error },
       );
     }
   }

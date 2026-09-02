@@ -40,6 +40,63 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.73.0
+
+Two breaking changes. Nothing you send to a server changed, and only one of these
+can reach a call site the compiler already checks.
+
+### If you call `withOptions` from a call site that lost its types
+
+`withOptions` takes one argument on an endpoint with no contract input, two when
+there is one. Passing two to a no-input endpoint used to succeed and silently
+drop the options: the request went out **uncancelled**, the caller still received
+`REQUEST_ABORTED` — cancellation is decided from the signal it was handed, not
+from what the transport did — and the server ran the operation to its own
+deadline. Every symptom then points at the transport, and the investigation goes
+there. It now throws a `TypeError` naming the endpoint and the correct shape.
+
+```ts
+// before — the options were dropped and the request was never cancelled
+api.ping.withOptions({}, { signal })
+
+// after
+api.ping.withOptions({ signal })
+```
+
+A typed call site already refused the wrong arity, so this reaches only code that
+does not have the types: a `Record<string, …>` view of the client, a hand-written
+double, a dynamic dispatch. The guard counts arguments and never reads them, so a
+method handed to a callback API behaves exactly as before.
+
+### If you match on `ApiError.message`
+
+An `ApiError` that nothing explained used to carry `API Error: ${code}` — a
+string that reads like an explanation while only restating the code, so a caller
+could not tell an origin that explained a failure from one that said nothing. It
+now says which it is.
+
+```ts
+// before
+err.message === 'API Error: INVALID_INPUT'
+
+// after
+err.message === 'INVALID_INPUT (no message supplied)'   // better: match err.code
+```
+
+Match `err.code` instead: it is the contract, and it did not change. An error
+carrying a real message is untouched. An empty message now counts as no message,
+for the same reason — an empty string is not an explanation either.
+
+Two related fixes need no migration, but change what you will see. An error the
+transport raised through `createHttpClient` now carries the transport's own text
+in `message` and the original error as `cause`, where before it carried neither
+and filed the text under `details.message` alone; if you followed the retry rule
+in [the client guide](./client.md) — inspect the adapter's `cause`, retry only
+when it proves dispatch did not happen — that rule was not executable on this
+transport and now is. And the client guide now states which direction validation
+runs: responses are checked against `output`, arguments are **not** checked
+before being sent.
+
 ## Released migration: 0.72.0
 
 Nothing you *pass* changed. Both items are about types you read or build, and

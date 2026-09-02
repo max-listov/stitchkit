@@ -30,6 +30,7 @@ export async function createDiagnosticJournal<SCHEMA extends z.ZodType>(
     maxFiles: limits.maxFiles,
     mode: parseDiagnosticJournalMode(config.mode),
     lock,
+    ...(config.machineIdentity !== undefined && { machineIdentity: config.machineIdentity }),
   });
   return createDiagnosticJournalManager(
     {

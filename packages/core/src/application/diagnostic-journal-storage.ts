@@ -45,6 +45,7 @@ interface RotatingStorageConfig {
   readonly maxFiles: number;
   readonly mode: number;
   readonly lock: DiagnosticJournalLockPolicy;
+  readonly machineIdentity?: string;
 }
 
 function isMissing(error: unknown): boolean {
@@ -104,6 +105,7 @@ export async function createRotatingDiagnosticJournalStorage(
     lockPath,
     config.mode,
     config.lock,
+    config.machineIdentity,
   );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let currentFileBytes = 0;

@@ -171,6 +171,8 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0143](0143-telegram-platform-primitives-need-no-bot-library.md) | Telegram platform primitives need no bot library | Accepted — `stitchkit/telegram` holds Mini App verification and Bot API failure classification, peer-free and server-only |
 | [0144](0144-generic-application-primitives-declare-facts-not-infrastructure.md) | Generic application primitives declare facts, not infrastructure | Accepted — one browser-safe declaration leaf with application-owned persistence and execution |
 | [0145](0145-a-reclaimed-lock-is-proven-never-assumed.md) | A reclaimed lock is proven, never assumed | Accepted — liveness proof reclaims an abandoned journal lock; no age or heartbeat variant is offered |
+| [0146](0146-a-scanning-gate-asserts-what-it-scanned.md) | A scanning gate asserts what it scanned | Accepted — a test that discovers its inputs states the size of the set before calling it clean |
+| [0147](0147-machine-identity-not-host-name-decides-whose-pid-this-is.md) | Machine identity, not host name, decides whose pid this is | Accepted — refines 0145: a renamed machine reclaims its own lock, and a refusal says which refusal it is |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

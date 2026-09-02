@@ -83,6 +83,7 @@ export {
   DiagnosticJournalFrameSchema,
   type DiagnosticJournalLimits,
   DiagnosticJournalLimitsSchema,
+  type DiagnosticJournalLockDiagnosis,
   type DiagnosticJournalLockPolicy,
   DiagnosticJournalLockPolicySchema,
   type DiagnosticJournalRefusalReason,
@@ -96,6 +97,7 @@ export {
   type DiagnosticJournalWaitOptions,
   type DiagnosticJournalWaitResult,
   DiagnosticJournalWaitResultSchema,
+  readDiagnosticJournalLockDiagnosis,
 } from './application/diagnostic-journal-contract';
 export {
   type ApplicationEventSink,

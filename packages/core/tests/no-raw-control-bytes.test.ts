@@ -28,9 +28,17 @@ describe('source hygiene', () => {
   test('no raw control bytes in any src/*.ts (use \\u / \\x escapes)', () => {
     const glob = new Glob('**/*.ts');
     const offenders: string[] = [];
+    let scanned = 0;
     for (const file of glob.scanSync({ cwd: `${import.meta.dir}/../src`, absolute: true })) {
+      scanned += 1;
       if (hasRawControlByte(readFileSync(file))) offenders.push(file);
     }
+    // The denominator, asserted before the numerator. A glob whose cwd stopped
+    // resolving — `src/` moved, the package re-laid-out — yields nothing and
+    // this test would report an empty offender list, which reads exactly like a
+    // clean scan. The floor is a floor, not a target: 270 files today, and it
+    // exists to separate "looked and found nothing" from "did not look".
+    expect(scanned).toBeGreaterThan(100);
     expect(offenders).toEqual([]);
   });
 });
