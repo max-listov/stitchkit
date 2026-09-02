@@ -209,3 +209,129 @@ describe('an ApiError admits when nothing explained it', () => {
     expect(error.message).toBe('age must be a number');
   });
 });
+
+/*
+ * A refusal that never left the process: one shape, one timing, on both transports.
+ *
+ * The client refuses a bad argument at eight sites while planning the request. Before 0.74.0 those
+ * left in three shapes across two timings — a plain `Error` rejected on the bare-fetch path, the same
+ * plain `Error` thrown SYNCHRONOUSLY on the Ky path so `.catch()` never ran, and a missing multipart
+ * file as `UNKNOWN_ERROR`, the code that means "this client cannot tell you what happened", on the
+ * one refusal where dispatch provably never happened.
+ *
+ * The timing half is asserted by capturing the call rather than with `expect(fn).toThrow()`: that
+ * matcher passes for a function which merely RETURNS a rejected promise (measured), so it cannot
+ * fail in this direction and the old divergence lived under it unnoticed.
+ */
+describe('a refusal that never left the process', () => {
+  const refuse = defineContract(
+    { prefix: 'refuse' },
+    {
+      upload: {
+        method: 'POST',
+        path: '/upload',
+        desc: 'Upload',
+        multipart: { files: { file: {} } },
+        output: z.object({ ok: z.boolean() }),
+      },
+      fetchOne: {
+        method: 'GET',
+        path: '/item/:id',
+        desc: 'Fetch one',
+        params: z.object({ id: z.string() }),
+        output: z.object({ ok: z.boolean() }),
+      },
+      list: {
+        method: 'GET',
+        path: '/list',
+        desc: 'List',
+        input: z.object({ filter: z.any() }),
+        output: z.object({ ok: z.boolean() }),
+      },
+    },
+  );
+
+  /** Every request that reaches a real server. A refusal that sends anyway would otherwise pass. */
+  let contacted = 0;
+  const origin = Bun.serve({
+    port: 0,
+    fetch: () => {
+      contacted += 1;
+      return Response.json({ ok: true });
+    },
+  });
+
+  type Caller = Record<string, (args?: unknown) => Promise<unknown>>;
+  const transports = (): [string, Caller][] => [
+    ['bare fetch', createClient(refuse, { baseUrl: origin.url.origin }) as unknown as Caller],
+    [
+      'ky adapter',
+      createClient(
+        refuse,
+        createHttpClient({ baseUrl: origin.url.origin, retry: { limit: 0 } }),
+      ) as unknown as Caller,
+    ],
+  ];
+
+  /** The refusal, plus whether the call threw instead of returning — the half a matcher hides. */
+  async function refusalOf(call: () => Promise<unknown>): Promise<ApiError> {
+    let returned: Promise<unknown>;
+    try {
+      returned = call();
+    } catch (error) {
+      throw new Error(`the call threw synchronously instead of rejecting: ${String(error)}`);
+    }
+    const settled = await returned.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    if (!ApiError.is(settled)) throw new Error(`expected an ApiError, got ${String(settled)}`);
+    return settled;
+  }
+
+  test.each([
+    ['a missing multipart file', 'upload', {}, 'file'],
+    ['a missing path param', 'fetchOne', {}, 'id'],
+    ['a nested field in a GET input', 'list', { filter: { deep: 1 } }, 'filter'],
+  ])('%s reads the same on both transports', async (_name, operation, args, field) => {
+    const seen: { code: string; status: number; paths: string[] }[] = [];
+    for (const [, api] of transports()) {
+      const error = await refusalOf(() =>
+        (api[operation] as (a: unknown) => Promise<unknown>)(args),
+      );
+      const issues = (error.details as { issues: { path: string }[] }).issues;
+      seen.push({ code: error.code, status: error.status, paths: issues.map((i) => i.path) });
+    }
+    // Agreement first, then what they must agree ON — two identical wrong answers
+    // would satisfy the comparison alone.
+    expect(seen[0]).toEqual(seen[1] as (typeof seen)[0]);
+    expect(seen[0]?.code).toBe('VALIDATION_ERROR');
+    expect(seen[0]?.status).toBe(0);
+    expect(seen[0]?.paths).toEqual([field as string]);
+  });
+
+  test('a missing scoped prefix key is refused the same way', async () => {
+    for (const transport of [
+      { baseUrl: origin.url.origin },
+      createHttpClient({ baseUrl: origin.url.origin, retry: { limit: 0 } }),
+    ]) {
+      const api = createClient(refuse, transport, {
+        pathPrefix: (args: { tenantId: string }) => `/t/${args.tenantId}`,
+        stripPrefixKeys: ['tenantId'],
+      }) as unknown as Caller;
+      const error = await refusalOf(() => api.list?.({ filter: 'ok' }) as Promise<unknown>);
+      expect(error.code).toBe('VALIDATION_ERROR');
+      expect(error.status).toBe(0);
+      expect((error.details as { issues: { path: string }[] }).issues[0]?.path).toBe(
+        'tenantId',
+      );
+    }
+  });
+
+  test('none of it reached the server', () => {
+    // The assertion the rest depends on: without it every case above would still pass
+    // on a change that refuses AND sends.
+    expect(contacted).toBe(0);
+    origin.stop(true);
+  });
+});

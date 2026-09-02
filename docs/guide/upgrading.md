@@ -40,6 +40,67 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.74.0
+
+One change, and it only reaches you if you catch a refusal the **client** raised — one it made while
+planning the request, before anything was sent. A server refusal is unchanged.
+
+### If you match on the text of a client-side refusal
+
+A missing path param, a missing scoped prefix key, a non-flat field in a `GET` input, a missing or
+invalid multipart file: each used to arrive as a plain `Error` carrying only a sentence. They now
+arrive as an `ApiError` in the same shape a server validation failure uses.
+
+```ts
+// before
+catch (e) {
+  if (/Missing path param/.test(e.message)) …
+}
+
+// after
+catch (e) {
+  if (e.code === 'VALIDATION_ERROR' && e.status === 0) …   // refused here, nothing was sent
+}
+// e.details.issues[0].path === 'id'
+```
+
+`status` is what separates the two worlds, and it is not new — `0` has always meant *this never
+reached the server*, as `REQUEST_ABORTED` and `REQUEST_TIMEOUT` already used it:
+
+| | `code` | `status` |
+|---|---|---|
+| the client refused your arguments | `VALIDATION_ERROR` | `0` |
+| the server refused your arguments | `VALIDATION_ERROR` | `400` |
+
+`details.issues` is the same `{ path, code, message }` array on both, so one rendering serves both —
+and `zodIssues` / `ZodIssueSummary` are now importable from `stitchkit` itself, not only from
+`stitchkit/server`.
+
+### If you are on `createHttpClient` and your call site relied on a synchronous throw
+
+This is the sharp one, because it is invisible in a diff. Those refusals used to be thrown
+**synchronously** on the Ky-backed client — before the call returned a promise — so
+`api.upload({}).catch(handler)` never reached the handler, while the same mistake on the bare-fetch
+client rejected normally. They now reject on both.
+
+```ts
+// before, on createHttpClient only
+try {
+  api.upload({})            // threw here
+} catch (e) { … }
+
+// after, on both transports
+await api.upload({}).catch(handler)
+```
+
+A `try/catch` around an `await`ed call keeps working. A `try/catch` around an un-awaited call no
+longer catches anything — which was already true on the other transport.
+
+Not a migration, but worth knowing: a missing multipart file used to be reported as
+`UNKNOWN_ERROR`, the code that means *this client cannot tell you what happened*, on the one refusal
+where it is certain nothing was sent. → ADR 0148 carries the reasoning, including why argument
+validation stays on the server.
+
 ## Released migration: 0.73.0
 
 Two breaking changes. Nothing you send to a server changed, and only one of these
@@ -86,6 +147,25 @@ err.message === 'INVALID_INPUT (no message supplied)'   // better: match err.cod
 Match `err.code` instead: it is the contract, and it did not change. An error
 carrying a real message is untouched. An empty message now counts as no message,
 for the same reason — an empty string is not an explanation either.
+
+### If a diagnostic journal lock file is already on disk
+
+One operator step, and only on a host that has been **renamed** since its lock was written.
+
+A lock written before this version carries no machine identity, so there is nothing to compare and
+the host name is all that is left. If the name still matches, the lock reclaims exactly as it always
+did and there is nothing to do. If the name has changed, the lock is `unattributable` and is refused
+— the same refusal this release exists to end, except that this particular file predates the fix and
+cannot be repaired from the inside. Delete it once:
+
+```sh
+rm <journal path>.lock   # only when the host was renamed since the file was written
+```
+
+Locks written from this version on carry the machine identity, so the situation cannot recur. To see
+which case you are in without guessing, read the refusal instead of the file:
+`readDiagnosticJournalLockDiagnosis(err)` returns `attribution: 'unattributable'` for exactly this
+one, and `'another-machine'` for a lock that genuinely belongs elsewhere and must **not** be deleted.
 
 Two related fixes need no migration, but change what you will see. An error the
 transport raised through `createHttpClient` now carries the transport's own text

@@ -153,6 +153,7 @@
     "UnauthorizedMatcher",
     "UrlBuilderConfig",
     "ValidatedRealtimeSocket",
+    "ZodIssueSummary",
     "appError",
     "asRealtimeRejection",
     "badRequest",
@@ -181,6 +182,7 @@
     "encodeCursor",
     "forbidden",
     "formatTraceparent",
+    "formatZodError",
     "isStitchErrorCode",
     "notFound",
     "paginatedSchema",
@@ -189,7 +191,8 @@
     "parseTraceparent",
     "rateLimited",
     "resumableIterator",
-    "unauthorized"
+    "unauthorized",
+    "zodIssues"
   ],
   "stitchkit/contract": [
     "ALL_TRANSPORTS",

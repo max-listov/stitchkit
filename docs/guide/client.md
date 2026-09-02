@@ -195,19 +195,53 @@ naming every offending field in the `message` and again in `details.issues` as
 `{ path, code, message }`. That holds for a JSON body, a query string and a path
 parameter alike, so a rejected argument always costs a round trip.
 
-An application that needs a local refusal can parse the schema itself before
-calling — `contract.endpoints.<name>.input` is the same Zod object the server
-validates with:
+It is tempting to close that gap locally: the schemas are on the contract object,
+and `input` is the very Zod object the server validates with, so parsing it before
+the call looks free. **It is not, and it fails in the direction that breaks
+working code.** A call's arguments and the server's `input` are not the same
+value, for two independent reasons.
+
+An argument object is typed as the intersection of `params`, `input` and any
+multipart fields, so `input` covers one factor of it. Parsed over the whole
+object it silently strips the keys it does not own — or, being `.strict()`,
+refuses them:
 
 ```ts
-const parsed = contract.endpoints.create.input.safeParse(args)
-if (!parsed.success) return refuse(parsed.error)
-await api.create(args)
+// params: { id }, input: z.object({ text }).strict()
+contract.endpoints.update.input.safeParse({ id: 'item-1', text: 'hello' })
+// → refused: unrecognized_keys: ["id"]     the server accepts this call
 ```
 
-It then owns a second error shape beside this one, so make the local refusal name
-the offending fields too. A caller who receives a bare code with no text cannot
-tell which gate refused or why — and reads it as a refusal of permission.
+And on a query string or a multipart body the wire carries strings while the
+caller holds live values, so a coercing schema answers differently on each side:
+
+```ts
+// input: z.object({ flag: z.coerce.boolean() })
+api.list({ flag: false })
+// local  safeParse({ flag: false })   → false
+// server safeParse({ flag: 'false' }) → true      z.coerce.boolean()('false') is true
+```
+
+And a plain JSON body is not the safe exception it looks like, because it still
+crosses `JSON.stringify`. A schema holding any type that does not survive that
+round trip — `z.date()`, `z.map()`, `z.set()`, `z.bigint()`, `z.instanceof(...)`,
+or `NaN` / `Infinity` inside a `z.number()` — agrees locally and refuses on the
+server:
+
+```ts
+// input: z.object({ when: z.date() }), POST, no path params
+check({ when: new Date() })   // accepted: a live Date
+// server                     // refused: expected date, received string
+```
+
+This one fails in the safe direction — nothing valid is blocked — but it means a
+local check passes traffic the server will reject, which is the opposite of what
+it was added for.
+
+One schema, one call, opposite answers — inside a single release, with no version
+skew involved. Argument validation therefore stays on the server, which is the
+only side that sees what was actually sent. A rejected argument costs a round
+trip, and the refusal names every offending field.
 
 An explicit contract `HEAD` operation is exposed like any other typed method.
 Because HEAD endpoints are `rawResponse`, it resolves to the untouched
@@ -281,9 +315,19 @@ the same client-only errors:
 
 | Failure | `ApiError.code` | `status` |
 |---------|-----------------|----------|
+| arguments refused before sending | `VALIDATION_ERROR` | `0` |
 | caller `AbortSignal` | `REQUEST_ABORTED` | `0` |
 | endpoint/client timeout | `REQUEST_TIMEOUT` | `0` |
 | other transport failure | `UNKNOWN_ERROR` | `0` |
+
+`status: 0` is what separates a refusal made here from one made by the server:
+the same `VALIDATION_ERROR` arrives with `400` when the server refused, and
+`details.issues` is the same `{ path, code, message }` array either way, so one
+rendering serves both. A refusal raised here is always a **rejection** — on both
+transports, for every call shape — and it never reaches the server. The client
+refuses this way for a missing path param, a missing scoped prefix key, a
+non-flat field in a `GET` input, and a missing or invalid multipart file. → ADR
+0148.
 
 Abort and timeout do not emit `network_error` and are not retried. The same
 options work for query, JSON, multipart and raw-response calls. Stitchkit does
@@ -328,9 +372,16 @@ const work = createClient(requestWorkContract, {
 
 The same adapter accepts unrelated contract shapes without learning their DTOs
 or operation inventory. `createClient` chooses method/path from the contract,
-serializes only the declared arguments, forwards `.withOptions(..., { signal })`
-and validates the response through the endpoint's output schema. A caller payload
-cannot replace the configured base URL or reserved operation path.
+forwards `.withOptions(..., { signal })` and validates the response through the
+endpoint's output schema. A caller payload cannot replace the configured base URL
+or reserved operation path.
+
+It does **not** filter your arguments down to the declared ones. Keys the contract
+does not declare are consumed for the path where they belong there and otherwise
+sent as they are — `api.list({ q: 'hello', note: 'internal' })` puts
+`?q=hello&note=internal` on the wire, and the server drops `note` only because its
+schema is not `.strict()`. Nothing was validated away on this side: pass the
+object the contract declares, not a wider one it happens to contain.
 
 Contract metadata describes an effect; it does not authorize one. Authentication,
 scope and destination policy remain in the application/server boundary. A schema

@@ -218,16 +218,23 @@ describe('GET / DELETE query input', () => {
     );
   });
 
-  test('a nested object in GET input throws loudly (HttpClient adapter)', () => {
+  // These two were written as `expect(() => …).toThrow(…)`, which reads as an assertion that the
+  // Ky-backed client refuses *synchronously* — and it never was one: `expect(fn).toThrow()` in
+  // bun:test passes for a function that merely RETURNS a rejected promise (measured:
+  // `expect(() => Promise.reject(new Error('boom'))).toThrow('boom')` is green). So the form could
+  // not fail in the direction it appeared to test, and it stayed green through the change that made
+  // both transports reject. Timing is pinned where it can actually fail, in
+  // `client-parity.test.ts`; these two are about the message.
+  test('a nested object in GET input is refused (HttpClient adapter)', async () => {
     const api = createClient(search, createHttpClient({ baseUrl: queryBaseUrl }));
-    expect(() => api.query({ filter: { name: 'x' } })).toThrow(
+    await expect(api.query({ filter: { name: 'x' } })).rejects.toThrow(
       /cannot travel as a query parameter/,
     );
   });
 
-  test('a nested object in DELETE input throws loudly', () => {
+  test('a nested object in DELETE input is refused', async () => {
     const api = createClient(search, createHttpClient({ baseUrl: queryBaseUrl }));
-    expect(() => api.remove({ filter: { name: 'x' } })).toThrow(
+    await expect(api.remove({ filter: { name: 'x' } })).rejects.toThrow(
       /DELETE \/: input field "filter"/,
     );
   });

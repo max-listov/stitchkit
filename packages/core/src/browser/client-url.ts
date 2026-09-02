@@ -2,6 +2,7 @@ import type { EndpointDef } from '../contract';
 import { inputIsQuery } from '../internal/http-input';
 import { parseTrailingWildcard } from '../internal/route-pattern';
 import type { ContractClientConfig, PathPrefixArgs } from './client';
+import { refuseLocally } from './http';
 
 type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
 
@@ -40,7 +41,8 @@ function collectQueryParams(
       : typeof value === 'object'
         ? 'a nested object'
         : `a ${typeof value}`;
-    throw new Error(
+    throw refuseLocally(
+      key,
       `${endpoint.method} ${endpoint.path}: input field "${key}" is ${what} — it cannot ` +
         'travel as a query parameter. GET / DELETE input must be flat (string / number / ' +
         'boolean, or an array of string / number); flatten the field or move the ' +
@@ -70,7 +72,7 @@ function resolvePathPrefix<K extends string>(
   const keys = config.stripPrefixKeys ?? [];
   if (!hasStringKeys(args, keys)) {
     const missing = keys.find((key) => typeof args[key] !== 'string');
-    throw new Error(`Missing path prefix key: ${missing}`);
+    throw refuseLocally(String(missing), `Missing path prefix key: ${missing}`);
   }
   return config.pathPrefix(args);
 }
@@ -145,7 +147,7 @@ function fillPathParams(path: string, args: Record<string, unknown>): string {
   let filled = path.replace(/:(\w+)/g, (_, key) => {
     const value = args[key];
     if (value === undefined || value === null) {
-      throw new Error(`Missing path param: ${key}`);
+      throw refuseLocally(String(key), `Missing path param: ${key}`);
     }
     return encodeURIComponent(String(value));
   });
@@ -153,7 +155,7 @@ function fillPathParams(path: string, args: Record<string, unknown>): string {
 
   const wildcardValue = args[wildcard.name];
   if (wildcardValue === undefined || wildcardValue === null) {
-    throw new Error(`Missing path param: ${wildcard.name}`);
+    throw refuseLocally(wildcard.name, `Missing path param: ${wildcard.name}`);
   }
   const remainder = String(wildcardValue)
     .split('/')

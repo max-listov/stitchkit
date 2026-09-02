@@ -327,22 +327,52 @@ function createEndpointMethod<K extends string>(
   const hasScopedArguments = (contractConfig?.stripPrefixKeys?.length ?? 0) > 0;
   if (endpointHasArguments(endpoint) || hasScopedArguments) {
     const method = (requestArgs: unknown) =>
-      execute(readClientRequestArgs(requestArgs), undefined);
+      settle(execute, readClientRequestArgs(requestArgs), undefined);
     return Object.assign(method, {
       withOptions: (...args: unknown[]) => {
         refuseExtraWithOptionsArguments(endpoint, args.length, 2);
-        return execute(readClientRequestArgs(args[0]), readClientRequestOptions(args[1]));
+        return settle(
+          execute,
+          readClientRequestArgs(args[0]),
+          readClientRequestOptions(args[1]),
+        );
       },
     });
   }
 
-  const method = () => execute({}, undefined);
+  const method = () => settle(execute, {}, undefined);
   return Object.assign(method, {
     withOptions: (...args: unknown[]) => {
       refuseExtraWithOptionsArguments(endpoint, args.length, 1);
-      return execute({}, readClientRequestOptions(args[0]));
+      return settle(execute, {}, readClientRequestOptions(args[0]));
     },
   });
+}
+
+/**
+ * Run an executor so that a refusal always arrives as a rejection.
+ *
+ * The two executors differ in a way no caller should ever have seen: the bare-fetch one is `async`,
+ * so a refusal raised while planning the request becomes a rejection, while the Ky-backed one is a
+ * plain function and threw the same refusal **synchronously** — `api.upload({}).catch(handler)`
+ * never reached the handler, and `expect(...).rejects` on one transport had to be
+ * `expect(() => ...).toThrow` on the other for the identical mistake.
+ *
+ * This is deliberately the funnel and not the executors: every method goes through here, so the
+ * guarantee cannot be true of one call shape and false of another. The `TypeError`s above it stay
+ * synchronous on purpose — a wrong argument *count* or a non-object options bag is a programming
+ * error at the call site, not a request this client refused to send.
+ */
+function settle(
+  execute: ClientRequestExecutor,
+  requestArgs: Record<string, unknown>,
+  options: ClientRequestOptions | undefined,
+): Promise<unknown> {
+  try {
+    return execute(requestArgs, options);
+  } catch (error) {
+    return Promise.reject(error);
+  }
 }
 
 /**

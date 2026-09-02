@@ -80,6 +80,11 @@ export {
   parseSSE,
 } from './browser/stream';
 export * from './contract';
+// The projection a `VALIDATION_ERROR` already travels in — browser-safe (zod only),
+// and the same three names the server entry exports, not a second set. A caller
+// rendering `ApiError.details.issues` had to hand-write the shape, because the only
+// door to it was `stitchkit/server`, which a browser must not import.
+export { formatZodError, type ZodIssueSummary, zodIssues } from './internal/errors';
 export type { StitchLogger } from './logger';
 // W3C trace helpers — browser-safe (Web Crypto only), shared with the server's
 // `stitchkit/observability` entry so client and server speak one format.

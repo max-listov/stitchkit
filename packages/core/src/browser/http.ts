@@ -79,6 +79,29 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A refusal the client raised itself, in the shape the server uses for the same failure.
+ *
+ * Before this, the client refused a bad argument in three shapes across two timings: a plain `Error`
+ * rejected on one transport, the same plain `Error` thrown **synchronously** on the other, and a
+ * missing multipart file reported as `UNKNOWN_ERROR` — the code whose whole meaning is *this client
+ * cannot tell you what happened*, on the one refusal where dispatch provably never happened, while
+ * the client guide instructs the reader never to conclude anything from that code.
+ *
+ * `status: 0` already means "this never reached the server" (`REQUEST_ABORTED`, `REQUEST_TIMEOUT`),
+ * so `VALIDATION_ERROR` with `status: 0` reads as "refused here" against the server's `400` with no
+ * new field and no new name. `details.issues` carries the same `{ path, code, message }` a 400
+ * carries, so one rendering serves both.
+ */
+export function refuseLocally(path: string, message: string): ApiError {
+  return new ApiError(
+    'VALIDATION_ERROR',
+    0,
+    { issues: [{ path, code: 'invalid_type', message }] },
+    message,
+  );
+}
+
 /** @internal Narrow adapter for a Bun fetch error Ky does not classify. */
 export function shouldRetryBunNetworkError(error: unknown): true | undefined {
   if (

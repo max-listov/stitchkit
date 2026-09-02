@@ -1,7 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError, appError, isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
+import {
+  ApiError,
+  zodIssues as barrelZodIssues,
+  createClient,
+  createHttpClient,
+  type ZodIssueSummary,
+} from '../src';
+import {
+  AppError,
+  appError,
+  defineContract,
+  isStitchErrorCode,
+  STITCH_ERROR_STATUS,
+} from '../src/contract';
 import { formatZodError, normalizeError, zodIssues } from '../src/internal/errors';
+import { createServer, implement } from '../src/server';
 
 describe('stitch error registry', () => {
   test('STITCH_ERROR_STATUS maps codes → status (incl. METHOD_NOT_ALLOWED 405)', () => {
@@ -202,5 +216,69 @@ describe('zodIssues', () => {
     const result = z.string().safeParse(123);
     if (result.success) throw new Error('Expected failure');
     expect(zodIssues(result.error)[0]?.path).toBe('(root)');
+  });
+});
+
+/*
+ * One projection, both sides — and reached through the door a browser may open.
+ *
+ * `zodIssues` is what a `VALIDATION_ERROR` already travels in, and until now the only entry that
+ * exported it was `stitchkit/server`, which pulls `Bun.serve`. So a caller rendering
+ * `ApiError.details.issues` had to hand-write the shape, and every consumer wrote its own — the
+ * "N shapes of one thing" a contract-first framework exists to prevent, produced by the framework.
+ *
+ * The import below is deliberately from `../src` and not from `../src/internal/errors`: the barrel
+ * IS the thing under test, and an import of the internal path would stay green with the export
+ * removed. The comparison against a live server is the other half — an export that agreed with
+ * nothing would be decoration.
+ */
+describe('the issue projection is reachable from the browser entry and equals the wire', () => {
+  const contract = defineContract(
+    { prefix: 'issues' },
+    {
+      create: {
+        method: 'POST',
+        path: '/create',
+        desc: 'Create',
+        input: z.object({ name: z.string().min(3), age: z.number().int() }),
+        output: z.object({ ok: z.boolean() }),
+      },
+    },
+  );
+
+  test('a server refusal carries exactly what the barrel projects locally', async () => {
+    const server = createServer({
+      port: 0,
+      services: [implement(contract, { create: () => ({ ok: true }) })],
+    });
+    try {
+      const api = createClient(
+        contract,
+        createHttpClient({ baseUrl: server.url, retry: { limit: 0 } }),
+      );
+      const bad = { name: 'ab', age: 'old' };
+      const settled = await (
+        api as unknown as Record<string, (a: unknown) => Promise<unknown>>
+      )
+        .create?.(bad)
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      if (!ApiError.is(settled))
+        throw new Error(`expected an ApiError, got ${String(settled)}`);
+
+      // The denominator: a comparison of two empty lists would pass while proving nothing.
+      // Typed through the exported type, which is half of what the export is for: a caller
+      // reading `details.issues` had no public name for its element.
+      const wire = (settled.details as { issues: ZodIssueSummary[] }).issues;
+      expect(wire.length).toBeGreaterThan(1);
+
+      const parsed = contract.endpoints.create.input.safeParse(bad);
+      if (parsed.success) throw new Error('the probe value was supposed to be invalid');
+      expect(barrelZodIssues(parsed.error)).toEqual(wire);
+    } finally {
+      await server.shutdown({ gracePeriodMs: 500 });
+    }
   });
 });

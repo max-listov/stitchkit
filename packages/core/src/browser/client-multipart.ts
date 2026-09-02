@@ -7,6 +7,7 @@
  * makes that subtlety readable in one screen.
  */
 import type { FileDescriptor, MultipartDescriptor, MultipartFile } from '../contract';
+import { refuseLocally } from './http';
 
 /**
  * A React Native / Expo file descriptor — a plain `{ uri, name, type }` object
@@ -67,22 +68,29 @@ export function buildMultipartForm(
   for (const [field, policy] of Object.entries(descriptor.files)) {
     const value = values[field];
     if (value === undefined) {
-      if (policy.required !== false) throw new Error(`Missing multipart file field: ${field}`);
+      if (policy.required !== false) {
+        throw refuseLocally(field, `Missing multipart file field: ${field}`);
+      }
       continue;
     }
     if (policy.multiple === true) {
       if (!Array.isArray(value) || value.length === 0) {
-        throw new Error(`Multipart file field "${field}" must be a non-empty array`);
+        throw refuseLocally(
+          field,
+          `Multipart file field "${field}" must be a non-empty array`,
+        );
       }
       for (const file of value) {
         if (!isMultipartFile(file)) {
-          throw new Error(`Invalid multipart file field: ${field}`);
+          throw refuseLocally(field, `Invalid multipart file field: ${field}`);
         }
         appendMultipartFile(formData, field, file);
       }
       continue;
     }
-    if (!isMultipartFile(value)) throw new Error(`Invalid multipart file field: ${field}`);
+    if (!isMultipartFile(value)) {
+      throw refuseLocally(field, `Invalid multipart file field: ${field}`);
+    }
     appendMultipartFile(formData, field, value);
   }
 

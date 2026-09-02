@@ -15,6 +15,83 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.74.0] — 2026-09-02
+
+### Added
+
+- **`zodIssues`, `ZodIssueSummary` and `formatZodError` are reachable from the
+  browser entry.** They are the exact projection a `VALIDATION_ERROR` already
+  travels in — `ApiError.details.issues` is `ZodIssueSummary[]` — and the only
+  entry that exported them was `stitchkit/server`, which a browser must not
+  import. So every consumer rendering a validation failure hand-wrote the shape,
+  which is the one thing a contract-first framework exists to prevent. No new
+  name and no second definition: the same three names on a second barrel, as
+  `AppError` and `defineContract` already are. `packages/core/tests/errors.test.ts`
+  pins it by comparing what the barrel projects locally against what a live server
+  actually sends, so an export that agreed with nothing would not pass.
+
+### Fixed
+
+- **The client guide no longer tells you to build a pre-flight check that refuses
+  working calls.** 0.73.0 documented which direction validation runs — responses
+  are checked against `output`, arguments are not checked before being sent — and
+  then suggested closing the gap with
+  `contract.endpoints.<name>.input.safeParse(args)`. That suggestion is wrong, and
+  wrong in the direction that breaks working code. A call's arguments are typed as
+  the intersection of `params`, `input` and any multipart fields, so `input` covers
+  one factor: parsed over the whole object it strips the keys it does not own, or,
+  being `.strict()`, refuses them — measured, a contract with `params: { id }` and a
+  strict `input` refuses `{ id, text }` with `unrecognized_keys: ["id"]` while the
+  server accepts the same call. Independently, a query string and a multipart body
+  carry strings while the caller holds live values, so `z.coerce.boolean()` called
+  with `false` parses locally to `false` and reaches the handler as `true`. And a
+  plain JSON body is not the safe exception it looks like: it still crosses
+  `JSON.stringify`, so a schema holding `z.date()`, `z.map()`, `z.set()`,
+  `z.bigint()`, `z.instanceof(...)` or `NaN` accepts locally and is refused by the
+  server — that one fails in the safe direction, but it passes traffic the server
+  will reject, which is the opposite of the point. One schema, one call, opposite
+  answers, with no version skew involved. The guide now states why argument
+  validation stays on the server and shows the measurements instead of the check.
+
+- **The client guide no longer claims the client drops undeclared arguments.** It
+  said `createClient` "serializes only the declared arguments", in the paragraph
+  about what a caller payload cannot do — so it read as a guarantee. It is not
+  one: `api.list({ q: 'hello', note: 'internal' })` puts `?q=hello&note=internal`
+  on the wire, and the server ignores `note` only because its schema is not
+  `.strict()`. Nothing is filtered on the caller's side, which matters when the
+  object handed to a call is wider than the contract.
+
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone matching the message text of a refusal the client raised itself — a missing
+path param, a missing scoped prefix key, a non-flat field in a `GET` input, a missing or invalid
+multipart file — and anyone on `createHttpClient` whose call site relied on those refusals being
+thrown **synchronously**. Both now arrive as a rejected `ApiError`. A server refusal is unchanged,
+and nothing about a successful call moves.
+
+- **Every refusal the client raises itself is now `ApiError('VALIDATION_ERROR', 0, { issues })`, and
+  always a rejection.** Eight sites used to answer in three shapes across two timings: a plain
+  `Error` rejected on the bare-fetch path, the same plain `Error` thrown synchronously on the
+  Ky-backed path — so `api.upload({}).catch(handler)` never reached the handler — and a missing
+  multipart file as `UNKNOWN_ERROR`, the code whose whole meaning is *this client cannot tell you
+  what happened*, on the one refusal where dispatch provably never happened, while the client guide
+  instructs the reader never to conclude anything from that code.
+
+  `status: 0` already means "this never reached the server", so the two worlds separate with no new
+  field and no new name, and `details.issues` names the offending field in the same
+  `{ path, code, message }` a `400` carries:
+
+  `// before: catch (e) { if (/Missing path param/.test(e.message)) … }  // and on the ky client, never reached` →
+  `// after: catch (e) { if (e.code === 'VALIDATION_ERROR' && e.status === 0) … }  // e.details.issues[0].path === 'id'`
+
+  The divergence survived because the assertions that appeared to pin it could not fail:
+  `expect(fn).toThrow()` passes for a function that merely **returns** a rejected promise, measured
+  as `expect(() => Promise.reject(new Error('boom'))).toThrow('boom')`. The new gate in
+  `packages/core/tests/client-parity.test.ts` captures the call instead, and also asserts the server
+  was never contacted — without which every other assertion would pass on a change that refuses and
+  sends anyway. → ADR 0148.
+
 ## [0.73.0] — 2026-09-02
 
 ### Fixed

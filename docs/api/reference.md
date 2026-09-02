@@ -40,6 +40,9 @@ The browser-and-server entrypoint. Re-exports everything from
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
 | `createHttpClient` | function | the Ky-based HTTP transport; on Next.js SSR its first attempt stays request-memoizable while every retry is a distinct transport attempt — [guide](../guide/client.md#createhttpclient) |
 | `ApiError` | class | a non-2xx or client failure, with `code` / `status` / `details` / `hint`, optional readonly `traceId` from `x-request-id`, and standard `cause` preserving an injected transport failure |
+| `zodIssues` | function | a `ZodError` → structured `{ path, code, message }[]` — the exact projection a `VALIDATION_ERROR` carries in `ApiError.details.issues`, so a caller renders one shape. Also on `stitchkit/server`; same name, one definition |
+| `ZodIssueSummary` | _type_ | one structured validation issue (`{ path, code, message }`) — the element type of `details.issues`. Also on `stitchkit/server` |
+| `formatZodError` | function | a `ZodError` → a readable, field-summarised string. Also on `stitchkit/server` |
 | `HttpClient` | _type_ | the transport interface `createClient` builds on |
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `fetch` installs an explicit transport and is mutually exclusive with the legacy Bun-only `unix` option — [details](../guide/client.md#createhttpclient) |
