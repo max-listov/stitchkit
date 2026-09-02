@@ -40,6 +40,28 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.76.0
+
+One change, and only if you hand `createWatchClient` a transport you wrote yourself.
+
+```bash
+rg -n "createWatchClient" --glob '*.ts'
+```
+
+If the `transport:` you pass is a bound realtime client — `bindRealtimeClient(...)` or
+`createRealtimeClient(...)` — there is nothing to do: it already carries
+`onConnectionChange`. If it is an object you assembled, add the fourth member:
+
+```ts
+onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void
+```
+
+It is required because the client recovers through it: on a drop it publishes
+`unavailable` to subscribers and forgets what was opened, and on a fresh
+connection it re-opens every key that still has a listener. Without it a watch
+stays "open" on the client after a server restart while the hub remembers
+nothing, and the face stops updating without saying so.
+
 ## Released migration: 0.75.0
 
 Two mechanical renames and one option that has to move. Nothing about a passing

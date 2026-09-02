@@ -17,6 +17,23 @@
  * `createUrlBuilder`, and the identity is the contract's own
  * `(prefix, endpoint key)` — the same pair the server labels every request with.
  *
+ * ## A connection is not forever, and recovering is this client's job
+ *
+ * A socket drops and comes back, and the hub forgets everything the old
+ * connection held — it releases a subscriber's keys the moment that subscriber
+ * detaches. So a client that opened each question once and never again is a
+ * client whose face freezes the first time a server restarts, *silently*,
+ * because nothing tells the subscriber that what it is looking at stopped being
+ * live.
+ *
+ * This client holds every key and every listener, so nobody else can do it: on a
+ * drop it tells subscribers the source is gone and forgets that anything was
+ * opened; on a fresh connection it re-opens every key that still has a listener.
+ * That is why {@link WatchTransport} **requires** `onConnectionChange` rather
+ * than using it when offered — a transport that cannot say when it reconnected
+ * cannot host a recovering client, and an optional hook would turn recovery into
+ * something that silently did not happen.
+ *
  * ## Retention
  *
  * The last value of a key is kept while anyone holds it, and for `holdMs` after
@@ -61,6 +78,15 @@ export interface WatchTransport {
     payload: unknown,
     options: { timeoutMs: number },
   ): Promise<{ accepted: boolean; reason?: string }>;
+  /**
+   * Observe connection changes. Required, because recovery depends on it.
+   *
+   * The hub releases a subscriber's keys when its connection detaches, so every
+   * question opened over the old socket is gone the moment it drops. Without
+   * this the client would go on believing it was subscribed and show a face that
+   * had quietly stopped updating.
+   */
+  onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
 }
 
 export interface WatchClientConfig {
@@ -77,10 +103,19 @@ type Listeners<TValue> = WatchListeners<TValue>;
 
 interface Entry {
   readonly key: WatchKey;
+  readonly args: Record<string, unknown>;
   readonly listeners: Set<Listeners<unknown>>;
   revision: number;
   value?: unknown;
   hasValue: boolean;
+  /**
+   * Whether the **current** connection has been told about this key.
+   *
+   * On the entry rather than on a handle: two handles asking one question share
+   * a subscription, so the second must not send a second `open` — and a
+   * reconnect has to clear it for both.
+   */
+  opened: boolean;
   state: WatchStateFrame;
   release?: ReturnType<typeof setTimeout>;
 }
@@ -99,6 +134,11 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
   const openTimeoutMs = config.openTimeoutMs ?? 10_000;
   const service = contract.meta.prefix;
 
+  function publishState(entry: Entry, state: WatchStateFrame): void {
+    entry.state = state;
+    for (const listener of [...entry.listeners]) listener.state?.(state);
+  }
+
   config.transport.on(WATCH_VALUE, (frame: WatchValueFrame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
@@ -115,8 +155,30 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
   config.transport.on(WATCH_STATE, (frame: WatchStateFrame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
-    entry.state = frame;
-    for (const listener of [...entry.listeners]) listener.state?.(frame);
+    publishState(entry, frame);
+  });
+
+  config.transport.onConnectionChange((connected, reason) => {
+    if (!connected) {
+      // The hub let go of every key that connection held. Say so — a face that
+      // stops updating without a word is the failure this exists to end — and
+      // forget that anything was opened, so the next connection re-opens it.
+      for (const entry of entries.values()) {
+        entry.opened = false;
+        publishState(entry, {
+          key: entry.key,
+          phase: 'unavailable',
+          reason: 'source-unavailable',
+          ...(reason !== undefined && { message: reason }),
+        });
+      }
+      return;
+    }
+    for (const entry of entries.values()) {
+      if (entry.listeners.size === 0) continue;
+      publishState(entry, { key: entry.key, phase: 'opening' });
+      void open(entry);
+    }
   });
 
   /** The cache is what makes a re-subscribe synchronous; the digest itself is not. */
@@ -136,7 +198,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     return digest;
   }
 
-  function entryFor(key: WatchKey): Entry {
+  function entryFor(key: WatchKey, args: Record<string, unknown>): Entry {
     const id = watchKeyString(key);
     const existing = entries.get(id);
     if (existing) {
@@ -146,13 +208,60 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     }
     const entry: Entry = {
       key,
+      args,
       listeners: new Set(),
       revision: 0,
       hasValue: false,
+      opened: false,
       state: { key, phase: 'opening' },
     };
     entries.set(id, entry);
     return entry;
+  }
+
+  /**
+   * Tell the server about a key, and turn every way that can fail into a state.
+   *
+   * Nothing here rejects. It runs from a subscribe and from a reconnect, neither
+   * of which has anywhere to put a rejected promise — and a disconnected socket
+   * rejects the request, which is exactly the moment this runs. An unhandled
+   * rejection in a console is also the one outcome that tells the subscriber
+   * nothing at all.
+   */
+  async function open(entry: Entry): Promise<void> {
+    if (entry.opened) return;
+    entry.opened = true;
+    try {
+      const acknowledgement = await config.transport.request(
+        WATCH_OPEN,
+        { key: entry.key, args: entry.args },
+        { timeoutMs: openTimeoutMs },
+      );
+      if (!acknowledgement.accepted) {
+        const reason = acknowledgement.reason ?? 'the server refused this watch';
+        config.onRefused?.(entry.key, reason);
+        publishState(entry, {
+          key: entry.key,
+          phase: 'unavailable',
+          reason: 'source-unavailable',
+          message: reason,
+        });
+      }
+    } catch (error) {
+      // The next connection must be able to try again, so forget it was sent.
+      entry.opened = false;
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String(Reflect.get(error, 'code'))
+          : undefined;
+      publishState(entry, {
+        key: entry.key,
+        phase: 'unavailable',
+        reason: 'source-unavailable',
+        ...(code !== undefined && { code }),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function releaseEntry(entry: Entry): void {
@@ -173,42 +282,19 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
   function handleFor(action: string, args: Record<string, unknown>): WatchHandle<unknown> {
     const mine = new Set<Listeners<unknown>>();
     let entry: Entry | undefined;
-    let opened = false;
 
     // Synchronous when this question has been asked before — which is the case
     // the claim is about. The first time, there is nothing retained to be
     // synchronous with.
     const known = cachedDigest(action, args);
-    if (known !== undefined) entry = entryFor({ service, action, digest: known });
+    if (known !== undefined) entry = entryFor({ service, action, digest: known }, args);
 
     const ready: Promise<Entry> = (async () => {
       if (entry) return entry;
       const digest = await resolveDigest(action, args);
-      entry = entryFor({ service, action, digest });
+      entry = entryFor({ service, action, digest }, args);
       return entry;
     })();
-
-    async function open(target: Entry): Promise<void> {
-      if (opened) return;
-      opened = true;
-      const acknowledgement = await config.transport.request(
-        WATCH_OPEN,
-        { key: target.key, args },
-        { timeoutMs: openTimeoutMs },
-      );
-      if (!acknowledgement.accepted) {
-        const reason = acknowledgement.reason ?? 'the server refused this watch';
-        config.onRefused?.(target.key, reason);
-        const refusal: WatchStateFrame = {
-          key: target.key,
-          phase: 'unavailable',
-          reason: 'source-unavailable',
-          message: reason,
-        };
-        target.state = refusal;
-        for (const listener of [...target.listeners]) listener.state?.(refusal);
-      }
-    }
 
     return {
       subscribe(listeners) {

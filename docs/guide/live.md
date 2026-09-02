@@ -158,6 +158,19 @@ order-independent — `{a, b}` and `{b, a}` are the same question, which a plain
 `JSON.stringify` key would get wrong exactly when two components happen to build
 their argument object in a different order.
 
+### Narrow the topic to the arguments
+
+`invalidatedBy` is given the arguments as well as the operation, so a topic can
+name what the answer actually depends on:
+
+```ts
+invalidatedBy: (operation, args) => [`chat.transcript:${args.address}`],
+```
+
+Without that, one address changing wakes every watcher of the operation. Twenty
+conversations open means twenty reads for one change — nineteen of them publish
+nothing, because nothing changed, and the read is paid anyway.
+
 ### Who shares with whom
 
 A key is `(service, action, digest of arguments)`, and everyone on that key gets
@@ -182,6 +195,20 @@ user something is wrong when the truth is that it is early.
 A failed read arrives as `unavailable` with the read's own `code` and `message`.
 The hub retries on its own backoff, and a success clears the state without anyone
 asking.
+
+### Across a reconnect
+
+The hub releases a connection's keys when it detaches, so everything opened over
+the old socket is gone the moment it drops. The client recovers on its own: on a
+drop your `state` listener gets `unavailable` / `source-unavailable`, and on the
+next connection every key that still has a listener is re-opened and the values
+resume. That is what `onConnectionChange` on the transport is for, and why it is
+required rather than optional — a client that cannot be told has no way to
+notice, and the face stops updating without a word.
+
+Nothing an open can fail with escapes as a rejected promise: a disconnected
+socket, a timeout, a refusal all arrive as `unavailable` carrying the error's own
+code and message, and the next connection retries.
 
 ### `watch` or `createLiveStateController`?
 
@@ -266,6 +293,32 @@ createServer({
   socket: { io, allowRequest: fence.allowRequest },
 });
 ```
+
+### A UI on one port, an API on the next
+
+The most ordinary arrangement in development is also the one the fence refuses by
+default: a UI dev server on `:5180` calling an API on `:5181`. The browser sends
+`Origin: http://localhost:5180` to `Host: localhost:5181`, they differ, and both
+lanes answer 403. Declare the second origin:
+
+```ts
+createTrustFence({
+  trustedHosts: ['localhost:5181'],
+  trustedOrigins: ['localhost:5180'],
+});
+```
+
+Same entry format as `trustedHosts`, compared against the `Origin`'s authority.
+Declaring one does not widen anything else: an undeclared origin is still
+refused, and `trustedHosts` still decides which authority the server answers on.
+
+It is worth knowing what the `Origin` check is for, because it is not what most
+people assume. It is **not** the DNS-rebinding defence — that attack is
+same-origin by construction, so it sends a matching `Origin` or none at all, and
+`trustedHosts` is what refuses it. What the `Origin` check stops is a plain
+cross-origin request from a page that never needs to read the reply: CORS governs
+whether a response can be *read*, never whether the request is *sent*, so a
+state-changing endpoint is reachable without it.
 
 ### Install **both** halves
 

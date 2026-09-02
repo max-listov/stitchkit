@@ -88,6 +88,27 @@ export interface TrustFenceConfig {
    * list it when you want it.
    */
   readonly trustedHosts: readonly string[];
+  /**
+   * Origins allowed to address this server from a different authority.
+   *
+   * Same entry format as {@link trustedHosts} — `host` or `host:port`, compared
+   * against the `Origin`'s authority. Absent, only an `Origin` that matches the
+   * `Host` is accepted, which is the safe default and also refuses the most
+   * ordinary arrangement there is: a UI dev server on one port talking to an API
+   * on the next. That is the case this exists for.
+   *
+   * Worth knowing what the `Origin` check is and is not for, because the
+   * question comes up the moment it refuses something. It is **not** what stops
+   * DNS rebinding: that attack is same-origin by construction — the page believes
+   * it *is* the target authority — so it sends a matching `Origin` or none at
+   * all, and {@link trustedHosts} is what refuses it. What the `Origin` check
+   * stops is a plain cross-origin request from a page that never needs to read
+   * the reply: CORS governs whether a response can be *read*, never whether the
+   * request is *sent*, so a state-changing endpoint is reachable without it.
+   * That is why the answer here is a declared list rather than dropping the
+   * check.
+   */
+  readonly trustedOrigins?: readonly string[];
   /** Called on every refusal, before the 403 is written. */
   readonly onRefused?: (refusal: TrustRefusal) => void;
   /** Refusals are logged at `warn` when a logger is supplied. */
@@ -196,6 +217,16 @@ export function createTrustFence(config: TrustFenceConfig): TrustFence {
     }
     trusted.push(authority);
   }
+  const trustedOrigins: Authority[] = [];
+  for (const entry of config.trustedOrigins ?? []) {
+    const authority = readAuthority(entry);
+    if (!authority) {
+      throw new Error(
+        `[stitchkit] trust fence: trustedOrigins entry "${entry}" is not an authority. An entry is \`host\` or \`host:port\` — no scheme, no path, no wildcard, the same form as trustedHosts.`,
+      );
+    }
+    trustedOrigins.push(authority);
+  }
 
   function refuse(refusal: TrustRefusal): TrustRefusal {
     config.onRefused?.(refusal);
@@ -247,10 +278,18 @@ export function createTrustFence(config: TrustFenceConfig): TrustFence {
       } catch {
         originAuthority = undefined;
       }
-      const agrees =
+      const sameAuthority =
         originAuthority !== undefined &&
         originAuthority.hostname === requested.hostname &&
         comparablePort(originAuthority.port) === comparablePort(requested.port);
+      const declared =
+        originAuthority !== undefined &&
+        trustedOrigins.some(
+          (entry) =>
+            entry.hostname === originAuthority.hostname &&
+            (entry.port === null || entry.port === originAuthority.port),
+        );
+      const agrees = sameAuthority || declared;
       if (!agrees) {
         return refuse({ reason: 'origin-mismatch', lane, host, origin, site });
       }

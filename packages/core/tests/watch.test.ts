@@ -136,6 +136,39 @@ describe('what causes a re-read', () => {
     expect(hub.readCount()).toBe(2);
   });
 
+  test('a topic may be narrowed to the arguments, and then one change wakes one watcher', async () => {
+    // Reported by a consuming project watching twenty conversations: an event for
+    // one address re-read all twenty, because the topics were derived from the
+    // operation alone. Nineteen published nothing — and paid for the read anyway.
+    let reads = 0;
+    const bus = topics();
+    const hub = createWatchHub({
+      read: async (_operation, args) => ({ address: (args as { address: string }).address }),
+      watchable: () => true,
+      invalidatedBy: (_operation, args) => [
+        `chat.transcript:${(args as { address: string }).address}`,
+      ],
+      subscribe: bus.subscribe,
+    });
+    const watcher = hub.attach(recorder());
+    const chat = { service: 'chat', action: 'transcript' } as const;
+    watcher.open(await watchKey(chat, { address: 'A' }), { address: 'A' });
+    watcher.open(await watchKey(chat, { address: 'B' }), { address: 'B' });
+    await settle();
+    reads = hub.readCount();
+    expect(reads).toBe(2);
+
+    bus.announce('chat.transcript:A');
+    await settle();
+    // One, not two. Before the fix this was two, and at twenty addresses twenty.
+    expect(hub.readCount()).toBe(reads + 1);
+
+    // And the negative control the count needs: the other address still works.
+    bus.announce('chat.transcript:B');
+    await settle();
+    expect(hub.readCount()).toBe(reads + 2);
+  });
+
   test('only a changed answer is published', async () => {
     const bus = topics();
     const hub = createWatchHub({
@@ -390,13 +423,20 @@ describe('the client shares one subscription', () => {
     return (open.payload as { key: unknown }).key;
   }
 
-  function fakeTransport() {
+  function fakeTransport(options: { connected?: boolean } = {}) {
     const handlers = new Map<string, (payload: never) => void>();
+    const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
     const sent: { event: string; payload: unknown; options?: { timeoutMs: number } }[] = [];
+    let connected = options.connected ?? true;
     return {
       sent,
       deliver(event: string, payload: unknown) {
         handlers.get(event)?.(payload as never);
+      },
+      /** What a socket does when a server restarts, and what it does after. */
+      setConnected(next: boolean, reason?: string) {
+        connected = next;
+        for (const listener of [...connectionListeners]) listener(next, reason);
       },
       transport: {
         on(event: string, handler: (payload: never) => void) {
@@ -407,8 +447,17 @@ describe('the client shares one subscription', () => {
           sent.push({ event, payload });
         },
         async request(event: string, payload: unknown, options: { timeoutMs: number }) {
+          if (!connected) {
+            throw Object.assign(new Error('socket is not connected'), {
+              code: 'REALTIME_DISCONNECTED',
+            });
+          }
           sent.push({ event, payload, options });
           return { accepted: true };
+        },
+        onConnectionChange(listener: (connected: boolean, reason?: string) => void) {
+          connectionListeners.add(listener);
+          return () => connectionListeners.delete(listener);
         },
       },
     };
@@ -489,6 +538,7 @@ describe('the client shares one subscription', () => {
         async request() {
           return { accepted: false, reason: 'notes.list is not watchable' };
         },
+        onConnectionChange: () => () => undefined,
       },
     });
     const states: WatchStateFrame[] = [];
@@ -496,6 +546,85 @@ describe('the client shares one subscription', () => {
     await settle();
     expect(states.at(-1)?.phase).toBe('unavailable');
     expect(states.at(-1)?.message).toBe('notes.list is not watchable');
+  });
+
+  test('a drop tells the subscriber, and the next connection re-opens the key', async () => {
+    // Measured on a live application restarting its server: every question
+    // stayed "open" on the client, the hub remembered none of them, and the face
+    // froze without a word. The client holds the keys and the listeners, so it
+    // is the only thing that can recover.
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    const states: WatchStateFrame[] = [];
+    const seen: unknown[] = [];
+    watch.list({}).subscribe({ value: (v) => seen.push(v), state: (s) => states.push(s) });
+    await settle();
+    expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(1);
+
+    fake.setConnected(false, 'transport close');
+    expect(states.at(-1)?.phase).toBe('unavailable');
+    expect(states.at(-1)?.reason).toBe('source-unavailable');
+
+    fake.setConnected(true);
+    await settle();
+    // The same key, opened again — not a new question, and not silence.
+    const opens = fake.sent.filter((frame) => frame.event === WATCH_OPEN);
+    expect(opens).toHaveLength(2);
+    expect(opens[1]?.payload).toEqual(opens[0]?.payload);
+
+    const key = sentKey(fake.sent);
+    fake.deliver(WATCH_VALUE, { key, revision: 1, value: { n: 5 } });
+    expect(seen).toEqual([{ n: 5 }]);
+  });
+
+  test('opening over a broken socket is a state, never an unhandled rejection', async () => {
+    // The reported symptom was an unhandled rejection in the console and nothing
+    // at all for the subscriber — the one outcome that says least.
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => rejections.push(error);
+    process.on('unhandledRejection', onRejection);
+    try {
+      const fake = fakeTransport({ connected: false });
+      const watch = createWatchClient(contract, { transport: fake.transport });
+      const states: WatchStateFrame[] = [];
+      watch.list({}).subscribe({ value: () => undefined, state: (s) => states.push(s) });
+      await settle();
+      await Bun.sleep(10);
+
+      // Narrowed to *this* rejection on purpose. A bare toEqual([]) would also fail
+      // on a stray promise from any other test in the process — a red that has
+      // nothing to do with the thing under test teaches people to ignore red.
+      expect(
+        rejections.map(String).filter((text) => text.includes('socket is not connected')),
+      ).toEqual([]);
+      expect(states.at(-1)?.phase).toBe('unavailable');
+      expect(states.at(-1)?.code).toBe('REALTIME_DISCONNECTED');
+      expect(states.at(-1)?.message).toBe('socket is not connected');
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
+  test('a failed open is retried by the next connection', async () => {
+    const fake = fakeTransport({ connected: false });
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    watch.list({}).subscribe({ value: () => undefined });
+    await settle();
+    expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(0);
+
+    fake.setConnected(true);
+    await settle();
+    expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(1);
+  });
+
+  test('two handles on one question open it once', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    watch.list({ folder: 'a' }).subscribe({ value: () => undefined });
+    await settle();
+    watch.list({ folder: 'a' }).subscribe({ value: () => undefined });
+    await settle();
+    expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(1);
   });
 
   test('the state channel reaches the subscriber', async () => {

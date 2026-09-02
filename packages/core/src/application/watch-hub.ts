@@ -87,8 +87,17 @@ export interface WatchHubConfig {
   read(operation: WatchOperation, args: unknown): Promise<unknown>;
   /** Whether an operation may be watched at all. Refusal is answered in words. */
   watchable(operation: WatchOperation): boolean;
-  /** The topics whose announcement means this operation's answer may have changed. */
-  invalidatedBy(operation: WatchOperation): readonly string[];
+  /**
+   * The topics whose announcement means this answer may have changed.
+   *
+   * Given the arguments as well as the operation, so a topic can name what the
+   * answer actually depends on: `chat.transcript:<address>` rather than
+   * `chat.transcript`. Without that narrowing, one address changing wakes every
+   * watcher of the operation — twenty conversations open means twenty reads for
+   * one change, and nineteen of them publish nothing because nothing changed.
+   * The read is still paid.
+   */
+  invalidatedBy(operation: WatchOperation, args: unknown): readonly string[];
   /** Subscribe to a topic; returns the unsubscribe. Normally an event bus's `on`. */
   subscribe(topic: string, listener: () => void): () => void;
   /** The most keys one subscriber may watch at once. Default 64. */
@@ -258,7 +267,9 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
       state: { key, phase: 'opening' },
       backoff: createBackoff(config.backoff ?? DEFAULT_BACKOFF),
     };
-    for (const topic of config.invalidatedBy(operation)) {
+    // Computed for THIS key's arguments, so the subscription is as narrow as the
+    // caller made its topic.
+    for (const topic of config.invalidatedBy(operation, args)) {
       source.unsubscribes.push(
         config.subscribe(topic, () => {
           source.dirty = true;

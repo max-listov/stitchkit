@@ -15,6 +15,64 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.76.0] — 2026-09-02
+
+Three defects, all reported by a consuming project adopting 0.75.0 with reproductions, all fixed
+at the root. Two are additive; the third could not be.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who wrote their own `WatchTransport`. A transport built from
+`bindRealtimeClient` / `createRealtimeClient` already satisfies this — those carry
+`onConnectionChange` — so passing one of those is unchanged. Nothing else about `watch` moves.
+
+- **`WatchTransport` now requires `onConnectionChange`.** The watch client had no way to learn
+  that a socket dropped or came back, so every question stayed "open" on the client while the hub
+  remembered none of them — it releases a subscriber's keys when that subscriber detaches. The
+  face froze, silently, with no `unavailable` to show. The client holds every key and every
+  listener, so recovering is its job and nobody else's, and it cannot do that job without being
+  told.
+
+  Optional would have been the softer choice and the wrong one: an absent hook makes recovery
+  something that silently did not happen, which is the defect rather than a lesser version of it.
+
+  ```ts
+  // before: createWatchClient(contract, { transport: { on, emit, request } })
+  // after:  createWatchClient(contract, { transport: { on, emit, request, onConnectionChange } })
+  // — or pass a bound realtime client, which already has all four.
+  ```
+
+### Fixed
+
+- **A watch client did not survive a reconnect.** On a drop it now tells subscribers the source is
+  gone (`unavailable` / `source-unavailable`) and forgets that anything was opened; on a fresh
+  connection it re-opens every key that still has a listener. Opening over a broken socket was
+  also an **unhandled rejection** and told the subscriber nothing at all — every way an open can
+  fail is now a state carrying the error's own code and message, and the next connection retries
+  it. Two handles on one question open it once, not twice.
+
+
+- **The trust fence refused a second origin of the same application, and there was nowhere to
+  declare one.** A UI dev server on one port calling an API on the next is the most ordinary
+  arrangement there is, and both lanes answered 403 — `trustedHosts` is compared against `Host`,
+  never against `Origin`. `TrustFenceConfig` gains `trustedOrigins`, the same entry format,
+  compared against the `Origin`'s authority; absent, the behaviour is what it was.
+
+  The reasoning behind fixing it this way rather than dropping the check: the `Origin` comparison
+  is **not** the DNS-rebinding defence. That attack is same-origin by construction — the page
+  believes it *is* the target authority — so it sends a matching `Origin` or none, and
+  `trustedHosts` is what refuses it. What the `Origin` check stops is a cross-origin request from
+  a page that never needs to read the reply, which CORS does not prevent. So the answer is a
+  declared list, not a removed guard. Reported by a consuming project with a reproduction.
+
+- **A watched read could not narrow its invalidation to its arguments.** `invalidatedBy` was
+  given only the operation, so every key of that operation subscribed to the same topics: one
+  conversation changing re-read all twenty that were open. Nineteen published nothing — `same`
+  saw no change — and the read was paid regardless. It now receives `(operation, args)`, so a
+  topic can be `chat.transcript:<address>`, and the hub subscribes each key to the topics
+  computed for **its** arguments. Additive: a callback that ignores the second parameter is
+  unchanged. Reported by a consuming project with a reproduction.
+
 ## [0.75.1] — 2026-09-02
 
 ### Docs

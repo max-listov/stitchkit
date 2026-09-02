@@ -204,6 +204,9 @@
     },
     "logger": {
       "test": "a supplied logger is warned, with the reason and the lane"
+    },
+    "trustedOrigins": {
+      "test": "a declared origin is accepted on both lanes"
     }
   },
   "EventBusOptions": {

@@ -177,6 +177,76 @@ describe('what the browser says about the request', () => {
   });
 });
 
+describe('a second origin of the same application', () => {
+  // Reported by a consuming project running a UI dev server on one port against
+  // an API on the next: both lanes refused, and there was nowhere to say the
+  // second origin was expected. Their reproduction, with the host renamed off
+  // `localhost` — a test may not carry a literal `localhost:NNNN`, and the shape
+  // under test is a port that differs, not which host it is.
+  const declared = () =>
+    createTrustFence({
+      trustedHosts: ['app.internal:5181'],
+      trustedOrigins: ['app.internal:5180'],
+    });
+
+  function apiRequest(origin?: string): Request {
+    return new Request('http://app.internal:5181/x', {
+      headers: { host: 'app.internal:5181', ...(origin !== undefined && { origin }) },
+    });
+  }
+
+  test('a declared origin is accepted on both lanes', async () => {
+    const fence = declared();
+    expect(fence.check(apiRequest('http://app.internal:5180'), 'http')).toBeUndefined();
+    expect(await fence.allowRequest(apiRequest('http://app.internal:5180'))).toBe(true);
+  });
+
+  test('an undeclared origin is still refused — the default did not widen', () => {
+    // The negative control, and the more important half: adding a way to declare
+    // one must not turn the check off for everyone who declares none.
+    const fence = createTrustFence({ trustedHosts: ['app.internal:5181'] });
+    expect(fence.check(apiRequest('http://app.internal:5180'), 'http')?.reason).toBe(
+      'origin-mismatch',
+    );
+  });
+
+  test('declaring one origin does not admit another host', () => {
+    expect(declared().check(apiRequest('http://evil.example:5180'), 'http')?.reason).toBe(
+      'origin-mismatch',
+    );
+  });
+
+  test('an origin entry without a port trusts that host on any port', () => {
+    const fence = createTrustFence({
+      trustedHosts: ['app.internal:5181'],
+      trustedOrigins: ['app.internal'],
+    });
+    expect(fence.check(apiRequest('http://app.internal:5180'), 'http')).toBeUndefined();
+    expect(fence.check(apiRequest('http://app.internal:9999'), 'http')).toBeUndefined();
+  });
+
+  test('a trustedOrigins entry that is not an authority stops startup, naming it', () => {
+    expect(() =>
+      createTrustFence({
+        trustedHosts: ['app.internal:5181'],
+        trustedOrigins: ['http://app.internal:5180'],
+      }),
+    ).toThrow(/trustedOrigins entry "http:\/\/app.internal:5180" is not an authority/);
+  });
+
+  test('the Host list is still what refuses an untrusted authority', () => {
+    // Stated as a test because the reasoning behind the fix is that the Origin
+    // check never was the rebinding defence — trustedHosts is. If declaring an
+    // origin loosened that, the fix would have traded the real guard for the
+    // wrong one.
+    const fence = declared();
+    const rebind = new Request('http://app.internal:5181/x', {
+      headers: { host: 'evil.example:5181', origin: 'http://evil.example:5181' },
+    });
+    expect(fence.check(rebind, 'http')?.reason).toBe('untrusted-host');
+  });
+});
+
 describe('the socket lane', () => {
   test('allowRequest answers for the lane that never reaches onRequest', async () => {
     const fence = createTrustFence({ trustedHosts: ['harness.internal:5180'] });
