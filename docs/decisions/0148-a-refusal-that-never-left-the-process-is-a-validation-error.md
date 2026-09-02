@@ -44,6 +44,13 @@ while the client guide instructs the reader never to conclude anything from that
 A consuming application named the cost of this as "contract-first exists to prevent N shapes of one
 thing". The complaint was correct and its target was us: the framework produced the shapes.
 
+And the divergence was worse than either behaviour would have been alone, **because the guide is
+one**. A reader who learned the client on one transport and moved to the other carried a `.catch()`
+with them that no longer caught — not through carelessness, but because one document promised one
+behaviour while two existed. That is the argument for unifying rather than for choosing the better
+half: no documentation can be true of both at once. (Named in this form by the consuming session that
+carried the earlier lock defect.)
+
 The divergence survived because the assertions that appeared to pin it could not fail. `expect(fn)
 .toThrow()` in bun:test passes for a function that merely **returns** a rejected promise — measured:
 `expect(() => Promise.reject(new Error('boom'))).toThrow('boom')` is green. Two tests written that

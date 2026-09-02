@@ -234,9 +234,11 @@ check({ when: new Date() })   // accepted: a live Date
 // server                     // refused: expected date, received string
 ```
 
-This one fails in the safe direction — nothing valid is blocked — but it means a
-local check passes traffic the server will reject, which is the opposite of what
-it was added for.
+This one fails in the safe direction — nothing valid is blocked — but "safe" is
+about traffic, not about diagnostics. The check stays silent exactly where it
+promised to speak: the refusal then arrives from the server, through a different
+path and without the field names the local gate would have given. A gate that
+lets through what it was added to catch is not a cheap gate, it is a quiet one.
 
 One schema, one call, opposite answers — inside a single release, with no version
 skew involved. Argument validation therefore stays on the server, which is the

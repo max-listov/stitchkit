@@ -15,6 +15,31 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.74.1] — 2026-09-02
+
+### Fixed
+
+- **A journal lock whose owner is a zombie can be reclaimed.** `process.kill(pid, 0)`
+  reports an entry in the process table, not a running process: a child that has
+  exited and whose parent has not reaped it keeps its entry, so the probe that
+  exists to prove absence reported the clearest possible absence as presence. The
+  lock could then never be reclaimed, and the refusal called the owner "a live
+  process" — the same unreclaimable-lock restart loop 0.73.0 ended for renamed
+  hosts, reached by a different door, and this one needs no unusual deployment:
+  a supervisor running as PID 1 in a container is a parent that does not reap.
+  `reclaim-stale` now reads the owner's state beside the signal —
+  `/proc/<pid>/stat` where it exists, `ps -o state=` where it does not — and a
+  zombie is `gone`.
+
+  `liveness` gains no value, because `gone` is the truthful answer: a zombie has
+  exited and holds nothing. It is also the *safer* half of `gone` rather than a
+  weakening of it — a pid cannot be reused until it is reaped, so a zombie entry
+  is provably the owner the lock recorded, while the doubt about reuse belongs to
+  the live branch. Where neither source answers, the owner is still treated as
+  present. Reported by a consuming application that measured `Z` and a successful
+  signal on both platforms of its fleet. → ADR 0149.
+
+
 ## [0.74.0] — 2026-09-02
 
 ### Added

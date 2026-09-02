@@ -174,6 +174,7 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0146](0146-a-scanning-gate-asserts-what-it-scanned.md) | A scanning gate asserts what it scanned | Accepted — a test that discovers its inputs states the size of the set before calling it clean |
 | [0147](0147-machine-identity-not-host-name-decides-whose-pid-this-is.md) | Machine identity, not host name, decides whose pid this is | Accepted — refines 0145: a renamed machine reclaims its own lock, and a refusal says which refusal it is |
 | [0148](0148-a-refusal-that-never-left-the-process-is-a-validation-error.md) | A refusal that never left the process is a `VALIDATION_ERROR` with status 0 | Accepted — one shape and one timing for every local refusal, and argument validation stays on the server |
+| [0149](0149-a-zombie-owner-is-gone-and-it-is-the-safer-half-of-gone.md) | A zombie owner is gone, and it is the safer half of gone | Accepted — refines 0147: a signal probe reports a table entry, and an unreaped pid cannot have been reused |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

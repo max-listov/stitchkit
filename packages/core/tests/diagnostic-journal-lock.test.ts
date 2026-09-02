@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -10,6 +10,7 @@ import {
   readDiagnosticJournalLockDiagnosis,
 } from '../src/application/diagnostic-journal-contract';
 import {
+  isZombieProcess,
   parsePlatformUuid,
   readDarwinPlatformUuid,
 } from '../src/application/diagnostic-journal-lock';
@@ -351,6 +352,177 @@ describe('the darwin machine identity', () => {
       const started = Date.now();
       expect(await readDarwinPlatformUuid(command)).toBeNull();
       expect(Date.now() - started).toBeLessThan(5_000);
+    });
+  });
+});
+
+/*
+ * A zombie owner is gone, and the probe that proves absence used to report it as presence.
+ *
+ * `process.kill(pid, 0)` reports an ENTRY in the process table, not a running process. A child that
+ * exited and whose parent has not reaped it keeps its entry, so the signal succeeds for a process
+ * that is provably finished — and a lock recorded under that pid could never be reclaimed, with a
+ * refusal that called it "a live process". Reported by a consuming application, which measured `Z`
+ * and a successful signal on both platforms of its fleet.
+ *
+ * Treating it as `gone` is the SAFER half of `gone`, not a weakening of it: a pid cannot be reused
+ * until it is reaped, so a zombie entry is provably the owner the lock recorded, where an absent pid
+ * carries the ordinary doubt about reuse.
+ */
+describe('a zombie owner', () => {
+  /** A real zombie: `perl` forks, the child exits, the parent never reaps it. */
+  async function withZombie(body: (pid: number) => Promise<void>): Promise<void> {
+    const parent = Bun.spawn(
+      [
+        'perl',
+        '-e',
+        'my $p = fork(); if ($p) { $| = 1; print "$p\\n"; sleep 60 } else { exit 0 }',
+      ],
+      { stdout: 'pipe', stderr: 'ignore' },
+    );
+    try {
+      const { value } = await parent.stdout.getReader().read();
+      const pid = Number(new TextDecoder().decode(value ?? new Uint8Array()).trim());
+      expect(Number.isInteger(pid)).toBe(true);
+
+      // Wait for the STATE, never for a duration: the pid is printed before the child has exited,
+      // and a fixture that starts measuring immediately measures a running process. Read
+      // independently of the function under test — a fixture that polls its own subject proves
+      // nothing about it.
+      let waited = 0;
+      while ((await stateOf(pid)) !== 'Z' && waited < 5_000) {
+        await Bun.sleep(25);
+        waited += 25;
+      }
+      expect(await stateOf(pid)).toBe('Z');
+      await body(pid);
+    } finally {
+      parent.kill();
+      await parent.exited;
+    }
+  }
+
+  /** The independent oracle: `/proc` where it exists, `ps` elsewhere. */
+  async function stateOf(pid: number): Promise<string | null> {
+    try {
+      const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
+      return stat
+        .slice(stat.lastIndexOf(')') + 1)
+        .trimStart()
+        .charAt(0);
+    } catch {
+      const ps = Bun.spawn(['ps', '-o', 'state=', '-p', String(pid)], {
+        stdout: 'pipe',
+        stderr: 'ignore',
+      });
+      const text = await new Response(ps.stdout).text();
+      await ps.exited;
+      return text.trim().charAt(0) || null;
+    }
+  }
+
+  test('is seen as a zombie, while this live process is not', async () => {
+    await withZombie(async (pid) => {
+      expect(await isZombieProcess(pid)).toBe(true);
+    });
+    // The negative control, and it needs no fixture: this process is running.
+    expect(await isZombieProcess(process.pid)).toBe(false);
+  });
+
+  test('the state is read after the LAST parenthesis', async () => {
+    // A command name may contain parentheses, so taking the third whitespace field is wrong for
+    // any process named like `(sleep) Z 1 …`. Driven through the seam because a process with such
+    // a name cannot be conjured reliably.
+    const root = await mkdtemp(join(tmpdir(), 'stitchkit-proc-'));
+    try {
+      for (const [label, stat, expected] of [
+        ['plain zombie', '4242 (bun) Z 1 4242 4242 0 -1 4194560', true],
+        ['plain running', '4242 (bun) R 1 4242 4242 0 -1 4194560', false],
+        ['name with a parenthesis and a decoy state', '4242 (odd) Z name) R 1 4242', false],
+      ] as const) {
+        await mkdir(join(root, '4242'), { recursive: true });
+        await writeFile(join(root, '4242', 'stat'), stat);
+        expect(
+          await isZombieProcess(4242, { procRoot: root, psCommand: join(root, 'no-such-ps') }),
+        ).toBe(expected as boolean);
+        expect(label).toBeTruthy();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('without /proc it asks ps, and answers "present" when nothing does', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'stitchkit-ps-'));
+    const absent = join(dir, 'no-proc');
+    try {
+      for (const [body, expected] of [
+        ['echo Z', true],
+        ['echo S', false],
+      ] as const) {
+        const command = join(dir, 'fake-ps');
+        await writeFile(command, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+        expect(await isZombieProcess(4242, { procRoot: absent, psCommand: command })).toBe(
+          expected,
+        );
+      }
+      // Neither source answers: the owner is treated as present, because a refusal to reclaim is
+      // the safe outcome and is what this probe did before it could see a zombie at all.
+      expect(
+        await isZombieProcess(4242, { procRoot: absent, psCommand: join(dir, 'no-such-ps') }),
+      ).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a lock held by a zombie is reclaimed, one held by a live process is not', async () => {
+    await withZombie(async (zombie) => {
+      await withDirectory(async (directory) => {
+        const path = join(directory, 'zombie.jsonl');
+        await writeFile(`${path}.lock`, ownerRecord({ pid: zombie, machine: OUR_MACHINE }), {
+          mode: 0o600,
+        });
+        const journal = await createDiagnosticJournal({
+          eventSchema: EventSchema,
+          limits,
+          machineIdentity: OUR_MACHINE,
+          path,
+          lock: 'reclaim-stale',
+        });
+        expect(journal.getStatus().lock).toEqual({
+          policy: 'reclaim-stale',
+          reclaimedStale: true,
+        });
+        await journal.close();
+      });
+
+      // The negative control on the same path: a running owner still refuses, so the change did
+      // not simply make everything reclaimable.
+      await withDirectory(async (directory) => {
+        const path = join(directory, 'live.jsonl');
+        await writeFile(
+          `${path}.lock`,
+          ownerRecord({ pid: process.pid, machine: OUR_MACHINE }),
+          {
+            mode: 0o600,
+          },
+        );
+        const refused = await createDiagnosticJournal({
+          eventSchema: EventSchema,
+          limits,
+          machineIdentity: OUR_MACHINE,
+          path,
+          lock: 'reclaim-stale',
+        }).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(readDiagnosticJournalLockDiagnosis(refused)).toMatchObject({
+          attribution: 'this-machine',
+          liveness: 'alive',
+        });
+      });
     });
   });
 });

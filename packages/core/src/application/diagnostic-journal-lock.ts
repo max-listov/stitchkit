@@ -148,13 +148,64 @@ function attribute(
  * every other outcome is unknown — both refuse. PID reuse can only turn a dead owner into a live
  * one, so the residual risk of this check is a refusal to reclaim, never a reclaim over a live
  * writer.
+ *
+ * Reachability is not liveness, though, and the gap is a zombie: an exited child its parent has not
+ * reaped keeps its table entry, so the signal succeeds for a process that is provably finished. A
+ * zombie is reported as `gone`, which is what it is — it holds no descriptor and no lock, because it
+ * exited. And it is the SAFER half of `gone` rather than a weakening of it: a pid cannot be reused
+ * until it is reaped, so a zombie entry is provably the owner the lock recorded, where an absent pid
+ * carries the ordinary doubt about reuse. Found by a consuming application, which measured `Z` and a
+ * successful signal on both platforms of its fleet. → ADR 0147.
  */
-function probeLiveness(owner: JournalLockOwner): 'alive' | 'gone' {
+async function probeLiveness(owner: JournalLockOwner): Promise<'alive' | 'gone'> {
   try {
     process.kill(owner.pid, 0);
-    return 'alive';
   } catch (error) {
     return isRecord(error) && error.code === 'ESRCH' ? 'gone' : 'alive';
+  }
+  // The signal proves an ENTRY in the process table, not a running process. A child that has
+  // exited and whose parent has not reaped it keeps its entry, and `kill(pid, 0)` succeeds for it —
+  // so the probe that exists to prove absence reported the clearest possible absence as presence.
+  // That needs no unusual deployment: a supervisor running as PID 1 in a container is a parent
+  // that does not reap.
+  return (await isZombieProcess(owner.pid)) ? 'gone' : 'alive';
+}
+
+/**
+ * The state letter of a pid, or `null` where this platform will not say.
+ *
+ * `/proc/<pid>/stat` puts the command name in parentheses and the name may itself contain them, so
+ * the state follows the LAST `)` — reading the third whitespace-separated field instead is wrong for
+ * any process whose name has a space or a bracket in it.
+ *
+ * @internal `psCommand` is a seam for the tests: `/proc` is Linux-only, so the fallback branch is
+ * unreachable here without one, and an untested branch in a liveness probe is how this defect got in.
+ */
+export async function isZombieProcess(
+  pid: number,
+  seam: { procRoot?: string; psCommand?: string } = {},
+): Promise<boolean> {
+  const { procRoot = '/proc', psCommand = 'ps' } = seam;
+  try {
+    const stat = await readFile(`${procRoot}/${pid}/stat`, 'utf8');
+    return stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trimStart()
+      .startsWith('Z');
+  } catch {
+    // No `/proc` — ask `ps`, which answers on darwin and the BSDs.
+  }
+  try {
+    const { stdout } = await run(psCommand, ['-o', 'state=', '-p', String(pid)], {
+      timeout: 2_000,
+      maxBuffer: 1 << 16,
+      encoding: 'utf8',
+    });
+    return stdout.trim().startsWith('Z');
+  } catch {
+    // Nothing answered. Treat the owner as present: a refusal to reclaim is the safe outcome, and
+    // it is the same outcome this probe had before it could see a zombie at all.
+    return false;
   }
 }
 
@@ -172,7 +223,7 @@ async function diagnose(
   };
   if (attribution !== 'this-machine')
     return { attribution, liveness: 'not-probed', owner: record };
-  return { attribution, liveness: probeLiveness(owner), owner: record };
+  return { attribution, liveness: await probeLiveness(owner), owner: record };
 }
 
 async function readLockOwner(lockPath: string): Promise<JournalLockOwner | undefined> {
