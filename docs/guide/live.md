@@ -158,6 +158,20 @@ order-independent — `{a, b}` and `{b, a}` are the same question, which a plain
 `JSON.stringify` key would get wrong exactly when two components happen to build
 their argument object in a different order.
 
+### Who shares with whom
+
+A key is `(service, action, digest of arguments)`, and everyone on that key gets
+one read. So the question a sharing primitive has to answer is what keeps one
+caller's answer from reaching another — and here the answer is structural:
+`read` is **given no subscriber**. An answer that depends on who is asking has to
+carry the asker in its arguments, and the arguments are what the digest is taken
+over, so two callers who differ get two keys and two reads.
+
+The one way to defeat that is to resolve an identity from ambient state *inside*
+`read` — a request-scoped context, a module-level "current user". Then every
+subscriber on that key receives whatever the first read happened to resolve.
+Put the identity in the arguments instead.
+
 ### Three states, not two
 
 `state.phase` comes from `LiveStatePhase`, the vocabulary the live-state

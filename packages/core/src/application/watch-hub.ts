@@ -71,6 +71,18 @@ export interface WatchHubConfig {
   /**
    * Perform one read. Supplied by the application, so a watched read goes
    * through the same authorization as the request it mirrors.
+   *
+   * **It is given no subscriber, and that is the guard, not an omission.** A key
+   * shares one read across everyone asking it, so a key that did not separate
+   * callers would hand one caller's answer to another. Here it cannot: an answer
+   * that depends on who is asking has to carry the asker in `args`, and `args`
+   * are what the key's digest is taken over — so two callers who differ get two
+   * keys and two reads, by construction rather than by discipline.
+   *
+   * The one way to defeat that is to resolve an identity from ambient state
+   * *inside* this function — a request-scoped context, a module-level "current
+   * user". Then every subscriber to that key receives whatever the first read
+   * happened to resolve. Do not; put the identity in the arguments.
    */
   read(operation: WatchOperation, args: unknown): Promise<unknown>;
   /** Whether an operation may be watched at all. Refusal is answered in words. */

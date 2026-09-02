@@ -15,6 +15,22 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.75.1] — 2026-09-02
+
+### Docs
+
+- **A watched read says what keeps one caller's answer from reaching another.** The share key is
+  `(service, action, digest of arguments)`, so everyone on that key gets one read — and the thing
+  that separates callers was structural but unstated: `WatchHubConfig.read` is handed **no
+  subscriber**, so an answer depending on who is asking has to carry the asker in its arguments,
+  and the arguments are what the digest covers. Two callers who differ therefore get two keys and
+  two reads by construction rather than by discipline.
+
+  Written where it is read — on the field it constrains, so it travels in the published
+  declarations, and in the guide beside the key. The one way to defeat it is named too: resolving
+  an identity from ambient state *inside* `read` gives every subscriber on that key whatever the
+  first read happened to resolve.
+
 ## [0.75.0] — 2026-09-02
 
 ### ⚠️ Breaking changes
