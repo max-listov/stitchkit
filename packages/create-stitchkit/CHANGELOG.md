@@ -12,6 +12,47 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-02
+
+The generated project stops being an empty frame with a to-do at the bottom of
+the page. It ships **one vertical feature**, from schema to transport to UI —
+and it was chosen so that every live primitive Stitchkit gained in 0.75–0.76 is
+there because the feature needs it, not to demonstrate anything.
+
+The demonstration is the second browser tab: post from it, and the first one
+updates without asking. Nothing on that page polls, and nothing refetches after
+a write.
+
+### Added
+
+- **A live board.** `board.list` is a watched read and `board.post` writes to it.
+  Together they use, and only where they are needed:
+  - `defineEvents` — one topic, `board.changed`, declared in `shared` because the
+    server announces it and the browser subscribes to it;
+  - `defineKeyspace` / `openKeyspace` over SQLite — notes are authoritative in
+    memory and durable behind it, so a read in a handler needs no `await` and a
+    restart loses nothing;
+  - `createWatchHub` / `createWatchClient` — every browser asking the same
+    question is **one read** on the server, re-run when the topic says the answer
+    may have changed;
+  - `createTrustFence` — installed on **both** lanes when `TRUSTED_HOSTS` is set,
+    because the Socket.IO lane never reaches a lifecycle hook.
+
+  The comments say which of these to reach for and, more usefully, when not to:
+  a keyspace is for a small bounded set the process wants synchronously, and the
+  moment a thing wants queries, relations or unbounded growth it is a database
+  row and Prisma is already there for it.
+
+- **Two environment variables**, both declared in the one place the project
+  declares variables: `BOARD_STORE_PATH` (defaulted, and the directory is created
+  by the application rather than by whoever deploys it) and `TRUSTED_HOSTS`
+  (unset means no fence, which is honest for a laptop and wrong for anything a
+  network can reach — a fence cannot invent the names it should answer to).
+
+### Changed
+
+- The template now targets `stitchkit` `^0.76.1`, up from `^0.71.0`.
+
 ## [0.5.1] — 2026-09-01
 
 Three findings from someone setting up a new application on the starter from

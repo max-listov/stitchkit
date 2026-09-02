@@ -1,6 +1,7 @@
 import { appIdentity } from '@app/config/app-identity';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
+import { env } from '@/env';
 import { LocaleSchema } from '@/i18n/locales';
 import { createPageMetadata } from '@/lib/seo/metadata';
 import { StarterPage } from './starter-page';
@@ -28,6 +29,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
       heroTitle={t('heroTitle')}
       catalogueLabel={t('ui')}
       locale={appLocale}
+      realtimeOrigin={env.PUBLIC_REALTIME_ORIGIN}
     />
   );
 }

@@ -60,6 +60,49 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Released migration: 0.6.0
+
+The scaffolder gained a vertical feature. Adopting it in a project you already
+own is optional — nothing breaks if you skip it — but two things are **operator
+steps**, and skipping those with the feature adopted means the API will not
+start.
+
+### 1. The store directory has to be writable
+
+`BOARD_STORE_PATH` defaults to `.data/board.sqlite`, relative to the API role's
+working directory. The application creates the directory itself; what it cannot
+do is make a read-only volume writable.
+
+```bash
+# on the machine, as the user the API runs as
+test -w "$(dirname "${BOARD_STORE_PATH:-.data/board.sqlite}")" || echo "not writable"
+```
+
+If the role runs from a read-only image, point `BOARD_STORE_PATH` at a mounted
+volume instead.
+
+### 2. Decide about the trust fence, on purpose
+
+`TRUSTED_HOSTS` is unset by default, and unset means **no fence**. That is
+correct on a laptop and wrong on anything a network reaches — but a fence cannot
+guess which names your deployment answers to, so it refuses to invent them.
+
+```bash
+# every authority this deployment answers on, comma separated
+TRUSTED_HOSTS=app.internal,app.internal:5181
+```
+
+Set it and the fence is installed on both lanes: HTTP before routing, and the
+realtime handshake, which never reaches a lifecycle hook on either runtime. If
+your browser lives on another origin you already declared it as `CORS_ORIGIN`,
+and the fence reads that one rather than asking you a second time.
+
+### 3. Nothing else
+
+The rest of the feature is code you either copy or do not. The framework range
+moved to `^0.76.1`; if you upgrade the dependency without taking the feature,
+[the framework's own guide](../../docs/guide/upgrading.md) is the one to follow.
+
 ## Released migration: 0.5.0
 
 ### the approval policy names a tool that no longer exists

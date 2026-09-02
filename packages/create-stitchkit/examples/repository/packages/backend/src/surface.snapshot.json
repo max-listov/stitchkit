@@ -1,5 +1,37 @@
 [
   {
+    "service": "board",
+    "action": "list",
+    "scope": "public",
+    "hasInput": false,
+    "hasOutput": true,
+    "inputShape": null,
+    "outputShape": "ce49fe198eb3412f",
+    "http": [
+      {
+        "method": "GET",
+        "path": "/api/board"
+      }
+    ],
+    "tools": {}
+  },
+  {
+    "service": "board",
+    "action": "post",
+    "scope": "public",
+    "hasInput": true,
+    "hasOutput": true,
+    "inputShape": "b1d8eb61c62cafed",
+    "outputShape": "ce49fe198eb3412f",
+    "http": [
+      {
+        "method": "POST",
+        "path": "/api/board"
+      }
+    ],
+    "tools": {}
+  },
+  {
     "service": "repository",
     "action": "read",
     "scope": "public",

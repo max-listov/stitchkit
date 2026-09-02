@@ -73,6 +73,22 @@ const baseVariables = {
    * requiring an origin there would be requiring knowledge of the place.
    */
   CORS_ORIGIN: z.url().optional(),
+  /**
+   * Where the board keeps its notes. A file, so they survive a restart — which
+   * is the only thing that makes the board worth watching rather than a toy.
+   */
+  BOARD_STORE_PATH: z.string().min(1).default('.data/board.sqlite'),
+  /**
+   * The authorities this API answers on, comma-separated — `host` or
+   * `host:port`.
+   *
+   * Set it and the trust fence is installed on BOTH lanes: HTTP before routing,
+   * and the realtime handshake, which never reaches a lifecycle hook on either
+   * runtime. Unset and there is no fence, which is honest for a local checkout
+   * and wrong for anything reachable from a network — a fence cannot invent the
+   * list of names it should answer to.
+   */
+  TRUSTED_HOSTS: z.string().min(1).optional(),
 };
 
 /**

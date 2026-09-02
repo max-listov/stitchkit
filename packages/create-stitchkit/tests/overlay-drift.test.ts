@@ -28,7 +28,8 @@ const ALLOWED_DIVERGENCE: Record<string, { added: string[]; removed: string[] }>
     ],
     removed: [
       "<p className='mt-5 text-sm text-muted-foreground'>",
-      'Add your first vertical feature from schema to transport and UI.',
+      'One vertical feature, from schema to transport to UI. Open a second tab and post',
+      'from it — nothing on this page polls.',
     ],
   },
 };

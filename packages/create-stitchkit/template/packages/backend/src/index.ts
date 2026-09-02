@@ -3,6 +3,7 @@ import { apiRole, appDeclaration } from '@app/config/declaration';
 import { wrapInRequestContext } from 'stitchkit/observability';
 import {
   bindProcessSignals,
+  composeLifecycleHooks,
   createServer,
   generateOpenApiDocument,
   openApiRoute,
@@ -14,7 +15,7 @@ import { createSurface } from './surface';
 import { onError } from './transport/errors';
 
 async function main(): Promise<void> {
-  const { services, socket } = await createSurface();
+  const { services, socket, fence, board, hub } = await createSurface();
   const mcp = createMcpHandler({
     serverInfo: {
       name: appDeclaration.identity.slug,
@@ -36,7 +37,10 @@ async function main(): Promise<void> {
     port: env.API_PORT,
     hostname: env.BIND_HOST,
     cors: env.CORS_ORIGIN ? { origin: env.CORS_ORIGIN } : undefined,
-    hooks: { onError },
+    // The fence FIRST: hook composition stops at the first hook that answers,
+    // so a fence behind anything that can respond is a fence that sometimes
+    // does not run.
+    hooks: fence ? composeLifecycleHooks(fence.hooks, { onError }) : { onError },
     logging: { format: env.LOG_FORMAT },
     socket,
     rawRoutes: [
@@ -66,6 +70,10 @@ async function main(): Promise<void> {
       // SIGKILL — the one ending that runs no cleanup at all.
       const cleanup = await closeWithinBudget([
         { name: 'MCP', close: () => mcp.close() },
+        // Stops re-reading for browsers that are already gone, then lets the
+        // board finish the writes it accepted and say how many it could not.
+        { name: 'watch hub', close: async () => hub.close() },
+        { name: 'board', close: () => board.close() },
         { name: 'database', close: () => prisma.$disconnect() },
       ]);
       // Say how the drain ended. Without this an operator sees a process that

@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { BrandMark } from '@/components/brand-mark';
 import { LanguageSwitcher, ThemeToggle } from '@/components/system-controls';
 import { buttonVariants } from '@/components/ui';
+import { BoardPanel } from '@/features/board/board-panel';
 import type { AppLocale } from '@/i18n/locales';
 import { Link } from '@/i18n/navigation';
 import { absoluteSiteUrl } from '@/lib/seo/metadata';
@@ -14,6 +15,7 @@ interface StarterPageProps {
   applicationDescription: string;
   heroTitle: string;
   catalogueLabel: string;
+  realtimeOrigin?: string;
   locale: AppLocale;
 }
 
@@ -61,6 +63,7 @@ export async function StarterPage({
   applicationDescription,
   heroTitle,
   catalogueLabel,
+  realtimeOrigin,
   locale,
 }: StarterPageProps) {
   const homeSeo = getSeoPage('home', locale);
@@ -139,8 +142,13 @@ export async function StarterPage({
               </div>
             </div>
 
+            <div className='mt-6 w-full max-w-xl'>
+              <BoardPanel realtimeOrigin={realtimeOrigin} />
+            </div>
+
             <p className='mt-5 text-sm text-muted-foreground'>
-              Add your first vertical feature from schema to transport and UI.
+              One vertical feature, from schema to transport to UI. Open a second tab and post
+              from it — nothing on this page polls.
             </p>
           </section>
         </div>
