@@ -15,6 +15,31 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.76.1] — 2026-09-02
+
+### Added
+
+- **`openKeyspace` — a keyspace for an application that owns its own lifecycle.** Until now
+  `keyspaceResource` was the only way to open one, and it can only be opened by the application
+  kernel: a server that binds its own signals and closes what it holds in an order it wrote had to
+  fabricate a resource context to get a handle. Found by using it — the packaged starter has
+  exactly that shape.
+
+  `openKeyspace(declaration, config)` loads the store and returns the handle plus the same four
+  phases the resource has (`stopAdmission` / `drain` / `close`). The resource is now a thin
+  wrapper over it, so there is one implementation and two lifecycles rather than two keyspaces.
+
+### Fixed
+
+- **A bound realtime client could not be handed to `createWatchClient`.** The guide said to pass
+  one and the types refused it — an instruction that reads as supported and fails at the call
+  site. The cause is not a wrong annotation: a bound client's `on` is generic over the events of
+  the contract it was bound to, and TypeScript will not relate that signature to any concrete one
+  a transport interface can declare (measured with a payload parameter and with the tuple form the
+  realtime handler actually has). `watchTransport(client)` is that conversion, once, in the
+  framework rather than copied into every application that follows the guide. Found by building
+  the packaged starter's first end-to-end feature from the guide.
+
 ## [0.76.0] — 2026-09-02
 
 Three defects, all reported by a consuming project adopting 0.75.0 with reproductions, all fixed

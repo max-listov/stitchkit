@@ -17,6 +17,7 @@ import {
   keyspaceResource,
   memoryKeyspaceBackend,
   type OpenKeyspace,
+  openKeyspace,
 } from '../src/application/keyspace';
 import { sqliteKeyspaceBackend } from '../src/application/keyspace-sqlite';
 import type { ManagedResource, ManagedResourceContext } from '../src/application/resource';
@@ -293,6 +294,49 @@ describe('the resource it declares itself as', () => {
       dependsOn: ['database'],
     });
     expect(resource.dependsOn).toEqual(['database']);
+  });
+});
+
+describe('opened directly, by an application that owns its lifecycle', () => {
+  test('openKeyspace loads the store and hands back the same four phases', async () => {
+    // The kernel is not the only legitimate owner. A server that binds its own
+    // signals and closes what it holds in an order it wrote has no context to
+    // hand a resource, and should not have to invent one.
+    const database = new Database(':memory:');
+    const seed = await openKeyspace(notes, {
+      backend: sqliteKeyspaceBackend(notes, { database }),
+    });
+    await seed.keyspace.put({ id: 'a', body: 'written before the restart' });
+    await seed.close();
+
+    const opened = await openKeyspace(notes, {
+      backend: sqliteKeyspaceBackend(notes, { database }),
+    });
+    // Loaded before it returned: the first read answers without awaiting.
+    expect(opened.keyspace.get('a')).toEqual({ id: 'a', body: 'written before the restart' });
+
+    opened.stopAdmission();
+    await expect(opened.keyspace.put({ id: 'b', body: 'after' })).rejects.toThrow(
+      /not accepting writes/,
+    );
+    await opened.drain();
+    await opened.close();
+  });
+
+  test('an unwritten record is reported to the owner, not swallowed', async () => {
+    const unwritten: number[] = [];
+    const opened = await openKeyspace(notes, {
+      backend: {
+        load: async () => [],
+        put: () => new Promise<void>(() => undefined),
+        delete: async () => undefined,
+      },
+      onUnwritten: (count) => unwritten.push(count),
+    });
+    void opened.keyspace.put({ id: 'a', body: 'never lands' });
+    await Bun.sleep(5);
+    await opened.close();
+    expect(unwritten).toEqual([1]);
   });
 });
 

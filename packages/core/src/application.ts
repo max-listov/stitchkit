@@ -138,7 +138,9 @@ export {
   type KeyspaceResourceConfig,
   keyspaceResource,
   memoryKeyspaceBackend,
+  type OpenedKeyspace,
   type OpenKeyspace,
+  openKeyspace,
 } from './application/keyspace';
 export {
   type SqliteKeyspaceBackendConfig,

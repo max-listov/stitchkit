@@ -116,6 +116,22 @@ async function runStep(step: string): Promise<void> {
   if (code !== 0) throw new Error(`verify: \`bun run ${step}\` exited with ${code}`);
 }
 
+/**
+ * How many heavy lanes may run at once.
+ *
+ * Refuses a value that is not a positive integer rather than falling back to the
+ * default: a typo in an environment variable that silently means "two" is a
+ * setting that looks applied and is not.
+ */
+export function heavyConcurrency(raw = Bun.env.VERIFY_HEAVY_CONCURRENCY): number {
+  if (raw === undefined || raw === '') return 2;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`VERIFY_HEAVY_CONCURRENCY must be a positive integer, got "${raw}".`);
+  }
+  return parsed;
+}
+
 /** Run independent heavy lanes without turning a developer machine into the CI fleet. */
 export async function runBounded(
   steps: readonly string[],
@@ -233,7 +249,13 @@ async function main(): Promise<void> {
     process.stderr.write(`[gate] ${step}\n`);
     await runStep(step);
   }
-  await runBounded(heavy, 2, async (step) => {
+  // Two by default, and adjustable because "a developer machine" is not one
+  // machine. The heavy lanes build Next twice, drive real browsers and run a
+  // supervisor; two of them at once on a host whose swap is already spent get
+  // terminated rather than finishing, and a lane that was killed reports the
+  // same way as a lane that failed. `VERIFY_HEAVY_CONCURRENCY=1` trades wall
+  // clock for finishing at all.
+  await runBounded(heavy, heavyConcurrency(), async (step) => {
     process.stderr.write(`[gate] ${step}\n`);
     await runStep(step);
   });

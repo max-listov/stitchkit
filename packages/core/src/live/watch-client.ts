@@ -69,13 +69,66 @@ export interface WatchHandle<TValue> {
   close(): void;
 }
 
-/** The transport half a watch client needs — a bound realtime client for `watchContract`. */
+/** What the server sends a watcher, by event name. */
+export interface WatchInboundEvents {
+  [WATCH_VALUE]: WatchValueFrame;
+  [WATCH_STATE]: WatchStateFrame;
+}
+
+/**
+ * A realtime client, as much of one as this adapter needs to see.
+ *
+ * Four members and no types on them, because the point of this shape is that a
+ * *typed* client satisfies it: a bound realtime client's `on` is generic over
+ * the events of the contract it was bound to, and TypeScript will not relate
+ * that signature to any concrete one written here — measured, both with a payload
+ * parameter and with the tuple form the realtime handler actually has.
+ */
+export interface RealtimeClientLike {
+  on: (...args: never[]) => unknown;
+  emit: (...args: never[]) => unknown;
+  request: (...args: never[]) => unknown;
+  onConnectionChange: (...args: never[]) => unknown;
+}
+
+/**
+ * Hand a bound realtime client to {@link createWatchClient}.
+ *
+ * The guide used to say "pass a bound realtime client" and the types refused it,
+ * which is the worst combination: an instruction that reads as supported and
+ * fails at the call site. This is the conversion, once, in the framework —
+ * rather than the same cast copied into every application that follows the
+ * guide.
+ */
+export function watchTransport(client: RealtimeClientLike): WatchTransport {
+  // The one boundary cast this module makes, and the reason is above: two
+  // generic signatures TypeScript declines to relate, over a client whose
+  // runtime shape is exactly what `WatchTransport` describes. → ADR 0003.
+  return client as unknown as WatchTransport;
+}
+
+/**
+ * The transport half a watch client needs — a realtime client bound to a
+ * contract that carries `watchContract`.
+ *
+ * Written in the protocol's own four event names rather than in `string`, so an
+ * application bringing its own transport knows exactly what to implement.
+ *
+ * A **bound realtime client does not satisfy this shape**, and no phrasing of it
+ * would fix that: its `on` is generic over the events of the contract it was
+ * bound to, and TypeScript will not relate two generic signatures like these.
+ * Pass it through {@link watchTransport}, which is that conversion done once
+ * here instead of once per application.
+ */
 export interface WatchTransport {
-  on(event: string, handler: (payload: never) => void): () => void;
-  emit(event: string, payload: unknown): void;
+  on<TEvent extends keyof WatchInboundEvents>(
+    event: TEvent,
+    handler: (payload: WatchInboundEvents[TEvent]) => void,
+  ): () => void;
+  emit(event: typeof WATCH_CLOSE, payload: { key: WatchKey }): unknown;
   request(
-    event: string,
-    payload: unknown,
+    event: typeof WATCH_OPEN,
+    payload: { key: WatchKey; args: unknown },
     options: { timeoutMs: number },
   ): Promise<{ accepted: boolean; reason?: string }>;
   /**
@@ -139,7 +192,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     for (const listener of [...entry.listeners]) listener.state?.(state);
   }
 
-  config.transport.on(WATCH_VALUE, (frame: WatchValueFrame) => {
+  config.transport.on(WATCH_VALUE, (frame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
     // A frame no newer than what is held is a late answer to an older question.
@@ -152,7 +205,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     for (const listener of [...entry.listeners]) listener.value(frame.value);
   });
 
-  config.transport.on(WATCH_STATE, (frame: WatchStateFrame) => {
+  config.transport.on(WATCH_STATE, (frame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
     publishState(entry, frame);

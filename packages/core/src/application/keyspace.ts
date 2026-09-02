@@ -29,6 +29,18 @@
  * and the owner's to configure. Saying "durable" without saying whose durability
  * would be the more comfortable lie.
  *
+ * ## Two ways in, because there are two lifecycles
+ *
+ * {@link keyspaceResource} declares it to the application kernel, which is right
+ * whenever there is a kernel: it closes after everything that writes to it,
+ * because a writer that depends on it is stopped first.
+ *
+ * {@link openKeyspace} opens one directly, for an application that owns its own
+ * lifecycle — a server that binds its signals and closes what it holds in an
+ * order it wrote itself. The resource is a thin wrapper over exactly this, not a
+ * second implementation: without it the only way to open a keyspace would be to
+ * have a kernel, which is a requirement nothing about a keyspace justifies.
+ *
  * ## It is a resource, not a global
  *
  * A keyspace is opened as a {@link ManagedResource} and its handle is read with
@@ -140,12 +152,71 @@ export function defineKeyspace<TValue>(
 }
 
 /**
+ * An opened keyspace, plus the lifecycle its owner drives.
+ *
+ * The same four phases a {@link ManagedResource} has, because they are the same
+ * four phases — an application without a kernel calls them in the order it
+ * chose, and one with a kernel gets them called for it.
+ */
+export interface OpenedKeyspace<TValue> {
+  readonly keyspace: OpenKeyspace<TValue>;
+  /** Refuse new writes. The queued ones still finish. */
+  stopAdmission(): void;
+  /** Wait for every accepted write to reach the backend. */
+  drain(): Promise<void>;
+  /** Report anything still unwritten, then close the backend. */
+  close(): Promise<void>;
+}
+
+/**
+ * Open a keyspace directly, for an application that owns its own lifecycle.
+ *
+ * Loads every stored record before it returns, so `get` and `list` are
+ * answerable from the first call. Where there is a kernel, prefer
+ * {@link keyspaceResource} — it gets the ordering right without anyone
+ * remembering to.
+ */
+export async function openKeyspace<TValue>(
+  declaration: KeyspaceDeclaration<TValue>,
+  config: KeyspaceResourceConfig<TValue>,
+): Promise<OpenedKeyspace<TValue>> {
+  const machine = keyspaceMachine(declaration, config);
+  await machine.load();
+  return {
+    keyspace: machine.keyspace,
+    stopAdmission: machine.stopAdmission,
+    drain: machine.drain,
+    close: machine.close,
+  };
+}
+
+/**
  * A keyspace as a managed resource. Its `start` publishes the {@link OpenKeyspace}.
  */
 export function keyspaceResource<TValue>(
   declaration: KeyspaceDeclaration<TValue>,
   config: KeyspaceResourceConfig<TValue>,
 ): ManagedResource {
+  const machine = keyspaceMachine(declaration, config);
+  return {
+    id: config.id ?? `keyspace:${declaration.name}`,
+    ...(config.dependsOn && { dependsOn: config.dependsOn }),
+    async start(_context: ManagedResourceContext) {
+      await machine.load();
+      return { value: machine.keyspace };
+    },
+    stopAdmission: machine.stopAdmission,
+    drain: machine.drain,
+    close: machine.close,
+    force: machine.force,
+  };
+}
+
+/** The one implementation both entry points drive. */
+function keyspaceMachine<TValue>(
+  declaration: KeyspaceDeclaration<TValue>,
+  config: KeyspaceResourceConfig<TValue>,
+) {
   const maxPending = config.maxPendingWrites ?? 1024;
   const records = new Map<string, TValue>();
   let admitting = true;
@@ -219,9 +290,8 @@ export function keyspaceResource<TValue>(
   }
 
   return {
-    id: config.id ?? `keyspace:${declaration.name}`,
-    ...(config.dependsOn && { dependsOn: config.dependsOn }),
-    async start(_context: ManagedResourceContext) {
+    keyspace,
+    async load() {
       for (const stored of await config.backend.load()) {
         // A stored record that no longer satisfies the schema is a real event —
         // a shape changed under a live store — and it stops the start rather
@@ -231,7 +301,6 @@ export function keyspaceResource<TValue>(
         const value = declaration.schema.parse(stored);
         records.set(declaration.key(value), value);
       }
-      return { value: keyspace };
     },
     stopAdmission() {
       admitting = false;

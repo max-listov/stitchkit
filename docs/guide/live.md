@@ -139,9 +139,17 @@ const hub = createWatchHub({
 
 ```ts
 // browser
-import { createWatchClient } from 'stitchkit/live';
+import { createWatchClient, watchTransport } from 'stitchkit/live';
 
-const watch = createWatchClient(notesContract, { transport: live, holdMs: 30_000 });
+// `live` is the bound realtime client. It goes through `watchTransport`, and
+// that is not ceremony: its `on` is generic over the contract it was bound to,
+// and TypeScript will not relate that signature to the one a watch client
+// declares. The conversion lives in the framework so it is written once rather
+// than in every application.
+const watch = createWatchClient(notesContract, {
+  transport: watchTransport(live),
+  holdMs: 30_000,
+});
 
 const handle = watch.list({ folder: 'inbox' });
 const stop = handle.subscribe({
@@ -259,8 +267,23 @@ point:
   immediately. An event emitted before the memory update is a wake-up to the old
   value.
 
-It is a **resource**, read with `context.use(...)`, not a function you call
-wherever you need it. The kernel resolves its resource graph in the constructor
+Where there is no kernel — a server that binds its own signals and closes what
+it holds in an order it wrote — open it directly instead:
+
+```ts
+const opened = await openKeyspace(sessions, { backend });
+opened.keyspace.get(id);                       // synchronous, from memory
+// on shutdown, in the order you chose:
+opened.stopAdmission();
+await opened.drain();
+await opened.close();
+```
+
+The resource is a thin wrapper over exactly that, so there is one implementation
+and two lifecycles, not two keyspaces.
+
+Where there **is** a kernel it is a **resource**, read with `context.use(...)`,
+rather than a function you call wherever you need it. The kernel resolves its resource graph in the constructor
 and cannot register one afterwards, so a keyspace opened by a bare call inside
 another resource's `start` is never drained, never closed, and never ordered
 against the things that write to it.

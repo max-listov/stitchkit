@@ -8,8 +8,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createWatchHub, type WatchSubscriber, watchKey } from '../src/application/watch-hub';
+import { createRealtimeClient } from '../src/browser/socket-io';
 import { defineContract } from '../src/contract';
-import { createWatchClient } from '../src/live/watch-client';
+import { createWatchClient, watchTransport } from '../src/live/watch-client';
 import {
   WATCH_CLOSE,
   WATCH_OPEN,
@@ -17,6 +18,7 @@ import {
   WATCH_VALUE,
   type WatchStateFrame,
   type WatchValueFrame,
+  watchContract,
 } from '../src/live/watch-contract';
 
 const notes = { service: 'notes', action: 'list' } as const;
@@ -462,6 +464,16 @@ describe('the client shares one subscription', () => {
       },
     };
   }
+
+  test('a bound realtime client reaches the watch client through the adapter', () => {
+    // The guide said "pass a bound realtime client" and the types refused it —
+    // an instruction that reads as supported and fails at the call site. Pinned
+    // here because it is a fact about two generic signatures TypeScript will not
+    // relate, and nothing in a runtime test would notice it coming back.
+    const realtime = createRealtimeClient(watchContract, { url: 'http://example.test' });
+    const watch = createWatchClient(contract, { transport: watchTransport(realtime) });
+    expect(typeof watch.list).toBe('function');
+  });
 
   test('two subscribers open one watch, and the last one closes it', async () => {
     const fake = fakeTransport();

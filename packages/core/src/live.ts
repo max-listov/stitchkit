@@ -28,11 +28,14 @@ export {
 } from './live/events';
 export {
   createWatchClient,
+  type RealtimeClientLike,
   type TypedWatchClient,
   type WatchClientConfig,
   type WatchHandle,
+  type WatchInboundEvents,
   type WatchListeners,
   type WatchTransport,
+  watchTransport,
 } from './live/watch-client';
 export {
   WATCH_CLOSE,

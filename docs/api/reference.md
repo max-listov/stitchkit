@@ -250,6 +250,7 @@ realtime contract from `stitchkit`, and the server halves live in `stitchkit/app
 | `EventPayloads` / `EventTopicsOfMode` / `WireTopic` | _types_ | payload map keyed by wire topic, the topics of one mode, and the `prefix.name` a topic is addressed by |
 | `createWatchClient` | function | contract-shaped watch client: `watch.action(args)` returns a ref-counted handle sharing one subscription |
 | `WatchHandle` / `WatchListeners` / `WatchClientConfig` / `WatchTransport` / `TypedWatchClient` | _types_ | subscribe/close, the value and state listeners, hold window and open deadline, and the bound realtime client it rides |
+| `watchTransport` / `RealtimeClientLike` / `WatchInboundEvents` | function / _types_ | hands a bound realtime client to a watch client — two generic signatures TypeScript will not relate, converted once here |
 | `watchContract` | const | the four-event realtime contract a watched read travels on |
 | `WATCH_OPEN` / `WATCH_CLOSE` / `WATCH_VALUE` / `WATCH_STATE` | const | the event names of that contract |
 | `WatchKey` / `WatchKeySchema` / `watchKeyString` | type / schema / function | `(service, action, arguments digest)` — the identity both ends compute the same way |
@@ -680,6 +681,7 @@ the function that derives it from a snapshot,
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineKeyspace` / `keyspaceResource` | function | a named record set read synchronously from memory and written through one serialised chain; backend first, then memory, then the change event |
+| `openKeyspace` / `OpenedKeyspace` | function / type | the same keyspace opened directly, for an application that owns its own lifecycle rather than declaring resources to a kernel |
 | `KeyspaceBackend` / `KeyspaceDeclaration` / `KeyspaceChange` / `KeyspaceResourceConfig` / `OpenKeyspace` | _types_ | the four-method durability port, the declaration, the announced change, the resource's options and the published handle |
 | `memoryKeyspaceBackend` / `sqliteKeyspaceBackend` / `SqliteKeyspaceBackendConfig` | function / type | a disposable in-process backend, and one table with a key and a JSON payload over a caller-owned database |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _types_ | the minimal synchronous SQLite boundary the framework types against |
