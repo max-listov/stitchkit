@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release gate no longer reddens from memory pressure.** Two heavy lanes
+  hold ~6.6 GiB between them — measured, `MemAvailable` sampled through each:
+  `starter-head-lane` 3.24, `supervised-lane` 3.33, `consumer-lane` 0.82 — and
+  the profile started the pair regardless. On a host with less it did not run
+  slowly, it timed out, in different Playwright tests every run, three failures
+  and thirty passes where the same lane alone passes forty-two in a sixth of the
+  wall clock. `verify --release` now asks the host and prints what it chose;
+  `VERIFY_HEAVY_CONCURRENCY` still wins outright, and a host that cannot be
+  measured keeps the old default and says so. → ADR 0162
+
+- **A heavy lane that fails now names itself.** The first lane to throw takes its
+  siblings' child processes down with it, so a backgrounded run showed a cluster
+  of `terminated by signal SIGTERM` lines and nothing else — three release runs
+  were read as external interference on that evidence. `runBounded` prints the
+  lane and its exit code before anything else reacts.
+
+
 ## [0.80.0] — 2026-09-03
 
 One defect, found by reading 0.79.0 back against the promise of the entrypoint

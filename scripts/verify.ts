@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   findGreenGate,
@@ -117,26 +118,119 @@ async function runStep(step: string): Promise<void> {
 }
 
 /**
+ * What one heavy lane holds, in gibibytes, measured rather than guessed.
+ *
+ * `MemAvailable` sampled every two seconds through each lane on a 22 GiB host:
+ * `starter-head-lane` 3.24, `supervised-lane` 3.33, `consumer-lane` 0.82. The
+ * two that build Next and drive three browsers are the ones that matter, and
+ * they agree; 3.5 is the pair rounded up, not a number that felt about right.
+ */
+export const HEAVY_LANE_MEMORY_GIB = 3.5;
+
+/** The default ceiling — see `runBounded`: a developer machine, not the CI fleet. */
+export const MAX_HEAVY_CONCURRENCY = 2;
+
+/**
+ * Available memory in gibibytes, or `undefined` where it cannot be read.
+ *
+ * Three outcomes, not two. `/proc/meminfo` does not exist on macOS and may be
+ * unreadable in a container, and "could not measure" must not arrive looking
+ * like a measurement — it keeps the historical default and says so.
+ */
+export function availableMemoryGib(meminfo?: string): number | undefined {
+  let text = meminfo;
+  if (text === undefined) {
+    try {
+      text = readFileSync('/proc/meminfo', 'utf8');
+    } catch {
+      return undefined;
+    }
+  }
+  const match = text.match(/^MemAvailable:\s+(\d+) kB$/m);
+  if (!match?.[1]) return undefined;
+  return Number(match[1]) / 1024 / 1024;
+}
+
+export interface HeavyConcurrencyChoice {
+  readonly concurrency: number;
+  /** Why this number — the line the gate prints, so the choice is never silent. */
+  readonly because: string;
+}
+
+/**
  * How many heavy lanes may run at once.
  *
  * Refuses a value that is not a positive integer rather than falling back to the
  * default: a typo in an environment variable that silently means "two" is a
  * setting that looks applied and is not.
+ *
+ * With no variable set it asks the host instead of asserting `2`. Two of these
+ * lanes want ~7 GiB between them, and on a host with less the pair does not run
+ * slowly — it runs into timeouts, in different tests every time, three failures
+ * and thirty passes where the same lane alone passes forty-two in a sixth of
+ * the wall clock. A gate that reddens from load is worse than a slow one: it
+ * teaches its readers to disbelieve red, and the release profile is the one run
+ * whose red cannot be repaired in place.
+ *
+ * The comment this replaces already knew all of that and left the fix to a
+ * human remembering to export a variable.
  */
-export function heavyConcurrency(raw = Bun.env.VERIFY_HEAVY_CONCURRENCY): number {
-  if (raw === undefined || raw === '') return 2;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`VERIFY_HEAVY_CONCURRENCY must be a positive integer, got "${raw}".`);
+export function chooseHeavyConcurrency(
+  raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
+  // A measurer, not a measurement. With a plain `available = availableMemoryGib()`
+  // parameter, "could not read it" and "caller said nothing" are the same
+  // `undefined` and the default fires for both — so the unmeasurable branch was
+  // unreachable from a test, and would have been unreachable from any caller
+  // that wanted to state it. The test asking for that branch is what found it.
+  measure: () => number | undefined = availableMemoryGib,
+): HeavyConcurrencyChoice {
+  if (raw !== undefined && raw !== '') {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(`VERIFY_HEAVY_CONCURRENCY must be a positive integer, got "${raw}".`);
+    }
+    return { concurrency: parsed, because: `VERIFY_HEAVY_CONCURRENCY=${raw}` };
   }
-  return parsed;
+  const available = measure();
+  if (available === undefined) {
+    return {
+      concurrency: MAX_HEAVY_CONCURRENCY,
+      because: 'available memory could not be read, keeping the default',
+    };
+  }
+  const affordable = Math.floor(available / HEAVY_LANE_MEMORY_GIB);
+  const concurrency = Math.min(MAX_HEAVY_CONCURRENCY, Math.max(1, affordable));
+  return {
+    concurrency,
+    because: `${available.toFixed(1)} GiB available, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
+  };
 }
 
-/** Run independent heavy lanes without turning a developer machine into the CI fleet. */
+/** The number alone, for callers that do not print the reason. */
+export function heavyConcurrency(
+  raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
+  measure: () => number | undefined = availableMemoryGib,
+): number {
+  return chooseHeavyConcurrency(raw, measure).concurrency;
+}
+
+/**
+ * Run independent heavy lanes without turning a developer machine into the CI fleet.
+ *
+ * A lane that throws says so *here*, by name, before anything else reacts.
+ * `Promise.all` rejects with the first failure and the surviving workers keep
+ * running until their own step ends, so a lane failing takes its siblings' child
+ * processes down with it — and in a backgrounded run all the reader sees is a
+ * cluster of `terminated by signal SIGTERM` lines and a harness reporting the
+ * job as killed. Three release runs were read as external interference before a
+ * foreground one printed the real cause. The failure is the same either way; the
+ * only thing missing was the sentence naming it.
+ */
 export async function runBounded(
   steps: readonly string[],
   concurrency: number,
   execute: (step: string) => Promise<void> = runStep,
+  report: (line: string) => void = (line) => process.stderr.write(line),
 ): Promise<void> {
   const queue = [...steps];
   const workers = Array.from(
@@ -144,7 +238,16 @@ export async function runBounded(
     async () => {
       while (queue.length > 0) {
         const step = queue.shift();
-        if (step) await execute(step);
+        if (!step) continue;
+        try {
+          await execute(step);
+        } catch (error) {
+          report(
+            `[gate] ${step} FAILED: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+          report('[gate] cancelling the other heavy lanes; their SIGTERM is a consequence\n');
+          throw error;
+        }
       }
     },
   );
@@ -249,16 +352,20 @@ async function main(): Promise<void> {
     process.stderr.write(`[gate] ${step}\n`);
     await runStep(step);
   }
-  // Two by default, and adjustable because "a developer machine" is not one
-  // machine. The heavy lanes build Next twice, drive real browsers and run a
-  // supervisor; two of them at once on a host whose swap is already spent get
-  // terminated rather than finishing, and a lane that was killed reports the
-  // same way as a lane that failed. `VERIFY_HEAVY_CONCURRENCY=1` trades wall
-  // clock for finishing at all.
-  await runBounded(heavy, heavyConcurrency(), async (step) => {
-    process.stderr.write(`[gate] ${step}\n`);
-    await runStep(step);
-  });
+  // Measured, not asserted. The heavy lanes build Next twice, drive real
+  // browsers and run a supervisor; two of them at once on a host that cannot
+  // hold both get timeouts rather than results. `VERIFY_HEAVY_CONCURRENCY`
+  // still wins — the host is asked only when nobody has answered.
+  if (heavy.length > 0) {
+    const choice = chooseHeavyConcurrency();
+    process.stderr.write(
+      `[gate] heavy lanes: ${choice.concurrency} at a time (${choice.because})\n`,
+    );
+    await runBounded(heavy, choice.concurrency, async (step) => {
+      process.stderr.write(`[gate] ${step}\n`);
+      await runStep(step);
+    });
+  }
 
   // The record is of the tree the run STARTED from — the input it actually
   // checked. If a step regenerated a committed artifact the tree has moved on,

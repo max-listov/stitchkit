@@ -117,7 +117,7 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 bun run dev            # watch-rebuild packages/core/dist
 bun run verify         # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
 bun run verify:fast    # lint · check · test — what an ordinary push runs
-bun scripts/verify.ts --release # release-train targets, max two independent heavy lanes
+bun scripts/verify.ts --release # release-train targets; heavy lanes run at most two at once, fewer when the host cannot hold them
 bun run build          # build dist/ + generate llms.txt
 bun run lint:fix       # auto-fix formatting / safe lint
 bun run update:starter # move the template's framework range + lockfile together
@@ -142,7 +142,7 @@ picks by what a red run would cost on the commit being pushed:
 | Push | Local gate | Why |
 | --- | --- | --- |
 | ordinary branch push | `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| push carrying the `release(...)` commit | metadata, then `verify --release` for the selected train (heavy concurrency 2) | a red run here cannot be repaired in place |
+| push carrying the `release(...)` commit | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
 The release row is the whole argument. `assert-subject` requires a tag to sit
