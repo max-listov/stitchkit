@@ -170,7 +170,19 @@ export interface ApplicationAdmission {
 }
 
 export const ApplicationRestartInputSchema = z
-  .object({ resourceId: z.string().min(1) })
+  .object({
+    resourceId: z.string().min(1),
+    /**
+     * Optional overrides of the application shutdown budget, for this restart.
+     *
+     * A restart takes its subtree down through the same three phases a shutdown
+     * does, so it asks the same budget question and defaults to the same answer.
+     * Naming one here is for the case a caller knows this subtree drains faster
+     * than the process is allowed to.
+     */
+    gracePeriodMs: z.number().int().nonnegative().optional(),
+    forceTimeoutMs: z.number().int().nonnegative().optional(),
+  })
   .strict()
   .readonly();
 export type ApplicationRestartInput = z.infer<typeof ApplicationRestartInputSchema>;
@@ -775,13 +787,28 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     entry: ResolvedManagedResource,
     record: ResourceRecord,
     signal: AbortSignal,
+    deadlines: { deadlineAt: number; forceDeadlineAt: number },
   ): Promise<void> => {
-    const context = () => contextFor(record, { signal });
+    const context = () => contextFor(record, { ...deadlines, signal });
     if (record.attempted && !record.closed) {
-      await entry.resource.stopAdmission?.(context());
-      await entry.resource.drain?.(context());
+      // Bounded, like every other path that takes a resource down — and bounded
+      // by a signal an actual timer fires, not by a number nobody watches. One
+      // `drain()` awaiting work that never finishes used to hang the restart for
+      // the life of the process, and because restarts are serialised it hung
+      // every restart queued behind it too.
+      const phase = async (work: unknown, what: string): Promise<void> => {
+        const settled = await untilDeadline(Promise.resolve(work), signal);
+        if (!settled.settled) {
+          throw new Error(
+            `[stitchkit] resource "${entry.id}" did not ${what} within the restart budget`,
+          );
+        }
+        if (settled.error !== undefined) throw settled.error;
+      };
+      await phase(entry.resource.stopAdmission?.(context()), 'stop admitting');
+      await phase(entry.resource.drain?.(context()), 'drain');
       record.closeInvoked = true;
-      await entry.resource.close?.(context());
+      await phase(entry.resource.close?.(context()), 'close');
     }
     // Every trace of the old generation goes, including the value it published:
     // a dependant that started again must `use()` the NEW handle, and leaving
@@ -833,16 +860,56 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       return refuse(`the application is ${lifecycle}, not ready`);
     }
 
+    // The application's own shutdown budget, unless this call names another.
+    // A restart takes resources down through the same three phases a shutdown
+    // does, so it is the same budget question, and inventing a second default
+    // would mean two numbers to keep in agreement.
+    // Per field, starting from the application's own budget. Re-parsing a
+    // partial input instead would let a caller who named only one of the two
+    // silently take the SCHEMA default for the other, rather than the budget
+    // this application was configured with — a declared option quietly not
+    // honoured, which is the defect this repository fails most often.
+    const budget = {
+      gracePeriodMs: parsed.gracePeriodMs ?? shutdownBudget.gracePeriodMs,
+      forceTimeoutMs: parsed.forceTimeoutMs ?? shutdownBudget.forceTimeoutMs,
+    };
+    const closeDeadlineAt = performance.now() + budget.gracePeriodMs;
+    const deadlines = {
+      deadlineAt: closeDeadlineAt,
+      forceDeadlineAt: closeDeadlineAt + budget.forceTimeoutMs,
+    };
+
     const restartAbort = new AbortController();
+    const closeTimer = setTimeout(
+      () => restartAbort.abort(),
+      Math.max(0, deadlines.forceDeadlineAt - performance.now()),
+    );
+    /** Every resource that ended this restart in `failed`, in start order. */
+    const stillFailed = () => affectedIds.filter((id) => records.get(id)?.state === 'failed');
     try {
       for (const entry of [...affected].reverse()) {
         const record = records.get(entry.id);
-        if (record) await closeOne(entry, record, restartAbort.signal);
+        if (record) await closeOne(entry, record, restartAbort.signal, deadlines);
       }
       publish();
       await startEach(affected, restartAbort.signal);
       await activateEach(affected, restartAbort.signal);
       publish();
+      // `startEach` re-throws only for a REQUIRED resource: an optional one that
+      // will not start again is recorded, skipped, and the loop finishes
+      // normally. Reporting that as `restarted` was a result contradicting the
+      // snapshot it came with — success on the return value, `failed` and
+      // `unhealthy` in the very next `getSnapshot()`. The records decide.
+      const failed = stillFailed();
+      if (failed.length > 0) {
+        return {
+          resourceId: parsed.resourceId,
+          affected: affectedIds,
+          outcome: 'failed',
+          reason: `did not come back: ${failed.join(', ')}`,
+          durationMs: Date.now() - startedAt,
+        };
+      }
       return {
         resourceId: parsed.resourceId,
         affected: affectedIds,
@@ -850,6 +917,10 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         durationMs: Date.now() - startedAt,
       };
     } catch (error) {
+      // Whatever is still running under this restart is told to stop. Without
+      // this the controller was constructed, threaded through every phase, and
+      // never fired — an abort signal nothing ever aborts.
+      restartAbort.abort();
       // The snapshot already carries what failed and in which phase, because
       // `startEach` records it the same way a startup does. Nothing is rolled
       // forward here: the old generation is closed and the new one did not come
@@ -862,6 +933,8 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         reason: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startedAt,
       };
+    } finally {
+      clearTimeout(closeTimer);
     }
   };
 

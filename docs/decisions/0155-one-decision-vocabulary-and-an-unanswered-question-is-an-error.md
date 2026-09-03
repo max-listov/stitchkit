@@ -54,8 +54,25 @@ trace that included policies which never ran would answer that question wrongly
 while looking complete. The first terminal verdict short-circuits; the rest do
 not run, and do not appear.
 
-A policy that throws or times out is a `DecisionPolicyError` and denies with the
-policy named. A policy that is broken must not be a policy that is skipped.
+A policy that returns a non-decision, throws, or runs past its deadline raises
+`DecisionPolicyError`, naming the policy and carrying the trace so far. A policy
+that is broken must not be a policy that is skipped.
+
+All three are one error deliberately: they are indistinguishable downstream — the
+question is undecided and the policy set is at fault — and splitting them invites
+a caller to handle one and not the others.
+
+The deadline is `policyTimeoutMs`, **required with no default**, for the reason
+`defineEvents` requires `listenerTimeoutMs`: a default is a number nobody chose,
+applied to consumer code the framework has never seen, and the failure it hides
+is a policy that never settles hanging every caller of the operation it guards.
+
+> This paragraph described behaviour that did not exist when it was written. The
+> pipeline shipped in 0.77.0 with neither a `try`/`catch` nor a deadline: a
+> throw reached the caller raw and a hang was forever. It was written from the
+> event bus, which does both, and nothing checked that the sentence was true of
+> the code beneath it. 0.78.0 made it true. The tests that hold it now name the
+> throw, the hang and the required deadline.
 
 ## Duplicate ids are refused at construction
 

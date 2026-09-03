@@ -39,10 +39,35 @@ the framework failing at the one thing it exists for.
 
 ## Why a second entrypoint rather than making `./application` browser-safe
 
+> **Corrected in 0.78.0 — see [ADR 0157](0157-a-restartable-resource-begins-a-generation.md)
+> and the note at the end of this section.** The reasoning below was wrong on a
+> fact, and the fix that followed from it treated a symptom.
+
 `stitchkit/application` is a server entrypoint by design — a kernel, an
 admission gate, a diagnostic journal that takes a file lock. Making it
 browser-safe would mean lazy-loading its own runtime to protect importers who
 do not want it.
+
+**That last sentence was false, and one command would have shown it.** Of the 18
+relative imports in `application.ts`, exactly **one** reached `node:`:
+`export { createDiagnosticJournal }`. The kernel, admission, schedules,
+keyspaces and every schema were already clean. There was no runtime to lazy-load
+— there was one line to move.
+
+So 0.78.0 moved it to `stitchkit/application/diagnostic-journal`, and the whole
+barrel became browser-safe: 39 schemas and 8 error classes that this ADR left
+stranded, including the entire `DiagnosticJournal*Schema` family out of a
+node-free file named `diagnostic-journal-contract.ts`.
+
+`stitchkit/application/schemas` stays. It is no longer the *only* way to reach
+those schemas, but it is still the honest minimal one — the schemas without the
+kernel — and it had already shipped.
+
+The lesson is not about entrypoints. This ADR reasoned from the shape of the
+module ("it is a server entrypoint by design") when the question was empirical
+and cheap, and it fixed the ten names the reporter happened to name instead of
+the cause. The report was right about the class and this ADR narrowed it to the
+instance.
 
 A symbol reachable from two entrypoints is this package's existing convention,
 not an alias: 108 names already sit in more than one entry barrel. An alias is a

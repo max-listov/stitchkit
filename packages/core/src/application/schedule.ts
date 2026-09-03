@@ -353,7 +353,32 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
       return status();
     },
     start(): void {
-      if (stopped) throw new Error(`[stitchkit] schedule "${descriptor.id}" is stopped`);
+      // A new generation, not a refusal.
+      //
+      // This used to throw whenever `stopped` was set, which `close()` always
+      // sets — so a schedule survived exactly one lifetime and any
+      // `restart({ resourceId })` naming it, or naming anything it depends on,
+      // closed the old generation and then permanently failed the new one.
+      // Schedules are required by default, so the application was left
+      // `unhealthy` with no way back short of restarting the process.
+      //
+      // Refusing a start after the application is *finished* is still right —
+      // but it is the kernel's call, not this resource's: only the kernel knows
+      // whether this `close` was a restart or the way down, and it already
+      // refuses `restart` unless the application is `ready`. From in here the
+      // two are indistinguishable, and guessing produced the worse answer.
+      if (active.size > 0) {
+        throw new Error(
+          `[stitchkit] schedule "${descriptor.id}" still has executions from its previous generation`,
+        );
+      }
+      cancelFuture();
+      stopped = false;
+      accepting = false;
+      activated = false;
+      activationContext = null;
+      queuedAt = null;
+      changed();
     },
     activate(context): void {
       if (activated || stopped) return;

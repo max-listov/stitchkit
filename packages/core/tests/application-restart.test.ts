@@ -326,3 +326,103 @@ describe('the process outlives the restart', () => {
     ]);
   });
 });
+
+describe('the result agrees with the snapshot', () => {
+  test('an optional resource that will not start again makes the restart failed', async () => {
+    const log: string[] = [];
+    const application = await ready(
+      [{ ...recorded('flaky', log, { failStartAfter: 1 }), required: false }],
+      log,
+    );
+
+    const result = await application.restart({ resourceId: 'flaky' });
+
+    // `startEach` re-throws only for a REQUIRED resource, so this path finished
+    // normally and used to report `restarted` — success on the return value and
+    // `failed` / `unhealthy` in the very next `getSnapshot()`. Two answers to
+    // one question, and the caller reads the wrong one.
+    expect(result.outcome).toBe('failed');
+    expect(result.reason).toContain('flaky');
+    const record = application.getSnapshot().resources.find((entry) => entry.id === 'flaky');
+    expect(record?.state).toBe('failed');
+    await application.shutdown();
+  });
+
+  test('a restart that comes back clean still reports restarted', async () => {
+    const log: string[] = [];
+    const application = await ready(
+      [{ ...recorded('cache', log), required: false }, recorded('database', log)],
+      log,
+    );
+    const result = await application.restart({ resourceId: 'cache' });
+    // The negative control for the test above: the failed-record check must not
+    // turn every optional restart into a failure.
+    expect(result.outcome).toBe('restarted');
+    await application.shutdown();
+  });
+});
+
+describe('the close phase is bounded', () => {
+  test('a drain that never finishes fails the restart instead of hanging it', async () => {
+    const log: string[] = [];
+    const stuck: ManagedResource = {
+      id: 'stuck',
+      start: () => ({ value: 1 }),
+      drain: () =>
+        new Promise<never>(() => {
+          // Never resolved: that is the condition under test.
+        }),
+      close: () => {
+        log.push('stuck:close');
+      },
+    };
+    const application = createApplication({
+      id: 'bounded-restart',
+      resources: [stuck],
+      shutdown: { gracePeriodMs: 20, forceTimeoutMs: 20 },
+    });
+    await application.start();
+
+    // Raced, because the failure this covers is a hang: without a bound the
+    // restart never settles, and a test that never returns cannot go red.
+    const NEVER = Symbol('still restarting');
+    const settled = await Promise.race([
+      application.restart({ resourceId: 'stuck' }),
+      new Promise((resolve) => setTimeout(() => resolve(NEVER), 2_000)),
+    ]);
+
+    expect(settled).not.toBe(NEVER);
+    expect((settled as { outcome: string }).outcome).toBe('failed');
+    expect((settled as { reason?: string }).reason).toContain('drain');
+  });
+
+  test('the call may name its own budget', async () => {
+    const log: string[] = [];
+    const stuck: ManagedResource = {
+      id: 'stuck',
+      start: () => ({ value: 1 }),
+      drain: () =>
+        new Promise<never>(() => {
+          // Never resolved: that is the condition under test.
+        }),
+    };
+    const application = createApplication({
+      id: 'bounded-restart-arg',
+      // Generous by default — so a budget that arrives only from the call is the
+      // only thing that can end this in time.
+      resources: [stuck],
+      shutdown: { gracePeriodMs: 60_000, forceTimeoutMs: 60_000 },
+    });
+    await application.start();
+    log.length = 0;
+
+    const NEVER = Symbol('still restarting');
+    const settled = await Promise.race([
+      application.restart({ resourceId: 'stuck', gracePeriodMs: 20, forceTimeoutMs: 20 }),
+      new Promise((resolve) => setTimeout(() => resolve(NEVER), 2_000)),
+    ]);
+
+    expect(settled).not.toBe(NEVER);
+    expect((settled as { outcome: string }).outcome).toBe('failed');
+  });
+});

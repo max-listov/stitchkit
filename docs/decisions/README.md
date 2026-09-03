@@ -181,7 +181,9 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0153](0153-a-watched-read-is-one-read-per-question.md) | A watched read is one read per question, and the question is not a function | Accepted — single-flight per key is the ordering guarantee, and the client is built from the contract because a method carries no identity |
 | [0154](0154-the-unit-of-a-restart-is-the-subtree.md) | The unit of a restart is the subtree, not the resource | Accepted — a dependant left running holds a handle to a closed generation, so the transitive dependants go down with it and the process epoch stays |
 | [0155](0155-one-decision-vocabulary-and-an-unanswered-question-is-an-error.md) | One decision vocabulary, and an unanswered question is an error | Accepted — `PolicyDecision` is shared by events and the pipeline; every policy deferring raises rather than defaulting either way |
-| [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted — the application schemas get their own node-free entrypoint, and the browser gate now refuses a built entry no `exports` path reaches |
+| [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted, partly corrected by 0157 — the schemas got their own entrypoint and the gate refuses an unreachable one; the claim that `./application` could not be browser-safe was wrong |
+| [0157](0157-a-restartable-resource-begins-a-generation.md) | A resource that can be restarted is a resource that can begin a generation | Accepted — `start` begins a generation, the result agrees with the snapshot, and the close phase is bounded like every other way down |
+| [0158](0158-a-gate-that-does-not-run-the-code-is-a-proxy.md) | A gate that does not run the code is measuring a proxy | Accepted — every promised browser entry is bundled and executed, after six of them killed the page while passing every static check |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

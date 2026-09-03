@@ -362,9 +362,26 @@ await app.restart({ resourceId: 'cache' })
 **Refused is not failed.** An unknown id, a restart during shutdown, and a
 restart before the application is ready all return `refused` with a reason and
 touch nothing. `failed` means the subtree came down and the new generation did
-not come up — the snapshot says so too, with the failing resource marked
-`failed` / `unhealthy`, because the restart records a failure the same way a
-startup does.
+not come up — and the result agrees with the snapshot: if any affected resource
+ends the restart in `failed`, so does the restart, including an optional one
+whose failure the start loop does not re-throw.
+
+**The close phase is bounded**, by the application's shutdown budget or by one
+this call names:
+
+```ts
+await app.restart({ resourceId: 'database', gracePeriodMs: 5_000, forceTimeoutMs: 2_000 })
+```
+
+**A resource has to be able to start twice.** The kernel calls `start` again, so
+a resource holding state across its own lifetime rebuilds it there. The ones this
+framework ships do — a schedule re-arms, a keyspace opens a new generation and
+re-loads, a managed server built from a factory gets a fresh server. A managed
+server given a server *instance* cannot, and says so by name rather than
+republishing something it has shut down. Give a keyspace a
+`backend: () => …` factory when its backend cannot be re-opened after `close()`.
+
+→ [ADR 0157](../decisions/0157-a-restartable-resource-begins-a-generation.md).
 
 Restarts of overlapping subtrees queue behind each other rather than being
 refused. Two callers asking at once is ordinary; two generations of one resource
@@ -400,7 +417,7 @@ const pipeline = createDecisionPipeline<{ userId: string; scope: string }>([
       ? { outcome: 'allow' }
       : { outcome: 'defer' }) },
   { id: 'default', decide: () => ({ outcome: 'deny', reason: 'no policy allowed this' }) },
-])
+], { policyTimeoutMs: 2_000 })
 
 const result = await pipeline.decide(request)
 result.outcome // 'allow' | 'deny' — never 'defer'
@@ -421,8 +438,19 @@ answer that wrongly while looking complete.
 **Every policy deferring raises.** `DecisionUndecidedError`, not a default —
 defaulting to `allow` turns an incomplete policy set into an open door, and
 defaulting to `deny` turns it into an outage whose cause reads as a legitimate
-refusal. A policy that throws or times out denies with the policy named
-(`DecisionPolicyError`): broken must not mean skipped.
+refusal.
+
+**A policy that does not answer raises too.** A non-decision, a throw, and running
+past `policyTimeoutMs` are one error — `DecisionPolicyError`, naming the policy
+and carrying the trace so far — because they are indistinguishable downstream and
+handling one but not the others is how a broken policy becomes a skipped one. The
+chain stops there rather than falling through to whatever the next policy would
+have said.
+
+`policyTimeoutMs` is required and has no default. Pick a number your slowest
+policy comfortably beats. The framework will not choose it for you: a policy that
+never settles hangs every caller of the operation it guards, and a default here
+is a number nobody chose applied to code the framework has never seen.
 
 The same `allow`/`deny`/`defer` type is what an event topic declared
 `mode: 'decision'` uses in `stitchkit/live` — one vocabulary, because a listener
@@ -524,8 +552,14 @@ changing its revision or status contract. → ADR 0119.
 Use `createDiagnosticJournal` when a process needs finite, ordered local metadata evidence and the
 deployment log pipeline is not the right boundary:
 
+It lives at `stitchkit/application/diagnostic-journal`, not in the main barrel:
+it is the one part of the kernel that spawns, locks and writes files, and while it
+was exported from `stitchkit/application` that single line made the whole
+entrypoint unusable in a browser bundle. Its schemas stay in
+`stitchkit/application`.
+
 ```ts
-import { createDiagnosticJournal } from 'stitchkit/application'
+import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal'
 import { z } from 'zod'
 
 const journal = await createDiagnosticJournal({

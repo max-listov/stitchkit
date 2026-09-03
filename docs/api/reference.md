@@ -542,7 +542,7 @@ cutovers are covered by the executable
 |--------|------|---------|
 | `createApplication` | function | compose a validated resource DAG into one startup, readiness, admission and shutdown state machine |
 | `ApplicationHandle.restart` | method | replace one resource and everything that depends on it, leaving the rest of the graph running and the process epoch unchanged |
-| `ApplicationRestartInputSchema` / `ApplicationRestartInput` | schema / _type_ | the resource to replace, by id |
+| `ApplicationRestartInputSchema` / `ApplicationRestartInput` | schema / _type_ | the resource to replace, by id, and optionally `gracePeriodMs` / `forceTimeoutMs` for this restart — the application's own shutdown budget otherwise |
 | `ApplicationRestartResultSchema` / `ApplicationRestartResult` | schema / _type_ | the subtree that was actually taken down and brought back, in start order, with the outcome, the reason on anything but success, and how long it took |
 | `ApplicationRestartOutcomeSchema` / `ApplicationRestartOutcome` | schema / _type_ | `restarted`, `failed` or `refused` — a refusal (unknown id, shutting down, not yet ready) is not a failure and touches nothing |
 | `ApplicationResourceFailure` | _type_ | one resource failure with the cause its phase label cannot carry — delivered to `onResourceFailure` |
@@ -693,11 +693,12 @@ vocabulary with an event topic declared `mode: 'decision'`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createDecisionPipeline` | function | run policies in declaration order; the first terminal verdict wins and the rest do not run |
+| `DecisionPipelineConfig` | _type_ | `policyTimeoutMs` — how long one policy has to answer. Required, no default: a policy that never settles hangs every caller of the operation it guards |
 | `PolicyDecisionSchema` / `PolicyDecision` | schema / _type_ | `allow`, `deny` with a reason, or `defer` — a deny cannot be silent |
 | `DecisionPolicy` / `DecisionPipeline` | _types_ | one named voter over the caller's subject, and the pipeline it composes into |
 | `DecisionResult` / `DecisionTraceEntry` | _types_ | the verdict, and the trace of what actually ran — not what was declared |
 | `DecisionUndecidedError` | class | every policy deferred and no undecided outcome was declared: an unanswered question, raised rather than guessed |
-| `DecisionPolicyError` | class | a policy threw or timed out; the pipeline denies with the policy named |
+| `DecisionPolicyError` | class | a policy returned a non-decision, threw, or ran past `policyTimeoutMs` — one error for all three, carrying the policy id and the trace so far |
 
 ### Keyspace and watched reads
 
@@ -705,7 +706,7 @@ vocabulary with an event topic declared `mode: 'decision'`.
 |--------|------|---------|
 | `defineKeyspace` / `keyspaceResource` | function | a named record set read synchronously from memory and written through one serialised chain; backend first, then memory, then the change event |
 | `openKeyspace` / `OpenedKeyspace` | function / type | the same keyspace opened directly, for an application that owns its own lifecycle rather than declaring resources to a kernel |
-| `KeyspaceBackend` / `KeyspaceDeclaration` / `KeyspaceChange` / `KeyspaceResourceConfig` / `OpenKeyspace` | _types_ | the four-method durability port, the declaration, the announced change, the resource's options and the published handle |
+| `KeyspaceBackend` / `KeyspaceDeclaration` / `KeyspaceChange` / `KeyspaceResourceConfig` / `OpenKeyspace` | _types_ | the four-method durability port, the declaration, the announced change, the resource's options and the published handle. `backend` takes a value or a **factory** — a factory is called once per generation, so a restarted keyspace gets a backend that was never closed |
 | `memoryKeyspaceBackend` / `sqliteKeyspaceBackend` / `SqliteKeyspaceBackendConfig` | function / type | a disposable in-process backend, and one table with a key and a JSON payload over a caller-owned database |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _types_ | the minimal synchronous SQLite boundary the framework types against |
 | `createWatchHub` / `watchKey` | function | one read per question however many are asking: single-flight per key, re-read on a declared topic, publish only what changed |
@@ -741,6 +742,23 @@ snapshots; the adapter owns no SDK lifecycle, polling or delta state.
 | `ApplicationOpenTelemetryBinding` | _type_ | idempotent exact callback removal and closed state |
 | `ApplicationTelemetryMeter` | _type_ | minimal structural `Meter.createObservableGauge` boundary compatible with `@opentelemetry/api` |
 | `ApplicationOpenTelemetryCollectionError` | _type_ | isolated instrument-name/error diagnostic without product/provider attributes |
+
+## `stitchkit/application/diagnostic-journal`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createDiagnosticJournal` | function | the bounded local journal: a file lock, a spawn to diagnose a stale one, and framed writes |
+
+Its own entrypoint because of what it reaches — `node:child_process`,
+`node:fs`, `node:os`, `node:util` — with `promisify(execFile)` evaluated while
+the module initialises. Exported from `stitchkit/application`, that one line made
+the entire barrel unusable in a browser bundle: not by failing at the call, but
+by throwing during module initialisation, on every route.
+
+Its **contract** stays in `stitchkit/application` — every
+`DiagnosticJournal*Schema`, the states and the refusal reasons touch nothing but
+Zod, and a client reading a journal's status has as much right to them as the
+server writing it.
 
 ## `stitchkit/application/schemas`
 

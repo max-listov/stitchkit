@@ -18,8 +18,9 @@
  * an operation nothing approved and nothing refused has not been decided, and
  * answering `allow` or `deny` there would be inventing the answer.
  *
- * → ADR 0154.
+ * → ADR 0155.
  */
+import { withDeadline } from '../internal/deadline';
 import { type PolicyDecision, PolicyDecisionSchema } from '../internal/decision';
 
 export type { PolicyDecision } from '../internal/decision';
@@ -57,6 +58,22 @@ export interface DecisionResult {
   readonly trace: readonly DecisionTraceEntry[];
 }
 
+export interface DecisionPipelineConfig {
+  /**
+   * How long one policy has to answer, in milliseconds. Required, with no
+   * default.
+   *
+   * A default here would be a number nobody chose, applied to consumer code the
+   * framework has never seen — and the failure it hides is the worst one: a
+   * policy that never settles hangs every caller of the operation it guards,
+   * with nothing in any log to say which policy. Declaring it is one line and
+   * makes the hang impossible; guessing it for the caller only moves the guess
+   * somewhere they cannot see. `defineEvents` requires `listenerTimeoutMs` for
+   * the same reason.
+   */
+  readonly policyTimeoutMs: number;
+}
+
 export interface DecisionPipeline<TInput> {
   decide(input: TInput): Promise<DecisionResult>;
   /** The configured policy ids, in order. For a status surface, not for deciding. */
@@ -84,15 +101,26 @@ export class DecisionUndecidedError extends Error {
   }
 }
 
-/** A policy answered with something that is not a decision. */
+/**
+ * A policy did not answer: it returned a non-decision, threw, or ran past its
+ * deadline.
+ *
+ * All three are one error on purpose. They are indistinguishable to everything
+ * downstream — the question is undecided and the policy set is at fault — and
+ * splitting them would invite a caller to handle one and not the others, which
+ * is how a broken policy quietly becomes a skipped policy. The trace comes with
+ * it for the same reason `DecisionUndecidedError` carries one.
+ */
 export class DecisionPolicyError extends Error {
   readonly policyId: string;
-  constructor(policyId: string, detail: string) {
+  readonly trace: readonly DecisionTraceEntry[];
+  constructor(policyId: string, detail: string, trace: readonly DecisionTraceEntry[] = []) {
     super(
-      `Policy "${policyId}" did not return a decision (${detail}). A policy returns { outcome: "allow" | "deny" | "defer" }, and a deny carries a reason.`,
+      `Policy "${policyId}" did not answer (${detail}). A policy returns { outcome: "allow" | "deny" | "defer" } within its deadline, and a deny carries a reason.`,
     );
     this.name = 'DecisionPolicyError';
     this.policyId = policyId;
+    this.trace = trace;
   }
 }
 
@@ -105,7 +133,14 @@ export class DecisionPolicyError extends Error {
  */
 export function createDecisionPipeline<TInput>(
   policies: readonly DecisionPolicy<TInput>[],
+  config: DecisionPipelineConfig,
 ): DecisionPipeline<TInput> {
+  const { policyTimeoutMs } = config;
+  if (!Number.isInteger(policyTimeoutMs) || policyTimeoutMs <= 0) {
+    throw new Error(
+      '[stitchkit] decision pipeline: policyTimeoutMs must be a positive integer number of milliseconds.',
+    );
+  }
   const seen = new Set<string>();
   for (const policy of policies) {
     if (policy.id.trim() === '') {
@@ -124,15 +159,36 @@ export function createDecisionPipeline<TInput>(
     async decide(input) {
       const trace: DecisionTraceEntry[] = [];
       for (const policy of policies) {
-        const answer = await policy.decide(input);
-        // Validated rather than trusted: a policy is consumer code, and a
-        // `undefined` or a bare string reaching the caller as a verdict is the
-        // silent wrong answer this exists to end.
+        // A policy is consumer code, so all three ways it can fail to answer are
+        // caught here rather than trusted: it can throw, it can never settle, and
+        // it can return something that is not a decision. Uncaught, the first two
+        // reach the caller as a raw exception and a hang — the two shapes a
+        // decision pipeline exists to make impossible.
+        let answer: unknown;
+        try {
+          const outcome = await withDeadline(policy.decide(input), policyTimeoutMs);
+          if (!outcome.settled) {
+            throw new DecisionPolicyError(
+              policy.id,
+              `did not answer within ${policyTimeoutMs}ms`,
+              trace,
+            );
+          }
+          answer = outcome.value;
+        } catch (error) {
+          if (error instanceof DecisionPolicyError) throw error;
+          throw new DecisionPolicyError(
+            policy.id,
+            error instanceof Error ? `threw: ${error.message}` : 'threw',
+            trace,
+          );
+        }
         const parsed = PolicyDecisionSchema.safeParse(answer);
         if (!parsed.success) {
           throw new DecisionPolicyError(
             policy.id,
             parsed.error.issues[0]?.message ?? 'invalid',
+            trace,
           );
         }
         const decision = parsed.data;

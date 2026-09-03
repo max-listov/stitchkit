@@ -15,6 +15,128 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.78.0] — 2026-09-03
+
+Everything 0.77.0 shipped, made true. The subtree restart it introduced could not
+restart any of the three resources this framework itself ships, and the decision
+pipeline documented a guarantee the code did not implement. Both were found by
+reading 0.77.0 back against its own claims, and by a consuming project that took
+the restart into a live application.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone calling `createDecisionPipeline` (one new required
+argument), and anyone importing `createDiagnosticJournal` (one new import path).
+Both are mechanical. Nothing else in `stitchkit/application` moved — and rather
+more of it arrived, because the barrel is now importable from a browser at all.
+
+- **`createDecisionPipeline` now requires a deadline.** A policy that never
+  settled hung every caller of the operation it guarded, with nothing in any log
+  to say which policy — and ADR 0155, the guide and the 0.77.0 changelog all
+  described a timeout that did not exist. It exists now, and it is required with
+  no default, for the reason `defineEvents` requires `listenerTimeoutMs`: a
+  default here is a number nobody chose, applied to consumer code the framework
+  has never seen.
+
+  ```ts
+  // before
+  createDecisionPipeline([policyA, policyB])
+  // after
+  createDecisionPipeline([policyA, policyB], { policyTimeoutMs: 2_000 })
+  ```
+
+- **`createDiagnosticJournal` moved to `stitchkit/application/diagnostic-journal`.**
+  It was the *only* import making `stitchkit/application` reach `node:` — one
+  line, against 208 exported names — and a bundler stubs Node built-ins rather
+  than omitting them, so `promisify(execFile)` at module scope killed the page
+  during initialisation. With it moved, the whole barrel is browser-safe,
+  including 39 schemas and 8 error classes that were stranded behind it.
+
+  ```ts
+  // before
+  import { createDiagnosticJournal } from 'stitchkit/application'
+  // after
+  import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal'
+  ```
+
+  Its schemas — every `DiagnosticJournal*Schema`, the states, the refusal
+  reasons — stay in `stitchkit/application` and are now reachable from a client.
+
+### Fixed
+
+- **A managed schedule could not be restarted at all.** `close()` set an internal
+  `stopped`, and the next `start()` threw `schedule "…" is stopped` — so
+  `restart({ resourceId })` naming a schedule, or naming anything a schedule
+  depends on, closed the old generation and permanently failed the new one.
+  Schedules are required by default, leaving the application `unhealthy` with no
+  way back short of restarting the process. `start()` now begins a generation.
+  Refusing a start after the application is *finished* is still right, but it is
+  the kernel's call — it alone knows whether a `close` was a restart or the way
+  down, and it already refuses `restart` unless the application is `ready`.
+
+- **A restarted keyspace came back healthy and refused every write.** The worst
+  available shape: `outcome: 'restarted'`, snapshot `ready` / `healthy`, and
+  every `put` rejected with "is shutting down", because `admitting` was never
+  reset and the previous generation's records were still in memory. `start` now
+  opens a generation — fresh backend if one is constructible, empty map, open
+  door, then load.
+
+- **A restarted managed server was never shut down.** Its shutdown promise is
+  memoised so three lifecycle calls are one shutdown; carried across a restart
+  that memo answered for a server already gone, so `close` returned without
+  asking the new one to stop and the restarted server outlived the application
+  holding its port. Given a server *instance* rather than a factory, a restart is
+  now refused by name instead of republishing a handle that has been shut down.
+
+- **`restart` could report `restarted` over a failed subtree.** `startEach`
+  re-throws only for a *required* resource, so an optional one that would not
+  start again was recorded, skipped, and reported as success — a result
+  contradicting the snapshot it arrived with. The records decide now.
+
+- **`restart` had no deadline.** `closeOne` was the one stopping path that
+  passed no budget, and its `AbortController` was constructed, threaded through
+  every phase, and never fired. One `drain()` awaiting work that never finished
+  hung the restart for the life of the process — and, because restarts are
+  serialised, every restart queued behind it. It now takes the application's
+  shutdown budget, or one this call names.
+
+- **Six entrypoints killed the page on import.** `stitchkit/observability`,
+  `/server`, `/cli`, `/tools/invoker`, `/agent-runtime` and `/files` each
+  evaluated a Node construction at module scope — `new AsyncLocalStorage()` and
+  `constants.O_NOFOLLOW` — which a browser bundler turns into a throw during
+  initialisation. Both are now built on first use. They remain server
+  entrypoints; they simply no longer take the whole application down with them
+  when something pulls one into a client graph.
+
+- **`stitchkit/remote` is documented "browser and server" and is now built that
+  way.** It sat in the server lane, so nothing checked the promise; it happened
+  to be clean.
+
+### Added
+
+- **`stitchkit/application` is browser-safe**, and gated as such.
+- **A keyspace backend may be a factory** — `backend: () => KeyspaceBackend` —
+  called once per generation, so a restarted keyspace gets a backend that was
+  never closed. A plain value still works where `close()` then `load()` is fine,
+  which is what `memoryKeyspaceBackend` does.
+- **`restart({ gracePeriodMs, forceTimeoutMs })`** to bound one restart
+  differently from the process.
+
+### Changed
+
+- **The browser gate now executes what it checks.** `check-browser-executes.mjs`
+  bundles every promised entry for the browser and runs it, because the static
+  scan is a proxy and proxies miss things: all six page-killers above passed
+  every check the package had. It also catches the bare spelling of a built-in
+  (`from 'fs'`) and follows dynamic relative imports, neither of which the
+  regex saw.
+- **The gate's derived entry list is now checked against the build lane token by
+  token.** It asked "did I read *anything*", which is the same silently
+  narrowing filter the derivation exists to prevent: one entry written
+  `./src/x.ts` dropped out of the list while the guard stayed happy, and was
+  then scanned by nothing.
+
+
 ## [0.77.0] — 2026-09-03
 
 ### ⚠️ Breaking changes

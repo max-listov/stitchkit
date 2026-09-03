@@ -40,6 +40,50 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.78.0
+
+Two mechanical edits. Find them both:
+
+```bash
+rg -n "createDecisionPipeline|createDiagnosticJournal" --glob '*.ts' --glob '*.tsx'
+```
+
+**1. `createDecisionPipeline` takes a deadline.**
+
+```ts
+// before
+createDecisionPipeline([policyA, policyB])
+// after
+createDecisionPipeline([policyA, policyB], { policyTimeoutMs: 2_000 })
+```
+
+Pick a number your slowest policy comfortably beats. There is no default on
+purpose: a policy that never settles hangs every caller of the operation it
+guards, and the framework has no basis for choosing that number for you.
+
+Past the deadline — and on a throw, and on a non-decision — the pipeline raises
+`DecisionPolicyError` naming the policy, with the trace so far. If you already
+catch that for a bad return value, you now catch two more cases with it.
+
+**2. `createDiagnosticJournal` moved.**
+
+```ts
+// before
+import { createDiagnosticJournal } from 'stitchkit/application'
+// after
+import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal'
+```
+
+Only the factory moved. `DiagnosticJournalConfig`, every
+`DiagnosticJournal*Schema` and `readDiagnosticJournalLockDiagnosis` stay where
+they were.
+
+**If you restart resources**, nothing to change — but three things that did not
+work now do: a managed schedule can be restarted, a restarted keyspace accepts
+writes again, and a restarted managed server is actually shut down at exit. If
+you pass `managedServerResource` a server *instance*, a restart is now refused
+by name; pass a factory (`server: (context) => …`) to restart it.
+
 ## Released migration: 0.77.0
 
 Two type renames, and only if you named them. Nothing runtime moved.

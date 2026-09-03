@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDiagnosticJournal } from 'stitchkit/application';
+import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal';
 import { z } from 'zod';
 
 const directory = await mkdtemp(join(tmpdir(), 'stitchkit-packed-journal-'));

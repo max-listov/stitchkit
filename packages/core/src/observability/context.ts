@@ -50,26 +50,41 @@ export interface RequestContext {
   error?: { code?: string; message?: string; details?: unknown };
 }
 
-const storage = new AsyncLocalStorage<RequestContext>();
+/**
+ * Built on first use, not while the module loads.
+ *
+ * `new AsyncLocalStorage()` at module scope is evaluated by the mere act of
+ * importing this file. A browser bundler substitutes a stub for
+ * `node:async_hooks`, so the constructor is `undefined` and the page dies during
+ * initialisation — `AsyncLocalStorage is not a constructor` — for every entry
+ * that reaches this module, on every route, whether or not a request context is
+ * ever used. Deferring it costs one branch and turns a page-killer into a
+ * function that is simply never called in a browser.
+ */
+let storage: AsyncLocalStorage<RequestContext> | undefined;
+const requestStorage = (): AsyncLocalStorage<RequestContext> => {
+  storage ??= new AsyncLocalStorage<RequestContext>();
+  return storage;
+};
 
 /** Run `fn` with `ctx` as the active request context. */
 export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {
-  return storage.run(ctx, fn);
+  return requestStorage().run(ctx, fn);
 }
 
 /** The active request context, or `undefined` outside any request. */
 export function getRequestContext(): RequestContext | undefined {
-  return storage.getStore();
+  return requestStorage().getStore();
 }
 
 /** The active trace id — the one id to stamp on every log line. */
 export function getTraceId(): string | undefined {
-  return storage.getStore()?.trace.traceId;
+  return requestStorage().getStore()?.trace.traceId;
 }
 
 /** The active user id, once auth has resolved it. */
 export function getUserId(): string | undefined {
-  return storage.getStore()?.userId;
+  return requestStorage().getStore()?.userId;
 }
 
 /**
@@ -78,7 +93,7 @@ export function getUserId(): string | undefined {
  * from the auth hook.
  */
 export function setRequestUser(userId: string): void {
-  const ctx = storage.getStore();
+  const ctx = requestStorage().getStore();
   if (ctx) ctx.userId = userId;
 }
 
@@ -90,7 +105,7 @@ export function setRequestUser(userId: string): void {
  * request context. → ADR 0022.
  */
 export function setRequestEndpoint(serviceName: string, action: string): void {
-  const ctx = storage.getStore();
+  const ctx = requestStorage().getStore();
   if (ctx) {
     ctx.serviceName = serviceName;
     ctx.action = action;
@@ -106,7 +121,7 @@ export function setRequestEndpoint(serviceName: string, action: string): void {
  * across calls; no-op outside a request context.
  */
 export function setRequestDimensions(dimensions: Record<string, string>): void {
-  const ctx = storage.getStore();
+  const ctx = requestStorage().getStore();
   if (ctx) ctx.dimensions = { ...ctx.dimensions, ...dimensions };
 }
 
@@ -123,7 +138,7 @@ export function setRequestError(error: {
   message?: string;
   details?: unknown;
 }): void {
-  const ctx = storage.getStore();
+  const ctx = requestStorage().getStore();
   if (ctx) ctx.error = error;
 }
 

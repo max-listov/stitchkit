@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { createDiagnosticJournal, type DiagnosticJournal } from 'stitchkit/application';
+import type { DiagnosticJournal } from 'stitchkit/application';
+import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal';
 import { z } from 'zod';
 import type { AgentTuiDiagnostics } from './config';
 import { listAgentTuiSessions } from './session';

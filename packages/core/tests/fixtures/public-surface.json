@@ -1466,6 +1466,7 @@
     "CreditWindowSnapshot",
     "CreditWindowSnapshotSchema",
     "DecisionPipeline",
+    "DecisionPipelineConfig",
     "DecisionPolicy",
     "DecisionPolicyError",
     "DecisionResult",
@@ -1549,7 +1550,6 @@
     "createBoundedChannel",
     "createCreditWindow",
     "createDecisionPipeline",
-    "createDiagnosticJournal",
     "createManagedSchedule",
     "createWatchHub",
     "defineKeyspace",
@@ -1603,6 +1603,7 @@
     "ManagedResourceStateSchema",
     "projectApplicationStatus"
   ],
+  "stitchkit/application/diagnostic-journal": ["createDiagnosticJournal"],
   "stitchkit/testing": [
     "AgentRaceBarrier",
     "AgentRaceDriver",

@@ -111,7 +111,17 @@ export interface KeyspaceChange<TValue> {
 }
 
 export interface KeyspaceResourceConfig<TValue> {
-  readonly backend: KeyspaceBackend;
+  /**
+   * Where records are durable.
+   *
+   * A factory is called once per generation, so a keyspace that is restarted
+   * gets a backend that was never closed. Pass a value when the backend
+   * tolerates `close()` followed by `load()` — `memoryKeyspaceBackend` does —
+   * and a factory when it does not, which is every backend holding a real
+   * handle. A value backend that cannot re-open fails the restart loudly, in
+   * `load`, rather than coming back as a keyspace that refuses every write.
+   */
+  readonly backend: KeyspaceBackend | (() => KeyspaceBackend);
   /**
    * Called after a change is durable **and** visible in memory.
    *
@@ -202,7 +212,7 @@ export function keyspaceResource<TValue>(
     id: config.id ?? `keyspace:${declaration.name}`,
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     async start(_context: ManagedResourceContext) {
-      await machine.load();
+      await machine.open();
       return { value: machine.keyspace };
     },
     stopAdmission: machine.stopAdmission,
@@ -220,6 +230,19 @@ function keyspaceMachine<TValue>(
   const maxPending = config.maxPendingWrites ?? 1024;
   const records = new Map<string, TValue>();
   let admitting = true;
+  /**
+   * The backend this generation is reading and writing — built on demand.
+   *
+   * Lazily, because building it at construction AND at `open()` called a
+   * factory twice for the first generation and dropped one of the two on the
+   * floor. With `memoryKeyspaceBackend` that is invisible; with anything
+   * holding a file, a socket or a database handle it is a leak on every start.
+   */
+  let backend: KeyspaceBackend | undefined;
+  const currentBackend = (): KeyspaceBackend => {
+    backend ??= typeof config.backend === 'function' ? config.backend() : config.backend;
+    return backend;
+  };
   let pending = 0;
   // One chain per keyspace: two writes to one key must reach the backend in the
   // order they were accepted, and the change events must follow that same order.
@@ -265,7 +288,7 @@ function keyspaceMachine<TValue>(
       const parsed = declaration.schema.parse(value);
       const key = declaration.key(parsed);
       return run(async () => {
-        await config.backend.put(key, parsed);
+        await currentBackend().put(key, parsed);
         records.set(key, parsed);
         config.onChanged?.({
           keyspace: declaration.name,
@@ -277,7 +300,7 @@ function keyspaceMachine<TValue>(
     },
     delete(key) {
       return run(async () => {
-        await config.backend.delete(key);
+        await currentBackend().delete(key);
         records.delete(key);
         config.onChanged?.({ keyspace: declaration.name, key, change: 'delete' });
       });
@@ -292,7 +315,7 @@ function keyspaceMachine<TValue>(
   return {
     keyspace,
     async load() {
-      for (const stored of await config.backend.load()) {
+      for (const stored of await currentBackend().load()) {
         // A stored record that no longer satisfies the schema is a real event —
         // a shape changed under a live store — and it stops the start rather
         // than being skipped. A keyspace silently missing records is the failure
@@ -302,6 +325,28 @@ function keyspaceMachine<TValue>(
         records.set(declaration.key(value), value);
       }
     },
+    /**
+     * Begin a generation: a fresh backend if one is constructible, an empty map,
+     * an open door, then load.
+     *
+     * Called by `start`, which the kernel may call again after a restart has
+     * closed this resource. Without the reset the resource came back `ready` and
+     * `healthy` with `admitting` still false and the previous generation's
+     * records still in memory — every write rejected with "is shutting down",
+     * and nothing anywhere saying so. A loud failure would have been better than
+     * that; a working keyspace is better than both.
+     */
+    async open() {
+      // Dropped rather than rebuilt in place: a factory then yields a fresh
+      // backend for this generation, and a plain value yields the same object,
+      // which is exactly the difference the two forms are for.
+      backend = undefined;
+      records.clear();
+      chain = Promise.resolve();
+      pending = 0;
+      admitting = true;
+      await this.load();
+    },
     stopAdmission() {
       admitting = false;
     },
@@ -310,7 +355,7 @@ function keyspaceMachine<TValue>(
     },
     async close() {
       reportUnwritten();
-      await config.backend.close?.();
+      await backend?.close?.();
     },
     force() {
       reportUnwritten();

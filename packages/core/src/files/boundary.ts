@@ -12,7 +12,16 @@ import { isWithinDir } from '../internal/within-dir';
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_INSPECTION_BYTES = 64 * 1024;
 const DEFAULT_INSPECTION_TIMEOUT_MS = 15_000;
-const NOFOLLOW_FLAG = constants.O_NOFOLLOW ?? 0;
+/**
+ * Read on first use. `?? 0` defends against a platform without the constant —
+ * it does not defend against `constants` itself being a bundler stub, where the
+ * property read throws while the module initialises and takes the page with it.
+ */
+let nofollowFlag: number | undefined;
+const noFollow = (): number => {
+  nofollowFlag ??= constants.O_NOFOLLOW ?? 0;
+  return nofollowFlag;
+};
 const ManagedFileInspectionSchema = ManagedFileRefSchema.pick({
   mediaType: true,
   name: true,
@@ -426,7 +435,7 @@ export async function createManagedFileBoundary(
       const maxBytes = positiveLimit(options.maxBytes, maxReadBytes, 'maxBytes');
       let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        handle = await open(realTarget, constants.O_RDONLY | NOFOLLOW_FLAG);
+        handle = await open(realTarget, constants.O_RDONLY | noFollow());
         const info = await handle.stat();
         if (!info.isFile()) {
           throw new ManagedFileError('FILE_NOT_REGULAR', 'managed path is not a regular file');
@@ -468,7 +477,7 @@ export async function createManagedFileBoundary(
       try {
         handle = await open(
           temporary,
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW_FLAG,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow(),
           0o600,
         );
         const written = await writeSource(

@@ -73,6 +73,7 @@ export {
 export {
   createDecisionPipeline,
   type DecisionPipeline,
+  type DecisionPipelineConfig,
   type DecisionPolicy,
   DecisionPolicyError,
   type DecisionResult,
@@ -81,7 +82,6 @@ export {
   type PolicyDecision,
   PolicyDecisionSchema,
 } from './application/decisions';
-export { createDiagnosticJournal } from './application/diagnostic-journal';
 export {
   type DiagnosticJournal,
   type DiagnosticJournalCloseResult,

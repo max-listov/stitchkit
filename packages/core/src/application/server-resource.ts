@@ -162,6 +162,26 @@ export function managedServerResource<TRuntime>(
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     ...(config.required !== undefined && { required: config.required }),
     async start(context) {
+      // A generation begins here, so the previous one's shutdown is forgotten.
+      //
+      // `shutdownPromise` is memoised so that `stopAdmission`, `drain` and
+      // `close` are one shutdown rather than three. Carried across a restart
+      // that memo is a lie about the NEW server: `drain` awaits a promise that
+      // settled for a server which is already gone, and `close` returns it
+      // without ever asking this one to stop — so the restarted server outlives
+      // the application that owns it, holding its port.
+      //
+      // A handle (rather than a thunk) is worse still: `resolveServer` returns
+      // the same already-shut-down object, and the kernel republishes it to
+      // dependants. That is precisely the dead handle a subtree restart exists
+      // to prevent, so it is refused here by name instead of being served.
+      if (startAttempted && typeof config.server !== 'function') {
+        throw new Error(
+          `[stitchkit] managed server "${config.id}" cannot be restarted: it was given a server instance, and that one has been shut down. Pass a factory — \`server: (context) => …\` — so each generation gets its own.`,
+        );
+      }
+      shutdownPromise = undefined;
+      started = undefined;
       // The application owns when the server exists; the server keeps owning its
       // own HTTP/WebSocket lifecycle once it does.
       startAttempted = true;

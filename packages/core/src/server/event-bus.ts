@@ -1,3 +1,4 @@
+import { withDeadline } from '../internal/deadline';
 import type { PolicyDecision, UndecidedOutcome } from '../internal/decision';
 import type { EventTopicDeclaration } from '../live/events';
 
@@ -97,31 +98,6 @@ function isDecision(value: unknown): value is PolicyDecision {
   const outcome = Reflect.get(value, 'outcome');
   if (outcome === 'allow' || outcome === 'defer') return true;
   return outcome === 'deny' && typeof Reflect.get(value, 'reason') === 'string';
-}
-
-/**
- * Resolve to `timeout` if the listener has not settled in time.
- *
- * The timer is always cleared: a bus dispatch must not be the reason a process
- * stays alive, and an uncleared timer on every announcement is exactly that.
- */
-async function withDeadline(
-  value: unknown,
-  timeoutMs: number,
-): Promise<{ settled: true; value: unknown } | { settled: false }> {
-  if (!(value instanceof Promise)) return { settled: true, value };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<{ settled: false }>((resolve) => {
-    timer = setTimeout(() => resolve({ settled: false }), timeoutMs);
-  });
-  try {
-    return await Promise.race([
-      value.then((settledValue) => ({ settled: true as const, value: settledValue })),
-      expiry,
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
 }
 
 export function createEventBus<M extends Record<string, unknown> = DefaultEventMap>(

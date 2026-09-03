@@ -287,7 +287,9 @@ export const OPTIONAL_PEER_MATRIX = [
     subpath: './application',
     fixture: 'minimal',
     installedPeers: FIXTURE_PEERS.minimal,
-    target: 'bun',
+    // Browser now: the diagnostic journal was the single import that made this
+    // barrel unusable in a client bundle, and it has its own entry.
+    target: 'browser',
     source: featureSource('stitchkit/application', 'createApplication'),
     runtimePeers: [],
     declarationPeers: [],
@@ -321,6 +323,22 @@ export const OPTIONAL_PEER_MATRIX = [
     ),
     runtimePeers: [],
     declarationPeers: ['@opentelemetry/api'],
+    execute: true,
+  },
+  {
+    id: 'application-diagnostic-journal',
+    subpath: './application/diagnostic-journal',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    // Node, deliberately: this entry exists BECAUSE it reaches the machine, and
+    // isolating it is what lets everything else in the barrel reach a browser.
+    target: 'node',
+    source: featureSource(
+      'stitchkit/application/diagnostic-journal',
+      'createDiagnosticJournal',
+    ),
+    runtimePeers: [],
+    declarationPeers: [],
     execute: true,
   },
   {
