@@ -891,3 +891,38 @@ describe('async operation protocol', () => {
     ).toEqual({ id: 'one' });
   });
 });
+
+describe('createAsyncOperationSnapshotSchema without progress', () => {
+  // The overload nothing called. Every caller in this repository, in the guide
+  // and in the examples configures `progress`, so the shape produced when it is
+  // absent was only ever emitted into the declaration — where it was a union
+  // zod's shape constraint rejects, and five `TS2344` errors any consumer with
+  // `skipLibCheck: false` had to read. Overloads fixed the type; these keep the
+  // runtime the fix promised not to move.
+  const schema = createAsyncOperationSnapshotSchema({
+    failure: z.object({ code: z.string() }),
+  });
+
+  test('parses every phase', () => {
+    for (const phase of ['pending', 'running', 'succeeded', 'cancelled'] as const) {
+      expect(schema.parse({ phase })).toEqual({ phase });
+    }
+    expect(schema.parse({ phase: 'failed', failure: { code: 'boom' } })).toEqual({
+      phase: 'failed',
+      failure: { code: 'boom' },
+    });
+  });
+
+  test('strips an unconfigured progress rather than refusing it', () => {
+    // The reason this is overloads and not a normalised `z.never().optional()`
+    // key: that would have turned this line into a parse error.
+    expect(schema.parse({ phase: 'running', progress: { done: 1 } })).toEqual({
+      phase: 'running',
+    });
+  });
+
+  test('still refuses an unknown phase and a missing failure', () => {
+    expect(schema.safeParse({ phase: 'elsewhere' }).success).toBe(false);
+    expect(schema.safeParse({ phase: 'failed' }).success).toBe(false);
+  });
+});

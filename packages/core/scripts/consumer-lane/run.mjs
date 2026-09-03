@@ -215,6 +215,33 @@ try {
         `[consumer-lane] nodenext: packed HTTP-only declarations are not clean\n${libCheck}`,
       );
     }
+    // Everything else the compiler said about our own declarations is a defect,
+    // and until 0.80.0 this loop threw all of it away: it recognised exactly one
+    // error class — an unresolved reference — and every other diagnostic in a
+    // packed `.d.ts` fell out of the lane silently. `TS2344` did, five times, in
+    // `tools/async-operation-contract.d.ts`, for two releases: the check that
+    // would have named it ran on every fixture, printed the errors, and the
+    // parser did not know how to see them. A filter that quietly narrows what it
+    // is looking at reports the same clean result as a real pass.
+    //
+    // So the shape is inverted. An unresolved reference is *subtracted* — the
+    // judgement lives in ACCEPTED_UNRESOLVED below — and whatever is left fails
+    // the lane rather than being ignored for not matching a pattern.
+    const unexpectedDiagnostics = libCheck
+      .split('\n')
+      .filter(
+        (line) =>
+          line.includes('node_modules/stitchkit/') &&
+          /error TS\d+:/.test(line) &&
+          !/Cannot find (?:module|namespace|name) '/.test(line),
+      );
+    if (unexpectedDiagnostics.length > 0) {
+      failed = true;
+      console.error(
+        `[consumer-lane] ${name}: packed declarations do not typecheck strictly (${unexpectedDiagnostics.length})\n${unexpectedDiagnostics.join('\n')}`,
+      );
+    }
+
     const fixtureUnresolved = new Set();
     for (const line of libCheck.split('\n')) {
       if (!line.includes('node_modules/stitchkit/')) continue;
@@ -294,6 +321,16 @@ try {
         console.error(
           '[consumer-lane] minimal: bounded primitives produced no proof',
           boundedOutput,
+        );
+      }
+      const toolsContractOutput = step('minimal: peer-free tools contract', () =>
+        run('bun', ['src/tools-contract-conformance.ts'], dir),
+      );
+      if (!toolsContractOutput.includes('tools contract conformance: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: tools contract conformance produced no proof',
+          toolsContractOutput,
         );
       }
       for (const runtime of ['bun', 'node']) {

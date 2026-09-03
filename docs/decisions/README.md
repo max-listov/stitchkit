@@ -186,6 +186,7 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0158](0158-a-gate-that-does-not-run-the-code-is-a-proxy.md) | A gate that does not run the code is measuring a proxy | Accepted — every promised browser entry is bundled and executed, after six of them killed the page while passing every static check |
 | [0159](0159-a-replacement-says-so-and-a-teardown-is-announced.md) | A replacement says so, and a teardown is announced | Accepted — the snapshot names the subtree being replaced, and a closing watch hub tells its subscribers instead of dropping them |
 | [0160](0160-one-declaration-of-which-entrypoints-a-browser-may-import.md) | One declaration of which entrypoints a browser may import | Accepted — one manifest, one build pass, and the guide and consumer lane asserted against it |
+| [0161](0161-a-gate-that-knows-one-error-is-blind-to-the-rest.md) | A gate that recognises one error is blind to every other | Accepted — the consumer lane's declaration check subtracts what is accepted and fails on the rest, after printing five `TS2344` errors for two releases and discarding them |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

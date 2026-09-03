@@ -40,6 +40,52 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.80.0
+
+One thing, and only if you parse an async-operation snapshot.
+
+```bash
+rg -n "createAsyncOperationSnapshotSchema"
+```
+
+`progress` on a parsed snapshot used to be `unknown`. The factory built its
+object shapes with a conditional spread, and the narrowing inside it widened
+your schema back to a bare `ZodType`, so the emitted declaration threw the type
+argument away. It is now the output of the schema you configured.
+
+```ts
+const schema = createAsyncOperationSnapshotSchema({
+  progress: z.object({ done: z.number(), total: z.number() }),
+  failure: z.object({ code: z.string() }),
+})
+const snap = schema.parse(body)
+if (snap.phase === 'running') {
+  // before: `snap.progress` was `unknown` — this needed a cast or a narrow
+  // after:  it is `{ done: number; total: number } | undefined`
+  console.log(snap.progress?.done)
+}
+```
+
+**If you cast it**, delete the cast — it was working around the erased type.
+**If you assigned something else to it**, the compiler now refuses, and it was
+already a value the schema rejected at run time.
+
+**If you pass explicit type arguments**, the no-progress form takes one now, not
+two: the factory is two overloads. Pass none.
+
+```ts
+// before: createAsyncOperationSnapshotSchema<undefined, typeof Failure>({ failure: Failure })
+// after:  createAsyncOperationSnapshotSchema({ failure: Failure })
+```
+
+Nothing about parsing moves. A snapshot configured without `progress` still
+strips an unexpected `progress` rather than refusing it — that behaviour is why
+this is overloads and not one normalised key.
+
+**If you compile with `skipLibCheck: false`**, this is also the release that
+makes `stitchkit/tools/contract` compile at all: it carried five `TS2344`
+errors, one per phase, from the same conditional spread.
+
 ## Released migration: 0.79.0
 
 One thing, and only if you assert on the whole snapshot.

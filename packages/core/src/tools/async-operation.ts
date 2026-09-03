@@ -8,6 +8,8 @@ export {
   type AsyncOperationCancelResult,
   AsyncOperationCancelResultSchema,
   type AsyncOperationCapability,
+  type AsyncOperationSnapshotSchema,
+  type AsyncOperationSnapshotSchemaWithProgress,
   createAsyncOperationSnapshotSchema,
 } from './async-operation-contract';
 

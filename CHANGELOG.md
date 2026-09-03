@@ -15,6 +15,101 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.80.0] — 2026-09-03
+
+One defect, found by reading 0.79.0 back against the promise of the entrypoint
+it shipped — and the reason no gate had said so.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who reads `progress` off a snapshot parsed by
+`createAsyncOperationSnapshotSchema`, and anyone who passes it explicit type
+arguments.
+
+- **The snapshot's `progress` is now typed instead of `unknown`.** The factory
+  built its object shapes with a conditional spread, and the narrowing inside it
+  widened the configured schema back to a bare `ZodType` — so the emitted
+  declaration erased the type argument, and `z.output<typeof schema>['progress']`
+  was `unknown` in every published copy. It is now the output of the schema you
+  configured.
+
+  ```ts
+  const schema = createAsyncOperationSnapshotSchema({
+    progress: z.object({ done: z.number() }),
+    failure: z.object({ code: z.string() }),
+  })
+  type Snap = z.output<typeof schema>
+
+  // before: compiled — `progress` was `unknown`
+  // after:  Type 'string' is not assignable to type '{ done: number; }'
+  const s: Snap = { phase: 'running', progress: 'anything at all' }
+  ```
+
+  A reader that narrowed or cast `progress` before is unaffected and can now
+  drop the cast. A writer that put something else there was writing a value the
+  schema rejects at run time; the compiler says so now.
+
+- **`createAsyncOperationSnapshotSchema<undefined, TFailure>(…)` no longer
+  compiles.** The factory is two overloads, so the no-progress form takes one
+  type argument rather than two. Pass none and let the overload be chosen, as
+  every call in this repository and in the guide already does.
+
+  ```ts
+  // before: createAsyncOperationSnapshotSchema<undefined, typeof Failure>({ failure: Failure })
+  // after:  createAsyncOperationSnapshotSchema({ failure: Failure })
+  ```
+
+### Fixed
+
+- **`createAsyncOperationSnapshotSchema` now produces a declaration a strict
+  consumer can compile.** It built its object shapes with a conditional spread,
+  which TypeScript infers as a *union* of "has `progress`" and
+  "has `progress?: undefined`" — and zod constrains a shape to
+  `Record<string, $ZodType>`, which the second half does not satisfy. Checking
+  source never showed it; writing a declaration did, five times, once per phase.
+  A consumer with `skipLibCheck: false` compiling against
+  `stitchkit/tools/contract` read five `TS2344` errors, in the one entrypoint
+  that exists specifically for consumers. Present since 0.78.0.
+
+  It is two overloads now, each returning a written-out union, and the
+  conditional spread stays in the implementation where it is a value and
+  correct. The runtime is unchanged on purpose: normalising the absent key to
+  `z.never().optional()` would have made one uniform shape and turned a snapshot
+  that *strips* an unexpected `progress` into one that rejects it.
+
+  ```ts
+  // before: 5 × error TS2344 in dist/tools/async-operation-contract.d.ts
+  // after:
+  const snapshot = createAsyncOperationSnapshotSchema({ failure: Failure })
+  //    → AsyncOperationSnapshotSchema<typeof Failure>
+  const withProgress = createAsyncOperationSnapshotSchema({ progress: Progress, failure: Failure })
+  //    → AsyncOperationSnapshotSchemaWithProgress<typeof Progress, typeof Failure>
+  ```
+
+- **The consumer lane no longer discards a diagnostic it does not recognise.**
+  It ran `tsc --skipLibCheck false` against the packed tarball for every fixture
+  the whole time, and had been printing those five errors for two releases: its
+  parser matched `Cannot find module|namespace|name` and dropped every other
+  line, so a run with five defects in it printed exactly what a clean run
+  printed. The filter is inverted — an accepted unresolved peer is subtracted,
+  and whatever remains fails the lane. → ADR 0161
+
+- **`stitchkit/tools/contract` is now checked by a consumer that installs no
+  optional peer.** Those five errors surfaced in the fixture that installs
+  *every* peer, and only because it imports `stitchkit/tools`, whose declaration
+  re-exports the contract module. No fixture named the entry, so
+  `dist/tools-contract.d.ts` itself was never in any program and the coverage
+  would have disappeared the day that unrelated import moved. The peer-free
+  fixture now imports it by name, names both return types and runs the parses.
+
+### Added
+
+- **`AsyncOperationSnapshotSchema`** and
+  **`AsyncOperationSnapshotSchemaWithProgress`** — the two return types of
+  `createAsyncOperationSnapshotSchema`, now nameable by a consumer that stores
+  or passes one. Exported from `stitchkit/tools/contract` and `stitchkit/tools`.
+
+
 ## [0.79.0] — 2026-09-03
 
 Four things 0.78.0 left named but not done, and one defect found while doing them.

@@ -27,6 +27,8 @@ export {
   type AsyncOperationCancelResult,
   AsyncOperationCancelResultSchema,
   type AsyncOperationCapability,
+  type AsyncOperationSnapshotSchema,
+  type AsyncOperationSnapshotSchemaWithProgress,
   createAsyncOperationSnapshotSchema,
 } from './tools/async-operation-contract';
 export { coerceJsonArgs } from './tools/coerce';

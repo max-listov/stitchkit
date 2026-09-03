@@ -1385,6 +1385,8 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `defineAsyncOperationContract` | function | define one canonical Zod-first HTTP contract for start/status/wait plus optional capabilities; execution and recovery remain application-owned |
 | `bindContractAsyncOperation` | function | bind literal methods from an existing contract without creating another HTTP surface |
 | `createAsyncOperationSnapshotSchema` | function | canonical pending/running/succeeded/failed/cancelled Zod snapshot |
+| `AsyncOperationSnapshotSchema` | _type_ | the snapshot union `createAsyncOperationSnapshotSchema` returns when no `progress` schema is configured |
+| `AsyncOperationSnapshotSchemaWithProgress` | _type_ | the same union with the configured `progress` schema optional on every phase |
 | `AsyncOperationCancelResultSchema` | constant | validated accepted/already_terminal/rejected cancellation result |
 | `AsyncOperationCancelResult` | _type_ | validated cancel capability result |
 | `AsyncOperationCancelCapability` | _type_ | optional typed domain cancellation callback |
