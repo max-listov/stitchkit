@@ -21,6 +21,7 @@
  * → ADR 0150.
  */
 import { z } from 'zod';
+import type { UndecidedOutcome } from '../internal/decision';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 
 /**
@@ -40,20 +41,17 @@ import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contra
 export type EventDeliveryMode = 'emit' | 'serial' | 'decision';
 
 /**
- * One listener's vote on a `decision` topic.
+ * One listener's vote on a `decision` topic — the framework's one decision
+ * vocabulary, shared with the policy pipeline in `stitchkit/application`.
  *
  * `defer` is a real answer — "not my call" — and it is distinct from `allow` on
  * purpose: an event where every listener defers is one nobody claimed, and what
  * should happen then is a policy the topic has to state rather than a default
- * somebody guesses. See `whenAllDefer`.
+ * somebody guesses. See `whenAllDefer`. (A policy pipeline treats that ending
+ * as a defect instead, because an operation nothing decided cannot be answered
+ * either way; same words, different mechanisms, and each says which it is.)
  */
-export type EventDecision =
-  | { readonly outcome: 'allow' }
-  | { readonly outcome: 'deny'; readonly reason: string }
-  | { readonly outcome: 'defer' };
-
-/** What a `decision` topic concludes when every listener deferred, or there were none. */
-export type EventUndecided = 'allow' | 'deny';
+export type { PolicyDecision, UndecidedOutcome } from '../internal/decision';
 
 export interface EventTopicDeclaration<TSchema extends z.ZodType = z.ZodType> {
   /** The payload schema. One payload per topic — a topic is not a function call. */
@@ -67,7 +65,7 @@ export interface EventTopicDeclaration<TSchema extends z.ZodType = z.ZodType> {
    * every topic whose author never thought about it. Both are decisions; a
    * default makes them silently.
    */
-  readonly whenAllDefer?: EventUndecided;
+  readonly whenAllDefer?: UndecidedOutcome;
   /**
    * How long one listener may take on a `serial` or `decision` topic before the
    * dispatcher stops waiting for it, in milliseconds.

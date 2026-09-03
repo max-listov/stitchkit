@@ -34,7 +34,10 @@ generations; it is neither canonical application state nor a durable log.
 
 ## Application state
 
-`createApplication` creates one non-restartable state machine.
+`createApplication` creates one state machine that cannot be restarted as a
+whole: once it reaches `failed` or `stopped` it is finished, and a new
+application is constructed instead. Individual resources are a different
+question — see [resource subtree restart](#resource-subtree-restart).
 
 | Current | Action | Next | Required effect |
 |---|---|---|---|
@@ -52,6 +55,8 @@ generations; it is neither canonical application state nor a durable log.
 | `stopping` | cleanup completes | `stopped` | retain complete cleanup truth in the result |
 | `stopping` | cleanup remains incomplete | `failed` | retain every phase failure in the result |
 | `failed` or `stopped` | `start()` | unchanged | reject; construct a new application instead |
+| `ready` | `restart({ resourceId })` | `ready` | replace that resource and its transitive dependants; the rest of the graph and the epoch are untouched |
+| any other lifecycle | `restart({ resourceId })` | unchanged | refuse with a reason; no resource is touched |
 
 Concurrent `start()` calls observe one start chain. Concurrent `shutdown()`
 calls observe one shutdown chain. Shutdown wins a race with startup: no later
@@ -69,6 +74,48 @@ Health is derived separately:
 
 Required resources cannot depend on optional resources. A failed dependency
 blocks its dependants even when the failed dependency itself is optional.
+
+### Resource subtree restart
+
+`restart({ resourceId })` is the one operation that replaces part of a running
+graph. The affected set is the named resource plus every resource that
+transitively depends on it, computed from the already-resolved topological order.
+
+| Phase | Order | Effect |
+|---|---|---|
+| close | reverse dependency order | `stopAdmission` → `drain` → `close` on each attempted, unclosed resource |
+| erase | — | the generation's record returns to *registered, never started*, and its published value is removed from the graph |
+| start | dependency order | the same `startEach` a full startup runs |
+| activate | dependency order | the same `activateEach` a full startup runs |
+
+Three properties are load-bearing.
+
+**The dependants go down with it.** A dependant holds what the resource
+published; leaving it running leaves it holding a closed generation, which fails
+at the first call rather than at the restart.
+
+**The published value is erased, not overwritten.** When the new generation
+publishes a value the `set` covers it; when it publishes nothing — a resource
+that publishes conditionally, or one whose restart failed — nothing covers it,
+and a dependant would otherwise `use()` a closed resource. Erasing means it is
+refused instead.
+
+**The record goes back to registered, not closed.** Left marked closed, the
+resource comes back up and is then skipped on the way down: a live generation the
+shutdown believes it has already dealt with. `failures` and `everHealthy` do
+survive — they are the process's history, and the shutdown report is where a
+failure that was later restarted away is still visible.
+
+Restarts are serialised against each other and refused during shutdown, before
+readiness, and for an unknown id. Two live generations of one resource is the
+outcome this exists to make impossible; a refusal touches nothing and is not a
+failure. A failed restart leaves the old generation closed and the new one
+absent, which is what the snapshot then reports; the failed attempt is still
+closed on the way down, the same treatment a startup failure gets.
+
+The process `epoch` does not move: the process did not restart.
+
+→ [ADR 0154](../decisions/0154-the-unit-of-a-restart-is-the-subtree.md).
 
 ## Resource model
 

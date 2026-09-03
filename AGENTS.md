@@ -211,7 +211,7 @@ packages/core/src/
 Entrypoints: `stitchkit` (browser-safe) · `/live` · `/server` · `/node` · `/tools` ·
 `/cli` · `/react` · `/contract` · `/observability` · `/remote` · `/files` ·
 `/testing` · `/declaration` · `/agent-runtime` (+`/openrouter`) · `/application`
-(+`/grammy`, `/opentelemetry`). `/declaration`, `/live`, `/agent-runtime` and
+(+`/grammy`, `/opentelemetry`, `/schemas`). `/declaration`, `/live`, `/agent-runtime` and
 `/application` are declared **evolving** (→ ADR 0103). The user guide is in
 `docs/guide/`, the full public API in `docs/api/reference.md`. The consumer
 entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by

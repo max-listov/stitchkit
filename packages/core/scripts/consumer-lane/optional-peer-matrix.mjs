@@ -324,6 +324,20 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'application-schemas',
+    subpath: './application/schemas',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    // Browser, deliberately. The schemas are reachable from './application'
+    // too, and a lane that only proved that would prove the wrong half: what
+    // this entry exists for is to be importable where the server runtime is not.
+    target: 'browser',
+    source: featureSource('stitchkit/application/schemas', 'ApplicationSnapshotSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'testing',
     subpath: './testing',
     fixture: 'minimal',

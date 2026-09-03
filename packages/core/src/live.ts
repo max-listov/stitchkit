@@ -14,7 +14,6 @@
  */
 export {
   defineEvents,
-  type EventDecision,
   type EventDeliveryMode,
   type EventPayloads,
   type EventsConfig,
@@ -22,8 +21,9 @@ export {
   type EventTopicDeclaration,
   type EventTopicRegistry,
   type EventTopicsOfMode,
-  type EventUndecided,
+  type PolicyDecision,
   toRealtimeContract,
+  type UndecidedOutcome,
   type WireTopic,
 } from './live/events';
 export {

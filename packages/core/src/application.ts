@@ -70,6 +70,17 @@ export {
   createBoundedChannel,
   createCreditWindow,
 } from './application/channel';
+export {
+  createDecisionPipeline,
+  type DecisionPipeline,
+  type DecisionPolicy,
+  DecisionPolicyError,
+  type DecisionResult,
+  type DecisionTraceEntry,
+  DecisionUndecidedError,
+  type PolicyDecision,
+  PolicyDecisionSchema,
+} from './application/decisions';
 export { createDiagnosticJournal } from './application/diagnostic-journal';
 export {
   type DiagnosticJournal,
@@ -124,6 +135,12 @@ export {
   type ApplicationOperationLease,
   type ApplicationResourceFailure,
   type ApplicationResourcePhase,
+  type ApplicationRestartInput,
+  ApplicationRestartInputSchema,
+  type ApplicationRestartOutcome,
+  ApplicationRestartOutcomeSchema,
+  type ApplicationRestartResult,
+  ApplicationRestartResultSchema,
   type ApplicationShutdownBudget,
   ApplicationShutdownBudgetSchema,
   type ApplicationShutdownOptions,
@@ -182,29 +199,6 @@ export {
   type ManagedScheduleTimer,
 } from './application/schedule';
 export {
-  type ApplicationAdmissionSnapshot,
-  ApplicationAdmissionSnapshotSchema,
-  type ApplicationHealth,
-  ApplicationHealthSchema,
-  type ApplicationId,
-  ApplicationIdSchema,
-  type ApplicationLifecycle,
-  ApplicationLifecycleSchema,
-  type ApplicationResourceShutdown,
-  ApplicationResourceShutdownSchema,
-  type ApplicationShutdownResult,
-  ApplicationShutdownResultSchema,
-  type ApplicationSnapshot,
-  ApplicationSnapshotSchema,
-  type ApplicationStatusProjection,
-  ApplicationStatusProjectionSchema,
-  type ManagedResourceSnapshot,
-  ManagedResourceSnapshotSchema,
-  type ManagedResourceState,
-  ManagedResourceStateSchema,
-  projectApplicationStatus,
-} from './application/schemas';
-export {
   type ManagedServerResource,
   type ManagedServerResourceConfig,
   managedServerResource,
@@ -218,4 +212,5 @@ export {
   type WatchSubscriber,
   watchKey,
 } from './application/watch-hub';
+export * from './application-schemas';
 export type { SqliteDatabase, SqliteStatement, SqliteValue } from './internal/sqlite';

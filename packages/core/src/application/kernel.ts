@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import { AppError } from '../contract/errors';
 import { ShutdownOptionsSchema } from '../server/shutdown';
 import { type ResolvedManagedResource, resolveResourceGraph } from './graph';
@@ -169,6 +169,37 @@ export interface ApplicationAdmission {
   run<T>(work: () => T | Promise<T>): Promise<T>;
 }
 
+export const ApplicationRestartInputSchema = z
+  .object({ resourceId: z.string().min(1) })
+  .strict()
+  .readonly();
+export type ApplicationRestartInput = z.infer<typeof ApplicationRestartInputSchema>;
+
+export const ApplicationRestartOutcomeSchema = z.enum(['restarted', 'failed', 'refused']);
+export type ApplicationRestartOutcome = z.infer<typeof ApplicationRestartOutcomeSchema>;
+
+export const ApplicationRestartResultSchema = z
+  .object({
+    /** The resource that was asked for. */
+    resourceId: z.string(),
+    /**
+     * Everything that was actually taken down and brought back, in start order:
+     * the resource named, and every resource that depends on it transitively.
+     *
+     * A dependant that kept running while the thing under it was replaced would
+     * be holding a handle to a closed generation — which is why the subtree,
+     * and not the resource, is the unit.
+     */
+    affected: z.array(z.string()).readonly(),
+    outcome: ApplicationRestartOutcomeSchema,
+    /** Present on `failed` and `refused` — never on success. */
+    reason: z.string().optional(),
+    durationMs: z.number().int().nonnegative(),
+  })
+  .strict()
+  .readonly();
+export type ApplicationRestartResult = z.infer<typeof ApplicationRestartResultSchema>;
+
 export interface ApplicationHandle {
   readonly id: string;
   readonly admission: ApplicationAdmission;
@@ -176,6 +207,16 @@ export interface ApplicationHandle {
   getSnapshot(): ApplicationSnapshot;
   subscribe(listener: (snapshot: ApplicationSnapshot) => void): () => void;
   shutdown(options?: ApplicationShutdownOptions): Promise<ApplicationShutdownResult>;
+  /**
+   * Replace one resource and everything that depends on it, leaving the rest of
+   * the graph running and the process epoch unchanged.
+   *
+   * Serialised against itself and refused during shutdown: two restarts of
+   * overlapping subtrees, or a restart racing the way down, are the two ways to
+   * end up with two live generations of one resource — which is the failure this
+   * exists to make impossible, not merely unlikely.
+   */
+  restart(input: ApplicationRestartInput): Promise<ApplicationRestartResult>;
 }
 
 /**
@@ -523,185 +564,317 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
     }
   };
 
+  /**
+   * Start these resources, in order.
+   *
+   * Extracted so a subtree restart runs the SAME code as a full startup
+   * rather than a second copy of it. Only two things differ between the two
+   * callers: which resources are being started, and whose abort signal ends
+   * the attempt. Everything a resource can do on the way up — publish a value
+   * before readiness, settle its completion first, report its own health —
+   * is behaviour a restart has to reproduce exactly, and the only way to be
+   * sure it does is for there to be one implementation.
+   */
+  const startEach = async (
+    entries: readonly ResolvedManagedResource[],
+    signal: AbortSignal,
+  ): Promise<void> => {
+    for (const entry of entries) {
+      if (shutdownRequested || signal.aborted) {
+        throw new ApplicationStartupInterruptedError();
+      }
+      const record = records.get(entry.id);
+      if (!record) throw new Error('Managed resource record disappeared');
+      const dependencyFailed = entry.dependsOn.some(
+        (dependencyId) => records.get(dependencyId)?.state !== 'ready',
+      );
+      if (dependencyFailed) {
+        record.state = 'failed';
+        record.health = 'unhealthy';
+        record.failures.push('start');
+        publish();
+        if (entry.required) {
+          throw new Error(
+            `[stitchkit] required resource "${entry.id}" has an unavailable dependency`,
+          );
+        }
+        continue;
+      }
+      record.attempted = true;
+      record.state = 'starting';
+      publish();
+      try {
+        const started = await entry.resource.start(contextFor(record, { signal: signal }));
+        if (shutdownRequested || signal.aborted) {
+          throw new ApplicationStartupInterruptedError();
+        }
+        if (isStartResult(started)) {
+          record.runtime = started;
+          // Published before readiness is awaited: a dependant only runs after
+          // this resource reaches `ready`, and a resource that reports its own
+          // readiness asynchronously still handed the value over here.
+          if (started.value !== undefined) published.set(entry.id, started.value);
+          let resourceReady = started.ready === undefined;
+          let completionSettled = false;
+          let completionFailure: unknown;
+          const completion = started.completion?.then(
+            () => {
+              completionSettled = true;
+              if (resourceReady) markLateCompletion(record);
+            },
+            (error: unknown) => {
+              completionSettled = true;
+              completionFailure = error;
+              if (resourceReady) markLateCompletion(record, { error });
+            },
+          );
+          if (started.ready && completion) {
+            const readiness: Promise<'ready'> = started.ready.then(() => 'ready');
+            const completionBeforeReady: Promise<'completion'> = completion.then(
+              () => 'completion',
+            );
+            const first = await Promise.race([readiness, completionBeforeReady]);
+            if (first === 'completion') {
+              throw new ResourceCompletionBeforeReadyError(entry.id, completionFailure);
+            }
+            resourceReady = true;
+            if (completionSettled) {
+              throw new ResourceCompletionBeforeReadyError(entry.id, completionFailure);
+            }
+          } else if (started.ready) {
+            await started.ready;
+            resourceReady = true;
+          } else if (completion) {
+            void completion;
+          }
+        }
+        if (shutdownRequested || signal.aborted) {
+          throw new ApplicationStartupInterruptedError();
+        }
+        record.state = 'ready';
+        // Only when the resource said nothing. A resource that reported its
+        // own health during `start` has already answered this question, and
+        // the answer is more specific than the default.
+        if (!record.healthReported) {
+          record.health = 'healthy';
+          record.everHealthy = true;
+        }
+        publish();
+      } catch (error) {
+        // A shutdown arriving mid-startup does not make the resource's own
+        // error stop being one. Only the kernel's own interruption is silent
+        // here; anything the resource threw is recorded and reported, and
+        // then re-thrown because the startup is over either way.
+        const interrupted = shutdownRequested || signal.aborted;
+        if (!(error instanceof ApplicationStartupInterruptedError)) {
+          record.failures.push(
+            error instanceof ResourceCompletionBeforeReadyError
+              ? 'completion'
+              : record.runtime?.ready
+                ? 'ready'
+                : 'start',
+          );
+          record.state = 'failed';
+          record.health = 'unhealthy';
+          reportFailure(
+            entry.id,
+            record.failures[record.failures.length - 1] ?? 'start',
+            error,
+          );
+          publish();
+        }
+        if (interrupted || entry.required) throw error;
+      }
+    }
+  };
+
+  /** Activate these resources, in order. Same reasoning as `startEach`. */
+  const activateEach = async (
+    entries: readonly ResolvedManagedResource[],
+    signal: AbortSignal,
+  ): Promise<void> => {
+    for (const entry of entries) {
+      if (shutdownRequested || signal.aborted) {
+        throw new ApplicationStartupInterruptedError();
+      }
+      const record = records.get(entry.id);
+      if (record?.state !== 'ready') continue;
+      const dependencyUnavailable = entry.dependsOn.some((dependencyId) => {
+        const dependency = records.get(dependencyId);
+        return dependency?.state !== 'ready' || !dependency.activated;
+      });
+      if (dependencyUnavailable) {
+        record.failures.push('start');
+        record.state = 'failed';
+        record.health = 'unhealthy';
+        publish();
+        if (entry.required) {
+          throw new Error(
+            `[stitchkit] required resource "${entry.id}" has an unavailable activation dependency`,
+          );
+        }
+        continue;
+      }
+      try {
+        // The check still fires for every required resource that is not ready
+        // and healthy after activating — that is what pushes the phase onto
+        // `failures`, calls `onResourceFailure`, and stops the cascade before
+        // the next resource's `activate` arms a schedule or opens a long
+        // poll. Loosening it to "lost it" alone kept the startup failing (the
+        // final readiness gate still refuses) but reported no phase for it and
+        // let every downstream activation run first.
+        //
+        // Only the WORDING depends on history: this test read "lost
+        // readiness" when becoming ready assigned `healthy` unconditionally,
+        // and a resource that reported `degraded` during `start` would
+        // otherwise be told it lost something it never had.
+        await entry.resource.activate?.(contextFor(record));
+        if (shutdownRequested || signal.aborted) {
+          throw new ApplicationStartupInterruptedError();
+        }
+        record.activated = true;
+        if (entry.required && (record.state !== 'ready' || record.health !== 'healthy')) {
+          const observed = `${record.state}/${record.health}`;
+          throw new Error(
+            record.everHealthy
+              ? `[stitchkit] required resource "${entry.id}" lost readiness during activation (${observed})`
+              : `[stitchkit] required resource "${entry.id}" is not healthy (${observed}). A required resource must be healthy for the application to be ready; a resource that is expected to start degraded belongs behind \`required: false\`.`,
+          );
+        }
+      } catch (error) {
+        // Same rule as the phase above: only the kernel's own interruption is
+        // silent, and a resource that threw while activating is reported.
+        const interrupted = shutdownRequested || signal.aborted;
+        if (!(error instanceof ApplicationStartupInterruptedError)) {
+          record.failures.push('start');
+          record.state = 'failed';
+          record.health = 'unhealthy';
+          reportFailure(entry.id, 'start', error);
+          publish();
+        }
+        if (interrupted || entry.required) throw error;
+      }
+    }
+  };
+
+  /** The resource named, plus every resource that transitively depends on it. */
+  const subtreeOf = (resourceId: string): readonly ResolvedManagedResource[] => {
+    const affected = new Set([resourceId]);
+    // One forward pass is enough because `ordered` is topological: a dependant
+    // always appears after everything it depends on.
+    for (const entry of ordered) {
+      if (entry.dependsOn.some((dependencyId) => affected.has(dependencyId))) {
+        affected.add(entry.id);
+      }
+    }
+    return ordered.filter((entry) => affected.has(entry.id));
+  };
+
+  /** Take one resource down through its own phases, then forget its generation. */
+  const closeOne = async (
+    entry: ResolvedManagedResource,
+    record: ResourceRecord,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const context = () => contextFor(record, { signal });
+    if (record.attempted && !record.closed) {
+      await entry.resource.stopAdmission?.(context());
+      await entry.resource.drain?.(context());
+      record.closeInvoked = true;
+      await entry.resource.close?.(context());
+    }
+    // Every trace of the old generation goes, including the value it published:
+    // a dependant that started again must `use()` the NEW handle, and leaving
+    // the old one behind is how a restart quietly hands back a closed resource.
+    //
+    // `closed` goes back to FALSE rather than staying true, because the record
+    // now describes a registered resource that has not been started — not one
+    // the shutdown has already dealt with. Left true, the resource comes back
+    // up and is then skipped on the way down: a live generation the shutdown
+    // believes it has already closed.
+    record.closed = false;
+    record.closeInvoked = false;
+    record.attempted = false;
+    record.activated = false;
+    record.state = 'registered';
+    record.health = 'unknown';
+    record.healthReported = false;
+    record.runtime = undefined;
+    // `failures` and `everHealthy` deliberately survive: they are the process's
+    // history, not this generation's state, and the shutdown report is the one
+    // place a failure that was later restarted away is still visible.
+    published.delete(entry.id);
+  };
+
+  let restarting: Promise<unknown> = Promise.resolve();
+
+  const runRestart = async (
+    input: ApplicationRestartInput,
+  ): Promise<ApplicationRestartResult> => {
+    const startedAt = Date.now();
+    const parsed = ApplicationRestartInputSchema.parse(input);
+    const affected = subtreeOf(parsed.resourceId);
+    const affectedIds = affected.map((entry) => entry.id);
+    const refuse = (reason: string): ApplicationRestartResult => ({
+      resourceId: parsed.resourceId,
+      affected: affectedIds,
+      outcome: 'refused',
+      reason,
+      durationMs: Date.now() - startedAt,
+    });
+
+    if (!records.has(parsed.resourceId)) {
+      return refuse(`no resource is registered as "${parsed.resourceId}"`);
+    }
+    if (shutdownRequested) {
+      return refuse('the application is shutting down');
+    }
+    if (lifecycle !== 'ready') {
+      return refuse(`the application is ${lifecycle}, not ready`);
+    }
+
+    const restartAbort = new AbortController();
+    try {
+      for (const entry of [...affected].reverse()) {
+        const record = records.get(entry.id);
+        if (record) await closeOne(entry, record, restartAbort.signal);
+      }
+      publish();
+      await startEach(affected, restartAbort.signal);
+      await activateEach(affected, restartAbort.signal);
+      publish();
+      return {
+        resourceId: parsed.resourceId,
+        affected: affectedIds,
+        outcome: 'restarted',
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      // The snapshot already carries what failed and in which phase, because
+      // `startEach` records it the same way a startup does. Nothing is rolled
+      // forward here: the old generation is closed and the new one did not come
+      // up, which is exactly what the snapshot now says.
+      publish();
+      return {
+        resourceId: parsed.resourceId,
+        affected: affectedIds,
+        outcome: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  };
+
   const runStart = async (): Promise<ApplicationSnapshot> => {
     lifecycle = 'starting';
     publish();
     let startFailure: unknown;
     try {
-      for (const entry of ordered) {
-        if (shutdownRequested || startupAbort.signal.aborted) {
-          throw new ApplicationStartupInterruptedError();
-        }
-        const record = records.get(entry.id);
-        if (!record) throw new Error('Managed resource record disappeared');
-        const dependencyFailed = entry.dependsOn.some(
-          (dependencyId) => records.get(dependencyId)?.state !== 'ready',
-        );
-        if (dependencyFailed) {
-          record.state = 'failed';
-          record.health = 'unhealthy';
-          record.failures.push('start');
-          publish();
-          if (entry.required) {
-            throw new Error(
-              `[stitchkit] required resource "${entry.id}" has an unavailable dependency`,
-            );
-          }
-          continue;
-        }
-        record.attempted = true;
-        record.state = 'starting';
-        publish();
-        try {
-          const started = await entry.resource.start(
-            contextFor(record, { signal: startupAbort.signal }),
-          );
-          if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new ApplicationStartupInterruptedError();
-          }
-          if (isStartResult(started)) {
-            record.runtime = started;
-            // Published before readiness is awaited: a dependant only runs after
-            // this resource reaches `ready`, and a resource that reports its own
-            // readiness asynchronously still handed the value over here.
-            if (started.value !== undefined) published.set(entry.id, started.value);
-            let resourceReady = started.ready === undefined;
-            let completionSettled = false;
-            let completionFailure: unknown;
-            const completion = started.completion?.then(
-              () => {
-                completionSettled = true;
-                if (resourceReady) markLateCompletion(record);
-              },
-              (error: unknown) => {
-                completionSettled = true;
-                completionFailure = error;
-                if (resourceReady) markLateCompletion(record, { error });
-              },
-            );
-            if (started.ready && completion) {
-              const readiness: Promise<'ready'> = started.ready.then(() => 'ready');
-              const completionBeforeReady: Promise<'completion'> = completion.then(
-                () => 'completion',
-              );
-              const first = await Promise.race([readiness, completionBeforeReady]);
-              if (first === 'completion') {
-                throw new ResourceCompletionBeforeReadyError(entry.id, completionFailure);
-              }
-              resourceReady = true;
-              if (completionSettled) {
-                throw new ResourceCompletionBeforeReadyError(entry.id, completionFailure);
-              }
-            } else if (started.ready) {
-              await started.ready;
-              resourceReady = true;
-            } else if (completion) {
-              void completion;
-            }
-          }
-          if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new ApplicationStartupInterruptedError();
-          }
-          record.state = 'ready';
-          // Only when the resource said nothing. A resource that reported its
-          // own health during `start` has already answered this question, and
-          // the answer is more specific than the default.
-          if (!record.healthReported) {
-            record.health = 'healthy';
-            record.everHealthy = true;
-          }
-          publish();
-        } catch (error) {
-          // A shutdown arriving mid-startup does not make the resource's own
-          // error stop being one. Only the kernel's own interruption is silent
-          // here; anything the resource threw is recorded and reported, and
-          // then re-thrown because the startup is over either way.
-          const interrupted = shutdownRequested || startupAbort.signal.aborted;
-          if (!(error instanceof ApplicationStartupInterruptedError)) {
-            record.failures.push(
-              error instanceof ResourceCompletionBeforeReadyError
-                ? 'completion'
-                : record.runtime?.ready
-                  ? 'ready'
-                  : 'start',
-            );
-            record.state = 'failed';
-            record.health = 'unhealthy';
-            reportFailure(
-              entry.id,
-              record.failures[record.failures.length - 1] ?? 'start',
-              error,
-            );
-            publish();
-          }
-          if (interrupted || entry.required) throw error;
-        }
-      }
+      await startEach(ordered, startupAbort.signal);
 
       lifecycle = 'ready';
       publish();
-      for (const entry of ordered) {
-        if (shutdownRequested || startupAbort.signal.aborted) {
-          throw new ApplicationStartupInterruptedError();
-        }
-        const record = records.get(entry.id);
-        if (record?.state !== 'ready') continue;
-        const dependencyUnavailable = entry.dependsOn.some((dependencyId) => {
-          const dependency = records.get(dependencyId);
-          return dependency?.state !== 'ready' || !dependency.activated;
-        });
-        if (dependencyUnavailable) {
-          record.failures.push('start');
-          record.state = 'failed';
-          record.health = 'unhealthy';
-          publish();
-          if (entry.required) {
-            throw new Error(
-              `[stitchkit] required resource "${entry.id}" has an unavailable activation dependency`,
-            );
-          }
-          continue;
-        }
-        try {
-          // The check still fires for every required resource that is not ready
-          // and healthy after activating — that is what pushes the phase onto
-          // `failures`, calls `onResourceFailure`, and stops the cascade before
-          // the next resource's `activate` arms a schedule or opens a long
-          // poll. Loosening it to "lost it" alone kept the startup failing (the
-          // final readiness gate still refuses) but reported no phase for it and
-          // let every downstream activation run first.
-          //
-          // Only the WORDING depends on history: this test read "lost
-          // readiness" when becoming ready assigned `healthy` unconditionally,
-          // and a resource that reported `degraded` during `start` would
-          // otherwise be told it lost something it never had.
-          await entry.resource.activate?.(contextFor(record));
-          if (shutdownRequested || startupAbort.signal.aborted) {
-            throw new ApplicationStartupInterruptedError();
-          }
-          record.activated = true;
-          if (entry.required && (record.state !== 'ready' || record.health !== 'healthy')) {
-            const observed = `${record.state}/${record.health}`;
-            throw new Error(
-              record.everHealthy
-                ? `[stitchkit] required resource "${entry.id}" lost readiness during activation (${observed})`
-                : `[stitchkit] required resource "${entry.id}" is not healthy (${observed}). A required resource must be healthy for the application to be ready; a resource that is expected to start degraded belongs behind \`required: false\`.`,
-            );
-          }
-        } catch (error) {
-          // Same rule as the phase above: only the kernel's own interruption is
-          // silent, and a resource that threw while activating is reported.
-          const interrupted = shutdownRequested || startupAbort.signal.aborted;
-          if (!(error instanceof ApplicationStartupInterruptedError)) {
-            record.failures.push('start');
-            record.state = 'failed';
-            record.health = 'unhealthy';
-            reportFailure(entry.id, 'start', error);
-            publish();
-          }
-          if (interrupted || entry.required) throw error;
-        }
-      }
+      await activateEach(ordered, startupAbort.signal);
       if (shutdownRequested) {
         throw new ApplicationStartupInterruptedError();
       }
@@ -1074,5 +1247,16 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       return () => listeners.delete(listener);
     },
     shutdown,
+    restart(input: ApplicationRestartInput) {
+      // Queued behind whatever restart is already running, rather than refused:
+      // two callers asking for overlapping subtrees is ordinary, and the thing
+      // that must never happen is their phases interleaving.
+      const queued = restarting.then(() => runRestart(input));
+      restarting = queued.then(
+        () => undefined,
+        () => undefined,
+      );
+      return queued;
+    },
   };
 }

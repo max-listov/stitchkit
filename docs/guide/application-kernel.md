@@ -332,6 +332,105 @@ Every instrument uses unit `1` and reports an absolute current/lifetime value:
 | `stitchkit.application.schedule.accepting`, `.active`, `.queued`, `.runs_started`, `.runs_completed`, `.runs_failed`, `.ticks_skipped` | current schedule state and absolute run/tick counts |
 | `stitchkit.application.activity.active`, `.queued`, `.completed`, `.failed` | absolute stage projections for declared activity sources |
 
+## Replacing part of the graph without stopping the process
+
+`restart` takes down one resource **and everything that depends on it**, then
+brings that subtree back. Everything else keeps running, and the process epoch
+does not move.
+
+```ts
+const result = await app.restart({ resourceId: 'database' })
+
+result.outcome  // 'restarted' | 'failed' | 'refused'
+result.affected // ['database', 'repository', 'api'] — in start order
+```
+
+The dependants come down with it because they are holding what the resource
+published. A repository that kept running across a database replacement holds a
+pool that has been closed: it still typechecks, still has methods, and fails at
+whatever moment the first call happens. There is no version of this where a
+dependant keeps a live handle, so the subtree — not the resource — is the unit.
+
+A leaf restart affects one resource, and an independent neighbour is never
+touched:
+
+```ts
+await app.restart({ resourceId: 'cache' })
+// mailer and database were not stopped, not started, not activated
+```
+
+**Refused is not failed.** An unknown id, a restart during shutdown, and a
+restart before the application is ready all return `refused` with a reason and
+touch nothing. `failed` means the subtree came down and the new generation did
+not come up — the snapshot says so too, with the failing resource marked
+`failed` / `unhealthy`, because the restart records a failure the same way a
+startup does.
+
+Restarts of overlapping subtrees queue behind each other rather than being
+refused. Two callers asking at once is ordinary; two generations of one resource
+alive at once is the thing this must make impossible.
+
+```ts
+// Both succeed, one complete pass after the other.
+await Promise.all([
+  app.restart({ resourceId: 'database' }),
+  app.restart({ resourceId: 'database' }),
+])
+```
+
+What a restart is **not** is a process restart: it replaces resources, and does
+not re-read configuration the kernel captured when it was constructed.
+
+→ [ADR 0154](../decisions/0154-the-unit-of-a-restart-is-the-subtree.md).
+
+## Decisions a policy set makes together
+
+`createDecisionPipeline` runs an ordered list of policies that each vote
+`allow`, `deny` (with a reason) or `defer`. The first terminal verdict wins and
+the rest do not run.
+
+```ts
+import { createDecisionPipeline } from 'stitchkit/application'
+
+const pipeline = createDecisionPipeline<{ userId: string; scope: string }>([
+  { id: 'banned', decide: (r) => (isBanned(r.userId)
+      ? { outcome: 'deny', reason: 'account suspended' }
+      : { outcome: 'defer' }) },
+  { id: 'scope', decide: (r) => (r.scope === 'admin'
+      ? { outcome: 'allow' }
+      : { outcome: 'defer' }) },
+  { id: 'default', decide: () => ({ outcome: 'deny', reason: 'no policy allowed this' }) },
+])
+
+const result = await pipeline.decide(request)
+result.outcome // 'allow' | 'deny' — never 'defer'
+result.trace   // the policies that actually ran, in order
+```
+
+Three things are deliberate.
+
+**A deny carries a reason, by schema.** `{ outcome: 'deny' }` alone does not
+typecheck. A refusal whose cause exists only in the log of whoever refused is a
+support ticket.
+
+**The trace is what ran, not what was declared.** It stops at the terminal
+verdict. When something was denied the question is which policy denied it and
+what the ones before it said, and a trace listing policies that never ran would
+answer that wrongly while looking complete.
+
+**Every policy deferring raises.** `DecisionUndecidedError`, not a default —
+defaulting to `allow` turns an incomplete policy set into an open door, and
+defaulting to `deny` turns it into an outage whose cause reads as a legitimate
+refusal. A policy that throws or times out denies with the policy named
+(`DecisionPolicyError`): broken must not mean skipped.
+
+The same `allow`/`deny`/`defer` type is what an event topic declared
+`mode: 'decision'` uses in `stitchkit/live` — one vocabulary, because a listener
+voting on an event and a policy voting on a request are answering the same
+question.
+
+→ [ADR 0155](../decisions/0155-one-decision-vocabulary-and-an-unanswered-question-is-an-error.md).
+
 ## Admission and graceful shutdown
 
 Use the application operation lease for work that is not already counted by a

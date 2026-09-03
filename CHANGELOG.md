@@ -15,6 +15,73 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.77.0] — 2026-09-03
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who imported `EventDecision` or `EventUndecided` from `stitchkit/live`.
+Both are type-only renames — the shapes are identical and no runtime value moved — so a project
+that only *returns* decisions from listeners has nothing to change.
+
+- **`EventDecision` is now `PolicyDecision`, and `EventUndecided` is now `UndecidedOutcome`.**
+  The decision pipeline added below votes with exactly the same three outcomes, and shipping a
+  second identical type beside the first is the failure this repository refuses everywhere else:
+  a reader searching for one finds half the truth, and the next contributor honestly adds a third.
+  One definition now lives in `internal/decision.ts` and both entrypoints re-export it.
+
+  ```ts
+  // before
+  import type { EventDecision, EventUndecided } from 'stitchkit/live'
+  // after
+  import type { PolicyDecision, UndecidedOutcome } from 'stitchkit/live'
+  ```
+
+### Added
+
+- **`stitchkit/application/schemas`** — the canonical application records with no server runtime
+  behind them. `stitchkit/application` reaches `node:child_process`, `node:fs` and
+  `node:crypto`, and one of those modules runs `promisify(execFile)` at top level; a browser
+  bundler substitutes a stub rather than omitting the module, so a client that merely *named* an
+  application schema threw during module initialisation and the application did not mount — on
+  every route, not the one that wanted the schema. A contract's `output` may naturally be an
+  application snapshot, and a schema the contract can return but the typed client cannot import is
+  the framework failing at the thing it exists for. The same names remain reachable from
+  `stitchkit/application`, which re-exports the module. Reported by a consuming project with the
+  bundler error and a reproduction.
+
+  ```ts
+  // browser and server alike
+  import { ApplicationSnapshotSchema } from 'stitchkit/application/schemas'
+  ```
+
+- **`ApplicationHandle.restart({ resourceId })`** — replace one resource and everything that
+  transitively depends on it, leaving the rest of the graph running and the process epoch
+  unchanged. The dependants come down with it because they hold what the resource published: a
+  repository that survived a database replacement holds a pool that has been closed, which still
+  typechecks and fails at whatever moment the first call happens. Returns the subtree it actually
+  touched, in start order. Restarts of overlapping subtrees queue behind each other; an unknown
+  id, a restart during shutdown and a restart before readiness are **refused** without touching
+  anything, which is not the same as failing.
+
+- **`createDecisionPipeline`** in `stitchkit/application` — an ordered policy set where each
+  policy votes `allow`, `deny` (with a reason, by schema) or `defer`, the first terminal verdict
+  short-circuits the rest, and the trace records what actually **ran**. Every policy deferring
+  raises `DecisionUndecidedError` rather than defaulting: defaulting to `allow` turns an
+  incomplete policy set into an open door, and defaulting to `deny` turns it into an outage whose
+  cause reads as a legitimate refusal. A policy that throws or times out denies with the policy
+  named — broken must not mean skipped.
+
+### Changed
+
+- **The browser gate now refuses an entry no `exports` path reaches**, and reads its entry list
+  out of the `build:browser` script instead of restating it. `dist/application/schemas.js` had
+  existed, node-free, for as long as the module has — with nothing published pointing at it, which
+  is precisely the defect above and precisely what the gate had nothing to say about. A hand-kept
+  copy of the entry list is a second source of truth whose failure mode is silence, so the list is
+  derived; a derivation that reads nothing is a hard failure rather than a green run over an empty
+  set.
+
+
 ## [0.76.2] — 2026-09-03
 
 ### Fixed

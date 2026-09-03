@@ -179,6 +179,9 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0151](0151-a-trust-fence-names-its-lanes-because-one-of-them-bypasses-hooks.md) | A trust fence names its lanes, because one of them bypasses hooks entirely | Accepted — authority comparison at `onRequest` and at `allowRequest`; the socket lane never reaches the hooks on either runtime |
 | [0152](0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md) | A keyspace is memory that nothing reaches before it is durable | Accepted — backend, then memory, then the change event; opened as a managed resource because the kernel cannot register one later |
 | [0153](0153-a-watched-read-is-one-read-per-question.md) | A watched read is one read per question, and the question is not a function | Accepted — single-flight per key is the ordering guarantee, and the client is built from the contract because a method carries no identity |
+| [0154](0154-the-unit-of-a-restart-is-the-subtree.md) | The unit of a restart is the subtree, not the resource | Accepted — a dependant left running holds a handle to a closed generation, so the transitive dependants go down with it and the process epoch stays |
+| [0155](0155-one-decision-vocabulary-and-an-unanswered-question-is-an-error.md) | One decision vocabulary, and an unanswered question is an error | Accepted — `PolicyDecision` is shared by events and the pipeline; every policy deferring raises rather than defaulting either way |
+| [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted — the application schemas get their own node-free entrypoint, and the browser gate now refuses a built entry no `exports` path reaches |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

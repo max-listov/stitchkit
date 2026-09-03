@@ -40,6 +40,29 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.77.0
+
+Two type renames, and only if you named them. Nothing runtime moved.
+
+```bash
+rg -n "EventDecision|EventUndecided" --glob '*.ts' --glob '*.tsx'
+```
+
+```ts
+// before
+import type { EventDecision, EventUndecided } from 'stitchkit/live'
+// after
+import type { PolicyDecision, UndecidedOutcome } from 'stitchkit/live'
+```
+
+The shapes are identical — `{ outcome: 'allow' } | { outcome: 'deny', reason } | { outcome: 'defer' }`
+and `'allow' | 'deny'`. If you only ever *return* decisions from listeners and never named the
+type, the search above finds nothing and there is nothing to do.
+
+They were renamed because `createDecisionPipeline` (new in this release) votes with exactly the
+same three outcomes, and two identical types under two names is the thing that makes a search for
+either one return half the truth.
+
 ## Released migration: 0.76.0
 
 One change, and only if you hand `createWatchClient` a transport you wrote yourself.

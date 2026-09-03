@@ -42,6 +42,7 @@ const ENTRYPOINTS: Record<string, string> = {
   'stitchkit/application': 'application.ts',
   'stitchkit/application/grammy': 'application-grammy.ts',
   'stitchkit/application/opentelemetry': 'application-opentelemetry.ts',
+  'stitchkit/application/schemas': 'application-schemas.ts',
   'stitchkit/testing': 'testing.ts',
   'stitchkit/files': 'files.ts',
   'stitchkit/telegram': 'telegram.ts',

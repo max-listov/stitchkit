@@ -1,4 +1,5 @@
-import type { EventDecision, EventTopicDeclaration, EventUndecided } from '../live/events';
+import type { PolicyDecision, UndecidedOutcome } from '../internal/decision';
+import type { EventTopicDeclaration } from '../live/events';
 
 /**
  * A listener's return value.
@@ -53,7 +54,7 @@ export interface EventBus<M extends Record<string, unknown> = DefaultEventMap> {
    * the same isolation would mean "counted as consent". A listener that was
    * asked and did not answer has not agreed.
    */
-  decide<K extends keyof M & string>(event: K, data: M[K]): Promise<EventDecision>;
+  decide<K extends keyof M & string>(event: K, data: M[K]): Promise<PolicyDecision>;
   on<K extends keyof M & string>(event: K, handler: EventHandler<M[K]>): () => void;
   once<K extends keyof M & string>(event: K, handler: EventHandler<M[K]>): () => void;
   off<K extends keyof M & string>(event: K, handler: EventHandler<M[K]>): void;
@@ -91,7 +92,7 @@ export interface EventBusOptions {
   topics?: Readonly<Record<string, EventTopicDeclaration>>;
 }
 
-function isDecision(value: unknown): value is EventDecision {
+function isDecision(value: unknown): value is PolicyDecision {
   if (typeof value !== 'object' || value === null) return false;
   const outcome = Reflect.get(value, 'outcome');
   if (outcome === 'allow' || outcome === 'defer') return true;
@@ -226,18 +227,18 @@ export function createEventBus<M extends Record<string, unknown> = DefaultEventM
       }
     },
 
-    async decide<K extends keyof M & string>(event: K, data: M[K]): Promise<EventDecision> {
+    async decide<K extends keyof M & string>(event: K, data: M[K]): Promise<PolicyDecision> {
       const topic = declarationFor(event, 'decide');
       const timeoutMs = topic?.listenerTimeoutMs ?? 0;
       // `declarationFor` has already refused a non-`decision` topic, and
       // `defineEvents` refuses a `decision` topic without `whenAllDefer`.
-      const undecided: EventUndecided = topic?.whenAllDefer ?? 'deny';
+      const undecided: UndecidedOutcome = topic?.whenAllDefer ?? 'deny';
       const { set, subs } = planned(event);
       let allowed = false;
       for (const sub of subs) {
         if (!set.has(sub)) continue;
         if (sub.once) set.delete(sub);
-        let vote: EventDecision;
+        let vote: PolicyDecision;
         try {
           const outcome = await withDeadline(sub.fn(data), timeoutMs);
           if (!outcome.settled) {

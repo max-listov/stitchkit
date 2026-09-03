@@ -245,7 +245,8 @@ realtime contract from `stitchkit`, and the server halves live in `stitchkit/app
 |--------|------|---------|
 | `defineEvents` | function | declare topics: a wire name, one payload schema and how the topic is delivered to in-process listeners |
 | `toRealtimeContract` | function | project a declaration onto `RealtimeContract`, so the existing validated socket carries it |
-| `EventDeliveryMode` / `EventDecision` / `EventUndecided` | _types_ | `emit` / `serial` / `decision`, one listener's vote, and the outcome when every listener defers |
+| `EventDeliveryMode` | _type_ | `emit` / `serial` / `decision` — how a topic reaches its in-process listeners |
+| `PolicyDecision` / `UndecidedOutcome` | _types_ | one voter's `allow` / `deny` / `defer`, and what a run settles on when every voter defers — the same two types the decision pipeline in `stitchkit/application` uses, because a listener voting on an event and a policy voting on a request are answering the same question |
 | `EventTopicDeclaration` / `EventTopicRegistry` / `EventsConfig` / `EventsDeclaration` | _types_ | one topic's schema, mode, `whenAllDefer` and `listenerTimeoutMs`, and the declaration they compose into |
 | `EventPayloads` / `EventTopicsOfMode` / `WireTopic` | _types_ | payload map keyed by wire topic, the topics of one mode, and the `prefix.name` a topic is addressed by |
 | `createWatchClient` | function | contract-shaped watch client: `watch.action(args)` returns a ref-counted handle sharing one subscription |
@@ -539,7 +540,11 @@ cutovers are covered by the executable
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createApplication` | function | compose a validated resource DAG into one non-restartable startup, readiness, admission and shutdown state machine |
+| `createApplication` | function | compose a validated resource DAG into one startup, readiness, admission and shutdown state machine |
+| `ApplicationHandle.restart` | method | replace one resource and everything that depends on it, leaving the rest of the graph running and the process epoch unchanged |
+| `ApplicationRestartInputSchema` / `ApplicationRestartInput` | schema / _type_ | the resource to replace, by id |
+| `ApplicationRestartResultSchema` / `ApplicationRestartResult` | schema / _type_ | the subtree that was actually taken down and brought back, in start order, with the outcome, the reason on anything but success, and how long it took |
+| `ApplicationRestartOutcomeSchema` / `ApplicationRestartOutcome` | schema / _type_ | `restarted`, `failed` or `refused` — a refusal (unknown id, shutting down, not yet ready) is not a failure and touches nothing |
 | `ApplicationResourceFailure` | _type_ | one resource failure with the cause its phase label cannot carry — delivered to `onResourceFailure` |
 | `ApplicationResourcePhase` | _type_ | the phase a managed resource failed in — the vocabulary of `ApplicationResourceShutdown.failures` |
 | `ApplicationShutdownOptionsSchema` / `ApplicationShutdownOptions` | schema / _type_ | the two shutdown budgets and an abort signal — without the HTTP-only `retryAfterSeconds` |
@@ -663,6 +668,10 @@ and `ApplicationEventSinkConfig`.
 
 ### Canonical application records
 
+These are also published on their own as
+[`stitchkit/application/schemas`](#stitchkitapplicationschemas), which carries
+no server runtime and can therefore be imported from a browser bundle.
+
 The entrypoint exports each Zod schema beside its inferred type:
 `ApplicationIdSchema` / `ApplicationId`, `ApplicationLifecycleSchema` /
 `ApplicationLifecycle`, `ApplicationHealthSchema` / `ApplicationHealth`,
@@ -675,6 +684,20 @@ The entrypoint exports each Zod schema beside its inferred type:
 the function that derives it from a snapshot,
 `ApplicationResourceShutdownSchema` / `ApplicationResourceShutdown`, and
 `ApplicationShutdownResultSchema` / `ApplicationShutdownResult`.
+
+### Decisions
+
+A pipeline of policies that each vote `allow`, `deny` or `defer`, sharing its
+vocabulary with an event topic declared `mode: 'decision'`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createDecisionPipeline` | function | run policies in declaration order; the first terminal verdict wins and the rest do not run |
+| `PolicyDecisionSchema` / `PolicyDecision` | schema / _type_ | `allow`, `deny` with a reason, or `defer` — a deny cannot be silent |
+| `DecisionPolicy` / `DecisionPipeline` | _types_ | one named voter over the caller's subject, and the pipeline it composes into |
+| `DecisionResult` / `DecisionTraceEntry` | _types_ | the verdict, and the trace of what actually ran — not what was declared |
+| `DecisionUndecidedError` | class | every policy deferred and no undecided outcome was declared: an unanswered question, raised rather than guessed |
+| `DecisionPolicyError` | class | a policy threw or timed out; the pipeline denies with the policy named |
 
 ### Keyspace and watched reads
 
@@ -718,6 +741,33 @@ snapshots; the adapter owns no SDK lifecycle, polling or delta state.
 | `ApplicationOpenTelemetryBinding` | _type_ | idempotent exact callback removal and closed state |
 | `ApplicationTelemetryMeter` | _type_ | minimal structural `Meter.createObservableGauge` boundary compatible with `@opentelemetry/api` |
 | `ApplicationOpenTelemetryCollectionError` | _type_ | isolated instrument-name/error diagnostic without product/provider attributes |
+
+## `stitchkit/application/schemas`
+
+The canonical application records — and nothing else. Every export here is also
+reachable from `stitchkit/application`; the difference is what comes with it.
+
+`stitchkit/application` is the server runtime: it reaches `node:child_process`,
+`node:fs` and `node:crypto`. A browser bundler does not omit those, it
+substitutes stubs — so a module that merely *names* an application schema fails
+while it is initialising, and the page never mounts, on every route rather than
+the one that wanted the schema. A contract whose `output` is an application
+snapshot could be declared and never consumed, which is the one thing a contract
+is for.
+
+So the same schemas ship a second way, from a module with nothing behind them:
+
+```ts
+// browser and server alike
+import { ApplicationSnapshotSchema } from 'stitchkit/application/schemas';
+```
+
+The exports are exactly those listed under
+[canonical application records](#canonical-application-records) above.
+`packages/core/scripts/check-browser-clean.mjs` holds the promise against the
+built artifact: it walks the browser lane's real `dist` output and refuses a
+`node:` import reachable from any of it, and refuses an entry built for the
+browser that no `exports` path leads to — which is how this one was missing.
 
 ---
 
