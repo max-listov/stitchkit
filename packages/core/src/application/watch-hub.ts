@@ -157,7 +157,7 @@ interface Source {
  * Exported because the client has to produce exactly this, and two
  * implementations of one key is the failure the digest exists to prevent.
  */
-export async function watchKey(operation: WatchOperation, args: unknown): Promise<WatchKey> {
+export function watchKey(operation: WatchOperation, args: unknown): WatchKey {
   const record =
     typeof args === 'object' && args !== null && !Array.isArray(args)
       ? (args as Record<string, unknown>)
@@ -165,7 +165,7 @@ export async function watchKey(operation: WatchOperation, args: unknown): Promis
   return {
     service: operation.service,
     action: operation.action,
-    digest: await argumentsDigest(record),
+    digest: argumentsDigest(record),
   };
 }
 

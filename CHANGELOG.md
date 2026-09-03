@@ -15,6 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.76.2] — 2026-09-03
+
+### Fixed
+
+- **Every watched read failed on a page that was not a secure context.** The argument digest went
+  through `crypto.subtle`, which browsers expose **only** in a secure context, so an application
+  opened over plain HTTP by a LAN name — `http://app.internal`, a hostname on a phone — threw
+  `Cannot read properties of undefined (reading 'digest')` on the first subscription and showed
+  nothing at all. `localhost` is secure by definition, which is exactly why a laptop, the test
+  suite and CI all agreed there was no problem.
+
+  The digest is now a 128-bit hash computed in plain JavaScript. That is not a fallback, it is
+  the honest shape: this key **identifies a question, it does not protect one**, and an attacker
+  who can choose the arguments can already ask the question directly. What it has to be is
+  well-distributed, deterministic, and agreed by both ends — a cryptographic hash bought none of
+  those and cost the entire non-secure web. Reported by a consuming project with the browser
+  measurements.
+
+  Being synchronous is the second thing it buys, and it removed machinery rather than adding it:
+  the client's first subscription to a question was asynchronous because its key was a promise,
+  which forced a cache beside it so that at least the *second* subscription could hand back a
+  retained value in the same turn. The promise, the cache and the difference between the first
+  subscription and every later one are all gone.
+
+  `watchKey` and `argumentsDigest` are synchronous now; a caller that awaited them is unaffected,
+  since awaiting a value is not an error.
+
 ## [0.76.1] — 2026-09-02
 
 ### Added

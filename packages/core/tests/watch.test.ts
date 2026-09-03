@@ -75,7 +75,7 @@ describe('one read per question', () => {
       invalidatedBy: () => ['notes.changed'],
       subscribe: bus.subscribe,
     });
-    const key = await watchKey(notes, { folder: 'a' });
+    const key = watchKey(notes, { folder: 'a' });
 
     const first = recorder();
     const second = recorder();
@@ -100,18 +100,18 @@ describe('one read per question', () => {
       subscribe: bus.subscribe,
     });
     const watcher = hub.attach(recorder());
-    watcher.open(await watchKey(notes, { folder: 'a' }), { folder: 'a' });
-    watcher.open(await watchKey(notes, { folder: 'b' }), { folder: 'b' });
+    watcher.open(watchKey(notes, { folder: 'a' }), { folder: 'a' });
+    watcher.open(watchKey(notes, { folder: 'b' }), { folder: 'b' });
     await settle();
     expect(hub.readCount()).toBe(2);
   });
 
   test('the same arguments in a different order are the same question', async () => {
-    const first = await watchKey(notes, { a: 1, b: 2 });
-    const second = await watchKey(notes, { b: 2, a: 1 });
+    const first = watchKey(notes, { a: 1, b: 2 });
+    const second = watchKey(notes, { b: 2, a: 1 });
     expect(second.digest).toBe(first.digest);
     // …and different arguments are not.
-    expect((await watchKey(notes, { a: 2, b: 1 })).digest).not.toBe(first.digest);
+    expect(watchKey(notes, { a: 2, b: 1 }).digest).not.toBe(first.digest);
   });
 });
 
@@ -125,7 +125,7 @@ describe('what causes a re-read', () => {
       invalidatedBy: () => ['notes.changed'],
       subscribe: bus.subscribe,
     });
-    hub.attach(recorder()).open(await watchKey(notes, {}), {});
+    hub.attach(recorder()).open(watchKey(notes, {}), {});
     await settle();
     expect(hub.readCount()).toBe(1);
 
@@ -154,8 +154,8 @@ describe('what causes a re-read', () => {
     });
     const watcher = hub.attach(recorder());
     const chat = { service: 'chat', action: 'transcript' } as const;
-    watcher.open(await watchKey(chat, { address: 'A' }), { address: 'A' });
-    watcher.open(await watchKey(chat, { address: 'B' }), { address: 'B' });
+    watcher.open(watchKey(chat, { address: 'A' }), { address: 'A' });
+    watcher.open(watchKey(chat, { address: 'B' }), { address: 'B' });
     await settle();
     reads = hub.readCount();
     expect(reads).toBe(2);
@@ -180,7 +180,7 @@ describe('what causes a re-read', () => {
       subscribe: bus.subscribe,
     });
     const subscriber = recorder();
-    hub.attach(subscriber).open(await watchKey(notes, {}), {});
+    hub.attach(subscriber).open(watchKey(notes, {}), {});
     await settle();
     bus.announce('notes.changed');
     await settle();
@@ -208,7 +208,7 @@ describe('what causes a re-read', () => {
       subscribe: bus.subscribe,
     });
     const subscriber = recorder();
-    hub.attach(subscriber).open(await watchKey(notes, {}), {});
+    hub.attach(subscriber).open(watchKey(notes, {}), {});
     await settle();
     expect(started).toBe(1);
 
@@ -250,7 +250,7 @@ describe('a failed read says what failed, in words', () => {
       backoff: { minDelayMs: 1, maxDelayMs: 2, jitter: 0 },
     });
     const subscriber = recorder();
-    hub.attach(subscriber).open(await watchKey(notes, {}), {});
+    hub.attach(subscriber).open(watchKey(notes, {}), {});
     await settle();
 
     const failure = subscriber.states.find((state) => state.phase === 'unavailable');
@@ -273,7 +273,7 @@ describe('what the hub refuses, and how', () => {
       subscribe: () => () => undefined,
     });
     const watcher = hub.attach(recorder());
-    const refusal = watcher.open(await watchKey(folders, {}), {});
+    const refusal = watcher.open(watchKey(folders, {}), {});
     expect(refusal.accepted).toBe(false);
     expect(refusal.reason).toContain('notes.folders is not watchable');
     expect(hub.readCount()).toBe(0);
@@ -288,8 +288,8 @@ describe('what the hub refuses, and how', () => {
       maxWatchesPerSubscriber: 1,
     });
     const watcher = hub.attach(recorder());
-    expect(watcher.open(await watchKey(notes, { n: 1 }), { n: 1 }).accepted).toBe(true);
-    const refusal = watcher.open(await watchKey(notes, { n: 2 }), { n: 2 });
+    expect(watcher.open(watchKey(notes, { n: 1 }), { n: 1 }).accepted).toBe(true);
+    const refusal = watcher.open(watchKey(notes, { n: 2 }), { n: 2 });
     expect(refusal.accepted).toBe(false);
     expect(refusal.reason).toContain('limit 1');
   });
@@ -304,7 +304,7 @@ describe('a subscriber that arrives late, and one that leaves', () => {
       invalidatedBy: () => [],
       subscribe: () => () => undefined,
     });
-    const key = await watchKey(notes, {});
+    const key = watchKey(notes, {});
     hub.attach(recorder()).open(key, {});
     await settle();
 
@@ -323,7 +323,7 @@ describe('a subscriber that arrives late, and one that leaves', () => {
       invalidatedBy: () => [],
       subscribe: () => () => undefined,
     });
-    const key = await watchKey(notes, {});
+    const key = watchKey(notes, {});
     const first = hub.attach(recorder());
     const second = hub.attach(recorder());
     first.open(key, {});
@@ -349,7 +349,7 @@ describe('the hub options that change what it does', () => {
       subscribe: () => () => undefined,
       holdMs: 1_000,
     });
-    const key = await watchKey(notes, {});
+    const key = watchKey(notes, {});
     const first = hub.attach(recorder());
     first.open(key, {});
     await settle();
@@ -378,7 +378,7 @@ describe('the hub options that change what it does', () => {
       same: (previous, next) =>
         (previous as { at: string }).at === (next as { at: string }).at,
     });
-    hub.attach(subscriber).open(await watchKey(notes, {}), {});
+    hub.attach(subscriber).open(watchKey(notes, {}), {});
     await settle();
     bus.announce('notes.changed');
     await settle();
@@ -403,7 +403,7 @@ describe('the hub options that change what it does', () => {
         error: () => undefined,
       },
     });
-    hub.attach(recorder()).open(await watchKey(notes, {}), {});
+    hub.attach(recorder()).open(watchKey(notes, {}), {});
     await settle();
     expect(warnings[0]).toContain('watched read failed');
     hub.close();

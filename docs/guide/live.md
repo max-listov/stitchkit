@@ -179,6 +179,13 @@ Without that, one address changing wakes every watcher of the operation. Twenty
 conversations open means twenty reads for one change — nineteen of them publish
 nothing, because nothing changed, and the read is paid anyway.
 
+The digest is a plain 128-bit hash computed in JavaScript, on purpose. It used
+to be SHA-256 through Web Crypto, which exists **only in a secure context** — so
+every watched read threw on a page served over plain HTTP from a LAN name, while
+`localhost` (secure by definition) and every test kept saying the code was fine.
+The key identifies a question; it does not protect one, and an attacker who can
+choose your watch arguments can already ask the question directly.
+
 ### Who shares with whom
 
 A key is `(service, action, digest of arguments)`, and everyone on that key gets

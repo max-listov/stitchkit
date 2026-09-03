@@ -44,7 +44,7 @@
  * sense a rendering component can use.
  */
 import type { ContractDef, EndpointDef } from '../contract/define';
-import { argumentsDigest, stableValue } from '../internal/stable-digest';
+import { argumentsDigest } from '../internal/stable-digest';
 import {
   WATCH_CLOSE,
   WATCH_OPEN,
@@ -182,7 +182,6 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
   config: WatchClientConfig,
 ): TypedWatchClient<T> {
   const entries = new Map<string, Entry>();
-  const digests = new Map<string, string>();
   const holdMs = config.holdMs ?? 0;
   const openTimeoutMs = config.openTimeoutMs ?? 10_000;
   const service = contract.meta.prefix;
@@ -233,23 +232,6 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
       void open(entry);
     }
   });
-
-  /** The cache is what makes a re-subscribe synchronous; the digest itself is not. */
-  function cachedDigest(action: string, args: Record<string, unknown>): string | undefined {
-    return digests.get(`${service}/${action}/${JSON.stringify(stableValue(args))}`);
-  }
-
-  async function resolveDigest(
-    action: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
-    const cacheKey = `${service}/${action}/${JSON.stringify(stableValue(args))}`;
-    const cached = digests.get(cacheKey);
-    if (cached !== undefined) return cached;
-    const digest = await argumentsDigest(args);
-    digests.set(cacheKey, digest);
-    return digest;
-  }
 
   function entryFor(key: WatchKey, args: Record<string, unknown>): Entry {
     const id = watchKeyString(key);
@@ -334,56 +316,34 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
 
   function handleFor(action: string, args: Record<string, unknown>): WatchHandle<unknown> {
     const mine = new Set<Listeners<unknown>>();
-    let entry: Entry | undefined;
-
-    // Synchronous when this question has been asked before — which is the case
-    // the claim is about. The first time, there is nothing retained to be
-    // synchronous with.
-    const known = cachedDigest(action, args);
-    if (known !== undefined) entry = entryFor({ service, action, digest: known }, args);
-
-    const ready: Promise<Entry> = (async () => {
-      if (entry) return entry;
-      const digest = await resolveDigest(action, args);
-      entry = entryFor({ service, action, digest }, args);
-      return entry;
-    })();
+    // The key is computed here and now. It used to be a promise, which made the
+    // first subscription of a question asynchronous and forced a cache beside it
+    // so that at least the *second* one could hand back a retained value in the
+    // same turn. A synchronous digest removes the promise, the cache, and the
+    // difference between the first subscription and every later one.
+    const entry = entryFor({ service, action, digest: argumentsDigest(args) }, args);
 
     return {
       subscribe(listeners) {
         const registered = listeners as Listeners<unknown>;
         mine.add(registered);
-        if (entry) {
-          entry.listeners.add(registered);
-          // Retained value first, state second: a subscriber that receives
-          // `live` before the value it describes has been told the wrong thing
-          // for one turn.
-          if (entry.hasValue) registered.value(entry.value);
-          registered.state?.(entry.state);
-        }
-        void ready.then((target) => {
-          if (!mine.has(registered)) return;
-          if (!target.listeners.has(registered)) {
-            target.listeners.add(registered);
-            if (target.hasValue) registered.value(target.value);
-            registered.state?.(target.state);
-          }
-          void open(target);
-        });
+        entry.listeners.add(registered);
+        // Retained value first, state second: a subscriber that receives `live`
+        // before the value it describes has been told the wrong thing for one
+        // turn.
+        if (entry.hasValue) registered.value(entry.value);
+        registered.state?.(entry.state);
+        void open(entry);
         return () => {
           mine.delete(registered);
-          const target = entry;
-          if (!target) return;
-          target.listeners.delete(registered);
-          releaseEntry(target);
+          entry.listeners.delete(registered);
+          releaseEntry(entry);
         };
       },
       close() {
-        const target = entry;
-        if (!target) return;
-        for (const listener of mine) target.listeners.delete(listener);
+        for (const listener of mine) entry.listeners.delete(listener);
         mine.clear();
-        releaseEntry(target);
+        releaseEntry(entry);
       },
     };
   }

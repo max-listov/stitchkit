@@ -199,7 +199,7 @@ export async function resolveMcpRound(options: {
   });
   const requests = policy.inputRequired;
   const state = options.context.mcpReq.requestState<McpRoundState>();
-  const digest = await argumentsDigest(options.rawArgs);
+  const digest = argumentsDigest(options.rawArgs);
 
   if (!state) {
     if (isRecord(options.context.mcpReq.inputResponses)) {
