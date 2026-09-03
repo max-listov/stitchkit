@@ -67,6 +67,23 @@ export const ApplicationSnapshotSchema = z
     changedAt: z.string().datetime({ offset: true }),
     admission: ApplicationAdmissionSnapshotSchema,
     resources: z.array(ManagedResourceSnapshotSchema).readonly(),
+    /**
+     * The resources a `restart` is replacing at this instant, in start order.
+     * Empty whenever no restart is running.
+     *
+     * A field rather than a `lifecycle` member, and the reason is mechanical:
+     * `acquire()` refuses a lease unless the lifecycle is exactly `ready`, so a
+     * `restarting` lifecycle would close admission for the WHOLE graph while one
+     * leaf is replaced — contradicting the thing a subtree restart exists to
+     * promise. A `ManagedResourceState` member would not work either: the start
+     * loop overwrites the record with `starting`, so it would describe only the
+     * closing half of the window and vanish for the rest.
+     *
+     * Without it, a snapshot taken mid-restart is indistinguishable from a
+     * resource that failed on its own, and an operator reading a dashboard acts
+     * on the wrong one.
+     */
+    restarting: z.array(z.string()).readonly(),
   })
   .readonly();
 export type ApplicationSnapshot = z.infer<typeof ApplicationSnapshotSchema>;
@@ -99,6 +116,15 @@ export const ApplicationStatusProjectionSchema = z
         failed: NonNegativeIntegerSchema,
       })
       .readonly(),
+    /**
+     * How many resources a restart is replacing right now. Zero between restarts.
+     *
+     * The count, not the ids: this projection is meant to be mounted publicly and
+     * the ids are the application dependency graph. Zero versus non-zero is the
+     * whole question a probe has — is this resource missing because it broke, or
+     * because it is being replaced.
+     */
+    restarting: NonNegativeIntegerSchema,
   })
   .readonly();
 export type ApplicationStatusProjection = z.infer<typeof ApplicationStatusProjectionSchema>;
@@ -125,6 +151,11 @@ export function projectApplicationStatus(
     ready: snapshot.ready,
     capturedAt: snapshot.capturedAt,
     resources: { total: snapshot.resources.length, ready, degraded, failed },
+    // The count, not the ids: a probe is mounted publicly and the ids are the
+    // application's dependency graph. Zero means nothing is being replaced, and
+    // that is the whole question a probe needs answered — is this resource
+    // missing because it broke, or because we are replacing it right now.
+    restarting: snapshot.restarting.length,
   };
 }
 

@@ -181,16 +181,41 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
   let reads = 0;
   let closed = false;
 
+  /**
+   * Hand one frame to one subscriber, and keep its failure to itself.
+   *
+   * Every call into a subscriber goes through here. They were direct, and a
+   * subscriber that threw took out whatever the hub was in the middle of: the
+   * rest of a broadcast never heard it, and on the teardown path their
+   * `unsubscribes` never ran either. The kernel already isolates its own
+   * snapshot listeners for the same reason — one consumer's bug is not the
+   * framework's to propagate.
+   */
+  function tell(key: WatchKey, deliver: () => void): void {
+    try {
+      deliver();
+    } catch (error) {
+      config.logger?.warn?.('[stitchkit] watch subscriber threw', {
+        key: watchKeyString(key),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   function announceState(source: Source, state: WatchStateFrame): void {
     source.state = state;
-    for (const subscriber of source.subscribers) subscriber.state(state);
+    for (const subscriber of source.subscribers) {
+      tell(source.key, () => subscriber.state(state));
+    }
   }
 
   function publish(source: Source, value: unknown): void {
     source.revision += 1;
     source.value = value;
     const frame: WatchValueFrame = { key: source.key, revision: source.revision, value };
-    for (const subscriber of source.subscribers) subscriber.value(frame);
+    for (const subscriber of source.subscribers) {
+      tell(source.key, () => subscriber.value(frame));
+    }
   }
 
   async function pump(source: Source): Promise<void> {
@@ -333,10 +358,27 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
           // A subscriber arriving after the answer is known gets it now, from
           // memory, before any network happens. That is the difference between a
           // panel that paints and a panel that spins.
-          if (source.signature !== undefined) {
-            subscriber.value({ key, revision: source.revision, value: source.value });
+          // The replay is NOT swallowed, unlike a broadcast.
+          //
+          // A subscriber whose first frame throws has been added to the source
+          // and told nothing: it would sit retained, seeing revision N+1 onward
+          // and never the value it opened for — a panel permanently one edit
+          // behind, with no error anywhere. `open` already has a refusal channel
+          // for exactly this, so it is used instead of hiding the failure.
+          try {
+            if (source.signature !== undefined) {
+              subscriber.value({ key, revision: source.revision, value: source.value });
+            }
+            subscriber.state(source.state);
+          } catch (error) {
+            source.subscribers.delete(subscriber);
+            keys.delete(id);
+            release(source);
+            return {
+              accepted: false,
+              reason: error instanceof Error ? error.message : String(error),
+            };
           }
-          subscriber.state(source.state);
           void pump(source);
           return { accepted: true };
         },
@@ -364,13 +406,43 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
     size: () => sources.size,
     close() {
       closed = true;
-      for (const source of sources.values()) {
-        clearTimeout(source.retry);
-        clearTimeout(source.release);
-        for (const unsubscribe of source.unsubscribes) unsubscribe();
-      }
+      // The map is emptied BEFORE anybody is told.
+      //
+      // Announcing while iterating `sources.values()` invites the natural client
+      // reaction — a subscriber that hears `unavailable` detaches — to re-enter
+      // `release()` mid-iteration and delete entries the loop has not reached.
+      // Measured: with two watches on one subscriber, only one of the two ever
+      // heard it, and the topic unsubscribes ran three times for two sources.
+      // Silently dropping a subscriber is the exact failure this teardown was
+      // added to end.
+      const teardown = [...sources.values()];
       sources.clear();
       held.clear();
+      for (const source of teardown) {
+        clearTimeout(source.retry);
+        clearTimeout(source.release);
+        // Told, not dropped.
+        //
+        // This used to clear its sources in silence, leaving every subscriber
+        // holding the last value it was sent, at phase `live`, forever. ADR 0153
+        // argues at length against exactly that state — a stale value standing
+        // as current — and the only reason it was survivable is that the hub
+        // used to close when the process did, so the socket died with it and the
+        // client recovered through `onConnectionChange`. A subtree restart
+        // closes the hub while the connections are still up, which makes the
+        // silent version the normal case rather than the impossible one.
+        //
+        // `unavailable` / `source-unavailable` is the pair the client already
+        // publishes when a connection drops, so this needs no new branch on the
+        // browser side. `closed` would need one, and would tell a live page to
+        // stop retrying.
+        announceState(source, {
+          key: source.key,
+          phase: 'unavailable',
+          reason: 'source-unavailable',
+        });
+        for (const unsubscribe of source.unsubscribes) unsubscribe();
+      }
     },
   };
 }

@@ -15,6 +15,88 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.79.0] — 2026-09-03
+
+Four things 0.78.0 left named but not done, and one defect found while doing them.
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who reads `getSnapshot()` or the status projection with
+an exact-shape assertion, and anyone importing `createDiagnosticJournal`'s
+neighbours from `stitchkit/tools` — nothing moved there, but a new entrypoint
+now offers the node-free half.
+
+- **`ApplicationSnapshot` and `ApplicationStatusProjection` gained a field.**
+  `restarting` — the resources a restart is replacing at this instant, as ids in
+  the snapshot and as a count in the projection. Additive to a reader that names
+  the fields it wants, breaking to one that compares the whole object.
+
+  ```ts
+  // before: a snapshot taken mid-restart looked exactly like a resource that broke
+  // after:
+  snapshot.restarting            // ['database', 'repository']
+  projection.restarting          // 2
+  ```
+
+  It is a field and not a `lifecycle` member for a mechanical reason:
+  `acquire()` refuses a lease unless the lifecycle is exactly `ready`, so a
+  `restarting` lifecycle would have closed admission for the whole graph while
+  one leaf was replaced — contradicting the single thing a subtree restart
+  promises.
+
+### Added
+
+- **`stitchkit/tools/contract`** — the shapes a tool surface speaks, without the
+  runtime that serves them: the async-operation contract helpers, its snapshot
+  and cancel schemas, `coerceJsonArgs`, and a view-file tool's input and output.
+  `stitchkit/tools` reaches `node:` through five of its first-hop imports, so a
+  browser bundler cannot initialise it at all — and a client that has to *call*
+  an async operation could not import its schema. The same contract-first
+  failure `stitchkit/application/schemas` was created for, one entrypoint over.
+  `stitchkit/tools` re-exports it, so there is one list of names rather than two.
+
+- **`packages/core/entrypoints.mjs`** — one declaration of every entrypoint and
+  whether a browser may import it, read by the build, both browser gates, the
+  reference walk, and the tests that hold the guide and the consumer lane to it.
+
+### Fixed
+
+- **A closing watch hub dropped its subscribers in silence.** Every one kept the
+  last value it was sent, at phase `live`, forever — a stale value standing as
+  current, which is the state ADR 0153 exists to prevent. It survived only
+  because the hub used to close when the process did, so the socket died with it;
+  a subtree restart closes it while the connections are up. `close()` now
+  announces `unavailable` / `source-unavailable`, the pair a client already knows.
+
+- **A subscriber that threw took the hub down with it.** Four call sites handed
+  frames to subscribers directly, so one throwing subscriber aborted the
+  broadcast: every subscriber after it was never told, and on the teardown path
+  its `unsubscribes` never ran either. All four now go through one isolating
+  helper, as the kernel already does for its own snapshot listeners.
+
+- **`stitchkit/remote` and `stitchkit/declaration` disagreed with themselves.**
+  `remote` is documented "browser **and** server" and was built on the server
+  lane, so no gate ever bundled it for a browser; `declaration` was built for the
+  browser and exercised for Bun. Both now have a browser row in the consumer
+  lane, and a test refuses the next such drift in either direction.
+
+### Changed
+
+- **One build pass instead of two lanes.** They carried identical flags and
+  differed only in their entry lists, which made those lists a second place to
+  declare browser-safety — and two `--splitting` runs into one `--outdir` produce
+  two chunk graphs, so `dist` shipped the contract layer more than once. Measured
+  on the same tree, the whole `dist` is **115 KB smaller** — `defineContract` lived
+  in two chunks and now lives in one. A single browser entry graph is *larger*,
+  by about 8%: one pass gives the bundler more entries to split across. The claim
+  is deduplication of the published package, not a smaller download.
+
+- **`bun run dev` watches, which it never did.** `bun run build:js -- --watch`
+  appends the flag to the tail of the expanded chain, so `--watch` landed on a
+  post-processing script that does not read argv. `bun build --watch` had never
+  run.
+
+
 ## [0.78.0] — 2026-09-03
 
 Everything 0.77.0 shipped, made true. The subtree restart it introduced could not

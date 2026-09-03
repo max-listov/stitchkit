@@ -40,6 +40,40 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.79.0
+
+One thing, and only if you assert on the whole snapshot.
+
+```bash
+rg -n "getSnapshot\(\)|projectApplicationStatus|status\(\)" --glob '*.test.ts' --glob '*.spec.ts'
+```
+
+`ApplicationSnapshot` and `ApplicationStatusProjection` each gained a
+`restarting` field — ids in the snapshot, a count in the projection. A reader
+that names the fields it wants is unaffected. A test that compares the whole
+object with `toEqual` fails until it adds the field:
+
+```ts
+// before
+expect(body).toEqual({ id, lifecycle: 'ready', /* … */ resources: { total: 1, ready: 1, degraded: 0, failed: 0 } })
+// after
+expect(body).toEqual({ id, lifecycle: 'ready', /* … */ resources: { total: 1, ready: 1, degraded: 0, failed: 0 }, restarting: 0 })
+```
+
+It is zero except while a restart is running, and then it names the subtree being
+replaced. That is the point: a snapshot taken mid-restart used to be
+indistinguishable from a resource that had failed on its own, so a dashboard read
+a planned replacement as an outage.
+
+**If you watch a hub across a restart**, nothing to change, but the behaviour is
+different and better: closing a hub now tells its subscribers `unavailable` /
+`source-unavailable` instead of dropping them, so a page stops showing a value
+that will never update again.
+
+**If you need a tool contract in a browser**, `stitchkit/tools/contract` now
+carries the async-operation helpers, its schemas and the view-file input/output
+without the runtime. `stitchkit/tools` still exports all of them.
+
 ## Released migration: 0.78.0
 
 Two mechanical edits. Find them both:

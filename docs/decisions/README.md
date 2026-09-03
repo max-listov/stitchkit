@@ -184,6 +184,8 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted, partly corrected by 0157 — the schemas got their own entrypoint and the gate refuses an unreachable one; the claim that `./application` could not be browser-safe was wrong |
 | [0157](0157-a-restartable-resource-begins-a-generation.md) | A resource that can be restarted is a resource that can begin a generation | Accepted — `start` begins a generation, the result agrees with the snapshot, and the close phase is bounded like every other way down |
 | [0158](0158-a-gate-that-does-not-run-the-code-is-a-proxy.md) | A gate that does not run the code is measuring a proxy | Accepted — every promised browser entry is bundled and executed, after six of them killed the page while passing every static check |
+| [0159](0159-a-replacement-says-so-and-a-teardown-is-announced.md) | A replacement says so, and a teardown is announced | Accepted — the snapshot names the subtree being replaced, and a closing watch hub tells its subscribers instead of dropping them |
+| [0160](0160-one-declaration-of-which-entrypoints-a-browser-may-import.md) | One declaration of which entrypoints a browser may import | Accepted — one manifest, one build pass, and the guide and consumer lane asserted against it |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

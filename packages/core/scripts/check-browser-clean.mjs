@@ -25,43 +25,25 @@
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { BROWSER_SOURCES, distOf, ENTRYPOINTS as MANIFEST } from '../entrypoints.mjs';
 
 const DIST = new URL('../dist/', import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 /**
- * The browser lane, read from the build script itself.
+ * The browser-safe entries, from the one manifest that declares them.
  *
- * Derived rather than restated: a hand-kept copy of this list is a second
- * source of truth, and the failure it produces is silence — an entry added to
- * the build and forgotten here is simply never scanned.
+ * This used to be scraped out of the `build:browser` script string — one
+ * source of truth better than a hand-kept copy, and still worse than a
+ * declaration. A regex over a command line silently dropped an entry written
+ * `./src/x.ts` rather than `src/x.ts`, and the guard on it asked whether it
+ * had read ANYTHING instead of whether it had read everything.
  */
-const LANE = pkg.scripts['build:browser'] ?? '';
-const ENTRIES = [...LANE.matchAll(/(?:^|\s)\.?\/?(src\/[\w./-]+\.tsx?)/g)].map((match) =>
-  match[1].replace(/^src\//, '').replace(/\.tsx?$/, '.js'),
-);
-
-/**
- * The derivation is checked against the lane token by token — not merely
- * against zero.
- *
- * The first version of this guard asked "did it read ANYTHING", which is the
- * wrong question and is itself the silently-narrowing filter the derivation
- * exists to prevent: one entry written `./src/x.ts` rather than `src/x.ts`
- * dropped out of the list while the guard stayed happy, and that entry was then
- * never scanned by anything. Counting the file-shaped tokens in the lane and
- * demanding the same number makes a missed entry impossible rather than
- * unlikely.
- */
-const LANE_FILES = LANE.split(/\s+/).filter((token) => /\.tsx?$/.test(token));
-if (ENTRIES.length !== LANE_FILES.length) {
-  console.error(
-    `[check-browser-clean] read ${ENTRIES.length} entries out of \`build:browser\`, which names ${LANE_FILES.length} files: ${LANE_FILES.join(' ')}`,
-  );
-  process.exit(1);
-}
+const ENTRIES = BROWSER_SOURCES.map(distOf);
 if (ENTRIES.length === 0) {
-  console.error('[check-browser-clean] could not read any entry out of `build:browser`');
+  console.error(
+    '[check-browser-clean] the entrypoint manifest declares no browser-safe entry',
+  );
   process.exit(1);
 }
 
@@ -149,9 +131,24 @@ const published = new Set(
     .map((entry) => entry?.import)
     .filter(Boolean),
 );
-for (const entry of ENTRIES) {
-  if (!published.has(`./dist/${entry}`)) {
-    offenders.push(`${entry}: built for the browser, but no "exports" path leads to it`);
+// Both directions, and over EVERY entry rather than the browser-safe ones.
+//
+// The entry lists used to live in `package.json` beside the `exports` map, where
+// disagreeing with it was hard to miss. Moving them to a manifest moved them away
+// from the thing they must agree with, and only the browser half's check came
+// along: deleting a server entry from the manifest left `bun run build` green,
+// every gate printing success, the file never emitted, and `package.json` still
+// exporting it.
+for (const { subpath, source } of MANIFEST) {
+  const built = `./dist/${distOf(source)}`;
+  if (!published.has(built)) {
+    offenders.push(`${subpath}: in the manifest, but no "exports" path leads to ${built}`);
+  }
+}
+const manifestBuilds = new Set(MANIFEST.map((entry) => `./dist/${distOf(entry.source)}`));
+for (const [subpath, entry] of Object.entries(pkg.exports ?? {})) {
+  if (entry?.import && !manifestBuilds.has(entry.import)) {
+    offenders.push(`${subpath}: exported as ${entry.import}, which the manifest never builds`);
   }
 }
 

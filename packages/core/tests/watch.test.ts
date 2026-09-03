@@ -655,3 +655,167 @@ describe('the client shares one subscription', () => {
     expect(states.at(-1)?.code).toBe('X');
   });
 });
+
+describe('closing the hub is said, not done in silence', () => {
+  test('every subscriber is told the source is gone', async () => {
+    const bus = topics();
+    const hub = createWatchHub({
+      read: async () => ({ n: 1 }),
+      watchable: () => true,
+      invalidatedBy: () => ['notes.changed'],
+      subscribe: bus.subscribe,
+    });
+    const key = watchKey(notes, { folder: 'a' });
+    const first = recorder();
+    const second = recorder();
+    hub.attach(first).open(key, { folder: 'a' });
+    hub.attach(second).open(key, { folder: 'a' });
+    await settle();
+    expect(first.states.at(-1)?.phase).toBe('live');
+
+    hub.close();
+
+    // Both, and with the reason a client already knows how to act on. Until
+    // this existed the hub dropped its sources without a word, so a page that
+    // was watching sat at `live` on a value nothing would ever update again —
+    // the exact state ADR 0153 argues against. It survived only because the hub
+    // used to close when the process did; a subtree restart closes it while the
+    // connections are still up.
+    for (const subscriber of [first, second]) {
+      expect(subscriber.states.at(-1)?.phase).toBe('unavailable');
+      expect(subscriber.states.at(-1)?.reason).toBe('source-unavailable');
+    }
+  });
+
+  test('one subscriber throwing does not silence the rest', async () => {
+    const bus = topics();
+    const hub = createWatchHub({
+      read: async () => ({ n: 1 }),
+      watchable: () => true,
+      invalidatedBy: () => ['notes.changed'],
+      subscribe: bus.subscribe,
+    });
+    const key = watchKey(notes, { folder: 'a' });
+    const angry: WatchSubscriber = {
+      value: () => {
+        // This case is about the state frame.
+      },
+      state: () => {
+        throw new Error('subscriber exploded');
+      },
+    };
+    const calm = recorder();
+    hub.attach(angry).open(key, { folder: 'a' });
+    hub.attach(calm).open(key, { folder: 'a' });
+    await settle();
+
+    expect(() => hub.close()).not.toThrow();
+    // The one after the thrower still hears it. Unisolated, the loop aborted on
+    // the first throw and every later subscriber was left believing its value
+    // was current — and its `unsubscribes` never ran.
+    expect(calm.states.at(-1)?.phase).toBe('unavailable');
+  });
+});
+
+describe('a subscriber failure is contained, and not hidden where it matters', () => {
+  test('every source is announced even when a subscriber detaches on hearing it', async () => {
+    const bus = topics();
+    const hub = createWatchHub({
+      read: async () => ({ n: 1 }),
+      watchable: () => true,
+      invalidatedBy: () => ['notes.changed'],
+      subscribe: bus.subscribe,
+    });
+    const heard: string[] = [];
+    const watcher = hub.attach({
+      value: () => {
+        // This case is about the state frames.
+      },
+      state: (frame) => {
+        heard.push(`${frame.key.action}:${frame.phase}`);
+        // The natural client reaction, and the one that used to break teardown:
+        // hearing `unavailable`, let go of everything. `detach` drops ALL of this
+        // subscriber's keys at once, so re-entering the hub while it iterated its
+        // own map deleted the source the loop had not reached yet — and that one
+        // was never announced at all. Dropping a single key does not reproduce
+        // it: the entry it deletes is the one already visited.
+        if (frame.phase === 'unavailable') watcher.detach();
+      },
+    });
+    watcher.open(watchKey(notes, { folder: 'a' }), { folder: 'a' });
+    watcher.open(watchKey({ service: 'notes', action: 'count' }, {}), {});
+    await settle();
+
+    hub.close();
+
+    expect(heard.filter((line) => line.endsWith(':unavailable'))).toHaveLength(2);
+  });
+
+  test('a subscriber that throws on its first frame is refused, not retained', async () => {
+    const bus = topics();
+    const hub = createWatchHub({
+      read: async () => ({ n: 1 }),
+      watchable: () => true,
+      invalidatedBy: () => ['notes.changed'],
+      subscribe: bus.subscribe,
+    });
+    const key = watchKey(notes, { folder: 'a' });
+    hub.attach(recorder()).open(key, { folder: 'a' });
+    await settle();
+
+    const result = hub
+      .attach({
+        value: () => {
+          throw new Error('replay exploded');
+        },
+        state: () => {
+          // Never reached: the value frame throws first.
+        },
+      })
+      .open(key, { folder: 'a' });
+
+    // Swallowed, it was added to the source and told nothing — it would see
+    // revision N+1 onward and never the value it opened for, with no error
+    // anywhere. `open` has a refusal channel; a broadcast does not, which is why
+    // only this path reports.
+    expect(result.accepted).toBe(false);
+    expect(result.reason).toContain('replay exploded');
+    hub.close();
+  });
+
+  test('one subscriber throwing does not stop a value broadcast to the rest', async () => {
+    const bus = topics();
+    let value = 1;
+    const hub = createWatchHub({
+      read: async () => ({ n: value }),
+      watchable: () => true,
+      invalidatedBy: () => ['notes.changed'],
+      subscribe: bus.subscribe,
+    });
+    const key = watchKey(notes, { folder: 'a' });
+    const calm = recorder();
+    hub
+      .attach({
+        value: () => {
+          throw new Error('broadcast exploded');
+        },
+        state: () => {
+          // Only the value path is under test here.
+        },
+      })
+      .open(key, { folder: 'a' });
+    hub.attach(calm).open(key, { folder: 'a' });
+    await settle();
+    const before = calm.values.length;
+
+    value = 2;
+    bus.announce('notes.changed');
+    await settle();
+
+    // The broadcast reaches the subscribers after the thrower. This is the
+    // isolation the earlier teardown test did not actually exercise: that one
+    // passed on a version where only state announcements were isolated.
+    expect(calm.values.length).toBeGreaterThan(before);
+    hub.close();
+  });
+});

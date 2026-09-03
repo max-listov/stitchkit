@@ -1,4 +1,16 @@
 import { type ZodObject, type ZodType, z } from 'zod';
+import {
+  AsyncOperationCancelResultSchema,
+  type AsyncOperationCapability,
+} from './async-operation-contract';
+
+export {
+  type AsyncOperationCancelResult,
+  AsyncOperationCancelResultSchema,
+  type AsyncOperationCapability,
+  createAsyncOperationSnapshotSchema,
+} from './async-operation-contract';
+
 import type {
   ContractDef,
   EndpointDef,
@@ -18,35 +30,6 @@ import {
   type RuntimeToolIdentity,
   type RuntimeToolTransport,
 } from './runtime-tool';
-
-export const AsyncOperationCancelResultSchema = z.discriminatedUnion('outcome', [
-  z.object({ outcome: z.literal('accepted') }),
-  z.object({ outcome: z.literal('already_terminal') }),
-  z.object({ outcome: z.literal('rejected'), reason: z.string().min(1) }),
-]);
-
-export type AsyncOperationCancelResult = z.infer<typeof AsyncOperationCancelResultSchema>;
-export type AsyncOperationCapability =
-  | 'start'
-  | 'status'
-  | 'wait'
-  | 'cancel'
-  | 'result'
-  | 'artifacts';
-
-export function createAsyncOperationSnapshotSchema<
-  TProgress extends ZodType | undefined = undefined,
-  TFailure extends ZodType = ZodType,
->(config: { progress?: TProgress; failure: TFailure }) {
-  const progress = config.progress ? { progress: config.progress.optional() } : {};
-  return z.discriminatedUnion('phase', [
-    z.object({ phase: z.literal('pending'), ...progress }),
-    z.object({ phase: z.literal('running'), ...progress }),
-    z.object({ phase: z.literal('succeeded'), ...progress }),
-    z.object({ phase: z.literal('failed'), failure: config.failure, ...progress }),
-    z.object({ phase: z.literal('cancelled'), ...progress }),
-  ]);
-}
 
 export interface AsyncOperationIdentity {
   serviceName: string;

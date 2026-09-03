@@ -15,7 +15,21 @@
 
 import { extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { z } from 'zod';
+import type { z } from 'zod';
+import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
+import { ViewFileInputSchema, ViewFileOutputSchema } from './view-file-contract';
+
+export {
+  type McpAnnotations,
+  McpAnnotationsSchema,
+  type McpMediaContent,
+  McpMediaContentSchema,
+  ViewFileErrorSchema,
+  ViewFileInputSchema,
+  type ViewFileOutput,
+  ViewFileOutputSchema,
+} from './view-file-contract';
+
 import { AppError } from '../contract';
 import { type ManagedFileBoundary, ManagedFileError } from '../files/boundary';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
@@ -23,7 +37,6 @@ import { normalizeFileToolError } from './managed-file-error';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
-const MAX_VIEW_FILES = 20;
 
 /** File extension → MIME. Fallback when a URL carries no `content-type`. */
 const EXT_MIME: Record<string, string> = {
@@ -40,50 +53,6 @@ const EXT_MIME: Record<string, string> = {
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
 };
-
-/**
- * Annotation telling the client who a content block is for. `audience` lists
- * `'user'` (render for the human) and/or `'assistant'` (keep in model context);
- * `priority` (0–1) hints how prominently. Same shape as the MCP resource/prompt
- * annotation.
- */
-export const McpAnnotationsSchema = z.object({
-  audience: z.array(z.enum(['user', 'assistant'])).optional(),
-  priority: z.number().optional(),
-});
-
-export type McpAnnotations = z.infer<typeof McpAnnotationsSchema>;
-
-/** An MCP content block — text / image / audio (video cannot be inlined). */
-export const McpMediaContentSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('text'), text: z.string() }),
-  z.object({
-    type: z.literal('image'),
-    data: z.string(),
-    mimeType: z.string(),
-    annotations: McpAnnotationsSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('audio'),
-    data: z.string(),
-    mimeType: z.string(),
-    annotations: McpAnnotationsSchema.optional(),
-  }),
-]);
-
-export type McpMediaContent = z.infer<typeof McpMediaContentSchema>;
-
-export const ViewFileErrorSchema = z.object({
-  path: z.string(),
-  message: z.string(),
-});
-
-export const ViewFileOutputSchema = z.object({
-  content: z.array(McpMediaContentSchema),
-  errors: z.array(ViewFileErrorSchema),
-});
-
-export type ViewFileOutput = z.infer<typeof ViewFileOutputSchema>;
 
 export interface ViewFileOptions {
   /**
@@ -280,12 +249,6 @@ export async function resolveMedia(
 ): Promise<McpMediaContent[]> {
   return (await resolveMediaWithinBudget(pathOrUrl, options, MAX_INLINE_BYTES)).content;
 }
-
-export const ViewFileInputSchema = z.object({
-  paths: z
-    .union([z.string(), z.array(z.string()).max(MAX_VIEW_FILES)])
-    .describe('Media URL(s) or file path(s) to view'),
-});
 
 /**
  * Resolve one bounded batch into neutral media content. Per-item failures stay

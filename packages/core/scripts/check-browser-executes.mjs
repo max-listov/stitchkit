@@ -24,18 +24,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BROWSER_SOURCES, distOf } from '../entrypoints.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
-const lane = pkg.scripts['build:browser'] ?? '';
-const promised = new Set(
-  [...lane.matchAll(/(?:^|\s)\.?\/?(src\/[\w./-]+\.tsx?)/g)].map(
-    (match) => `./dist/${match[1].replace(/^src\//, '').replace(/\.tsx?$/, '.js')}`,
-  ),
-);
+const promised = new Set(BROWSER_SOURCES.map((source) => `./dist/${distOf(source)}`));
 if (promised.size === 0) {
-  console.error('[check-browser-executes] could not read any entry out of `build:browser`');
+  console.error(
+    '[check-browser-executes] the entrypoint manifest declares no browser-safe entry',
+  );
   process.exit(1);
 }
 
@@ -88,6 +86,17 @@ try {
   }
 } finally {
   rmSync(work, { recursive: true, force: true });
+}
+
+// Every promised entry was actually reached, not merely some of them. The loop
+// above skips any `exports` row the manifest does not call browser-safe, which is
+// the same silently-narrowing filter its sibling gate was rewritten to kill — and
+// `promised.size === 0` asks whether anything was read rather than whether
+// everything was.
+if (checked !== promised.size) {
+  offenders.push(
+    `checked ${checked} of ${promised.size} browser-safe entries — the exports map and the manifest disagree`,
+  );
 }
 
 if (offenders.length > 0) {

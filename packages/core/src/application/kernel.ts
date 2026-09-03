@@ -363,6 +363,9 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         !record.entry.required || (record.state === 'ready' && record.health === 'healthy'),
     );
 
+  /** The subtree a restart is replacing right now — empty between restarts. */
+  let restartingIds: readonly string[] = [];
+
   const snapshot = (): ApplicationSnapshot =>
     ApplicationSnapshotSchema.parse({
       id,
@@ -374,6 +377,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       capturedAt: new Date().toISOString(),
       changedAt,
       admission: { accepting, accepted, completed, pending },
+      restarting: [...restartingIds],
       resources: ordered.map((entry) => {
         const record = records.get(entry.id);
         if (!record) throw new Error('Managed resource record disappeared');
@@ -879,6 +883,7 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
       forceDeadlineAt: closeDeadlineAt + budget.forceTimeoutMs,
     };
 
+    restartingIds = affectedIds;
     const restartAbort = new AbortController();
     const closeTimer = setTimeout(
       () => restartAbort.abort(),
@@ -934,7 +939,9 @@ export function createApplication(config: ApplicationConfig): ApplicationHandle 
         durationMs: Date.now() - startedAt,
       };
     } finally {
+      restartingIds = [];
       clearTimeout(closeTimer);
+      publish();
     }
   };
 

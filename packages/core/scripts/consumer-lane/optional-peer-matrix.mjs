@@ -68,6 +68,19 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    id: 'tools-contract',
+    subpath: './tools/contract',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    // Browser, because that is the whole point: a client calling an async
+    // operation could not import its schema without dragging in the runtime.
+    target: 'browser',
+    source: featureSource('stitchkit/tools/contract', 'createAsyncOperationSnapshotSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'tool-invoker',
     subpath: './tools/invoker',
     fixture: 'minimal',
@@ -127,6 +140,20 @@ export const OPTIONAL_PEER_MATRIX = [
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
+  },
+  {
+    // The browser half of the promise the guide makes for this entry. It was
+    // missing for as long as the promise existed: the entry sat in the server
+    // build lane, so nothing bundled it for a browser and nothing noticed.
+    id: 'remote-browser',
+    subpath: './remote',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/remote', 'implementRemote'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
   },
   {
     id: 'contract',
@@ -412,6 +439,17 @@ export const OPTIONAL_PEER_MATRIX = [
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
+  },
+  {
+    id: 'declaration-browser',
+    subpath: './declaration',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/declaration', 'ProjectDeclarationSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
   },
   {
     id: 'node-signals',
