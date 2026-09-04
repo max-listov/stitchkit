@@ -108,7 +108,7 @@ try {
   // whole line matches paths `tsc` quotes inside its prose ("Did you mean to
   // import 'dist/index.js'"), which attributes the probe's own errors to the
   // package. And `tsc` prints a diagnostic's file relative to the working
-  // directory — `../../home/ml/…/dist/…` — so comparing against an absolute
+  // directory — `../../workspace/project/dist/…` — so comparing against an absolute
   // `dist` matches nothing and the gate reports clean over a defect it is holding
   // in its hand. Resolving both sides is the only comparison that is about files.
   const ours = output.split('\n').filter((line) => {

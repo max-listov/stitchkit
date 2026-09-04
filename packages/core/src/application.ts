@@ -183,6 +183,24 @@ export {
   managedResourceDependencyId,
 } from './application/resource';
 export {
+  createRevisionSignal,
+  type RevisionSignal,
+  type RevisionSignalAdvanceResult,
+  RevisionSignalAdvanceResultSchema,
+  type RevisionSignalClock,
+  type RevisionSignalConfig,
+  type RevisionSignalSnapshot,
+  RevisionSignalSnapshotSchema,
+  type RevisionSignalState,
+  RevisionSignalStateSchema,
+  type RevisionSignalTimer,
+  type RevisionSignalWaitOptions,
+  type RevisionSignalWaitOutcome,
+  RevisionSignalWaitOutcomeSchema,
+  type RevisionSignalWaitResult,
+  RevisionSignalWaitResultSchema,
+} from './application/revision-signal';
+export {
   createManagedSchedule,
   type ManagedSchedule,
   type ManagedScheduleClock,

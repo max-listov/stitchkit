@@ -587,6 +587,19 @@ cutovers are covered by the executable
 | `BoundedAdmissionRefusalError` | class | `run()` refusal with reason and optional `retryAfterMs` |
 | `BoundedOperationWaitError` | class | caller wait ended as `cancelled` or `timed-out`; underlying capacity remains leased until work settles |
 
+### Revision wake-up
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createRevisionSignal` | function | finite broadcast wait for the next monotonic process-local revision |
+| `RevisionSignal` / `RevisionSignalConfig` / `RevisionSignalClock` / `RevisionSignalTimer` | _type_ | signal handle, waiter bound and replaceable timer boundary |
+| `RevisionSignalWaitOptions` | _type_ | optional caller `signal` and positive `timeoutMs`; absent options wait until advance or close |
+| `RevisionSignalWaitOutcomeSchema` / `RevisionSignalWaitOutcome` | schema / _type_ | `changed \| timed-out \| aborted \| closed \| capacity` |
+| `RevisionSignalWaitResultSchema` / `RevisionSignalWaitResult` | schema / _type_ | terminal wait outcome with the revision observed at settlement |
+| `RevisionSignalAdvanceResultSchema` / `RevisionSignalAdvanceResult` | schema / _type_ | successful `advanced` or post-close `closed`, with the resulting revision |
+| `RevisionSignalStateSchema` / `RevisionSignalState` | schema / _type_ | `open \| closed` lifecycle |
+| `RevisionSignalSnapshotSchema` / `RevisionSignalSnapshot` | schema / _type_ | current revision, finite pending count and lifetime outcome counters |
+
 ### Bounded delivery
 
 | Export | Kind | Summary |

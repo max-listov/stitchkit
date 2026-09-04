@@ -4,7 +4,7 @@ description: Compose process-local resources, schedules, readiness, drain and op
 type: architecture
 status: active
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-09-04 14:11 +07:00
 ---
 
 # Managed application kernel
@@ -513,6 +513,40 @@ aborts the signal and settles the caller, but the lease remains active until the
 underlying Promise actually settles. `drain()` therefore reports real work;
 `force()` closes admission and reports remaining work without claiming to have
 terminated it. → ADR 0118.
+
+### Bounded revision wake-up
+
+Use `createRevisionSignal` when several operations need to wait for the same
+process-local fact to change, but the change itself is not a queue item:
+
+```ts
+const connectionsChanged = createRevisionSignal({ maxWaiters: 256 })
+
+const observed = connectionsChanged.getSnapshot().revision
+const result = await connectionsChanged.wait(observed, {
+  signal: request.signal,
+  timeoutMs: 10_000,
+})
+
+// After changing the canonical connection state:
+connectionsChanged.advance()
+```
+
+`wait(after)` resolves immediately when the signal is already newer than
+`after`; this closes the race between reading a snapshot and registering the
+wait. Waiting on the current revision parks one operation, up to `maxWaiters`.
+Every terminal result carries the revision it observed and distinguishes
+`changed`, `timed-out`, `aborted`, `closed` and `capacity`. A future `after` is
+a caller error rather than a revision the signal could honestly promise to
+reach.
+
+One advance wakes every older waiter. It is not consumed by the first reader,
+does not retain event payloads and has no replay history. A bounded channel is
+for delivering items to one reader; a credit window grants a finite resource.
+
+The signal is already its whole lifecycle handle. Call its idempotent `close()`
+from the `close` phase of the managed resource that owns the changing fact;
+there is no second managed-resource wrapper around the same state. → ADR 0163.
 
 ### Bounded delivery and byte credit
 

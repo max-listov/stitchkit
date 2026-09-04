@@ -15,7 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.80.1] — 2026-09-04
+
 ### Added
+
+- **Bounded revision broadcasts for process-local change waits.**
+  `createRevisionSignal` advances one monotonic revision and wakes every waiter
+  behind it without turning the signal into a consumed queue item. `wait(after)`
+  closes the read/register race by answering an already-newer revision
+  immediately; timeout, abort, close and capacity are distinct outcomes carrying
+  the revision they observed. A required `maxWaiters` bounds retained waits, and
+  the snapshot exposes pending and lifetime outcome counts. → ADR 0163
 
 - **`build` typechecks every emitted declaration the way a strict consumer
   reads it.** `check-declarations-strict.mjs` re-exports all 29 entrypoints into

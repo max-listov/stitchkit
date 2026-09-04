@@ -1,10 +1,10 @@
 ---
 title: Managed application kernel architecture
-description: Current process-local resource, readiness, shutdown, schedule, projection and provider-adapter model.
+description: Current process-local resource, readiness, shutdown, revision wake-up, schedule, projection and provider-adapter model.
 type: architecture
 status: active
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-09-04 14:11 +07:00
 ---
 
 # Managed application kernel architecture
@@ -20,6 +20,7 @@ their transport state machines or add a worker control plane.
 | resource graph and lifecycle | durable records and recovery | process registration and placement |
 | readiness and health projection | business health probes and effects | PM2/systemd/Docker control |
 | process-local admission leases | distributed leases and idempotency | boot/restart/resource policy |
+| finite revision wake-ups | durable change logs and replay | cross-process notification delivery |
 | bounded drain and close ordering | ORM transactions and queue claims | host logs and fleet aggregation |
 | ephemeral periodic timers | cron/timezone/backfill semantics | scheduled units and external cron |
 | aggregate operational snapshots | provider payloads and product metrics | monitoring backend/dashboard |
@@ -177,6 +178,29 @@ The application result contains application admission counts and per-resource
 cleanup outcomes. It never manufactures HTTP request or WebSocket counters.
 `managedServerResource` retains the real server shutdown promise: it starts the
 existing shutdown once and every later phase awaits that exact promise.
+
+## Revision wake-up
+
+`createRevisionSignal` announces that an application-owned process-local fact is
+newer. It retains no fact or event payload: the application changes canonical
+state first and then calls `advance()`. One advance increments a safe-integer
+revision and broadcasts it to every older waiter.
+
+The cursor comparison is the ordering boundary. `wait(after)` answers
+immediately when the current revision is newer, parks only when it is equal and
+rejects a future cursor. Therefore a change between reading the revision and
+registering the wait cannot be lost.
+
+`maxWaiters` is a hard retained-memory count bound. Timeout, abort, close and
+capacity settle as typed outcomes with the revision observed at that point.
+Every parked wait has one cleanup path for its timer, abort listener and set
+membership. Close is terminal and idempotent; an advance after close reports
+`closed` without moving the revision.
+
+The signal is not a managed resource by itself. It is a synchronous child of
+the resource that owns the changing fact, and that resource closes it during
+teardown. It carries no readiness, health, dependency or async startup state
+that would justify a second resource identity.
 
 ## Managed schedules
 

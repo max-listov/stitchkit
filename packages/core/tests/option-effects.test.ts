@@ -44,6 +44,8 @@ const COVERED: Record<string, string> = {
   ManagedServerResourceConfig: 'application.ts',
   DiagnosticJournalConfig: 'application.ts',
   CreditAcquireWaitOptions: 'application.ts',
+  RevisionSignalConfig: 'application.ts',
+  RevisionSignalWaitOptions: 'application.ts',
   BoundedAdmissionPerKeyLimits: 'application.ts',
   KeyspaceResourceConfig: 'application.ts',
   SqliteKeyspaceBackendConfig: 'application.ts',

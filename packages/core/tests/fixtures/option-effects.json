@@ -164,6 +164,22 @@
       "test": "refuses with a distinguishable reason when the wait budget runs out"
     }
   },
+  "RevisionSignalConfig": {
+    "maxWaiters": {
+      "test": "maxWaiters refuses excess waits without retaining them"
+    },
+    "clock": {
+      "test": "the injected clock owns timeout scheduling and cancellation"
+    }
+  },
+  "RevisionSignalWaitOptions": {
+    "signal": {
+      "test": "an aborted signal ends a revision wait before and during it"
+    },
+    "timeoutMs": {
+      "test": "timeoutMs settles only after the declared wait budget"
+    }
+  },
   "BoundedAdmissionPerKeyLimits": {
     "maxConcurrent": {
       "test": "enforces a different ceiling for each key from one resolver"
