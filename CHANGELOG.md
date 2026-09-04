@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **`build` typechecks every emitted declaration the way a strict consumer
+  reads it.** `check-declarations-strict.mjs` re-exports all 29 entrypoints into
+  one module, compiles it with `skipLibCheck: false`, and fails on any
+  diagnostic whose file resolves inside `dist`. The consumer lane already caught
+  this class — it is what found the five `TS2344` errors in
+  `tools/async-operation-contract.d.ts` — but it runs at release time, after
+  packing and installing. This is the same question seven seconds into a build,
+  where the fix is an edit instead of a second release commit. → ADR 0161
+
 ### Fixed
 
 - **The release gate no longer reddens from memory pressure.** Two heavy lanes

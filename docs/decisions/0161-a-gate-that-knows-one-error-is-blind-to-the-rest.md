@@ -108,9 +108,41 @@ fixture that installs everything, is being checked for the wrong thing.
 peer-free fixture, names both return types, and runs the parses — so the entry
 is now anchored rather than reached sideways.
 
+## And it should not have to wait for a release to say so
+
+The consumer lane is the right net and the wrong moment. It packs a tarball,
+installs it into five fixtures and typechecks each — a minute of work that runs
+when a release is being cut, which is the last place anyone wants to learn that
+a declaration does not compile. The same question costs seven seconds against
+`dist`, and `check-declarations-strict.mjs` now asks it inside `build`: one
+generated module re-exporting all 29 entrypoints, `skipLibCheck: false`,
+failing on any diagnostic whose file resolves inside our own `dist`.
+
+The lane keeps its job. It checks the *packed* artifact with real installs and
+real optional-peer matrices, which a build cannot; this one catches the class
+four seconds after the file is written, where the fix is an edit rather than a
+second release commit.
+
+Writing it reproduced the same defect twice, which is the argument for positive
+controls better than any reasoning about them:
+
+- The first filter tested whether the whole line contained the `dist` path.
+  `tsc` quotes paths inside its own prose — "Did you mean to import
+  'dist/index.js' instead?" — so the probe's own 29 errors were reported as the
+  package's.
+- The second resolved that by keying on the diagnostic's file position, and
+  compared it to an **absolute** `dist` path. `tsc` prints a diagnostic's file
+  relative to its working directory, so the comparison matched nothing at all
+  and the gate reported 29 clean entrypoints while holding five errors in its
+  hand. Nothing about the output distinguishes that from a real pass.
+
+Both were caught by running the gate against the 0.79.0 declaration, whose
+answer was known in advance. Neither would have been caught by reading it.
+
 ## Consequence
 
 - A diagnostic in a packed declaration fails the release, whatever its code.
+- A diagnostic in an emitted declaration fails the **build**, seven seconds in.
 - A newly unresolvable optional peer is a listed decision, as before.
 - The no-progress overload has runtime tests. It had none: every caller in this
   repository, in the guide and in the examples configures `progress`, which is
