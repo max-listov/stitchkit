@@ -60,6 +60,20 @@ its seconds: **a local gate can refuse, and CI can only report.** For anything
 whose damage is done by publication rather than by being wrong, that is the
 whole difference.
 
+## Where it runs, and why that matters most on the quietest push
+
+A push earns one of three local gates: `none` for a tag, `fast` for an ordinary
+branch push, `full` for one carrying a release commit. The scan is a
+straight-line statement before all three, so no profile can skip it — and the
+profile that would otherwise do the least is the one where this matters most.
+
+A tag push is what triggers publication to npm, and an npm version is immutable:
+there is no scrubbing it in the next release, the way the git leak was scrubbed.
+That the leak in `check-declarations-strict.mjs` never reached npm was luck
+about which directory it landed in — `scripts/` is not in the packed files — not
+a property of the system. Now the last thing that happens before a tag goes up
+is the question "is there anything private in what git carries".
+
 ## Why not widen the memo key
 
 The memo already carries two inputs a tree cannot show — the PostgreSQL server

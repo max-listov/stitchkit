@@ -34,6 +34,11 @@
  * check leaves the memo instead, and joins the pre-push metadata gate — the
  * place this repository already reserves for cheap things that must be true
  * every time. Metadata before machinery, for the same reason.
+ *
+ * It sits before the profile branches, so it runs for `none`, `fast` and `full`
+ * alike. The `none` profile is a tag push, which is what triggers publication to
+ * npm — and an npm version is immutable, so that is the one push where a leak
+ * cannot be scrubbed by the next release.
  */
 import {
   inspectTrackedPublication,
