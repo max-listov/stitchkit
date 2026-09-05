@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **The consumer lane executes every `stitchkit/application` factory.** Six of
+  the thirteen were reached by no fixture — `createDecisionPipeline`,
+  `createApplicationEventSink`, `createApplicationHealthHandler`,
+  `createApplicationOperationalHandlers`, `createRevisionSignal` and
+  `createWatchHub`. Their declarations are checked and the in-repo suite
+  exercises them from `src`; nothing ran them out of the packed tarball, which
+  is the only thing this lane is for. They run in the peer-free fixture, so the
+  absence of an optional peer is asserted along with them.
+
 ### Fixed
 
 - **The publication-privacy scan can no longer be skipped by the gate memo.**

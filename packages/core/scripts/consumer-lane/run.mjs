@@ -323,6 +323,16 @@ try {
           boundedOutput,
         );
       }
+      const primitivesOutput = step('minimal: peer-free application primitives', () =>
+        run('bun', ['src/application-primitives-conformance.ts'], dir),
+      );
+      if (!primitivesOutput.includes('application primitives conformance: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: application primitives conformance produced no proof',
+          primitivesOutput,
+        );
+      }
       const toolsContractOutput = step('minimal: peer-free tools contract', () =>
         run('bun', ['src/tools-contract-conformance.ts'], dir),
       );
