@@ -189,6 +189,7 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0161](0161-a-gate-that-knows-one-error-is-blind-to-the-rest.md) | A gate that recognises one error is blind to every other | Accepted — the consumer lane's declaration check subtracts what is accepted and fails on the rest, after printing five `TS2344` errors for two releases and discarding them |
 | [0162](0162-a-gate-that-reddens-from-load-teaches-you-to-disbelieve-red.md) | A gate that reddens from load teaches you to disbelieve red | Accepted — heavy-lane concurrency is measured from available memory and reported, and a failing lane names itself before its siblings are cancelled |
 | [0163](0163-a-revision-signal-broadcasts-a-fact-not-an-item.md) | A revision signal broadcasts a fact, not an item | Accepted — cursor-safe change waits are finite, broadcast and lifecycle-complete without becoming a queue or a second managed resource |
+| [0164](0164-a-local-gate-refuses-ci-only-reports.md) | A local gate refuses; CI only reports | Accepted — the publication-privacy scan runs on every push outside the memo, after a memo key that could not describe its input let a real machine path reach a public repository |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

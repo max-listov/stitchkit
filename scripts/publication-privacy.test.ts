@@ -20,95 +20,20 @@
  * widening one global list until the strict reader stops being strict.
  */
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { worktreeTreeHash } from './gate-memo';
 import {
   applyPublicationExemptions,
   inspectPublicationText,
   inspectTrackedPublication,
-  type PublicationPrivacyExemption,
   privateShapes,
   STITCHKIT_CONVENTIONS,
+  STITCHKIT_EXEMPTIONS,
 } from './publication-privacy';
 
 const ROOT = `${import.meta.dir}/..`;
-
-/**
- * Every allowance this repository grants, and why it is not a leak.
- *
- * A stale one is refused by `applyPublicationExemptions`, so an allowance
- * cannot outlive the line it was written for.
- */
-const EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
-  {
-    file: 'scripts/publication-privacy.test.ts',
-    rule: 'non-synthetic Linux home path',
-    because:
-      'This file proves each shape fires, which it can only do by containing one of each.',
-  },
-  {
-    file: 'scripts/publication-privacy.test.ts',
-    rule: 'non-synthetic macOS home path',
-    because:
-      'This file proves each shape fires, which it can only do by containing one of each.',
-  },
-  {
-    file: 'scripts/publication-privacy.test.ts',
-    rule: 'private fleet-style node identity',
-    because:
-      'This file proves each shape fires, which it can only do by containing one of each.',
-  },
-  {
-    file: 'scripts/publication-privacy.test.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'This file proves each shape fires, which it can only do by containing one of each.',
-  },
-  {
-    file: 'scripts/publication-privacy.ts',
-    rule: 'agent or session routing metadata',
-    because:
-      'The scanner states that shape as a literal pattern, so it matches itself. A rule cannot be written without writing it down.',
-  },
-  {
-    file: 'packages/core/tests/error-hook.test.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'A synthetic DSN inside an error message, asserted to be redacted before it reaches a client.',
-  },
-  {
-    file: 'packages/core/tests/errors.test.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'A synthetic secret built by repeating one character, used to prove long values are truncated.',
-  },
-  {
-    file: 'packages/core/tests/oauth.test.ts',
-    rule: 'credential embedded in a URL',
-    because: 'A redirect URI carrying userinfo, asserted to be refused.',
-  },
-  {
-    file: 'packages/core/tests/project-declaration.test.ts',
-    rule: 'credential embedded in a URL',
-    because: 'The hygiene filter is tested by feeding it exactly the shapes it must refuse.',
-  },
-  {
-    file: 'packages/core/tests/secure-fetch.test.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'A URL with embedded userinfo, asserted to be rejected before any request is made.',
-  },
-  {
-    file: 'packages/create-stitchkit/template/scripts/acceptance-database.test.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'A throwaway local database URL the acceptance script parses; never reachable off the machine.',
-  },
-  {
-    file: 'scripts/starter-database.ts',
-    rule: 'credential embedded in a URL',
-    because:
-      'Not a credential at all: both halves are template placeholders interpolated at runtime. The shape cannot tell a template from a literal, and a value assembled from variables is by construction not a secret.',
-  },
-];
 
 describe('the private working companion is never named here', () => {
   // Its **path** was already refused by the home-directory shapes; its bare
@@ -200,10 +125,66 @@ describe('nothing private is in what git carries', () => {
     const findings = await inspectTrackedPublication({
       root: ROOT,
       conventions: STITCHKIT_CONVENTIONS,
-      exemptions: EXEMPTIONS,
+      exemptions: STITCHKIT_EXEMPTIONS,
     });
     expect(
       findings.map((finding) => `${finding.file}:${finding.line} ${finding.rule}`),
     ).toEqual([]);
+  });
+});
+
+describe('the scan cannot be skipped by the gate memo', () => {
+  /**
+   * The defect this pins is not in either component. `worktreeTreeHash` takes
+   * its hash with `git add --all .` into a scratch index, so it counts
+   * untracked files; the scan reads the real index, so it does not. The two
+   * notions of "the tree" agree everywhere except the first `git add` of a new
+   * file — which changes no content, so no hash — and that is exactly the
+   * moment the file first enters the scan's reach. A green run remembered
+   * before it therefore answers for the push after it.
+   *
+   * A real machine path reached a public repository through that gap. CI caught
+   * it and went red, which for a public push is a report rather than a refusal:
+   * the push had already published it. The repair is that the scan no longer
+   * runs inside the memo at all, and this test states the arithmetic that made
+   * the repair necessary, so nobody "optimises" it back under the memo later.
+   */
+  const git = (root: string, ...args: string[]): void => {
+    const result = Bun.spawnSync(['git', '-C', root, ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (result.exitCode !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+  };
+
+  test('a new file is inside the memo key and outside the scan until it is staged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stitchkit-privacy-memo-'));
+    try {
+      git(root, 'init', '--quiet');
+      git(root, 'config', 'user.email', 'gate@example.invalid');
+      git(root, 'config', 'user.name', 'gate');
+      writeFileSync(join(root, 'kept.md'), 'nothing private here\n');
+      git(root, 'add', 'kept.md');
+      git(root, 'commit', '--quiet', '-m', 'base');
+
+      const findings = async (): Promise<number> =>
+        (await inspectTrackedPublication({ root, conventions: STITCHKIT_CONVENTIONS })).length;
+
+      expect(await findings()).toBe(0);
+
+      // The leak, written but not yet staged.
+      writeFileSync(join(root, 'leak.md'), 'see /home/realperson/work/x for the layout\n');
+      const beforeStaging = await worktreeTreeHash(root);
+      expect(await findings()).toBe(0);
+
+      git(root, 'add', 'leak.md');
+      const afterStaging = await worktreeTreeHash(root);
+
+      // The whole defect in two assertions: the key did not move, the verdict did.
+      expect(afterStaging).toBe(beforeStaging);
+      expect(await findings()).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

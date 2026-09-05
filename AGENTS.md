@@ -151,6 +151,13 @@ commit to be the branch head, so a red run on an already-pushed release commit
 is repaired only by making a **new** release commit. Everywhere else, red is
 two and a half minutes and a fix.
 
+**The publication-privacy scan runs on both pushes and is never memoised.** It
+reads the index, and the memo's key is a working-tree hash that counts untracked
+files — so a new file is inside the key and outside the scan at the same time,
+and `git add` moves neither. A push therefore skipped it once and published a
+real machine path; CI went red afterwards, which for a public repository is a
+report rather than a refusal. It costs 367 ms. → ADR 0164
+
 **Metadata before machinery, on both pushes.** A release commit's changelog is
 read — version against the manifest, `### ⚠️ Breaking changes` against its
 `**Who must act:**` line, the breaking section against the version calibre, the

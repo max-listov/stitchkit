@@ -965,6 +965,17 @@ async function main(): Promise<void> {
       releaseCommits: releaseCommitsIn,
       validateCommit: (commit) => validateReleaseCommit(root, commit).then(() => undefined),
     });
+    // Before the machinery, and never memoised — the one input the memo's key
+    // cannot describe. `verify` remembers a green run by a tree hash taken with
+    // `git add --all .`, which counts untracked files; this scan reads the real
+    // index, which does not. A new file is therefore inside the key and outside
+    // the scan at the same time, `git add` changes no content and so no hash,
+    // and the push skips the suite that would have looked. That is how a real
+    // machine path reached a public repository. CI did catch it and went red —
+    // afterwards, which for a public push is after the content is public. Only
+    // a local refusal is a refusal. A third of a second, every time, is the
+    // whole cost of never needing that distinction again.
+    await run(['bun', 'scripts/check-publication-privacy.ts']);
     if (profile === 'fast') {
       process.stderr.write(
         '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',

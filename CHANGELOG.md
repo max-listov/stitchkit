@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- **The publication-privacy scan can no longer be skipped by the gate memo.**
+  `verify` remembers a green run under a tree hash taken with `git add --all .`,
+  which counts untracked files; the scan reads the real index, which does not.
+  A new file is therefore inside the key and outside the scan at once, `git add`
+  changes no content and so no hash, and the push skips the suite that would
+  have looked. Measured on a clone: the same hash yields 30 findings before
+  `git add` and 31 after. The scan now runs on every push beside the release
+  metadata gate, outside the memo — 367 ms, always. Widening the key instead
+  would make `git add` re-spend thirteen minutes of heavy lanes on a check that
+  takes a third of a second. → ADR 0164
+
+- **`STITCHKIT_EXEMPTIONS` is exported from `scripts/publication-privacy.ts`.**
+  The allowance list lived in the test, which was fine while the test was its
+  only caller. Of two copies, the one that drifted would be the one deciding
+  what reaches a public repository.
+
+
 ## [0.80.1] — 2026-09-04
 
 ### Added

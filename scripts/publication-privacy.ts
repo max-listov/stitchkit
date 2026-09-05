@@ -122,6 +122,90 @@ export function privateShapes(
 
 const PRIVATE_SHAPES = privateShapes();
 
+/**
+ * Every allowance this repository grants, and why it is not a leak.
+ *
+ * Exported rather than declared in the test, because the test is no longer the
+ * only caller: `check-publication-privacy.ts` runs the same scan on every push,
+ * outside the gate memo. Two copies of this list would drift, and the copy that
+ * drifted would be the one deciding what reaches a public repository.
+ *
+ * A stale one is refused by `applyPublicationExemptions`, so an allowance
+ * cannot outlive the line it was written for.
+ */
+export const STITCHKIT_EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
+  {
+    file: 'scripts/publication-privacy.test.ts',
+    rule: 'non-synthetic Linux home path',
+    because:
+      'This file proves each shape fires, which it can only do by containing one of each.',
+  },
+  {
+    file: 'scripts/publication-privacy.test.ts',
+    rule: 'non-synthetic macOS home path',
+    because:
+      'This file proves each shape fires, which it can only do by containing one of each.',
+  },
+  {
+    file: 'scripts/publication-privacy.test.ts',
+    rule: 'private fleet-style node identity',
+    because:
+      'This file proves each shape fires, which it can only do by containing one of each.',
+  },
+  {
+    file: 'scripts/publication-privacy.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'This file proves each shape fires, which it can only do by containing one of each.',
+  },
+  {
+    file: 'scripts/publication-privacy.ts',
+    rule: 'agent or session routing metadata',
+    because:
+      'The scanner states that shape as a literal pattern, so it matches itself. A rule cannot be written without writing it down.',
+  },
+  {
+    file: 'packages/core/tests/error-hook.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'A synthetic DSN inside an error message, asserted to be redacted before it reaches a client.',
+  },
+  {
+    file: 'packages/core/tests/errors.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'A synthetic secret built by repeating one character, used to prove long values are truncated.',
+  },
+  {
+    file: 'packages/core/tests/oauth.test.ts',
+    rule: 'credential embedded in a URL',
+    because: 'A redirect URI carrying userinfo, asserted to be refused.',
+  },
+  {
+    file: 'packages/core/tests/project-declaration.test.ts',
+    rule: 'credential embedded in a URL',
+    because: 'The hygiene filter is tested by feeding it exactly the shapes it must refuse.',
+  },
+  {
+    file: 'packages/core/tests/secure-fetch.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'A URL with embedded userinfo, asserted to be rejected before any request is made.',
+  },
+  {
+    file: 'packages/create-stitchkit/template/scripts/acceptance-database.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'A throwaway local database URL the acceptance script parses; never reachable off the machine.',
+  },
+  {
+    file: 'scripts/starter-database.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'Not a credential at all: both halves are template placeholders interpolated at runtime. The shape cannot tell a template from a literal, and a value assembled from variables is by construction not a secret.',
+  },
+];
+
 export function inspectPublicationText(
   file: string,
   contents: string,
