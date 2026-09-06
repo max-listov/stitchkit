@@ -21,6 +21,14 @@ export interface FileStateStoreOptions<TState> {
 
 /** A lock whose heartbeat is this many stale bounds old is abandoned whatever its pid says. */
 const ABANDONED_LOCK_MULTIPLIER = 10;
+/**
+ * …and never fewer than this many missed heartbeats. The heartbeat interval
+ * is floored at 10 ms, so with a tiny stale bound the stale multiple alone
+ * would sit below a couple of missed beats — one scheduler stall on a loaded
+ * host, and a live holder's lock was reclaimed under it.
+ */
+const ABANDONED_HEARTBEATS = 30;
+const MIN_HEARTBEAT_MS = 10;
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -98,6 +106,7 @@ async function reclaim(
   lockPath: string,
   observed: NonNullable<Awaited<ReturnType<typeof stat>>>,
   staleLockMs: number,
+  abandonedAfterMs: number,
 ): Promise<boolean> {
   const guardPath = `${lockPath}.reclaim`;
   let guard: Awaited<ReturnType<typeof open>>;
@@ -132,7 +141,7 @@ async function reclaim(
     // the heartbeat is the liveness signal the lock actually carries.
     const owner = await ownerState(lockPath);
     const age = Date.now() - current.mtimeMs;
-    if (owner !== 'gone' && age < staleLockMs * ABANDONED_LOCK_MULTIPLIER) return false;
+    if (owner !== 'gone' && age < abandonedAfterMs) return false;
     await unlink(lockPath);
     return true;
   } finally {
@@ -158,6 +167,11 @@ export function createFileStateStore<TState>(
   const lockTimeoutMs = options.lockTimeoutMs ?? 10_000;
   const staleLockMs = options.staleLockMs ?? 3_000;
   const retryMs = options.retryMs ?? 10;
+  const heartbeatMs = Math.max(MIN_HEARTBEAT_MS, Math.floor(staleLockMs / 3));
+  const abandonedAfterMs = Math.max(
+    staleLockMs * ABANDONED_LOCK_MULTIPLIER,
+    heartbeatMs * ABANDONED_HEARTBEATS,
+  );
   if (staleLockMs >= lockTimeoutMs) {
     throw new Error(
       `[stitchkit] createFileStateStore: staleLockMs (${staleLockMs}) must be below lockTimeoutMs (${lockTimeoutMs}), or a crashed holder blocks every update until the timeout`,
@@ -226,7 +240,7 @@ export function createFileStateStore<TState>(
         try {
           const lock = await stat(lockPath);
           if (Date.now() - lock.mtimeMs > staleLockMs) {
-            if (await reclaim(lockPath, lock, staleLockMs)) continue;
+            if (await reclaim(lockPath, lock, staleLockMs, abandonedAfterMs)) continue;
           }
         } catch (statError) {
           if (await missing(statError)) continue;
@@ -268,7 +282,7 @@ export function createFileStateStore<TState>(
       const lock = await acquire();
       const heartbeat = setInterval(
         () => void lock.refresh().catch(() => undefined),
-        Math.max(10, staleLockMs / 3),
+        heartbeatMs,
       );
       try {
         const next = await transition(await parseFile());

@@ -108,8 +108,8 @@ change once, because the materialized params schema is now part of them.
   defaults now let a contender outlive a crashed holder (`staleLockMs` 3 s
   inside `lockTimeoutMs` 10 s — the constructor refuses the reverse), an
   orphaned reclaim guard ages out, a lock whose heartbeat is ten stale bounds
-  old is abandoned whatever its pid says, and a crashed writer's temporary
-  files are swept.
+  old — never fewer than thirty missed heartbeats — is abandoned whatever its
+  pid says, and a crashed writer's temporary files are swept.
 
 - **`stitchkit/geo` — server-only managed GeoIP generations.** The resolver
   keeps a last-known-good reader on a failed reload, rejects non-public IPs via

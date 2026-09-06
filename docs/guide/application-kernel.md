@@ -850,7 +850,8 @@ is a file with a heartbeat: the holder refreshes its mtime every third of
 holder blocks every update until the lock ages out, which the constructor
 refuses. A lock whose heartbeat is stale is reclaimed once its recorded pid is
 gone; a live or unverifiable pid (a reused number, another user's process)
-keeps it for ten stale bounds, after which the heartbeat wins and the lock is
-abandoned. Temporary files a crashed writer left beside the state are swept on
+keeps it for ten stale bounds — and never fewer than thirty missed heartbeats,
+so a scheduler stall on a loaded host cannot pull a live lock from under its
+holder — after which the heartbeat wins and the lock is abandoned. Temporary files a crashed writer left beside the state are swept on
 the store's first update. Ledger corruption may be declared reconstructable;
 an outbox must fail closed rather than silently discard pending delivery.
