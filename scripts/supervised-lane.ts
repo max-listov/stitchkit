@@ -26,8 +26,8 @@ import {
   reapProcessesUnder,
   releaseLaneDirectory,
   supervisorPidIn,
-  sweepAbandonedLaneDirectories,
   sweepAbandonedLaneProcesses,
+  sweepAbandonedTemporaryDirectories,
 } from './lane-processes';
 import { createStarterLaneDatabase } from './starter-database';
 
@@ -131,7 +131,7 @@ if (swept > 0) {
 }
 // And their trees: the `rm` at the end of this file runs on no path a signal or
 // the OOM killer takes, so every such run used to leave its workspace on disk.
-const reclaimed = await sweepAbandonedLaneDirectories();
+const reclaimed = await sweepAbandonedTemporaryDirectories();
 if (reclaimed.length > 0) {
   console.log(
     `[supervised-lane] removed ${reclaimed.length} directory(ies) abandoned by an earlier run`,

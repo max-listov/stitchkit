@@ -259,6 +259,52 @@ export async function reapProcessesUnder(directory: string): Promise<number> {
   return living.length;
 }
 
+/**
+ * Every process holding a file OPEN inside this tree, whatever its own working
+ * directory is.
+ *
+ * The blind spot of the cwd scan, and not a theoretical one: a neighbouring
+ * project's supervised backend was found holding three descriptors inside an
+ * abandoned consumer tree while its own cwd was in its own repository. The cwd
+ * scan calls that tree empty; removing it would have pulled a running service's
+ * modules out from under it — this fix causing the next incident, which is the
+ * thing the whole sweep is written to avoid.
+ *
+ * `/proc/<pid>/fd` rather than `lsof`, so the sweep has no external dependency.
+ */
+async function descriptorsUnder(directory: string): Promise<number[]> {
+  const holders: number[] = [];
+  for (const pid of await processIds()) {
+    if (pid === process.pid) continue;
+    let descriptors: string[];
+    try {
+      descriptors = await readdir(`/proc/${pid}/fd`);
+    } catch {
+      // Gone, or not ours to inspect.
+      continue;
+    }
+    for (const descriptor of descriptors) {
+      let target: string;
+      try {
+        target = await readlink(`/proc/${pid}/fd/${descriptor}`);
+      } catch {
+        continue;
+      }
+      if (target.startsWith(`${directory}/`)) {
+        holders.push(pid);
+        break;
+      }
+    }
+  }
+  return holders;
+}
+
+/** Whether anything at all is living in or reading from this tree. */
+async function anythingIsUsing(directory: string): Promise<boolean> {
+  if ((await processesUnder(directory)).length > 0) return true;
+  return (await descriptorsUnder(directory)).length > 0;
+}
+
 /** Every process whose working directory is inside this tree. */
 async function processesUnder(directory: string): Promise<number[]> {
   const found: number[] = [];
@@ -288,6 +334,22 @@ export async function assertNothingSurvives(directory: string): Promise<void> {
     );
   }
 }
+
+/**
+ * Every temporary directory this repository creates, by prefix.
+ *
+ * Deliberately WIDER than `LANE_DIRECTORY_PREFIXES`, and used only for removing
+ * directories — never for killing processes, which stays on the narrow list.
+ * The lanes are the biggest leak but not the only one: a killed run also leaves
+ * a 137 MiB consumer tree, and one small directory per scaffolder test. They
+ * all clean up on the happy path and none of them survives a SIGKILL, which is
+ * how a host with a memory guard actually ends a gate.
+ *
+ * A prefix rather than a list of exact names, because an exact list is the
+ * thing that drifts: a new script gets a new prefix and nothing tells the
+ * sweeper about it.
+ */
+const PROJECT_TEMP_PREFIXES = ['stitchkit-', 'supervised-lane-', 'starter-signal-'] as const;
 
 /**
  * The marker a lane writes into its own directory, naming the process that owns it.
@@ -351,7 +413,7 @@ export async function releaseLaneDirectory(directory: string): Promise<void> {
  */
 const UNCLAIMED_GRACE_MS = 6 * 60 * 60 * 1000;
 
-async function laneDirectoryIsAbandoned(directory: string): Promise<boolean> {
+async function temporaryDirectoryIsAbandoned(directory: string): Promise<boolean> {
   let marker: string;
   try {
     marker = await readFile(join(directory, OWNER_FILE), 'utf8');
@@ -363,7 +425,7 @@ async function laneDirectoryIsAbandoned(directory: string): Promise<boolean> {
       return false;
     }
     if (age < UNCLAIMED_GRACE_MS) return false;
-    return (await processesUnder(directory)).length === 0;
+    return !(await anythingIsUsing(directory));
   }
 
   let owner: { pid?: unknown; startedAt?: unknown };
@@ -376,7 +438,11 @@ async function laneDirectoryIsAbandoned(directory: string): Promise<boolean> {
   if (owner.pid === process.pid) return false;
   const startedAt = await processStartTime(owner.pid);
   // Gone, or the number now belongs to something that started later.
-  return startedAt === undefined || startedAt !== owner.startedAt;
+  if (startedAt !== undefined && startedAt === owner.startedAt) return false;
+  // A dead owner is not enough. Something else may have reached into the tree
+  // and still be reading from it, and a reclaimed gigabyte is not worth a
+  // neighbour's running service losing the files under it.
+  return !(await anythingIsUsing(directory));
 }
 
 /**
@@ -384,9 +450,11 @@ async function laneDirectoryIsAbandoned(directory: string): Promise<boolean> {
  *
  * The counterpart of `sweepAbandonedLaneProcesses`, and the only defence that
  * survives a SIGKILL — which, on a host whose memory guard kills the gate, is
- * how these are actually produced.
+ * how these are actually produced. It covers the whole temporary namespace of
+ * this repository rather than the lanes alone, because every script here cleans
+ * up on the happy path and none of them survives a kill.
  */
-export async function sweepAbandonedLaneDirectories(): Promise<string[]> {
+export async function sweepAbandonedTemporaryDirectories(): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(tmpdir());
@@ -395,9 +463,16 @@ export async function sweepAbandonedLaneDirectories(): Promise<string[]> {
   }
   const removed: string[] = [];
   for (const entry of entries) {
-    if (!LANE_DIRECTORY_PREFIXES.some((prefix) => entry.startsWith(prefix))) continue;
+    if (!PROJECT_TEMP_PREFIXES.some((prefix) => entry.startsWith(prefix))) continue;
     const directory = join(tmpdir(), entry);
-    if (!(await laneDirectoryIsAbandoned(directory))) continue;
+    // Only directories. This namespace also collects stray log files, and a
+    // sweep that removed those would be deleting evidence, not leftovers.
+    try {
+      if (!(await stat(directory)).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (!(await temporaryDirectoryIsAbandoned(directory))) continue;
     try {
       await rm(directory, { recursive: true, force: true });
       removed.push(directory);

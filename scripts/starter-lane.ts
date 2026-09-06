@@ -8,8 +8,8 @@ import {
   reapProcessesUnder,
   releaseLaneDirectory,
   stopProcessGroup,
-  sweepAbandonedLaneDirectories,
   sweepAbandonedLaneProcesses,
+  sweepAbandonedTemporaryDirectories,
 } from './lane-processes';
 import { findNeutralIdentity } from './neutral-identity';
 import { createStarterLaneDatabase } from './starter-database';
@@ -221,7 +221,7 @@ if (swept > 0) {
 // And the TREES they left, which nothing used to remove: a lane killed by a
 // signal or the OOM killer never reaches the `rm` below, and 1.6 GiB per run
 // accumulates on a shared disk until a neighbour hits `No space left`.
-const reclaimed = await sweepAbandonedLaneDirectories();
+const reclaimed = await sweepAbandonedTemporaryDirectories();
 if (reclaimed.length > 0) {
   console.log(
     `[starter-lane] removed ${reclaimed.length} directory(ies) abandoned by an earlier run`,
