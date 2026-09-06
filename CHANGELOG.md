@@ -15,7 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
-## [0.81.1] — 2026-09-06
+## [0.82.0] — 2026-09-06
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone mounting MCP or agent tools from a contract built by
+`createTrackingContract`.
+
+- **The tracking event ingest is HTTP-only, as its sibling always was.**
+  `bootstrap` declared `expose: ['HTTP']`; `track` declared nothing, and an
+  endpoint with no `expose` is a tool on MCP and AGENT by default. Because this
+  contract is built inside the framework rather than by the application's own
+  contract factory, a project that had made every tool opt-in for the endpoints
+  it authors was still handed a `track_<prefix>` tool — one an agent has nothing
+  to gain from and can use to write into the application's visitor data under
+  its own name, indistinguishable afterwards from a real visitor's.
+
+  ```ts
+  // before: the mounted tool surface carried `track_tracking`
+  // after:  it carries neither tracking operation
+  ```
+
+  If a tool-surface digest is pinned, it moves by one. If something really did
+  call that tool, it was calling a browser ingest: declare your own endpoint
+  for it rather than un-declaring this one.
 
 ### Added
 
