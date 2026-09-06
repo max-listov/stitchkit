@@ -25,7 +25,12 @@
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { BROWSER_SOURCES, distOf, ENTRYPOINTS as MANIFEST } from '../entrypoints.mjs';
+import {
+  BINARIES,
+  BROWSER_SOURCES,
+  distOf,
+  ENTRYPOINTS as MANIFEST,
+} from '../entrypoints.mjs';
 
 const DIST = new URL('../dist/', import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -149,6 +154,23 @@ const manifestBuilds = new Set(MANIFEST.map((entry) => `./dist/${distOf(entry.so
 for (const [subpath, entry] of Object.entries(pkg.exports ?? {})) {
   if (entry?.import && !manifestBuilds.has(entry.import)) {
     offenders.push(`${subpath}: exported as ${entry.import}, which the manifest never builds`);
+  }
+}
+
+// The same agreement for the executables. A binary is not in `exports`, so the
+// two loops above cannot see it: a bin whose source left the manifest would be
+// declared by `package.json`, never built, and installed as a dangling link.
+const declaredBins = Object.entries(pkg.bin ?? {});
+for (const { name, source } of BINARIES) {
+  const built = `./dist/${distOf(source)}`;
+  if (!declaredBins.some(([binName, target]) => binName === name && target === built)) {
+    offenders.push(`bin ${name}: in the manifest, but "bin" does not point at ${built}`);
+  }
+}
+const manifestBins = new Set(BINARIES.map(({ source }) => `./dist/${distOf(source)}`));
+for (const [name, target] of declaredBins) {
+  if (!manifestBins.has(target)) {
+    offenders.push(`bin ${name}: installed as ${target}, which the manifest never builds`);
   }
 }
 

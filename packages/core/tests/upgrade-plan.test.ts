@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { planUpgrade, renderUpgradePlan } from './upgrade-plan';
+import { planUpgrade, renderUpgradePlan } from '../src/internal/upgrade-plan';
 
 const changelog = `# Changelog
 
@@ -60,7 +60,7 @@ describe('upgrade plan', () => {
   });
 
   test('plans two known ranges from the repository changelog', async () => {
-    const real = await Bun.file(new URL('../CHANGELOG.md', import.meta.url)).text();
+    const real = await Bun.file(new URL('../../../CHANGELOG.md', import.meta.url)).text();
     expect(planUpgrade(real, '0.79.0', '0.80.1').map(({ version }) => version)).toEqual([
       '0.80.0',
     ]);

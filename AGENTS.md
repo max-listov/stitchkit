@@ -124,6 +124,7 @@ bun scripts/verify.ts --release # release-train targets; heavy lanes run at most
 bun run build          # build dist/ + generate llms.txt
 bun run lint:fix       # auto-fix formatting / safe lint
 bun run update:starter # move the template's framework range + lockfile together
+bun packages/core/src/upgrade-cli.ts upgrade --from X.Y.Z  # the plan a consumer gets, from this tree
 ```
 
 The full annotated command list, setup and git hooks are in

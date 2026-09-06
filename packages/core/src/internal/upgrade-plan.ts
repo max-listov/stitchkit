@@ -1,3 +1,12 @@
+/**
+ * The consumer upgrade plan: every `### ⚠️ Breaking changes` section an
+ * installed → target range crosses, oldest first.
+ *
+ * Pure over the changelog text. The reader is `stitchkit upgrade`, the binary
+ * this package installs; the changelog it reads ships in the package, so a
+ * consumer recovers the plan without cloning the repository or being told the
+ * range by whoever cut the release.
+ */
 export interface UpgradeBreakingChange {
   version: string;
   whoMustAct: string;
@@ -76,11 +85,4 @@ export function renderUpgradePlan(
         `## ${change.version}\n\n**Who must act:** ${change.whoMustAct}\n\n${change.markdown.replace(/^\*\*Who must act:\*\*[\s\S]*?(?=\n\s*\n|\n[-*] )/m, '').trim()}`,
     )
     .join('\n\n')}\n`;
-}
-
-if (import.meta.main) {
-  const [from, to] = process.argv.slice(2);
-  if (!from || !to) throw new Error('Usage: bun scripts/upgrade-plan.ts <from> <to>');
-  const changelog = await Bun.file(new URL('../CHANGELOG.md', import.meta.url)).text();
-  process.stdout.write(renderUpgradePlan(planUpgrade(changelog, from, to), from, to));
 }

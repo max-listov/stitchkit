@@ -197,6 +197,31 @@ try {
       );
     }
 
+    // The upgrade plan, from the install — not from this repository.
+    //
+    // `stitchkit upgrade` exists so a consuming project recovers its own
+    // migration list without cloning us and without being handed the range in a
+    // message. Every part of that promise is packaging: the binary has to be in
+    // `bin`, its entry has to be built into `dist`, and the changelog it reads
+    // has to be inside `files`. All three are invisible to a source test and to
+    // a typecheck — the tarball is the only place they are true or false.
+    if (name === 'node') {
+      const binary = join(dir, 'node_modules', '.bin', 'stitchkit');
+      if (!existsSync(binary)) {
+        failed = true;
+        console.error('[consumer-lane] node: the install has no `stitchkit` binary');
+      } else {
+        const plan = step('node: upgrade plan from the install', () =>
+          run(binary, ['upgrade', '--from', '0.79.0'], dir),
+        );
+        // 0.80.0 broke a public API, so any target above it must name it.
+        if (!plan.includes('## 0.80.0') || !plan.includes('Who must act')) {
+          failed = true;
+          console.error(`[consumer-lane] node: the installed binary printed no plan\n${plan}`);
+        }
+      }
+    }
+
     // The consumer's default. Any error here is the package's fault, full stop.
     const strict = step(`${name}: typecheck`, () => tsc(dir, []));
     if (strict.trim()) {

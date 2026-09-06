@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **`stitchkit upgrade` — the migration plan, from the install.** The package now
+  installs a binary and ships its own `CHANGELOG.md`, so a consuming project
+  recovers the full list of breaking changes between the version it has and the
+  version it is moving to without cloning this repository and without being sent
+  the range by anybody:
+
+  ```bash
+  bunx stitchkit@latest upgrade    # or: npx stitchkit@latest upgrade
+  ```
+
+  Run inside the project, it reads the installed version from `node_modules`,
+  the target from the package it runs as, and prints every `### ⚠️ Breaking
+  changes` section the range crosses, oldest first, each with its **Who must
+  act** line. `--from`, `--to`, `--cwd` and `--changelog` override each input.
+  The plan itself is unchanged — the same parser that used to live in a
+  repository-only script, which is now gone in favour of the shipped one.
+
 ## [0.81.0] — 2026-09-06
 
 ### ⚠️ Breaking changes

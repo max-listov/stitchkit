@@ -11,10 +11,19 @@ A release that breaks a public API leads its `CHANGELOG.md` entry with a
 **`### ⚠️ Breaking changes`** section (exact heading), each item carrying a
 **before → after** snippet. A version with **no** such section is **purely
 additive** — adopting it changes nothing in your code. (See
-[`AGENTS.md` → Breaking changes](../../AGENTS.md).) `bun scripts/upgrade-plan.ts
-<installed> <target>` prints every breaking section your range crosses, oldest
-first, each with its **Who must act** line — the list this guide's migrations
-expand on.
+[`AGENTS.md` → Breaking changes](../../AGENTS.md).) So the list is recoverable
+mechanically, and the package recovers it for you:
+
+```bash
+bunx stitchkit@latest upgrade    # or: npx stitchkit@latest upgrade
+```
+
+Run it inside the project that depends on stitchkit. It reads your installed
+version out of `node_modules`, reads the changelog **shipped inside the
+package**, and prints every breaking section your range crosses, oldest first,
+each with its **Who must act** line — the list this guide's migrations expand
+on. Nothing to clone, nothing to be told: `--from` / `--to` override either end
+of the range if you want a different one.
 
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.

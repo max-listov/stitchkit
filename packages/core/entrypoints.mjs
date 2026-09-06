@@ -83,8 +83,19 @@ export const ENTRYPOINTS = [
   { subpath: './node', source: 'src/node.ts', browser: false },
 ];
 
+/**
+ * Executables the package installs. Not import surfaces: they are absent from
+ * `exports` on purpose, so the entry/exports agreement above stays exact — but
+ * they are still built, and `bin` must still agree with this list, which is what
+ * the manifest gate checks.
+ */
+export const BINARIES = [{ name: 'stitchkit', source: 'src/upgrade-cli.ts' }];
+
 /** Source files, in declaration order — what `bun build` is handed. */
-export const SOURCES = ENTRYPOINTS.map((entry) => entry.source);
+export const SOURCES = [
+  ...ENTRYPOINTS.map((entry) => entry.source),
+  ...BINARIES.map((binary) => binary.source),
+];
 
 /** The subset the package promises a browser can import. */
 export const BROWSER_SOURCES = ENTRYPOINTS.filter((entry) => entry.browser).map(

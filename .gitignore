@@ -14,6 +14,10 @@ packages/core/native/*.node
 # generated consumer-agent entry points (built from docs/ by gen:llms)
 packages/core/llms.txt
 packages/core/llms-full.txt
+
+# the root changelog, copied into the package by `build` so `stitchkit upgrade`
+# reads it from an ordinary install. One source of truth stays at the root.
+packages/core/CHANGELOG.md
 packages/create-stitchkit/template/packages/db/src/generated/
 
 # What the template's OWN dev workspace produces when it is worked in.
