@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { extractToken, verifyJwt } from '../src/server/middleware/auth';
-import { parseCookies, serializeCookie } from '../src/server/middleware/cookies';
+import {
+  defineCookie,
+  parseCookieHeader,
+  parseCookies,
+  serializeCookie,
+} from '../src/server/middleware/cookies';
 import { corsHeaders, DEFAULT_CORS_ALLOW_HEADERS } from '../src/server/middleware/cors';
 
 describe('cookies', () => {
@@ -155,5 +160,63 @@ describe('auth', () => {
     const secret = 'test-secret';
     const token = await signJwt({ sub: 'user-1', exp: 'soon' }, secret);
     await expect(verifyJwt(token, secret)).rejects.toThrow();
+  });
+});
+
+describe('two cookies with one name', () => {
+  const twoDifferent = new Request('http://x', {
+    headers: { cookie: 'sid=stale; theme=dark; sid=valid' },
+  });
+  const twoIdentical = new Request('http://x', { headers: { cookie: 'sid=same; sid=same' } });
+  const one = new Request('http://x', { headers: { cookie: 'sid=only' } });
+  const none = new Request('http://x');
+
+  test('parseCookieHeader keeps every pair in header order', () => {
+    expect(parseCookieHeader('sid=stale; theme=dark; sid=valid')).toEqual([
+      ['sid', 'stale'],
+      ['theme', 'dark'],
+      ['sid', 'valid'],
+    ]);
+    expect(parseCookieHeader(null)).toEqual([]);
+  });
+
+  test('parseCookies is the same list collapsed, last wins, prototype keys dropped', () => {
+    expect(parseCookies('sid=stale; sid=valid; __proto__=x')).toEqual({ sid: 'valid' });
+  });
+
+  test('getAll returns every candidate, decoded like get', () => {
+    const encoded = new Request('http://x', { headers: { cookie: 'sid=a%20b; sid=c%' } });
+    expect(defineCookie({ name: 'sid' }).getAll(twoDifferent)).toEqual(['stale', 'valid']);
+    expect(defineCookie({ name: 'sid' }).getAll(encoded)).toEqual(['a b', 'c%']);
+    expect(defineCookie({ name: 'sid' }).get(encoded)).toBe('c%');
+    expect(defineCookie({ name: 'sid' }).getAll(none)).toEqual([]);
+  });
+
+  test('get answers with the last occurrence by default, as it always has', () => {
+    expect(defineCookie({ name: 'sid' }).get(twoDifferent)).toBe('valid');
+    expect(defineCookie({ name: 'sid', duplicates: 'last' }).get(twoDifferent)).toBe('valid');
+  });
+
+  test("duplicates: 'first' names the other coin", () => {
+    expect(defineCookie({ name: 'sid', duplicates: 'first' }).get(twoDifferent)).toBe('stale');
+  });
+
+  test('reject yields undefined when two cookies with the same name carry different values', () => {
+    expect(
+      defineCookie({ name: 'sid', duplicates: 'reject' }).get(twoDifferent),
+    ).toBeUndefined();
+  });
+
+  test('reject keeps a value two identical cookies agree on', () => {
+    // A host cookie and a parent-domain cookie set by the same application are
+    // one value twice, not a conflict — refusing them would lock the user out.
+    expect(defineCookie({ name: 'sid', duplicates: 'reject' }).get(twoIdentical)).toBe('same');
+  });
+
+  test('a single cookie reads the same under every policy', () => {
+    for (const duplicates of ['last', 'first', 'reject'] as const) {
+      expect(defineCookie({ name: 'sid', duplicates }).get(one)).toBe('only');
+      expect(defineCookie({ name: 'sid', duplicates }).get(none)).toBeUndefined();
+    }
   });
 });

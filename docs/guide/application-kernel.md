@@ -782,3 +782,75 @@ The responsibility change is more important than line count:
 Durable job tables, lifecycle journals/outboxes, provider inboxes and business
 retry rules do **not** disappear. They were never process-local glue and remain
 application-owned.
+
+## Durable process facts and owner notifications
+
+`createProcessLifecycleLedger` records a bounded versioned list of process runs.
+Start, readiness and shutdown target both `runId` and `pid`, so hot reload and
+PID reuse cannot close the wrong generation. A start classifies what happened to
+the newest run before it, and the classification is decided by three facts —
+whether that run recorded its own exit, whether the pid is the same, and whether
+the version changed:
+
+| newest run | same pid | version | `previousExit` | predecessor's `termination` |
+|---|---|---|---|---|
+| none | — | — | `first-boot` | — |
+| recorded `stoppedAt` | — | — | `clean` / `forced` / `abnormal` as recorded | unchanged |
+| still `active` | yes | — | `hot-reload` | `hot-reload`, closed at the new start |
+| still `active` | no | changed | `handoff` | stays `active`; it records its own stop later |
+| still `active` | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
+
+A version of `unknown` on either side is never a version change, so a dev build
+after a crashed release reads `abnormal`, not `handoff`. `forced` means the
+process itself acknowledged a kill; `abnormal` means a successor found it dead.
+
+The last row is a choice, and the default is the single-process deployment:
+one process per build, a new pid of the same build means the old one stopped
+answering. Where two processes of **one** build overlap on purpose — a
+cluster, a zero-downtime reload of the same build — pass
+`sameVersionOverlap: 'handoff'` to the ledger, and the predecessor stays
+`active` until it records its own shutdown. The cost of that setting is
+symmetric: a real crash under it is reported as a handoff and the dead run
+stays `active` in the ledger until retention drops it. The list is kept in the
+order the transitions wrote it — every write goes through one atomic update,
+so that order is the causal one, and a successor whose clock lags its
+predecessor still finds it at the head; `startedAt` is data, not the sort key.
+Retention (`retain`, default 20) drops finished runs first and an active one —
+a live handoff predecessor — only when nothing finished is left. Facts are
+published through the ledger's own subscription and resource value;
+`ApplicationEventSink` remains the strict application-state stream.
+
+`createNotificationOutbox` is the transport-neutral durable delivery side. It
+persists before send, claims an item with an expiring lease, carries one stable
+idempotency key into the transport, retries under an injected clock and records
+terminal drops. The guarantee is at-least-once: a crash after remote acceptance
+but before the receipt is persisted may redeliver, so transports should use the
+key when they support deduplication. The retry budget is sized for the outage
+an owner notification has to outlive, not for a flaky call: the default backoff
+doubles from one second and caps at sixty (`backoffDelay`, the one formula the
+client's resumable streams also use, with jitter 0), and the 99 waits between
+the default `maxAttempts` of 100 sum to 1+2+4+8+16+32 s plus 93 × 60 s — about
+94 minutes — before `onDropped` sees `attempt-limit`.
+`state()` is a read and never fails on the bounds a transition enforces — a file
+that grew past `maxStateBytes` under an older limit is inspectable and is
+trimmed by the next transition. Two bounds do fail loudly: `enqueue` past
+`maxQueue` throws rather than dropping silently, and a `backoffMs` that returns
+`NaN`, a negative or an infinite delay rejects the flush. `stop()` lets the
+send in flight finish and claims nothing more; a `send` without its own
+deadline holds `stop()` — and so the resource's `force()` — for that one call,
+so give the transport a timeout. Superseding a key that is being sent right now
+does not recall it: the send completes, and only its receipt is not written.
+
+Both primitives depend on the structural `StateStore`. On a server,
+`createFileStateStore` supplies the shared Zod-validated JSON adapter with an
+inter-process lock, unique temporary file, fsync and atomic rename. The lock
+is a file with a heartbeat: the holder refreshes its mtime every third of
+`staleLockMs` (default 3 s), a contender waits up to `lockTimeoutMs` (default
+10 s), and the stale bound must sit inside the timeout — otherwise a crashed
+holder blocks every update until the lock ages out, which the constructor
+refuses. A lock whose heartbeat is stale is reclaimed once its recorded pid is
+gone; a live or unverifiable pid (a reused number, another user's process)
+keeps it for ten stale bounds, after which the heartbeat wins and the lock is
+abandoned. Temporary files a crashed writer left beside the state are swept on
+the store's first update. Ledger corruption may be declared reconstructable;
+an outbox must fail closed rather than silently discard pending delivery.

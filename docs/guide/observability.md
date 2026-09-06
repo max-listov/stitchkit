@@ -248,12 +248,11 @@ route-match, *before* validation, so both are present on every event for a
 request that matched a contract route, including a pre-handler 400. Nothing to
 wire.
 
-They are **absent** on events that never reached a contract route: a raw route
-(`openApiRoute`, an MCP mount, any `rawRoutes` entry), a request short-circuited
-by `onRequest`, and an unmatched 404 or 405. Both fields are optional in
-`RequestEvent` for exactly that reason — a sink with a `NOT NULL` column on
-either, or a dashboard grouping by `(serviceName, action)`, has to allow for
-it.
+Raw routes may opt into the same context with `serviceName` and optional
+`action` on their `RawRoute` declaration. Without that declaration they remain
+absent, as they do for a request short-circuited by `onRequest` and an unmatched
+404 or 405. Both fields therefore remain optional in `RequestEvent`; a sink
+with a `NOT NULL` column on either still has to account for unattributed paths.
 
 When failure attribution itself is asynchronous, use `createErrorHook`'s
 `onError(error, info, ctx, endpoint)` observer. The framework awaits it before
@@ -605,3 +604,23 @@ hooks: {
 
 Keep any sink **asynchronous and self-contained**: a slow or failing write must
 never block or break the request. Swallow the sink's own errors.
+
+## Typed dimensions and bounded loggers
+
+`createDimensionsProjector` keeps endpoint metadata opaque. Configure typed
+request, result and error projections, then call its phase methods from the
+corresponding lifecycle hooks. Every projection writes through
+`setRequestDimensions`; repeated keys follow the declared `overwrite`,
+`preserve` or `error` policy. Two of its inputs are programming errors and
+throw, which fails the request rather than recording a lie: a repeated key
+under `collision: 'error'`, and a key named `__proto__` (it would set the
+bag's prototype — it can only arrive from parsed input, never from an object
+literal, which has no such own key).
+
+`createBoundedLogger` decorates the existing `StitchLogger` interface, so Pino,
+console and application sinks keep their ownership. It reuses the same
+sanitizer as request audit: sensitive keys, configured paths, URL fragments and
+`Error` fields are redacted before string/collection/depth/total-byte bounds are
+applied. Active trace, span, user and dimensions are reserved framework fields;
+caller data cannot overwrite them. A throwing getter, cyclic value or failing
+sink never escapes into application code.

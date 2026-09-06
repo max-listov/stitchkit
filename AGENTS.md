@@ -32,8 +32,10 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   the generic bridges in `browser/client.ts` where a scoped client surface is
   rebuilt from a wider one. Each must carry a comment saying why. A new cast
   anywhere else means the types are broken upstream; fix them there. Nothing
-  enforces this mechanically — it is a review rule over a small, countable set
-  (thirteen in `packages/core/src`), not a gate. → ADR 0003
+  enforces this mechanically — it is a review rule over a small, countable set,
+  not a gate: 47 `AsExpression` nodes in `packages/core/src` on 2026-09-06,
+  counted by the TypeScript AST with `as const` excluded (a text search over-
+  counts comments and strings). A rising count is a review question. → ADR 0003
 - **ALWAYS** keep the core Web Fetch-clean — `createHandler` takes
   `HandlerConfig` (no Bun types). Bun APIs live only in `createServer` and
   `stitchkit/server`. → ADR 0013
@@ -211,14 +213,17 @@ packages/core/src/
 ├── realtime/   typed Socket.IO contracts and rejection reporting
 ├── observability/  request/tool events, sanitising, trace context
 ├── files/      managed file boundary, byte ranges, inspection
+├── tracking/   visitor-tracking client, outbox, beacon; server/ decisions (evolving)
+├── release/    build marker, release watcher, socket channel (evolving)
+├── geo/        server-only GeoIP resolver over an optional MaxMind peer (evolving)
 ├── testing/    in-process client, surface manifest, conformance kits
 └── internal/   error normalization, typed helpers
 ```
 
 Entrypoints: `stitchkit` (browser-safe) · `/live` · `/server` · `/node` · `/tools` ·
 `/cli` · `/react` · `/contract` · `/observability` · `/remote` · `/files` ·
-`/testing` · `/declaration` · `/agent-runtime` (+`/openrouter`) · `/application`
-(+`/grammy`, `/opentelemetry`, `/schemas`, `/diagnostic-journal`). `/declaration`, `/live`, `/agent-runtime` and
+`/testing` · `/declaration` · `/tracking` (+`/server`) · `/release` · `/geo` · `/agent-runtime` (+`/openrouter`) · `/application`
+(+`/grammy`, `/opentelemetry`, `/schemas`, `/diagnostic-journal`). `/declaration`, `/live`, `/tracking`, `/release`, `/geo`, `/agent-runtime` and
 `/application` are declared **evolving** (→ ADR 0103). The user guide is in
 `docs/guide/`, the full public API in `docs/api/reference.md`. The consumer
 entry points `llms.txt` / `llms-full.txt` are **generated** from those docs by

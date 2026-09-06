@@ -118,6 +118,7 @@ describe('expose headers', () => {
     expect(exposed).toContain('content-disposition');
     expect(exposed).toContain('content-range');
     expect(exposed).toContain('etag');
+    expect(exposed).toContain('x-build-id');
   });
 });
 

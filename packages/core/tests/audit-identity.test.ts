@@ -104,4 +104,93 @@ describe('audit — endpoint identity (A) + domain dimensions (B)', () => {
     // beforeHandle never ran; the dimension was attributed in onError.
     expect(e?.dimensions).toEqual({ projectId: 'p2' });
   });
+
+  test('a raw route may declare the same stable identity without deriving it from the path', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({
+      request: { write: (event) => void events.push(event) },
+    });
+    const fetch = createHandler({
+      observability: audit.request,
+      rawRoutes: [
+        {
+          method: 'POST',
+          path: '/internal/rebuild/:id',
+          serviceName: 'maintenance',
+          action: 'rebuild',
+          handler: () => new Response(null, { status: 204 }),
+        },
+      ],
+    });
+
+    expect(
+      (
+        await fetch(
+          new Request('http://localhost/internal/rebuild/abc', { method: 'POST' }),
+          undefined,
+        )
+      ).status,
+    ).toBe(204);
+    await Bun.sleep(10);
+
+    expect(events[0]?.serviceName).toBe('maintenance');
+    expect(events[0]?.action).toBe('rebuild');
+  });
+
+  test('a raw route can declare only serviceName for service-level policies', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({
+      request: { write: (event) => void events.push(event) },
+    });
+    const fetch = createHandler({
+      observability: audit.request,
+      rawRoutes: [
+        {
+          method: 'POST',
+          path: '/internal/rebuild',
+          serviceName: 'maintenance',
+          handler: () => new Response(null, { status: 204 }),
+        },
+      ],
+    });
+
+    await fetch(
+      new Request('http://localhost/internal/rebuild', { method: 'POST' }),
+      undefined,
+    );
+    await Bun.sleep(10);
+
+    expect(events[0]?.serviceName).toBe('maintenance');
+    expect(events[0]?.action).toBeUndefined();
+  });
+
+  test('raw route identity is bound before a thrown handler error', async () => {
+    const events: RequestEvent[] = [];
+    const audit = createObservability({
+      request: { write: (event) => void events.push(event) },
+    });
+    const fetch = createHandler({
+      observability: audit.request,
+      rawRoutes: [
+        {
+          method: 'POST',
+          path: '/internal/fail',
+          serviceName: 'maintenance',
+          action: 'fail',
+          handler: () => {
+            throw new Error('private failure');
+          },
+        },
+      ],
+    });
+
+    expect(
+      (await fetch(new Request('http://localhost/internal/fail', { method: 'POST' }))).status,
+    ).toBe(500);
+    await Bun.sleep(10);
+
+    expect(events[0]?.serviceName).toBe('maintenance');
+    expect(events[0]?.action).toBe('fail');
+    expect(events[0]?.ok).toBe(false);
+  });
 });

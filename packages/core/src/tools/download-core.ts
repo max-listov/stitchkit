@@ -1,6 +1,7 @@
 import { basename, extname } from 'node:path';
 import type { ManagedFileRef } from '../contract/file-ref';
 import type { ManagedFileBoundary } from '../files/boundary';
+import { mediaTypeEssence } from '../internal/media-type';
 import { fetchGuarded } from '../internal/secure-fetch';
 
 /** Default memory cap for a download — overridable per operation. */
@@ -75,8 +76,7 @@ export async function runDownloadOperation(
   }
 
   const mimeType =
-    (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ||
-    'application/octet-stream';
+    mediaTypeEssence(res.headers.get('content-type')) || 'application/octet-stream';
   const max = config.maxBytes ?? DEFAULT_MAX_BYTES;
   const declared = Number(res.headers.get('content-length') ?? 0);
   if (declared > max) {

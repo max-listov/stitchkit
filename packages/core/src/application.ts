@@ -173,6 +173,50 @@ export {
   type RevisionedApplicationSnapshot,
 } from './application/latest-sink';
 export {
+  createNotificationOutbox,
+  type DroppedNotification,
+  type EnqueueNotification,
+  type NotificationFailureClassification,
+  type NotificationOutbox,
+  type NotificationOutboxConfig,
+  type NotificationOutboxItem,
+  type NotificationOutboxReceipt,
+  type NotificationOutboxResource,
+  type NotificationOutboxResourceConfig,
+  type NotificationOutboxState,
+  type NotificationSend,
+  notificationOutboxResource,
+  notificationOutboxStateSchema,
+} from './application/notification-outbox';
+export {
+  createProcessLifecycleLedger,
+  type LifecycleLedgerResource,
+  type LifecycleLedgerResourceConfig,
+  type LifecycleRun,
+  LifecycleRunSchema,
+  type LifecycleState,
+  LifecycleStateSchema,
+  type LifecycleTermination,
+  LifecycleTerminationSchema,
+  type LifecycleTransition,
+  lifecycleLedgerResource,
+  type PreviousExit,
+  PreviousExitSchema,
+  type ProcessLifecycleFact,
+  type ProcessLifecycleLedger,
+  type ProcessLifecycleLedgerConfig,
+  type ReadyFact,
+  type SameVersionOverlap,
+  type ShutdownFact,
+  type StartFact,
+  type TransitionReadyInput,
+  type TransitionShutdownInput,
+  type TransitionStartInput,
+  transitionProcessReady,
+  transitionProcessShutdown,
+  transitionProcessStart,
+} from './application/process-lifecycle';
+export {
   defineManagedResource,
   type ManagedResource,
   type ManagedResourceContext,
@@ -221,6 +265,7 @@ export {
   type ManagedServerResourceConfig,
   managedServerResource,
 } from './application/server-resource';
+export type { StateStore, StateStoreUpdate } from './application/state-store';
 export {
   type AttachedWatcher,
   createWatchHub,

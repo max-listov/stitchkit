@@ -56,43 +56,14 @@ export interface ResolvedError {
 }
 
 /** Config for `createErrorHook`. */
-export interface ErrorHookConfig<TWireCode extends string = string> {
-  /**
-   * Remap stitchkit's own error codes to your public wire codes.
-   *
-   * **Partial on purpose.** It once said "Exhaustive — `satisfies
-   * Record<StitchErrorCode, …>` makes a new framework code a compile error
-   * here", which stopped being true in 0.56.1 and kept shipping in the `.d.ts`
-   * for a consumer to read on hover. The set grows in ordinary releases, so an
-   * exhaustive map would break every consumer on an additive one; a code you
-   * leave out falls through to `unmappedCode`. → ADR 0105
-   *
-   * Codes you threw yourself (not stitchkit's) pass through as-is.
-   */
-  codeMap?: Partial<Record<StitchErrorCode, TWireCode>>;
-  /**
-   * Wire code for every unmapped stitchkit code, or a resolver for grouping
-   * them. Explicit `codeMap` entries win. Project-owned codes never use this
-   * fallback and continue to pass through unchanged.
-   */
-  unmappedCode?: TWireCode | ((code: StitchErrorCode) => TWireCode);
+export interface ErrorHookBase {
   /** Build the response body from the resolved error. */
-  /**
-   * Build the response body from the resolved error. `ctx` is the request's
-   * `RuntimeContext` — read `ctx.traceId` / `ctx.spanId` to put a correlation id
-   * in the envelope, which is the ordinary reason to have one. Declaring the
-   * parameter is optional: a one-argument `render` stays assignable.
-   */
   render: (
     info: ResolvedError,
     ctx: RuntimeContext,
     endpoint?: MethodDef,
   ) => unknown | Promise<unknown>;
-  /**
-   * Observe the raw thrown value before rendering — logging, metrics or
-   * asynchronous request attribution. The matched endpoint is absent for
-   * failures that happen before the router resolves an operation.
-   */
+  /** Observe the raw thrown value before rendering. */
   onError?: (
     error: unknown,
     info: ResolvedError,
@@ -101,10 +72,53 @@ export interface ErrorHookConfig<TWireCode extends string = string> {
   ) => unknown | Promise<unknown>;
 }
 
+export type ErrorHookMapping<TWireCode extends string> =
+  | {
+      /** A vocabulary returned by `defineErrors`; its generated map is canonical. */
+      vocabulary: { readonly codeMap: Partial<Record<StitchErrorCode, TWireCode>> };
+      codeMap?: never;
+      unmappedCode?: never;
+    }
+  | {
+      vocabulary?: never;
+      /**
+       * Remap stitchkit's own error codes to your public wire codes.
+       *
+       * **Partial on purpose.** It once said "Exhaustive — `satisfies
+       * Record<StitchErrorCode, …>` makes a new framework code a compile error
+       * here", which stopped being true in 0.56.1 and kept shipping in the `.d.ts`
+       * for a consumer to read on hover. The set grows in ordinary releases, so an
+       * exhaustive map would break every consumer on an additive one; a code you
+       * leave out falls through to `unmappedCode`. → ADR 0105
+       *
+       * Codes you threw yourself (not stitchkit's) pass through as-is.
+       */
+      codeMap?: Partial<Record<StitchErrorCode, TWireCode>>;
+      /**
+       * Wire code for every unmapped stitchkit code, or a resolver for grouping
+       * them. Explicit `codeMap` entries win. Project-owned codes never use this
+       * fallback and continue to pass through unchanged.
+       */
+      unmappedCode?: TWireCode | ((code: StitchErrorCode) => TWireCode);
+    };
+
+export type ErrorHookConfig<TWireCode extends string = string> = ErrorHookBase &
+  ErrorHookMapping<TWireCode>;
+
 /** Build an `onError` hook from a code map + envelope renderer. */
 export function createErrorHook<TWireCode extends string = string>(
   config: ErrorHookConfig<TWireCode>,
 ): NonNullable<LifecycleHooks['onError']> {
+  // The type already makes these exclusive; the runtime says so for a caller
+  // outside the type system, instead of silently preferring one map.
+  if (
+    config.vocabulary &&
+    (config.codeMap !== undefined || config.unmappedCode !== undefined)
+  ) {
+    throw new Error(
+      '[stitchkit] createErrorHook: `vocabulary` carries the wire map — it cannot be combined with `codeMap` or `unmappedCode`',
+    );
+  }
   return async (ctx, error, endpoint) => {
     // Normalise first — the same classification the framework default uses:
     // a `ZodError` (bad input) becomes `VALIDATION_ERROR` 400, an `AppError`
@@ -116,7 +130,9 @@ export function createErrorHook<TWireCode extends string = string>(
     // ordinary releases. The optional fallback handles only that narrowed
     // framework vocabulary; project codes preserve their existing passthrough.
     const stitchCode = isStitchErrorCode(appErr.code) ? appErr.code : undefined;
-    const mapped = stitchCode === undefined ? undefined : config.codeMap?.[stitchCode];
+    const vocabularyMap = config.vocabulary?.codeMap;
+    const configuredMap = vocabularyMap ?? config.codeMap;
+    const mapped = stitchCode === undefined ? undefined : configuredMap?.[stitchCode];
     const fallback =
       mapped === undefined && stitchCode !== undefined
         ? typeof config.unmappedCode === 'function'

@@ -22,8 +22,13 @@
  * ```
  */
 import { z } from 'zod';
-import { mapObjectTypeBoundary } from '../internal/typed';
-import { AppError } from './errors';
+import { mapObjectTypeBoundary, transportResult, typedEntries } from '../internal/typed';
+import {
+  AppError,
+  isStitchErrorCode,
+  STITCH_ERROR_STATUS,
+  type StitchErrorCode,
+} from './errors';
 
 /** Supported structured-details schemas: a required or optional Zod object. */
 export type ErrorDetailsSchema = z.ZodObject | z.ZodOptional<z.ZodObject>;
@@ -111,8 +116,39 @@ export type FrozenErrorDefinitions<TDefinitions extends ErrorDefinitions> = {
   };
 };
 
+/** The union of an application's declared error codes. */
+export type ErrorVocabularyCode<TDefinitions extends ErrorDefinitions> = Extract<
+  keyof TDefinitions,
+  string
+>;
+
+export type ErrorVocabularyMapping<TDefinitions extends ErrorDefinitions> =
+  | {
+      /** Require an explicit application code for every Stitchkit code. */
+      exhaustive: true;
+      map: Record<StitchErrorCode, ErrorVocabularyCode<TDefinitions>>;
+      fallback?: never;
+    }
+  | {
+      exhaustive?: false;
+      /** Per-framework-code overrides. */
+      map?: Partial<Record<StitchErrorCode, ErrorVocabularyCode<TDefinitions>>>;
+      /** Explicit HTTP-status fallback; no key-order inference is performed. */
+      fallback?: Partial<Record<number, ErrorVocabularyCode<TDefinitions>>>;
+    };
+
+export type VocabularyCodeMap<
+  TDefinitions extends ErrorDefinitions,
+  TMapping extends ErrorVocabularyMapping<TDefinitions> | undefined,
+> = TMapping extends { exhaustive: true }
+  ? Readonly<Record<StitchErrorCode, ErrorVocabularyCode<TDefinitions>>>
+  : Readonly<Partial<Record<StitchErrorCode, ErrorVocabularyCode<TDefinitions>>>>;
+
 /** The immutable handle returned by `defineErrors`. */
-export interface DefinedErrors<TDefinitions extends ErrorDefinitions> {
+export interface DefinedErrors<
+  TDefinitions extends ErrorDefinitions,
+  TMapping extends ErrorVocabularyMapping<TDefinitions> | undefined = undefined,
+> {
   /** One typed `AppError` constructor per code. The caller chooses when to throw. */
   readonly errors: ErrorFactories<TDefinitions>;
   /** Code literals for client-side matching without magic strings. */
@@ -121,6 +157,8 @@ export interface DefinedErrors<TDefinitions extends ErrorDefinitions> {
   readonly definitions: FrozenErrorDefinitions<TDefinitions>;
   /** Type guard — is `code` one of this application's declared codes? */
   readonly isCode: (code: string) => code is Extract<keyof TDefinitions, string>;
+  /** Framework-code projection consumed directly by `createErrorHook`. */
+  readonly codeMap: VocabularyCodeMap<TDefinitions, TMapping>;
 }
 
 interface RuntimeErrorOptions {
@@ -160,9 +198,10 @@ function validateDefinition(code: string, definition: ErrorDefinition): void {
 }
 
 /** Declare an immutable, Zod-first domain error vocabulary. */
-export function defineErrors<const TDefinitions extends ErrorDefinitions>(
-  source: TDefinitions,
-): DefinedErrors<TDefinitions> {
+export function defineErrors<
+  const TDefinitions extends ErrorDefinitions,
+  const TMapping extends ErrorVocabularyMapping<TDefinitions> | undefined = undefined,
+>(source: TDefinitions, mapping?: TMapping): DefinedErrors<TDefinitions, TMapping> {
   const definitions = mapObjectTypeBoundary<
     TDefinitions,
     FrozenErrorDefinitions<TDefinitions>
@@ -201,10 +240,73 @@ export function defineErrors<const TDefinitions extends ErrorDefinitions>(
   Object.freeze(codes);
 
   const known = new Set(Object.keys(definitions));
+  for (const [code, target] of Object.entries(mapping?.map ?? {})) {
+    if (!isStitchErrorCode(code)) {
+      throw new Error(
+        `[stitchkit] Error vocabulary contains unknown framework code "${code}"`,
+      );
+    }
+    if (typeof target !== 'string' || !known.has(target)) {
+      throw new Error(
+        `[stitchkit] Error vocabulary maps "${code}" to undeclared code "${String(target)}"`,
+      );
+    }
+    // The wire carries the framework's status with the application's code;
+    // a code declared under another status would name one thing and carry
+    // another, so the map is refused where the fallback already is.
+    const status = STITCH_ERROR_STATUS[code];
+    if (definitions[target]?.status !== status) {
+      throw new Error(
+        `[stitchkit] Error vocabulary maps "${code}" (${status}) to "${target}", declared with status ${String(definitions[target]?.status)}`,
+      );
+    }
+  }
+  for (const [statusText, target] of Object.entries(mapping?.fallback ?? {})) {
+    const status = Number(statusText);
+    if (!Number.isInteger(status) || status < 400 || status > 599) {
+      throw new Error(
+        `[stitchkit] Error vocabulary fallback status "${statusText}" must be an integer from 400 to 599`,
+      );
+    }
+    if (typeof target !== 'string' || !known.has(target)) {
+      throw new Error(
+        `[stitchkit] Error vocabulary fallback ${status} names undeclared code "${String(target)}"`,
+      );
+    }
+    if (definitions[target]?.status !== status) {
+      throw new Error(
+        `[stitchkit] Error vocabulary fallback ${status} must name a code with status ${status}`,
+      );
+    }
+  }
+  if (mapping?.exhaustive === true) {
+    for (const code of Object.keys(STITCH_ERROR_STATUS)) {
+      if (!Object.hasOwn(mapping.map, code)) {
+        throw new Error(`[stitchkit] Exhaustive error vocabulary is missing "${code}"`);
+      }
+    }
+  }
+
+  const codeMap: Partial<Record<StitchErrorCode, ErrorVocabularyCode<TDefinitions>>> = {};
+  for (const [stitchCode, status] of typedEntries(STITCH_ERROR_STATUS)) {
+    const code = mapping?.map?.[stitchCode] ?? mapping?.fallback?.[status];
+    if (code === undefined) continue;
+    if (!known.has(code)) {
+      throw new Error(
+        `[stitchkit] Error vocabulary maps "${stitchCode}" to undeclared code "${code}"`,
+      );
+    }
+    codeMap[stitchCode] = code;
+  }
+  Object.freeze(codeMap);
+  const vocabularyCodeMap =
+    transportResult<VocabularyCodeMap<TDefinitions, TMapping>>(codeMap);
+
   return Object.freeze({
     errors,
     codes,
     definitions,
     isCode: (code: string): code is Extract<keyof TDefinitions, string> => known.has(code),
+    codeMap: vocabularyCodeMap,
   });
 }

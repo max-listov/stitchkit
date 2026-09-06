@@ -159,8 +159,9 @@ from the root `stitchkit`.
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns — endpoint `scope` overrides join the union |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
 | `ContractDef` | _type_ | a defined contract |
+| `PathParams` | _type_ | infer named `:segments` and a terminal `*wildcard` from a path literal as string params |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
-| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid) |
+| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
 | `EndpointStreamDescriptor` | _type_ | HTTP-only schema-derived stream declaration: item schema, envelope/item framing, stream-end/terminal completion, NDJSON/SSE encoding and frame/lifetime/heartbeat/idle bounds — [guide](../guide/server.md#contract-first-streams) |
 | `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
@@ -196,6 +197,7 @@ from the root `stitchkit`.
 
 ### Errors
 
+| `ErrorVocabularyCode` / `ErrorVocabularyMapping` / `VocabularyCodeMap` | _type_ | application-code union, partial/exhaustive framework mapping input and resolved wire map returned by `defineErrors` |
 | Export | Kind | Summary |
 |--------|------|---------|
 | `AppError` | class | the framework error — `code` / `status` / `details` / `hint` |
@@ -208,7 +210,7 @@ from the root `stitchkit`.
 | `rateLimited` | function | throw `429 RATE_LIMITED` |
 | `appError` | function | throw an `AppError` for any code |
 | `defineErrors` | function | declare immutable domain error definitions → typed `AppError` constructors, codes and schemas — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
-| `DefinedErrors` | _type_ | the `{ errors, codes, definitions, isCode }` handle `defineErrors` returns |
+| `DefinedErrors` | _type_ | the `{ errors, codes, definitions, isCode, codeMap }` handle `defineErrors` returns |
 | `DefinedAppError` | _type_ | literal-code error instance with schema-refined details |
 | `ErrorDefinition` | _type_ | `{ status, message?, details? }` definition for one domain code |
 | `ErrorDefinitions` | _type_ | string-keyed domain error definition registry |
@@ -364,7 +366,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `composeLifecycleHooks` | function | compose HTTP lifecycle phases in declaration order with short-circuit/fallthrough semantics |
 | `AuthorizationContext` | _type_ | HTTP pre-body context with validated params, `input: undefined` and no files |
 | `RouteGroup` | _type_ | a prefixed group of services with its own hooks; matched errors try group `onError` → global `onError` → standard envelope, keeping the original error on fallback — [precedence](../guide/server.md#lifecycle-hooks) |
-| `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context |
+| `RawRoute` | _type_ | a non-contract `Request → Response` route with a concrete `BunServer` context and optional stable `serviceName` / `action` observability identity |
 | `RawRouteContext` | _type_ | the Bun-bound routing context a raw handler receives |
 | `BunServer` | _type_ | the `Bun.serve` instance type |
 | `ServerPassthrough` | _type_ | extra `Bun.serve` options |
@@ -381,7 +383,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 |--------|------|---------|
 | `createAuthHook` | function | one scope gate for HTTP `authorize` and tool `beforeHandle` — [guide](../guide/auth-and-errors.md#createauthhook) |
 | `composeAuthHooks` | function | route multiple canonical auth domains by owned scope and atomically commit their typed contributions |
-| `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a code map + envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
+| `createErrorHook` | function | an async-capable, endpoint-aware `onError` hook from a `defineErrors` vocabulary or a code map, plus an envelope renderer — [guide](../guide/auth-and-errors.md#createerrorhook) |
+| `ErrorHookBase` / `ErrorHookMapping` | _type_ | common hook fields and the vocabulary-or-map branch accepted by `createErrorHook` |
 | `ErrorHookConfig` | _type_ | async observer/renderer config with partial `codeMap` and optional typed `unmappedCode` fallback |
 | `ResolvedError` | _type_ | the normalised error handed to `createErrorHook`'s `render` |
 | `createBearerResolver` | function | a bearer-token identity resolver |
@@ -411,19 +414,23 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `defineCookie` | function | a typed cookie `get` / `set` / `clear` handle — [guide](../guide/auth-and-errors.md#cookies) |
-| `parseCookies` | function | parse a `Cookie` header to a record |
+| `defineCookie` | function | a typed cookie `get` / `getAll` / `set` / `clear` handle; `duplicates` names what `get` answers when two cookies share the name — [guide](../guide/auth-and-errors.md#cookies) |
+| `parseCookies` | function | parse a `Cookie` header to a record (the last of two same-named cookies wins) |
+| `parseCookieHeader` | function | parse a `Cookie` header to `[name, value]` pairs in header order, duplicates kept |
 | `serializeCookie` | function | build a `Set-Cookie` value |
 | `corsHeaders` | function | compute CORS response headers |
 | `corsPreflightResponse` | function | build a preflight `Response` |
 | `DEFAULT_CORS_ALLOW_HEADERS` | const | the default `Access-Control-Allow-Headers` (incl. `traceparent`) — extend it when overriding `cors.headers` |
-| `DEFAULT_CORS_EXPOSE_HEADERS` | const | the default `Access-Control-Expose-Headers` (incl. `Content-Disposition`, `ETag`, `Content-Range`) — extend it when overriding `cors.exposeHeaders` |
+| `DEFAULT_CORS_EXPOSE_HEADERS` | const | the default `Access-Control-Expose-Headers` (incl. `Content-Disposition`, `ETag`, `Content-Range`, `X-Build-Id`) — extend it when overriding `cors.exposeHeaders`, or a cross-origin page loses the build id |
 | `CookieDef` | _type_ | the `defineCookie` handle |
-| `CookieOptions` | _type_ | cookie attributes |
+| `CookieOptions` | _type_ | cookie attributes, plus the `duplicates` read policy |
+| `CookieDuplicatesPolicy` | _type_ | `'last'` (default) / `'first'` / `'reject'` — `reject` yields `undefined` for two different values and the value when they agree |
 | `CorsConfig` | _type_ | CORS policy |
 
 ### Realtime (server)
 
+| `bindSocketRegistry` | function | room membership and consistent replay over an already-authenticated realtime server |
+| `AuthorizedSocketRoom` / `SocketRegistry` / `SocketRegistryConnection` / `SocketRegistryOptions` / `SocketRegistryServer` / `SocketRegistrySnapshot` / `SocketReplayFrame` | _type_ | authorized room token, structural server boundary, replay frames and immutable registry state |
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createSocketIOServer` | function | the typed Socket.IO server — [guide](../guide/realtime.md#server--createsocketioserver) |
@@ -446,6 +453,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 ### Primitives
 
+| `createFileStateStore` | function | cross-process locked atomic JSON state updates over one Zod schema |
+| `FileStateStoreCorruption` / `FileStateStoreOptions` | _type_ | explicit corrupt-state report/policy and lock timing configuration |
 | Export | Kind | Summary |
 |--------|------|---------|
 | `streamSSE` | function | an async generator → SSE `Response` — [guide](../guide/server.md#sse-streaming) |
@@ -464,6 +473,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `MultipartReceiver` | _type_ | consumer-owned Web-stream storage receiver |
 | `MultipartReceiverResult` | _type_ | receiver value plus rollback cleanup |
 | `StreamingMultipartImplementation` | _type_ | receiver registry and handler shape inferred by `defineMultipartStream` |
+| `bindReleaseRefreshSignal` / `ReleaseRefreshSignalOptions` / `ReleaseRefreshSignal` | function / _type_ | a deploy signal (`SIGUSR2`, the one user-defined signal the process vocabulary has) refreshes a `stitchkit/release` marker, whose subscribers tell every socket; never throws at the signal — [guide](../guide/release.md) |
 | `bindProcessSignals` | function | bind `SIGINT` / `SIGTERM` to one managed `shutdown()` — one chain, force on a later signal, default disposition on the one after — [guide](../guide/testing-and-deployment.md#process-signals--bindprocesssignals) |
 | `ProcessSignalsOptions` | _type_ | config for `bindProcessSignals` |
 | `ProcessSignalsBinding` | _type_ | the `{ promise, close }` handle `bindProcessSignals` returns |
@@ -541,6 +551,17 @@ cutovers are covered by the executable
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createApplication` | function | compose a validated resource DAG into one startup, readiness, admission and shutdown state machine |
+| `StateStore` / `StateStoreUpdate` | _type_ | async atomic read/update boundary shared by durable application state machines |
+| `createProcessLifecycleLedger` / `ProcessLifecycleLedger` / `ProcessLifecycleLedgerConfig` | function / _type_ | durable bounded run history and typed fact subscription |
+| `LifecycleRunSchema` / `LifecycleRun` / `LifecycleStateSchema` / `LifecycleState` / `LifecycleTerminationSchema` / `LifecycleTermination` | schema / _type_ | versioned process-run state and termination vocabulary |
+| `PreviousExitSchema` / `PreviousExit` / `StartFact` / `ReadyFact` / `ShutdownFact` / `ProcessLifecycleFact` | schema / _type_ | first-boot, hot-reload, clean, forced, handoff and abnormal lifecycle facts |
+| `transitionProcessStart` / `transitionProcessReady` / `transitionProcessShutdown` | function | pure idempotent runId+pid-owned transitions |
+| `LifecycleTransition` / `TransitionStartInput` / `TransitionReadyInput` / `TransitionShutdownInput` / `SameVersionOverlap` | _type_ | pure transition inputs, the same-build overlap policy (`abnormal` default / `handoff`) and state+fact result |
+| `lifecycleLedgerResource` / `LifecycleLedgerResource` / `LifecycleLedgerResourceConfig` | function / _type_ | managed-resource adapter that records start, readiness and shutdown |
+| `createNotificationOutbox` / `NotificationOutbox` / `NotificationOutboxConfig` | function / _type_ | bounded at-least-once queue with durable claims, leases, retries and supersede |
+| `NotificationOutboxItem` / `NotificationOutboxReceipt` / `NotificationOutboxState` / `NotificationSend` / `NotificationFailureClassification` / `DroppedNotification` / `EnqueueNotification` | _type_ | versioned queue records, stable send identity and delivery decisions |
+| `notificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
+| `notificationOutboxResource` / `NotificationOutboxResource` / `NotificationOutboxResourceConfig` | function / _type_ | thin managed-resource scheduler over an outbox handle |
 | `ApplicationHandle.restart` | method | replace one resource and everything that depends on it, leaving the rest of the graph running and the process epoch unchanged |
 | `ApplicationRestartInputSchema` / `ApplicationRestartInput` | schema / _type_ | the resource to replace, by id, and optionally `gracePeriodMs` / `forceTimeoutMs` for this restart — the application's own shutdown budget otherwise |
 | `ApplicationRestartResultSchema` / `ApplicationRestartResult` | schema / _type_ | the subtree that was actually taken down and brought back, in start order, with the outcome, the reason on anything but success, and how long it took |
@@ -1179,6 +1200,11 @@ audit event. See the [Observability guide](../guide/observability.md).
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
+| `createDimensionsProjector` / `DimensionsProjector` / `DimensionsProjectorConfig` / `ProjectedDimensions` | function / _type_ | typed request/result/error attribution projected into the existing request context |
+| `DimensionCollision` / `SetRequestDimensionsOptions` | _type_ | explicit overwrite, preserve or error policy for dimension keys |
+| `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |
+| `DEFAULT_REDACT_PATHS` | constant | baseline credential/token paths added to the sanitizer's sensitive-key policy |
+| `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
 | `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(), close() }` with bounded sink lifecycle |
@@ -1599,6 +1625,97 @@ injected grammY bot. → ADR 0143
 
 ---
 
+## `stitchkit/tracking`
+
+Browser-safe visitor-tracking mechanics, with no event vocabulary of their own
+and no React. The React wrapper (a provider and a hook, ~40 lines) is the
+application's — it owns the router and the session. The server half is
+`stitchkit/tracking/server`. → ADR 0166 — [guide](../guide/tracking.md)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createTrackingClient` | function | the client: visit lease and renewal, pending queue, synchronous identity from reserved sequences, outbox and flush lease, delivery, the string-body page-leave beacon plus a queued copy, visible time, scroll milestones, declarative clicks, heartbeats |
+| `TrackingClient` / `TrackingClientConfig` | _type_ | `track` / `onNavigate` / `start` / `visitId` / `browserStreamId` / `attribution`, and the host, `buildId`, `builtin` names, `bootstrap`, `deliver`, optional `decorate` (your `eventExtras` on every minted event), `unload` / `unloadUrl`, `outbox`, `onUnauthorized`, `onVisit`, `onFailure`, `isAction`, `referrerMap`, `clickAttributes`, `scrollMilestones`, `batchSize`, periods and limits |
+| `TrackFn` / `EventsWithMetadata` / `EventsWithoutMetadata` | _type_ | `track(type)` / `track(type, metadata)` typed by the application's metadata map, and the two halves of that map |
+| `BuiltinTrackingEventTypes` / `CONVENTIONAL_TRACKING_EVENT_TYPES` | _type_ / const | the application's names for the events the client emits itself; the conventional `PAGE_VIEW` … `INTERACTION` set |
+| `browserTrackingHost` / `TrackingHost` / `TrackingPageContext` | function / _type_ | everything the client takes from a browser tab behind one interface — page context, visibility, scroll depth, events, intervals, clocks, storage — so a test or a non-tab host can supply its own |
+| `createTrackingContract` / `TrackingContractConfig` / `TrackingContractEndpoints` | function / _type_ | `bootstrap` (`POST /visit`) and `track` (`POST /events`, `safelistedBody`) from the application's event types, scope and optional extras |
+| `createTrackingSchemas` / `TrackingSchemas` / `TrackingSchemasConfig` | function / _type_ | every schema of one surface — `event`, `request`, `response`, `disposition`, `entry`, `bootstrap` — from `eventTypes`, optional `eventExtras`, `buildIdPattern`, `maxEventsPerBatch` |
+| `TrackingEventEnvelope` / `TrackingEventShape` | _type_ | `eventId`, `visitId`, `browserStreamId`, `browserSequence`, `type`, `page`, `metadata`, `clientTimestamp` |
+| `TrackEventsRequest` / `TrackEventsResponse` / `TrackEventsResponseSchema` | _type_ / schema | a batch (`buildId`, `events`, `utm`) and its answer (`accepted`, `dispositions`) |
+| `TrackingDisposition` / `TrackingDispositionSchema` / `TrackingDispositionStatus` / `TrackingDispositionStatusSchema` | _type_ / schema | `accepted` / `duplicate` / `identity-invalid` / `excluded-bot` — every one terminal |
+| `VisitEntryContext` / `VisitEntryContextShape` / `VisitBootstrapResponse` / `VisitBootstrapResponseSchema` | _type_ / schema | what a browser reports to open a visit (lineage, landing, referrer, UTM, display, screen, `buildId`, outbox health) and the lease it gets back |
+| `TrackingOutboxState` / `TrackingOutboxStateSchema` | _type_ / schema | `available` / `unavailable` |
+| `UtmData` / `UtmDataSchema` / `AttributionData` / `AttributionDataSchema` | _type_ / schema | campaign tags and a touch (UTM, referrer, landing page) |
+| `DEFAULT_BUILD_ID_PATTERN` | const | `dev` or a git SHA |
+| `createTrackingOutbox` / `TrackingOutbox` / `TrackingOutboxOptions` / `TrackingOutboxHealth` | function / _type_ | the tab-shared outbox: `streamId`, `reserveSequences`, `enqueue`, `acquireLease` / `releaseLease` (short, released on leave), `readBatch`, `acknowledge`, `health`; bounded by count and age |
+| `TrackingOutboxStorage` / `TrackingOutboxMeta` / `TrackingOutboxEvents` / `TrackingOutboxRecord` / `TrackingQueuedEvent` | _type_ | one atomic, all-or-nothing `transact` over a key/value store and an event store (`readonly` for pure reads) — the contract an adapter implements |
+| `indexedDbOutboxStorage` / `memoryOutboxStorage` | function | the IndexedDB adapter (one `readwrite` transaction per `transact`) and the in-memory one for tests and degraded mode |
+| `createSequenceReserve` / `SequenceReserve` / `SequenceReserveOptions` | function / _type_ | a block of reserved numbers spent synchronously — `take` / `refill` / `shared` — with a per-tab fallback when the source fails |
+| `deliverTrackingBatch` / `TrackingDeliveryOptions` / `TrackingDeliveryOutcome` | function / _type_ | one batch, one bounded retry on `0` / `5xx`; `delivered` / `failed` / `auth-invalidated` (on `401` / `403`) with an optional `onUnauthorized` recovery |
+| `sendUnloadBeacon` | function | `sendBeacon` with a **string** body — the `text/plain` request a dying document can still complete; `false` without the API |
+| `createVisibleTimeMeter` / `VisibleTimeMeter` / `VisibleInterval` / `VisibleHeartbeat` / `VisibleTimeMeterOptions` | function / _type_ | additive visible time — `checkpoint` / `cut` / `heartbeat`, each interval with its own id; a hidden heartbeat carries no interval |
+| `scrollDepthPercent` / `createScrollMilestones` / `ScrollMilestones` | function / _type_ | depth as a percentage of the scrollable range; milestones fired once each per page |
+| `createOncePerPage` / `OncePerPage` | function / _type_ | one fact per key per page within a window — the guard a twice-mounted component cannot keep itself |
+| `resolveAttribution` / `ResolveAttributionInput` / `ResolvedAttribution` / `AttributionStorage` / `ReferrerRule` | function / _type_ | first-touch once, current-touch on every new UTM; the referrer → source/medium map is the application's, there is no built-in list |
+| `parseUtmFromSearch` / `parseReferrer` | function | the two parsers `resolveAttribution` is built from |
+| `resolveTrackedClick` / `ResolveTrackedClickOptions` / `TrackedClick` / `TrackedClickAttributes` / `ClickTarget` | function / _type_ | `data-track` → click, `data-track-action` → interaction, a link to another origin → outbound; attribute names configurable; `leavesPage` says which path to send on |
+
+---
+
+## `stitchkit/tracking/server`
+
+The decisions a tracking backend makes, without the storage it makes them
+over. The application reads visits and stored hashes from its database, hands
+them here and writes what comes back; `issueVisitLease` runs the visit
+algorithm over a store the application implements. → ADR 0166
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `dispositionTrackingBatch` / `DispositionInput` / `DispositionResult` / `DispositionEvent` / `KnownVisit` | function / _type_ | decide a batch: bot → all `excluded-bot`; wrong lineage or owner → `identity-invalid`; stored id → `duplicate` (+ `conflicts` when the hash differs); rest `accepted`; anonymous visits an identified caller may `adopt` |
+| `issueVisitLease` / `IssueVisitLeaseOptions` / `IssuedVisitLease` | function / _type_ | under the lineage lock: continue the named or latest active visit (adopting an anonymous one when `ownership: 'adopting'`), else end what is open and start a new one; a bot gets a lease no store holds |
+| `TrackingVisitStore` / `FindActiveVisitQuery` / `ActiveVisit` / `VisitActor` / `VisitOutboxHealth` / `VisitOwnership` | _type_ | the six-method store the application implements over its database — `withLineageLock`, `findActive`, `touch`, optional `adopt`, `endOpen`, `create` — and the shapes it exchanges |
+| `activeIntervalOf` / `ActiveTimeInterval` / `ActiveIntervalOptions` | function / _type_ | the visible-time interval an event carries, dated by the server clock; `null` for an unshaped or implausible one |
+| `hashTrackingEvent` | function | `sha256(JSON.stringify(parsedEvent))` — the stored payload hash, unsorted on purpose so it matches what applications already hold |
+| `isBotUserAgent` / `DEFAULT_BOT_USER_AGENT_PATTERN` | function / const | crawlers, monitors and `headlesschrome` are not visitors |
+| `createPresenceRegistry` / `PresenceRegistry` / `PresenceEntry` | function / _type_ | who is here now, in this process: `touch` / `snapshot(filter)` / `presentVisitOf` with a 45 s TTL |
+
+---
+
+## `stitchkit/release`
+
+A page follows the release it was built for. The server keeps a marker of the
+current frontend build and names it on every response (`X-Build-Id`) and every
+socket connection; the browser compares that to its **own** build id and
+reloads under a declared policy. Reading the build id and sending the deploy
+signal stay with the application. → ADR 0167 — [guide](../guide/release.md)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createReleaseMarker` / `ReleaseMarker` / `ReleaseMarkerConfig` / `ReleaseRefresh` | function / _type_ | `current()`, `refresh()` → `{ changed, buildId }`, `subscribe`; built on an application `read` that returns `null` where there is no release; a bad value or a throwing subscriber goes to `onError`, never out |
+| `RELEASE_HEADER` | const | `X-Build-Id` — set on every response of a handler configured with `release`, exposed through CORS by default |
+| `createReleaseWatcher` / `ReleaseWatcher` / `ReleaseWatcherConfig` / `ReleaseReloadPolicy` | function / _type_ | `observe(buildId)` against the bundle's own id; `immediate` / `when-hidden` / `on-navigation` with `maxDeferMs`; one reload per id, remembered across it; `navigated`, `stale`, `dispose`, `onStale` |
+| `browserReleaseHost` / `ReleaseWatcherHost` | function / _type_ | visibility, timer and reload behind one interface — a test supplies its own |
+| `bindReleaseToSocketServer` / `observeReleaseFromSocket` | function | the socket channel: each connection re-reads and hears the build, everyone hears a change; the client hands the event to the watcher |
+| `ReleaseSocketServer` / `ReleaseSocketEmitter` / `ReleaseSocketListener` / `ReleaseSocketOptions` | _type_ | the structural slices of a Socket.IO server and client the bindings use — no peer import |
+
+---
+
+## `stitchkit/geo`
+
+Server-only managed GeoIP generations. Applications own database acquisition,
+licensing and domain mapping; the optional MaxMind peer is loaded only when its
+adapter is used.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createGeoIpResolver` / `GeoIpResolver` / `GeoIpResolverOptions` / `GeoIpSnapshot` | function / _type_ | public-IP lookup over one stable reader generation; unavailable start, last-known-good degraded reload and cleanup are explicit states |
+| `createMaxMindGeoIpLoader` / `MaxMindGeoIpLoaderOptions` / `MaxMindGeoIpPaths` | function / _type_ | lazy optional-peer City+ASN loader with stable before/after file revision checks |
+| `GeoIpReader` / `GeoIpReaderLoader` | _type_ | peer-neutral reader/generation seam for adapters and tests |
+| `GeoAttribution` / `mapGeoIpRecord` | _type_ / function | generic optional place and autonomous-system projection; application-specific fields remain outside |
+
+---
+
 ## `stitchkit/declaration`
 
 Zod-only, dependency-free. The **project declaration**: the single
@@ -1691,7 +1808,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `NodeServerHandle` | _type_ | managed Node handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `NodeRuntimeServer` | _type_ | concrete `srvx/node` runtime escape hatch |
 | `NodeSocketLifecycle` | _type_ | Bun-free Socket.IO lifecycle accepted by `serveNode` |
-| `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` |
+| `HandlerConfig` / `ServiceDef` / `RawRoute` / `RawRouteContext` | _type_ | runtime-neutral handler types; raw routes default their host server to `unknown` and may declare stable `serviceName` / `action` observability identity |
 | `SocketIORequestPolicy` / `SocketIOServerConfig` / `SocketIOPeerLoaders` / `SocketIOServerHandle` | _type_ | runtime-neutral handshake policy, config, optional-peer loaders and the Bun-free Node handle with `io`, `attach` and lifecycle |
 | `UnixClientTransportConfig` / `UnixClientTransport` | _type_ | Unix socket bounds, explicit response-body mode and owned Fetch-compatible handle |
 | `UnixResponseBodyMode` | _type_ | finite cumulative `bounded` mode or explicit pull-driven `streaming` mode |
@@ -1734,12 +1851,14 @@ SDK nor the `ai` peer.
 
 ## `stitchkit/react`
 
-Browser-only. The React data-layer helpers. Needs the `@tanstack/react-query`
-and `react-query-kit` peers.
+Browser- and server-render-safe React data-layer helpers. Needs the
+`@tanstack/react-query` and `react-query-kit` peers.
 
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createCursorQuery` | function | a cursor-paginated infinite query — [guide](../guide/client.md#cursor-pagination) |
+| `apiErrorRetry` | function | build a bounded network/HTTP-status retry predicate using cross-bundle `ApiError.is` — [guide](../guide/react.md#api-error-retries) |
+| `createQueryClientFactory` | function | request-local SSR QueryClient through a supplied cache adapter plus a factory-local browser singleton — [guide](../guide/react.md#query-client-per-runtime) |
 | `createCacheBridge` | function | sync socket events into the Query cache — [guide](../guide/realtime.md#cache-bridge) |
 | `createRealtimeCacheBridge` | function | the same bridge fed by a **validated realtime contract**; the payload comes from the contract's args tuple instead of inferring `never` |
 | `createEntityCacheHandlers` | function | created/updated/deleted cache handlers for one entity — [guide](../guide/realtime.md#entity-cache-handlers) |
@@ -1753,6 +1872,9 @@ and `react-query-kit` peers.
 | `EntityCacheListShape` | _type_ | `array \| paginated \| infinite-array \| infinite-paginated` |
 | `DeletedPayload` | _type_ | a `deleted` event payload — the entity or a bare `{ id }` |
 | `CursorQueryConfig` | _type_ | config for `createCursorQuery` |
+| `ApiErrorRetryConfig` | _type_ | retry attempts, excluded application codes, inclusive status ranges and network policy |
+| `QueryClientFactoryConfig` / `QueryClientServerCache` | _type_ | TanStack config, mutation observer, retry policy and request-cache adapter |
+| `QueryRetryValue` | _type_ | TanStack's accepted query retry value retained by the factory pass-through |
 | `CacheBridge` | _type_ | the `createCacheBridge` handle |
 | `CacheBridgeConfig` | _type_ | config for `createCacheBridge` |
 | `RealtimeCacheBridgeConfig` | _type_ | config for `createRealtimeCacheBridge` — same fields, a `ValidatedRealtimeSocket` in place of the raw socket |

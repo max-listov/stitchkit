@@ -112,18 +112,33 @@ function matchSegments(
     const actual = requestSegments[i];
     if (actual === undefined) return null;
     if (pattern.startsWith(':')) {
-      params[pattern.slice(1)] = decodeURIComponent(actual);
+      const decoded = decodeSegment(actual);
+      if (decoded === null) return null;
+      params[pattern.slice(1)] = decoded;
     } else if (pattern !== actual) {
       return null;
     }
   }
   if (wildcardName) {
-    params[wildcardName] = requestSegments
-      .slice(prefixLength)
-      .map(decodeURIComponent)
-      .join('/');
+    const decoded = requestSegments.slice(prefixLength).map(decodeSegment);
+    if (decoded.some((segment) => segment === null)) return null;
+    params[wildcardName] = decoded.join('/');
   }
   return params;
+}
+
+/**
+ * A segment whose percent-encoding is malformed (`%E0%A4%A`, `%ZZ`) names no
+ * resource: it fails to match instead of escaping the router as a bare
+ * `URIError`, so the request ends in the ordinary 404 envelope with its
+ * request id, CORS headers and audit event.
+ */
+function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 /** Static routes win over params, and params win over a terminal catch-all. */
@@ -332,6 +347,19 @@ export function matchRawRoute<TServer>(
  */
 export function validateRawRoutes<TServer>(rawRoutes: RawRoute<TServer>[] | undefined): void {
   const routes = rawRoutes ?? [];
+  for (const route of routes) {
+    if (route.serviceName !== undefined && route.serviceName.trim().length === 0) {
+      throw new Error(`Raw route ${route.method} ${route.path} has an empty serviceName`);
+    }
+    if (route.action !== undefined && route.action.trim().length === 0) {
+      throw new Error(`Raw route ${route.method} ${route.path} has an empty action`);
+    }
+    if (route.action !== undefined && route.serviceName === undefined) {
+      throw new Error(
+        `Raw route ${route.method} ${route.path} declares action without serviceName`,
+      );
+    }
+  }
   const shapes = routes.map((route) => rawRouteShape(route.path));
   const conflicts: string[] = [];
 

@@ -23,10 +23,27 @@ export interface SanitizeOptions {
    * `X-Api-Key` are masked while `authorId` and `sessionCount` survive.
    */
   sensitiveKeys?: RegExp;
+  /** Augment, rather than replace, the built-in sensitive-key matcher. */
+  includeDefaultSensitiveKeys?: boolean;
+  /** Dot paths to mask. `*` matches one segment and `**` matches any suffix. */
+  sensitivePaths?: readonly string[];
+  /** Patterns whose matching portions are masked in every string, including messages. */
+  sensitiveUrlPatterns?: readonly RegExp[];
   /** Cap on the serialised payload — anything larger collapses to a preview. Default 16 KB. */
   maxBytes?: number;
   /** Recursion limit — deeper nesting collapses to a marker. Default 20. */
   maxDepth?: number;
+  /** Maximum UTF-16 string length before an explicit truncation marker. */
+  maxStringLength?: number;
+  /** Maximum members retained from an array, map, set, or object. */
+  maxCollectionLength?: number;
+  /**
+   * Maximum values visited in one walk. The ancestor check stops cycles, not
+   * a shared acyclic subtree reached from many parents — a diamond-shaped
+   * object of a few hundred keys can mean billions of visits — so past this
+   * budget the rest collapses to a marker. Default 20 000.
+   */
+  maxNodes?: number;
 }
 
 /** The result of `measureSize`. */
@@ -107,6 +124,7 @@ function isSensitiveKeyDefault(key: string): boolean {
 
 const DEFAULT_MAX_BYTES = 16_000;
 const DEFAULT_MAX_DEPTH = 20;
+const DEFAULT_MAX_NODES = 20_000;
 const MASK = '[redacted]';
 
 /**
@@ -123,20 +141,67 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
       ? isSensitiveKeyDefault
       : (key: string) => {
           custom.lastIndex = 0;
-          return custom.test(key);
+          return (
+            custom.test(key) ||
+            (options.includeDefaultSensitiveKeys === true && isSensitiveKeyDefault(key))
+          );
         };
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxStringLength = options.maxStringLength ?? Number.POSITIVE_INFINITY;
+  const maxCollectionLength = options.maxCollectionLength ?? Number.POSITIVE_INFINITY;
+  const pathMatchers = (options.sensitivePaths ?? []).map((pattern) => pattern.split('.'));
+  const matchesPath = (
+    matcher: readonly string[],
+    path: readonly string[],
+    patternIndex = 0,
+    pathIndex = 0,
+  ): boolean => {
+    if (patternIndex === matcher.length) return pathIndex === path.length;
+    const segment = matcher[patternIndex];
+    if (segment === '**') {
+      if (patternIndex + 1 === matcher.length) return true;
+      for (let next = pathIndex; next <= path.length; next += 1) {
+        if (matchesPath(matcher, path, patternIndex + 1, next)) return true;
+      }
+      return false;
+    }
+    if (pathIndex === path.length || (segment !== '*' && segment !== path[pathIndex]))
+      return false;
+    return matchesPath(matcher, path, patternIndex + 1, pathIndex + 1);
+  };
+  const isSensitivePath = (path: readonly string[]): boolean =>
+    pathMatchers.some((matcher) => matchesPath(matcher, path));
+  const safeString = (input: string): string => {
+    let output = input;
+    for (const pattern of options.sensitiveUrlPatterns ?? []) {
+      try {
+        // Rebuilt as global and never sticky: a `y` flag would mask only a
+        // match at position 0 and leave every later secret in place.
+        const global = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}g`);
+        output = output.replace(global, MASK);
+      } catch {
+        // A consumer regexp must not turn diagnostics into application failure.
+      }
+    }
+    if (output.length <= maxStringLength) return output;
+    return `${output.slice(0, Math.max(0, maxStringLength))}…[truncated]`;
+  };
 
   // Track the ANCESTOR chain of the current node — not every visited object —
   // so a true circular reference collapses to a marker, while a shared (but
   // acyclic) subtree referenced from two siblings is still walked both times.
   const ancestors = new Set<object>();
 
-  const walk = (input: unknown, depth: number): JsonValue => {
+  const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
+  let visited = 0;
+  const walk = (input: unknown, depth: number, path: readonly string[] = []): JsonValue => {
     if (depth > maxDepth) return '[max depth]';
+    visited += 1;
+    if (visited > maxNodes) return '[node budget]';
     if (input === null || input === undefined) return null;
 
-    if (typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean') {
+    if (typeof input === 'string') return safeString(input);
+    if (typeof input === 'number' || typeof input === 'boolean') {
       return input;
     }
 
@@ -158,10 +223,19 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
       // collected request headers into a Map — the shape `Headers` naturally
       // becomes — wrote the bearer token into the audit row in cleartext while
       // the identical plain object was masked.
-      const result = [...input.entries()].map(([key, value]) => [
-        walk(key, depth + 1),
-        typeof key === 'string' && isSensitive(key) ? MASK : walk(value, depth + 1),
-      ]);
+      const entries = [...input.entries()];
+      const result = entries.slice(0, maxCollectionLength).map(([key, value]) => {
+        const segment = typeof key === 'string' ? key : String(key);
+        const childPath = [...path, segment];
+        return [
+          walk(key, depth + 1, [...path, '[key]']),
+          (typeof key === 'string' && isSensitive(key)) || isSensitivePath(childPath)
+            ? MASK
+            : walk(value, depth + 1, childPath),
+        ];
+      });
+      if (entries.length > maxCollectionLength)
+        result.push(['[truncated]', entries.length - maxCollectionLength]);
       ancestors.delete(input);
       return { _type: 'map', entries: result };
     }
@@ -172,23 +246,52 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
       // masker redacts by KEY NAME. A secret held as a bare Set member is
       // indistinguishable from any other string — the same limit the rest of
       // this module states, said where someone would look for it.
-      const values = [...input].map((item) => walk(item, depth + 1));
+      const entries = [...input];
+      const values = entries
+        .slice(0, maxCollectionLength)
+        .map((item, index) => walk(item, depth + 1, [...path, String(index)]));
+      if (entries.length > maxCollectionLength)
+        values.push(`[truncated ${entries.length - maxCollectionLength} items]`);
       ancestors.delete(input);
       return { _type: 'set', values };
     }
+    if (input instanceof Date) {
+      return Number.isNaN(input.getTime()) ? '[invalid date]' : input.toISOString();
+    }
+    if (input instanceof URL) return safeString(input.href);
     if (input instanceof Error) {
+      const property = (name: 'name' | 'message' | 'stack' | 'cause'): unknown => {
+        try {
+          return Reflect.get(input, name);
+        } catch {
+          return '[unreadable]';
+        }
+      };
+      const stack = property('stack');
+      const cause = property('cause');
       return {
         _type: 'error',
-        name: input.name,
-        message: input.message,
-        ...(input.stack !== undefined && { stack: input.stack }),
+        name: safeString(String(property('name'))),
+        message: safeString(String(property('message'))),
+        ...(stack !== undefined && { stack: safeString(String(stack)) }),
+        ...(cause !== undefined && { cause: walk(cause, depth + 1, [...path, 'cause']) }),
       };
     }
 
     if (Array.isArray(input)) {
       if (ancestors.has(input)) return '[circular]';
       ancestors.add(input);
-      const result = input.map((item) => walk(item, depth + 1));
+      const result: JsonValue[] = [];
+      const count = Math.min(input.length, maxCollectionLength);
+      for (let index = 0; index < count; index += 1) {
+        try {
+          result.push(walk(Reflect.get(input, index), depth + 1, [...path, String(index)]));
+        } catch {
+          result.push('[unreadable]');
+        }
+      }
+      if (input.length > maxCollectionLength)
+        result.push(`[truncated ${input.length - maxCollectionLength} items]`);
       ancestors.delete(input);
       return result;
     }
@@ -197,19 +300,25 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
       if (ancestors.has(input)) return '[circular]';
       ancestors.add(input);
       const out: { [key: string]: JsonValue } = {};
-      for (const key of Object.keys(input)) {
+      const keys = Object.keys(input);
+      for (const key of keys.slice(0, maxCollectionLength)) {
         // A `__proto__` key would set the prototype of the produced value.
         if (isUnsafeKey(key)) continue;
-        if (isSensitive(key)) {
+        const childPath = [...path, key];
+        if (isSensitive(key) || isSensitivePath(childPath)) {
           out[key] = MASK;
           continue;
         }
         try {
-          out[key] = walk(Reflect.get(input, key), depth + 1);
+          out[key] = walk(Reflect.get(input, key), depth + 1, childPath);
         } catch {
           out[key] = '[unreadable]';
         }
       }
+      // Bracketed like the array and map markers, so it cannot shadow a real
+      // `_truncated` property of the value being logged.
+      if (keys.length > maxCollectionLength)
+        out['[truncated]'] = keys.length - maxCollectionLength;
       ancestors.delete(input);
       return out;
     }

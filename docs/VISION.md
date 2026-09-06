@@ -26,6 +26,16 @@ provider policy, process supervision and deployment remain outside Stitchkit.
 Applications may also attach a bounded local diagnostic journal to that server-only boundary; its
 ordered files are finite process evidence, never canonical or durable domain state.
 
+Applications that repeat visitor tracking — a tab-shared outbox, a visit lease, the page-leave
+beacon, visible time, scroll and click capture, attribution — may opt into the browser-safe
+tracking client and the server-side decisions beside it. Storage, the event vocabulary, the
+referrer map and every report remain the application's.
+
+Applications whose pages should follow the release they were built for may opt into the release
+marker and watcher: the server names the current build on every response and socket connection,
+the browser compares it to its own and reloads under a declared policy. Reading the build id and
+sending the deploy signal remain the application's.
+
 Browser and headless clients that repeat snapshot/event synchronization may opt into a small
 renderer-neutral live-state controller. It consumes one host-owned continuous consistency
 boundary, finitely buffers early events and fences stale generations; transport reconnect,
@@ -140,5 +150,10 @@ the published package before release.
 - Remove copied client snapshot/event race handling through the browser-safe live-state controller,
   while keeping Socket.IO reconnect, HTTP framing, opaque cursors, replay and rendering in their
   existing owners.
+- Remove copied visitor-tracking mechanics through the browser-safe tracking client and the pure
+  server-side decisions beside it, while keeping tables, transactions, event types, GeoIP and
+  reports in their existing owners.
+- Remove copied reload-on-release mechanics through the release marker and watcher, while keeping
+  the build-id source, the deploy step and the moment to reload with the application.
 
 The release-by-release plan is the root [`ROADMAP.md`](../ROADMAP.md).

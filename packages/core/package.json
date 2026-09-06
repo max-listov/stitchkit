@@ -153,6 +153,22 @@
       "types": "./dist/telegram.d.ts",
       "import": "./dist/telegram.js"
     },
+    "./tracking": {
+      "types": "./dist/tracking.d.ts",
+      "import": "./dist/tracking.js"
+    },
+    "./release": {
+      "types": "./dist/release.d.ts",
+      "import": "./dist/release.js"
+    },
+    "./tracking/server": {
+      "types": "./dist/tracking-server.d.ts",
+      "import": "./dist/tracking-server.js"
+    },
+    "./geo": {
+      "types": "./dist/geo.d.ts",
+      "import": "./dist/geo.js"
+    },
     "./declaration": {
       "types": "./dist/declaration.d.ts",
       "import": "./dist/declaration.js"
@@ -183,14 +199,15 @@
   "peerDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@opentelemetry/api": "^1.9.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "@types/bun": "^1.3.14",
+    "@opentelemetry/api": "^1.9.0",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": ">=5",
+    "@types/bun": "^1.3.14",
     "ai": "^7.0.0",
     "grammy": "^1.45.1",
+    "maxmind": "^5.0.7",
     "react": ">=18",
     "react-query-kit": "^3.3.3",
     "socket.io": "^4.8.3",
@@ -229,6 +246,9 @@
     "grammy": {
       "optional": true
     },
+    "maxmind": {
+      "optional": true
+    },
     "react": {
       "optional": true
     },
@@ -252,8 +272,8 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@opentelemetry/api": "^1.9.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
+    "@opentelemetry/api": "^1.9.0",
     "@socket.io/bun-engine": "^0.1.1",
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": "5.102.3",
@@ -262,6 +282,7 @@
     "@types/react": "^19.2.18",
     "@typescript/typescript6": "^6.0.2",
     "ai": "^7.0.79",
+    "fake-indexeddb": "^6.2.5",
     "grammy": "^1.45.1",
     "react": "^19.2.8",
     "react-query-kit": "^3.3.4",

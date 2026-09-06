@@ -379,8 +379,29 @@ session.clear()         // → a Set-Cookie value that expires it
 ```
 
 `defineCookie` bundles a cookie's name and options into a typed handle, so the
-config is not repeated at every call site. `parseCookies(header)` and
-`serializeCookie(name, value, opts)` are the lower-level primitives.
+config is not repeated at every call site. `parseCookies(header)`,
+`parseCookieHeader(header)` and `serializeCookie(name, value, opts)` are the
+lower-level primitives.
+
+**Two cookies, one name.** A browser sends every cookie whose domain and path
+match, so a `sid` on `.example.com` and a `sid` on `app.example.com` both arrive
+— in an order the browser chooses (RFC 6265 §5.4) and a server should not rely
+on (§4.2.2). `get` returns the **last** one by default, which is a fact of the
+header order, not a rule: the same session then validates in one browser and
+not in another. Name the behaviour you rely on, or refuse to guess:
+
+```ts
+const session = defineCookie({ name: 'sid', domain: '.example.com', duplicates: 'reject' })
+
+session.get(req)     // undefined when two *different* values arrive; the one value when they agree
+session.getAll(req)  // every candidate, in header order — validate each, clear the loser
+```
+
+`duplicates: 'reject'` turns the lottery into "no session", which a login page
+handles; `'first'` and `'last'` exist so an application can state which coin it
+flips. For a session cookie on a parent domain the durable fix is `getAll`:
+validate each candidate and answer with `clear()` for the one that lost, so the
+next request carries one.
 
 To set a cookie from a schema-validated JSON endpoint without losing its typed
 client result, declare [`responseMeta`](./server.md#typed-json-response-metadata)
@@ -534,6 +555,38 @@ onError: (ctx, err) => {
   // … your own AppError / normalizeError path
 }
 ```
+
+## One application vocabulary and one wire map
+
+`defineErrors` can also resolve Stitchkit's framework codes into the same
+application vocabulary. A status fallback is explicit because several
+application codes may legally share one HTTP status:
+
+```ts
+const vocabulary = defineErrors(
+  {
+    VALIDATION_ERROR: { status: 400, message: 'Invalid request' },
+    INTERNAL_ERROR: { status: 500, message: 'Internal error' },
+  },
+  {
+    fallback: { 400: 'VALIDATION_ERROR', 500: 'INTERNAL_ERROR' },
+    map: { FILE_TOO_LARGE: 'VALIDATION_ERROR' },
+  },
+)
+
+const onError = createErrorHook({ vocabulary })
+// `vocabulary` *is* the wire map: `codeMap` and `unmappedCode` cannot sit
+// beside it — the type forbids the combination and the runtime refuses it.
+// A `map` target must be declared under the framework code's own status
+// (`NOT_FOUND` → a 404 code, never a 410 one): the wire keeps the framework
+// status and carries your code, so `defineErrors` refuses the mismatch where
+// it already refuses a `fallback` under the wrong status.
+```
+
+An explicit per-code `map` wins over a status fallback. With
+`exhaustive: true`, `map` must be a complete `Record<StitchErrorCode, AppCode>`
+at compile time. Transport boundaries identify errors with `AppError.is`, not
+`instanceof`, so two bundled copies still agree.
 
 ## Domain errors — `defineErrors`
 

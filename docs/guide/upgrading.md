@@ -11,7 +11,10 @@ A release that breaks a public API leads its `CHANGELOG.md` entry with a
 **`### ⚠️ Breaking changes`** section (exact heading), each item carrying a
 **before → after** snippet. A version with **no** such section is **purely
 additive** — adopting it changes nothing in your code. (See
-[`AGENTS.md` → Breaking changes](../../AGENTS.md).)
+[`AGENTS.md` → Breaking changes](../../AGENTS.md).) `bun scripts/upgrade-plan.ts
+<installed> <target>` prints every breaking section your range crosses, oldest
+first, each with its **Who must act** line — the list this guide's migrations
+expand on.
 
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
@@ -39,6 +42,30 @@ makes one thing your job rather than the resolver's:
 
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
+
+## Unreleased migration: path literals own string params
+
+An endpoint whose path contains `:id` or a terminal `*rest` no longer needs a
+duplicate `params: z.object({ …string() })` declaration. Remove schemas that do
+nothing beyond repeating path names:
+
+```ts
+// before
+{ path: '/projects/:projectId/*filePath',
+  params: z.object({ projectId: z.string(), filePath: z.string() }) }
+
+// after
+{ path: '/projects/:projectId/*filePath' }
+```
+
+Keep an explicit schema when it validates or coerces. It must cover every name
+in the path — an explicit schema that misses one now fails at `defineContract`
+with the path and the missing field named. Client calls and handler contexts
+infer the string fields from the literal, so a call that omitted one becomes a
+compile error instead of building a URL with an unresolved segment. Measured
+across three consuming applications before release (373 endpoints with path
+segments), no explicit schema missed a field: the migration is deleting
+schemas that only repeated the path, or nothing.
 
 ## Released migration: 0.80.0
 

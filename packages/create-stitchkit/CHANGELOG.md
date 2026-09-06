@@ -12,6 +12,16 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- **The generated frontend carries the canonical React Query runtime shape.**
+  `lib/query-client.ts` owns request-local SSR identity, one browser singleton,
+  pending dehydration, application `staleTime` and the retry policy a released
+  core already lets it state — one retry for queries, none for mutations — with
+  a test that keeps it there. It does not depend on an unreleased Stitchkit
+  export; `UPGRADING.md` records the one-step cutover to
+  `createQueryClientFactory` after the matching core release is available.
+
 ## [0.6.0] — 2026-09-02
 
 The generated project stops being an empty frame with a to-do at the bottom of

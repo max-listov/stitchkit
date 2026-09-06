@@ -975,3 +975,37 @@ WebSocket transport ([ADR 0008](../decisions/0008-thin-wrappers.md)). stitchkit
 gives you the contract and the metadata (`idempotent`, the open `source` tag,
 `createRetainedTopics`); the wire and the per-call execution stay yours. See
 [ADR 0028](../decisions/0028-revert-contract-dispatcher.md).
+
+## Authenticated room registry and replay
+
+`bindSocketRegistry` composes over `bindRealtimeServer`; it never authenticates
+a socket a second time and never creates another outbound validator. The
+identity in `connection.raw.data` has already passed the Socket.IO handshake.
+
+`rooms(identity)` names the rooms a connecting identity may be in; the registry
+joins them and refuses a later `join` to any other. The disconnect listener is
+attached before that lookup is awaited, so a socket that drops while its
+permissions are still being resolved never becomes a member. `registry.room(name)` mints
+the opaque `AuthorizedSocketRoom` for a name — the token proves the name came
+through this registry, not that anyone is in the room, so a room with no open
+tab is an ordinary `emitTo` target that reports zero recipients. The registry
+owns join/leave, multiple sockets per identity, immutable snapshots and
+listener cleanup.
+
+Replay is revisioned: while a socket's snapshot is open, frames sent through
+`emitTo` to its rooms are held back and delivered after the snapshot, so the
+socket never sees a delta for state its snapshot already contains, nor a
+snapshot that predates a delta it already received. A snapshot taken across a
+`revision` change is retried up to `replayAttempts` (default 3). The hold-back buffer is
+bounded by `maxBufferedFrames` (default 1000): past it the attempt is abandoned
+and retried, and when the attempts are spent `onResyncRequired(socketId,
+identity)` fires with nothing half-delivered — the application decides what a
+resync means for that socket. A retry relies on the fresh snapshot carrying
+what the abandoned frames carried, which holds when every emitted change also
+moves `revision`; without a `revision` the registry has no way to tell, so
+declare one wherever replay matters. Room tokens are recognised, not
+remembered: a token the application keeps stays valid for the life of the
+registry, and a name seen once does not live on in a map. This ordering exists only for frames that go
+through `emitTo`; a broadcast through `realtime.to(room).emit` reaches the
+socket immediately, replay or not, so keep room traffic whose order matters
+relative to the snapshot on the registry.

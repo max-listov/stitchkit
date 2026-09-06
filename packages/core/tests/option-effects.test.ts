@@ -54,6 +54,8 @@ const COVERED: Record<string, string> = {
   EventTopicDeclaration: 'live.ts',
   WatchClientConfig: 'live.ts',
   VerifyTelegramInitDataOptions: 'telegram.ts',
+  ApiErrorRetryConfig: 'react.ts',
+  QueryClientFactoryConfig: 'react.ts',
 };
 
 const EntrySchema = z.union([

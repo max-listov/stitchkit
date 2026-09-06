@@ -46,9 +46,13 @@ export const DEFAULT_CORS_ALLOW_HEADERS =
  * Note the deliberate asymmetry with {@link DEFAULT_CORS_ALLOW_HEADERS}:
  * inbound the id may arrive as `X-Trace-Id`, outbound it is always
  * `X-Request-Id` — one name on the wire out, no alias.
+ *
+ * `X-Build-Id` is the release a handler configured with a release marker
+ * names on every response; a cross-origin page reads it to learn it is stale
+ * (`stitchkit/release`).
  */
 export const DEFAULT_CORS_EXPOSE_HEADERS =
-  'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Request-Id';
+  'Content-Disposition, Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Request-Id, X-Build-Id';
 
 /**
  * Reject an unsafe CORS config at construction. `credentials: true` with a
@@ -98,6 +102,27 @@ function resolveOrigin(
     return config.origin.some((o) => o.toLowerCase() === lower) ? requestOrigin : undefined;
   }
   return config.origin;
+}
+
+/**
+ * Is `requestOrigin` on the server's **explicit** allow-list? The question a
+ * safelisted request body asks before it is read (→ ADR 0165), and it is
+ * deliberately stricter than `resolveOrigin`: a wildcard is not an allow-list
+ * (a simple request is sent with cookies from any site, so `'*'` would admit
+ * every site), `null` is what a sandboxed iframe, a cross-origin redirect and
+ * `file://` send and names no site, and an absent header is no answer at all.
+ * A string origin is compared, not echoed. Case-insensitive, like
+ * `resolveOrigin`'s list branch.
+ */
+export function isOriginAllowed(
+  config: CorsConfig | undefined,
+  requestOrigin: string | null | undefined,
+): boolean {
+  if (!config || config.origin === undefined || config.origin === '*') return false;
+  if (!requestOrigin || requestOrigin === 'null') return false;
+  const lower = requestOrigin.toLowerCase();
+  const allowed = Array.isArray(config.origin) ? config.origin : [config.origin];
+  return allowed.some((origin) => origin.toLowerCase() === lower);
 }
 
 export function corsHeaders(

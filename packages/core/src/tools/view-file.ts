@@ -32,6 +32,7 @@ export {
 
 import { AppError } from '../contract';
 import { type ManagedFileBoundary, ManagedFileError } from '../files/boundary';
+import { mediaTypeEssence } from '../internal/media-type';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { normalizeFileToolError } from './managed-file-error';
 
@@ -96,7 +97,7 @@ async function fetchSource(
       signal: options.signal,
     });
     if (!res.ok) throw new AppError('VIEW_HTTP_ERROR', `HTTP ${res.status}`, 502);
-    const headerMime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
+    const headerMime = mediaTypeEssence(res.headers.get('content-type'));
     const mimeType = headerMime || extMime || 'application/octet-stream';
 
     // A video body is never inlined (MCP has no video block) — do not download

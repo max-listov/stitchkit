@@ -7,11 +7,15 @@
  * sinks.
  */
 export {
+  createDimensionsProjector,
   createObservability,
+  type DimensionsProjector,
+  type DimensionsProjectorConfig,
   type HttpRequestCompletion,
   type HttpRequestObserver,
   type Observability,
   type ObservabilityConfig,
+  type ProjectedDimensions,
   type RequestEventSinkConfig,
   type RequestObservabilityConfig,
   type SinkDrop,
@@ -19,11 +23,19 @@ export {
   type SinkError,
 } from './audit';
 export {
+  type BoundedLoggerBounds,
+  type BoundedLoggerOptions,
+  createBoundedLogger,
+  DEFAULT_REDACT_PATHS,
+} from './bounded-logger';
+export {
+  type DimensionCollision,
   getRequestContext,
   getTraceId,
   getUserId,
   type RequestContext,
   runWithRequestContext,
+  type SetRequestDimensionsOptions,
   setRequestDimensions,
   setRequestEndpoint,
   setRequestError,

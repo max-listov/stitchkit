@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { copyFile, readFile } from 'node:fs/promises';
+import { copyFile, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'dotenv';
 
@@ -34,5 +34,25 @@ async function run(command: string[], cwd: string, env = Bun.env): Promise<void>
 }
 
 await run(['bun', 'install', '--frozen-lockfile'], templateRoot);
+// The checked-in template is the development workspace (ADR 0066), while a
+// generated project must keep the published catalog target. Link only this
+// workspace's installed package to the core tree after the frozen install; the
+// symlink lives in ignored node_modules and is never copied by the scaffolder.
+const localCore = resolve(repositoryRoot, 'packages/core');
+const templateCoreLinks = [resolve(templateRoot, 'node_modules/stitchkit')];
+for (const workspace of await readdir(resolve(templateRoot, 'packages'), {
+  withFileTypes: true,
+})) {
+  if (workspace.isDirectory()) {
+    templateCoreLinks.push(
+      resolve(templateRoot, 'packages', workspace.name, 'node_modules/stitchkit'),
+    );
+  }
+}
+for (const templateCore of templateCoreLinks) {
+  if (!existsSync(templateCore)) continue;
+  await rm(templateCore, { force: true, recursive: true });
+  await symlink(localCore, templateCore, 'dir');
+}
 await run(['bun', 'run', 'db:generate'], templateRoot, { ...Bun.env, ...environment });
 await run(['bun', 'install', '--frozen-lockfile'], agentTemplateRoot);

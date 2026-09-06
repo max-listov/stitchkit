@@ -1,28 +1,36 @@
-import { defaultShouldDehydrateQuery, isServer, QueryClient } from '@tanstack/react-query';
+import {
+  defaultShouldDehydrateQuery,
+  environmentManager,
+  QueryClient,
+  type QueryClientConfig,
+} from '@tanstack/react-query';
 import { cache } from 'react';
 
-function createQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { staleTime: 30_000, retry: 1 },
-      dehydrate: {
-        // `pending` queries dehydrate too: a server component may kick off a
-        // prefetch without awaiting it, and streaming SSR hands the in-flight
-        // promise to the client, which resumes it instead of refetching. The
-        // default predicate would drop exactly those queries and reintroduce
-        // the client-side loading flash.
-        shouldDehydrateQuery: (query) =>
-          defaultShouldDehydrateQuery(query) || query.state.status === 'pending',
-      },
+// The template targets the published catalog release, so it cannot import
+// `createQueryClientFactory` yet; the retry policy below is the part of that
+// factory a released core already lets it state. UPGRADING names the cutover.
+const config = {
+  defaultOptions: {
+    // One retry for queries, none for mutations — a mutation retried on a
+    // timeout may run twice; a query only reads.
+    queries: { staleTime: 30_000, retry: 1 },
+    mutations: { retry: false },
+    dehydrate: {
+      shouldDehydrateQuery: (query) =>
+        defaultShouldDehydrateQuery(query) || query.state.status === 'pending',
     },
-  });
+  },
+} satisfies QueryClientConfig;
+
+function createQueryClient(): QueryClient {
+  return new QueryClient(config);
 }
 
 const getServerQueryClient = cache(createQueryClient);
 let browserQueryClient: QueryClient | undefined;
 
 export function getQueryClient(): QueryClient {
-  if (isServer) return getServerQueryClient();
-  if (!browserQueryClient) browserQueryClient = createQueryClient();
+  if (environmentManager.isServer()) return getServerQueryClient();
+  browserQueryClient ??= createQueryClient();
   return browserQueryClient;
 }

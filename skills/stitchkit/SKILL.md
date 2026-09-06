@@ -107,12 +107,14 @@ both. Read it there; the four that come up most:
 | cutting an existing poller, queue or DB bootstrap over to the kernel | Application migration recipes |
 | moving across stitchkit versions | Upgrading |
 | what a repository says about itself: identity, roles, build, release steps, the names of the values a deployment supplies | Project declaration |
+| visitor tracking: the outbox, the visit lease, the page-leave beacon, visible time, clicks, attribution, and the server-side decisions | Visitor tracking |
+| the page reloads onto the release it was built for: build marker, `X-Build-Id`, socket event, reload policy | Release |
 
-Three of those surfaces are declared **evolving** — `stitchkit/declaration`,
-`stitchkit/agent-runtime` and `stitchkit/application` may be redefined in any minor, always with a marked
-breaking change and a migration section. Everything else in the table above is
-stable. See the Entrypoints table in the getting-started guide for the full
-list; read `Upgrading` before crossing a minor on either.
+Some of those surfaces are declared **evolving** — `stitchkit/declaration`,
+`stitchkit/tracking`, `stitchkit/release`, `stitchkit/live`, `stitchkit/agent-runtime` and `stitchkit/application` may be redefined in any minor, always with a marked
+breaking change and a migration section. The Entrypoints table in the
+getting-started guide is the authoritative list of which is which; read
+`Upgrading` before crossing a minor on an evolving one.
 
 When in doubt, open `llms.txt`, pick the page, read that section of
 `llms-full.txt` in full, then write the code.

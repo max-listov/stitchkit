@@ -27,6 +27,16 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'install, entrypoints, and a first contract → server → client app',
   ],
   [
+    'release.md',
+    'Release',
+    'stitchkit/release — the page reloads onto the release it was built for: build marker, X-Build-Id header, socket event, reload policy, the deploy signal',
+  ],
+  [
+    'tracking.md',
+    'Visitor tracking',
+    'stitchkit/tracking — the browser client, outbox, page-leave beacon, attribution; stitchkit/tracking/server — dispositions and the visit lease over your store',
+  ],
+  [
     'contracts.md',
     'Contracts',
     'every endpoint field — method, path, params/input/output, scope, expose, meta, multipart',
@@ -101,6 +111,16 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'frontend-integrations.md',
     'Frontend integrations',
     'React Router resource routes and a separate Vite development proxy',
+  ],
+  [
+    'react.md',
+    'React Query policy',
+    'request-local SSR clients, a browser singleton and ApiError retry rules',
+  ],
+  [
+    'geo.md',
+    'GeoIP',
+    'stitchkit/geo — a server-only managed reader, three observable states and last-known-good generation reloads',
   ],
   [
     'upgrading.md',

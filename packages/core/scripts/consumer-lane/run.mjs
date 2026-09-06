@@ -13,7 +13,7 @@
  * `check-browser-clean` and `check-env-live` are the same instinct, one scar at
  * a time. This is the net for the next one nobody has thought of.
  *
- * Four fixtures are split by the axis that actually matters — **what a consumer
+ * Fixtures are split by the axis that actually matters — **what a consumer
  * had to install**. The optional-peer matrix then classifies every public export
  * and mixed-barrel feature by target, installed peers, runtime bundle budget,
  * declaration budget and execution policy. Adding an export without adding a
@@ -58,7 +58,7 @@ if (unknownArguments.length > 0) {
 const containedFilesOnly = arguments_.includes('--contained-files-only');
 const FIXTURES = containedFilesOnly
   ? ['node']
-  : ['minimal', 'nodenext', 'full', 'node', 'grammy'];
+  : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo'];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -341,6 +341,16 @@ try {
         console.error(
           '[consumer-lane] minimal: tools contract conformance produced no proof',
           toolsContractOutput,
+        );
+      }
+      const trackingOutput = step('minimal: peer-free tracking', () =>
+        run('bun', ['src/tracking-conformance.ts'], dir),
+      );
+      if (!trackingOutput.includes('tracking conformance: ok')) {
+        failed = true;
+        console.error(
+          '[consumer-lane] minimal: tracking conformance produced no proof',
+          trackingOutput,
         );
       }
       for (const runtime of ['bun', 'node']) {

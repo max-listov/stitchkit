@@ -3,14 +3,21 @@
  * by `createHandler`; tool completion comes from the canonical tool hooks.
  * Both are normalised into `RequestEvent` without nested fetch wrappers.
  */
+import type { RuntimeContext } from '../contract';
 import { recordedErrorMessage } from '../internal/errors';
 import {
   type BoundedSinkManager,
   createBoundedSinkManager,
 } from '../internal/observability-sink';
 import { isRecord } from '../internal/typed';
+import type { MethodDef } from '../server/types';
 import type { ToolCallHooks, ToolResult } from '../tools/execute';
-import { getRequestContext, type RequestContext } from './context';
+import {
+  type DimensionCollision,
+  getRequestContext,
+  type RequestContext,
+  setRequestDimensions,
+} from './context';
 import type { RequestEvent } from './event';
 import { measureSize, type SanitizeOptions, sanitizePayload } from './sanitize';
 import {
@@ -93,6 +100,63 @@ export interface Observability {
   getStatus(): ObservabilityStatus;
   /** Stop admission and drain every previously accepted event. Idempotent. */
   close(): Promise<ObservabilityDrainReport>;
+}
+
+export type ProjectedDimensions = Readonly<Record<string, string | undefined>>;
+
+/** Typed, explicit attribution rules composed into an application's hooks. */
+export interface DimensionsProjectorConfig<TContext extends RuntimeContext, TResult> {
+  request?: (ctx: TContext, endpoint: MethodDef) => ProjectedDimensions;
+  result?: (ctx: TContext, result: TResult, endpoint: MethodDef) => ProjectedDimensions;
+  error?: (ctx: TContext, error: unknown, endpoint?: MethodDef) => ProjectedDimensions;
+  /** Default `overwrite`: later phases own a repeated dimension. */
+  collision?: DimensionCollision;
+}
+
+export interface DimensionsProjector<TContext extends RuntimeContext, TResult> {
+  request(ctx: TContext, endpoint: MethodDef): void;
+  result(ctx: TContext, result: TResult, endpoint: MethodDef): TResult;
+  error(ctx: TContext, error: unknown, endpoint?: MethodDef): void;
+}
+
+function writeProjectedDimensions(
+  dimensions: ProjectedDimensions | undefined,
+  collision: DimensionCollision,
+): void {
+  if (!dimensions) return;
+  const materialized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(dimensions)) {
+    if (value !== undefined) materialized[key] = value;
+  }
+  if (Object.keys(materialized).length > 0) {
+    setRequestDimensions(materialized, { collision });
+  }
+}
+
+/**
+ * Build one typed dimensions projector without assigning semantics to
+ * `endpoint.meta`. Applications call these methods from their existing
+ * lifecycle hooks; every phase writes through the canonical request context.
+ */
+export function createDimensionsProjector<
+  TContext extends RuntimeContext = RuntimeContext,
+  TResult = unknown,
+>(
+  config: DimensionsProjectorConfig<TContext, TResult>,
+): DimensionsProjector<TContext, TResult> {
+  const collision = config.collision ?? 'overwrite';
+  return Object.freeze({
+    request(ctx: TContext, endpoint: MethodDef): void {
+      writeProjectedDimensions(config.request?.(ctx, endpoint), collision);
+    },
+    result(ctx: TContext, result: TResult, endpoint: MethodDef): TResult {
+      writeProjectedDimensions(config.result?.(ctx, result, endpoint), collision);
+      return result;
+    },
+    error(ctx: TContext, error: unknown, endpoint?: MethodDef): void {
+      writeProjectedDimensions(config.error?.(ctx, error, endpoint), collision);
+    },
+  });
 }
 
 /** Pull a human-readable message out of a failed `ToolResult`. */

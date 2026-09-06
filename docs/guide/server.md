@@ -586,12 +586,83 @@ not retain the text. `maxJsonBodyBytes` may also be set once on `createServer` /
 `createHandler`; a route value wins. Both limits are opt-in and abort an
 oversized stream before it is fully buffered. → ADR 0051
 
+## Safelisted request bodies (beacons)
+
+A body the router reads is `application/json`, and a non-empty body with any
+other `Content-Type` is a `400`. That is deliberate: a `text/plain` body is a
+CORS *simple* request, sent with cookies from any site before the browser asks
+whether the page may read the reply — so requiring JSON forces a preflight, and
+the preflight is where a foreign form is stopped.
+
+A page that is being unloaded does not get a preflight. `navigator.sendBeacon`
+with an `application/json` blob and `fetch({ keepalive: true })` with a JSON
+`Content-Type` both report success and both die before the server sees them
+when the API is on another origin. A beacon with a **string** body is
+`text/plain` and arrives. Declare the endpoint that receives it:
+
+```ts
+const tracking = defineContract(
+  { prefix: 'tracking', scope: 'public' },
+  {
+    track: {
+      method: 'POST', path: '/events', desc: 'Batch track browser events',
+      safelistedBody: true,
+      maxJsonBodyBytes: 256 * 1024,
+      input: TrackEventsRequestSchema,
+      output: TrackEventsResponseSchema,
+    },
+  },
+)
+
+// browser, on `pagehide`
+navigator.sendBeacon(urls.tracking.track(), JSON.stringify(batch)) // text/plain;charset=UTF-8
+```
+
+The body is parsed by the same JSON parser, validated against the same `input`
+and bounded by the same `maxJsonBodyBytes`; `application/json` keeps working.
+What changes is one rule, and it is the rule that keeps the door from being a
+hole: a `text/plain` body is accepted **only from an `Origin` on the server's
+explicit `cors.origin` allow-list**. Everything else is a `403` before the text
+is read:
+
+| Request | Outcome |
+|---------|---------|
+| `Origin` on the allow-list (string or list, case-insensitive) | parsed |
+| `Content-Type: text/plain; charset=application/json` from a foreign origin | `403` — the media type is compared whole, never as a substring |
+| `Origin` of a site the server never named | `403` |
+| `Origin: null` — sandboxed iframe, cross-origin redirect, `file://` | `403` |
+| no `Origin` header | `403` |
+| server `cors.origin: '*'` | `403` — a wildcard is not an allow-list |
+| server without `cors` | `403` — there is no allow-list |
+| `application/json` from any origin | unchanged — never subject to the check |
+
+The check is a browser invariant, not authentication: a `curl` with a stolen
+cookie and a forged `Origin` passes, and that is an authenticated call, not a
+cross-site one. Two things follow for the application:
+
+- **`sendBeacon` sends no headers.** A bearer-authenticated client has to put
+  its token in the body — and the body is read *after* `authorize`, so that
+  token is available in `beforeHandle` or the handler, never in an auth hook.
+  Cookie-authenticated apps are unaffected.
+- **`POST` only.** `defineContract` refuses the flag on `GET`, `HEAD`, `PUT`,
+  `PATCH`, `DELETE`, multipart, streaming and input-less endpoints: none of them
+  is a simple request with a JSON body, so the flag would only widen the surface.
+
+Unlike `rawBody`, the flag does not force `expose: ['HTTP']` — a beacon endpoint
+may still be a tool; only HTTP body parsing changes. OpenAPI lists both media
+types with one schema. → ADR 0165
+
+A [raw route](#raw-routes) has none of this: `parseBody` reads any
+`Content-Type`, so a raw beacon route is reachable from any site with the
+user's cookies unless the route checks `Origin` itself. Prefer the flag.
+
 ### Choosing an HTTP boundary
 
 | Need | Contract declaration | What remains framework-owned |
 |------|----------------------|------------------------------|
 | Typed JSON request/response | ordinary `input` / `output` | routing, auth, schemas, hooks, client, OpenAPI |
 | HMAC-signed JSON | `rawBody: true` + `input` / `output` | the same pipeline plus the exact decoded request text |
+| Page-unload beacon from another origin | `safelistedBody: true` + `input` / `output` | the same pipeline; a `text/plain` body is admitted only from an allow-listed `Origin` |
 | File upload | typed `multipart` descriptor | file cardinality/limits, text input validation and client form encoding |
 | File, stream or redirect response behind contract auth | `rawResponse: true` | request parsing, route identity, auth and typed URL/client surface |
 | Transport that cannot be expressed as the contract pipeline | `RawRoute` | only raw routing, CORS, request hook and error normalisation |
@@ -756,11 +827,19 @@ createServer({
     {
       method: 'POST',
       path: '/webhooks/:provider',
+      serviceName: 'webhooks',
+      action: 'receive',
       handler: (req, ctx) => handleWebhook(ctx.params.provider, req),
     },
   ],
 })
 ```
+
+`serviceName` and `action` are optional observability identity. Declare
+`serviceName` when audit, logging, sampling or another cross-cutting policy
+groups this raw route with a service; add `action` when the policy needs an
+operation within that service. Stitchkit never derives either from `path`.
+`action` without `serviceName`, and empty identity strings, fail at startup.
 
 A path may be exact, carry `:param` segments, or end in `/*filePath` for a prefix
 wildcard — and the two combine: `/app/:slug/*filePath` matches `/app/x/a/b` with

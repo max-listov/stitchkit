@@ -27,6 +27,7 @@ export {
   type MultipartDescriptor,
   type MultipartFile,
   type MultipartFilePolicy,
+  type PathParams,
   type ResponseMetadata,
   type RuntimeContext,
   type ScopedEndpointFn,
@@ -65,7 +66,10 @@ export {
   type ErrorFactories,
   type ErrorFactory,
   type ErrorFactoryArguments,
+  type ErrorVocabularyCode,
+  type ErrorVocabularyMapping,
   type FrozenErrorDefinitions,
+  type VocabularyCodeMap,
 } from './errors-factory';
 export {
   type ContractFactoryConfig,

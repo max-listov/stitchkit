@@ -17,6 +17,7 @@ import {
   setRequestError,
 } from '../observability/context';
 import { resolveTraceContext } from '../observability/trace';
+import { RELEASE_HEADER } from '../release/header';
 import {
   buildBaseContext,
   buildErrorContext,
@@ -401,6 +402,9 @@ export function createHandler<TServer = unknown>(
     if (config.rawRoutes) {
       const rawMatch = matchRawRoute(config.rawRoutes, req.method, url.pathname);
       if (rawMatch) {
+        if (rawMatch.route.serviceName !== undefined) {
+          setRequestEndpoint(rawMatch.route.serviceName, rawMatch.route.action);
+        }
         try {
           const res = await rawMatch.route.handler(req, {
             params: rawMatch.params,
@@ -458,6 +462,7 @@ export function createHandler<TServer = unknown>(
         url,
         method,
         config.maxJsonBodyBytes,
+        cors,
       );
 
       if (hooks?.beforeHandle) {
@@ -632,6 +637,10 @@ export function createHandler<TServer = unknown>(
       // tolerated: the id is best-effort there.
       try {
         response.headers.set('x-request-id', traceId);
+        // The build the server considers current, beside the trace id, on
+        // every response — the channel a client has without a socket.
+        const buildId = config.release?.current();
+        if (buildId) response.headers.set(RELEASE_HEADER, buildId);
       } catch {
         // headers are immutable — a redirect / opaque response; skip.
       }

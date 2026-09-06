@@ -15,7 +15,169 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** consumers with a path literal containing `:name` or terminal
+`*name` that omitted `params`, or supplied an explicit params schema that does
+not cover every path field. Measured before release across three consuming
+applications — 373 endpoints with path segments, every one carrying an explicit
+schema that covers its path — the runtime change reaches none of them; what
+changes is the type of a client call that omitted a segment, which now fails to
+compile instead of building a URL with a literal `:id` in it. Two declaration
+shapes moved with it: `ErrorHookConfig` is now a type (a union of the
+`vocabulary` and `codeMap` branches), so an `interface … extends
+ErrorHookConfig` becomes `type … = ErrorHookConfig & …`; and `DefinedErrors`
+carries a required `codeMap`, so a hand-built stand-in for `defineErrors`'
+result must add it. Request bodies are now matched by media-type essence —
+`application/JSON` is JSON, `application/json-patch+json` and every other
+`+json` suffix are not (the substring test accepted them); declare
+`application/json`. `setRequestDimensions` throws on a `__proto__` key instead
+of merging it. Surface-manifest fingerprints of endpoints with path segments
+change once, because the materialized params schema is now part of them.
+
+- **Path params are inferred and materialized from the path literal.** A route
+  such as `/projects/:projectId/*filePath` now gives the handler and client
+  `{ projectId: string; filePath: string }` without a duplicate Zod schema, and
+  the same generated schema reaches HTTP, OpenAPI, MCP, Agent, CLI and the
+  surface manifest. Keep an explicit schema for coercion or validation; add any
+  missing path fields to it. Coverage is checked by property *names* only — a
+  `z.coerce.date()` or `z.custom()` field is a fine path param — and a
+  **required** field the path never supplies is refused at `defineContract`,
+  since every request would fail its validation; optional extras are left
+  alone. A malformed percent-escape in a request path (`%E0%A4%A`, `%ZZ`) now
+  fails to match and answers the ordinary 404 envelope instead of escaping the
+  router as a bare `URIError`. See the [migration](docs/guide/upgrading.md#unreleased-migration-path-literals-own-string-params).
+
 ### Added
+
+- **Raw routes can declare stable observability identity.** Optional
+  `serviceName` and `action` fields populate the same request context as a
+  matched contract operation, so service-level audit, sampling and logging
+  policies no longer need to parse a path. An action without a service, or an
+  empty identity field, is rejected at startup.
+
+- **Application error vocabularies now include their framework wire map.**
+  `defineErrors(definitions, mapping)` resolves explicit status fallbacks and
+  per-code overrides into `codeMap`; exhaustive mode requires every
+  `StitchErrorCode` at compile time. A `map` target must be declared under the
+  framework code's own status — the wire keeps the framework status and
+  carries the application code, so a mismatch would name one thing and carry
+  another — and is refused at definition like a `fallback` is.
+  `createErrorHook({ vocabulary })` consumes that same declaration, with no
+  second error class or mapping factory, and refuses `codeMap` / `unmappedCode`
+  beside it at runtime as the type already does.
+
+- **Typed request dimensions without magic endpoint metadata.**
+  `createDimensionsProjector` maps request, result and error phases through the
+  existing request context under an explicit collision policy.
+
+- **Authenticated realtime room registry.** `bindSocketRegistry` composes over
+  the existing handshake and realtime validator, owns multi-tab room membership
+  and cleanup, and buffers revisioned live frames across a consistent replay.
+  `room(name)` mints the token for any name — a room with no member is an
+  ordinary `emitTo` target reporting zero recipients — and the hold-back buffer
+  is bounded by `maxBufferedFrames` (default 1000): past it the replay attempt
+  is retried, and once the attempts are spent `onResyncRequired` fires with
+  nothing half-delivered. The disconnect listener is attached before `rooms()`
+  is awaited, so a socket that drops during its permission lookup never becomes
+  a member; an adapter whose `leave` rejects on disconnect is swallowed rather
+  than surfacing as an unhandled rejection; and tokens are recognised by a weak
+  set, not retained by name.
+
+- **Durable process lifecycle and notification primitives.** A shared atomic
+  `StateStore`, `createProcessLifecycleLedger`, `createNotificationOutbox` and
+  server `createFileStateStore` cover runId+pid lifecycle facts and bounded
+  at-least-once delivery with persistent claims, leases and retries. A run a
+  successor found dead is closed as `termination: 'abnormal'`, distinct from a
+  `forced` stop the process acknowledged; a version of `unknown` on either side
+  is never a version change, so a dev build after a crashed release reads
+  `abnormal`, not `handoff`; and `sameVersionOverlap: 'handoff'` declares a
+  deployment where two processes of one build overlap on purpose (a cluster, a
+  same-build reload) — the default reads that overlap as a crash. The outbox
+  default `maxAttempts` is 100 (the 99 waits between them sum to about 94
+  minutes under the default backoff, which is `backoffDelay` from the client's
+  resumable streams with jitter 0) so an owner notification outlives a
+  transport outage, `state()` is a read that never fails on the bounds a
+  transition enforces, and `stop()` finishes the send in flight and claims
+  nothing more. The run list keeps write order (the causal one under atomic
+  updates) rather than re-sorting by a clock that may step, retention drops
+  finished runs before a live handoff predecessor, and a restarted
+  `lifecycleLedgerResource` records its second shutdown. The file store's
+  defaults now let a contender outlive a crashed holder (`staleLockMs` 3 s
+  inside `lockTimeoutMs` 10 s — the constructor refuses the reverse), an
+  orphaned reclaim guard ages out, a lock whose heartbeat is ten stale bounds
+  old is abandoned whatever its pid says, and a crashed writer's temporary
+  files are swept.
+
+- **`stitchkit/geo` — server-only managed GeoIP generations.** The resolver
+  keeps a last-known-good reader on a failed reload, rejects non-public IPs via
+  the canonical policy and exposes a lazy optional MaxMind City+ASN adapter.
+
+- **Bounded structured logging over any `StitchLogger`.**
+  `createBoundedLogger` extends the existing sanitizer with path/URL/Error
+  redaction, request context and per-value/total limits; malformed data and sink
+  failures never escape into application code. The sanitizer also bounds the
+  *work* of one entry (`maxNodes`, default 20 000): a shared acyclic subtree
+  reached from many parents — a diamond of a few hundred keys — can otherwise
+  mean billions of visits on the request path.
+
+- **React Query policy shared with the starter.** `apiErrorRetry` classifies
+  cross-bundle `ApiError` values; `createQueryClientFactory` composes a supplied
+  request cache with one factory-local browser singleton, pending dehydration
+  and mutation retry disabled by default.
+
+- **Mechanical consumer upgrade plans.** `bun scripts/upgrade-plan.ts <from>
+  <to>` prints every crossed breaking section and its `Who must act` scope in
+  ascending release order, including legacy sections that predate that field.
+
+- **`safelistedBody: true` — a `POST` may accept its JSON body as `text/plain`,
+  from an allow-listed `Origin` only.** A page that is being unloaded gets no
+  CORS preflight, so a JSON beacon to another origin reports success and never
+  arrives; a string body is a simple request and does. The flag admits that
+  body through the same parser, schema and `maxJsonBodyBytes`, and the server
+  honours it only when the request's `Origin` is on the explicit `cors.origin`
+  list — `'*'`, `null` and an absent header are refused with `403` before the
+  text is read, because a simple request carries cookies from any site and the
+  refusal is the only thing standing between the flag and CSRF. `POST` only,
+  transport-neutral, listed in OpenAPI as a second media type. → ADR 0165
+
+- **`defineCookie` says what it does with two cookies of one name.** `get`
+  always returned the last occurrence — a fact of the record it read, not a
+  rule, and the browser chooses that order, so a session cookie on a parent
+  domain beside a same-named one validated in one browser and not in another.
+  `duplicates: 'last' | 'first' | 'reject'` names the policy (`reject` yields
+  `undefined` for two *different* values and the value when they agree),
+  `getAll(req)` returns every candidate in header order, and
+  `parseCookieHeader(header)` is the list the record was always built from.
+  The default is unchanged.
+
+- **`stitchkit/tracking` and `stitchkit/tracking/server` — visitor-tracking
+  mechanics as two evolving entrypoints.** Two consuming applications carried
+  the same browser code — outbox, visit lease, page-leave beacon, visible time,
+  scroll, clicks, attribution — and fixed the same defects one copy at a time.
+  The browser entry owns those mechanics behind a `TrackingHost` interface (no
+  React, no DOM at import) and a contract factory whose `track` is
+  `safelistedBody`; the server entry owns the decisions — `dispositionTrackingBatch`,
+  `issueVisitLease` over an application-implemented `TrackingVisitStore`,
+  `activeIntervalOf`, presence — and no database. Event types, the referrer
+  map and the `data-track` attribute names are parameters, not built-ins.
+  `fake-indexeddb` joins the devDependencies so the IndexedDB adapter is the
+  one the suite runs. → ADR 0166
+
+- **`stitchkit/release` — a page follows the release it was built for.** A
+  consuming application kept "reload when the frontend is redeployed" in three
+  places of its own code, with a baseline taken from the first id the tab
+  happened to hear, an immediate reload mid-form, a deploy signal nobody in
+  any repository sends, and a socket as the only channel. The evolving entry
+  owns the comparison and the channels: `createReleaseMarker` on the server
+  (an application `read`, `refresh`, subscribers), `HandlerConfig.release`
+  naming the build as `X-Build-Id` on every response (exposed through CORS by
+  default), `bindReleaseToSocketServer` / `observeReleaseFromSocket` for the
+  socket event, `createReleaseWatcher` in the browser comparing against the
+  bundle's **own** id under `immediate` / `when-hidden` / `on-navigation`
+  with a cap, `HttpClientConfig.release` feeding it from every response, and
+  `bindReleaseRefreshSignal` in `stitchkit/server` for the deploy signal.
+  → ADR 0167
 
 - **The consumer lane executes every `stitchkit/application` factory.** Six of
   the thirteen were reached by no fixture — `createDecisionPipeline`,

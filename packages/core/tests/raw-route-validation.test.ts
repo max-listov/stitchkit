@@ -9,6 +9,23 @@ function route(method: RawRoute['method'], path: string): RawRoute {
 }
 
 describe('raw route ambiguity validation', () => {
+  test('rejects incomplete or empty observability identity', () => {
+    expect(() =>
+      createHandler({
+        rawRoutes: [
+          { method: 'GET', path: '/empty', serviceName: ' ', handler: () => new Response() },
+        ],
+      }),
+    ).toThrow('has an empty serviceName');
+    expect(() =>
+      createHandler({
+        rawRoutes: [
+          { method: 'GET', path: '/action', action: 'read', handler: () => new Response() },
+        ],
+      }),
+    ).toThrow('declares action without serviceName');
+  });
+
   test.each([
     {
       name: 'exact duplicate',

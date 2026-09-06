@@ -6,6 +6,7 @@ import type {
   RuntimeContext,
 } from '../contract';
 import { mergeMeta } from '../contract/define';
+import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import {
   callRuntimeHandler,
   isRecord,
@@ -235,7 +236,7 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
       // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
       // `endpoint.scope` alone — no consumer ever re-resolves against a service.
       scope: endpoint.scope ?? groupScope,
-      paramsSchema: endpoint.params,
+      paramsSchema: resolveRouteParamsSchema(endpoint.path, endpoint.params),
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       stream: 'stream' in endpoint ? endpoint.stream : undefined,
@@ -255,6 +256,7 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
       // and every tool surface. → ADR 0038.
       rawResponse: endpoint.rawResponse,
       rawBody: endpoint.rawBody,
+      safelistedBody: endpoint.safelistedBody,
       responseMeta: endpoint.responseMeta,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: streamingHandler

@@ -2,9 +2,11 @@
  * `RuntimeContext` assembly — parses params / body / multipart against the
  * endpoint schemas and gathers request metadata (trace id, client info).
  */
-import { badRequest, type RuntimeContext } from '../contract';
+import { badRequest, forbidden, type RuntimeContext } from '../contract';
+import { mediaTypeEssence } from '../internal/media-type';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
 import { RUNTIME_CONTEXT_RESERVED_KEYS } from './context-contribution';
+import { type CorsConfig, isOriginAllowed } from './middleware/cors';
 import { type MultipartLifecycle, parseMultipart } from './multipart';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from './request';
 import { readRequestText } from './request-body';
@@ -15,11 +17,34 @@ import type { AuthorizationContext, MethodDef } from './types';
  * A non-empty body must declare `Content-Type: application/json`: a
  * `text/plain` body is a simple cross-origin request a form can forge, so
  * rejecting it keeps CSRF off cookie-authenticated endpoints.
+ *
+ * An endpoint that declared `safelistedBody` accepts the same JSON under
+ * `text/plain` — but only from an `Origin` on the explicit CORS allow-list.
+ * The browser sends that header on every cross-origin `POST` and on
+ * `sendBeacon`, and it is the one thing a foreign page cannot choose; a
+ * request without it, with `null`, or from a site the server never named is
+ * refused before the text is parsed. → ADR 0165.
  */
-function parseJsonBody(req: Request, text: string): unknown {
+function parseJsonBody(
+  req: Request,
+  text: string,
+  method: MethodDef,
+  cors: CorsConfig | undefined,
+): unknown {
   if (text.trim() === '') return {};
-  if (!req.headers.get('content-type')?.includes('application/json')) {
-    badRequest('Request body must be application/json');
+  const essence = mediaTypeEssence(req.headers.get('content-type'));
+  if (essence !== 'application/json') {
+    if (!method.safelistedBody || essence !== 'text/plain') {
+      badRequest('Request body must be application/json');
+    }
+    const origin = req.headers.get('origin');
+    if (!cors || cors.origin === undefined || cors.origin === '*') {
+      forbidden('A text/plain body requires an explicit cors.origin allow-list on the server');
+    }
+    if (!origin) forbidden('A text/plain body requires an Origin header');
+    if (!isOriginAllowed(cors, origin)) {
+      forbidden('A text/plain body is accepted only from an allowed origin');
+    }
   }
   try {
     return safeJsonParse(text);
@@ -85,6 +110,7 @@ export async function parseRequestPayloadInto(
   url: URL,
   method: MethodDef,
   maxJsonBodyBytes?: number,
+  cors?: CorsConfig,
 ): Promise<MultipartLifecycle | undefined> {
   if (method.multipart) {
     const multipart = await parseMultipart(
@@ -101,18 +127,17 @@ export async function parseRequestPayloadInto(
     if (req.method === 'GET') {
       ctx.input = method.inputSchema.parse(parseQueryParams(url));
     } else if (req.method === 'DELETE') {
-      const ct = req.headers.get('content-type');
-      if (ct?.includes('application/json')) {
+      if (mediaTypeEssence(req.headers.get('content-type')) === 'application/json') {
         const text = await readRequestText(req, method.maxJsonBodyBytes ?? maxJsonBodyBytes);
         if (method.rawBody) ctx.rawBody = text;
-        ctx.input = method.inputSchema.parse(parseJsonBody(req, text));
+        ctx.input = method.inputSchema.parse(parseJsonBody(req, text, method, cors));
       } else {
         ctx.input = method.inputSchema.parse(parseQueryParams(url));
       }
     } else {
       const text = await readRequestText(req, method.maxJsonBodyBytes ?? maxJsonBodyBytes);
       if (method.rawBody) ctx.rawBody = text;
-      ctx.input = method.inputSchema.parse(parseJsonBody(req, text));
+      ctx.input = method.inputSchema.parse(parseJsonBody(req, text, method, cors));
     }
   }
   return undefined;

@@ -88,11 +88,13 @@ with output and a default bodyless `204` without it.
 
 The three schemas are distinct on purpose:
 
-- **`params`** — values in the URL path. `path: '/:id'` ⇒
-  `params: z.object({ id: z.string() })`. The client takes them from the call
-  argument and substitutes them into the URL. A terminal wildcard is explicitly
-  named: `path: '/:slug/*filePath'` with
-  `params: z.object({ slug: z.string(), filePath: z.string() })` matches both
+- **`params`** — values in the URL path. `path: '/:id'` infers
+  `{ id: string }` and materializes the same Zod string schema for HTTP, OpenAPI,
+  MCP, Agent and CLI. Declare `params: z.object({ id: z.uuid() })` only when the
+  path value needs validation or coercion; an explicit schema must cover every
+  name in the path. The client takes params from the call argument and
+  substitutes them into the URL. A terminal wildcard is explicitly named:
+  `path: '/:slug/*filePath'` matches both
   `/foo/page` and `/foo/a/b`; the handler reads `ctx.params.filePath` as
   `'page'` or `'a/b'`. Bare `/*`, invalid/duplicate names and a wildcard before
   the final segment fail at contract definition.
@@ -107,7 +109,7 @@ caller passes a single flat object, the client routes each field to the path or
 the body.
 
 ```ts
-// path: '/:id', params: { id }, input: { text }
+// path: '/:id' infers params: { id: string }; input: { text }
 await api.update({ id: '1', text: 'new' })   // PUT /users/1  body: { text: 'new' }
 
 // path: '/:slug/*filePath', params: { slug, filePath }
@@ -174,6 +176,11 @@ const { defineContract } = createContractFactory<AppScope>({
 With this policy, omitting `expose` materializes `['HTTP']` on the returned
 endpoint. MCP, Agent and CLI then require an explicit endpoint array. The plain
 factory and `defineContract` keep the default-on behaviour above.
+
+Consequently, `expose: ['HTTP']` is redundant inside a factory configured with
+`toolExposure: 'explicit'`: omit it unless the explicit spelling is useful to a
+local reader. Add `MCP`, `AGENT` or `CLI` only on endpoints that intentionally
+join those surfaces.
 
 Tool transports (`MCP`, `AGENT`) skip four kinds of endpoint automatically:
 `multipart` (a file upload is not a tool call),

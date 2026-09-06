@@ -24,3 +24,11 @@ export {
   type EntityCacheTotalDeltaInput,
   type EntityCacheTotalPolicy,
 } from './react/entity-cache';
+export {
+  type ApiErrorRetryConfig,
+  apiErrorRetry,
+  createQueryClientFactory,
+  type QueryClientFactoryConfig,
+  type QueryClientServerCache,
+  type QueryRetryValue,
+} from './react/query-client';

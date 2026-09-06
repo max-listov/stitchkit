@@ -299,9 +299,14 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
           const required = jsonSchemaFields(safeJson(method.inputSchema, 'input')).some(
             (f) => f.required,
           );
+          const schema = safeJson(method.inputSchema, 'input');
           operation.requestBody = {
             required,
-            content: { 'application/json': { schema: safeJson(method.inputSchema, 'input') } },
+            // A safelisted endpoint reads the same JSON under `text/plain` — the
+            // beacon media type — so the document lists both, one schema.
+            content: method.safelistedBody
+              ? { 'application/json': { schema }, 'text/plain': { schema } }
+              : { 'application/json': { schema } },
           };
         }
       }

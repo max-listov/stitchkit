@@ -8,7 +8,9 @@
     "paths": {
       "stitchkit": ["../../../../src/index.ts"],
       "stitchkit/*": ["../../../../src/*"],
-      "stitchkit/tools/contract": ["../../../../src/tools-contract.ts"]
+      "stitchkit/tools/contract": ["../../../../src/tools-contract.ts"],
+      "stitchkit/tracking": ["../../../../src/tracking.ts"],
+      "stitchkit/tracking/server": ["../../../../src/tracking-server.ts"]
     },
     "noEmit": true,
     "skipLibCheck": true,

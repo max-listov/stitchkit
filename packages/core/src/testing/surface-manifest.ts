@@ -223,6 +223,7 @@ interface OperationSource {
   ui?: unknown;
   mcp?: EndpointMcpPolicy;
   rawBody?: true;
+  safelistedBody?: true;
   rawResponse?: true;
   responseMeta?: unknown;
   maxJsonBodyBytes?: number;
@@ -275,6 +276,7 @@ function operationFingerprint(source: OperationSource): string {
     ui: source.ui ?? null,
     mcp,
     rawBody: source.rawBody ?? false,
+    safelistedBody: source.safelistedBody ?? false,
     rawResponse: source.rawResponse ?? false,
     responseMeta: source.responseMeta ?? null,
     maxJsonBodyBytes: source.maxJsonBodyBytes ?? null,

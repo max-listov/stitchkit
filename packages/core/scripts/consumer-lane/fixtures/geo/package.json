@@ -1,0 +1,8 @@
+{
+  "name": "stitchkit-consumer-geo",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "maxmind": "^5.0.7"
+  }
+}

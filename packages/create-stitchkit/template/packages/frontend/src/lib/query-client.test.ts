@@ -19,4 +19,10 @@ describe('query dehydration policy', () => {
     expect(shouldDehydrate(successful)).toBe(true);
     expect(shouldDehydrate(pending)).toBe(true);
   });
+
+  test('retries a query once and never retries a mutation', () => {
+    const defaults = getQueryClient().getDefaultOptions();
+    expect(defaults.queries?.retry).toBe(1);
+    expect(defaults.mutations?.retry).toBe(false);
+  });
 });

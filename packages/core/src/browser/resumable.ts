@@ -16,6 +16,24 @@ export const BackoffPolicySchema = z
   });
 export type BackoffPolicy = z.infer<typeof BackoffPolicySchema>;
 
+/**
+ * The delay before retry number `attempt` (1-based) under `policy`: doubling
+ * from `minDelayMs`, capped at `maxDelayMs`, with `jitter` subtracted. The one
+ * formula behind `createBackoff` and every attempt-numbered retry schedule.
+ */
+export function backoffDelay(
+  policy: BackoffPolicy,
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const exponential = Math.min(
+    policy.maxDelayMs,
+    policy.minDelayMs * 2 ** Math.max(0, attempt - 1),
+  );
+  const spread = exponential * policy.jitter * random();
+  return Math.max(1, Math.round(exponential - spread));
+}
+
 export interface Backoff {
   /** The next delay in milliseconds, doubling from `minDelayMs` and jittered. */
   next(): number;
@@ -35,14 +53,12 @@ export function createBackoff(
   policy: BackoffPolicy,
   random: () => number = Math.random,
 ): Backoff {
-  const { minDelayMs, maxDelayMs, jitter } = BackoffPolicySchema.parse(policy);
+  const parsed = BackoffPolicySchema.parse(policy);
   let attempt = 0;
   return {
     next() {
-      const exponential = Math.min(maxDelayMs, minDelayMs * 2 ** attempt);
       attempt += 1;
-      const spread = exponential * jitter * random();
-      return Math.max(1, Math.round(exponential - spread));
+      return backoffDelay(parsed, attempt, random);
     },
     reset() {
       attempt = 0;

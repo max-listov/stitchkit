@@ -7,6 +7,7 @@ import {
   type RuntimeContext,
 } from '../contract';
 import { mergeMeta } from '../contract/define';
+import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import type { MethodDef, ServiceDef } from '../server/types';
 
@@ -79,7 +80,7 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       // contract-wide default merged under it. → ADR 0021 / 0036.
       meta: mergeMeta(contract.meta.meta, endpoint.meta),
       scope: endpoint.scope ?? groupScope,
-      paramsSchema: endpoint.params,
+      paramsSchema: resolveRouteParamsSchema(endpoint.path, endpoint.params),
       inputSchema: endpoint.input,
       outputSchema: endpoint.output,
       multipart: endpoint.multipart,
@@ -90,6 +91,7 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       // service, rather than by accident. → ADR 0038.
       rawResponse: endpoint.rawResponse,
       rawBody: endpoint.rawBody,
+      safelistedBody: endpoint.safelistedBody,
       responseMeta: endpoint.responseMeta,
       contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: async (ctx: RuntimeContext) => {

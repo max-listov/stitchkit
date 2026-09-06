@@ -14,13 +14,22 @@ import type {
   RuntimeContext,
   Transport,
 } from '../contract';
+import type { PathParams } from '../internal/route-pattern';
 import type { StitchLogger } from '../logger';
 import type { HttpRequestObserver } from '../observability/audit';
+import type { ReleaseMarker } from '../release/marker';
 import type { LogFormat } from './logger';
 import type { CorsConfig } from './middleware/cors';
 
 type Prop<T, K extends string> = K extends keyof T ? T[K] : undefined;
-type InferParams<E> = Prop<E, 'params'> extends ZodType<infer P> ? P : undefined;
+type InferParams<E> =
+  Prop<E, 'params'> extends ZodType<infer P>
+    ? P
+    : E extends { path: infer TPath extends string }
+      ? keyof PathParams<TPath> extends never
+        ? undefined
+        : PathParams<TPath>
+      : undefined;
 type InferInput<E> = Prop<E, 'input'> extends ZodType<infer I> ? I : undefined;
 type InferOutput<E> = Prop<E, 'output'> extends ZodType<infer O> ? O : never;
 type InferMcpInput<E> =
@@ -87,9 +96,12 @@ export type EndpointHandlerContext<
       : { files: MultipartBufferedFiles<M> }
     : unknown);
 
+// The default is the loose runtime context, not `HandlerContext` (whose
+// `params` default to `undefined`): the per-endpoint context intersects the
+// base with the inferred params, and `undefined & { id: string }` is `never`.
 export type Handlers<
   C extends Record<string, EndpointDef>,
-  TCtx extends RuntimeContext = HandlerContext,
+  TCtx extends RuntimeContext = RuntimeContext,
 > = {
   [K in keyof C]: C[K] extends { multipart: { delivery: 'stream' } }
     ? StreamingMultipartImplementation
@@ -240,6 +252,11 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   rawResponse?: true;
   /** Retain the decoded JSON request text on `ctx.rawBody`. HTTP-only. */
   rawBody?: true;
+  /**
+   * The JSON body may also arrive as `text/plain` — from `EndpointDef.safelistedBody`.
+   * Honoured only for an `Origin` on the server's explicit CORS allow-list. → ADR 0165.
+   */
+  safelistedBody?: true;
   /** Static success metadata for an HTTP-only typed-data endpoint. → ADR 0052. */
   responseMeta?: EndpointResponseMeta;
   /** Documented response media type of a raw-response endpoint — OpenAPI only. */
@@ -338,6 +355,13 @@ export interface RawRouteContext<TServer = unknown> {
 
 export interface RawRoute<TServer = unknown> {
   method: HttpMethod | 'ALL';
+  /**
+   * Stable service identity for observability policies. Unlike a contract
+   * prefix this cannot be derived from `path`, so raw routes declare it here.
+   */
+  serviceName?: string;
+  /** Optional action identity within `serviceName`; never inferred from `path`. */
+  action?: string;
   /**
    * Exact path, `:param` segments, or a named trailing prefix wildcard. For
    * example `/app/:slug/*filePath` exposes `params.slug` and `params.filePath`.
@@ -475,6 +499,14 @@ export interface HandlerConfig<TServer = unknown> {
    */
   maxJsonBodyBytes?: number;
   cors?: CorsConfig;
+  /**
+   * The current frontend build, named on every response as `X-Build-Id` so a
+   * browser can tell it is running a bundle the server no longer serves
+   * (`stitchkit/release`). Silent while the marker reads `null`. A custom
+   * `cors.exposeHeaders` replaces the default list — include `X-Build-Id` there
+   * or a cross-origin page cannot read it. → ADR 0167.
+   */
+  release?: Pick<ReleaseMarker, 'current'>;
   hooks?: LifecycleHooks;
   logging?: boolean | LoggingConfig;
   /** Framework-owned HTTP RequestEvent projection from `createObservability`. */

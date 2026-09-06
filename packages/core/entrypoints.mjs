@@ -75,6 +75,10 @@ export const ENTRYPOINTS = [
   { subpath: './testing', source: 'src/testing.ts', browser: false },
   { subpath: './files', source: 'src/files.ts', browser: false },
   { subpath: './telegram', source: 'src/telegram.ts', browser: false },
+  { subpath: './tracking', source: 'src/tracking.ts', browser: true },
+  { subpath: './release', source: 'src/release.ts', browser: true },
+  { subpath: './tracking/server', source: 'src/tracking-server.ts', browser: false },
+  { subpath: './geo', source: 'src/geo.ts', browser: false },
   { subpath: './declaration', source: 'src/declaration.ts', browser: true },
   { subpath: './node', source: 'src/node.ts', browser: false },
 ];

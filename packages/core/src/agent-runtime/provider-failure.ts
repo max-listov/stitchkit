@@ -21,6 +21,7 @@
  * provider, not about anyone's business.
  */
 
+import { messageOf } from '../internal/error-message';
 import { isRecord } from '../internal/typed';
 
 /**
@@ -103,13 +104,6 @@ function statusOf(value: unknown): number | undefined {
   // `ai` wraps the transport failure; the status lives one level down.
   const nested = value.cause ?? value.response ?? value.error;
   return nested === value ? undefined : statusOf(nested);
-}
-
-function messageOf(value: unknown): string {
-  if (value instanceof Error) return value.message;
-  if (typeof value === 'string') return value;
-  if (isRecord(value) && typeof value.message === 'string') return value.message;
-  return '';
 }
 
 /**

@@ -102,6 +102,21 @@ export function refuseLocally(path: string, message: string): ApiError {
   );
 }
 
+/**
+ * An abort or a deadline the caller chose — `RequestCancellationError`, a
+ * `DOMException` or any error named `AbortError` / `TimeoutError`. Never a
+ * reason to retry, on either side of the fetch.
+ */
+export function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof RequestCancellationError) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  );
+}
+
 /** @internal Narrow adapter for a Bun fetch error Ky does not classify. */
 export function shouldRetryBunNetworkError(error: unknown): true | undefined {
   if (
@@ -109,9 +124,7 @@ export function shouldRetryBunNetworkError(error: unknown): true | undefined {
     isHTTPError(error) ||
     isNetworkError(error) ||
     isTimeoutError(error) ||
-    error instanceof RequestCancellationError ||
-    (error instanceof DOMException &&
-      (error.name === 'AbortError' || error.name === 'TimeoutError'))
+    isAbortLikeError(error)
   ) {
     return undefined;
   }
@@ -174,6 +187,12 @@ export interface HttpClientConfig {
   trace?: boolean;
   /** Explicit Fetch-compatible transport, for example `createUnixClientTransport().fetch`. */
   fetch?: ClientFetch;
+  /**
+   * Hear the `X-Build-Id` of every response — a `createReleaseWatcher` from
+   * `stitchkit/release`, which reloads the page when the server names a build
+   * this bundle is not. The channel a client has with no socket at all.
+   */
+  release?: { observe(buildId: string | null): void };
   /**
    * Dial a unix domain socket instead of TCP (Bun runtime only). Other runtimes
    * fail before dispatch; use `createUnixClientTransport().fetch` for the
@@ -345,6 +364,15 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       ],
       afterResponse: [
         async ({ request, response }) => {
+          // Best-effort, like the trace id: a watcher that throws must not
+          // turn the response that carried the header into a failed request.
+          if (config.release) {
+            try {
+              config.release.observe(response.headers.get('x-build-id'));
+            } catch {
+              // The watcher's failure is its own.
+            }
+          }
           if (response.status === 401) {
             const url = new URL(request.url).pathname;
             if (!isLoggedOut && !suppressUnauthorizedFor.some((matches) => matches(url))) {

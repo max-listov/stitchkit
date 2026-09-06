@@ -187,7 +187,7 @@ describe('named wildcard contract validation', () => {
         { prefix: 'bad' },
         { route: endpoint('/*file-path', z.object({ 'file-path': z.string() })) },
       ),
-    ).toThrow('must be named');
+    ).toThrow('Invalid wildcard name "file-path"');
     expect(() =>
       defineContract(
         { prefix: 'bad' },
@@ -202,15 +202,52 @@ describe('named wildcard contract validation', () => {
     ).toThrow('Duplicate route parameter name');
   });
 
-  test('requires the named field in the params schema', () => {
-    expect(() => defineContract({ prefix: 'bad' }, { route: endpoint('/*filePath') })).toThrow(
-      'requires a params schema field',
-    );
+  test('infers a wildcard schema and requires explicit schemas to cover it', () => {
+    const inferred = defineContract({ prefix: 'good' }, { route: endpoint('/*filePath') })
+      .endpoints.route.params;
+    expect(inferred?.parse({ filePath: 'nested/path' })).toEqual({ filePath: 'nested/path' });
     expect(() =>
       defineContract(
         { prefix: 'bad' },
         { route: endpoint('/*filePath', z.object({ other: z.string() })) },
       ),
     ).toThrow('is missing wildcard field "filePath"');
+  });
+  test('a malformed percent-escape in the path answers the 404 envelope, not a bare URIError', async () => {
+    const contract = defineContract(
+      { prefix: 'esc' },
+      {
+        one: {
+          method: 'GET',
+          path: '/items/:id',
+          desc: 'd',
+          expose: ['HTTP'],
+          output: z.object({ id: z.string() }),
+        },
+        tree: {
+          method: 'GET',
+          path: '/files/*filePath',
+          desc: 'd',
+          expose: ['HTTP'],
+          output: z.object({ path: z.string() }),
+        },
+      },
+    );
+    const handler = createHandler({
+      services: [
+        implement(contract, {
+          one: async ({ params }) => ({ id: params.id }),
+          tree: async ({ params }) => ({ path: params.filePath }),
+        }),
+      ],
+    });
+    for (const path of ['/esc/items/%E0%A4%A', '/esc/files/a/%ZZ']) {
+      const res = await handler(new Request(`http://x${path}`));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
+      expect(res.headers.get('x-request-id')).toBeTruthy();
+    }
+    const ok = await handler(new Request('http://x/esc/items/a%20b'));
+    expect(await ok.json()).toEqual({ id: 'a b' });
   });
 });

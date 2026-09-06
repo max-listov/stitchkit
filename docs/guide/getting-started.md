@@ -49,10 +49,14 @@ own, recorded as an ADR.
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
 | `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification and Bot API send-failure classification |
+| `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
+| `stitchkit/tracking/server` | server (Bun or Node) | evolving | the decisions a tracking backend makes — dispositions, visit lease over an application-owned store, active intervals, presence; no database |
+| `stitchkit/release` | browser **and** server | evolving | a page follows the release it was built for — `createReleaseMarker` on the server, `createReleaseWatcher` in the browser, the `X-Build-Id` header and a socket event between them |
+| `stitchkit/geo` | server (Bun or Node) | evolving | managed GeoIP reader generations, last-known-good reload and the optional MaxMind adapter |
 | `stitchkit/observability` | server | stable | request/tool event projections — `createObservability`, trace context, sanitisation |
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the store and managed-resource conformance kits |
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
-| `stitchkit/react` | browser | stable | `createCursorQuery`, `createCacheBridge` |
+| `stitchkit/react` | browser + server rendering | stable | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
 | `stitchkit/agent-runtime` | server | evolving<br>_redefined in 11 of the 25 minors since 0.56.2, most recently 0.75.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/harness` | server | evolving | resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
 | `stitchkit/agent-runtime/coding-tools` | server (Bun or Node) | evolving | bounded host-authorized direct file and shell tools; a root boundary, not an OS sandbox |
@@ -172,6 +176,7 @@ map — feature → packages:
 | MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
+| MaxMind GeoIP (`stitchkit/geo`) | `maxmind` |
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
 | Socket.IO client | `socket.io-client` (runtime peer; unrelated root declarations remain peer-free) |

@@ -253,4 +253,45 @@ describe('a secret is masked by its key wherever the key exists', () => {
     const rendered = JSON.stringify(sanitizePayload({ h: new Set(['Bearer sk-live-abc']) }));
     expect(rendered).toContain('Bearer sk-live-abc');
   });
+  test('a truncated object keeps its own `_truncated` property and marks the cut in brackets', () => {
+    const out = redact({ _truncated: 'real', a: 1, b: 2, c: 3 }, { maxCollectionLength: 2 });
+    expect(out).toEqual({ _truncated: 'real', a: 1, '[truncated]': 2 });
+  });
+
+  test('a sticky sensitive pattern still masks every occurrence, not only position 0', () => {
+    const out = redact('a Bearer x b Bearer y', {
+      sensitiveUrlPatterns: [/Bearer \S+/y],
+    });
+    expect(out).toBe('a [redacted] b [redacted]');
+  });
+
+  test('dates and URLs are logged as their text, and a URL is masked like any string', () => {
+    const out = redact(
+      { at: new Date('2026-09-06T04:00:00.000Z'), where: new URL('https://h/x?token=abc') },
+      { sensitiveUrlPatterns: [/token=\w+/] },
+    );
+    expect(out).toEqual({ at: '2026-09-06T04:00:00.000Z', where: 'https://h/x?[redacted]' });
+  });
+  test('a shared acyclic subtree cannot make one log entry cost billions of visits', () => {
+    // A diamond: every node at each level points at all nodes of the next.
+    const build = (fanout: number, depth: number): Record<string, unknown> => {
+      let level: Record<string, unknown>[] = [{ leaf: true }];
+      for (let d = 0; d < depth; d += 1) {
+        const next: Record<string, unknown>[] = [];
+        for (let i = 0; i < fanout; i += 1) {
+          const node: Record<string, unknown> = {};
+          for (const [j, child] of level.entries()) node[`c${j}`] = child;
+          next.push(node);
+        }
+        level = next;
+      }
+      const root: Record<string, unknown> = {};
+      for (const [j, child] of level.entries()) root[`c${j}`] = child;
+      return root;
+    };
+    const startedAt = performance.now();
+    const out = redact(build(50, 4), { maxDepth: 10, maxCollectionLength: 100 });
+    expect(performance.now() - startedAt).toBeLessThan(500);
+    expect(JSON.stringify(out)).toContain('[node budget]');
+  });
 });

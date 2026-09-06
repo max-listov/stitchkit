@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "paths": {
+      "stitchkit": ["../../../../src/index.ts"],
+      "stitchkit/*": ["../../../../src/*"]
+    },
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["src"]
+}

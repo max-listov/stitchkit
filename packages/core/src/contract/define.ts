@@ -1,6 +1,8 @@
-import { type ZodType, z } from 'zod';
-import { parseTrailingWildcard } from '../internal/route-pattern';
+import type { ZodType, z } from 'zod';
+import { type PathParams, resolveRouteParamsSchema } from '../internal/route-pattern';
 import { isUnsafeKey } from '../internal/safe-json';
+
+export type { PathParams } from '../internal/route-pattern';
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -114,6 +116,23 @@ interface EndpointDefBase {
    * Enforced while streaming, before the complete body is buffered.
    */
   maxJsonBodyBytes?: number;
+  /**
+   * Accept the JSON body under `text/plain` as well as `application/json` — the
+   * CORS-safelisted media type a page can send **without a preflight**, which
+   * is the only way a document that is being unloaded can deliver a body to
+   * another origin (`navigator.sendBeacon(url, string)`). The body is still
+   * parsed as JSON, validated against `input` and bounded by `maxJsonBodyBytes`.
+   *
+   * The cost is the reason the default refuses `text/plain`: a simple request
+   * is sent with cookies from any site, before CORS can say no. So a
+   * safelisted body is accepted **only** from an `Origin` on the server's
+   * explicit `cors.origin` allow-list — never `'*'`, never `null`, never
+   * absent — and the identity such a body carries is readable in
+   * `beforeHandle` or the handler, not in `authorize`, which runs before the
+   * body is read. `POST` only: the other body methods always preflight.
+   * Transport-neutral — the flag changes HTTP parsing, not `expose`. → ADR 0165.
+   */
+  safelistedBody?: true;
   /**
    * HTTP client timeout in ms for this endpoint. Use it for slow synchronous
    * endpoints (AI generation) that need more than the client default. A
@@ -363,6 +382,7 @@ export interface HeadEndpointDef {
   multipart?: never;
   rawBody?: never;
   maxJsonBodyBytes?: never;
+  safelistedBody?: never;
   toolName?: never;
   ui?: never;
   annotations?: never;
@@ -429,22 +449,15 @@ export function defineContract(
   meta: ContractMeta,
   endpoints: Record<string, EndpointDef>,
 ): ContractDef {
+  const materializedEndpoints: Record<string, EndpointDef> = {};
+  for (const [key, endpoint] of Object.entries(endpoints)) {
+    const params = resolveRouteParamsSchema(endpoint.path, endpoint.params);
+    materializedEndpoints[key] =
+      params === endpoint.params ? endpoint : { ...endpoint, params };
+  }
+
   const toolTransports = new Map<string, { key: string; transports: Set<Transport> }>();
-  for (const [key, ep] of Object.entries(endpoints)) {
-    const wildcard = parseTrailingWildcard(ep.path);
-    if (wildcard) {
-      if (!ep.params) {
-        throw new Error(
-          `Contract "${meta.prefix}": endpoint "${key}" wildcard "${wildcard.name}" requires a params schema field`,
-        );
-      }
-      const paramsJson = z.toJSONSchema(ep.params, { io: 'input' });
-      if (!paramsJson.properties || !(wildcard.name in paramsJson.properties)) {
-        throw new Error(
-          `Contract "${meta.prefix}": endpoint "${key}" params schema is missing wildcard field "${wildcard.name}"`,
-        );
-      }
-    }
+  for (const [key, ep] of Object.entries(materializedEndpoints)) {
     // `desc` is the description a model reads to decide whether to call the
     // tool — an empty one passes the type check but ships an unusable tool.
     if (ep.desc.trim() === '') {
@@ -466,6 +479,7 @@ export function defineContract(
     if ('stream' in ep) assertStreamingResponseEndpoint(meta.prefix, key, ep);
     if (ep.method === 'HEAD') assertHeadEndpoint(meta.prefix, key, ep);
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
+    if (ep.safelistedBody) assertSafelistedBodyEndpoint(meta.prefix, key, ep);
     if ('responseMeta' in ep) assertResponseMetaEndpoint(meta.prefix, key, ep);
 
     if (!('toolName' in ep) || !ep.toolName) continue;
@@ -503,7 +517,7 @@ export function defineContract(
     }
   }
 
-  return { meta, endpoints };
+  return { meta, endpoints: materializedEndpoints };
 }
 
 function assertPositiveLimit(where: string, name: string, value: number | undefined): void {
@@ -637,6 +651,20 @@ function assertRawBodyEndpoint(prefix: string, key: string, ep: EndpointDef): vo
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
   }
+}
+
+/**
+ * A safelisted body exists only where a simple cross-origin request can carry
+ * one: a validated `POST`. Every other shape either has no JSON body (`GET`,
+ * `HEAD`, multipart) or always preflights (`PUT`, `PATCH`, `DELETE`), so the
+ * flag would buy nothing and only widen the surface the Origin check guards.
+ */
+function assertSafelistedBodyEndpoint(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": safelistedBody endpoint "${key}"`;
+  if (ep.method !== 'POST') throw new Error(`${where} must use POST`);
+  if (!ep.input) throw new Error(`${where} must declare an input schema`);
+  if (ep.multipart) throw new Error(`${where} cannot be multipart`);
+  if ('stream' in ep && ep.stream) throw new Error(`${where} cannot be a streaming response`);
 }
 
 /** Typed response metadata is a static, HTTP-only addition to the data path. */
@@ -878,7 +906,16 @@ type ClientEndpointWithoutArgs<Output> = {
   withOptions(options: ClientRequestOptions): Promise<Output>;
 };
 
-type EndpointArgs<E> = InferInput<Prop<E, 'params'>> &
+type InferredPathParams<E> = E extends { path: infer TPath extends string }
+  ? keyof PathParams<TPath> extends never
+    ? unknown
+    : PathParams<TPath>
+  : unknown;
+
+type EndpointParamsInput<E> =
+  Prop<E, 'params'> extends ZodType ? InferInput<Prop<E, 'params'>> : InferredPathParams<E>;
+
+type EndpointArgs<E> = EndpointParamsInput<E> &
   InferInput<Prop<E, 'input'>> &
   MultipartArgs<E>;
 
@@ -935,7 +972,7 @@ export type TypedHttpClient<C extends Record<string, EndpointDef>> = ScopedHttpC
 
 type IsUrlBuildable<E> = ExposesHttp<E>;
 
-type EndpointUrlArgs<E> = InferInput<Prop<E, 'params'>> &
+type EndpointUrlArgs<E> = EndpointParamsInput<E> &
   (E extends { method: 'GET' | 'DELETE' } ? InferInput<Prop<E, 'input'>> : unknown);
 
 type UrlArgsWith<E, Extra> = EndpointUrlArgs<E> & Extra;

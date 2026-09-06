@@ -25,6 +25,16 @@ export {
 // and ADRs 0023 / 0038 tell consumers to call it, so it has to be reachable.
 export { isWithinDir } from '../internal/within-dir';
 export {
+  type AuthorizedSocketRoom,
+  bindSocketRegistry,
+  type SocketRegistry,
+  type SocketRegistryConnection,
+  type SocketRegistryOptions,
+  type SocketRegistryServer,
+  type SocketRegistrySnapshot,
+  type SocketReplayFrame,
+} from '../realtime/registry';
+export {
   type BunFetchComposition as FetchComposition,
   type BunFetchHandler as FetchHandler,
   type BunHandlerConfig as HandlerConfig,
@@ -41,7 +51,9 @@ export { type CacheOptions, cacheHeaders, createCache } from './cache';
 export { createHandler } from './create';
 export {
   createErrorHook,
+  type ErrorHookBase,
   type ErrorHookConfig,
+  type ErrorHookMapping,
   type ResolvedError,
 } from './error-hook';
 export {
@@ -59,6 +71,11 @@ export {
   staticRoute,
   weakETag,
 } from './file';
+export {
+  createFileStateStore,
+  type FileStateStoreCorruption,
+  type FileStateStoreOptions,
+} from './file-state-store';
 export {
   createImplement,
   createImplementRegistry,
@@ -105,8 +122,10 @@ export {
 } from './middleware/auth';
 export {
   type CookieDef,
+  type CookieDuplicatesPolicy,
   type CookieOptions,
   defineCookie,
+  parseCookieHeader,
   parseCookies,
   serializeCookie,
 } from './middleware/cookies';
@@ -153,6 +172,11 @@ export {
   type RealtimeServerConnection,
   type RealtimeServerHandle,
 } from './realtime';
+export {
+  bindReleaseRefreshSignal,
+  type ReleaseRefreshSignal,
+  type ReleaseRefreshSignalOptions,
+} from './release-signal';
 export {
   type ClientIpOptions,
   extractIp,

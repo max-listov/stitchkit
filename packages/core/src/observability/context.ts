@@ -10,6 +10,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract';
+import { isUnsafeKey } from '../internal/safe-json';
 import { getClientInfo, resolveSocketIp } from '../server/request';
 import { resolveTraceContext, type TraceContext } from './trace';
 
@@ -104,12 +105,20 @@ export function setRequestUser(userId: string): void {
  * operation it targeted even when the request fails pre-handler. No-op outside a
  * request context. → ADR 0022.
  */
-export function setRequestEndpoint(serviceName: string, action: string): void {
+export function setRequestEndpoint(serviceName: string, action?: string): void {
   const ctx = requestStorage().getStore();
   if (ctx) {
     ctx.serviceName = serviceName;
-    ctx.action = action;
+    if (action !== undefined) ctx.action = action;
   }
+}
+
+/** What a repeated dimension name does: the later write wins, the earlier one stays, or it throws. */
+export type DimensionCollision = 'overwrite' | 'preserve' | 'error';
+
+export interface SetRequestDimensionsOptions {
+  /** Policy when an earlier phase already wrote the same dimension. */
+  collision?: DimensionCollision;
 }
 
 /**
@@ -118,11 +127,29 @@ export function setRequestEndpoint(serviceName: string, action: string): void {
  * surfaced on `RequestEvent.dimensions`. Resolve them cheaply from `ctx.params` /
  * headers in `beforeHandle` (success) or `onError` (a pre-handler failure) and
  * they land on the audit event for the request, success or failure alike. Merges
- * across calls; no-op outside a request context.
+ * across calls; no-op outside a request context. Two calls are programming
+ * errors and throw — they fail the request rather than record a lie: a key of
+ * `__proto__` (it would set the bag's prototype) and a repeated key under
+ * `collision: 'error'`.
  */
-export function setRequestDimensions(dimensions: Record<string, string>): void {
+export function setRequestDimensions(
+  dimensions: Record<string, string>,
+  options: SetRequestDimensionsOptions = {},
+): void {
   const ctx = requestStorage().getStore();
-  if (ctx) ctx.dimensions = { ...ctx.dimensions, ...dimensions };
+  if (!ctx) return;
+
+  const next = { ...ctx.dimensions };
+  for (const [key, value] of Object.entries(dimensions)) {
+    if (isUnsafeKey(key)) throw new Error('Request dimension name cannot be "__proto__"');
+    const exists = Object.hasOwn(next, key);
+    if (exists && options.collision === 'preserve') continue;
+    if (exists && options.collision === 'error') {
+      throw new Error(`Request dimension "${key}" is already set`);
+    }
+    next[key] = value;
+  }
+  ctx.dimensions = next;
 }
 
 /**

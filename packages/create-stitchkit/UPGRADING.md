@@ -60,6 +60,27 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: canonical query client factory
+
+This migration is additive, but it has a dependency order: first upgrade to a
+Stitchkit release that exports `createQueryClientFactory` from
+`stitchkit/react`. Then replace the local QueryClient construction with:
+
+```ts
+import { cache } from 'react';
+import { createQueryClientFactory } from 'stitchkit/react';
+
+export const getQueryClient = createQueryClientFactory({
+  serverCache: cache,
+  queryClient: {
+    defaultOptions: { queries: { staleTime: 30_000 } },
+  },
+});
+```
+
+Keep project-specific mutation toasts or cache configuration in the factory
+options. Do not copy the framework retry predicate back into the application.
+
 ## Released migration: 0.6.0
 
 The scaffolder gained a vertical feature. Adopting it in a project you already
