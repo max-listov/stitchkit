@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,6 +9,7 @@ import {
   reapProcessesUnder,
   stopProcessGroup,
   supervisorPidIn,
+  sweepAbandonedLaneDirectories,
   sweepAbandonedLaneProcesses,
 } from './lane-processes';
 
@@ -260,3 +261,175 @@ test.skipIf(!hasProcfs)(
   },
   30_000,
 );
+
+/**
+ * A lane owns its DIRECTORY too, not only the processes it starts.
+ *
+ * The half that was missing: `rm(workspace)` lives after the `finally`, a
+ * `finally` covers a throw and not a signal, and SIGKILL runs nothing at all —
+ * so every badly-ended run left its whole tree behind. Four of them, 3.3 GiB,
+ * were found by a neighbouring project on a disk at 97% whose database was
+ * answering `No space left on device`.
+ */
+async function laneDirectoryClaimedBy(
+  keepAlive: boolean,
+): Promise<{ directory: string; owner: ReturnType<typeof Bun.spawn> }> {
+  const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+  const source = join(directory, 'owner.ts');
+  await writeFile(
+    source,
+    [
+      `import { claimLaneDirectory } from ${JSON.stringify(join(import.meta.dir, 'lane-processes.ts'))};`,
+      `await claimLaneDirectory(${JSON.stringify(directory)});`,
+      "console.log('claimed');",
+      keepAlive ? 'setInterval(() => {}, 1000);' : '',
+    ].join('\n'),
+  );
+  // Started OUTSIDE the tree on purpose: a live owner that has not yet chdir'd
+  // into its workspace is exactly the case the cwd scan cannot see, and the one
+  // where a sweep by "nothing is living inside it" would delete a running lane.
+  const owner = Bun.spawn(['bun', source], {
+    cwd: import.meta.dir,
+    stdout: 'pipe',
+    stderr: 'ignore',
+  });
+  const reader = owner.stdout.getReader();
+  const decoder = new TextDecoder();
+  let seen = '';
+  while (!seen.includes('claimed')) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    seen += decoder.decode(value);
+  }
+  reader.releaseLock();
+  return { directory, owner };
+}
+
+test.skipIf(!hasProcfs)(
+  'a lane directory whose owner is gone is swept by the next run',
+  async () => {
+    const { directory, owner } = await laneDirectoryClaimedBy(false);
+    try {
+      await owner.exited;
+      expect(existsSync(directory)).toBe(true);
+
+      expect(await sweepAbandonedLaneDirectories()).toContain(directory);
+
+      expect(existsSync(directory)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(!hasProcfs)(
+  'a lane directory whose owner is still running is left alone',
+  async () => {
+    const { directory, owner } = await laneDirectoryClaimedBy(true);
+    try {
+      expect(await sweepAbandonedLaneDirectories()).not.toContain(directory);
+      expect(existsSync(directory)).toBe(true);
+
+      // And the moment the owner is gone, the same sweep reclaims it.
+      await stopProcessGroup(owner);
+      await settle(() => !alive(owner.pid));
+
+      expect(await sweepAbandonedLaneDirectories()).toContain(directory);
+      expect(existsSync(directory)).toBe(false);
+    } finally {
+      await stopProcessGroup(owner).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(!hasProcfs)(
+  'a young directory with no owner marker is kept, not guessed about',
+  async () => {
+    // Written by a lane from before the marker existed, or by one killed in the
+    // moment between creating its directory and claiming it. Its owner cannot
+    // be asked, so the fail-safe direction is to keep it.
+    const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+    try {
+      expect(await sweepAbandonedLaneDirectories()).not.toContain(directory);
+      expect(existsSync(directory)).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(!hasProcfs)(
+  'a signal to the lane itself gives its directory back',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+    let removed = false;
+    try {
+      // The same miniature as above, with the registration the real lanes now
+      // make: reaping the roles and leaving 1.6 GiB behind is half a cleanup.
+      await writeFile(
+        join(directory, 'lane.ts'),
+        [
+          `import { reapOnTermination, releaseLaneDirectory } from ${JSON.stringify(join(import.meta.dir, 'lane-processes.ts'))};`,
+          `reapOnTermination(() => releaseLaneDirectory(${JSON.stringify(directory)}));`,
+          "console.log('ready');",
+          'setInterval(() => {}, 1000);',
+        ].join('\n'),
+      );
+      const lane = Bun.spawn(['bun', join(directory, 'lane.ts')], {
+        cwd: import.meta.dir,
+        stdout: 'pipe',
+        stderr: 'ignore',
+      });
+      const reader = lane.stdout.getReader();
+      const decoder = new TextDecoder();
+      let seen = '';
+      while (!seen.includes('ready')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        seen += decoder.decode(value);
+      }
+      reader.releaseLock();
+
+      lane.kill('SIGTERM');
+      await lane.exited;
+      await settle(() => !existsSync(directory));
+
+      expect(existsSync(directory)).toBe(false);
+      removed = true;
+    } finally {
+      if (!removed) await rm(directory, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+/**
+ * The wiring, at the point of attachment.
+ *
+ * The behaviours above would all still pass if no lane ever called them, and
+ * spawning a real lane to find out costs minutes and a database. So the two
+ * lanes that create a directory under a lane prefix are read for the three
+ * claims that make the leak impossible: they claim what they create, they sweep
+ * what an earlier run abandoned, and they give their own tree back on a signal.
+ */
+test('every lane claims, sweeps and releases its directory', async () => {
+  for (const lane of ['starter-lane.ts', 'supervised-lane.ts']) {
+    const source = await readFile(join(import.meta.dir, lane), 'utf8');
+    expect({ lane, claims: source.includes('claimLaneDirectory(workspace)') }).toEqual({
+      lane,
+      claims: true,
+    });
+    expect({ lane, sweeps: source.includes('sweepAbandonedLaneDirectories()') }).toEqual({
+      lane,
+      sweeps: true,
+    });
+    expect({ lane, releases: source.includes('releaseLaneDirectory(workspace)') }).toEqual({
+      lane,
+      releases: true,
+    });
+  }
+});

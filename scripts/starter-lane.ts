@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   assertNothingSurvives,
+  claimLaneDirectory,
   reapOnTermination,
   reapProcessesUnder,
+  releaseLaneDirectory,
   stopProcessGroup,
+  sweepAbandonedLaneDirectories,
   sweepAbandonedLaneProcesses,
 } from './lane-processes';
 import { findNeutralIdentity } from './neutral-identity';
@@ -215,8 +218,18 @@ const swept = await sweepAbandonedLaneProcesses();
 if (swept > 0) {
   console.log(`[starter-lane] reaped ${swept} process(es) abandoned by an earlier run`);
 }
+// And the TREES they left, which nothing used to remove: a lane killed by a
+// signal or the OOM killer never reaches the `rm` below, and 1.6 GiB per run
+// accumulates on a shared disk until a neighbour hits `No space left`.
+const reclaimed = await sweepAbandonedLaneDirectories();
+if (reclaimed.length > 0) {
+  console.log(
+    `[starter-lane] removed ${reclaimed.length} directory(ies) abandoned by an earlier run`,
+  );
+}
 
 const workspace = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+await claimLaneDirectory(workspace);
 
 let roles: Array<{ pid: number; exited: Promise<number> }> = [];
 const reapEverything = async (): Promise<void> => {
@@ -225,7 +238,12 @@ const reapEverything = async (): Promise<void> => {
 };
 // A `finally` covers a throw and nothing else. An interrupted lane is exactly
 // the run that leaves the most behind, so the same cleanup runs on a signal.
-reapOnTermination(reapEverything);
+reapOnTermination(async () => {
+  await reapEverything();
+  // Including the tree itself. Reaping the roles and leaving 1.6 GiB behind is
+  // half a cleanup, and the interrupted run is the one that leaves it.
+  await releaseLaneDirectory(workspace);
+});
 
 try {
   const packed = join(workspace, 'packed');

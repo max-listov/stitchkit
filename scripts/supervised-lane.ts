@@ -21,9 +21,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   assertNothingSurvives,
+  claimLaneDirectory,
   reapOnTermination,
   reapProcessesUnder,
+  releaseLaneDirectory,
   supervisorPidIn,
+  sweepAbandonedLaneDirectories,
   sweepAbandonedLaneProcesses,
 } from './lane-processes';
 import { createStarterLaneDatabase } from './starter-database';
@@ -126,8 +129,17 @@ const swept = await sweepAbandonedLaneProcesses();
 if (swept > 0) {
   console.log(`[supervised-lane] reaped ${swept} process(es) abandoned by an earlier run`);
 }
+// And their trees: the `rm` at the end of this file runs on no path a signal or
+// the OOM killer takes, so every such run used to leave its workspace on disk.
+const reclaimed = await sweepAbandonedLaneDirectories();
+if (reclaimed.length > 0) {
+  console.log(
+    `[supervised-lane] removed ${reclaimed.length} directory(ies) abandoned by an earlier run`,
+  );
+}
 
 const workspace = await mkdtemp(join(tmpdir(), 'supervised-lane-'));
+await claimLaneDirectory(workspace);
 const pm2Home = join(workspace, 'pm2');
 
 /**
@@ -197,7 +209,10 @@ const shutDownSupervisor = async (): Promise<void> => {
 };
 // A signal to the lane is exactly the case that used to leave a daemon behind:
 // it keeps its roles alive, and restarts them, long after the tree is gone.
-reapOnTermination(shutDownSupervisor);
+reapOnTermination(async () => {
+  await shutDownSupervisor();
+  await releaseLaneDirectory(workspace);
+});
 
 try {
   if (!Bun.which('pm2', { PATH: laneEnvironment().PATH })) {

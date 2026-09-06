@@ -1,4 +1,5 @@
-import { readdir, readFile, readlink, stat } from 'node:fs/promises';
+import { readdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -249,26 +250,27 @@ export async function supervisorPidIn(home: string): Promise<number | undefined>
  * The assertion stays as the backstop for anything that survives a SIGKILL.
  */
 export async function reapProcessesUnder(directory: string): Promise<number> {
-  const inside = async (): Promise<number[]> => {
-    const found: number[] = [];
-    for (const pid of await processIds()) {
-      if (pid === process.pid) continue;
-      try {
-        if ((await readlink(`/proc/${pid}/cwd`)).startsWith(directory)) found.push(pid);
-      } catch {
-        // Not ours to inspect.
-      }
-    }
-    return found;
-  };
-
-  const living = await inside();
+  const living = await processesUnder(directory);
   if (living.length === 0) return 0;
   for (const pid of living) signal(pid, 'SIGTERM');
   await Bun.sleep(2_000);
-  for (const pid of await inside()) signal(pid, 'SIGKILL');
+  for (const pid of await processesUnder(directory)) signal(pid, 'SIGKILL');
   await Bun.sleep(500);
   return living.length;
+}
+
+/** Every process whose working directory is inside this tree. */
+async function processesUnder(directory: string): Promise<number[]> {
+  const found: number[] = [];
+  for (const pid of await processIds()) {
+    if (pid === process.pid) continue;
+    try {
+      if ((await readlink(`/proc/${pid}/cwd`)).startsWith(directory)) found.push(pid);
+    } catch {
+      // Not ours to inspect.
+    }
+  }
+  return found;
 }
 
 /**
@@ -279,19 +281,129 @@ export async function reapProcessesUnder(directory: string): Promise<number> {
  * and a half hours.
  */
 export async function assertNothingSurvives(directory: string): Promise<void> {
-  const survivors: number[] = [];
-  for (const pid of await processIds()) {
-    if (pid === process.pid) continue;
-    try {
-      const cwd = await readlink(`/proc/${pid}/cwd`);
-      if (cwd.startsWith(directory)) survivors.push(pid);
-    } catch {
-      // Not ours to inspect.
-    }
-  }
+  const survivors = await processesUnder(directory);
   if (survivors.length > 0) {
     throw new Error(
       `The lane finished with ${survivors.length} process(es) still running inside ${directory} (pids ${survivors.join(', ')}). Every process a lane starts must be reaped by the lane.`,
     );
   }
+}
+
+/**
+ * The marker a lane writes into its own directory, naming the process that owns it.
+ *
+ * Sweeping processes was only half the leak. A lane that dies badly also leaves
+ * its TREE — 1.6 GiB of packed tarball, `node_modules` and a built starter, per
+ * run. Nothing removed it: `rm(workspace)` lives after the `finally`, and a
+ * `finally` covers a throw, not a signal; SIGKILL runs nothing at all. Measured
+ * on the same shared host: four abandoned lanes, 3.3 GiB, no open files, on a
+ * disk at 97% where a neighbouring database was answering `No space left on
+ * device`.
+ *
+ * So a directory is OWNED, the way a process group is. The owner records what
+ * can identify it after the fact — the pid, plus the boot-relative start time
+ * that tells a live owner apart from an unrelated process that inherited its
+ * number — and the next run removes every lane directory whose owner is gone.
+ */
+const OWNER_FILE = '.lane-owner';
+
+/**
+ * A pid alone cannot answer "is the owner still running": pids are reused, and
+ * a reused one makes a dead owner look alive forever. Field 22 of
+ * `/proc/<pid>/stat` is the process start time in clock ticks since boot, which
+ * is stable for the life of the process and different for its successor. The
+ * comm field is parenthesised and may itself contain spaces and parentheses,
+ * so the split starts after its LAST closing parenthesis.
+ */
+async function processStartTime(pid: number): Promise<string | undefined> {
+  let stats: string;
+  try {
+    stats = await readFile(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return undefined;
+  }
+  const fields = stats.slice(stats.lastIndexOf(')') + 2).split(' ');
+  return fields[19];
+}
+
+/** Record this process as the owner of a lane directory it just created. */
+export async function claimLaneDirectory(directory: string): Promise<void> {
+  const startedAt = await processStartTime(process.pid);
+  await writeFile(
+    join(directory, OWNER_FILE),
+    `${JSON.stringify({ pid: process.pid, startedAt })}\n`,
+    'utf8',
+  );
+}
+
+/** Give a lane's own directory back, after everything living in it is gone. */
+export async function releaseLaneDirectory(directory: string): Promise<void> {
+  await reapProcessesUnder(directory);
+  await rm(directory, { recursive: true, force: true });
+}
+
+/**
+ * A directory with no marker predates this mechanism, or belongs to a lane that
+ * was killed in the moment between creating it and claiming it. Either way its
+ * owner cannot be asked, so it is only swept once it is far older than any lane
+ * run and nothing is living inside it — the fail-safe direction is to KEEP it,
+ * because deleting a live sibling's tree is this fix causing the next incident.
+ */
+const UNCLAIMED_GRACE_MS = 6 * 60 * 60 * 1000;
+
+async function laneDirectoryIsAbandoned(directory: string): Promise<boolean> {
+  let marker: string;
+  try {
+    marker = await readFile(join(directory, OWNER_FILE), 'utf8');
+  } catch {
+    let age: number;
+    try {
+      age = Date.now() - (await stat(directory)).mtimeMs;
+    } catch {
+      return false;
+    }
+    if (age < UNCLAIMED_GRACE_MS) return false;
+    return (await processesUnder(directory)).length === 0;
+  }
+
+  let owner: { pid?: unknown; startedAt?: unknown };
+  try {
+    owner = JSON.parse(marker) as typeof owner;
+  } catch {
+    return false;
+  }
+  if (typeof owner.pid !== 'number' || !Number.isInteger(owner.pid)) return false;
+  if (owner.pid === process.pid) return false;
+  const startedAt = await processStartTime(owner.pid);
+  // Gone, or the number now belongs to something that started later.
+  return startedAt === undefined || startedAt !== owner.startedAt;
+}
+
+/**
+ * Remove the trees earlier runs left behind, before this one adds another.
+ *
+ * The counterpart of `sweepAbandonedLaneProcesses`, and the only defence that
+ * survives a SIGKILL — which, on a host whose memory guard kills the gate, is
+ * how these are actually produced.
+ */
+export async function sweepAbandonedLaneDirectories(): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(tmpdir());
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const entry of entries) {
+    if (!LANE_DIRECTORY_PREFIXES.some((prefix) => entry.startsWith(prefix))) continue;
+    const directory = join(tmpdir(), entry);
+    if (!(await laneDirectoryIsAbandoned(directory))) continue;
+    try {
+      await rm(directory, { recursive: true, force: true });
+      removed.push(directory);
+    } catch {
+      // Another run may have removed it first, or it is not ours to remove.
+    }
+  }
+  return removed;
 }
