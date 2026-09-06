@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.81.1] — 2026-09-06
+
 ### Added
 
 - **`stitchkit upgrade` — the migration plan, from the install.** The package now
