@@ -38,6 +38,7 @@ export type TrackingContractEndpoints<TSchemas extends TrackingSchemas<z.ZodObje
   track: {
     method: 'POST';
     path: '/events';
+    expose: readonly ['HTTP'];
     desc: string;
     input: TSchemas['request'];
     output: TSchemas['response'];
@@ -52,6 +53,16 @@ export type TrackingContractEndpoints<TSchemas extends TrackingSchemas<z.ZodObje
  * `sendUnloadBeacon` with a string body — the only body a document that is
  * being unloaded can deliver to another origin (ADR 0165) — and the server
  * therefore needs an explicit `cors.origin` allow-list for it to arrive.
+ *
+ * **Both endpoints are HTTP-only, and that is not a formality.** An endpoint
+ * with no `expose` is a tool on MCP and AGENT by default, and this contract is
+ * built here rather than by the application's own contract factory — so a
+ * project that sets `toolExposure: 'explicit'` for everything it authors was
+ * still handed a `track` tool it never asked for. An agent has nothing to gain
+ * from a browser-event ingest and one thing to lose by having it: writes into
+ * the application's visitor data, under its own name, indistinguishable
+ * afterwards from a real visitor's. `bootstrap` said `['HTTP']` from the start;
+ * `track` not saying it was an omission, not a decision.
  */
 export function createTrackingContract<TType extends string, TScope extends string>(
   config: TrackingContractConfig<TType, undefined, TScope>,
@@ -87,6 +98,7 @@ export function createTrackingContract(
       track: {
         method: 'POST',
         path: '/events',
+        expose: ['HTTP'],
         desc: 'Batch track browser events',
         input: schemas.request,
         output: schemas.response,

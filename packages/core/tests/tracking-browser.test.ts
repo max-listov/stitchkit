@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { ApiError } from '../src/browser/http';
+import { implement } from '../src/server/implement';
+import { listToolNames } from '../src/tools/list-names';
 import { resolveAttribution } from '../src/tracking/attribution';
 import { sendUnloadBeacon } from '../src/tracking/beacon';
 import { type ClickTarget, resolveTrackedClick } from '../src/tracking/clicks';
@@ -423,5 +425,29 @@ describe('schemas and contract', () => {
     expect(contract.endpoints.track.path).toBe('/events');
     expect(contract.endpoints.track.safelistedBody).toBe(true);
     expect(contract.endpoints.track.maxJsonBodyBytes).toBe(256 * 1024);
+  });
+
+  /**
+   * Asked of the mounted surface rather than of the field, because the field is
+   * not what does the harm. An endpoint with no `expose` is a tool on MCP and
+   * AGENT by default, and this contract is built inside the framework — so an
+   * application that made every tool opt-in for the endpoints it authors was
+   * still given a `track` tool, and an agent could write into its visitor data
+   * under its own name. `bootstrap` carried `['HTTP']`; `track` did not, and
+   * nothing said so until a consumer's tool-surface digest moved by one.
+   */
+  test('neither tracking operation is a tool on any transport', () => {
+    const contract = createTrackingContract({ scope: 'public', eventTypes: ['PAGE_VIEW'] });
+    const service = implement(contract, {
+      bootstrap: () => {
+        throw new Error('not called');
+      },
+      track: () => {
+        throw new Error('not called');
+      },
+    });
+    expect(listToolNames({ services: [service] })).toEqual([]);
+    expect(contract.endpoints.bootstrap.expose).toEqual(['HTTP']);
+    expect(contract.endpoints.track.expose).toEqual(['HTTP']);
   });
 });

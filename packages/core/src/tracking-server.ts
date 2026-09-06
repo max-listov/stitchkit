@@ -5,6 +5,20 @@
  * back; `issueVisitLease` runs the visit algorithm over a store interface the
  * application implements. No database, no schema, no domain. → ADR 0166.
  */
+
+// The schema types this entrypoint's own signatures are written in.
+//
+// They are shared with the browser side and live on `stitchkit/tracking`, which
+// satisfies the "a consumer can reach it" rule and still costs a round trip:
+// the first import a store implementation reaches for is the entrypoint whose
+// functions it is implementing, and `issueVisitLease` names all three. Nothing
+// is renamed and nothing is redefined here — the same symbols, reachable from
+// the entrypoint that requires them.
+export type {
+  TrackingDisposition,
+  VisitBootstrapResponse,
+  VisitEntryContext,
+} from './tracking/schemas';
 export {
   type ActiveIntervalOptions,
   type ActiveTimeInterval,

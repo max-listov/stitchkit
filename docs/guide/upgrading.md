@@ -52,6 +52,31 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.82.0
+
+One thing, and only if you mount MCP or agent tools from a `createTrackingContract` contract.
+
+```bash
+rg -n "createTrackingContract"
+```
+
+The event ingest (`track`, `POST /events`) is now `expose: ['HTTP']`, which is
+what its sibling `bootstrap` always declared. Before, it declared nothing — and
+an endpoint with no `expose` is a tool on MCP and AGENT by default, so the
+mounted surface carried a `track_<prefix>` tool. Since this contract is built
+inside the framework, an application that had made every tool opt-in for the
+endpoints *it* authors could not have opted this one out.
+
+**If you pin a tool-surface digest or count**, it moves by one; re-record it.
+**If you assert on tool names**, `track_<prefix>` is gone. **If nothing in your
+project mounts tools from this contract**, there is nothing to do — the HTTP
+routes, the client and the schemas are unchanged.
+
+Un-declaring the tool was never the intent, so there is no option to keep it. If
+an agent in your system genuinely needs to record something, give it your own
+endpoint with your own schema: the browser ingest trusts a client-minted event
+id and a visit lease, and an agent holds neither.
+
 ## Released migration: 0.81.0
 
 **Path literals own string params.**

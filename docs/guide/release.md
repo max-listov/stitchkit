@@ -102,12 +102,41 @@ records the verdict and reloads nothing.
 
 ## Adopting it
 
-1. Bake the build id into the bundle: `NEXT_PUBLIC_BUILD_ID=$(git rev-parse
-   --short HEAD)` at build time, or Next's `generateBuildId`. Without it the
-   watcher has no `own` and never reloads.
+1. Bake the build id into the bundle, from **one** source. Without it the
+   watcher has no `own` and never reloads — and it never says so, which is the
+   part worth spending a paragraph on.
+
+   `NEXT_PUBLIC_BUILD_ID=$(git rev-parse --short HEAD)` in the build command is
+   the short version and it has a failure mode: on an immutable-release layout
+   that variable usually lives in a static environment file, so it is easy for
+   two releases to ship the same id. Then `own` equals what the server reports
+   on every response, the watcher is correct to stay quiet, and nothing
+   anywhere is red. A reload that never happens looks exactly like a reload
+   that was not needed.
+
+   So mint it once and let one value reach all three readers. In Next, that is
+   `next.config`:
+
+   ```ts
+   const buildId = process.env.BUILD_ID ?? execSync('git rev-parse --short HEAD').toString().trim()
+
+   export default {
+     generateBuildId: () => buildId,          // → .next/BUILD_ID, which the server marker reads
+     env: { NEXT_PUBLIC_BUILD_ID: buildId },  // → the bundle, which becomes `own`
+   }
+   ```
+
+   The bundle's id and the file the server reports now come from the same
+   expression evaluated once, so they cannot drift apart per release. Any
+   arrangement with that property will do; the one to avoid is two places that
+   each decide the id and are expected to agree.
 2. Point `read` at the id of the **active** release, not the process's cwd.
 3. Add `release: (data: { buildId: string | null }) => void` to your
    `ServerToClientEvents` map where you type your socket, so your own `on`
-   knows the event the binding emits.
+   knows the event the binding emits. This is also what makes a **typed**
+   `Server<…>` fit `bindReleaseToSocketServer`: its `emit` is narrowed to the
+   names in your map, so until `release` is one of them the call fails to
+   typecheck — as a long structural mismatch, which reads like a bug in the
+   binding and is this line instead.
 4. Send `SIGUSR2` from the deploy step that activates a frontend without
    restarting the backend, and name that step in the project's release steps.

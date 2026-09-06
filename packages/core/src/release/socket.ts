@@ -1,7 +1,20 @@
 import type { ReleaseMarker } from './marker';
 import type { ReleaseWatcher } from './watcher';
 
-/** The little of a Socket.IO server this binding uses — structural, no peer import. */
+/**
+ * The little of a Socket.IO server this binding uses — structural, no peer
+ * import.
+ *
+ * `emit` is declared over `string` because the event name is configurable. A
+ * **typed** `Server<ClientToServer, ServerToClient>` narrows its own `emit` to
+ * the names in its map, so it satisfies this only once that map declares the
+ * event — `release: (payload: { buildId: string | null }) => void`, or whatever
+ * `options.event` renames it to. Until then the compiler reports a structural
+ * mismatch between two large socket.io types, which reads like a defect in this
+ * binding and is a missing line in the application's event map. Adding it is
+ * step 3 of the guide's adoption list for exactly this reason: the same
+ * declaration is what lets the application's own `on` know the event.
+ */
 export interface ReleaseSocketServer {
   on(event: 'connection', handler: (socket: ReleaseSocketEmitter) => void): unknown;
   emit(event: string, payload: { buildId: string | null }): unknown;
