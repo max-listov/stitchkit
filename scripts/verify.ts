@@ -23,6 +23,10 @@ import { readReleaseTrain } from './release-train';
  * tree has already been through it.
  */
 export const VERIFY_STEPS = [
+  // The one CI step every runner performs before anything else, and the one
+  // this gate did not: a manifest edited without its lockfile passed every
+  // local step and turned the first CI run of a release red at `bun install`.
+  'lockfile',
   'lint',
   'check',
   'test',
@@ -56,7 +60,7 @@ export const VERIFY_STEPS = [
  * reach the same answer. Duplicating that is not caution, it is a slower copy.
  * → `AGENTS.md`, "What runs where".
  */
-export const FAST_STEPS = ['lint', 'check', 'test'] as const;
+export const FAST_STEPS = ['lockfile', 'lint', 'check', 'test'] as const;
 
 /** The name each gate is remembered under. */
 export const VERIFY_GATE = 'verify';

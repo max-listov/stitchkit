@@ -88,9 +88,10 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
   on the first request, an unenforced allowlist looks exactly like success.
 - **ALWAYS** run `bun scripts/verify.ts --release` before a **release commit**, and let the
   `pre-push` hook reuse that exact-tree result — see *What runs where* below. `verify` is the
-  whole portable local gate and it runs **every portable gate CI runs**: lint, typecheck, tests,
-  the Postgres agent-store lane, build, the Next-SSR and Node smokes, the packed
-  consumer lane, the packed starter lanes and the supervised PM2 lane. Its
+  whole portable local gate and it runs **every portable gate CI runs**: the frozen-lockfile
+  install every runner performs first, lint, typecheck, tests, the Postgres agent-store lane,
+  build, the Next-SSR and Node smokes, the packed consumer lane, the packed starter lanes and
+  the supervised PM2 lane. Its
   prerequisites are listed in `CONTRIBUTING.md` and all of them arrive with
   `bun install` except a reachable PostgreSQL and the Playwright browsers.
 
@@ -117,8 +118,8 @@ HTTP API, MCP tools, AI-agent tools and a typed client.
 
 ```bash
 bun run dev            # watch-rebuild packages/core/dist
-bun run verify         # lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
-bun run verify:fast    # lint · check · test — what an ordinary push runs
+bun run verify         # lockfile · lint · check · test · agent-store lane · build · smokes · consumer lane · starter lanes
+bun run verify:fast    # lockfile · lint · check · test — what an ordinary push runs
 bun scripts/verify.ts --release # release-train targets; heavy lanes run at most two at once, fewer when the host cannot hold them
 bun run build          # build dist/ + generate llms.txt
 bun run lint:fix       # auto-fix formatting / safe lint
@@ -143,7 +144,7 @@ picks by what a red run would cost on the commit being pushed:
 
 | Push | Local gate | Why |
 | --- | --- | --- |
-| ordinary branch push | `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
+| ordinary branch push | `lockfile`, `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
 | push carrying the `release(...)` commit | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
@@ -299,7 +300,11 @@ carries the branch and pull-request gate:
 
 - **stitchkit:** bump only `packages/core/package.json`, roll the root
   `CHANGELOG.md`, add the target to `release-train.json`, then tag `vX.Y.Z`. CI checks the core
-  version, publishes only `stitchkit` and reads the root changelog.
+  version, publishes only `stitchkit` and reads the root changelog. Rolling the changelog adds
+  a minor to the count in the maturity table (`docs/guide/getting-started.md`), which
+  `scripts/surface-cadence.test.ts` derives from the changelog and holds by exact sentence —
+  recompute both sentences with the test's own term lists and update the table and the test
+  in the same commit, or the first `verify` after the roll is red.
 - **create-stitchkit:** update the template's single `catalog.stitchkit` target
   and lockfile — `bun run update:starter` moves both and restores every
   `"stitchkit": "catalog:"` reference a raw `bun update` would dissolve — pass

@@ -38,7 +38,7 @@ bun run starter-lane       # both scaffold variants against the published Stitch
 bun run starter-head-lane  # both scaffold variants against packed framework HEAD
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
 bun run verify    # every portable CI gate, including the supervised PM2 lane
-bun run verify:fast    # lint + check + test, the part that is faster to learn locally
+bun run verify:fast    # lockfile + lint + check + test, the part that is faster to learn locally
 bun scripts/verify.ts --release # package-aware release train gate, max two heavy lanes
 bun run update:starter # move the template's framework range and lockfile together
 bun run release:train # push every tag selected by release-train.json after green exact-SHA CI

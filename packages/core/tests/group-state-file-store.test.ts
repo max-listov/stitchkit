@@ -69,15 +69,18 @@ describe('file state store', () => {
     );
     const old = new Date(Date.now() - 60_000);
     await utimes(lockPath, old, old);
+    // Realistic bounds: with a 1 ms stale bound the heartbeat floor and the
+    // abandonment window collapse into scheduler noise, and a loaded host once
+    // let the second contender take the first one's live lock.
     const first = createFileStateStore(path, {
       schema,
-      staleLockMs: 1,
-      retryMs: 1,
+      staleLockMs: 50,
+      retryMs: 5,
     });
     const second = createFileStateStore(path, {
       schema,
-      staleLockMs: 1,
-      retryMs: 1,
+      staleLockMs: 50,
+      retryMs: 5,
     });
     await Promise.all(
       [first, second].map((store) =>

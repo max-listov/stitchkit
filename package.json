@@ -20,6 +20,7 @@
     "lint:fix": "biome check --write . && cd packages/create-stitchkit/template && bun run lint:fix",
     "format": "biome format --write .",
     "format:check": "biome format .",
+    "lockfile": "bun install --frozen-lockfile --ignore-scripts",
     "verify": "bun scripts/verify.ts",
     "verify:fast": "bun scripts/verify.ts --fast",
     "smoke:node": "bun --filter stitchkit smoke:node",

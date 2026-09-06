@@ -19,6 +19,16 @@ describe('local gate vocabulary', () => {
     expect(passed.filter((flag) => !accepted.has(flag))).toEqual([]);
   });
 
+  test('the frozen-lockfile install CI performs first is a local step in both profiles', () => {
+    // Every CI runner starts with this install; a manifest edited without its
+    // lockfile once passed every local step and reddened a release's first run.
+    const ciInstall = 'bun install --frozen-lockfile --ignore-scripts';
+    expect(CI).toContain(ciInstall);
+    expect(PACKAGE.scripts?.lockfile).toBe(ciInstall);
+    expect(PROFILES.fast.steps[0]).toBe('lockfile');
+    expect(VERIFY_STEPS[0]).toBe('lockfile');
+  });
+
   test('full local verification retains every portable evidence lane', () => {
     for (const step of VERIFY_STEPS) expect(PACKAGE.scripts?.[step]).toBeDefined();
     expect(PROFILES.fast.usesLaneEnvironment).toBe(false);
