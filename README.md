@@ -506,6 +506,10 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
   [multi-tenant](./docs/guide/multi-tenant.md) ·
   [upgrading](./docs/guide/upgrading.md)
 - **[API reference](./docs/api/reference.md)** — every export, by entrypoint.
+- **Moving to a newer version?** Run `bunx stitchkit@latest upgrade` inside your
+  project. It reads the version you have from `node_modules` and the changelog
+  from inside the package, and prints every breaking change between the two —
+  oldest first, each with who must act. Nothing to clone, nobody to ask.
 - **Coding agent?** The package ships **`llms.txt`** (a curated index) and
   **`llms-full.txt`** (the whole guide inlined) — your agent reads them from
   `node_modules/stitchkit/`. For Claude Code, the repo also provides a

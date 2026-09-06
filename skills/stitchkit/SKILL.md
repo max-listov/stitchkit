@@ -69,9 +69,14 @@ Work in this order; each step links a contract field to a transport.
   hand-copy code strings.
 - **Install the optional peer for each feature you use** — they don't auto-install
   (see the matrix below). A missing one fails with an actionable "install X".
-- **Upgrading stitchkit?** Read `docs/guide/upgrading.md`: scan each version's
-  `### ⚠️ Breaking changes` between your current and target version. A version
-  without that section is purely additive.
+- **Upgrading stitchkit?** Ask the package, in the project you are upgrading:
+  `bunx stitchkit@latest upgrade` (or `npx`) prints every `### ⚠️ Breaking
+  changes` section between the installed version and the latest, oldest first,
+  each with its **Who must act** line. It reads the installed version from
+  `node_modules` and the changelog from inside the package, so there is nothing
+  to clone and nobody to ask; `--from` / `--to` set a different range.
+  `docs/guide/upgrading.md` expands the sections into migrations. A version with
+  no such section is purely additive.
 
 ## Optional peers — install per feature
 
