@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.81.0] — 2026-09-06
+
 ### ⚠️ Breaking changes
 
 **Who must act:** consumers with a path literal containing `:name` or terminal
@@ -46,7 +48,7 @@ change once, because the materialized params schema is now part of them.
   since every request would fail its validation; optional extras are left
   alone. A malformed percent-escape in a request path (`%E0%A4%A`, `%ZZ`) now
   fails to match and answers the ordinary 404 envelope instead of escaping the
-  router as a bare `URIError`. See the [migration](docs/guide/upgrading.md#unreleased-migration-path-literals-own-string-params).
+  router as a bare `URIError`. See the [migration](docs/guide/upgrading.md#released-migration-0810).
 
 ### Added
 

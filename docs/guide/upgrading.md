@@ -43,7 +43,9 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
-## Unreleased migration: path literals own string params
+## Released migration: 0.81.0
+
+**Path literals own string params.**
 
 An endpoint whose path contains `:id` or a terminal `*rest` no longer needs a
 duplicate `params: z.object({ …string() })` declaration. Remove schemas that do

@@ -77,24 +77,25 @@ test('a setting that is not a positive integer is refused, not defaulted', () =>
 test('memory decides only when nobody has', () => {
   // Measured on the host this was written for: one heavy lane holds ~3.3 GiB,
   // and 5.8 GiB available is where the pair started timing out.
-  expect(chooseHeavyConcurrency(undefined, () => 5.8).concurrency).toBe(1);
-  expect(chooseHeavyConcurrency(undefined, () => 8).concurrency).toBe(2);
+  // `undefined` selects the parameter default, which reads the operator's own
+  // VERIFY_HEAVY_CONCURRENCY and turned this test red under a real override;
+  // the empty string is the explicit "not set".
+  expect(chooseHeavyConcurrency('', () => 5.8).concurrency).toBe(1);
+  expect(chooseHeavyConcurrency('', () => 8).concurrency).toBe(2);
   // The boundary itself, from both sides, so the threshold is a decision and
   // not an accident of the two numbers above.
-  expect(chooseHeavyConcurrency(undefined, () => HEAVY_LANE_MEMORY_GIB * 2).concurrency).toBe(
-    2,
+  expect(chooseHeavyConcurrency('', () => HEAVY_LANE_MEMORY_GIB * 2).concurrency).toBe(2);
+  expect(chooseHeavyConcurrency('', () => HEAVY_LANE_MEMORY_GIB * 2 - 0.1).concurrency).toBe(
+    1,
   );
-  expect(
-    chooseHeavyConcurrency(undefined, () => HEAVY_LANE_MEMORY_GIB * 2 - 0.1).concurrency,
-  ).toBe(1);
   // Never zero, however little is left.
-  expect(chooseHeavyConcurrency(undefined, () => 0.1).concurrency).toBe(1);
+  expect(chooseHeavyConcurrency('', () => 0.1).concurrency).toBe(1);
   // Never more than the ceiling, however much there is.
-  expect(chooseHeavyConcurrency(undefined, () => 512).concurrency).toBe(2);
+  expect(chooseHeavyConcurrency('', () => 512).concurrency).toBe(2);
 });
 
 test('a host that cannot be measured keeps the historical default and says so', () => {
-  const choice = chooseHeavyConcurrency(undefined, () => undefined);
+  const choice = chooseHeavyConcurrency('', () => undefined);
   expect(choice.concurrency).toBe(2);
   expect(choice.because).toContain('could not be read');
 });
