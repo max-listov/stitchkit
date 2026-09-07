@@ -272,31 +272,37 @@ export async function reapProcessesUnder(directory: string): Promise<number> {
  *
  * `/proc/<pid>/fd` rather than `lsof`, so the sweep has no external dependency.
  */
+async function matchingProcessIds(
+  match: (pid: number) => Promise<boolean>,
+): Promise<number[]> {
+  const pids = (await processIds()).filter((pid) => pid !== process.pid);
+  const found: number[] = [];
+  for (let offset = 0; offset < pids.length; offset += 32) {
+    const matches = await Promise.all(
+      pids
+        .slice(offset, offset + 32)
+        .map(async (pid) => ((await match(pid)) ? pid : undefined)),
+    );
+    found.push(...matches.filter((pid): pid is number => pid !== undefined));
+  }
+  return found;
+}
+
 async function descriptorsUnder(directory: string): Promise<number[]> {
-  const holders: number[] = [];
-  for (const pid of await processIds()) {
-    if (pid === process.pid) continue;
+  return matchingProcessIds(async (pid) => {
     let descriptors: string[];
     try {
       descriptors = await readdir(`/proc/${pid}/fd`);
     } catch {
-      // Gone, or not ours to inspect.
-      continue;
+      return false;
     }
-    for (const descriptor of descriptors) {
-      let target: string;
-      try {
-        target = await readlink(`/proc/${pid}/fd/${descriptor}`);
-      } catch {
-        continue;
-      }
-      if (target.startsWith(`${directory}/`)) {
-        holders.push(pid);
-        break;
-      }
-    }
-  }
-  return holders;
+    const targets = await Promise.all(
+      descriptors.map((descriptor) =>
+        readlink(`/proc/${pid}/fd/${descriptor}`).catch(() => undefined),
+      ),
+    );
+    return targets.some((target) => target?.startsWith(`${directory}/`));
+  });
 }
 
 /** Whether anything at all is living in or reading from this tree. */
@@ -307,16 +313,13 @@ async function anythingIsUsing(directory: string): Promise<boolean> {
 
 /** Every process whose working directory is inside this tree. */
 async function processesUnder(directory: string): Promise<number[]> {
-  const found: number[] = [];
-  for (const pid of await processIds()) {
-    if (pid === process.pid) continue;
+  return matchingProcessIds(async (pid) => {
     try {
-      if ((await readlink(`/proc/${pid}/cwd`)).startsWith(directory)) found.push(pid);
+      return (await readlink(`/proc/${pid}/cwd`)).startsWith(directory);
     } catch {
-      // Not ours to inspect.
+      return false;
     }
-  }
-  return found;
+  });
 }
 
 /**

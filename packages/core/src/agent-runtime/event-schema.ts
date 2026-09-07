@@ -6,6 +6,7 @@ import {
   AgentRecordIdSchema,
   AgentRecordVersionSchema,
   AgentRunMetricsSchema,
+  AgentRunOperationSchema,
   AgentRunSchema,
   AgentRunStateSchema,
   AgentTerminalReasonSchema,
@@ -66,6 +67,12 @@ export const AgentRunStateEventSchema = EventIdentitySchema.extend({
   snapshotVersion: AgentRecordVersionSchema,
   state: AgentRunStateSchema,
 });
+export const AgentRunOperationEventSchema = EventIdentitySchema.extend({
+  type: z.literal('run-operation'),
+  eventId: AgentRecordIdSchema,
+  snapshotVersion: AgentRecordVersionSchema,
+  operation: AgentRunOperationSchema,
+});
 export const AgentToolStatusEventSchema = EventIdentitySchema.extend({
   type: z.literal('tool-status'),
   runtimeEpoch: z.string().min(1),
@@ -94,6 +101,7 @@ export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
   AgentReasoningEndEventSchema,
   AgentCheckpointEventSchema,
   AgentRunStateEventSchema,
+  AgentRunOperationEventSchema,
   AgentToolStatusEventSchema,
   AgentTerminalEventSchema,
 ]);
@@ -112,16 +120,17 @@ export interface AgentRuntimeCursorAdvance {
   cursor: AgentRuntimeEventCursor;
 }
 
-function isDurableEvent(
-  event: AgentRuntimeEvent,
-): event is Extract<
+function isDurableEvent(event: AgentRuntimeEvent): event is Extract<
   AgentRuntimeEvent,
-  { type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'terminal' }
+  {
+    type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal';
+  }
 > {
   return (
     event.type === 'admission' ||
     event.type === 'assistant-checkpoint' ||
     event.type === 'run-state' ||
+    event.type === 'run-operation' ||
     event.type === 'terminal'
   );
 }
@@ -167,7 +176,7 @@ export function advanceAgentRuntimeEventCursor(
 
 /** Stable identity for a post-CAS event; safe for outbox/dedup keys. */
 export function agentDurableEventId(
-  type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'terminal',
+  type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal',
   runId: string,
   snapshotVersion: number,
 ): string {

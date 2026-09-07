@@ -5,6 +5,7 @@ import {
   AgentRecordIdSchema,
   AgentRecordVersionSchema,
   type AgentRun,
+  AgentRunOperationSchema,
   AgentRunSchema,
   type AgentSnapshot,
   AgentSnapshotSchema,
@@ -90,6 +91,14 @@ export const CheckpointRunAssistantSchema = z.object({
    */
   usage: AgentUsageSchema.optional(),
 });
+export const RecordRunOperationSchema = z.object({
+  conversationId: AgentRecordIdSchema,
+  runId: AgentRecordIdSchema,
+  expectedRevision: AgentRecordVersionSchema,
+  ownerId: z.string().min(1),
+  fencingToken: AgentRecordVersionSchema.optional(),
+  operation: AgentRunOperationSchema,
+});
 export const CommitRunTerminalSchema = z.object({
   conversationId: AgentRecordIdSchema,
   runId: AgentRecordIdSchema,
@@ -152,6 +161,7 @@ export const ReplaceCompactedRangeSchema = z.object({
 export type AcceptInputAndAssignRun = z.infer<typeof AcceptInputAndAssignRunSchema>;
 export type AcquireAgentRun = z.infer<typeof AcquireAgentRunSchema>;
 export type CheckpointRunAssistant = z.infer<typeof CheckpointRunAssistantSchema>;
+export type RecordRunOperation = z.infer<typeof RecordRunOperationSchema>;
 export type CommitRunTerminal = z.infer<typeof CommitRunTerminalSchema>;
 export type RequestRunInterrupt = z.infer<typeof RequestRunInterruptSchema>;
 export type RecoverAgentRun = z.infer<typeof RecoverAgentRunSchema>;
@@ -200,6 +210,8 @@ export interface AgentRuntimeStore {
   acceptInputAndAssignRun(input: AcceptInputAndAssignRun): Promise<AgentStoreMutationResult>;
   acquireRun(input: AcquireAgentRun): Promise<AgentStoreMutationResult>;
   checkpointRunAssistant(input: CheckpointRunAssistant): Promise<AgentStoreMutationResult>;
+  /** Durably replace the run's latest observable model/compaction operation. */
+  recordRunOperation(input: RecordRunOperation): Promise<AgentStoreMutationResult>;
   requestRunInterrupt(input: RequestRunInterrupt): Promise<AgentStoreMutationResult>;
   recoverRun(input: RecoverAgentRun): Promise<AgentStoreMutationResult>;
   commitRunTerminal(input: CommitRunTerminal): Promise<AgentStoreMutationResult>;

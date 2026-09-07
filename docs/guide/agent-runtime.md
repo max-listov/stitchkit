@@ -843,11 +843,32 @@ transaction. Drivers without this guarantee must leave the capability absent. Se
   while provider metadata stays inside a validated canonical envelope;
 - `assistant-checkpoint` follows a successful checkpoint CAS;
 - `run-state` follows durable queue/acquire/interrupt transitions;
+- `run-operation` follows a successful operation CAS. Its `operation` is the
+  durable `AgentRun.lastOperation`: `model-request` or `compaction`, with
+  `started`, `first-output`, `completed`, `failed` or `cancelled` phase and the
+  original timestamps. Model request start means the provider call is about to
+  enter `doStream`, not that HTTP transmission is measured. First output is a
+  non-empty text/reasoning/tool-argument delta or complete tool call; metadata,
+  usage, files and sources do not count;
 - `tool-status` is transient lifecycle presentation with JSON-safe input on
   start and output on completion. A mounted typed failure carries the same safe
   `{ error, details?, _hint? }` envelope as the durable result; an unknown
   internal cause remains generic and stays in local observability only;
 - `terminal` follows the winning terminal CAS.
+
+`loop.checkpointEveryEvents` batches ordinary stream parts (default `20`) and
+does not batch live event delivery. Tool call/result/error/denial, approval
+request/response and step-finish boundaries force an assistant checkpoint and
+reset that batch. The checkpoint is awaited after the managed loop observes the
+normalized boundary. It does **not** promise persistence before a tool side
+effect: tool fencing supplies the real ownership checks around execution, while
+cross-crash effect idempotency stays application-owned. → ADR 0174.
+
+`compaction` names invocation of the configured callback, including a
+`not_needed` context-budget check; it does not by itself say that history was
+summarized. Operation timestamps are retained wall-clock observations and may
+move backwards after a clock correction. Do not subtract them for duration;
+phase order comes from durable snapshot versions/event order.
 
 These are post-commit notifications, not a transactional outbox: a process can
 crash between the database commit and `publish`. Reconnect should load canonical

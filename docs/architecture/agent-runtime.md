@@ -94,6 +94,11 @@ The managed loop is the only AI SDK stream switch. It disables whole-call retrie
 text/reasoning/tools/sources/files/provider envelopes, uses bounded checkpoints, applies dynamic
 step and named stop policy, and commits exactly one terminal state by CAS. Tool fencing runs before
 the handler and again before accepting its result; stale control errors are never model-facing.
+Model-request and compaction phases update `AgentRun.lastOperation` through that same store and
+publish durable `run-operation` events. Request start is the measured pre-`doStream` boundary;
+first output is the first non-empty text/reasoning/tool-argument delta or complete tool call. Structural tool,
+approval and step boundaries checkpoint independently from the ordinary delta batch, without
+claiming persistence before a tool effect. → ADR 0174.
 
 `createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
 caller-provided model per run, loads bounded typed resources, composes them through the canonical
@@ -105,7 +110,8 @@ tools; their path root constrains file resolution but is not an OS sandbox for a
 
 ## Delivery and observability
 
-Durable event IDs derive from `(runId, event type, snapshotVersion)`. Transient events use
+Durable event IDs derive from `(runId, event type, snapshotVersion)`, including each
+`run-operation` phase. Transient events use
 `(runId, runtimeEpoch, sequence)`. `advanceAgentRuntimeEventCursor` reports duplicates and gaps; a
 gap is recovered by loading the canonical snapshot, not by assuming infinite process replay.
 `createAgentRuntimeEventSink` supplies bounded failure-isolated delivery and a projection/redaction

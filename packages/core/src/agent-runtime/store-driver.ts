@@ -27,6 +27,8 @@ import {
   CheckpointRunAssistantSchema,
   type CommitRunTerminal,
   CommitRunTerminalSchema,
+  type RecordRunOperation,
+  RecordRunOperationSchema,
   type RecoverAgentRun,
   RecoverAgentRunSchema,
   type ReplaceCompactedRange,
@@ -155,6 +157,7 @@ type StoreOperation =
   | { type: 'accept'; input: AcceptInputAndAssignRun }
   | { type: 'acquire'; input: AcquireAgentRun }
   | { type: 'checkpoint'; input: CheckpointRunAssistant }
+  | { type: 'operation'; input: RecordRunOperation }
   | { type: 'interrupt'; input: RequestRunInterrupt }
   | { type: 'recover'; input: RecoverAgentRun }
   | { type: 'terminal'; input: CommitRunTerminal }
@@ -582,6 +585,29 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
         runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })],
         historyMutations: [{ type: 'upsert-assistant', message: input.assistant }],
       },
+    );
+  }
+
+  if (operation.type === 'operation' && run) {
+    const input = operation.input;
+    if (
+      run.revision !== input.expectedRevision ||
+      (run.state !== 'running' && run.state !== 'interrupt_requested') ||
+      run.ownerId !== input.ownerId ||
+      (input.fencingToken !== undefined && run.fencingToken !== input.fencingToken)
+    ) {
+      return conflict(run.revision);
+    }
+    const next = AgentRunSchema.parse({
+      ...run,
+      lastOperation: input.operation,
+      revision: run.revision + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    return applied(
+      current,
+      { runs: replaceRun(current.runs, next) },
+      { runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: next })] },
     );
   }
 
@@ -1120,6 +1146,11 @@ export function createAgentRuntimeStore<TRANSACTION>(
       mutate({
         type: 'checkpoint',
         input: CheckpointRunAssistantSchema.parse(input),
+      }),
+    recordRunOperation: (input) =>
+      mutate({
+        type: 'operation',
+        input: RecordRunOperationSchema.parse(input),
       }),
     requestRunInterrupt: (input) =>
       mutate({

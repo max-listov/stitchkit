@@ -1,5 +1,6 @@
 import {
   type Instructions,
+  type LanguageModelCallStartEvent,
   type ModelMessage,
   type PrepareStepFunction,
   type StopCondition,
@@ -17,6 +18,7 @@ import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
+import { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import type { AgentContextUsage, AgentRuntimeConfig } from './runtime';
 import {
   abortTerminalReason,
@@ -252,7 +254,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
      * which is what makes the ordering safe (→ ADR 0113).
      */
     const absorbed = new Map<string, string[]>();
-    let eventCount = 0;
+    let eventsSinceCheckpoint = 0;
     let sequence = 0;
     let terminalReason: AgentTerminalReason = 'success';
     // A requeued run re-executes from scratch and pays the provider again, so
@@ -277,6 +279,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     let terminalPolicyName: string | undefined;
     const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs);
     const executionSignal = idleDeadline.signal;
+    const operationLifecycle = createAgentRunOperationLifecycle({
+      store: config.store,
+      runtimeEpoch,
+      currentRun: () => run,
+      acceptSnapshot: (next) => {
+        snapshot = next;
+        observedVersion = next.version;
+        run = findRun(next.runs, run.id);
+      },
+      publish,
+      now,
+    });
 
     const updateReasoning = (text: string, metadata?: unknown): void => {
       const provider = providerEnvelope(metadata);
@@ -348,14 +362,30 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
 
     try {
       if (config.history?.compact) {
-        const compacted = await config.history.compact({
-          conversationId: run.conversationId,
-          store: config.store,
-          signal: executionSignal,
-        });
-        snapshot = compacted.snapshot;
-        observedVersion = snapshot.version;
-        run = findRun(snapshot.runs, run.id);
+        await operationLifecycle.startCompaction(generateId());
+        let compacted: Awaited<ReturnType<NonNullable<typeof config.history.compact>>>;
+        try {
+          compacted = await config.history.compact({
+            conversationId: run.conversationId,
+            store: config.store,
+            signal: executionSignal,
+          });
+          snapshot = compacted.snapshot;
+          observedVersion = snapshot.version;
+          run = findRun(snapshot.runs, run.id);
+          await operationLifecycle.finish('completed');
+        } catch (error) {
+          const latest = await config.store.loadRun({
+            conversationId: run.conversationId,
+            runId: run.id,
+          });
+          if (latest?.run.ownerId === runtimeEpoch) {
+            observedVersion = latest.snapshotVersion;
+            run = latest.run;
+          }
+          await operationLifecycle.finish(executionSignal.aborted ? 'cancelled' : 'failed');
+          throw error;
+        }
         // A model call the run caused is the run's cost, even though it made no
         // step and emitted no event of its own.
         if (compacted.usage) {
@@ -557,6 +587,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
+        onLanguageModelCallStart: async (event: LanguageModelCallStartEvent) => {
+          await operationLifecycle.startModelRequest(event.callId, step);
+        },
         repairToolCall: deferredToolRepair(config.loop?.prepareStep),
         ...(config.loop?.toolApproval && {
           toolApproval: config.loop.toolApproval,
@@ -567,6 +600,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }),
         ...((config.loop?.prepareStep || injection) && {
           prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
+            // The SDK can prepare the next step before the consumer has read
+            // that previous step's `finish-step` stream part. Derive the
+            // provider-reported fill from the completed step the SDK hands us,
+            // rather than depending on stream-consumer scheduling.
+            const previousStep = options.steps.at(-1);
+            if (previousStep) {
+              lastPromptTokens =
+                selectedModel?.normalizeUsage?.({
+                  usage: previousStep.usage,
+                  providerMetadata: previousStep.providerMetadata,
+                })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
+            }
             const prepared = await config.loop?.prepareStep?.({
               ...options,
               ...runtimeContext,
@@ -584,13 +629,24 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
 
       for await (const part of result.stream) {
         idleDeadline.touch();
-        eventCount += 1;
+        eventsSinceCheckpoint += 1;
         sequence += 1;
         if (
           firstOutputAt === undefined &&
-          ['text-delta', 'reasoning-delta', 'tool-call', 'file', 'source'].includes(part.type)
+          ((part.type === 'text-delta' && part.text.length > 0) ||
+            (part.type === 'reasoning-delta' && part.text.length > 0) ||
+            (part.type === 'tool-input-delta' && part.delta.length > 0) ||
+            part.type === 'tool-call')
         ) {
           firstOutputAt = performance.now();
+        }
+        if (
+          (part.type === 'text-delta' && part.text.length > 0) ||
+          (part.type === 'reasoning-delta' && part.text.length > 0) ||
+          (part.type === 'tool-input-delta' && part.delta.length > 0) ||
+          part.type === 'tool-call'
+        ) {
+          await operationLifecycle.firstOutput();
         }
         if (part.type === 'text-delta') {
           appendText(parts, part.text);
@@ -701,6 +757,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               status: 'interrupted',
               emittedAt: now().toISOString(),
             });
+            await checkpoint();
             throw part.error;
           }
           const output = isAgentToolError(part.error)
@@ -836,6 +893,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               : 'provider_failure';
           internalCause = part.error;
         } else if (part.type === 'finish-step') {
+          await operationLifecycle.finish(
+            part.finishReason === 'error' ? 'failed' : 'completed',
+          );
           const stepTrace = trace ? config.observe?.rootTrace(trace) : undefined;
           const stepUsage =
             selectedModel.normalizeUsage?.({
@@ -884,8 +944,27 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           modelUsage = mergeModelTotals(normalizeSdkUsage(part.totalUsage), modelUsage);
           usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
         }
-        if (eventCount % checkpointEveryEvents === 0) await checkpoint();
+        const structuralBoundary = [
+          'tool-call',
+          'tool-result',
+          'tool-error',
+          'tool-output-denied',
+          'tool-approval-request',
+          'tool-approval-response',
+          'finish-step',
+        ].includes(part.type);
+        if (structuralBoundary || eventsSinceCheckpoint >= checkpointEveryEvents) {
+          await checkpoint();
+          eventsSinceCheckpoint = 0;
+        }
       }
+      await operationLifecycle.finish(
+        executionSignal.aborted
+          ? 'cancelled'
+          : terminalReason === 'provider_failure'
+            ? 'failed'
+            : 'completed',
+      );
       if (terminalPolicyName !== undefined) terminalReason = 'policy_stop';
       if (executionSignal.aborted) terminalReason = abortTerminalReason(executionSignal);
       const awaitsApproval = parts.some((part) => part.type === 'tool-approval-request');
@@ -927,6 +1006,12 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         // the stream started and nothing reads it again from here on.
         observedVersion = latest.snapshotVersion;
         run = latestRun;
+      }
+      const staleOwner = isToolExecutionControlError(error) && error.reason === 'stale_run';
+      if (!staleOwner) {
+        await operationLifecycle.finish(
+          executionSignal.aborted || durableInterrupt ? 'cancelled' : 'failed',
+        );
       }
       if (isToolExecutionControlError(error) || executionSignal.aborted || durableInterrupt) {
         terminalReason = executionSignal.aborted

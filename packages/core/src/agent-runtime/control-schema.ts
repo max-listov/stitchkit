@@ -102,13 +102,19 @@ export const AgentMultiSessionCursorSchema = z
   .strict();
 export type AgentMultiSessionCursor = z.infer<typeof AgentMultiSessionCursorSchema>;
 
-function durable(
-  event: AgentRuntimeEvent,
-): event is Extract<
+function durable(event: AgentRuntimeEvent): event is Extract<
   AgentRuntimeEvent,
-  { type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'terminal' }
+  {
+    type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal';
+  }
 > {
-  return ['admission', 'assistant-checkpoint', 'run-state', 'terminal'].includes(event.type);
+  return [
+    'admission',
+    'assistant-checkpoint',
+    'run-state',
+    'run-operation',
+    'terminal',
+  ].includes(event.type);
 }
 
 export function advanceAgentMultiSessionCursor(

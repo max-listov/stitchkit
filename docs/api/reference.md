@@ -890,7 +890,9 @@ Server-only optional application runtime. See the
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent`; compose beside application idempotency for [durable operations](../guide/mcp-and-agents.md#durable-application-owned-execution) |
-| `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/terminal projections |
+| `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/run-operation/terminal projections |
+| `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps |
+| `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
 ### Complete runtime inventory
@@ -1020,7 +1022,8 @@ provider and required capabilities without constructing the model; runtime `mode
 runs before durable admission.
 
 Delivery exports are `AgentAdmissionEventSchema`, `AgentCheckpointEventSchema`,
-`AgentRunStateEventSchema`, `AgentTerminalEventSchema`, `AgentTransientDeltaEventSchema`,
+`AgentRunStateEventSchema`, `AgentRunOperationEventSchema`, `AgentTerminalEventSchema`,
+`AgentTransientDeltaEventSchema`,
 `AgentReasoningStartEventSchema`, `AgentReasoningDeltaEventSchema`,
 `AgentReasoningEndEventSchema`, `AgentToolStatusEventSchema`, `AgentRuntimeEvent`,
 `AgentRuntimeEventCursor`, `AgentRuntimeEventCursorSchema`, `AgentRuntimeCursorAdvance`,

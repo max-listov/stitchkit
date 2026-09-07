@@ -917,6 +917,7 @@ describe('agent runtime terminalization', () => {
         acceptInputAndAssignRun: () => Promise.reject(new Error('admission failed')),
         acquireRun: () => Promise.reject(new Error('not used')),
         checkpointRunAssistant: () => Promise.reject(new Error('not used')),
+        recordRunOperation: () => Promise.reject(new Error('not used')),
         requestRunInterrupt: () => Promise.reject(new Error('not used')),
         recoverRun: () => Promise.reject(new Error('not used')),
         commitRunTerminal: () => Promise.reject(new Error('not used')),

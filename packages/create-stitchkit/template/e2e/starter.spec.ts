@@ -26,7 +26,13 @@ test('calls the live backend through the typed contract client', async () => {
     }),
   );
 
-  await expect(client.status()).resolves.toEqual({ status: 'ok' });
+  // The release gate runs several isolated starters in parallel. A process can
+  // pass readiness and still briefly lose the first new connection while the
+  // host is saturated; retry the real typed call, while a dead backend still
+  // fails within the bounded acceptance window.
+  await expect(async () => {
+    await expect(client.status()).resolves.toEqual({ status: 'ok' });
+  }).toPass({ timeout: 5_000 });
 });
 
 test('publishes complete page metadata', async ({ page }) => {

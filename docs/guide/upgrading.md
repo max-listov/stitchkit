@@ -28,6 +28,33 @@ of the range if you want a different one.
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.85.0
+
+Only if you implement `AgentRuntimeStore` directly. Add the new durable
+operation mutation beside the existing run mutations:
+
+```ts
+// before
+const store: AgentRuntimeStore = {
+  checkpointRunAssistant,
+  commitRunTerminal,
+  // ...
+}
+
+// after
+const store: AgentRuntimeStore = {
+  checkpointRunAssistant,
+  recordRunOperation,
+  commitRunTerminal,
+  // ...
+}
+```
+
+It must atomically replace `AgentRun.lastOperation`, increment the run revision
+and conversation snapshot version, and enforce the supplied owner, fencing
+token and expected revision. Adapters built with `createAgentRuntimeStore`
+already receive the reference implementation; no driver method is added.
+
 ## What your range does, and does not, do for you
 
 A caret range (`"stitchkit": "^0.71.0"`) is a real gate: it resolves `< 0.72.0`,

@@ -15,6 +15,43 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.85.0] — 2026-09-07
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications implementing `AgentRuntimeStore` directly.
+Normalized drivers passed to `createAgentRuntimeStore` need no new method.
+
+- **Direct stores add `recordRunOperation`.** The mutation durably replaces
+  `AgentRun.lastOperation` under the existing revision, owner and fencing-token
+  contract. `// before: { checkpointRunAssistant, commitRunTerminal }` →
+  `// after: { checkpointRunAssistant, recordRunOperation, commitRunTerminal }`.
+  See the 0.85.0 migration in the upgrading guide.
+
+### Added
+
+- **Agent model requests and compaction expose one truthful durable lifecycle.**
+  `AgentRun.lastOperation` and the post-CAS `run-operation` event carry
+  `model-request`/`compaction`, operation and step identity, phases from
+  `started` through `first-output` to a terminal outcome, and original
+  timestamps. Request start is measured immediately before provider
+  `doStream`; first output requires a non-empty text/reasoning/tool-argument
+  delta or complete tool call. Reconnect reads the same fact from the snapshot,
+  and public terminal phases contain no raw provider error. The browser control
+  schema and cursors accept the durable event. `compaction` means the configured
+  callback is running, including a `not_needed` budget check; it does not claim
+  a summary was written. Wall-clock timestamps are observations, not ordered
+  durations, so a clock correction cannot fail a run. → ADR 0174.
+
+### Changed
+
+- **Tool, approval and step boundaries checkpoint independently from delta
+  batching.** `checkpointEveryEvents` still bounds ordinary stream persistence
+  and every live delta still publishes, while tool call/result/error/denial,
+  approval request/response and step finish force one checkpoint. The guarantee
+  begins when the managed loop observes the normalized boundary; it does not
+  claim persistence before a tool side effect. → ADR 0174.
+
 ## [0.84.1] — 2026-09-07
 
 ### Added

@@ -152,6 +152,68 @@ export const AgentRunStateSchema = z.enum([
 export const AgentRunQueuePrioritySchema = z.enum(['interrupt-next']);
 export type AgentRunQueuePriority = z.infer<typeof AgentRunQueuePrioritySchema>;
 
+export const AgentRunOperationKindSchema = z.enum(['model-request', 'compaction']);
+export const AgentRunOperationPhaseSchema = z.enum([
+  'started',
+  'first-output',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+const AgentRunOperationFieldsSchema = z.object({
+  operationId: AgentRecordIdSchema,
+  kind: AgentRunOperationKindSchema,
+  phase: AgentRunOperationPhaseSchema,
+  /** Present only for a provider model request; zero-based within the run. */
+  step: z.int().nonnegative().optional(),
+  startedAt: AgentTimestampSchema,
+  /** First non-empty text/reasoning/tool-argument delta or complete tool call. */
+  firstOutputAt: AgentTimestampSchema.optional(),
+  finishedAt: AgentTimestampSchema.optional(),
+});
+
+/** The last runtime operation, with timestamps that survive reconnect. */
+export const AgentRunOperationSchema = AgentRunOperationFieldsSchema.superRefine(
+  (operation, ctx) => {
+    if ((operation.kind === 'model-request') !== (operation.step !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['step'],
+        message: 'Only a model request has a step identity',
+      });
+    }
+    if (operation.kind === 'compaction' && operation.phase === 'first-output') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['phase'],
+        message: 'Compaction has no first-output phase',
+      });
+    }
+    if (
+      (operation.phase === 'first-output' && operation.firstOutputAt === undefined) ||
+      (operation.phase === 'started' && operation.firstOutputAt !== undefined) ||
+      (operation.kind === 'compaction' && operation.firstOutputAt !== undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['firstOutputAt'],
+        message: 'Only model output phases carry the observed first-output timestamp',
+      });
+    }
+    const terminal = ['completed', 'failed', 'cancelled'].includes(operation.phase);
+    if (terminal !== (operation.finishedAt !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['finishedAt'],
+        message: 'A terminal operation phase carries its observed finish timestamp',
+      });
+    }
+  },
+);
+
+export type AgentRunOperation = z.infer<typeof AgentRunOperationSchema>;
+
 export const AgentTerminalReasonSchema = z.enum([
   'success',
   'policy_stop',
@@ -340,6 +402,8 @@ const AgentRunFieldsSchema = z.object({
    * invoice by the core. Absent on a run that has not terminated.
    */
   usage: AgentUsageSchema.optional(),
+  /** Latest model-request or compaction lifecycle fact, durable across reconnect. */
+  lastOperation: AgentRunOperationSchema.optional(),
   createdAt: AgentTimestampSchema,
   updatedAt: AgentTimestampSchema,
 });

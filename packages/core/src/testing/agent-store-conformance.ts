@@ -449,10 +449,34 @@ async function conformanceScenario(
   if (!recoverable.items.some((item) => item.run.id === running.id)) {
     throw new Error('A running run must appear in a recoverable scan');
   }
-  const interrupted = await store.requestRunInterrupt({
+  const operation = await store.recordRunOperation({
     conversationId,
     runId: running.id,
     expectedRevision: checkpointedRun.revision,
+    ownerId: 'conformance-owner',
+    fencingToken: checkpointedRun.fencingToken,
+    operation: {
+      operationId: 'model-call-1:0',
+      kind: 'model-request',
+      phase: 'first-output',
+      step: 0,
+      startedAt: '2026-08-22T00:00:01.800Z',
+      firstOutputAt: '2026-08-22T00:00:01.900Z',
+    },
+  });
+  requireOutcome(operation, 'applied');
+  const operatedRun = operation.snapshot.runs.find((run) => run.id === running.id);
+  if (operatedRun?.lastOperation?.operationId !== 'model-call-1:0') {
+    throw new Error('Run operation identity did not survive its durable mutation');
+  }
+  const operatedView = await store.loadRun({ conversationId, runId: running.id });
+  if (operatedView?.run.lastOperation?.startedAt !== '2026-08-22T00:00:01.800Z') {
+    throw new Error('loadRun did not retain the original operation timestamp');
+  }
+  const interrupted = await store.requestRunInterrupt({
+    conversationId,
+    runId: running.id,
+    expectedRevision: operatedRun.revision,
   });
   requireOutcome(interrupted, 'applied');
   const interruptedRun = interrupted.snapshot.runs.find((run) => run.id === running.id);
