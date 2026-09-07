@@ -1211,7 +1211,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `ObservabilityDrainBound` | _type_ | `timeoutMs` and/or `signal` limiting how long `flush`/`close` wait; the wait ends, outstanding writes do not |
 | `ObservabilitySinkStatus` | _type_ | immutable counters for one bounded request/tool sink |
 | `ObservabilityStatus` | _type_ | per-surface plus aggregate operational snapshot |
-| `ObservabilityDrainReport` | _type_ | final closed/drained snapshot, duration, and `drained` — read from the counters, `false` only when `total.pending + total.preparing` is nonzero |
+| `ObservabilityDrainReport` | _type_ | final closed/drained snapshot, `durationMs` (the shared drain's age, not this call's wait), and `drained` — read from the counters, `false` only when `total.pending + total.preparing` is nonzero |
 | `ObservabilitySinkStatusSchema` / `ObservabilityStatusSchema` / `ObservabilityDrainReportSchema` | schema | runtime schemas for status/report integration boundaries |
 | `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
 | `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture and default-off `includeCancelled` rows |

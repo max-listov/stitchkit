@@ -34,6 +34,15 @@ export type ObservabilityStatus = z.infer<typeof ObservabilityStatusSchema>;
 
 /** Final immutable state returned after observability admission closes and drains. */
 export const ObservabilityDrainReportSchema = ObservabilityStatusObjectSchema.extend({
+  /**
+   * How long the DRAIN has run, not how long this call waited.
+   *
+   * The drain is started once and shared, so a second `close` under its own
+   * bound reports the age of the one drain — a caller that waited 20 ms after
+   * an earlier close began 300 ms ago reads 320, not 20. For the ordinary
+   * single close the two are the same number; for a shutdown log that wants
+   * its own wait, measure it at the call site.
+   */
   durationMs: z.number().nonnegative(),
   /**
    * Whether every accepted event settled before the caller's bound expired.
