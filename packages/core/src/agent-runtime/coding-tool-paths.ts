@@ -5,6 +5,7 @@ import {
   type AgentCodingToolAuthorization,
   AgentCodingToolAuthorizationSchema,
   type AgentCodingToolConfig,
+  AgentCodingToolPathAuthorizationSchema,
 } from './coding-tool-contract';
 import { codingRefusal } from './coding-tool-refusals';
 
@@ -103,6 +104,24 @@ export async function authorizeCodingTool(
 ): Promise<void> {
   const parsed = AgentCodingToolAuthorizationSchema.parse(request);
   if (!(await config.authorize(parsed))) forbidden('Coding tool permission denied');
+}
+
+export async function isCodingPathAuthorized(
+  config: AgentCodingToolConfig,
+  path: string,
+): Promise<boolean> {
+  if (!config.authorizePath) return true;
+  const parsed = AgentCodingToolPathAuthorizationSchema.parse({ path });
+  return await config.authorizePath(parsed);
+}
+
+export async function authorizeCodingPath(
+  config: AgentCodingToolConfig,
+  path: string,
+): Promise<void> {
+  if (!(await isCodingPathAuthorized(config, path))) {
+    forbidden('Coding tool path permission denied');
+  }
 }
 
 const codingPathLocks = new Map<string, Promise<void>>();

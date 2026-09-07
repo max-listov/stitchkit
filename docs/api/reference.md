@@ -1077,8 +1077,9 @@ artifact store is supplied, `read_output`.
 | `createAgentCodingTools` | function | construct direct host-authorized bounded file, listing, glob, search, exact-snippet edit, shell and artifact runtime-tool definitions; every ordinary refusal is a typed code with an instructive `hint`, and filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
 | `AGENT_CODING_TOOL_NAMES` | const | the mounted tool names — `read_file`, `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command`, `read_output` |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
-| `AgentCodingToolConfig` | _type_ | absolute root, required authorization callback, finite executable alias map, exact child environment and optional limits |
+| `AgentCodingToolConfig` | _type_ | absolute root, required operation authorization, optional async/sync `authorizePath({ path })` shared by direct file effects and discovery, finite executable alias map, exact child environment and optional limits |
 | `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |
+| `AgentCodingToolPathAuthorizationSchema` / `AgentCodingToolPathAuthorization` | schema / _type_ | strict workspace-relative path presented to the shared path policy before disclosure, opening or mutation |
 | `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout/termination-grace ceilings |
 | `AgentCodingArtifactStore` | _type_ | host-owned opaque artifact write and bounded read boundary |
 | `FileReadInputSchema` / `FileReadOutputSchema` | schema | bounded strict-UTF-8 byte slice; offsets must align with UTF-8 code-point boundaries |
@@ -1091,6 +1092,12 @@ without claiming an executable sandbox. The default ceilings are 4,096 path byte
 of aggregate argument text, 4 MiB per artifact and 30 seconds. The root is a path-resolution
 boundary, not an OS sandbox; executable behavior, process
 isolation, credentials and external-effect idempotency remain host responsibilities.
+
+When `authorizePath` denies a path, direct read/write/edit returns `FORBIDDEN`, while
+`list_directory`, `glob` and `search_files` omit it. Directory admission happens before descent and
+file admission before opening; `search_files.include` is also applied before content is read.
+`run_command` is intentionally outside this guarantee because an executable needs process isolation,
+not path filtering, to constrain its filesystem access. → ADR 0172.
 
 ## `stitchkit/agent-runtime/browser`
 

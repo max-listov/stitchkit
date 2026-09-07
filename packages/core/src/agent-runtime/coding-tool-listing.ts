@@ -7,7 +7,12 @@ import type {
   AgentCodingToolDefinition,
   AgentCodingToolLimits,
 } from './coding-tool-contract';
-import { authorizeCodingTool, boundedCodingRelativePath } from './coding-tool-paths';
+import {
+  authorizeCodingPath,
+  authorizeCodingTool,
+  boundedCodingRelativePath,
+  isCodingPathAuthorized,
+} from './coding-tool-paths';
 import {
   codingPathRefusal,
   codingRefusal,
@@ -115,11 +120,13 @@ export function createListingCodingTools(
       const root = await realpath(config.root);
       const relative =
         input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      await authorizeCodingPath(config, relative);
       await authorizeCodingTool(config, { operation: 'list', path: relative });
       const listing = await listContainedDirectory(
         root,
         relative,
         limits.maxListEntries,
+        (candidate) => isCodingPathAuthorized(config, candidate),
       ).catch((error: unknown) => {
         if (error instanceof Error && error.message.includes('ancestor is not a directory')) {
           codingPathRefusal('BAD_REQUEST', 'This path is not a directory', relative, {
@@ -156,6 +163,7 @@ export function createListingCodingTools(
     handler: async ({ input }) => {
       const relative =
         input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      await authorizeCodingPath(config, relative);
       await authorizeCodingTool(config, {
         operation: 'glob',
         pattern: input.pattern,
@@ -178,6 +186,7 @@ export function createListingCodingTools(
         symlinks: 'skip',
         excludeDirectory: (directory) =>
           directory.split(path.sep).some((segment) => excluded.has(segment)),
+        authorizePath: (candidate) => isCodingPathAuthorized(config, candidate),
       });
       const prefix = relative === '.' ? '' : `${relative}${path.sep}`;
       const matched = scan.files

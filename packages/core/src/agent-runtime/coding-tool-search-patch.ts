@@ -11,8 +11,10 @@ import type {
 } from './coding-tool-contract';
 import { compileWorkspaceGlob, DEFAULT_EXCLUDED_DIRECTORIES } from './coding-tool-listing';
 import {
+  authorizeCodingPath,
   authorizeCodingTool,
   boundedCodingRelativePath,
+  isCodingPathAuthorized,
   textOccurrences,
   withCodingPathLock,
 } from './coding-tool-paths';
@@ -146,9 +148,11 @@ export function createSearchAndPatchCodingTools(
         mode: input.mode,
       });
       const root = await realpath(config.root);
+      await authorizeCodingPath(config, '.');
       const excluded = new Set(
         config.search?.excludeDirectories ?? DEFAULT_EXCLUDED_DIRECTORIES,
       );
+      const included = input.include ? compileWorkspaceGlob(input.include) : null;
       const scan = await scanContainedFiles({
         root,
         maxDepth: limits.maxSearchDepth,
@@ -160,9 +164,12 @@ export function createSearchAndPatchCodingTools(
         }),
         excludeDirectory: (relative) =>
           relative.split(path.sep).some((segment) => excluded.has(segment)),
+        authorizePath: async (candidate, kind) => {
+          if (kind === 'file' && included && !included.test(candidate)) return false;
+          return await isCodingPathAuthorized(config, candidate);
+        },
       });
       const matcher = input.regex ? compileSearchRegex(input.query) : null;
-      const included = input.include ? compileWorkspaceGlob(input.include) : null;
       const hit = (line: string): boolean => {
         if (line.length > MAX_SEARCHED_LINE_BYTES) return false;
         if (matcher) {
@@ -180,7 +187,6 @@ export function createSearchAndPatchCodingTools(
       }> = [];
       let truncated = false;
       for (const file of scan.files) {
-        if (included && !included.test(file.relative)) continue;
         if (input.mode === 'path') {
           if (hit(file.relative)) matches.push({ path: file.relative });
         } else {
@@ -227,6 +233,7 @@ export function createSearchAndPatchCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      await authorizeCodingPath(config, relative);
       const parent = await openContainedParent(root, relative).catch((error: unknown) =>
         refuseMissingCodingPath(error, relative),
       );

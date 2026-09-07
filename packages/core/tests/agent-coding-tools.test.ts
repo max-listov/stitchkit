@@ -124,6 +124,91 @@ describe('host-authorized Agent coding tools', () => {
     });
   });
 
+  test('applies one async path policy before direct access, discovery and search reads', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-path-policy-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'src'));
+    await mkdir(path.join(root, 'credentials'));
+    await writeFile(path.join(root, '.env'), 'SECRET_MARKER=env\n');
+    await writeFile(path.join(root, 'credentials', 'token.txt'), 'SECRET_MARKER=token\n');
+    await writeFile(path.join(root, 'src', 'ordinary.ts'), 'export const ordinary = true;\n');
+    await writeFile(path.join(root, 'outside-include.txt'), 'ordinary but not included\n');
+    await symlink('.env', path.join(root, 'public-link'));
+
+    const admitted: string[] = [];
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: async ({ path: candidate }) => {
+          admitted.push(candidate);
+          await Promise.resolve();
+          return candidate !== '.env' && !candidate.startsWith('credentials');
+        },
+      }),
+    });
+    const options = { toolCallId: 'path-policy', messages: [], context: undefined };
+
+    const content = await executable(tools, 'search_files')(
+      { query: 'SECRET_MARKER', mode: 'content' },
+      options,
+    );
+    expect(content.matches).toEqual([]);
+    admitted.length = 0;
+    const ordinary = await executable(tools, 'search_files')(
+      { query: 'ordinary', mode: 'content', include: 'src/**' },
+      options,
+    );
+    expect(ordinary.matches).toEqual([
+      {
+        path: path.join('src', 'ordinary.ts'),
+        line: 1,
+        text: 'export const ordinary = true;',
+      },
+    ]);
+    expect(admitted).not.toContain('outside-include.txt');
+
+    const paths = await executable(tools, 'search_files')(
+      { query: '.', mode: 'path', regex: true },
+      options,
+    );
+    expect(paths.matches.map(({ path: candidate }: { path: string }) => candidate)).toEqual([
+      'outside-include.txt',
+      path.join('src', 'ordinary.ts'),
+    ]);
+    const listing = await executable(tools, 'list_directory')({ path: '.' }, options);
+    expect(listing.entries.map(({ name }: { name: string }) => name)).toEqual([
+      'src',
+      'outside-include.txt',
+      'public-link',
+    ]);
+    const glob = await executable(tools, 'glob')({ pattern: '**' }, options);
+    expect(glob.paths).toEqual(['outside-include.txt', path.join('src', 'ordinary.ts')]);
+
+    const originalError = console.error;
+    console.error = () => undefined;
+    await expect(
+      executable(tools, 'read_file')({ path: '.env' }, options),
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    await expect(
+      executable(tools, 'write_file')(
+        { path: '.env', content: 'changed', overwrite: true },
+        options,
+      ),
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    await expect(
+      executable(tools, 'edit_file')(
+        { path: '.env', oldText: 'SECRET_MARKER=env', newText: 'changed' },
+        options,
+      ),
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    await expect(
+      executable(tools, 'read_file')({ path: 'public-link' }, options),
+    ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+    console.error = originalError;
+    expect(await readFile(path.join(root, '.env'), 'utf8')).toBe('SECRET_MARKER=env\n');
+  });
+
   test('omits command execution when the host declares no executable aliases', () => {
     const definitions = createAgentCodingTools({ root: '/tmp', authorize: () => true });
     expect(definitions.map(({ name }) => name)).not.toContain('run_command');

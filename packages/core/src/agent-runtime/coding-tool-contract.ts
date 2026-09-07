@@ -77,9 +77,24 @@ export const AgentCodingToolAuthorizationSchema = z.discriminatedUnion('operatio
 export type AgentCodingToolLimits = z.infer<typeof AgentCodingToolLimitsSchema>;
 export type AgentCodingToolAuthorization = z.infer<typeof AgentCodingToolAuthorizationSchema>;
 
+export const AgentCodingToolPathAuthorizationSchema = z
+  .object({ path: z.string().min(1) })
+  .strict();
+
+export type AgentCodingToolPathAuthorization = z.infer<
+  typeof AgentCodingToolPathAuthorizationSchema
+>;
+
 export interface AgentCodingToolConfig {
   root: string;
   authorize(input: AgentCodingToolAuthorization): boolean | Promise<boolean>;
+  /**
+   * One operation-independent admission policy for workspace paths.
+   *
+   * A denied path is refused by direct file tools and omitted from discovery.
+   * The callback runs before a file is opened or its content is read.
+   */
+  authorizePath?(input: AgentCodingToolPathAuthorization): boolean | Promise<boolean>;
   executables?: Readonly<Record<string, string>>;
   environment?: Readonly<Record<string, string>>;
   artifacts?: AgentCodingArtifactStore;

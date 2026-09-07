@@ -286,8 +286,11 @@ approval input fails the run with a private diagnostic rather than starting a fr
 
 `stitchkit/agent-runtime/coding-tools` returns ordinary direct runtime tools named `read_file`,
 `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command` and optional
-`read_output`. Every call passes a
-required host authorization callback. File paths are relative, bounded and contained after
+`read_output`. Every call passes a required host authorization callback. An optional async/sync
+`authorizePath({ path })` is the one operation-independent policy for direct file access and
+discovery: direct read/write/edit refuses a denied path, while listing, glob and search omit it.
+Directory decisions happen before descent; file decisions and `search_files.include` happen before
+opening content. File paths are relative, bounded and contained after
 descriptor-relative resolution: each ancestor is opened without following symlinks and remains
 pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
@@ -300,7 +303,8 @@ UTF-8 and retained bytes are finite. Shell accepts a finite alias mapped by the 
 argument array — never a shell command string — and uses only the explicitly supplied environment.
 Arguments, output and time are bounded, while cancellation terminates the child. The configured
 root and cwd are path boundaries, not a security sandbox: isolate the process when an executable
-must not access the rest of the machine.
+must not access the rest of the machine. Path admission does not constrain `run_command`; an
+executable requires process isolation for that guarantee. → ADR 0172
 
 `edit_file` replaces one exact snippet. `oldText` is itself the freshness guard for the region it
 changes, so the digest is the optional `expectedSha256` and an edit is one call; pass the digest

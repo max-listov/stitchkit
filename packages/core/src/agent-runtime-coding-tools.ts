@@ -6,5 +6,7 @@ export {
   type AgentCodingToolDefinition,
   type AgentCodingToolLimits,
   AgentCodingToolLimitsSchema,
+  type AgentCodingToolPathAuthorization,
+  AgentCodingToolPathAuthorizationSchema,
   createAgentCodingTools,
 } from './agent-runtime/coding-tools';

@@ -1231,6 +1231,8 @@
     "AgentCodingToolDefinition",
     "AgentCodingToolLimits",
     "AgentCodingToolLimitsSchema",
+    "AgentCodingToolPathAuthorization",
+    "AgentCodingToolPathAuthorizationSchema",
     "createAgentCodingTools"
   ],
   "stitchkit/agent-runtime/browser": [

@@ -271,6 +271,7 @@ export async function listContainedDirectory(
   root: string,
   relative: string,
   maxEntries: number,
+  authorizePath?: (relative: string) => boolean | Promise<boolean>,
 ): Promise<{
   entries: {
     name: string;
@@ -295,12 +296,17 @@ export async function listContainedDirectory(
     }
     const raw = [...(await listAt(current))];
     raw.sort((left, right) => left.name.localeCompare(right.name));
+    const admitted = [];
+    for (const entry of raw) {
+      const entryPath = relative === '.' ? entry.name : path.join(relative, entry.name);
+      if (!authorizePath || (await authorizePath(entryPath))) admitted.push(entry);
+    }
     const entries: {
       name: string;
       kind: 'file' | 'directory' | 'symlink' | 'other';
       bytes?: number;
     }[] = [];
-    for (const entry of raw.slice(0, maxEntries)) {
+    for (const entry of admitted.slice(0, maxEntries)) {
       const kind = entry.isDirectory()
         ? 'directory'
         : entry.isSymbolicLink()
@@ -324,7 +330,7 @@ export async function listContainedDirectory(
       if (left.kind === right.kind) return left.name.localeCompare(right.name);
       return left.kind === 'directory' ? -1 : right.kind === 'directory' ? 1 : 0;
     });
-    return { entries, truncated: raw.length > maxEntries };
+    return { entries, truncated: admitted.length > maxEntries };
   } finally {
     await current.close();
   }
@@ -654,6 +660,10 @@ export async function scanContainedFiles(input: {
   readMaxBytes?: number;
   skipUnreadable?: boolean;
   excludeDirectory?: (relative: string) => boolean;
+  authorizePath?: (
+    relative: string,
+    kind: 'file' | 'directory' | 'symlink' | 'other',
+  ) => boolean | Promise<boolean>;
 }): Promise<ContainedFileScan> {
   const files: ContainedFile[] = [];
   let truncated = false;
@@ -676,6 +686,14 @@ export async function scanContainedFiles(input: {
       const relative = relativeDirectory
         ? path.join(relativeDirectory, entry.name)
         : entry.name;
+      const kind = entry.isDirectory()
+        ? 'directory'
+        : entry.isSymbolicLink()
+          ? 'symlink'
+          : entry.isFile()
+            ? 'file'
+            : 'other';
+      if (input.authorizePath && !(await input.authorizePath(relative, kind))) continue;
       if (entry.isSymbolicLink()) {
         if (input.symlinks === 'refuse') {
           throw new Error(`Contained file traversal refuses symlink: ${relative}`);

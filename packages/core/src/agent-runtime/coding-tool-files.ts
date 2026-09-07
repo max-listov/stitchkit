@@ -10,7 +10,11 @@ import {
   FileWriteInputSchema,
   FileWriteOutputSchema,
 } from './coding-tool-contract';
-import { authorizeCodingTool, boundedCodingRelativePath } from './coding-tool-paths';
+import {
+  authorizeCodingPath,
+  authorizeCodingTool,
+  boundedCodingRelativePath,
+} from './coding-tool-paths';
 import { codingPathRefusal, refuseMissingCodingPath } from './coding-tool-refusals';
 import {
   assertContainedFileCurrent,
@@ -50,6 +54,7 @@ export function createFileCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      await authorizeCodingPath(config, relative);
       const handle = await openContainedFile(root, relative).catch((error: unknown) =>
         refuseMissingCodingPath(error, relative),
       );
@@ -99,6 +104,7 @@ export function createFileCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      await authorizeCodingPath(config, relative);
       const bytes = Buffer.byteLength(input.content);
       if (bytes > limits.maxWriteBytes) {
         codingPathRefusal(

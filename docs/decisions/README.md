@@ -197,6 +197,7 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0169](0169-durable-runtime-facts-use-one-atomic-state-boundary.md) | Durable runtime facts use one atomic state boundary | Accepted — lifecycle facts and at-least-once notifications share async atomic updates while rendering and transport remain application-owned |
 | [0170](0170-new-mechanics-compose-existing-owners.md) | New mechanics compose existing owners | Accepted — socket membership, error maps and log bounds extend existing auth, error and sanitizer paths; duplicate DSL/plugin/name surfaces are rejected |
 | [0171](0171-geoip-swaps-complete-reader-generations.md) | GeoIP swaps complete reader generations | Accepted — City and optional ASN swap together, in-flight reads drain and failed reloads retain the last known good reader |
+| [0172](0172-a-path-policy-runs-before-discovery-or-reading.md) | A path policy runs before discovery or reading | Accepted — one host path decision gates direct file effects and filters discovery before any selected content is opened |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

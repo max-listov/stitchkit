@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Agent coding tools can enforce one path policy before disclosure or content reads.**
+  `createAgentCodingTools({ authorizePath })` accepts an async or synchronous callback shared by
+  direct read/write/edit, `list_directory`, `glob` and both `search_files` modes. Direct access to a
+  denied path returns `FORBIDDEN`; discovery omits it. The contained walker applies the decision
+  before descending into a directory or opening a file, and `search_files.include` now filters
+  before reading instead of after the whole scan. This lets a host protect `.env` or credential
+  paths without copying the framework scanner. Shell remains explicitly outside the guarantee: an
+  executable requires process isolation, not path filtering. → ADR 0172.
+
 ## [0.83.1] — 2026-09-07
 
 ### Fixed
