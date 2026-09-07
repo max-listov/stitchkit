@@ -37,6 +37,27 @@ const APPLICATION_TERMS = [
   'DiagnosticJournal',
 ] as const;
 
+/**
+ * A surface that is genuinely stable still has to prove it.
+ *
+ * The row said "stable" in the release that broke it — the same failure the
+ * comment above records for the application kernel, arriving by the other door:
+ * there the term list was too narrow, here the surface carried no evidence at
+ * all, so nothing could go stale and nothing could fail. One in twenty-eight is
+ * a stable surface; the sentence is what keeps that a measurement rather than a
+ * claim nobody rechecks.
+ */
+const OBSERVABILITY_TERMS = [
+  'stitchkit/observability',
+  'createObservability',
+  'ObservabilityDrainReport',
+  'ObservabilitySinkStatus',
+  'RequestEvent',
+  'createBoundedLogger',
+  'sanitizePayload',
+  'wrapInRequestContext',
+] as const;
+
 test('counts a minor once however many patches broke it', () => {
   const changelog = [
     '## [0.3.1] — x',
@@ -78,14 +99,22 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 11 of the 27 minors since 0.56.2, most recently 0.75.0');
+  expect(sentence).toBe('redefined in 12 of the 28 minors since 0.56.2, most recently 0.83.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 6 of the 27 minors since 0.56.2, most recently 0.79.0',
+    'redefined in 7 of the 28 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${application}_`);
+
+  const observability = cadenceSentence(
+    surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
+  );
+  expect(observability).toBe(
+    'redefined in 1 of the 28 minors since 0.56.2, most recently 0.83.0',
+  );
+  expect(guide).toContain(`_${observability}_`);
 });

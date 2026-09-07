@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.83.0] — 2026-09-07
+
 ### ⚠️ Breaking changes
 
 **Who must act:** anyone who builds an `ObservabilityDrainReport` by hand (a
@@ -31,10 +33,15 @@ test double, a persisted report re-parsed through
 
 - **Every observability `flush()` returns `Promise<boolean>` instead of
   `Promise<void>`** — `true` when the generation admitted before the call
-  settled inside the bound. `await sink.flush()` is unchanged; a declared
-  `Promise<void>` is not. The outcome could not be left to `getStatus()`:
-  flush waits on a generation, the status counts everything alive right now, so
-  a complete flush and an expired one are indistinguishable there.
+  settled inside the bound. This is not only the audit sink: it redefines
+  `stitchkit/application` (`createApplicationEventSink`, and
+  `ApplicationSnapshot` delivery through `createApplicationSnapshotSink`, whose
+  `close` gained the same bound) and `stitchkit/agent-runtime`
+  (`createAgentRuntimeEventSink`, `createAgentObservability`). `await
+  sink.flush()` is unchanged; a declared `Promise<void>` is not. The outcome
+  could not be left to `getStatus()`: flush waits on a generation, the status
+  counts everything alive right now, so a complete flush and an expired one are
+  indistinguishable there.
   `// before: const f: () => Promise<void> = sink.flush` →
   `// after: const f: () => Promise<boolean> = sink.flush`
 

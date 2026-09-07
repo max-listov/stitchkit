@@ -52,7 +52,7 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
-## Unreleased migration: observability drains are bounded
+## Released migration: 0.83.0
 
 Two things, both mechanical, and only if you touch an observability sink.
 
