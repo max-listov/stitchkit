@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.83.2] — 2026-09-07
+
 ### Added
 
 - **Agent coding tools can enforce one path policy before disclosure or content reads.**
