@@ -511,6 +511,13 @@ try {
             `[consumer-lane] node: ${runtime} diagnostic journal produced no proof`,
           );
         }
+        const drainOutput = step(`node: drain bound (${runtime})`, () =>
+          run(runtime, ['src/drain-bound.mjs'], dir),
+        );
+        if (!drainOutput.includes('packed drain bound: ok')) {
+          failed = true;
+          console.error(`[consumer-lane] node: ${runtime} drain bound produced no proof`);
+        }
       }
     }
   }

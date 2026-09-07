@@ -69,8 +69,16 @@ export function assertDrainBound(bound: ObservabilityDrainBound | undefined): vo
  * `flush({ signal })` per batch is exactly the shape that accumulates them.
  * A listener and a timer, both disposed here, cost nothing and leave nothing.
  *
- * The timer is unref'd: a drain bound must never be the thing keeping a process
- * alive when the whole point is shutting down.
+ * The timer is REF'D, and that is the whole mechanism. Unref'ing it reads like
+ * good hygiene — a drain bound should not keep a process alive while it is
+ * shutting down — and it silently destroys the feature: a pending write holds
+ * nothing, so when the stuck write is the last thing left, an unref'd timer
+ * lets the loop empty and the bound never fires at all. That is not an edge
+ * case, it is the case this exists for. The timer cannot outlive the deadline
+ * the caller itself asked for, so holding the loop for exactly that long is
+ * what was wanted. Found only by installing the published package and running
+ * it under `node`, where the process exits 13 on an unsettled top-level await;
+ * every in-process test passes because the runner keeps the loop alive.
  */
 export function withinBound(
   work: Promise<unknown>,
@@ -95,10 +103,7 @@ export function withinBound(
       onAbort = give;
       signal.addEventListener('abort', onAbort, { once: true });
     }
-    if (timeoutMs !== undefined) {
-      timer = setTimeout(give, timeoutMs);
-      timer.unref?.();
-    }
+    if (timeoutMs !== undefined) timer = setTimeout(give, timeoutMs);
   });
 
   return Promise.race([work.then(() => true), reached]).finally(() => {
