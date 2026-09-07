@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.83.1] — 2026-09-07
+
+### Fixed
+
+- **The drain bound could not fire when it was the only thing left to fire.**
+  0.83.0 unref'd the bound's timer, which reads like hygiene — a drain bound
+  should not keep a process alive while it is shutting down — and silently
+  destroyed the feature. A pending write holds nothing, so when the stuck write
+  is the last work in the process, an unref'd timer lets the event loop empty
+  and `close({ timeoutMs })` never settles at all. That is not an edge case, it
+  is the case the bound exists for; under Node the process exits 13 on the
+  unsettled await. The timer cannot outlive the deadline the caller asked for,
+  so it is ref'd again.
+
+  Every in-process test passed against the broken build, because a test runner
+  keeps the loop alive by itself. The consumer lane now runs the real failure
+  from the packed tarball under each runtime (`node: drain bound`), which is the
+  only place it was ever visible.
+
 ## [0.83.0] — 2026-09-07
 
 ### ⚠️ Breaking changes
