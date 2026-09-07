@@ -52,6 +52,59 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Released migration: 0.84.0
+
+Only if you call `createAgentCodingTools`.
+
+```bash
+rg -n "createAgentCodingTools"
+```
+
+**1. Backslashes are refused.** If anything in your system hands the tools a Windows-style path,
+it now gets `FORBIDDEN`. Convert to `/` at the boundary:
+
+```ts
+// before: read_file({ path: 'src\\index.ts' })   // reached openat as two segments
+// after:  read_file({ path: 'src/index.ts' })
+```
+
+This is the half that matters most: until now a backslash bypassed your **required**
+`authorize({ operation, path })` callback, not just `authorizePath`. A rule denying
+`credentials/token.txt` refused that spelling and served — and overwrote — the same file spelled
+`credentials\token.txt`. If your policy denies specific files, re-read your audit logs for
+backslash spellings.
+
+**2. Denying a directory now denies everything under it — and a policy must admit every directory
+on the way to a file**, the way POSIX needs `+x` on each directory in a path.
+
+If your policy is a DENY-list, it now does what it read as:
+
+```ts
+authorizePath: ({ path }) => path !== 'credentials'
+// before: hid `credentials` from glob, served `credentials/token.txt` to read_file
+// after:  refuses `credentials/token.txt`, `credentials/nested/deep.txt` and writes under it
+```
+
+If you relied on the old behaviour — a directory hidden from discovery but readable directly — you
+were relying on a defect, and the two halves of one callback disagreeing. Name the paths you
+actually want reachable instead.
+
+If your policy is an ALLOW-list, widen it to the directories it leads through, or nothing under
+them is reachable:
+
+```ts
+// before: allowed src/index.ts, because only the leaf was ever asked
+authorizePath: ({ path }) => path.startsWith('src/')
+// after: `src` itself is asked first and refused, so the file is refused too
+authorizePath: ({ path }) => path === 'src' || path.startsWith('src/')
+```
+
+The workspace root is not asked about — it is the boundary the tools already own.
+
+**3. The policy is called more often.** A path of depth N costs N+1 calls (`.`, then each ancestor,
+then the leaf), outermost first, stopping at the first refusal. A policy that logs or meters will
+see a different sequence, and will no longer see the leaf once an ancestor has refused.
+
 ## Released migration: 0.83.0
 
 Two things, both mechanical, and only if you touch an observability sink.

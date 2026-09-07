@@ -10,6 +10,13 @@ const AGENT_RUNTIME_TERMS = [
   'inputPolicy',
   'AgentUsage',
   'AgentHistory',
+  // The coding tools ship from `stitchkit/agent-runtime/coding-tools` and a
+  // consumer of them is a consumer of this surface. Left out, the table read
+  // "most recently 0.83.0" in the release that redefined what BOTH of their
+  // authorization callbacks are asked about — the same way the application row
+  // read "stable" through a break, which is why its own list was widened.
+  'createAgentCodingTools',
+  'AgentCodingTool',
 ] as const;
 
 /**
@@ -99,14 +106,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 12 of the 28 minors since 0.56.2, most recently 0.83.0');
+  expect(sentence).toBe('redefined in 15 of the 29 minors since 0.56.2, most recently 0.84.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 7 of the 28 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 7 of the 29 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${application}_`);
 
@@ -114,7 +121,7 @@ test('the maturity table carries the figure the changelog supports', async () =>
     surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
   );
   expect(observability).toBe(
-    'redefined in 1 of the 28 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 1 of the 29 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${observability}_`);
 });

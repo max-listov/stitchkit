@@ -15,6 +15,56 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.84.0] — 2026-09-07
+
+### ⚠️ Breaking changes
+
+**Who must act:** anyone using `createAgentCodingTools`. The separator fix
+below reaches BOTH callbacks — the required `authorize({ operation, path })`
+and the optional `authorizePath`. The recursion fix reaches `authorizePath`
+only. Anyone passing a non-canonical `cwd` to `run_command` is affected by the
+separator fix even if they implement neither policy shape.
+
+- **A backslash in a requested path is refused instead of silently becoming a
+  separator.** `contained-files` splits a relative path on `[\/]`, so
+  `credentials\token.txt` reached `openat` as two segments while every
+  authorization callback was handed the string whole and read it as one name.
+  A rule denying `credentials/token.txt` refused that spelling and served — then
+  overwrote — the same file spelled with a backslash. This bypassed the
+  **required** `authorize` callback, not only the `authorizePath` added in
+  0.83.2, and it has been reachable since 0.70.0. Requests carrying `\` now get
+  a typed `FORBIDDEN`; `run_command`'s `cwd` goes through the same segment and
+  separator validation as every file tool.
+  `// before: read_file('a\b.txt') → served past a rule denying 'a/b.txt'` →
+  `// after: read_file('a\b.txt') → FORBIDDEN, use 'a/b.txt'`
+
+- **`authorizePath` denies a directory on every surface it governs.** Direct
+  read, write and edit asked the path policy only about the leaf, so `authorizePath: p => p !== 'credentials'`
+  hid the directory from `glob` and served `credentials/token.txt` to
+  `read_file`, created files under it through `write_file` and rewrote it
+  through `edit_file`; `list_directory` and `glob` given a base path *inside* a
+  denied directory disclosed its contents and disagreed about the refusal shape.
+  Direct access and discovery base paths now ask about `.` and each ancestor,
+  outermost first, short-circuiting on the first refusal — segment-wise, so
+  denying `credentials` does not deny `credentials-backup`.
+  `// before: authorizePath asked once, about the leaf` →
+  `// after: asked about '.', then each ancestor, then the leaf`
+
+  **The policy must now admit every directory on the way to a file**, the way
+  POSIX needs `+x` on each directory in a path. A DENY-list is unaffected:
+  refusing `credentials` now refuses everything under it, which is what the rule
+  always read as. An ALLOW-list must be widened to name the directories it
+  leads through — `p => p.startsWith('src/')` refuses `src` itself and so loses
+  `src/index.ts`; write `p => p === 'src' || p.startsWith('src/')`. The
+  workspace root is not asked about: it is the boundary the tools already own.
+  A path of depth N costs N questions, and a policy keeping an audit no longer
+  sees the leaf once an ancestor refused.
+
+  This recursion is `authorizePath` only. The required `authorize({ operation,
+  path })` is still asked once, about the operation's own path, and a broad
+  `search` or `glob` is still one decision covering every file the walk opens —
+  which is the reason `authorizePath` exists at all. → ADR 0172 (amended).
+
 ## [0.83.2] — 2026-09-07
 
 ### Added
