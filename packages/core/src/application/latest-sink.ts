@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  assertDrainBound,
+  type ObservabilityDrainBound,
+  withinBound,
+} from '../internal/observability-sink';
 import { createBoundedChannel } from './channel';
 
 const SnapshotRevisionSchema = z.number().int().nonnegative();
@@ -43,8 +48,17 @@ export interface ApplicationSnapshotSink<TSnapshot extends RevisionedApplication
   /** Admit a newer absolute snapshot. Returns false after close or for a stale revision. */
   publish(snapshot: TSnapshot): boolean;
   getStatus(): ApplicationSnapshotSinkStatus;
-  /** Close admission and deliver the newest snapshot accepted before this boundary. */
-  close(): Promise<ApplicationSnapshotSinkStatus>;
+  /**
+   * Close admission and deliver the newest snapshot accepted before this
+   * boundary.
+   *
+   * Bounded like every other drain here. The application-kernel guide puts this
+   * call in a cleanup path, which is the same position — and the same failure —
+   * as the shutdown that spent its whole budget waiting on a write that never
+   * settled. The status is read after the wait ends, so `inFlight` and the
+   * queue say what was not delivered.
+   */
+  close(bound?: ObservabilityDrainBound): Promise<ApplicationSnapshotSinkStatus>;
 }
 
 /**
@@ -154,15 +168,19 @@ export function createApplicationSnapshotSink<TSnapshot extends RevisionedApplic
       return true;
     },
     getStatus,
-    close() {
-      if (closePromise) return closePromise;
-      accepting = false;
-      pending.close({ mode: 'drain' });
-      closePromise = new Promise((resolve) => {
-        resolveClose = resolve;
-        settleCloseIfIdle();
-      });
-      return closePromise;
+    close(bound) {
+      // Refused before anything is mutated: a call that throws leaves admission
+      // open rather than half-closed.
+      assertDrainBound(bound);
+      if (!closePromise) {
+        accepting = false;
+        pending.close({ mode: 'drain' });
+        closePromise = new Promise((resolve) => {
+          resolveClose = resolve;
+          settleCloseIfIdle();
+        });
+      }
+      return withinBound(closePromise, bound).then(() => getStatus());
     },
   };
 }

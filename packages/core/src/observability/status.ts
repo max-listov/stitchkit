@@ -35,6 +35,15 @@ export type ObservabilityStatus = z.infer<typeof ObservabilityStatusSchema>;
 /** Final immutable state returned after observability admission closes and drains. */
 export const ObservabilityDrainReportSchema = ObservabilityStatusObjectSchema.extend({
   durationMs: z.number().nonnegative(),
+  /**
+   * Whether every accepted event settled before the caller's bound expired.
+   *
+   * `false` means the drain gave up waiting and `total.pending` plus
+   * `total.preparing` are events the sink had not written — the number a
+   * shutdown log can state instead of guessing. Always `true` for an unbounded
+   * close, which waits however long the sink takes.
+   */
+  drained: z.boolean(),
 }).readonly();
 
 export type ObservabilityDrainReport = z.infer<typeof ObservabilityDrainReportSchema>;

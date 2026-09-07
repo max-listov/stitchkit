@@ -1207,10 +1207,11 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
-| `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(), close() }` with bounded sink lifecycle |
+| `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(bound?): Promise<boolean>, close(bound?) }` with bounded sink lifecycle |
+| `ObservabilityDrainBound` | _type_ | `timeoutMs` and/or `signal` limiting how long `flush`/`close` wait; the wait ends, outstanding writes do not |
 | `ObservabilitySinkStatus` | _type_ | immutable counters for one bounded request/tool sink |
 | `ObservabilityStatus` | _type_ | per-surface plus aggregate operational snapshot |
-| `ObservabilityDrainReport` | _type_ | final closed/drained snapshot plus duration |
+| `ObservabilityDrainReport` | _type_ | final closed/drained snapshot, duration, and `drained` — read from the counters, `false` only when `total.pending + total.preparing` is nonzero |
 | `ObservabilitySinkStatusSchema` / `ObservabilityStatusSchema` / `ObservabilityDrainReportSchema` | schema | runtime schemas for status/report integration boundaries |
 | `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
 | `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture and default-off `includeCancelled` rows |

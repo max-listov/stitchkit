@@ -6,8 +6,11 @@
 import type { RuntimeContext } from '../contract';
 import { recordedErrorMessage } from '../internal/errors';
 import {
+  assertDrainBound,
   type BoundedSinkManager,
   createBoundedSinkManager,
+  type ObservabilityDrainBound,
+  withinBound,
 } from '../internal/observability-sink';
 import { isRecord } from '../internal/typed';
 import type { MethodDef } from '../server/types';
@@ -94,13 +97,29 @@ export interface HttpRequestObserver {
 export interface Observability {
   request?: HttpRequestObserver;
   toolCall: ToolCallHooks;
-  /** Wait for events admitted before this call. */
-  flush(): Promise<void>;
+  /**
+   * Wait for events admitted before this call; `true` when they settled inside
+   * the bound.
+   *
+   * The outcome is RETURNED rather than left to `getStatus()`, which cannot
+   * answer it: flush waits on the generation admitted before this call, while
+   * the status counts everything alive right now — so a nonzero `pending` after
+   * a complete flush and after an expired one look identical.
+   */
+  flush(bound?: ObservabilityDrainBound): Promise<boolean>;
   /** Read an immutable snapshot of each enabled sink and their aggregate. */
   getStatus(): ObservabilityStatus;
-  /** Stop admission and drain every previously accepted event. Idempotent. */
-  close(): Promise<ObservabilityDrainReport>;
+  /**
+   * Stop admission and drain every previously accepted event. Idempotent.
+   *
+   * With a bound, returns a report rather than waiting past it; `drained` says
+   * which happened. The drain itself is started once and shared, so a second
+   * call with a shorter bound observes the same drain under its own limit.
+   */
+  close(bound?: ObservabilityDrainBound): Promise<ObservabilityDrainReport>;
 }
+
+export type { ObservabilityDrainBound };
 
 export type ProjectedDimensions = Readonly<Record<string, string | undefined>>;
 
@@ -236,7 +255,11 @@ export function createObservability(config: ObservabilityConfig): Observability 
   const requestManager = config.request ? createSinkManager(config.request) : undefined;
   const toolManager = config.tools ? createSinkManager(config.tools) : undefined;
   let closed = false;
-  let closePromise: Promise<ObservabilityDrainReport> | undefined;
+  // The drain is started once and shared. A second `close` with a shorter bound
+  // observes the SAME drain under its own limit rather than starting another.
+  let drain: Promise<void> | undefined;
+  let drainStartedAt = 0;
+  let unbounded: Promise<ObservabilityDrainReport> | undefined;
   const request: HttpRequestObserver | undefined = config.request
     ? {
         includePayload: config.request.includePayload ?? false,
@@ -369,25 +392,47 @@ export function createObservability(config: ObservabilityConfig): Observability 
   return {
     ...(request && { request }),
     toolCall: toolCall ?? {},
-    async flush() {
-      await Promise.all([requestManager?.flush(), toolManager?.flush()]);
+    flush(bound) {
+      assertDrainBound(bound);
+      // Not `async`: the refusal of a nonsensical bound is thrown the same way
+      // `close` throws it. As an async function this one alone turned it into a
+      // rejection, so the same bad input reached a caller through two channels.
+      return withinBound(Promise.all([requestManager?.flush(), toolManager?.flush()]), bound);
     },
     getStatus,
-    close() {
-      if (!closePromise) {
+    close(bound) {
+      // Refused BEFORE anything is mutated, so a call that throws has no
+      // effect and admission is not left half-closed.
+      assertDrainBound(bound);
+      if (!drain) {
         closed = true;
-        const startedAt = performance.now();
-        closePromise = Promise.all([requestManager?.close(), toolManager?.close()]).then(
-          () => {
-            const status = getStatus();
-            return ObservabilityDrainReportSchema.parse({
-              ...status,
-              durationMs: performance.now() - startedAt,
-            });
-          },
+        drainStartedAt = performance.now();
+        drain = Promise.all([requestManager?.close(), toolManager?.close()]).then(
+          () => undefined,
         );
       }
-      return closePromise;
+      const startedAt = drainStartedAt;
+      const report = (): ObservabilityDrainReport => {
+        const status = getStatus();
+        return ObservabilityDrainReportSchema.parse({
+          ...status,
+          durationMs: performance.now() - startedAt,
+          // Read from the COUNTERS, not from which side of the race won. A
+          // bound that expires on a sink that has in fact finished — a shutdown
+          // budget already tripped by an earlier step, so the signal arrives
+          // aborted — reported a failed drain over zero unwritten events, and
+          // the guide told the consumer to log that as lost audit.
+          drained: status.total.pending + status.total.preparing === 0,
+        });
+      };
+      // An unbounded close keeps returning the SAME promise, which is what
+      // "idempotent" has always meant here. Only a bounded call gets its own,
+      // because two callers may bound the one drain differently.
+      if (!bound?.signal && bound?.timeoutMs === undefined) {
+        unbounded ??= withinBound(drain, undefined).then(report);
+        return unbounded;
+      }
+      return withinBound(drain, bound).then(report);
     },
   };
 }

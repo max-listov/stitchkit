@@ -15,6 +15,60 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** anyone who builds an `ObservabilityDrainReport` by hand (a
+test double, a persisted report re-parsed through
+`ObservabilityDrainReportSchema`), and anyone who types an observability
+`flush()` as `Promise<void>`.
+
+- **`ObservabilityDrainReport` gained a required `drained` field.** Returned by
+  the framework, so reading code is unaffected; a hand-built object stops
+  compiling, and `ObservabilityDrainReportSchema.parse` rejects a stored report
+  written by an older version until it carries the field.
+  `// before: { request, tools, total, durationMs }` →
+  `// after: { request, tools, total, durationMs, drained }`
+
+- **Every observability `flush()` returns `Promise<boolean>` instead of
+  `Promise<void>`** — `true` when the generation admitted before the call
+  settled inside the bound. `await sink.flush()` is unchanged; a declared
+  `Promise<void>` is not. The outcome could not be left to `getStatus()`:
+  flush waits on a generation, the status counts everything alive right now, so
+  a complete flush and an expired one are indistinguishable there.
+  `// before: const f: () => Promise<void> = sink.flush` →
+  `// after: const f: () => Promise<boolean> = sink.flush`
+
+### Added
+
+- **Every observability drain takes a bound.** `flush(bound?)` and
+  `close(bound?)` accept `{ timeoutMs?, signal? }` on `createObservability`,
+  `createApplicationEventSink`, `createApplicationSnapshotSink`,
+  `createAgentRuntimeEventSink` and `createAgentObservability`. Unbounded, a
+  drain waits for every accepted event however long the sink takes: one write
+  that never settled held `close()` forever, and an application whose shutdown
+  graph gives every other step a deadline spent its entire budget here and
+  exited by force — measured by a consumer as five forced shutdowns in a week,
+  each burning 110 seconds with every application operation already completed
+  and the transport closed in 26 ms. A drain that cannot be bounded cannot take
+  part in a shutdown budget: it either fits, or it cancels the budget. New
+  export `ObservabilityDrainBound`.
+
+- **`ObservabilityDrainReport.drained`** says whether every accepted event
+  settled. It is read from the counters rather than from which side of the race
+  won, so a bound that expires on a sink that has in fact finished — a shutdown
+  signal already aborted by an earlier step — reports `true` rather than a false
+  audit-loss alarm.
+
+### Fixed
+
+- **Sink counters were readable mid-update.** `completed` was incremented one
+  microtask before the write left `pending`, and an id left `preparing` two
+  microtasks after `admit` had already put it in `writes` — so a status read
+  landing in either gap counted one event twice, or reported `accepted` below
+  `completed + pending`. Harmless while nothing read the counters at speed; a
+  caller-supplied abort signal fires synchronously and lands a bounded drain's
+  report exactly there. Each counter now moves in the same tick as its map.
+
 ## [0.82.0] — 2026-09-06
 
 ### ⚠️ Breaking changes

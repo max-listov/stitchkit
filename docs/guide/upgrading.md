@@ -52,6 +52,53 @@ makes one thing your job rather than the resolver's:
 The mechanical part is identical either way. Only the *noticing* differs, and an
 exact pin moves it onto you.
 
+## Unreleased migration: observability drains are bounded
+
+Two things, both mechanical, and only if you touch an observability sink.
+
+```bash
+rg -n "createObservability|createApplicationEventSink|createApplicationSnapshotSink|createAgentRuntimeEventSink|createAgentObservability"
+```
+
+**1. `flush()` returns `Promise<boolean>`.** `await sink.flush()` needs no
+change. Only a declared type does:
+
+```ts
+// before
+const flushAudit: () => Promise<void> = observability.flush
+// after
+const flushAudit: () => Promise<boolean> = observability.flush
+```
+
+**2. `ObservabilityDrainReport` carries `drained`.** The framework builds it, so
+reading code is unchanged. A hand-built report — a test double, or one persisted
+and re-parsed through `ObservabilityDrainReportSchema` — needs the field:
+
+```ts
+// before
+{ request, tools, total, durationMs }
+// after
+{ request, tools, total, durationMs, drained: true }
+```
+
+Then take the thing this release exists for. Every drain now accepts
+`{ timeoutMs?, signal? }`, so a shutdown can give the audit drain the same
+deadline it gives every other step:
+
+```ts
+const report = await observability.close({ timeoutMs: 5_000 })
+if (!report.drained) {
+  logger.warn('audit drain incomplete', {
+    unwritten: report.total.received - report.total.filtered - report.total.completed,
+  })
+}
+```
+
+The bound ends the **waiting**, not the writes: a sink's `write` is handed no
+cancellation, so an outstanding one keeps running against whatever you close
+next. Racing `close()` against your own timer looks equivalent and is not — it
+discards the report along with the wait.
+
 ## Released migration: 0.82.0
 
 One thing, and only if you mount MCP or agent tools from a `createTrackingContract` contract.

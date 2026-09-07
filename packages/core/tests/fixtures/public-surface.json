@@ -906,6 +906,7 @@
     "JsonValue",
     "Observability",
     "ObservabilityConfig",
+    "ObservabilityDrainBound",
     "ObservabilityDrainReport",
     "ObservabilityDrainReportSchema",
     "ObservabilitySinkStatus",

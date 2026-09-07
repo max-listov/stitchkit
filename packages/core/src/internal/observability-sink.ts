@@ -24,11 +24,100 @@ export interface BoundedSinkConfig<EVENT> {
   onDrop?(drop: BoundedSinkDrop<EVENT>): void | Promise<void>;
 }
 
+/**
+ * A caller's limit on how long a drain may WAIT.
+ *
+ * Unbounded, a drain waits for every accepted event however long the sink
+ * takes — correct when the sink is healthy, fatal when it is not. One write
+ * that never settles, a database that has stopped answering, held `close()`
+ * forever; an application whose shutdown graph gives every other step a
+ * deadline then spent its whole budget here and exited by force. A drain that
+ * cannot be bounded cannot take part in a shutdown budget: it either fits, or
+ * it cancels the budget.
+ *
+ * The bound ends the WAITING, not the writes: a sink's `write` is handed no
+ * cancellation, so an outstanding one keeps running against whatever the caller
+ * closes next. And it is a bound on waiting for I/O, not on wall time — no
+ * bound can preempt a `write` that occupies the event loop.
+ */
+export interface ObservabilityDrainBound {
+  /** Give up waiting after this many milliseconds. */
+  timeoutMs?: number;
+  /** Give up waiting when this signal aborts. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Refuse a nonsensical bound BEFORE anything is mutated, so a call that throws
+ * has no effect — admission stays open rather than half-closed.
+ */
+export function assertDrainBound(bound: ObservabilityDrainBound | undefined): void {
+  const timeoutMs = bound?.timeoutMs;
+  if (timeoutMs === undefined) return;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new TypeError('Observability drain timeoutMs must be a non-negative finite number');
+  }
+}
+
+/**
+ * Wait for `work`, but not past `bound`. Resolves `true` when the work settled
+ * first, `false` when the bound did.
+ *
+ * Composed by hand rather than with `AbortSignal.any`, because the composite it
+ * returns registers itself on the caller's signal and is never released: on Bun
+ * that is a dependent leaked per drain against a process-lifetime signal, and
+ * `flush({ signal })` per batch is exactly the shape that accumulates them.
+ * A listener and a timer, both disposed here, cost nothing and leave nothing.
+ *
+ * The timer is unref'd: a drain bound must never be the thing keeping a process
+ * alive when the whole point is shutting down.
+ */
+export function withinBound(
+  work: Promise<unknown>,
+  bound: ObservabilityDrainBound | undefined,
+): Promise<boolean> {
+  assertDrainBound(bound);
+  const { timeoutMs, signal } = bound ?? {};
+  if (timeoutMs === undefined && !signal) return work.then(() => true);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const reached = new Promise<false>((resolve) => {
+    const give = (): void => resolve(false);
+    // An already-aborted signal never fires `abort`, so it is answered here —
+    // and still through the race below, so `work` always gets a subscriber and
+    // a late rejection can never become an unhandled one.
+    if (signal?.aborted) {
+      give();
+      return;
+    }
+    if (signal) {
+      onAbort = give;
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(give, timeoutMs);
+      timer.unref?.();
+    }
+  });
+
+  return Promise.race([work.then(() => true), reached]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onAbort && signal) signal.removeEventListener('abort', onAbort);
+  });
+}
+
 export interface BoundedSinkManager<EVENT> {
   submit(produce: () => EVENT | Promise<EVENT>): void;
-  flush(): Promise<void>;
+  /** Whether the generation admitted before this call settled inside the bound. */
+  flush(bound?: ObservabilityDrainBound): Promise<boolean>;
   getStatus(): ObservabilitySinkStatus;
-  close(): Promise<ObservabilitySinkStatus>;
+  /**
+   * Stop admission and drain. The status is read AFTER the wait ends, so
+   * `pending` and `preparing` say what the sink had not written — including
+   * when the bound ended the wait early.
+   */
+  close(bound?: ObservabilityDrainBound): Promise<ObservabilitySinkStatus>;
 }
 
 const DEFAULT_MAX_PENDING = 1000;
@@ -59,7 +148,7 @@ export function createBoundedSinkManager<EVENT>(
   let dropped = 0;
   let failed = 0;
   let preparationFailed = 0;
-  let closePromise: Promise<ObservabilitySinkStatus> | undefined;
+  let drain: Promise<void> | undefined;
   const preparing = new Map<number, Promise<void>>();
   const writes = new Map<number, Promise<void>>();
 
@@ -94,16 +183,29 @@ export function createBoundedSinkManager<EVENT>(
       return;
     }
     accepted += 1;
+    // The counter and the map entry move TOGETHER. As a trailing `.finally`,
+    // the delete ran one microtask after the increment, so a status read landing
+    // in that gap saw an event counted as both `completed` and `pending` — and a
+    // caller-supplied abort signal fires synchronously, which lands a bounded
+    // drain's report exactly there. The observed report claimed `accepted: 1`
+    // with `completed: 1` and `pending: 1`.
+    const settle = (record: () => void): void => {
+      record();
+      writes.delete(id);
+    };
     const write = Promise.resolve()
       .then(() => config.write(event))
-      .then(() => {
-        completed += 1;
-      })
-      .catch((error) => {
-        failed += 1;
-        reportError(error, event);
-      })
-      .finally(() => writes.delete(id));
+      .then(
+        () =>
+          settle(() => {
+            completed += 1;
+          }),
+        (error) =>
+          settle(() => {
+            failed += 1;
+            reportError(error, event);
+          }),
+      );
     writes.set(id, write);
   };
   const awaitGeneration = async (boundary: number): Promise<void> => {
@@ -130,28 +232,40 @@ export function createBoundedSinkManager<EVENT>(
           });
         return;
       }
+      // Same rule, and the same gap: as a trailing `.finally`, this id left
+      // `preparing` two microtasks AFTER `admit` had already put it in
+      // `writes`, so one event was counted twice by `pending + preparing` —
+      // the sum a bounded drain reports as unwritten.
       const preparation = Promise.resolve()
         .then(produce)
-        .then((event) => admit(id, event))
-        .catch((error) => {
-          preparationFailed += 1;
-          reportError(error);
-        })
-        .finally(() => preparing.delete(id));
+        .then(
+          (event) => {
+            preparing.delete(id);
+            admit(id, event);
+          },
+          (error) => {
+            preparing.delete(id);
+            preparationFailed += 1;
+            reportError(error);
+          },
+        );
       preparing.set(id, preparation);
     },
-    flush() {
-      return awaitGeneration(sequence);
+    flush(bound) {
+      assertDrainBound(bound);
+      return withinBound(awaitGeneration(sequence), bound);
     },
     getStatus,
-    close() {
-      if (closePromise) return closePromise;
+    close(bound) {
+      assertDrainBound(bound);
+      // The drain is started once and shared: a second close under a shorter
+      // bound observes the SAME drain rather than starting another.
+      drain ??= awaitGeneration(sequence);
       closed = true;
       // The SAME snapshot function, not a second copy of the same eleven-field
       // literal: as two, a new counter appeared in whichever one its author was
       // looking at, and the other kept reporting the old shape.
-      closePromise = awaitGeneration(sequence).then(getStatus);
-      return closePromise;
+      return withinBound(drain, bound).then(getStatus);
     },
   };
 

@@ -129,7 +129,7 @@ export const observability = createObservability({
 })
 
 const status = observability.getStatus()
-const drained = await observability.close()
+const report = await observability.close({ timeoutMs: 5_000 })
 ```
 
 `maxPending` defaults to `1000` per sink and must be a positive safe integer.
@@ -147,13 +147,70 @@ without parsing callback logs.
 
 `flush()` snapshots the current generation and waits only for events admitted
 up to that call. `close()` atomically stops admission, drains every accepted
-generation and returns the final counters plus `durationMs`; repeated calls
-return the same report. Graceful shutdown order is therefore:
+generation and returns the final counters plus `durationMs`; repeated unbounded
+calls return the same report. Graceful shutdown order is therefore:
 
 1. stop HTTP/MCP admission;
 2. wait for active requests and tool calls;
-3. `await observability.close()`;
+3. `await observability.close({ timeoutMs })`;
 4. close the database/storage connection used by the sinks.
+
+### Give the drain a bound in a shutdown budget
+
+Unbounded, `close()` waits for every accepted event however long the sink takes.
+That is right when the sink is healthy and fatal when it is not: one write that
+never settles — a database that has stopped answering — holds the drain forever,
+and a shutdown that gives every other step a deadline then spends its entire
+budget here and exits by force. A drain that cannot be bounded cannot take part
+in a shutdown budget: it either fits, or it cancels the budget.
+
+Both `flush` and `close` take `{ timeoutMs?, signal? }`:
+
+```ts
+const report = await observability.close({ timeoutMs: 5_000 })
+if (!report.drained) {
+  const t = report.total
+  logger.warn('audit drain incomplete', {
+    stillWriting: t.pending + t.preparing,
+    neverWritten: t.received - t.filtered - t.completed,
+  })
+}
+```
+
+Those are two different numbers and the difference matters. `pending +
+preparing` is what the drain was still waiting for when the bound expired —
+events handed to `write` that may yet succeed. `received - filtered -
+completed` is every event the sink has not written **for any reason**: those,
+plus the ones already lost to `failed`, `dropped` and `preparationFailed`. A
+shutdown log that wants to state how much audit was lost wants the second; one
+that wants to explain why the drain did not finish wants the first.
+
+`drained` is read from the counters, not from which side of the race won, so a
+bound that expires on a sink that has in fact finished — a shutdown signal
+already aborted by an earlier step — reports `true` rather than a false alarm.
+
+The bound ends the **waiting**, not the writes: a sink's `write` is handed no
+cancellation, so an outstanding one keeps running against whatever the consumer
+closes next. It is a bound on waiting for I/O, not on wall time — no bound can
+preempt a `write` that occupies the event loop. Racing `close()` against your
+own timer looks equivalent and is not: it discards the report along with the
+wait.
+
+`flush(bound?)` takes the same bound and returns whether the generation it
+waited on settled. That outcome is returned rather than left to `getStatus()`,
+which cannot answer it: flush waits on the events admitted before the call while
+the status counts everything alive right now, so a complete flush and an expired
+one look identical there.
+
+Every other sink in the framework takes the same bound —
+`createApplicationEventSink`, `createApplicationSnapshotSink`,
+`createAgentRuntimeEventSink`, `createAgentObservability`. The hazard was never
+specific to the audit sink; it was specific to waiting without a limit.
+
+The drain itself is started once and shared, so a second `close` with a shorter
+bound observes the same drain under its own limit rather than starting another.
+Passing no bound keeps the previous behaviour exactly, including the identical
+returned promise.
 
 Stitchkit manages only in-process delivery. If process-crash durability matters,
 make `write` enqueue into a consumer-owned durable outbox and let that adapter

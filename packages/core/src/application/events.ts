@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { createBoundedSinkManager } from '../internal/observability-sink';
+import {
+  createBoundedSinkManager,
+  type ObservabilityDrainBound,
+} from '../internal/observability-sink';
 import type { ObservabilitySinkStatus } from '../observability/status';
 import {
   ApplicationHealthSchema,
@@ -52,9 +55,15 @@ export interface ApplicationEventSinkConfig {
 
 export interface ApplicationEventSink {
   publish(snapshot: ApplicationSnapshot): void;
-  flush(): Promise<void>;
+  /** Whether the generation admitted before this call settled inside the bound. */
+  flush(bound?: ObservabilityDrainBound): Promise<boolean>;
   getStatus(): ObservabilitySinkStatus;
-  close(): Promise<ObservabilitySinkStatus>;
+  /**
+   * Stop admission and drain. Bounded the same way as every other drain here:
+   * without a bound it waits however long the sink takes, which is what used to
+   * consume an entire application shutdown budget when a write never settled.
+   */
+  close(bound?: ObservabilityDrainBound): Promise<ObservabilitySinkStatus>;
 }
 
 /** Failure-isolated operator event delivery; canonical truth remains the absolute snapshot. */
@@ -70,8 +79,8 @@ export function createApplicationEventSink(
     publish(snapshot) {
       manager.submit(() => applicationLifecycleEvent(snapshot));
     },
-    flush: () => manager.flush(),
+    flush: (bound) => manager.flush(bound),
     getStatus: () => manager.getStatus(),
-    close: () => manager.close(),
+    close: (bound) => manager.close(bound),
   };
 }

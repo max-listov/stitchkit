@@ -15,6 +15,7 @@ export {
   type HttpRequestObserver,
   type Observability,
   type ObservabilityConfig,
+  type ObservabilityDrainBound,
   type ProjectedDimensions,
   type RequestEventSinkConfig,
   type RequestObservabilityConfig,

@@ -310,3 +310,227 @@ describe('managed observability sink lifecycle', () => {
     expect(report.tools?.closed).toBe(true);
   });
 });
+
+/**
+ * A drain that cannot be bounded cannot take part in a shutdown budget.
+ *
+ * Measured by a consumer on production: five forced shutdowns in a week, each
+ * one burning the whole 110-second budget with every application operation
+ * already completed and the transport closed in 26 ms. The distinguishing
+ * signal was the finalisation log reaching the line before `close()` and never
+ * the line after it — and between them stands exactly one call.
+ */
+describe('bounded observability drain', () => {
+  function stuckSink(): {
+    observability: ReturnType<typeof createObservability>;
+    started: () => number;
+  } {
+    let started = 0;
+    const observability = createObservability({
+      request: {
+        write: () => {
+          started += 1;
+          // The failure being reproduced: a write that never settles, the way a
+          // database that has stopped answering behaves.
+          return new Promise<void>(() => undefined);
+        },
+      },
+    });
+    return { observability, started: () => started };
+  }
+
+  function admit(
+    observability: ReturnType<typeof createObservability>,
+    path = '/stuck',
+  ): void {
+    observability.request?.complete({
+      context: context(path),
+      statusCode: 200,
+      durationMs: 1,
+    });
+  }
+
+  test('a stuck write does not hold close past the caller timeout', async () => {
+    const { observability, started } = stuckSink();
+    admit(observability);
+    await waitFor(() => started() === 1);
+
+    const report = await observability.close({ timeoutMs: 20 });
+
+    expect(report.drained).toBe(false);
+    expect(report.total).toMatchObject({
+      accepted: 1,
+      completed: 0,
+      pending: 1,
+      closed: true,
+    });
+    // The two numbers a shutdown log can state: what the drain was still
+    // waiting for, and everything the sink has not written for any reason.
+    const total = report.total;
+    expect(total.pending + total.preparing).toBe(1);
+    expect(total.received - total.filtered - total.completed).toBe(1);
+  });
+
+  test('a timeout and a signal together are both honoured', async () => {
+    const { observability } = stuckSink();
+    admit(observability);
+    const controller = new AbortController();
+    // The signal wins: a long timeout must not be what the caller waits for.
+    const closing = observability.close({ timeoutMs: 60_000, signal: controller.signal });
+    controller.abort();
+    expect((await closing).drained).toBe(false);
+
+    const { observability: other } = stuckSink();
+    admit(other);
+    // The timeout wins: a signal that never aborts must not make it unbounded.
+    expect(
+      (await other.close({ timeoutMs: 20, signal: new AbortController().signal })).drained,
+    ).toBe(false);
+  });
+
+  test('a bound that expires on a sink that finished reports a complete drain', async () => {
+    // The false alarm this guards: a shutdown holds one budget signal, an
+    // earlier step already tripped it, and `close` is reached with an
+    // already-aborted signal over a sink that drains in one microtask. Read
+    // from the race, that says `drained: false` with nothing unwritten, and the
+    // guide tells the consumer to log it as lost audit.
+    const observability = createObservability({ request: { write: () => undefined } });
+    admit(observability, '/ok');
+    await observability.close();
+
+    const report = await observability.close({ signal: AbortSignal.abort() });
+
+    expect(report.drained).toBe(true);
+    expect(report.total).toMatchObject({ completed: 1, pending: 0, preparing: 0 });
+  });
+
+  test('the report is never read mid-update, whenever the signal lands', async () => {
+    // An abort listener fires SYNCHRONOUSLY inside whoever calls abort(), so a
+    // bounded report lands between a counter and its map. It used to count one
+    // event as both `preparing` and `pending`, and to report `accepted` below
+    // `completed + pending` — an impossible sink.
+    for (let ticks = 0; ticks <= 6; ticks += 1) {
+      const observability = createObservability({
+        request: { write: () => Promise.resolve() },
+      });
+      admit(observability, '/e');
+      const controller = new AbortController();
+      const closing = observability.close({ signal: controller.signal });
+      let chain = Promise.resolve();
+      for (let step = 0; step < ticks; step += 1) chain = chain.then(() => undefined);
+      void chain.then(() => controller.abort());
+
+      const { total } = await closing;
+
+      expect({ ticks, impossible: total.accepted < total.completed + total.pending }).toEqual({
+        ticks,
+        impossible: false,
+      });
+      expect({ ticks, unwritten: total.pending + total.preparing }).toEqual({
+        ticks,
+        unwritten: total.completed === 1 ? 0 : 1,
+      });
+    }
+  });
+
+  test('a healthy sink drains inside its bound and says so', async () => {
+    const held = deferred();
+    const observability = createObservability({ request: { write: () => held.promise } });
+    admit(observability, '/ok');
+    held.resolve();
+
+    const report = await observability.close({ timeoutMs: 1_000 });
+
+    expect(report.drained).toBe(true);
+    expect(report.total).toMatchObject({ accepted: 1, completed: 1, pending: 0 });
+  });
+
+  test('a zero timeout still grants the drain whatever settles without waiting', async () => {
+    // Not a claim that zero preempts everything: `setTimeout(0)` is a
+    // macrotask, so every microtask-resolvable write completes first. A bound
+    // limits waiting for I/O, it cannot preempt a sink that occupies the loop.
+    const synchronous = createObservability({ request: { write: () => undefined } });
+    admit(synchronous, '/sync');
+    expect((await synchronous.close({ timeoutMs: 0 })).drained).toBe(true);
+
+    const { observability } = stuckSink();
+    admit(observability);
+    expect((await observability.close({ timeoutMs: 0 })).drained).toBe(false);
+  });
+
+  test('a second, shorter bound observes the same drain rather than starting another', async () => {
+    const { observability, started } = stuckSink();
+    admit(observability);
+    await waitFor(() => started() === 1);
+
+    const first = await observability.close({ timeoutMs: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const second = await observability.close({ timeoutMs: 10 });
+
+    expect(second.drained).toBe(false);
+    expect(started()).toBe(1);
+    // The decisive assertion, and the one this test used to lack: `durationMs`
+    // is the age of the SHARED drain. A second drain would have restarted the
+    // clock and reported roughly its own bound instead.
+    expect(first.durationMs).toBeLessThan(100);
+    expect(second.durationMs).toBeGreaterThan(100);
+  });
+
+  test('flush is bounded the same way and returns whether its generation settled', async () => {
+    const { observability, started } = stuckSink();
+    admit(observability);
+    await waitFor(() => started() === 1);
+
+    expect(await observability.flush({ timeoutMs: 20 })).toBe(false);
+    const controller = new AbortController();
+    const flushing = observability.flush({ signal: controller.signal });
+    controller.abort();
+    expect(await flushing).toBe(false);
+    // Admission is untouched: flush bounds the wait, it does not close.
+    expect(observability.getStatus().total).toMatchObject({ pending: 1, closed: false });
+
+    const healthy = createObservability({ request: { write: () => undefined } });
+    admit(healthy, '/ok');
+    expect(await healthy.flush({ timeoutMs: 1_000 })).toBe(true);
+  });
+
+  test('an unbounded close is unchanged, and reports a complete drain', async () => {
+    const observability = createObservability({ request: { write: () => undefined } });
+    admit(observability, '/ok');
+
+    const closing = observability.close();
+    // Same promise, the way it has always been.
+    expect(observability.close()).toBe(closing);
+    const report = await closing;
+
+    expect(report.drained).toBe(true);
+    expect(report.total).toMatchObject({ accepted: 1, completed: 1, pending: 0 });
+  });
+
+  test('a timeout that is not a non-negative finite number is refused, and closes nothing', () => {
+    const observability = createObservability({ request: { write: () => undefined } });
+    // Both methods throw the SAME way. `expect(fn).toThrow` cannot check this:
+    // it passes for a function that returns a rejected promise too, so it is
+    // blind to exactly the difference being pinned — an `async` method turns
+    // the identical bad input into a rejection a `.catch` would see and a
+    // synchronous `try` would not.
+    const call = (invoke: () => unknown): { threw: boolean; returned: unknown } => {
+      try {
+        return { threw: false, returned: invoke() };
+      } catch (error) {
+        expect(String(error)).toMatch(/non-negative finite/);
+        return { threw: true, returned: undefined };
+      }
+    };
+    expect(call(() => observability.close({ timeoutMs: -1 }))).toEqual({
+      threw: true,
+      returned: undefined,
+    });
+    expect(call(() => observability.flush({ timeoutMs: Number.NaN }))).toEqual({
+      threw: true,
+      returned: undefined,
+    });
+    // A refused call has no effect: admission is open, not half-closed.
+    expect(observability.getStatus().total.closed).toBe(false);
+  });
+});

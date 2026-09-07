@@ -1,4 +1,7 @@
-import { createBoundedSinkManager } from '../internal/observability-sink';
+import {
+  createBoundedSinkManager,
+  type ObservabilityDrainBound,
+} from '../internal/observability-sink';
 import type { ObservabilitySinkStatus } from '../observability/status';
 import {
   type AgentRuntimeEvent,
@@ -22,9 +25,15 @@ export interface AgentRuntimeEventSinkConfig {
 
 export interface AgentRuntimeEventSink {
   publish: AgentRuntimePublisher;
-  flush(): Promise<void>;
+  /** Whether the generation admitted before this call settled inside the bound. */
+  flush(bound?: ObservabilityDrainBound): Promise<boolean>;
   getStatus(): ObservabilitySinkStatus;
-  close(): Promise<ObservabilitySinkStatus>;
+  /**
+   * Stop admission and drain. Bounded the same way as every other drain here:
+   * without a bound it waits however long the sink takes, which is what used to
+   * consume an entire application shutdown budget when a write never settled.
+   */
+  close(bound?: ObservabilityDrainBound): Promise<ObservabilitySinkStatus>;
 }
 
 /** Bounded, failure-isolated transport-neutral delivery lifecycle. */
@@ -43,8 +52,8 @@ export function createAgentRuntimeEventSink(
       const projected = config.project?.(event) ?? (config.project ? undefined : event);
       if (projected) manager.submit(() => AgentRuntimeEventSchema.parse(projected));
     },
-    flush: () => manager.flush(),
+    flush: (bound) => manager.flush(bound),
     getStatus: () => manager.getStatus(),
-    close: () => manager.close(),
+    close: (bound) => manager.close(bound),
   };
 }
