@@ -24,6 +24,19 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * A tree of this test's own to sweep.
+ *
+ * The sweep removes directories, so a test that points it at the shared system
+ * temp directory deletes what every other test, every other lane and every
+ * other project on the machine has open there — and reads their leftovers back
+ * as its own result. Its own name carries no project prefix, so nothing sweeps
+ * the root itself.
+ */
+async function sweepRoot(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'lane-sweep-root-'));
+}
+
 async function settle(check: () => boolean, budgetMs = 5_000): Promise<void> {
   const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline && !check()) await Bun.sleep(50);
@@ -273,8 +286,9 @@ test.skipIf(!hasProcfs)(
  */
 async function laneDirectoryClaimedBy(
   keepAlive: boolean,
+  root: string,
 ): Promise<{ directory: string; owner: ReturnType<typeof Bun.spawn> }> {
-  const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+  const directory = await mkdtemp(join(root, 'stitchkit-starter-lane-'));
   const source = join(directory, 'owner.ts');
   await writeFile(
     source,
@@ -308,16 +322,17 @@ async function laneDirectoryClaimedBy(
 test.skipIf(!hasProcfs)(
   'a lane directory whose owner is gone is swept by the next run',
   async () => {
-    const { directory, owner } = await laneDirectoryClaimedBy(false);
+    const root = await sweepRoot();
+    const { directory, owner } = await laneDirectoryClaimedBy(false, root);
     try {
       await owner.exited;
       expect(existsSync(directory)).toBe(true);
 
-      expect(await sweepAbandonedTemporaryDirectories()).toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([directory]);
 
       expect(existsSync(directory)).toBe(false);
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   },
   30_000,
@@ -326,20 +341,21 @@ test.skipIf(!hasProcfs)(
 test.skipIf(!hasProcfs)(
   'a lane directory whose owner is still running is left alone',
   async () => {
-    const { directory, owner } = await laneDirectoryClaimedBy(true);
+    const root = await sweepRoot();
+    const { directory, owner } = await laneDirectoryClaimedBy(true, root);
     try {
-      expect(await sweepAbandonedTemporaryDirectories()).not.toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([]);
       expect(existsSync(directory)).toBe(true);
 
       // And the moment the owner is gone, the same sweep reclaims it.
       await stopProcessGroup(owner);
       await settle(() => !alive(owner.pid));
 
-      expect(await sweepAbandonedTemporaryDirectories()).toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([directory]);
       expect(existsSync(directory)).toBe(false);
     } finally {
       await stopProcessGroup(owner).catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   },
   30_000,
@@ -351,12 +367,13 @@ test.skipIf(!hasProcfs)(
     // Written by a lane from before the marker existed, or by one killed in the
     // moment between creating its directory and claiming it. Its owner cannot
     // be asked, so the fail-safe direction is to keep it.
-    const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+    const root = await sweepRoot();
+    const directory = await mkdtemp(join(root, 'stitchkit-starter-lane-'));
     try {
-      expect(await sweepAbandonedTemporaryDirectories()).not.toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([]);
       expect(existsSync(directory)).toBe(true);
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   },
   30_000,
@@ -441,17 +458,18 @@ test.skipIf(!hasProcfs)(
     // tree is 137 MiB, and every scaffolder test leaves a small directory. None
     // of them writes an owner marker, so age and emptiness are all there is to
     // go on — which is why the fail-safe direction is to keep.
-    const old = await mkdtemp(join(tmpdir(), 'stitchkit-consumer-'));
-    const young = await mkdtemp(join(tmpdir(), 'stitchkit-consumer-'));
-    const strayFile = join(tmpdir(), `stitchkit-${Date.now()}-stray.log`);
+    const root = await sweepRoot();
+    const old = await mkdtemp(join(root, 'stitchkit-consumer-'));
+    const young = await mkdtemp(join(root, 'stitchkit-consumer-'));
+    const strayFile = join(root, 'stitchkit-stray.log');
     await writeFile(strayFile, 'a log someone is still reading\n');
     const sevenHoursAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
     await utimes(old, sevenHoursAgo, sevenHoursAgo);
     await utimes(strayFile, sevenHoursAgo, sevenHoursAgo);
     try {
-      const removed = await sweepAbandonedTemporaryDirectories();
+      const removed = await sweepAbandonedTemporaryDirectories(root);
 
-      expect(removed).toContain(old);
+      expect(removed).toEqual([old]);
       expect(existsSync(old)).toBe(false);
       // Young: a run that may still be going.
       expect(removed).not.toContain(young);
@@ -460,9 +478,7 @@ test.skipIf(!hasProcfs)(
       expect(removed).not.toContain(strayFile);
       expect(existsSync(strayFile)).toBe(true);
     } finally {
-      await rm(old, { recursive: true, force: true });
-      await rm(young, { recursive: true, force: true });
-      await rm(strayFile, { force: true });
+      await rm(root, { recursive: true, force: true });
     }
   },
   30_000,
@@ -475,13 +491,15 @@ test.skipIf(!hasProcfs)(
     // neighbouring project's supervised backend was found holding three
     // descriptors inside an abandoned consumer tree while its own working
     // directory was in its own repository.
-    const directory = await mkdtemp(join(tmpdir(), 'stitchkit-consumer-'));
+    const root = await sweepRoot();
+    const directory = await mkdtemp(join(root, 'stitchkit-consumer-'));
     const target = join(directory, 'module.js');
+    const probe = join(root, 'reader-probe.ts');
     let reader: Bun.Subprocess<'ignore', 'pipe', 'ignore'> | undefined;
     try {
       await writeFile(target, 'export const x = 1;\n');
       await writeFile(
-        join(tmpdir(), 'stitchkit-reader-probe.ts'),
+        probe,
         [
           "import { open } from 'node:fs/promises';",
           `const handle = await open(${JSON.stringify(target)}, 'r');`,
@@ -490,7 +508,7 @@ test.skipIf(!hasProcfs)(
         ].join('\n'),
       );
       // Started OUTSIDE the tree, exactly like the process that was found.
-      const spawned = Bun.spawn(['bun', join(tmpdir(), 'stitchkit-reader-probe.ts')], {
+      const spawned = Bun.spawn(['bun', probe], {
         cwd: import.meta.dir,
         stdout: 'pipe',
         stderr: 'ignore',
@@ -509,7 +527,7 @@ test.skipIf(!hasProcfs)(
       const sevenHoursAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
       await utimes(directory, sevenHoursAgo, sevenHoursAgo);
 
-      expect(await sweepAbandonedTemporaryDirectories()).not.toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([]);
       expect(existsSync(target)).toBe(true);
 
       // And once the reader lets go, the same sweep reclaims it.
@@ -517,13 +535,30 @@ test.skipIf(!hasProcfs)(
       await settle(() => !alive(spawned.pid));
       await utimes(directory, sevenHoursAgo, sevenHoursAgo);
 
-      expect(await sweepAbandonedTemporaryDirectories()).toContain(directory);
+      expect(await sweepAbandonedTemporaryDirectories(root)).toEqual([directory]);
       expect(existsSync(directory)).toBe(false);
     } finally {
       if (reader) await stopProcessGroup(reader).catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
-      await rm(join(tmpdir(), 'stitchkit-reader-probe.ts'), { force: true });
+      await rm(root, { recursive: true, force: true });
     }
   },
   30_000,
 );
+
+test('the sweep defaults to the system temp directory', async () => {
+  // Every test above hands it a tree of its own, so nothing else would notice
+  // if the default stopped being the directory the lanes actually use.
+  const root = await mkdtemp(join(tmpdir(), 'lane-sweep-default-'));
+  const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+  try {
+    // Old enough to sweep, and empty, so the default root reaches it.
+    const sevenHoursAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
+    await utimes(directory, sevenHoursAgo, sevenHoursAgo);
+
+    expect(await sweepAbandonedTemporaryDirectories()).toContain(directory);
+    expect(existsSync(directory)).toBe(false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});

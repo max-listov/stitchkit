@@ -453,18 +453,27 @@ async function temporaryDirectoryIsAbandoned(directory: string): Promise<boolean
  * how these are actually produced. It covers the whole temporary namespace of
  * this repository rather than the lanes alone, because every script here cleans
  * up on the happy path and none of them survives a kill.
+ *
+ * `root` exists so a test can sweep a tree of its own. Pointed at the real
+ * shared temp directory — which is what a test without it must use — this
+ * removes things concurrently belonging to every other test, every other lane
+ * and every other project on the machine, and reads their leftovers back as its
+ * own result. That is a test with global side effects, and it fails the way
+ * they always do: green alone, red under a full run.
  */
-export async function sweepAbandonedTemporaryDirectories(): Promise<string[]> {
+export async function sweepAbandonedTemporaryDirectories(
+  root: string = tmpdir(),
+): Promise<string[]> {
   let entries: string[];
   try {
-    entries = await readdir(tmpdir());
+    entries = await readdir(root);
   } catch {
     return [];
   }
   const removed: string[] = [];
   for (const entry of entries) {
     if (!PROJECT_TEMP_PREFIXES.some((prefix) => entry.startsWith(prefix))) continue;
-    const directory = join(tmpdir(), entry);
+    const directory = join(root, entry);
     // Only directories. This namespace also collects stray log files, and a
     // sweep that removed those would be deleting evidence, not leftovers.
     try {
