@@ -8,7 +8,7 @@ import type {
   AgentCodingToolLimits,
 } from './coding-tool-contract';
 import {
-  authorizeCodingPath,
+  authorizeCodingPathChain,
   authorizeCodingTool,
   boundedCodingRelativePath,
   isCodingPathAuthorized,
@@ -120,7 +120,7 @@ export function createListingCodingTools(
       const root = await realpath(config.root);
       const relative =
         input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
-      await authorizeCodingPath(config, relative);
+      await authorizeCodingPathChain(config, relative);
       await authorizeCodingTool(config, { operation: 'list', path: relative });
       const listing = await listContainedDirectory(
         root,
@@ -163,7 +163,7 @@ export function createListingCodingTools(
     handler: async ({ input }) => {
       const relative =
         input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
-      await authorizeCodingPath(config, relative);
+      await authorizeCodingPathChain(config, relative);
       await authorizeCodingTool(config, {
         operation: 'glob',
         pattern: input.pattern,

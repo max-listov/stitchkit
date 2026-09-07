@@ -289,8 +289,13 @@ approval input fails the run with a private diagnostic rather than starting a fr
 `read_output`. Every call passes a required host authorization callback. An optional async/sync
 `authorizePath({ path })` is the one operation-independent policy for direct file access and
 discovery: direct read/write/edit refuses a denied path, while listing, glob and search omit it.
-Directory decisions happen before descent; file decisions and `search_files.include` happen before
-opening content. File paths are relative, bounded and contained after
+Denial is recursive on every surface — direct access and discovery base paths ask about `.` and each
+ancestor, outermost first, stopping at the first refusal, so denying `credentials` denies everything
+under it. The comparison is segment-wise, so it does not deny `credentials-backup`, and a path of
+depth N costs N+1 questions. Directory decisions happen before descent; file decisions and
+`search_files.include` happen before opening content. Requested paths use `/`: a backslash is
+refused rather than normalised, because the workspace walk reads it as a separator and every
+authorization callback would otherwise be asked about a different decomposition than the one opened. File paths are relative, bounded and contained after
 descriptor-relative resolution: each ancestor is opened without following symlinks and remains
 pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend

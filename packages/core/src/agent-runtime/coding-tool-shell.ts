@@ -9,7 +9,11 @@ import {
   createShellInputSchema,
   ShellOutputSchema,
 } from './coding-tool-contract';
-import { authorizeCodingTool, existingCodingPath } from './coding-tool-paths';
+import {
+  authorizeCodingTool,
+  boundedCodingRelativePath,
+  existingCodingPath,
+} from './coding-tool-paths';
 
 async function runShell(input: {
   executableName: string;
@@ -196,7 +200,17 @@ export function createShellCodingTool(
       const executable = executables[input.executable];
       if (!executable) throw new Error('Coding tool executable is not declared');
       const root = await realpath(config.root);
-      const cwd = await existingCodingPath(root, input.cwd, limits.maxPathBytes);
+      // The same SHAPE guard every file tool applies. The path policy stays
+      // deliberately out of `run_command` — an executable needs process
+      // isolation, not path filtering — but that is a decision about
+      // authorization, not a reason for `cwd` to accept spellings the file
+      // tools refuse. Without this, `a/../b` and `a\\b` were accepted here and
+      // refused everywhere else.
+      const cwd = await existingCodingPath(
+        root,
+        input.cwd === '.' ? '.' : boundedCodingRelativePath(input.cwd, limits.maxPathBytes),
+        limits.maxPathBytes,
+      );
       if (!(await stat(cwd.absolute)).isDirectory()) {
         throw new Error('Coding tool cwd is not a directory');
       }

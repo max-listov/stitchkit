@@ -124,6 +124,186 @@ describe('host-authorized Agent coding tools', () => {
     });
   });
 
+  /**
+   * A denied directory means the SAME thing on every surface.
+   *
+   * It did not. The walk refuses to descend into a denied directory, so denial
+   * was recursive during discovery; direct access asked only about the leaf. A
+   * host writing the obvious rule got a listing that hid `credentials` and a
+   * `read_file` that served the secret inside it.
+   *
+   * And underneath that, a worse one: `contained-files` splits paths on
+   * `[\\/]`, so `credentials\\token.txt` reached `openat` as two segments while
+   * every callback was handed it as one name. That bypassed the REQUIRED
+   * `authorize({ operation, path })` too — the one every consumer has had since
+   * 0.70.0 — for reads and for writes.
+   */
+  test('a denied directory is denied on every surface, whatever the spelling', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-path-chain-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'credentials', 'nested'), { recursive: true });
+    await mkdir(path.join(root, 'credentials-backup'));
+    await writeFile(path.join(root, 'credentials', 'token.txt'), 'SECRET_MARKER=token\n');
+    await writeFile(
+      path.join(root, 'credentials', 'nested', 'deep.txt'),
+      'SECRET_MARKER=deep\n',
+    );
+    await writeFile(path.join(root, 'credentials-backup', 'note.txt'), 'ordinary\n');
+
+    const asked: string[] = [];
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: ({ path: candidate }) => {
+          asked.push(candidate);
+          return candidate !== 'credentials';
+        },
+      }),
+    });
+    const options = { toolCallId: 'path-chain', messages: [], context: undefined };
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      const forbidden = { output: { error: 'FORBIDDEN' } };
+
+      // Direct access, at the leaf and deeper.
+      await expect(
+        executable(tools, 'read_file')({ path: 'credentials/token.txt' }, options),
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        executable(tools, 'read_file')({ path: 'credentials/nested/deep.txt' }, options),
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        executable(tools, 'edit_file')(
+          { path: 'credentials/token.txt', oldText: 'SECRET_MARKER=token', newText: 'x' },
+          options,
+        ),
+      ).rejects.toMatchObject(forbidden);
+
+      // A mutation that used to CREATE directories under a denied ancestor.
+      await expect(
+        executable(tools, 'write_file')(
+          { path: 'credentials/created/new.txt', content: 'x' },
+          options,
+        ),
+      ).rejects.toMatchObject(forbidden);
+      expect(existsSync(path.join(root, 'credentials', 'created'))).toBe(false);
+
+      // Discovery given a base path INSIDE the denied directory: it used to
+      // list the contents, and `glob` used to answer with an empty result —
+      // two refusal shapes for one policy decision.
+      await expect(
+        executable(tools, 'list_directory')({ path: 'credentials/nested' }, options),
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        executable(tools, 'glob')({ path: 'credentials/nested', pattern: '**' }, options),
+      ).rejects.toMatchObject(forbidden);
+
+      // The spelling that bypassed every rule by changing one character.
+      await expect(
+        executable(tools, 'read_file')({ path: 'credentials\\token.txt' }, options),
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        executable(tools, 'write_file')(
+          { path: 'credentials\\token.txt', content: 'PWNED', overwrite: true },
+          options,
+        ),
+      ).rejects.toMatchObject(forbidden);
+      expect(await readFile(path.join(root, 'credentials', 'token.txt'), 'utf8')).toBe(
+        'SECRET_MARKER=token\n',
+      );
+
+      // NEGATIVE CONTROL. Segment-wise, not `startsWith`: a rule denying
+      // `credentials` must not also deny `credentials-backup`, and an
+      // implementation that used string prefixes would pass everything above.
+      const allowed = await executable(tools, 'read_file')(
+        { path: 'credentials-backup/note.txt' },
+        options,
+      );
+      expect(allowed.text).toBe('ordinary\n');
+
+      // Outermost first, short-circuiting: nothing under a denied directory is
+      // ever put to the policy.
+      expect(asked).not.toContain('credentials/token.txt');
+      expect(asked).toContain('credentials');
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  /**
+   * The chain asks about ANCESTORS, and the workspace root is not one.
+   *
+   * Asking `.` on every direct access looks symmetrical with the walk, which
+   * does ask it — but there `.` is the base path the caller named. Asked
+   * unconditionally it inverts every allow-list: a host exposing one subtree
+   * answers `false` for a root it never meant to deny, and loses the subtree
+   * too. This is the assertion that pins it; without one, removing the `.`
+   * question changes nothing that any test can see.
+   */
+  test('an allow-list policy keeps working, and the workspace root is not asked about', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-allow-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'src'));
+    await writeFile(path.join(root, 'src', 'index.ts'), 'export const ordinary = true;\n');
+
+    const asked: string[] = [];
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        // Exposing one subtree: `false` for everything else, `.` included.
+        authorizePath: ({ path: candidate }) => {
+          asked.push(candidate);
+          return candidate.startsWith('src');
+        },
+      }),
+    });
+    const options = { toolCallId: 'allow-list', messages: [], context: undefined };
+
+    const read = await executable(tools, 'read_file')({ path: 'src/index.ts' }, options);
+
+    expect(read.text).toBe('export const ordinary = true;\n');
+    expect(asked).toEqual(['src', 'src/index.ts']);
+  });
+
+  /**
+   * `run_command` is outside the path POLICY on purpose — an executable needs
+   * process isolation, not path filtering. It is not outside the path SHAPE:
+   * accepting spellings here that every file tool refuses was an asymmetry with
+   * no decision behind it, and `\\` in particular was the separator that
+   * bypassed both callbacks everywhere else.
+   */
+  test('run_command cwd is held to the same path shape as every file tool', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-cwd-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'work'));
+
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        executables: { printf: '/usr/bin/printf' },
+      }),
+    });
+    const options = { toolCallId: 'cwd-shape', messages: [], context: undefined };
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      for (const cwd of ['work\\nested', 'work/../work']) {
+        await expect(
+          executable(tools, 'run_command')(
+            { executable: 'printf', args: ['x'], cwd },
+            options,
+          ),
+        ).rejects.toMatchObject({ output: { error: 'FORBIDDEN' } });
+      }
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test('applies one async path policy before direct access, discovery and search reads', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-path-policy-'));
     roots.push(root);
@@ -143,7 +323,10 @@ describe('host-authorized Agent coding tools', () => {
         authorizePath: async ({ path: candidate }) => {
           admitted.push(candidate);
           await Promise.resolve();
-          return candidate !== '.env' && !candidate.startsWith('credentials');
+          // EXACT, not `startsWith`. The prefix form was the one policy shape
+          // where a leaf-only check and a recursive one agree, so it hid both
+          // the ancestor gap and the separator gap this file now covers below.
+          return candidate !== '.env' && candidate !== 'credentials';
         },
       }),
     });

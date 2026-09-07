@@ -12,6 +12,7 @@ import type {
 import { compileWorkspaceGlob, DEFAULT_EXCLUDED_DIRECTORIES } from './coding-tool-listing';
 import {
   authorizeCodingPath,
+  authorizeCodingPathChain,
   authorizeCodingTool,
   boundedCodingRelativePath,
   isCodingPathAuthorized,
@@ -233,7 +234,7 @@ export function createSearchAndPatchCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
-      await authorizeCodingPath(config, relative);
+      await authorizeCodingPathChain(config, relative);
       const parent = await openContainedParent(root, relative).catch((error: unknown) =>
         refuseMissingCodingPath(error, relative),
       );

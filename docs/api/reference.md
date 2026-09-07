@@ -1094,8 +1094,12 @@ boundary, not an OS sandbox; executable behavior, process
 isolation, credentials and external-effect idempotency remain host responsibilities.
 
 When `authorizePath` denies a path, direct read/write/edit returns `FORBIDDEN`, while
-`list_directory`, `glob` and `search_files` omit it. Directory admission happens before descent and
-file admission before opening; `search_files.include` is also applied before content is read.
+`list_directory`, `glob` and `search_files` omit it. Denial is recursive: direct access and
+discovery base paths are checked against `.` and every ancestor, outermost first and segment-wise,
+so denying `credentials` denies `credentials/token.txt` but not `credentials-backup`. Directory
+admission happens before descent and file admission before opening; `search_files.include` is also
+applied before content is read. Requested paths must use `/` — a backslash is refused, because the
+containment walk reads it as a separator while a callback would read it as one name.
 `run_command` is intentionally outside this guarantee because an executable needs process isolation,
 not path filtering, to constrain its filesystem access. → ADR 0172.
 
