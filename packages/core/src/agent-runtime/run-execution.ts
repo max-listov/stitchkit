@@ -579,16 +579,17 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }
         return messages;
       };
+      const fallbackModel = selectedModel.model;
       const result = streamAgentTextBoundary<TOOLS>({
-        model: selectedModel.model,
+        model: fallbackModel,
         tools,
         instructions: withCarriedSystem(prompt.instructions),
         messages: history,
         abortSignal: executionSignal,
         maxRetries: 0,
         stopWhen: stopConditions,
-        onLanguageModelCallStart: async (event: LanguageModelCallStartEvent) => {
-          await operationLifecycle.startModelRequest(event.callId, step);
+        onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
+          operationLifecycle.noteProviderCall(event.callId);
         },
         repairToolCall: deferredToolRepair(config.loop?.prepareStep),
         ...(config.loop?.toolApproval && {
@@ -598,33 +599,43 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         ...(config.loop?.toolApprovalSecret && {
           experimental_toolApprovalSecret: config.loop.toolApprovalSecret,
         }),
-        ...((config.loop?.prepareStep || injection) && {
-          prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
-            // The SDK can prepare the next step before the consumer has read
-            // that previous step's `finish-step` stream part. Derive the
-            // provider-reported fill from the completed step the SDK hands us,
-            // rather than depending on stream-consumer scheduling.
-            const previousStep = options.steps.at(-1);
-            if (previousStep) {
-              lastPromptTokens =
-                selectedModel?.normalizeUsage?.({
-                  usage: previousStep.usage,
-                  providerMetadata: previousStep.providerMetadata,
-                })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
-            }
-            const prepared = await config.loop?.prepareStep?.({
-              ...options,
-              ...runtimeContext,
-            });
-            const injected = await takeInjectedMessages();
-            if (injected.length === 0) return prepared;
-            // The SDK carries a `prepareStep` message list into the next step,
-            // so appending only what was taken *this* boundary is right — and
-            // appending the whole accumulated list would duplicate it.
-            const base = prepared?.messages ?? options.messages;
-            return { ...prepared, messages: [...base, ...injected] };
-          },
-        }),
+        prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
+          // The SDK can prepare the next step before the consumer has read
+          // that previous step's `finish-step` stream part. Derive the
+          // provider-reported fill from the completed step the SDK hands us,
+          // rather than depending on stream-consumer scheduling.
+          const previousStep = options.steps.at(-1);
+          if (previousStep) {
+            lastPromptTokens =
+              selectedModel?.normalizeUsage?.({
+                usage: previousStep.usage,
+                providerMetadata: previousStep.providerMetadata,
+              })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
+          }
+          const prepared = await config.loop?.prepareStep?.({
+            ...options,
+            ...runtimeContext,
+          });
+          const injected = await takeInjectedMessages();
+          // The SDK carries a `prepareStep` message list into the next step,
+          // so appending only what was taken *this* boundary is right — and
+          // appending the whole accumulated list would duplicate it.
+          const preparedStep =
+            injected.length === 0
+              ? prepared
+              : {
+                  ...prepared,
+                  messages: [...(prepared?.messages ?? options.messages), ...injected],
+                };
+          return {
+            ...preparedStep,
+            model: await operationLifecycle.prepareModel(
+              preparedStep?.model ?? fallbackModel,
+              options.stepNumber,
+              generateId(),
+            ),
+          };
+        },
       });
 
       for await (const part of result.stream) {
@@ -956,6 +967,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         if (structuralBoundary || eventsSinceCheckpoint >= checkpointEveryEvents) {
           await checkpoint();
           eventsSinceCheckpoint = 0;
+          if (part.type === 'finish-step') operationLifecycle.checkpointStep(step - 1);
         }
       }
       await operationLifecycle.finish(
@@ -993,6 +1005,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         }
       }
     } catch (error) {
+      operationLifecycle.failStepCheckpoints(error);
       internalCause = error;
       const latest = await config.store.loadRun({
         conversationId: run.conversationId,

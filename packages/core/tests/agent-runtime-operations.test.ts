@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
+import { type LanguageModel, simulateReadableStream, tool } from 'ai';
+import { MockLanguageModelV3, MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   type AgentCompactionResult,
@@ -67,7 +67,7 @@ function prompt(): ComposedAgentPrompt {
 }
 
 function runtimeConfig(
-  model: MockLanguageModelV4,
+  model: LanguageModel,
   events: AgentRuntimeEvent[],
   store: AgentRuntimeStore = createMemoryAgentRuntimeStore(),
 ) {
@@ -236,6 +236,181 @@ describe('agent runtime durable operation lifecycle', () => {
       phase: 'completed',
       startedAt: starts[1]?.operation.startedAt,
     });
+    await runtime.close();
+  });
+
+  test('keeps lifecycle admission around an AI SDK v3 provider model', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'v3-text' },
+            { type: 'text-delta', id: 'v3-text', delta: 'done' },
+            { type: 'text-end', id: 'v3-text' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage,
+            },
+          ],
+        } as never),
+      }),
+    });
+    const runtime = createAgentRuntime(runtimeConfig(model, events));
+
+    expect((await submit(runtime).result).reason).toBe('success');
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(operations(events).map((event) => event.operation.phase)).toEqual([
+      'started',
+      'first-output',
+      'completed',
+    ]);
+    await runtime.close();
+  });
+
+  test('admits a global provider model ID before provider execution', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    let providerCalls = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        providerCalls += 1;
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'finish',
+                finishReason: { unified: 'stop', raw: undefined },
+                usage,
+              },
+            ],
+          }),
+        };
+      },
+    });
+    const globals = globalThis as typeof globalThis & { AI_SDK_DEFAULT_PROVIDER?: unknown };
+    const previousProvider = globals.AI_SDK_DEFAULT_PROVIDER;
+    globals.AI_SDK_DEFAULT_PROVIDER = {
+      specificationVersion: 'v4',
+      languageModel: () => model,
+    } as never;
+
+    try {
+      const runtime = createAgentRuntime(runtimeConfig('openai/gpt-4.1-mini', events));
+      expect((await submit(runtime).result).reason).toBe('success');
+      expect(providerCalls).toBe(1);
+      expect(operations(events).map((event) => event.operation.phase)).toEqual([
+        'started',
+        'completed',
+      ]);
+      await runtime.close();
+    } finally {
+      if (previousProvider === undefined) delete globals.AI_SDK_DEFAULT_PROVIDER;
+      else globals.AI_SDK_DEFAULT_PROVIDER = previousProvider;
+    }
+  });
+
+  test('serializes a deferred lifecycle write after the previous structural checkpoint', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    const durable = createMemoryAgentRuntimeStore();
+    const structuralCheckpoint = Promise.withResolvers<void>();
+    const order: string[] = [];
+    let startedWrites = 0;
+    const store: AgentRuntimeStore = {
+      ...durable,
+      async recordRunOperation(input) {
+        if (input.operation.kind === 'model-request' && input.operation.phase === 'started') {
+          startedWrites += 1;
+          if (startedWrites === 2) await structuralCheckpoint.promise;
+        }
+        return durable.recordRunOperation(input);
+      },
+      async checkpointRunAssistant(input) {
+        const result = await durable.checkpointRunAssistant(input);
+        if (input.assistant.parts.some((part) => part.type === 'tool-result')) {
+          order.push('structural-checkpoint');
+          structuralCheckpoint.resolve();
+        }
+        return result;
+      },
+    };
+    let providerCalls = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        providerCalls += 1;
+        order.push(`provider-${providerCalls}`);
+        return {
+          stream: simulateReadableStream({
+            chunks:
+              providerCalls === 1
+                ? [
+                    {
+                      type: 'tool-call',
+                      toolCallId: 'tool-deferred',
+                      toolName: 'lookup',
+                      input: '{}',
+                    },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'tool-calls', raw: undefined },
+                      usage,
+                    },
+                  ]
+                : [
+                    { type: 'text-start', id: 'text-deferred' },
+                    { type: 'text-delta', id: 'text-deferred', delta: 'done' },
+                    { type: 'text-end', id: 'text-deferred' },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'stop', raw: undefined },
+                      usage,
+                    },
+                  ],
+          } as never),
+        };
+      },
+    });
+    const runtime = createAgentRuntime({
+      ...runtimeConfig(model, events, store),
+      tools: () => ({
+        lookup: tool({ inputSchema: z.object({}), execute: () => ({ answer: 42 }) }),
+      }),
+      loop: { maxSteps: 3, checkpointEveryEvents: 10_000 },
+    });
+
+    expect((await submit(runtime).result).reason).toBe('success');
+    const starts = operations(events).filter((event) => event.operation.phase === 'started');
+    expect(providerCalls).toBe(2);
+    expect(starts.map((event) => event.operation.step)).toEqual([0, 1]);
+    expect(starts[0]?.operation.operationId).not.toBe(starts[1]?.operation.operationId);
+    expect(order.indexOf('structural-checkpoint')).toBeLessThan(order.indexOf('provider-2'));
+    await runtime.close();
+  });
+
+  test('does not invoke the provider when durable request admission fails', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    const durable = createMemoryAgentRuntimeStore();
+    let providerCalls = 0;
+    const store: AgentRuntimeStore = {
+      ...durable,
+      recordRunOperation(input) {
+        if (input.operation.kind === 'model-request' && input.operation.phase === 'started') {
+          throw new Error('operation storage unavailable');
+        }
+        return durable.recordRunOperation(input);
+      },
+    };
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        providerCalls += 1;
+        return { stream: simulateReadableStream({ chunks: [] } as never) };
+      },
+    });
+    const runtime = createAgentRuntime(runtimeConfig(model, events, store));
+
+    expect((await submit(runtime).result).reason).toBe('provider_failure');
+    expect(providerCalls).toBe(0);
+    expect(operations(events)).toEqual([]);
     await runtime.close();
   });
 

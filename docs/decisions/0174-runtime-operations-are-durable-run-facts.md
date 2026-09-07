@@ -33,11 +33,16 @@ identity, the model step when applicable, and the original observed timestamps.
 `AgentRuntimeStore.recordRunOperation` replaces that projection under the same
 owner, fencing-token and revision checks as other run mutations.
 
-Every successful mutation publishes a durable `run-operation` event. A model
-request starts at the AI SDK callback immediately before provider `doStream`,
-not at run acquisition and not as a claim that an HTTP request crossed the
-network. Its identity combines the SDK call identity with the zero-based step,
-because the SDK scopes one call identity to the whole managed generation. The
+Every successful mutation publishes a durable `run-operation` event. For a
+concrete model, the AI SDK callback supplies its call identity but does not own
+durable admission: callback failures are notification failures and the SDK
+suppresses them. Awaited step preparation gates the causal step, and model
+middleware records request start before it invokes provider `doStream`; a
+rejected write therefore prevents the provider invocation. A global provider
+model ID cannot be wrapped before the SDK resolves it, so step preparation
+admits that path with a runtime-generated request identity instead. The boundary
+is not run acquisition and does not claim that an HTTP request crossed the
+network. Every identity is unique within the run and includes the zero-based step. The
 first-output phase requires the first non-empty text, reasoning or streaming
 tool-argument delta, or a complete parsed tool call. Metadata, stream-start,
 usage, files and sources do not qualify. Terminal phases never carry provider
@@ -66,12 +71,20 @@ execute a tool before the consumer loop receives its result. The managed tool
 fence remains the pre/post-effect ownership boundary, and application
 idempotency remains necessary for crash-safe effects.
 
+The next model request is a separate boundary: its middleware waits until the
+previous step-finish checkpoint has committed before recording the next request
+and entering `doStream`. This removes the revision race between the SDK's
+producer loop and the runtime's stream consumer. It does not move tool execution
+behind persistence; it orders only the following provider request.
+
 ## Consequences
 
 - A live surface can distinguish compaction, provider wait and streaming using
   the same schema it reloads after reconnect.
 - One model run with tools has a distinct request identity per step without a
   second consumer event engine.
+- Failed lifecycle storage cannot be hidden by an SDK notification callback or
+  followed by an unrecorded provider invocation.
 - Default batching writes proportional to batched stream parts plus structural
   boundaries, rather than one growing assistant record per delta.
 - Custom `AgentRuntimeStore` implementations must add

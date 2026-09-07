@@ -15,6 +15,21 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.85.1] — 2026-09-07
+
+### Fixed
+
+- **A later model step cannot outrun its durable lifecycle or the previous
+  structural checkpoint.** AI SDK lifecycle callbacks deliberately suppress
+  callback failures, so the 0.85.0 request-start write could lose a revision
+  race with stream persistence while the provider request still executed. The
+  runtime now uses the callback only for concrete-model call identity; awaited
+  step preparation and model middleware record request admission before `doStream`, and every step
+  after the first waits for the prior step's structural checkpoint. A rejected
+  lifecycle write therefore prevents the provider call instead of producing an
+  unrecorded inference. Deferred-store and failed-admission tests cover both
+  sides of the guarantee. → ADR 0174 (amended).
+
 ## [0.85.0] — 2026-09-07
 
 ### ⚠️ Breaking changes

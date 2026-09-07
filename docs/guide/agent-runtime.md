@@ -846,8 +846,11 @@ transaction. Drivers without this guarantee must leave the capability absent. Se
 - `run-operation` follows a successful operation CAS. Its `operation` is the
   durable `AgentRun.lastOperation`: `model-request` or `compaction`, with
   `started`, `first-output`, `completed`, `failed` or `cancelled` phase and the
-  original timestamps. Model request start means the provider call is about to
-  enter `doStream`, not that HTTP transmission is measured. First output is a
+  original timestamps. Concrete models use SDK call identity in an awaited model
+  middleware; global provider IDs use a runtime-generated identity during awaited
+  step preparation. Both durably admit the request before entering `doStream`, so a failed
+  write prevents the provider call. This does not claim HTTP transmission is
+  measured. First output is a
   non-empty text/reasoning/tool-argument delta or complete tool call; metadata,
   usage, files and sources do not count;
 - `tool-status` is transient lifecycle presentation with JSON-safe input on
@@ -862,7 +865,9 @@ request/response and step-finish boundaries force an assistant checkpoint and
 reset that batch. The checkpoint is awaited after the managed loop observes the
 normalized boundary. It does **not** promise persistence before a tool side
 effect: tool fencing supplies the real ownership checks around execution, while
-cross-crash effect idempotency stays application-owned. → ADR 0174.
+cross-crash effect idempotency stays application-owned. The following model
+step waits for the previous step-finish checkpoint before its own durable
+request admission and provider invocation. → ADR 0174.
 
 `compaction` names invocation of the configured callback, including a
 `not_needed` context-budget check; it does not by itself say that history was

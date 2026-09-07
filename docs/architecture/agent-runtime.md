@@ -95,10 +95,14 @@ text/reasoning/tools/sources/files/provider envelopes, uses bounded checkpoints,
 step and named stop policy, and commits exactly one terminal state by CAS. Tool fencing runs before
 the handler and again before accepting its result; stale control errors are never model-facing.
 Model-request and compaction phases update `AgentRun.lastOperation` through that same store and
-publish durable `run-operation` events. Request start is the measured pre-`doStream` boundary;
+publish durable `run-operation` events. Awaited step preparation serializes each request after the
+previous structural checkpoint; concrete models then use SDK call identity in an awaited model
+middleware, while global provider IDs use a runtime-generated identity during preparation. Both
+paths make request start a fail-closed pre-`doStream` admission boundary;
 first output is the first non-empty text/reasoning/tool-argument delta or complete tool call. Structural tool,
 approval and step boundaries checkpoint independently from the ordinary delta batch, without
-claiming persistence before a tool effect. → ADR 0174.
+claiming persistence before a tool effect; the following provider step waits for the prior
+step-finish checkpoint. → ADR 0174.
 
 `createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
 caller-provided model per run, loads bounded typed resources, composes them through the canonical

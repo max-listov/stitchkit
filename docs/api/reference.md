@@ -891,7 +891,7 @@ Server-only optional application runtime. See the
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
 | `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent`; compose beside application idempotency for [durable operations](../guide/mcp-and-agents.md#durable-application-owned-execution) |
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/run-operation/terminal projections |
-| `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps |
+| `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps; request admission is awaited before provider invocation |
 | `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 
