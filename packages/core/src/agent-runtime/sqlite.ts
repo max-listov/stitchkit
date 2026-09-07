@@ -253,20 +253,25 @@ export function createSqliteAgentRuntimeStore(
     return result;
   };
 
+  const runTransaction = <RESULT>(
+    access: 'read' | 'write',
+    work: (transaction: SqliteDatabase) => Promise<RESULT>,
+  ): Promise<RESULT> =>
+    serial(async () => {
+      database.exec(access === 'read' ? 'BEGIN' : 'BEGIN IMMEDIATE');
+      try {
+        const result = await work(database);
+        database.exec('COMMIT');
+        return result;
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    });
+
   const driver: AgentRuntimeStoreDriver<SqliteDatabase> = {
     conversations: sqliteConversationPurge(database),
-    transaction: (work) =>
-      serial(async () => {
-        database.exec('BEGIN IMMEDIATE');
-        try {
-          const result = await work(database);
-          database.exec('COMMIT');
-          return result;
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-      }),
+    transaction: (work, options) => runTransaction(options?.access ?? 'write', work),
     head: {
       async load(transaction, conversationId) {
         const value = transaction
@@ -513,7 +518,7 @@ export function createSqliteAgentRuntimeStore(
       },
     },
     scanRecoverable: (input) =>
-      serial(async () => {
+      runTransaction('read', async () => {
         const cursor = input.cursor ? parseRecoveryCursor(input.cursor) : undefined;
         const values: SqliteValue[] = cursor
           ? [cursor[0], cursor[0], cursor[1], input.limit + 1]
@@ -551,7 +556,7 @@ export function createSqliteAgentRuntimeStore(
     store: createAgentRuntimeStore(driver),
     conversations: {
       list: (input) =>
-        serial(async () => {
+        runTransaction('read', async () => {
           if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
             throw new TypeError('Conversation page limit must be between 1 and 1000');
           }
@@ -616,7 +621,7 @@ export function createSqliteAgentRuntimeStore(
           });
         }),
       messages: (input) =>
-        serial(async () => {
+        runTransaction('read', async () => {
           if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 1_000) {
             throw new TypeError('Conversation message page limit must be between 1 and 1000');
           }

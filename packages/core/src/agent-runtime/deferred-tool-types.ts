@@ -7,7 +7,12 @@ import type { ToolExtend } from '../tools/mount';
 import type { AgentRuntimePrepareStep, AgentRuntimeRunContext } from './runtime';
 
 export const DeferredAgentToolSearchInputSchema = z.object({
-  query: z.string().min(1),
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'An exact tool name, or words describing the tool. Matched as one phrase first, then word by word.',
+    ),
   reason: z.enum(['inactive_call']).optional(),
 });
 export const DeferredAgentToolMatchSchema = z.object({

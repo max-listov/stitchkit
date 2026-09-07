@@ -91,7 +91,15 @@ export type AgentStoreCompareAndSwapResult =
 
 export interface AgentRuntimeStoreDriver<TRANSACTION> {
   conversations?: AgentConversationPurgeDriver<TRANSACTION>;
-  transaction<RESULT>(work: (transaction: TRANSACTION) => Promise<RESULT>): Promise<RESULT>;
+  /**
+   * Run one coherent store operation. `read` lets an adapter take a stable
+   * snapshot without reserving its writer slot; absent options retain the
+   * write-safe transaction used by existing adapters.
+   */
+  transaction<RESULT>(
+    work: (transaction: TRANSACTION) => Promise<RESULT>,
+    options?: { access: 'read' | 'write' },
+  ): Promise<RESULT>;
   head: {
     load(
       transaction: TRANSACTION,
@@ -890,19 +898,22 @@ export function createAgentRuntimeStore<TRANSACTION>(
   driver: AgentRuntimeStoreDriver<TRANSACTION>,
 ): AgentRuntimeStore {
   const loadSnapshot = (conversationId: string): Promise<AgentSnapshot> =>
-    driver.transaction(async (transaction) => {
-      const [stored, messages, activeRecords] = await Promise.all([
-        driver.head.load(transaction, conversationId),
-        driver.history.load(transaction, conversationId),
-        driver.runs.listActive(transaction, conversationId),
-      ]);
-      const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
-      const referencedRecords = await driver.runs.loadMany(transaction, {
-        conversationId,
-        runIds: referencedRunIds(messages),
-      });
-      return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
-    });
+    driver.transaction(
+      async (transaction) => {
+        const [stored, messages, activeRecords] = await Promise.all([
+          driver.head.load(transaction, conversationId),
+          driver.history.load(transaction, conversationId),
+          driver.runs.listActive(transaction, conversationId),
+        ]);
+        const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
+        const referencedRecords = await driver.runs.loadMany(transaction, {
+          conversationId,
+          runIds: referencedRunIds(messages),
+        });
+        return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
+      },
+      { access: 'read' },
+    );
 
   /**
    * `loadRun` reads one run and the head. `listActiveRuns` also reads history:
@@ -915,44 +926,50 @@ export function createAgentRuntimeStore<TRANSACTION>(
     conversationId: string;
     runId: string;
   }): Promise<AgentRunView | undefined> =>
-    driver.transaction(async (transaction) => {
-      const [stored, record] = await Promise.all([
-        driver.head.load(transaction, input.conversationId),
-        driver.runs.load(transaction, input),
-      ]);
-      if (!record) return undefined;
-      const parsed = AgentStoredRunSchema.parse(record);
-      if (
-        parsed.run.conversationId !== input.conversationId ||
-        parsed.run.id !== input.runId
-      ) {
-        throw new TypeError('Stored run does not match the identity it was loaded by');
-      }
-      const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(input.conversationId));
-      return AgentRunViewSchema.parse({
-        snapshotVersion: head.version,
-        run: parsed.run,
-        ...(parsed.terminalAssistant && { assistant: parsed.terminalAssistant }),
-      });
-    });
+    driver.transaction(
+      async (transaction) => {
+        const [stored, record] = await Promise.all([
+          driver.head.load(transaction, input.conversationId),
+          driver.runs.load(transaction, input),
+        ]);
+        if (!record) return undefined;
+        const parsed = AgentStoredRunSchema.parse(record);
+        if (
+          parsed.run.conversationId !== input.conversationId ||
+          parsed.run.id !== input.runId
+        ) {
+          throw new TypeError('Stored run does not match the identity it was loaded by');
+        }
+        const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(input.conversationId));
+        return AgentRunViewSchema.parse({
+          snapshotVersion: head.version,
+          run: parsed.run,
+          ...(parsed.terminalAssistant && { assistant: parsed.terminalAssistant }),
+        });
+      },
+      { access: 'read' },
+    );
 
   const listActiveRuns = (conversationId: string): Promise<readonly AgentRun[]> =>
-    driver.transaction(async (transaction) => {
-      const [records, messages] = await Promise.all([
-        driver.runs.listActive(transaction, conversationId),
-        driver.history.load(transaction, conversationId),
-      ]);
-      const runs = records.map((record) => AgentStoredRunSchema.parse(record).run);
-      for (const run of runs) {
-        if (run.conversationId !== conversationId) {
-          throw new TypeError('Active run belongs to another conversation');
+    driver.transaction(
+      async (transaction) => {
+        const [records, messages] = await Promise.all([
+          driver.runs.listActive(transaction, conversationId),
+          driver.history.load(transaction, conversationId),
+        ]);
+        const runs = records.map((record) => AgentStoredRunSchema.parse(record).run);
+        for (const run of runs) {
+          if (run.conversationId !== conversationId) {
+            throw new TypeError('Active run belongs to another conversation');
+          }
+          if (!isActiveRunState(run.state)) {
+            throw new TypeError('Active run listing returned a terminal run');
+          }
         }
-        if (!isActiveRunState(run.state)) {
-          throw new TypeError('Active run listing returned a terminal run');
-        }
-      }
-      return orderRuns(messages, runs);
-    });
+        return orderRuns(messages, runs);
+      },
+      { access: 'read' },
+    );
 
   const mutate = (operation: StoreOperation): Promise<AgentStoreMutationResult> =>
     driver.transaction(async (transaction) => {

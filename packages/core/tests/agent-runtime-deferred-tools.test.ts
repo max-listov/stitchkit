@@ -10,6 +10,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/agent-runtime';
+import { placeholderDeferredSearch } from '../src/agent-runtime/deferred-tool-search';
+import { ranked } from '../src/agent-runtime/deferred-tool-selection';
 import { defineRuntimeTool } from '../src/tools';
 
 const usage = {
@@ -423,5 +425,61 @@ describe('deferred Agent tool surface', () => {
         },
       ],
     });
+  });
+});
+
+/**
+ * A `NO_MATCH` the model can act on.
+ *
+ * Observed on a real run against 0.83.2: the catalog held `resource_clock:
+ * Current server time and timezone.`, the model asked for
+ * `resource_clock time timezone` — the tool's own name plus the words it
+ * expected to find — and got `NO_MATCH`, twice, widening the query with
+ * synonyms each time. The bare name selected it immediately. The whole query
+ * was one substring needle, so adding a true word could only ever subtract.
+ */
+describe('deferred catalog query semantics', () => {
+  const manifest = [
+    {
+      name: 'resource_clock',
+      description: 'Current server time and timezone.',
+      inputSchema: {},
+    },
+    {
+      name: 'resource_disk',
+      description: 'Free space on the data volume.',
+      inputSchema: {},
+    },
+  ];
+
+  test('a phrase that matches nothing falls back to its words, best match first', () => {
+    expect(ranked('resource_clock time timezone', manifest)).toEqual(['resource_clock']);
+    // Ranked by how many words an entry carries, not by manifest order.
+    expect(ranked('free space timezone', manifest)).toEqual([
+      'resource_disk',
+      'resource_clock',
+    ]);
+  });
+
+  test('the phrase pass still wins, so every query that selected before selects the same', () => {
+    // `resource` is a prefix of both names: the phrase pass answers, in
+    // manifest order, and the word pass never runs.
+    expect(ranked('resource', manifest)).toEqual(['resource_clock', 'resource_disk']);
+    // An exact name is first even though the other entry says "time" too.
+    expect(ranked('resource_clock', manifest)).toEqual(['resource_clock']);
+  });
+
+  test('words nobody carries still answer nothing', () => {
+    expect(ranked('quantum entanglement harness', manifest)).toEqual([]);
+  });
+
+  test('the model is told how the query is read', () => {
+    // The contract lives where the model can see it, not only in the matcher:
+    // an empty answer with no stated rule is indistinguishable from "no such
+    // tool" and from "not allowed".
+    const search = placeholderDeferredSearch('tool_search');
+
+    expect(search.description).toContain('one phrase');
+    expect(search.description).toContain('individual words');
   });
 });

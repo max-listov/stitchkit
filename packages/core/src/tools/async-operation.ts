@@ -18,6 +18,7 @@ import type {
   EndpointDef,
   EndpointToolAnnotations,
   HttpMethod,
+  Transport,
 } from '../contract';
 import { AppError, defineContract } from '../contract';
 import { isRecord } from '../internal/typed';
@@ -520,6 +521,23 @@ interface AsyncOperationContractBaseConfig<
   artifacts?: TArtifacts;
   descriptions?: Partial<Record<AsyncOperationCapability, string>>;
   scopes?: TScopes;
+  /**
+   * Which transports carry each capability. Absent, an endpoint is a tool on
+   * every transport, which is the framework default.
+   *
+   * It has to be declarable HERE because this contract is built inside the
+   * framework: an application that made tools opt-in with
+   * `createContractFactory({ toolExposure: 'explicit' })` set that default on
+   * its OWN factory, and these endpoints never pass through it. Without this
+   * field a consumer who had decided that agents get only the tools it names
+   * was still handed `start` and `cancel` — both effectful — with no way to say
+   * otherwise short of rebuilding the contract by hand.
+   *
+   * The default is unchanged on purpose. Unlike the tracking ingest, an async
+   * operation is a plausible thing for an agent to start and follow, so this
+   * says who decides rather than deciding for everyone.
+   */
+  expose?: Partial<Record<AsyncOperationCapability, readonly Transport[]>>;
 }
 
 export type AsyncOperationContractConfig<
@@ -807,6 +825,7 @@ export function defineAsyncOperationContract<
     output: TOutput,
   ): EndpointDef => {
     const scope = config.scopes?.[capability];
+    const expose = config.expose?.[capability];
     return {
       method,
       path,
@@ -814,6 +833,7 @@ export function defineAsyncOperationContract<
       input,
       output,
       ...(scope !== undefined && { scope }),
+      ...(expose !== undefined && { expose }),
     };
   };
   const startOutput: ZodType = config.startOutput ?? config.id;

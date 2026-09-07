@@ -843,7 +843,7 @@ Server-only optional application runtime. See the
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
-| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history and indexed run recovery |
+| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history and indexed run recovery; optional `{ access: 'read' }` selects a coherent read transaction while absent options remain write-safe |
 | `AgentRuntimeHeadSchema` | schema | constant-size conversation identity plus monotonic runtime version |
 | `AgentStoredRunSchema` | schema | canonical normalized run with an optional retained terminal assistant |
 | `AgentAdmissionReceiptSchema` | schema | durable idempotency receipt with canonical input and assigned run/assistant identities |
@@ -1447,7 +1447,7 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `AsyncOperationOutputCapability` | _type_ | optional result/artifact schema plus handler |
 | `RuntimeAsyncOperationConfig` | _type_ | runtime-only descriptor configuration |
 | `RuntimeAsyncOperation` | _type_ | inferred generated definitions and schemas |
-| `AsyncOperationContractConfig` | _type_ | canonical contract config where start returns the operation id |
+| `AsyncOperationContractConfig` | _type_ | canonical contract config where start returns the operation id; optional `expose` names the transports per capability, because this contract is built inside the framework and never passes through a consumer's `toolExposure: 'explicit'` factory |
 | `AsyncOperationContractWithStartOutputConfig` | _type_ | canonical contract config with an application start envelope and typed id extractor |
 | `DefinedAsyncOperationContract` | _type_ | generated contract, capability keys, schemas and parsed adapters |
 | `ContractAsyncOperationConfig` | _type_ | literal contract method binding and handlers |

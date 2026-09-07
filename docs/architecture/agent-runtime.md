@@ -18,7 +18,7 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 |---|---|---|
 | Canonical message/run shapes | Stitchkit | Zod schemas in `packages/core/src/agent-runtime/schemas.ts` |
 | Transition validation, revisions, idempotency and compaction replacement | Stitchkit | reducer in `store-driver.ts` |
-| Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history |
+| Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history; read access may borrow a coherent snapshot without reserving the writer slot |
 | Process-local queue, interrupt, supersede and settlement | Stitchkit | `coordinator.ts` |
 | Distributed ownership | application adapter | lease plus optional monotonic `fencingToken` persisted with the run |
 | Model allowlist/default | application | registry declarations and selection policy |

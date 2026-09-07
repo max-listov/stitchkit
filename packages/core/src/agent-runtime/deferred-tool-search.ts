@@ -19,8 +19,21 @@ type SearchDefinition = RuntimeToolDefinitionWithOutput<
   typeof DeferredAgentToolSearchInputSchema,
   typeof DeferredAgentToolReceiptSchema
 >;
+/**
+ * What the model is told, because it cannot read this file.
+ *
+ * The old sentence described the purpose and not the contract, so a `NO_MATCH`
+ * left nothing to correct: the query is matched as a whole phrase first, and a
+ * model that added synonyms got an empty answer indistinguishable from "no such
+ * tool" and from "not allowed". Saying how the query is read costs one sentence
+ * and turns a dead end into a next step.
+ */
 const description =
-  'Search the available tool catalog and select exact tools for the next step.';
+  'Search the available tool catalog and select exact tools for the next step. ' +
+  'The query is matched as one phrase against tool names and descriptions; ' +
+  'if nothing matches the phrase, its individual words are matched and the ' +
+  'tools matching the most words rank first. An exact tool name always wins, ' +
+  'so prefer one when you know it.';
 
 export function placeholderDeferredSearch(name: string): SearchDefinition {
   return defineRuntimeTool({

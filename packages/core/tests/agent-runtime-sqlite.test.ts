@@ -199,6 +199,152 @@ describe('SQLite agent-runtime store', () => {
     await Promise.all([first.close(), second.close()]);
   });
 
+  test('reads one WAL snapshot while an external writer owns the write slot', async () => {
+    const filename = databasePath('wal-reader');
+    const setup = new Database(filename, { create: true, readwrite: true });
+    expect(setup.query('PRAGMA journal_mode = WAL').get()).toEqual({ journal_mode: 'wal' });
+    setup.exec('CREATE TABLE application_writes (id TEXT PRIMARY KEY)');
+    setup.close();
+
+    const fixture = createBunSqliteAgentRuntimeStore({ filename });
+    const conversationId = 'wal-reader';
+    const message = input(conversationId, 'input-1');
+    const admitted = await fixture.store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-1',
+      input: message,
+      run: run(conversationId, message.id, 'run-1'),
+    });
+    if (admitted.outcome !== 'applied') throw new Error('fixture admission did not apply');
+
+    const writer = new Database(filename, { readwrite: true });
+    writer.exec(`
+      PRAGMA busy_timeout = 0;
+      BEGIN IMMEDIATE;
+      INSERT INTO application_writes (id) VALUES ('held');
+    `);
+    let writerOpen = true;
+    try {
+      const [snapshot, loaded, active, recoverable, conversations, messages] =
+        await Promise.all([
+          fixture.store.loadSnapshot(conversationId),
+          fixture.store.loadRun({ conversationId, runId: 'run-1' }),
+          fixture.store.listActiveRuns(conversationId),
+          fixture.store.scanRecoverable({ limit: 10 }),
+          fixture.conversations.list({ limit: 10 }),
+          fixture.conversations.messages({ conversationId, limit: 10, direction: 'after' }),
+        ]);
+      expect(snapshot).toMatchObject({ version: 1, messages: [{ id: 'input-1' }] });
+      expect(loaded?.run.id).toBe('run-1');
+      expect(active.map(({ id }) => id)).toEqual(['run-1']);
+      expect(recoverable.items.map(({ run }) => run.id)).toEqual(['run-1']);
+      expect(conversations.items.map(({ conversationId: id }) => id)).toEqual([
+        conversationId,
+      ]);
+      expect(messages.items.map(({ id }) => id)).toEqual(['input-1']);
+
+      const blockedMessage = input('wal-blocked-write', 'input-2');
+      await expect(
+        fixture.store.acceptInputAndAssignRun({
+          idempotencyKey: 'request-2',
+          input: blockedMessage,
+          run: run(blockedMessage.conversationId, blockedMessage.id, 'run-2'),
+        }),
+      ).rejects.toThrow('locked');
+      expect((await fixture.store.loadSnapshot(conversationId)).version).toBe(1);
+
+      writer.exec('ROLLBACK');
+      writerOpen = false;
+      expect(
+        (
+          await fixture.store.acceptInputAndAssignRun({
+            idempotencyKey: 'request-2',
+            input: blockedMessage,
+            run: run(blockedMessage.conversationId, blockedMessage.id, 'run-2'),
+          })
+        ).outcome,
+      ).toBe('applied');
+    } finally {
+      if (writerOpen) writer.exec('ROLLBACK');
+      writer.close();
+      await fixture.close();
+    }
+  });
+
+  test('keeps a read coherent when a WAL writer commits between its selects', async () => {
+    const filename = databasePath('wal-consistency');
+    const setup = new Database(filename, { create: true, readwrite: true });
+    setup.exec('PRAGMA journal_mode = WAL');
+    setup.close();
+    const seeded = createBunSqliteAgentRuntimeStore({ filename });
+    const conversationId = 'wal-consistency';
+    const message = input(conversationId, 'input-1');
+    await seeded.store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-1',
+      input: message,
+      run: run(conversationId, message.id, 'run-1'),
+    });
+    await seeded.close();
+
+    const writer = new Database(filename, { readwrite: true });
+    const changedMessage = AgentMessageSchema.parse({
+      ...message,
+      parts: [{ type: 'text', text: 'committed-between-selects' }],
+      updatedAt: '2026-08-28T00:00:01.000Z',
+    });
+    writer.exec('BEGIN IMMEDIATE');
+    writer
+      .query('UPDATE stitchkit_agent_runtime_heads SET version = 2 WHERE conversation_id = ?')
+      .run(conversationId);
+    writer
+      .query(
+        'UPDATE stitchkit_agent_runtime_messages SET payload = ? WHERE conversation_id = ?',
+      )
+      .run(JSON.stringify(changedMessage), conversationId);
+
+    const reader = new Database(filename, { readwrite: true });
+    let writerOpen = true;
+    const boundary: SqliteDatabase = {
+      exec: (sql) => reader.exec(sql),
+      prepare(sql) {
+        const statement = reader.query(sql);
+        return {
+          get: (...parameters: SqliteValue[]) => {
+            const value = statement.get(...parameters);
+            if (
+              writerOpen &&
+              sql.includes('SELECT version FROM stitchkit_agent_runtime_heads')
+            ) {
+              writer.exec('COMMIT');
+              writerOpen = false;
+            }
+            return value;
+          },
+          all: (...parameters: SqliteValue[]) => statement.all(...parameters),
+          run: (...parameters: SqliteValue[]) => {
+            const result = statement.run(...parameters);
+            return { changes: result.changes };
+          },
+        };
+      },
+      close: () => reader.close(),
+    };
+    const fixture = createSqliteAgentRuntimeStore({ database: boundary, initialize: false });
+    try {
+      expect(await fixture.store.loadSnapshot(conversationId)).toMatchObject({
+        version: 1,
+        messages: [{ parts: [{ type: 'text', text: 'input-1' }] }],
+      });
+      expect(await fixture.store.loadSnapshot(conversationId)).toMatchObject({
+        version: 2,
+        messages: [{ parts: [{ type: 'text', text: 'committed-between-selects' }] }],
+      });
+    } finally {
+      if (writerOpen) writer.exec('ROLLBACK');
+      writer.close();
+      await fixture.close();
+    }
+  });
+
   test('restores acquired and urgent queue order after reopen', async () => {
     const filename = databasePath('priority-reopen');
     const first = createBunSqliteAgentRuntimeStore({ filename });

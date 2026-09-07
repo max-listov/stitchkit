@@ -15,6 +15,47 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.84.1] — 2026-09-07
+
+### Added
+
+- **`defineAsyncOperationContract` accepts `expose` per capability.** This
+  contract is built inside the framework, so an application that made tools
+  opt-in with `createContractFactory({ toolExposure: 'explicit' })` set that
+  default on its own factory and these endpoints never passed through it: it
+  was handed `start` and `cancel` — both effectful — as agent tools with no way
+  to say otherwise short of rebuilding the contract by hand. The same shape
+  that handed a project a `track_<prefix>` tool in 0.82.0. The default is
+  unchanged: unlike a browser event ingest, an async operation is a plausible
+  thing for an agent to start and follow, so this says who decides rather than
+  deciding for everyone.
+
+### Fixed
+
+- **Agent-runtime reads no longer reserve SQLite's WAL writer slot.**
+  `loadSnapshot`, `loadRun`, `listActiveRuns`, recovery scans and conversation
+  reads now use a deferred read transaction, so they see one committed snapshot
+  while an independent `BEGIN IMMEDIATE` writer is active. Mutations retain
+  `BEGIN IMMEDIATE`, fail promptly on contention and are never retried by the
+  store. Custom `AgentRuntimeStoreDriver` implementations remain source
+  compatible: `transaction(work, { access: 'read' })` is additive and absent
+  options still mean write access.
+
+- **The deferred tool catalog answers a multi-word query.** The whole query was
+  one substring needle, so a catalog holding `resource_clock: Current server
+  time and timezone.` returned `NO_MATCH` for `resource_clock time timezone` —
+  the tool's own name plus the words a model expects to find — while the bare
+  name selected it. Adding a true word could only ever subtract. The phrase pass
+  is unchanged and still wins, so every query that selected something selects
+  the same things in the same order; only when it finds nothing are the words
+  matched, ranked by how many an entry carries.
+
+  The rule now also reaches the model, which is the half that made the empty
+  answer a dead end: the generated `tool_search` description and the `query`
+  schema both state that the query is matched as a phrase first and word by word
+  after, and that an exact name always wins. An empty answer with no stated rule
+  is indistinguishable from "no such tool" and from "not allowed".
+
 ## [0.84.0] — 2026-09-07
 
 ### ⚠️ Breaking changes

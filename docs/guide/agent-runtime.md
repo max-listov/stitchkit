@@ -383,7 +383,10 @@ provide one database transaction driver:
 
 ```ts
 const store = createAgentRuntimeStore({
-  transaction: work => db.transaction(tx => work(tx)),
+  transaction: (work, options) =>
+    options?.access === 'read'
+      ? db.readTransaction(tx => work(tx))
+      : db.writeTransaction(tx => work(tx)),
   head: {
     load: (tx, conversationId) => loadRuntimeHead(tx, conversationId),
     compareAndSwap: (tx, operation) => casRuntimeHead(tx, operation),
@@ -461,6 +464,13 @@ Each handle serializes its transactions. Separate connections use
 SQLite's lock error, so an awaited transaction can resume and commit or roll
 back. Retry that explicit error with an application-owned bounded policy; do
 not configure a blocking busy timeout on the same JavaScript thread.
+
+Aggregate reads and catalog pages use `BEGIN`, so a WAL writer may remain active
+while the reader sees one committed snapshot. Mutations and purge use
+`BEGIN IMMEDIATE`: they reserve the writer slot before reading state for CAS and
+never attempt a deferred read-to-write upgrade. A custom driver may inspect the
+additive `transaction` option `{ access: 'read' }`; ignoring it preserves the
+previous write-safe behavior.
 
 The adapter proves canonical durability across reopen and process restart. It
 does not make external tool effects exactly once, join application projections

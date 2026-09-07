@@ -40,7 +40,60 @@ export function schemaBytes(
   }
   return bytes;
 }
+/**
+ * Rank the catalog against a query, whole phrase first and words after.
+ *
+ * The whole trimmed query used to be the only needle, so a model that did the
+ * natural thing — naming the tool and adding the words it expected to find,
+ * `resource_clock time timezone` — got `NO_MATCH` from a catalog that held
+ * `resource_clock: Current server time and timezone.`, while the bare name
+ * selected it. An empty answer is indistinguishable from "no such tool" and
+ * from "you are not allowed", so the model learned nothing it could act on and
+ * the fix was to guess a shorter query.
+ *
+ * The phrase pass is unchanged and still wins: every query that selected
+ * something before selects the same things in the same order. Only when it
+ * finds nothing do the words get their turn, ranked by how many of them an
+ * entry matches — deterministic, and a fallback rather than a second ranking
+ * competing with the first.
+ */
 export function ranked(
+  query: string,
+  manifest: readonly DeferredAgentToolManifestEntry[],
+): string[] {
+  const phrase = rankedByPhrase(query, manifest);
+  return phrase.length > 0 ? phrase : rankedByWords(query, manifest);
+}
+
+/** Entries matching the most query words, then the fewest, then manifest order. */
+function rankedByWords(
+  query: string,
+  manifest: readonly DeferredAgentToolManifestEntry[],
+): string[] {
+  const words = [
+    ...new Set(
+      query
+        .trim()
+        .toLocaleLowerCase()
+        .split(/\s+/u)
+        .filter((word) => word.length > 0),
+    ),
+  ];
+  // One word is one phrase: it already had its turn above, and running it again
+  // here would only reorder what that pass already refused.
+  if (words.length < 2) return [];
+  return manifest
+    .map((entry, order) => {
+      const haystack = `${entry.name} ${entry.description}`.toLocaleLowerCase();
+      const hits = words.filter((word) => haystack.includes(word)).length;
+      return { name: entry.name, order, hits };
+    })
+    .filter((entry) => entry.hits > 0)
+    .sort((left, right) => right.hits - left.hits || left.order - right.order)
+    .map((entry) => entry.name);
+}
+
+function rankedByPhrase(
   query: string,
   manifest: readonly DeferredAgentToolManifestEntry[],
 ): string[] {

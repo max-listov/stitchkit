@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError, defineContract } from '../src/contract';
 import { ManagedFileRefSchema } from '../src/contract/file-ref';
+import { implement } from '../src/server/implement';
 import {
   type AsyncOperationCancelResult,
   AsyncOperationCancelResultSchema,
@@ -12,6 +13,7 @@ import {
   defineAsyncOperation,
   defineAsyncOperationContract,
 } from '../src/tools/async-operation';
+import { listToolNames } from '../src/tools/list-names';
 import type { RuntimeToolHandlerContext } from '../src/tools/runtime-tool';
 
 const IdSchema = z.object({ id: z.string() });
@@ -924,5 +926,71 @@ describe('createAsyncOperationSnapshotSchema without progress', () => {
   test('still refuses an unknown phase and a missing failure', () => {
     expect(schema.safeParse({ phase: 'elsewhere' }).success).toBe(false);
     expect(schema.safeParse({ phase: 'failed' }).success).toBe(false);
+  });
+});
+
+/**
+ * Who decides which transports carry an async operation.
+ *
+ * This contract is built INSIDE the framework, so an application that made
+ * tools opt-in with `createContractFactory({ toolExposure: 'explicit' })` set
+ * that default on its own factory and these endpoints never pass through it.
+ * The same shape that handed a project a `track_<prefix>` tool it had already
+ * opted out of, one subsystem over.
+ *
+ * The default stays agent-visible on purpose: unlike a browser event ingest, an
+ * async operation is a plausible thing for an agent to start and follow. What
+ * was missing was any way for the consumer to say otherwise short of rebuilding
+ * the contract by hand.
+ */
+describe('async operation contract exposure', () => {
+  const config = {
+    prefix: 'jobs',
+    description: 'Long job',
+    startInput: z.object({ url: z.string() }),
+    id: z.object({ id: z.string() }),
+    snapshot: z.object({ id: z.string(), phase: z.string() }),
+    cancel: true as const,
+  };
+
+  const throwing = {
+    start: () => {
+      throw new Error('not called');
+    },
+    status: () => {
+      throw new Error('not called');
+    },
+    wait: () => {
+      throw new Error('not called');
+    },
+    cancel: () => {
+      throw new Error('not called');
+    },
+  };
+
+  test('every capability is a tool by default', () => {
+    const { contract } = defineAsyncOperationContract(config);
+    const service = implement(contract, throwing as never);
+
+    expect(listToolNames({ services: [service] }).map(({ name }) => name)).toEqual([
+      'cancel_job',
+      'start_job',
+      'status_job',
+      'wait_job',
+    ]);
+  });
+
+  test('a consumer can keep the effectful capabilities off the tool surface', () => {
+    const { contract } = defineAsyncOperationContract({
+      ...config,
+      expose: { start: ['HTTP'], cancel: ['HTTP'] },
+    });
+    const service = implement(contract, throwing as never);
+
+    // Named through the mounted surface, not read off the endpoint object: the
+    // shape agreeing is not the same fact as the tool being gone.
+    const tools = listToolNames({ services: [service] }).map(({ name }) => name);
+
+    expect(tools).toEqual(['status_job', 'wait_job']);
   });
 });
