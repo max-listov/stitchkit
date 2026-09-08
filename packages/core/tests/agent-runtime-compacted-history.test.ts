@@ -91,11 +91,13 @@ describe('reading the history compaction removed', () => {
         direction: 'after',
         includeCompacted: true,
       });
+      // The block reads through, then the summary that stands for it — the
+      // order the person lived, not the order the model's history needs.
       expect(person.items.map((item) => item.id)).toEqual([
         'input-1',
-        'summary-1',
         'input-2',
         'input-3',
+        'summary-1',
         'input-4',
       ]);
       // The boundary compaction drew, named on the same sequence.
@@ -114,7 +116,7 @@ describe('reading the history compaction removed', () => {
     });
     try {
       await compactedConversation(fixture);
-      const expected = ['input-1', 'summary-1', 'input-2', 'input-3', 'input-4'];
+      const expected = ['input-1', 'input-2', 'input-3', 'summary-1', 'input-4'];
 
       const forward: string[] = [];
       let cursor: string | undefined;
@@ -189,9 +191,9 @@ describe('the v1 baseline carries the compacted history', () => {
       // said, while the normalized table still held it.
       expect(payload.messages.map((item) => item.id)).toEqual([
         'input-1',
-        'summary-1',
         'input-2',
         'input-3',
+        'summary-1',
         'input-4',
       ]);
       expect(payload.compacted).toEqual(['input-1', 'input-2', 'input-3']);

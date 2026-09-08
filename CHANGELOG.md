@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.87.1] — 2026-09-08
+
+### Fixed
+
+- **A compaction summary reads after the block it stands for.** It was written
+  at the position of the first message it replaced, which the model's history
+  cannot tell from the last — every replaced message is gone from it either
+  way. A page that includes the compacted messages can: the summary landed
+  between the first message and the rest of the block, so a person read one
+  message, then a retelling of the next ten, then those ten. The summary now
+  takes the position of the last message it replaces. The model's history and
+  its order are unchanged, and so is every existing row: this places new
+  summaries, it does not rewrite old ones.
+
 ## [0.87.0] — 2026-09-08
 
 ### ⚠️ Breaking changes

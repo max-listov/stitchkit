@@ -618,8 +618,19 @@ export function createSqliteAgentRuntimeStore(
             `)
             .all(message.conversationId, ...parameters)
             .map((row) => PositionedMessageRowSchema.parse(row));
-          const first = rows[0];
-          if (!first || rows.length !== parameters.length) {
+          // The summary takes the position of the LAST message it replaces, not
+          // the first.
+          //
+          // Both put it in the same place in the model's history — every
+          // replaced row is inactive, so nothing active sits between them —
+          // and the two differ only once a reader asks for the compacted
+          // messages too. Anchored at the first, the summary landed between
+          // the message it summarizes and the rest of the block: a person read
+          // one message, then a retelling of the next ten, then those ten.
+          // Anchored at the last, the block reads through and the summary
+          // arrives after it, where it was written.
+          const anchor = rows.at(-1);
+          if (!anchor || rows.length !== parameters.length) {
             throw new Error('Compaction range changed inside the transaction');
           }
           transaction
@@ -634,7 +645,7 @@ export function createSqliteAgentRuntimeStore(
                 (conversation_id, id, position, active, payload)
               VALUES (?, ?, ?, 1, ?)
             `)
-            .run(message.conversationId, message.id, first.position, encodeJson(message));
+            .run(message.conversationId, message.id, anchor.position, encodeJson(message));
           return;
         }
         const existing = transaction

@@ -521,8 +521,10 @@ const removed = new Set(page.compacted)
 `items` stays one sequence in the order it happened, and `compacted` names the
 ids inside it that the model no longer sees — the boundary is a mark on the
 conversation, not a second list. A compaction summary sits at the position of
-the first message it replaced, so it appears at the head of the block it
-stands for. Without the flag the page is exactly what it was, `compacted`
+the last message it replaced, so the block reads through and the summary
+arrives after it, where it was written; in the model's history, where every
+replaced message is gone, it occupies the block's place either way. Without
+the flag the page is exactly what it was, `compacted`
 empty. The v1 → v2 migration baseline records the same thing: the whole
 sequence, with `compacted` naming what had been folded away. A file migrated
 by 0.86.0 has a baseline built from the active history only — the messages
