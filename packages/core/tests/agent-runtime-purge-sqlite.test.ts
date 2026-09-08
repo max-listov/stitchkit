@@ -12,6 +12,7 @@ import {
 import { completePurgeFixture, purgeAdmission } from './fixtures/agent-purge';
 
 const tables = ['messages', 'admissions', 'runs', 'heads'];
+const purgeTriggerTables = ['spills', 'schedules', 'projections', 'events', ...tables];
 
 test('SQLite purge rolls back after each deletion and commit failure, then survives reopen', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-purge-'));
@@ -160,7 +161,7 @@ test('additive v1 initialization fences an already-open pre-purge writer', async
   await initialized.close();
   const schema = new Database(filename);
   // Construct the original v1 schema; no private table layout is needed by a consumer.
-  for (const table of tables) {
+  for (const table of purgeTriggerTables) {
     for (const operation of ['insert', 'update'])
       schema.exec(`DROP TRIGGER stitchkit_agent_runtime_${table}_purge_${operation}`);
   }

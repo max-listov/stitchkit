@@ -3,7 +3,7 @@
   "releases": [
     {
       "target": "core",
-      "version": "0.85.2"
+      "version": "0.86.0"
     }
   ]
 }

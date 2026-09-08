@@ -590,7 +590,7 @@ describe('agent runtime durable operation lifecycle', () => {
         compact: () => Promise.reject(new Error(compactionSecret)),
       },
     });
-    expect((await submit(compactionRuntime).result).reason).toBe('provider_failure');
+    expect((await submit(compactionRuntime).result).reason).toBe('runtime_failure');
     expect(operations(compactionEvents).map((event) => event.operation.phase)).toEqual([
       'started',
       'failed',
@@ -780,5 +780,93 @@ describe('agent runtime durable operation lifecycle', () => {
     expect([first.reason, second.reason]).toEqual(['success', 'success']);
     expect(conflicts).toEqual([]);
     await runtime.close();
+  });
+
+  /**
+   * The three failures used to share one word. Each of these reaches the
+   * terminal record by a different route, and each used to say the provider
+   * failed — twice about a provider that was never called.
+   */
+  test('names what actually failed instead of blaming the provider', async () => {
+    const conflictEvents: AgentRuntimeEvent[] = [];
+    const durable = createMemoryAgentRuntimeStore();
+    let checkpoints = 0;
+    let calls = 0;
+    const refusing: AgentRuntimeStore = {
+      ...durable,
+      async checkpointRunAssistant(input) {
+        checkpoints += 1;
+        // The second checkpoint loses its compare-and-set, the way a store
+        // shared with another writer does.
+        if (checkpoints === 2) return { outcome: 'conflict', actualVersion: 0 };
+        return durable.checkpointRunAssistant(input);
+      },
+    };
+    const conflicted = createAgentRuntime({
+      ...runtimeConfig(
+        new MockLanguageModelV4({
+          doStream: async () => {
+            calls += 1;
+            return {
+              stream: simulateReadableStream({
+                chunks: [
+                  { type: 'text-start', id: 'answer' },
+                  { type: 'text-delta', id: 'answer', delta: 'done' },
+                  { type: 'text-end', id: 'answer' },
+                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+                ],
+              }),
+            };
+          },
+        }),
+        conflictEvents,
+        refusing,
+      ),
+      loop: { checkpointEveryEvents: 1 },
+    });
+    const conflictResult = await submit(conflicted).result;
+    expect(conflictResult.reason).toBe('storage_conflict');
+    expect(conflictResult.run.state).toBe('failed');
+    // Zero: the losing checkpoint lands before the model call, which is the
+    // shape a consumer reported. The run used to blame a provider it had not
+    // spoken to.
+    expect(calls).toBe(0);
+    await conflicted.close();
+
+    // The application's own acceptance refuses a finished answer. The provider
+    // did its work; the reason must not say otherwise.
+    const rejectedEvents: AgentRuntimeEvent[] = [];
+    const rejecting = createAgentRuntime({
+      ...runtimeConfig(
+        new MockLanguageModelV4({
+          doStream: async () => ({
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'text-start', id: 'answer' },
+                { type: 'text-delta', id: 'answer', delta: 'done' },
+                { type: 'text-end', id: 'answer' },
+                { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+              ],
+            }),
+          }),
+        }),
+        rejectedEvents,
+      ),
+      protocol: { ...protocol, acceptTerminal: () => false },
+    });
+    const rejectedResult = await submit(rejecting).result;
+    expect(rejectedResult.reason).toBe('output_rejected');
+    await rejecting.close();
+
+    // And this runtime's own callback failing before any provider call.
+    const runtimeEvents: AgentRuntimeEvent[] = [];
+    const broken = createAgentRuntime({
+      ...runtimeConfig(new MockLanguageModelV4(), runtimeEvents),
+      prompt: () => {
+        throw new Error('prompt fixture');
+      },
+    });
+    expect((await submit(broken).result).reason).toBe('runtime_failure');
+    await broken.close();
   });
 });

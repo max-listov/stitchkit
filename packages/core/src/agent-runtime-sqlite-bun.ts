@@ -47,6 +47,7 @@ export type {
   SqliteAgentRuntimeStoreConfig,
   SqliteDatabase,
   SqliteStatement,
+  SqliteStoreTransaction,
   SqliteValue,
 } from './agent-runtime/sqlite';
 export {

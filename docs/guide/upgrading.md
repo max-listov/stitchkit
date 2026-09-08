@@ -28,6 +28,125 @@ of the range if you want a different one.
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.86.0
+
+Only if you branch on `AgentTerminalReason` or show it to a person. Three
+failures that used to arrive as `provider_failure` now arrive as themselves:
+
+```ts
+// before
+if (run.terminalReason === 'provider_failure') showOutage()
+
+// after
+switch (run.terminalReason) {
+  case 'provider_failure':
+    showOutage()
+    break
+  case 'storage_conflict':
+    // Another writer took this run's revision, or the store refused the write.
+    retryOrReport()
+    break
+  case 'output_rejected':
+    // Your own `protocol.acceptTerminal` refused the finished message.
+    reportRejectedAnswer()
+    break
+  case 'runtime_failure':
+    // The runtime, or a check the SDK ran on what it was handed, failed
+    // before the provider was reached.
+    reportInternal()
+    break
+}
+```
+
+A run that never reached the provider can no longer report `provider_failure`,
+so an alert keyed on that value stops firing for causes that were never the
+provider's.
+
+If you implement `AgentRuntimeStore` directly, add the event-ledger surface:
+
+```ts
+const store: AgentRuntimeStore = {
+  // existing normalized operations
+  appendEvent,
+  readEvents,
+  exportConversation,
+  importConversation,
+}
+```
+
+If you implement an `AgentRuntimeStoreDriver` (Prisma, Postgres, any external
+database), the ledger is yours to keep: `events` is a required member, and it
+needs a table.
+
+```ts
+// before
+const driver: AgentRuntimeStoreDriver<Tx> = { transaction, head, runs, admissions, history, scanRecoverable }
+
+// after
+const driver: AgentRuntimeStoreDriver<Tx> = {
+  transaction, head, runs, admissions, history, scanRecoverable,
+  events: {
+    // One row per event; `seq` is per conversation, starts at 1, and is
+    // assigned inside the caller's transaction so concurrent appends cannot
+    // share or skip a number.
+    append: async (tx, draft) => {
+      // Two transactions that both read max(seq) and both insert max + 1
+      // collide on the primary key; under SERIALIZABLE the snapshot predates
+      // any lock you take here. Treat a unique violation on this table as a
+      // serialization conflict and re-run the whole transaction — see
+      // `runTransaction` in examples/agent-store-prisma/adapter.ts.
+      const seq = (await tx.event.aggregate({ _max: { seq: true }, where: { conversationId: draft.conversationId } }))._max.seq ?? 0
+      await tx.event.create({ data: { ...draft, seq: seq + 1, payload: JSON.stringify(draft.payload) } })
+      return { ...draft, seq: seq + 1 }
+    },
+    // Ordered by `seq`, bounded by `fromSeq`/`toSeq`/`limit`; `nextSeq` when
+    // more remain.
+    list: async (tx, input) => { /* see examples/agent-store-prisma/adapter.ts */ },
+  },
+}
+```
+
+The table carries `eventId` (unique), `conversationId`, `seq`, `schemaVersion`,
+`kind`, `occurredAt`, `ignorable` and `payload`. `runAgentStoreConformance`
+from `stitchkit/testing` now exercises it — contiguous `seq` under twenty
+concurrent appends, bounded reads, the `ignorable` flag, a byte-stable export
+— so run it against your driver before deploying. Expect one more insert per
+run operation (`runtime/transition`) and one per model step
+(`provider/request`) on the hot path; there is no opt-out.
+
+If you operate a built-in SQLite store file:
+
+1. Back the file up. The first open by 0.86.0 migrates it to schema 2 in one
+   transaction and there is no way back: a 0.85.x package refuses a migrated
+   file with `Unsupported Stitchkit agent-runtime SQLite schema version 2`.
+2. Check the build for FTS5 before deploying:
+
+   ```sql
+   SELECT sqlite_compileoption_used('ENABLE_FTS5');
+   ```
+
+   A build without it is refused at open with `requires FTS5 support`. On the
+   machine this was verified, Bun 1.3 `bun:sqlite` and Node 24.18 `node:sqlite`
+   both carry it; verify your own build rather than assuming — the table of
+   supported runtimes says Node ≥ 22.5, and FTS5 there is not verified here.
+3. Know what the migration wrote. Each existing conversation becomes one
+   `runtime/baseline` event at `seq 1`, dated when the migration ran, with
+   `asOf` inside the payload naming the last message it describes. Event
+   search and projections address that conversation's pre-migration history as
+   one snapshot at `seq 1`; event-level precision begins with the first event
+   after the migration.
+
+If you subscribe to `AgentRuntimeEvent` and switch over `event.type`
+exhaustively, add the transient `attempt-reset` case — drop the run's
+transient text — or the reducer stops compiling; a reducer that ignores it
+keeps a failed attempt's partial text on screen.
+
+New in this release, not a migration: child runs cascade only when the manager
+is given to the runtime —
+`createAgentRuntime({ ...config, children: createSqliteAgentChildManager({ sqlite, spawn }) })`
+— and the SQLite companions take the store handle (`{ sqlite }`), whose
+`database` and `transaction` they share.
+
 ## Released migration: 0.85.0
 
 Only if you implement `AgentRuntimeStore` directly. Add the new durable

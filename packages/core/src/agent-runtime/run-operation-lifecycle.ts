@@ -1,6 +1,7 @@
 import { type LanguageModel, wrapLanguageModel } from 'ai';
 import type { AgentRuntimeEvent } from './event-schema';
 import { agentDurableEventId } from './event-schema';
+import { isOwnInputRefusal, markProviderOrigin } from './provider-origin';
 import type { RunMutationQueue } from './run-mutation-queue';
 import { findRun } from './runtime-internals';
 import {
@@ -61,8 +62,8 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
         emittedAt: config.now().toISOString(),
       });
     });
-  const startModelRequest = (callId: string, step: number): Promise<void> =>
-    record(
+  const startModelRequest = async (callId: string, step: number): Promise<void> => {
+    await record(
       AgentRunOperationSchema.parse({
         operationId: `${callId}:${step}`,
         kind: 'model-request',
@@ -71,6 +72,7 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
         startedAt: config.now().toISOString(),
       }),
     );
+  };
 
   return {
     noteProviderCall(callId: string): void {
@@ -107,7 +109,15 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
             // This awaited write is the admission fence: the provider is not
             // invoked when durable lifecycle storage rejects the transition.
             await startModelRequest(callId, step);
-            return doStream();
+            try {
+              return await doStream();
+            } catch (error) {
+              // The one place the provider's own failure is known as such —
+              // except for the checks the SDK runs on *our* inputs inside the
+              // same call. An approval this runtime issued and failed to
+              // verify is this runtime's refusal, whoever's stack it is on.
+              throw isOwnInputRefusal(error) ? error : markProviderOrigin(error);
+            }
           },
         },
       });

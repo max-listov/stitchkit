@@ -2,6 +2,10 @@ import type { SqliteDatabase } from './sqlite';
 import type { AgentConversationPurgeDriver } from './store-purge';
 
 const OWNED_TABLES = [
+  'stitchkit_agent_runtime_spills',
+  'stitchkit_agent_runtime_schedules',
+  'stitchkit_agent_runtime_projections',
+  'stitchkit_agent_runtime_events',
   'stitchkit_agent_runtime_messages',
   'stitchkit_agent_runtime_admissions',
   'stitchkit_agent_runtime_runs',
@@ -59,6 +63,11 @@ export function sqliteConversationPurge(
           .prepare(`DELETE FROM ${table} WHERE conversation_id = ?`)
           .run(conversationId);
       }
+      transaction
+        .prepare(
+          'DELETE FROM stitchkit_agent_runtime_children WHERE parent_conversation_id = ? OR child_conversation_id = ?',
+        )
+        .run(conversationId, conversationId);
     },
   };
 }

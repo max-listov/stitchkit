@@ -227,6 +227,25 @@ export const AgentTerminalReasonSchema = z.enum([
   /** This runtime refused to call the provider — the context did not fit. */
   'context_overflow',
   /**
+   * An owned mutation of this run lost its compare-and-set, or the store
+   * refused it. Nothing upstream failed, and the provider may never have been
+   * contacted: the durable record is what came apart.
+   */
+  'storage_conflict',
+  /**
+   * The application's own acceptance — `protocol.acceptTerminal` — refused the
+   * finished message. The provider answered; this run's own reader rejected the
+   * answer.
+   */
+  'output_rejected',
+  /**
+   * This runtime, or an application callback it awaits, failed before the
+   * provider was ever admitted. Kept apart from `provider_failure` for the
+   * reason `context_overflow` is: a durable record must not blame an upstream
+   * that was never contacted.
+   */
+  'runtime_failure',
+  /**
    * This run's input was taken on by a run already in flight, which answered it.
    *
    * Never passed to `commitRunTerminal` as an operation's own reason: it is

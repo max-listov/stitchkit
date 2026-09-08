@@ -5,6 +5,38 @@
 stitchkit's own test suite runs on `bun:test`. The contract makes most of an
 API testable without a live socket.
 
+### Agent runtime faults and replay
+
+`stitchkit/agent-runtime/testing` is a credential-free test entrypoint for Bun
+and Node. It provides a local OpenAI-compatible SSE server with a deterministic
+fault plan, a replay provider for model fixtures, and named race barriers for
+event-order assertions:
+
+```ts
+import {
+  createFaultProviderServer,
+  createReplayAgentProvider,
+} from 'stitchkit/agent-runtime/testing'
+
+const server = await createFaultProviderServer({
+  scenario: [
+    { kind: 'stream-cut', afterBytes: 50 },
+    { kind: 'pass', text: 'recovered' },
+  ],
+})
+
+const provider = createReplayAgentProvider({
+  attempts: { primary: [firstModel, recoveredModel] },
+})
+```
+
+The fault vocabulary also covers connection refusal, timeout before the first
+byte, HTTP errors, malformed JSON, slow streams and missing usage. Configure
+runtime retry explicitly through `loop.retry`. A retry is recorded at the
+durable provider-step boundary; once a tool has executed, the runtime will not
+replay that attempt automatically. Always close the local server in test
+teardown with `await server.close()`.
+
 ### Test generated clients in process
 
 `createHandlerTestClient` runs the real generated client against the real Fetch

@@ -103,6 +103,9 @@ recognises as a duplicate.
 - Custom `AgentRuntimeStore` implementations must add
   `recordRunOperation`; normalized driver implementations built through
   `createAgentRuntimeStore` receive the reference reducer automatically.
+- A failure is named by whoever owned it. The lifecycle's own conflicts end a
+  run `storage_conflict` rather than `provider_failure`, so the durable record
+  of a lost compare-and-set does not read as an upstream outage.
 - The record is a latest-operation projection, not an audit log or a provider
   trace. Durable history beyond the latest fact remains an application outbox
   concern.

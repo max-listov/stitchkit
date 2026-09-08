@@ -343,7 +343,7 @@ describe('durable approval continuations', () => {
                 metadata: {},
               });
         const failed = await ticket.result;
-        expect(failed.reason).toBe('provider_failure');
+        expect(failed.reason).toBe('runtime_failure');
         expect(model.doStreamCalls).toHaveLength(1);
         expect(effects).toEqual([]);
         await observe.flush();
@@ -351,7 +351,7 @@ describe('durable approval continuations', () => {
           events.some(
             (event) =>
               event.type === 'run-terminal' &&
-              event.terminalReason === 'provider_failure' &&
+              event.terminalReason === 'runtime_failure' &&
               event.internalCause !== undefined,
           ),
         ).toBe(true);

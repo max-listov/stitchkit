@@ -1,5 +1,6 @@
 import { AgentMessageSchema, AgentRunSchema, type AgentUsage } from '../agent-runtime/schemas';
 import type { AgentRuntimeStore } from '../agent-runtime/store';
+import { decodeAgentConversationArchive } from '../agent-runtime/store-events';
 
 /**
  * What the scenario is about to touch, handed over before the first mutation.
@@ -92,6 +93,7 @@ export async function runAgentStoreConformance(
       `${run}-causal-history`,
       `${run}-causal-active`,
       `${run}-interrupt-priority`,
+      `${run}-ledger`,
     ],
   };
   const store = await config.createStore(context);
@@ -129,7 +131,9 @@ async function conformanceScenario(
     causalHistoryConversationId,
     causalActiveConversationId,
     interruptPriorityConversationId,
+    ledgerConversationId,
   ] = conversationIds;
+  if (ledgerConversationId) await ledgerScenario(store, ledgerConversationId);
   if (
     !conversationId ||
     !recoveryConversationId ||
@@ -926,5 +930,72 @@ async function assertAbsorptionIsAtomic(
   }
   if (retried.inputMessageId !== successorInput.id) {
     throw new Error('A retried absorbed key must still name its own input');
+  }
+}
+
+/**
+ * The event ledger, as every store must keep it.
+ *
+ * Added when a driver's `events` became mandatory and no conformance scenario
+ * exercised it: the Prisma example implemented `seq = max + 1` under a
+ * transaction and nothing proved it held under concurrent appends.
+ */
+async function ledgerScenario(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  const first = await store.appendEvent({
+    conversationId,
+    kind: 'state/set',
+    payload: { n: 1 },
+  });
+  if (first.seq !== 1)
+    throw new Error(`Agent store conformance expected seq 1, received ${first.seq}`);
+  // Twenty concurrent appends: every seq unique and contiguous, none lost.
+  const appended = await Promise.all(
+    Array.from({ length: 20 }, (_, index) =>
+      store.appendEvent({ conversationId, kind: 'state/set', payload: { n: index + 2 } }),
+    ),
+  );
+  const seqs = [first.seq, ...appended.map((event) => event.seq)].sort((a, b) => a - b);
+  for (let index = 0; index < seqs.length; index += 1) {
+    if (seqs[index] !== index + 1) {
+      throw new Error(
+        `Agent store conformance expected contiguous seq, received ${seqs.join(',')}`,
+      );
+    }
+  }
+  const page = await store.readEvents({ conversationId, fromSeq: 5, toSeq: 9, limit: 3 });
+  if (page.items.map((event) => event.seq).join(',') !== '5,6,7' || page.nextSeq !== 8) {
+    throw new Error(
+      `Agent store conformance expected events 5,6,7 then 8, received ${page.items
+        .map((event) => event.seq)
+        .join(',')} then ${page.nextSeq}`,
+    );
+  }
+  const ignorable = await store.appendEvent({
+    conversationId,
+    kind: 'state/set',
+    payload: { n: 'ignorable' },
+    ignorable: true,
+  });
+  if (ignorable.ignorable !== true) {
+    throw new Error('Agent store conformance expected the ignorable flag to persist');
+  }
+  // Import requires an empty conversation, so the round trip is proven by the
+  // memory and SQLite suites on a second store; here the export itself must be
+  // byte-stable and carry every event, ignorable included.
+  const archive = await store.exportConversation(conversationId);
+  const again = await store.exportConversation(conversationId);
+  if (Buffer.compare(Buffer.from(archive), Buffer.from(again)) !== 0) {
+    throw new Error(
+      'Agent store conformance expected two exports of a quiet store to be byte-equal',
+    );
+  }
+  const decoded = decodeAgentConversationArchive(archive);
+  if (decoded.events.length !== 22) {
+    throw new Error(
+      `Agent store conformance expected 22 archived events, received ${decoded.events.length}`,
+    );
   }
 }

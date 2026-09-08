@@ -454,7 +454,7 @@ const sqlite = createNodeSqliteAgentRuntimeStore({ filename: './agent-runtime.sq
 ```
 
 Initialization creates only `stitchkit_agent_runtime_*` tables and records
-schema version 1 in `stitchkit_agent_runtime_meta`; it does not use
+schema version 2 in `stitchkit_agent_runtime_meta`; it does not use
 `PRAGMA user_version` or mutate application tables. An unknown schema version or
 unversioned partial Stitchkit schema is refused. The connection is owned by the
 returned handle and closes only after accepted operations drain.
@@ -477,6 +477,111 @@ does not make external tool effects exactly once, join application projections
 atomically or replace an application outbox. If a product row must commit with
 an agent transition, implement `AgentRuntimeStoreDriver` over the application's
 own transaction boundary instead.
+
+Opening a version 1 store migrates it in one transaction, forward only — back
+the file up first, a 0.85.x package refuses a migrated file. Existing
+normalized state becomes one `runtime/baseline` event per conversation, dated
+when the migration ran and carrying `asOf` for the last message it describes;
+search and projections address that pre-migration history as one snapshot at
+`seq 1`. New transitions continue the monotonic conversation sequence. Version
+2 requires SQLite FTS5 because event search is an advertised capability, so a
+build without FTS5 is a startup error (`requires FTS5 support`) rather than an
+empty search result; check with
+`SELECT sqlite_compileoption_used('ENABLE_FTS5')`.
+
+The handle returned by `createBunSqliteAgentRuntimeStore` /
+`createNodeSqliteAgentRuntimeStore` is `{ store, conversations, database,
+transaction, close }`. `database` is the shared connection and `transaction`
+is one write transaction in the store's own serialization: the SQLite
+companions — `createSqliteAgentProjectionStore`, `createSqliteAgentSpillStore`,
+`createSqliteAgentChildManager`, `createAgentScheduleService` — take `{ sqlite }`
+and write their rows and events through it, so a row and its event land
+together or not at all.
+
+### Retried provider streams
+
+With `loop.retry` set, a provider stream that fails before any tool call in the
+attempt is retried at the step boundary. Subscribers see `attempt-reset` for the
+run before the next attempt's first delta and drop what the failed attempt
+streamed; the durable draft is checkpointed after that output is discarded; an
+input injected into the failed attempt is taken again by the retry; and the
+failed attempt's reported usage stays in the run's spend. Transient events —
+deltas, reasoning, `attempt-reset` — are numbered from 1 per run, counting only
+what was published, so a cursor sees no gap on an ordinary stream.
+
+### Event ledger, projections and durable capabilities
+
+`AgentRuntimeStore` exposes bounded `readEvents`, declared `appendEvent`,
+canonical `exportConversation` and empty-target `importConversation`. Runtime
+transitions and exact provider requests enter the same append-only ledger; the
+normalized head/run/message tables remain the fast operational projection.
+
+Use `defineAgentProjection` with `createSqliteAgentProjectionStore` for a
+deterministic versioned fold. Every value reports `uptoSeq`, so a caller can
+distinguish current data from a projection that still has events to consume.
+Changing the projection version folds from sequence one.
+
+The built-ins are `agentSummaryProjection`, `agentUsageProjection` and
+`agentOutlineProjection`; focused card, state-slot and schedule projections are
+also available. `list(projection)` reads all materialized conversation rows in
+one SQLite query instead of reopening their event logs.
+
+Durable state is declared once and injected on every provider request:
+
+```ts
+const goal = defineStateSlot({
+  name: 'goal',
+  schema: z.object({ objective: z.string(), status: z.string() }),
+})
+
+const slots = createAgentStateSlotStore({ store: sqlite.store, definitions: [goal] })
+await slots.set({
+  conversationId,
+  name: 'goal',
+  value: { objective: 'finish migration', status: 'active' },
+  actor: 'human',
+})
+
+const runtime = createAgentRuntime({ ...config, store: sqlite.store, stateSlots: [goal] })
+```
+
+`createAgentStateTools` binds `create_goal`, `update_goal`, `get_goal` and
+`todo_write` to one conversation. Human changes call the same slot store with
+`actor: 'human'`; they remain structured `state/set` facts rather than forged
+chat messages.
+
+`createSqliteAgentSpillStore` persists oversized output separately and records
+its locator, hash and lifecycle in the ledger. `read_output` and
+`search_output` re-run both locator authorization and the originating tool
+authorization before reading bytes. `createSqliteAgentEventSearch` returns the
+exact conversation and event sequence; cross-conversation results are denied
+unless `authorizeConversation` approves each target.
+`createAgentEventSearchTools` supplies `session_search`, `session_trace` and
+`session_event` over the same bounded APIs.
+
+For credential-free failure tests, import `createFaultProviderServer` and
+`createReplayAgentProvider` from `stitchkit/agent-runtime/testing`. Runtime
+`loop.retry` applies an explicit `AgentRetryPolicy`: each decision is recorded
+as `retry/scheduled`, each new attempt as `retry/started`, and an attempt that
+has invoked a tool is never automatically replayed.
+
+`createAgentScheduleService` persists `at`, `after` and `every` input. Repeating
+schedules require an explicit IANA time zone. Dispatch uses a stable
+`schedule:<id>:<occurrence>` idempotency key, and restart lateness is recorded.
+`createAgentScheduleTools` exposes the exact `schedule_after`, `schedule_at`,
+`schedule_every`, `schedule_list` and `schedule_cancel` surface.
+
+`createSqliteAgentChildManager` seeds a child from the parent's ledger through
+an exact sequence, stores the graph, clamps requested limits to a durable parent
+remainder and stops budget overruns at the next step boundary as
+`policy_stop`. That enforcement runs inside the child's own runtime: the host that spawns it gives the child
+`loop.stopPolicies: [agentChildBudgetStopPolicy({ manager, childConversationId })]`, which
+calls `recordStepUsage` at every step boundary; `recordStepUsage` alone measures and decides,
+and reports `enforced: false` when the deciding process holds no handle to stop. Given to `createAgentRuntime` as `children`, the manager stops the parent's children after the parent's terminal is durable — interrupted, cancelled, timed out or shut down; a successful, policy-stopped, superseded or failed parent leaves them to the conversation (ADR 0175 carries the table); without `children` nothing cascades; an unreachable child is recorded
+as `lost`, not misreported as a provider failure.
+`createAgentChildTools` adds `subagent`, `subagent_fork`, `list_agents`,
+`send_message` and `interrupt_agent`; final output stays behind its bounded
+result locator.
 
 ## Durable order
 
@@ -831,6 +936,12 @@ transaction. Drivers without this guarantee must leave the capability absent. Se
 
 ## Events and reconnect
 
+A subscriber that switches over `event.type` handles one transient event
+beyond deltas and reasoning: `attempt-reset`, published when `loop.retry`
+starts a new attempt, meaning everything this run streamed before it is
+withdrawn. `reduceAgentControlEvent` does that; a hand-written reducer must,
+or it keeps the failed attempt's partial text on screen.
+
 `publish` receives event classes with different guarantees:
 
 - `admission` follows a successful acceptance CAS and carries the same complete
@@ -952,8 +1063,12 @@ prepareStep: (step) => {
 
 That deliberate refusal ends the run as `context_overflow` on the durable
 record, delivery terminal and operator event. Stitchkit does not inspect error
-messages: every other `prepareStep` or provider error remains
-`provider_failure`, and operator-only observability retains its original cause.
+messages — it recognises failures by identity, not by text. A store refusing an
+owned mutation ends the run `storage_conflict`; `protocol.acceptTerminal`
+refusing a finished message ends it `output_rejected`; a check the SDK runs on
+what this runtime handed it ends it `runtime_failure`. Every error the runtime
+cannot identify as its own remains `provider_failure`, and operator-only
+observability retains its original cause in all of them.
 
 Completion validity belongs to the protocol and is checked before the terminal
 CAS. Protocols that require a visible answer opt in explicitly:

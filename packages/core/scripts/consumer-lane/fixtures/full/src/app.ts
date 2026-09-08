@@ -17,8 +17,10 @@ import {
   AgentContextOverflowError,
   composeAgentPrompt,
   createAgentRuntime,
+  createAgentStateSlotStore,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
+  defineStateSlot,
 } from 'stitchkit/agent-runtime';
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import { defineCliCommand } from 'stitchkit/cli';
@@ -41,6 +43,7 @@ import {
   defineUploadTool,
   defineViewFileTool,
   defineWaitTool,
+  describeToolCatalog,
   type ErrorHintFn,
   EXT_APPS_BUNDLE_PLACEHOLDER,
   flattenToolJsonSchema,
@@ -176,11 +179,53 @@ const packedAgentTicket = packedAgentRuntime.submit({
 await packedAgentTicket.accepted;
 const packedAgentTerminal = await packedAgentTicket.result;
 check(
-  'the packed agent runtime terminalizes a pre-stream failure',
-  packedAgentTerminal.reason === 'provider_failure' &&
+  'the packed agent runtime terminalizes a pre-stream failure as its own',
+  // Pre-stream: the provider was never reached, so the reason must not name it.
+  packedAgentTerminal.reason === 'runtime_failure' &&
     packedAgentTerminal.run.state === 'failed',
 );
 await packedAgentRuntime.close();
+
+const packedGoal = defineStateSlot({
+  name: 'packed-goal',
+  schema: z.object({ objective: z.string() }),
+});
+const packedDurableStore = createMemoryAgentRuntimeStore();
+await createAgentStateSlotStore({
+  store: packedDurableStore,
+  definitions: [packedGoal],
+}).set({
+  conversationId: 'packed-durable',
+  name: 'packed-goal',
+  value: { objective: 'round trip' },
+  actor: 'human',
+});
+const packedArchive = await packedDurableStore.exportConversation('packed-durable');
+const packedRestoredStore = createMemoryAgentRuntimeStore();
+await packedRestoredStore.importConversation(packedArchive);
+check(
+  'the packed agent ledger round-trips canonical archive bytes',
+  new TextDecoder().decode(await packedRestoredStore.exportConversation('packed-durable')) ===
+    new TextDecoder().decode(packedArchive),
+);
+
+const packedCatalog = describeToolCatalog({
+  runtimeTools: [
+    defineRuntimeTool({
+      name: 'packed_catalog_probe',
+      description: 'Packed catalog probe',
+      identity: { serviceName: 'packed', action: 'catalog-probe', method: 'GET' },
+      input: z.object({}),
+      output: z.object({ ok: z.boolean() }),
+      handler: () => ({ ok: true }),
+    }),
+  ],
+  transport: 'AGENT',
+});
+check(
+  'the packed tool catalog reports model-facing name and schema bytes',
+  packedCatalog[0]?.name === 'packed_catalog_probe' && packedCatalog[0].schemaBytes > 0,
+);
 
 const packedStepModel = new MockLanguageModelV4();
 const packedStepRuntime = createAgentRuntime({

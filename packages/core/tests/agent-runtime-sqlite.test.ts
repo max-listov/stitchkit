@@ -82,6 +82,56 @@ describe('SQLite agent-runtime store', () => {
     await second.close();
   });
 
+  test('migrates a v1 file transactionally and writes one reconstructable baseline', async () => {
+    const filename = databasePath('v1-migration');
+    const first = createBunSqliteAgentRuntimeStore({ filename });
+    const message = input('migrated-conversation', 'input-1');
+    await first.store.acceptInputAndAssignRun({
+      idempotencyKey: 'request-1',
+      input: message,
+      run: run(message.conversationId, message.id, 'run-1'),
+    });
+    await first.close();
+
+    const v1 = new Database(filename, { readwrite: true });
+    v1.exec(`
+      DROP TABLE stitchkit_agent_runtime_events_fts;
+      DROP TABLE stitchkit_agent_runtime_events;
+      DROP TABLE stitchkit_agent_runtime_projections;
+      DROP TABLE stitchkit_agent_runtime_spills;
+      DROP TABLE stitchkit_agent_runtime_schedules;
+      DROP TABLE stitchkit_agent_runtime_children;
+      UPDATE stitchkit_agent_runtime_meta SET value = '1' WHERE key = 'schema_version';
+    `);
+    v1.close();
+
+    const migrationStartedAt = new Date();
+    const migrated = createBunSqliteAgentRuntimeStore({ filename });
+    const events = await migrated.store.readEvents({
+      conversationId: message.conversationId,
+      limit: 10,
+    });
+    expect(events.items).toHaveLength(1);
+    expect(events.items[0]).toMatchObject({ kind: 'runtime/baseline', seq: 1 });
+    expect(events.items[0]?.payload).toMatchObject({
+      head: { version: 1 },
+      messages: [expect.objectContaining({ id: 'input-1' })],
+      runs: [expect.objectContaining({ run: expect.objectContaining({ id: 'run-1' }) })],
+    });
+    // The baseline happened at migration time; what it describes is dated
+    // separately, inside the payload. It used to write the last message's
+    // time as its own — a durable record timestamped with someone else's event.
+    const baseline = events.items[0];
+    expect(new Date(baseline?.occurredAt ?? 0).getTime()).toBeGreaterThanOrEqual(
+      migrationStartedAt.getTime() - 1,
+    );
+    expect(baseline?.payload).toMatchObject({
+      migratedAt: baseline?.occurredAt,
+      asOf: message.createdAt,
+    });
+    await migrated.close();
+  });
+
   test('pages conversation summaries and active history through an optional reader', async () => {
     const fixture = createBunSqliteAgentRuntimeStore({ filename: databasePath('reader') });
     const records: [string, string, string][] = [
@@ -454,11 +504,11 @@ describe('SQLite agent-runtime store', () => {
       CREATE TABLE application_rows (id TEXT PRIMARY KEY);
       INSERT INTO application_rows (id) VALUES ('kept');
       CREATE TABLE stitchkit_agent_runtime_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '2');
+      INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '99');
     `);
     unknown.close();
     expect(() => createBunSqliteAgentRuntimeStore({ filename: unknownPath })).toThrow(
-      'Unsupported Stitchkit agent-runtime SQLite schema version 2',
+      'Unsupported Stitchkit agent-runtime SQLite schema version 99',
     );
     const verifyUnknown = new Database(unknownPath, { readwrite: true });
     expect(verifyUnknown.query('SELECT id FROM application_rows').get()).toEqual({

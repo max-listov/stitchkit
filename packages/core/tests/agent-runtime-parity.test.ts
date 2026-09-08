@@ -175,7 +175,7 @@ describe('agent runtime mature-consumer parity', () => {
     const text = await send(2);
     const file = await send(3);
     const structured = await send(4);
-    expect(empty.reason).toBe('provider_failure');
+    expect(empty.reason).toBe('output_rejected');
     expect(empty.message.status).toBe('failed');
     expect(text.reason).toBe('success');
     expect(file.message.parts).toContainEqual(

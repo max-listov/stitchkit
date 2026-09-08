@@ -38,6 +38,7 @@ export type AgentProviderFailureReason =
   | 'context-overflow'
   | 'timeout'
   | 'cancelled'
+  | 'stream-cut'
   | 'unknown';
 
 export interface AgentProviderFailure {
@@ -93,7 +94,17 @@ const RETRYABLE: ReadonlySet<AgentProviderFailureReason> = new Set([
   'rate-limited',
   'timeout',
   'insufficient-credits',
+  'stream-cut',
 ]);
+
+export class AgentProviderStreamCutError extends Error {
+  readonly reason = 'stream-cut';
+
+  constructor(message = 'Provider stream ended before a terminal part') {
+    super(message);
+    this.name = 'AgentProviderStreamCutError';
+  }
+}
 
 function statusOf(value: unknown): number | undefined {
   if (!isRecord(value)) return undefined;
@@ -114,6 +125,9 @@ function statusOf(value: unknown): number | undefined {
  * reasons and must not be treated as one.
  */
 export function classifyProviderFailure(error: unknown): AgentProviderFailure {
+  if (error instanceof AgentProviderStreamCutError) {
+    return { reason: 'stream-cut', retryable: true, evidence: 'none' };
+  }
   const status = statusOf(error);
   const byStatus = status === undefined ? undefined : BY_STATUS[status];
   if (byStatus) {

@@ -72,8 +72,9 @@ describe('the conformance kit can be given a fixture', () => {
     // Nothing left behind, and nothing preselected: the kit chose the ids and
     // said so, rather than the adapter having to guess a global fixture name.
     expect(parents.size).toBe(0);
-    expect(announced.length).toBe(6);
-    expect(new Set(announced).size).toBe(6);
+    // Six normalized scenarios and the ledger scenario: seven identities.
+    expect(announced.length).toBe(7);
+    expect(new Set(announced).size).toBe(7);
     for (const id of announced) expect(id).toStartWith('conformance-');
   });
 

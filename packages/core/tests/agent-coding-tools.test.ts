@@ -603,7 +603,7 @@ describe('host-authorized Agent coding tools', () => {
       options,
     );
     expect(output).toMatchObject({
-      stdout: '01234567',
+      stdout: '0123cdef',
       outcome: 'exited',
       artifact: { reference: 'artifact-1', truncated: false },
     });

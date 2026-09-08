@@ -395,4 +395,21 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       recoverableCount: 0,
     });
   }, 120_000);
+
+  test('a duplicate eventId is refused at once, not retried as a sequence collision', async () => {
+    if (!connectionString || !fixture) return;
+    const conversationId = `dup-${crypto.randomUUID()}`;
+    await fixture.store.appendEvent({ conversationId, kind: 'state/set', payload: { n: 1 } });
+    const archive = await fixture.store.exportConversation(conversationId);
+    // A fresh conversation id, the same event ids: refused by eventId uniqueness.
+    const copied = new TextDecoder()
+      .decode(archive)
+      .replaceAll(conversationId, `${conversationId}-copy`);
+    const startedAt = performance.now();
+    await expect(
+      fixture.store.importConversation(new TextEncoder().encode(copied)),
+    ).rejects.toThrow(/eventId|Unique constraint/);
+    // One transaction, not thirty-two serializable attempts.
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
 });

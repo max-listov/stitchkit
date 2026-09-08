@@ -180,11 +180,20 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
 ): ProjectedTool<TRuntime>[] {
   const projected: ProjectedTool<TRuntime>[] = [];
   const names = new Set<string>();
+  const origins = new Map<string, string>();
   const append = (tool: ProjectedTool<TRuntime>): void => {
     if (config.assertUniqueNames ?? true) {
-      assertUniqueToolName(tool.name, names.has(tool.name), duplicateLabel(transport));
+      if (names.has(tool.name)) {
+        const previous = origins.get(tool.name) ?? 'unknown';
+        const current = `${tool.serviceName}.${tool.action}`;
+        throw new Error(
+          `Duplicate ${duplicateLabel(transport)} "${tool.name}" across mounted operations: ${previous}, ${current}`,
+        );
+      }
+      assertUniqueToolName(tool.name, false, duplicateLabel(transport));
     }
     names.add(tool.name);
+    origins.set(tool.name, `${tool.serviceName}.${tool.action}`);
     projected.push(tool);
   };
 

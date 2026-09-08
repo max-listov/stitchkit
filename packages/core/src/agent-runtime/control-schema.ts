@@ -239,7 +239,9 @@ export function reduceAgentControlEvent(
       ? { ...transient, text: transient.text + event.textDelta }
       : event.type === 'reasoning-delta'
         ? { ...transient, reasoning: transient.reasoning + event.textDelta }
-        : transient;
+        : event.type === 'attempt-reset'
+          ? { text: '', reasoning: '' }
+          : transient;
   const snapshotStale = durable(event) && current.snapshot?.version !== event.snapshotVersion;
   const transientByRun =
     event.type === 'terminal'

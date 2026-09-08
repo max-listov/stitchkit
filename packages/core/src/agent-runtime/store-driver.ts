@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AgentConversationPurgedError } from './purge';
 import {
@@ -36,6 +37,21 @@ import {
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
 } from './store';
+import {
+  type AgentConversationArchive,
+  type AgentStoreEventDraft,
+  type AgentStoreEventEnvelope,
+  AgentStoreEventEnvelopeSchema,
+  type AgentStoreEventPage,
+  AgentStoreEventPageSchema,
+  AgentStoreTransitionSchema,
+  AppendAgentStoreEventSchema,
+  agentStoreEventDraft,
+  canonicalAgentJson,
+  decodeAgentConversationArchive,
+  encodeAgentConversationArchive,
+  ReadAgentStoreEventsSchema,
+} from './store-events';
 import {
   type AgentConversationPurgeDriver,
   createStoreConversationPurge,
@@ -150,7 +166,54 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
     load(transaction: TRANSACTION, conversationId: string): Promise<readonly AgentMessage[]>;
     apply(transaction: TRANSACTION, mutation: AgentHistoryMutation): Promise<void>;
   };
+  events: {
+    append(
+      transaction: TRANSACTION,
+      event: AgentStoreEventDraft,
+    ): Promise<AgentStoreEventEnvelope>;
+    list(
+      transaction: TRANSACTION,
+      input: z.infer<typeof ReadAgentStoreEventsSchema>,
+    ): Promise<AgentStoreEventPage>;
+  };
+  /** Optional driver-owned durable payloads included in the canonical archive. */
+  archive?: {
+    export(
+      transaction: TRANSACTION,
+      conversationId: string,
+    ): Promise<Pick<AgentConversationArchive, 'projections' | 'spills'>>;
+    import(transaction: TRANSACTION, archive: AgentConversationArchive): Promise<void>;
+  };
   scanRecoverable(input: { cursor?: string; limit: number }): Promise<AgentRecoverablePage>;
+}
+
+/**
+ * What a transition writes to the ledger.
+ *
+ * A checkpoint carries the whole assistant draft, and a run checkpoints on
+ * every structural boundary and every `checkpointEveryEvents` deltas: written
+ * verbatim, the ledger held the growing draft dozens of times per run and the
+ * search index matched one phrase at dozens of `seq`. The checkpoint record
+ * names the draft by hash and size; the terminal commit still carries the
+ * final message in full, and the normalized tables hold the draft itself.
+ */
+function transitionRecord(operation: StoreOperation): unknown {
+  if (operation.type !== 'checkpoint') return operation;
+  const { assistant, ...rest } = operation.input;
+  const body = canonicalAgentJson(assistant);
+  return {
+    type: operation.type,
+    input: {
+      ...rest,
+      assistant: {
+        id: assistant.id,
+        status: assistant.status,
+        sha256: createHash('sha256').update(body).digest('hex'),
+        parts: assistant.parts.length,
+        bytes: Buffer.byteLength(body),
+      },
+    },
+  };
 }
 
 type StoreOperation =
@@ -923,23 +986,25 @@ function validateAdmissionReceipt(
 export function createAgentRuntimeStore<TRANSACTION>(
   driver: AgentRuntimeStoreDriver<TRANSACTION>,
 ): AgentRuntimeStore {
+  /** The snapshot as one transaction sees it — shared by reads and the export. */
+  const snapshotIn = async (transaction: TRANSACTION, conversationId: string) => {
+    const [stored, messages, activeRecords] = await Promise.all([
+      driver.head.load(transaction, conversationId),
+      driver.history.load(transaction, conversationId),
+      driver.runs.listActive(transaction, conversationId),
+    ]);
+    const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
+    const referencedRecords = await driver.runs.loadMany(transaction, {
+      conversationId,
+      runIds: referencedRunIds(messages),
+    });
+    return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
+  };
+
   const loadSnapshot = (conversationId: string): Promise<AgentSnapshot> =>
-    driver.transaction(
-      async (transaction) => {
-        const [stored, messages, activeRecords] = await Promise.all([
-          driver.head.load(transaction, conversationId),
-          driver.history.load(transaction, conversationId),
-          driver.runs.listActive(transaction, conversationId),
-        ]);
-        const head = AgentRuntimeHeadSchema.parse(stored ?? emptyHead(conversationId));
-        const referencedRecords = await driver.runs.loadMany(transaction, {
-          conversationId,
-          runIds: referencedRunIds(messages),
-        });
-        return snapshotOf(head, messages, mergeRunRecords(activeRecords, referencedRecords));
-      },
-      { access: 'read' },
-    );
+    driver.transaction((transaction) => snapshotIn(transaction, conversationId), {
+      access: 'read',
+    });
 
   /**
    * `loadRun` reads one run and the head. `listActiveRuns` also reads history:
@@ -1125,13 +1190,190 @@ export function createAgentRuntimeStore<TRANSACTION>(
       for (const mutation of reduced.historyMutations ?? []) {
         await driver.history.apply(transaction, mutation);
       }
+      await driver.events.append(
+        transaction,
+        agentStoreEventDraft({
+          conversationId,
+          kind: 'runtime/transition',
+          payload: z.json().parse(transitionRecord(operation)),
+        }),
+      );
       return { outcome: 'applied', snapshot: reduced.snapshot };
     });
+
+  const appendEvent = (input: z.input<typeof AppendAgentStoreEventSchema>) => {
+    const parsed = AppendAgentStoreEventSchema.parse(input);
+    return driver.transaction(async (transaction) => {
+      if (await driver.conversations?.isPurged(transaction, parsed.conversationId)) {
+        throw new AgentConversationPurgedError();
+      }
+      return driver.events.append(transaction, agentStoreEventDraft(parsed));
+    });
+  };
+
+  const readEvents = (input: z.input<typeof ReadAgentStoreEventsSchema>) => {
+    const parsed = ReadAgentStoreEventsSchema.parse(input);
+    return driver.transaction(
+      async (transaction) =>
+        AgentStoreEventPageSchema.parse(await driver.events.list(transaction, parsed)),
+      { access: 'read' },
+    );
+  };
+
+  /**
+   * One read transaction for the whole archive.
+   *
+   * Events, the durable companions and the snapshot used to be three separate
+   * reads; a spill cleanup or a run transition landing between them produced
+   * an archive whose parts disagreed — a `spill/created` without its payload,
+   * a snapshot newer than its last transition — and an import of it restored a
+   * state no event had produced.
+   */
+  const exportConversation = (conversationId: string): Promise<Uint8Array> =>
+    driver.transaction(
+      async (transaction) => {
+        const events: AgentStoreEventEnvelope[] = [];
+        let fromSeq: number | undefined;
+        do {
+          const page = AgentStoreEventPageSchema.parse(
+            await driver.events.list(
+              transaction,
+              ReadAgentStoreEventsSchema.parse({
+                conversationId,
+                ...(fromSeq && { fromSeq }),
+                limit: 10_000,
+              }),
+            ),
+          );
+          events.push(...page.items);
+          fromSeq = page.nextSeq;
+        } while (fromSeq !== undefined);
+        const durable = (await driver.archive?.export(transaction, conversationId)) ?? {
+          projections: [],
+          spills: [],
+        };
+        const snapshot = await snapshotIn(transaction, conversationId);
+        return encodeAgentConversationArchive({
+          format: 'stitchkit.agent-conversation',
+          formatVersion: 1,
+          conversationId,
+          events,
+          projections: [
+            { archiveType: 'runtime-snapshot', snapshot: z.json().parse(snapshot) },
+            ...durable.projections,
+          ],
+          spills: durable.spills,
+        });
+      },
+      { access: 'read' },
+    );
+
+  const importConversation = async (bytes: Uint8Array) => {
+    const archive = decodeAgentConversationArchive(bytes);
+    return driver.transaction(async (transaction) => {
+      const existing = await driver.events.list(transaction, {
+        conversationId: archive.conversationId,
+        limit: 1,
+      });
+      if (existing.items.length > 0) {
+        throw new TypeError('Conversation event log must be empty before import');
+      }
+      for (const event of archive.events) {
+        const appended = await driver.events.append(transaction, {
+          schemaVersion: event.schemaVersion,
+          eventId: event.eventId,
+          conversationId: event.conversationId,
+          kind: event.kind,
+          occurredAt: event.occurredAt,
+          payload: event.payload,
+          ...(event.ignorable && { ignorable: true }),
+        });
+        if (appended.seq !== event.seq) {
+          throw new TypeError('Conversation archive event sequence is not contiguous');
+        }
+      }
+      const snapshotEntry = archive.projections.find(
+        (entry) =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          !Array.isArray(entry) &&
+          entry.archiveType === 'runtime-snapshot',
+      );
+      if (
+        snapshotEntry &&
+        typeof snapshotEntry === 'object' &&
+        !Array.isArray(snapshotEntry)
+      ) {
+        const snapshot = AgentSnapshotSchema.parse(snapshotEntry.snapshot);
+        if (snapshot.conversationId !== archive.conversationId) {
+          throw new TypeError('Conversation archive snapshot belongs to another conversation');
+        }
+        if (snapshot.version > 0 || snapshot.messages.length > 0 || snapshot.runs.length > 0) {
+          const outcome = await driver.head.compareAndSwap(transaction, {
+            conversationId: snapshot.conversationId,
+            expectedVersion: 0,
+            next: AgentRuntimeHeadSchema.parse({
+              schemaVersion: 1,
+              conversationId: snapshot.conversationId,
+              version: snapshot.version,
+            }),
+          });
+          if (outcome.outcome !== 'applied') {
+            throw new TypeError('Conversation archive snapshot target is not empty');
+          }
+        }
+        for (const run of snapshot.runs) {
+          const terminalAssistant = snapshot.messages.find(
+            (message) => message.id === run.assistantMessageId,
+          );
+          await driver.runs.save(
+            transaction,
+            AgentStoredRunSchema.parse({
+              schemaVersion: 1,
+              run,
+              ...(terminalAssistant && { terminalAssistant }),
+            }),
+          );
+        }
+        for (const message of snapshot.messages) {
+          await driver.history.apply(transaction, { type: 'admit', input: message });
+        }
+        for (const event of archive.events) {
+          if (event.kind !== 'runtime/transition') continue;
+          const transition = AgentStoreTransitionSchema.parse(event.payload);
+          if (transition.type !== 'accept') continue;
+          const assigned = snapshot.runs.find((run) =>
+            run.inputMessageIds.includes(transition.input.input.id),
+          );
+          if (!assigned) {
+            throw new TypeError('Conversation archive admission has no assigned run');
+          }
+          await driver.admissions.create(
+            transaction,
+            AgentAdmissionReceiptSchema.parse({
+              schemaVersion: 1,
+              conversationId: archive.conversationId,
+              idempotencyKey: transition.input.idempotencyKey,
+              input: transition.input.input,
+              runId: assigned.id,
+              assistantMessageId: assigned.assistantMessageId,
+            }),
+          );
+        }
+      }
+      await driver.archive?.import(transaction, archive);
+      return { conversationId: archive.conversationId, events: archive.events.length };
+    });
+  };
 
   return {
     loadSnapshot,
     loadRun,
     listActiveRuns,
+    appendEvent,
+    readEvents,
+    exportConversation,
+    importConversation,
     ...(driver.conversations && {
       purgeConversation: createStoreConversationPurge(driver, driver.conversations),
     }),
@@ -1179,6 +1421,7 @@ interface MemoryTransaction {
   runs: Map<string, Map<string, AgentStoredRun>>;
   admissions: Map<string, Map<string, AgentAdmissionReceipt>>;
   histories: Map<string, AgentMessage[]>;
+  events: Map<string, AgentStoreEventEnvelope[]>;
 }
 
 function cloneHeadMap(source: ReadonlyMap<string, AgentRuntimeHead>) {
@@ -1218,6 +1461,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
   let runs = new Map<string, Map<string, AgentStoredRun>>();
   let admissions = new Map<string, Map<string, AgentAdmissionReceipt>>();
   let histories = new Map<string, AgentMessage[]>();
+  let events = new Map<string, AgentStoreEventEnvelope[]>();
   let transactionTail = Promise.resolve();
 
   const driver: AgentRuntimeStoreDriver<MemoryTransaction> = {
@@ -1236,6 +1480,12 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
           AgentAdmissionReceiptSchema.parse(structuredClone(receipt)),
         ),
         histories: cloneHistoryMap(histories),
+        events: new Map(
+          [...events].map(([conversationId, stored]) => [
+            conversationId,
+            stored.map((event) => AgentStoreEventEnvelopeSchema.parse(structuredClone(event))),
+          ]),
+        ),
       };
       try {
         const result = await work(transaction);
@@ -1244,6 +1494,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         runs = transaction.runs;
         admissions = transaction.admissions;
         histories = transaction.histories;
+        events = transaction.events;
         return result;
       } finally {
         release.resolve();
@@ -1259,6 +1510,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         transaction.runs.delete(conversationId);
         transaction.admissions.delete(conversationId);
         transaction.histories.delete(conversationId);
+        transaction.events.delete(conversationId);
       },
     },
     head: {
@@ -1382,6 +1634,33 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
           mutation.summary,
           ...current.slice(first + positions.length),
         ]);
+      },
+    },
+    events: {
+      async append(transaction, draft) {
+        const current = transaction.events.get(draft.conversationId) ?? [];
+        const event = AgentStoreEventEnvelopeSchema.parse({
+          ...draft,
+          seq: (current.at(-1)?.seq ?? 0) + 1,
+        });
+        if (current.some((candidate) => candidate.eventId === event.eventId)) {
+          throw new TypeError('Agent store event identity is already present');
+        }
+        transaction.events.set(draft.conversationId, [...current, event]);
+        return event;
+      },
+      async list(transaction, input) {
+        const selected = (transaction.events.get(input.conversationId) ?? []).filter(
+          (event) =>
+            (input.fromSeq === undefined || event.seq >= input.fromSeq) &&
+            (input.toSeq === undefined || event.seq <= input.toSeq),
+        );
+        const items = selected.slice(0, input.limit);
+        const last = items.at(-1);
+        return AgentStoreEventPageSchema.parse({
+          items,
+          ...(selected.length > items.length && last ? { nextSeq: last.seq + 1 } : {}),
+        });
       },
     },
     async scanRecoverable(input) {

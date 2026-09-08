@@ -1,3 +1,17 @@
+export type { AgentToolDefinition } from './agent-runtime/agent-tool';
+export { createAgentChildTools } from './agent-runtime/child-tools';
+export {
+  type AgentChildBudget,
+  AgentChildBudgetSchema,
+  type AgentChildHandle,
+  type AgentChildManager,
+  type AgentChildRecord,
+  AgentChildRecordSchema,
+  type AgentChildState,
+  AgentChildStateSchema,
+  agentChildBudgetStopPolicy,
+  createSqliteAgentChildManager,
+} from './agent-runtime/children';
 export {
   type AgentCompactionContext,
   type AgentCompactionResult,
@@ -44,7 +58,14 @@ export {
   type DeferredAgentToolSurfaceDefinition,
 } from './agent-runtime/deferred-tools';
 export {
+  type AgentEventSearchResult,
+  AgentEventSearchResultSchema,
+  createSqliteAgentEventSearch,
+} from './agent-runtime/event-search';
+export { createAgentEventSearchTools } from './agent-runtime/event-search-tools';
+export {
   AgentAdmissionEventSchema,
+  AgentAttemptResetEventSchema,
   AgentCheckpointEventSchema,
   AgentReasoningDeltaEventSchema,
   AgentReasoningEndEventSchema,
@@ -129,6 +150,19 @@ export {
   createAgentObservability,
 } from './agent-runtime/observability';
 export {
+  type AgentProjectionDefinition,
+  type AgentProjectionValue,
+  agentConversationCardProjection,
+  agentOutlineProjection,
+  agentScheduleSummaryProjection,
+  agentStateSlotsProjection,
+  agentSummaryProjection,
+  agentUsageProjection,
+  createAgentProjectionRegistry,
+  createSqliteAgentProjectionStore,
+  defineAgentProjection,
+} from './agent-runtime/projections';
+export {
   type AgentHistoryBudgetDecision,
   type AgentHistoryBudgetResult,
   type AgentPromptBudget,
@@ -153,6 +187,7 @@ export {
 export {
   type AgentProviderFailure,
   type AgentProviderFailureReason,
+  AgentProviderStreamCutError,
   classifyProviderFailure,
   isToolResultFailure,
 } from './agent-runtime/provider-failure';
@@ -164,6 +199,7 @@ export {
   AgentConversationPurgeResultSchema,
   purgeAgentConversation,
 } from './agent-runtime/purge';
+export { type AgentRetryPolicy, recordAgentRetryDecision } from './agent-runtime/retry-policy';
 export {
   type AgentContextUsage,
   type AgentRuntime,
@@ -183,7 +219,37 @@ export {
   createAgentRuntime,
 } from './agent-runtime/runtime';
 export type { AgentRuntimeResult } from './agent-runtime/runtime-result';
+export {
+  type AgentProcessSandbox,
+  type AgentSandboxGrade,
+  AgentSandboxGradeSchema,
+  type AgentSandboxRestriction,
+  AgentSandboxRestrictionSchema,
+  missingSandboxRestrictions,
+  probeAgentProcessSandbox,
+  recordAgentSandboxProbe,
+} from './agent-runtime/sandbox';
+export { createAgentScheduleTools } from './agent-runtime/schedule-tools';
+export {
+  type AgentSchedule,
+  AgentScheduleSchema,
+  type AgentScheduleService,
+  createAgentScheduleService,
+} from './agent-runtime/schedules';
 export * from './agent-runtime/schemas';
+export { createSqliteAgentSpillStore } from './agent-runtime/spill';
+export {
+  type AgentStateSlotDefinition,
+  type AgentStateSlotStore,
+  type AgentStateSlotValue,
+  type AnyAgentStateSlot,
+  agentGoalStateSlot,
+  agentTodoStateSlot,
+  createAgentStateSlotStore,
+  defineStateSlot,
+  renderAgentStateSlots,
+} from './agent-runtime/state-slots';
+export { createAgentStateTools } from './agent-runtime/state-tools';
 export {
   type AcceptInputAndAssignRun,
   AcceptInputAndAssignRunSchema,
@@ -230,6 +296,30 @@ export {
   createAgentRuntimeStore,
   createMemoryAgentRuntimeStore,
 } from './agent-runtime/store-driver';
+export {
+  type AgentConversationArchive,
+  AgentConversationArchiveSchema,
+  type AgentStoreEventDecodeAccepted,
+  type AgentStoreEventDecodeIgnored,
+  type AgentStoreEventDecodeResult,
+  type AgentStoreEventDraft,
+  type AgentStoreEventEnvelope,
+  AgentStoreEventEnvelopeSchema,
+  type AgentStoreEventKind,
+  AgentStoreEventKindSchema,
+  type AgentStoreEventPage,
+  AgentStoreEventPageSchema,
+  type AgentStoreTransition,
+  AgentStoreTransitionSchema,
+  type AppendAgentStoreEvent,
+  AppendAgentStoreEventSchema,
+  canonicalAgentJson,
+  decodeAgentConversationArchive,
+  decodeAgentStoreEvent,
+  encodeAgentConversationArchive,
+  type ReadAgentStoreEvents,
+  ReadAgentStoreEventsSchema,
+} from './agent-runtime/store-events';
 export type { AgentConversationPurgeDriver } from './agent-runtime/store-purge';
 export { AgentRuntimeConflictError } from './agent-runtime/terminal-commit';
 export {

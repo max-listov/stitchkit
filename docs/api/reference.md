@@ -843,7 +843,8 @@ Server-only optional application runtime. See the
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
-| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history and indexed run recovery; optional `{ access: 'read' }` selects a coherent read transaction while absent options remain write-safe |
+| `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history, a **required** `events: { append, list }` ledger table, an optional `archive: { export, import }` for driver-owned durable payloads, and indexed run recovery; optional `{ access: 'read' }` selects a coherent read transaction while absent options remain write-safe |
+| `recordAgentRetryDecision` / `AgentRetryPolicy` | function / _type_ | `loop.retry` policy and the ledger record of a retry decision: explicit retryability and backoff at a durable provider-step boundary |
 | `AgentRuntimeHeadSchema` | schema | constant-size conversation identity plus monotonic runtime version |
 | `AgentStoredRunSchema` | schema | canonical normalized run with an optional retained terminal assistant |
 | `AgentAdmissionReceiptSchema` | schema | durable idempotency receipt with canonical input and assigned run/assistant identities |
@@ -894,6 +895,29 @@ Server-only optional application runtime. See the
 | `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps; request admission is awaited before provider invocation |
 | `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
+
+### Durable capability layer
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `AgentConversationArchiveSchema` / `AgentConversationArchive` / `encodeAgentConversationArchive` / `decodeAgentConversationArchive` / `canonicalAgentJson` | schema / _type_ / functions | canonical validated conversation archive with exact ledger events, recovery projection and durable spill payloads |
+| `AgentStoreEventEnvelopeSchema` / `AgentStoreEventEnvelope` / `AgentStoreEventKindSchema` / `AgentStoreEventKind` / `AgentStoreEventPageSchema` / `AgentStoreEventPage` | schema / _type_ | append-only event envelope, closed current vocabulary and bounded page |
+| `AppendAgentStoreEventSchema` / `AppendAgentStoreEvent` / `ReadAgentStoreEventsSchema` / `ReadAgentStoreEvents` | schema / _type_ | required append and bounded-read store contracts |
+| `AgentStoreTransitionSchema` / `AgentStoreTransition` / `AgentStoreEventDraft` / `AgentStoreEventDecodeAccepted` / `AgentStoreEventDecodeIgnored` / `AgentStoreEventDecodeResult` / `decodeAgentStoreEvent` | schema / _types_ / function | normalized runtime mutations, append drafts and strict current/ignorable future-event decoding outcomes |
+| `defineAgentProjection` / `AgentProjectionDefinition` / `AgentProjectionValue` / `createAgentProjectionRegistry` / `createSqliteAgentProjectionStore` | functions / _type_ | deterministic folds with persisted version and honest `uptoSeq` checkpoints |
+| `agentSummaryProjection` / `agentUsageProjection` / `agentOutlineProjection` | constants | built-in list summary, provenance-carrying usage and request outline projections |
+| `agentConversationCardProjection` / `agentStateSlotsProjection` / `agentScheduleSummaryProjection` | constants | focused card, durable-state and schedule lifecycle projections |
+| `defineStateSlot` / `AgentStateSlotDefinition` / `AgentStateSlotStore` / `AgentStateSlotValue` / `AnyAgentStateSlot` / `createAgentStateSlotStore` / `renderAgentStateSlots` | functions / _types_ | typed durable state written as ledger events and injected on every provider request |
+| `agentGoalStateSlot` / `agentTodoStateSlot` / `createAgentStateTools` | constants / function | built-in goal/todo state and bound `goal_*` / `todo_write` Agent tools |
+| `AgentSandboxGradeSchema` / `AgentSandboxGrade` / `AgentSandboxRestrictionSchema` / `AgentSandboxRestriction` / `AgentProcessSandbox` | schema / _type_ | host-provided process sandbox capability and explicit restriction vocabulary |
+| `probeAgentProcessSandbox` / `missingSandboxRestrictions` / `recordAgentSandboxProbe` | functions | process-cached probe, fail-closed required-gap calculation and durable probe record |
+| `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createSqliteAgentEventSearch` / `createAgentEventSearchTools` | schema / _type_ / functions | authorized FTS5 search with exact event addresses and `session_*` tools |
+| `createSqliteAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
+| `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `createAgentScheduleService` / `createAgentScheduleTools` | schema / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, stable dispatch identity and Agent tools |
+| `AgentChildBudgetSchema` / `AgentChildBudget` / `AgentChildStateSchema` / `AgentChildState` / `AgentChildRecordSchema` / `AgentChildRecord` | schema / _type_ | durable child graph, bounded seed and measured budget state |
+| `AgentChildHandle` / `AgentChildManager` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
+| `AgentToolDefinition` | _type_ | peer-neutral shape returned by the bound agent-only state, search, schedule and child tool factories |
+| `AgentProviderStreamCutError` | class | explicit retryable provider stream truncation evidence |
 
 ### Complete runtime inventory
 
@@ -1021,7 +1045,7 @@ Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
 provider and required capabilities without constructing the model; runtime `models.preflight`
 runs before durable admission.
 
-Delivery exports are `AgentAdmissionEventSchema`, `AgentCheckpointEventSchema`,
+Delivery exports are `AgentAdmissionEventSchema`, `AgentAttemptResetEventSchema`, `AgentCheckpointEventSchema`,
 `AgentRunStateEventSchema`, `AgentRunOperationEventSchema`, `AgentTerminalEventSchema`,
 `AgentTransientDeltaEventSchema`,
 `AgentReasoningStartEventSchema`, `AgentReasoningDeltaEventSchema`,
@@ -1038,6 +1062,20 @@ Managed effects and operator telemetry additionally export `AgentToolFenceConfig
 `AgentRunSinkConfig`, `AgentRunSinkDrop` and `AgentRunSinkError`. A monotonic run `fencingToken`
 may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
 operator-only observability sink explicitly opts in.
+
+## `stitchkit/agent-runtime/testing`
+
+Credential-free provider and concurrency fixtures for Bun and Node tests.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createFaultProviderServer` | function | start an OpenAI-compatible local SSE endpoint with deterministic pass, connection-refused, timeout, stream-cut, HTTP, malformed JSON, slow-stream and missing-usage steps |
+| `AgentFaultStepSchema` / `AgentFaultStep` | schema / _type_ | strict fault-plan step vocabulary |
+| `defineAgentFaultPlan` | function | validate a non-empty deterministic fault sequence |
+| `createReplayAgentProvider` | function | serve a declared sequence of credential-free language-model fixtures per model ID |
+| `createAgentRaceBarrier` / `AgentRaceBarrier` | function / _type_ | named bounded deterministic concurrency barrier |
+| `createAgentRaceTrace` / `AgentRaceTrace` / `AgentRaceTraceEntry` | function / _type_ | record and assert exact event order without wall-clock guesses |
+| `createAgentRaceDriver` / `AgentRaceDriver` | function / _type_ | collect named barriers and release their teardown together |
 
 ## `stitchkit/agent-runtime/harness`
 
@@ -1110,7 +1148,8 @@ not path filtering, to constrain its filesystem access. → ADR 0172.
 
 Browser-safe canonical agent data. It re-exports the run, message, part, usage,
 terminal and provider-envelope schemas/types listed under
-`stitchkit/agent-runtime`, together with all runtime delivery event schemas,
+`stitchkit/agent-runtime`, together with all runtime delivery event schemas (durable and transient,
+including `AgentAttemptResetEventSchema` for `attempt-reset`),
 `AgentRuntimeEventCursorSchema`, `advanceAgentRuntimeEventCursor`,
 `AgentControlRequestSchema` / `AgentControlRequest`, `AgentControlResponseSchema` /
 `AgentControlResponse`, `AgentControlDeliverySchema` / `AgentControlDelivery`, `AgentMultiSessionCursorSchema` /
@@ -1141,12 +1180,12 @@ loaded by the neutral, browser or Node runtime surfaces.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v1 and return `{ store, conversations, close }` |
+| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v2, migrate v1 transactionally and return `{ store, conversations, database, transaction, close }` |
 | `BunSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional create and initialization policies |
 | `createSqliteAgentRuntimeStore` | function | build the normalized store over an injected synchronous SQLite boundary |
 | `initializeAgentRuntimeSqlite` | function | initialize or validate only Stitchkit's namespaced SQLite schema |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
-| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` / `SqliteStoreTransaction` | _type_ | durable store handle — `store`, `conversations`, `database`, `transaction`, `close` — owned connection lifecycle, initialization policy, and the one write transaction the SQLite companions share |
 
 ---
 
@@ -1197,11 +1236,11 @@ the Bun leaf but imports only `node:sqlite`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate schema v1 and return `{ store, close }` |
+| `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate schema v2, migrate v1 transactionally and return `{ store, conversations, database, transaction, close }` |
 | `NodeSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional read-only and initialization policies; read-only requires an initialized schema |
 | `createSqliteAgentRuntimeStore` / `initializeAgentRuntimeSqlite` | function | shared normalized adapter and namespaced schema lifecycle |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
-| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle, owned connection lifecycle and initialization policy |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` / `SqliteStoreTransaction` | _type_ | durable store handle — `store`, `conversations`, `database`, `transaction`, `close` — owned connection lifecycle, initialization policy, and the one write transaction the SQLite companions share |
 
 ## `stitchkit/observability`
 
@@ -1320,6 +1359,8 @@ payload.
 | `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
 | `listToolNames` | function | every contract/runtime tool name with origin, identity and transports — for stable snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
 | `listContractToolNames` | function | the same listing straight from contracts — no handlers or stub services needed |
+| `describeToolCatalog` | function | inspect the exact model-facing names, source identities, schema byte sizes and deferred state; an explicit total byte budget fails closed |
+| `ToolCatalogConfig` / `ToolCatalogEntry` | _type_ | catalog source, transport, optional explicit schema budget and one inspectable result row |
 | `McpHandlerConfig` | _type_ | server surface plus stateless HTTP transport config |
 | `McpHttpConfig` | _type_ | HTTP auth, protected-resource, legacy-era and security options |
 | `McpHttpHandler` | _type_ | framework-owned `{ fetch(request), close() }` lifecycle |

@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.85.2",
+  "version": "0.86.0",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -101,6 +101,10 @@
       "types": "./dist/agent-runtime.d.ts",
       "import": "./dist/agent-runtime.js"
     },
+    "./agent-runtime/testing": {
+      "types": "./dist/agent-runtime-testing.d.ts",
+      "import": "./dist/agent-runtime-testing.js"
+    },
     "./agent-runtime/harness": {
       "types": "./dist/agent-runtime-harness.d.ts",
       "import": "./dist/agent-runtime-harness.js"
@@ -198,6 +202,7 @@
     "smoke:next-ssr": "node scripts/next-ssr-retry-smoke.mjs",
     "consumer-lane": "bun scripts/consumer-lane/run.mjs",
     "bench:mcp-preparation": "bun scripts/benchmark-mcp-preparation.ts",
+    "bench:durable-store": "bun scripts/bench-durable-store.ts",
     "build:entrypoints": "bun scripts/build-entrypoints.mjs"
   },
   "peerDependencies": {

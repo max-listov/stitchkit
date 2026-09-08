@@ -9,6 +9,8 @@ import {
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
   AgentStoredRunSchema,
+  AgentStoreEventEnvelopeSchema,
+  AgentStoreEventPageSchema,
   createAgentRuntimeStore,
 } from 'stitchkit/agent-runtime';
 import { Prisma, PrismaClient } from './generated/client';
@@ -56,20 +58,40 @@ export function createPrismaAgentStoreFixture(input: {
   const prisma = new PrismaClient({
     adapter: new PrismaPg({ connectionString: input.connectionString }),
   });
+  // Twenty concurrent appends to one conversation collide repeatedly; each
+  // retry admits one more writer, so the budget must cover the crowd.
+  const RETRY_ATTEMPTS = 32;
   const runTransaction = async <RESULT>(
     work: (transaction: Prisma.TransactionClient) => Promise<RESULT>,
   ): Promise<RESULT> => {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
       try {
         return await prisma.$transaction((transaction) => work(transaction), {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         });
       } catch (error) {
-        const retryable =
+        // A primary-key collision on the event ledger is a serialization
+        // conflict in disguise: two serializable transactions both read
+        // `max(seq)` from their own snapshot and both insert `max + 1`, and
+        // Postgres reports the second as a unique violation rather than
+        // 40001. Re-running the transaction reads the committed maximum. The
+        // conformance suite's twenty concurrent appends are the proof.
+        const ledgerCollision =
           error instanceof Prisma.PrismaClientKnownRequestError &&
-          (error.code === 'P2034' ||
-            (error.code === 'P2010' && error.message.includes('40001')));
-        if (!retryable || attempt === 3) throw error;
+          error.code === 'P2002' &&
+          (error.meta as { modelName?: string } | undefined)?.modelName ===
+            'AgentRuntimeEvent' &&
+          // The primary key `(conversationId, seq)` only: a duplicate `eventId`
+          // — an archive imported twice — is a real refusal and must not spend
+          // thirty-two serializable attempts to say so. With a driver adapter
+          // the constraint name arrives in the message, not in `meta.target`.
+          error.message.includes('AgentRuntimeEvent_pkey');
+        const retryable =
+          ledgerCollision ||
+          (error instanceof Prisma.PrismaClientKnownRequestError &&
+            (error.code === 'P2034' ||
+              (error.code === 'P2010' && error.message.includes('40001'))));
+        if (!retryable || attempt === RETRY_ATTEMPTS) throw error;
       }
     }
     throw new Error('Serializable transaction retry budget exhausted');
@@ -353,6 +375,67 @@ export function createPrismaAgentStoreFixture(input: {
         if (input.failAfterHistoryApply) {
           throw new Error('Injected failure after history mutation');
         }
+      },
+    },
+    events: {
+      async append(transaction, event) {
+        const conversationId = storageId(event.conversationId);
+        const last = await transaction.agentRuntimeEvent.aggregate({
+          where: { conversationId },
+          _max: { seq: true },
+        });
+        const envelope = AgentStoreEventEnvelopeSchema.parse({
+          ...event,
+          seq: (last._max.seq ?? 0) + 1,
+        });
+        await transaction.agentRuntimeEvent.create({
+          data: {
+            conversationId,
+            seq: envelope.seq,
+            eventId: envelope.eventId,
+            schemaVersion: envelope.schemaVersion,
+            kind: envelope.kind,
+            occurredAt: new Date(envelope.occurredAt),
+            ignorable: envelope.ignorable ?? false,
+            payload: encodePayload(envelope.payload),
+          },
+        });
+        return envelope;
+      },
+      async list(transaction, input) {
+        const rows = await transaction.agentRuntimeEvent.findMany({
+          where: {
+            conversationId: storageId(input.conversationId),
+            ...(input.fromSeq !== undefined && { seq: { gte: input.fromSeq } }),
+            ...(input.toSeq !== undefined && {
+              seq: {
+                ...(input.fromSeq !== undefined && { gte: input.fromSeq }),
+                lte: input.toSeq,
+              },
+            }),
+          },
+          orderBy: { seq: 'asc' },
+          take: input.limit + 1,
+        });
+        const events = rows.map((row) =>
+          AgentStoreEventEnvelopeSchema.parse({
+            conversationId: input.conversationId,
+            seq: row.seq,
+            eventId: row.eventId,
+            schemaVersion: row.schemaVersion,
+            kind: row.kind,
+            occurredAt: row.occurredAt.toISOString(),
+            // The envelope carries the flag only when set: `false` is not a value it takes.
+            ...(row.ignorable && { ignorable: true as const }),
+            payload: decodePayload(row.payload),
+          }),
+        );
+        const items = events.slice(0, input.limit);
+        const lastEvent = items.at(-1);
+        return AgentStoreEventPageSchema.parse({
+          items,
+          ...(events.length > input.limit && lastEvent ? { nextSeq: lastEvent.seq + 1 } : {}),
+        });
       },
     },
     async scanRecoverable(scan) {

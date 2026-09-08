@@ -294,6 +294,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'agent-runtime-testing',
+    subpath: './agent-runtime/testing',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-runtime/testing', 'createFaultProviderServer'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'agent-runtime-harness',
     subpath: './agent-runtime/harness',
     fixture: 'full',

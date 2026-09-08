@@ -14,6 +14,8 @@ import {
   boundedCodingRelativePath,
   existingCodingPath,
 } from './coding-tool-paths';
+import { codingRefusal } from './coding-tool-refusals';
+import { missingSandboxRestrictions, probeAgentProcessSandbox } from './sandbox';
 
 async function runShell(input: {
   executableName: string;
@@ -27,7 +29,24 @@ async function runShell(input: {
   maxOutputBytes: number;
   maxArtifactBytes: number;
   artifacts?: AgentCodingToolConfig['artifacts'];
+  authorization?: Parameters<NonNullable<AgentCodingToolConfig['authorize']>>[0];
 }) {
+  const preview = (data: Buffer, budget: number) => {
+    if (data.byteLength <= budget) {
+      return { data, headBytes: data.byteLength, tailBytes: 0, omittedBytes: 0 };
+    }
+    const headBytes = Math.ceil(budget / 2);
+    const tailBytes = Math.floor(budget / 2);
+    return {
+      data: Buffer.concat([
+        data.subarray(0, headBytes),
+        data.subarray(data.byteLength - tailBytes),
+      ]),
+      headBytes,
+      tailBytes,
+      omittedBytes: data.byteLength - budget,
+    };
+  };
   const stdoutHeader = Buffer.from('--- stdout ---\n');
   const stderrHeader = Buffer.from('\n--- stderr ---\n');
   const artifactPayloadLimit =
@@ -76,13 +95,35 @@ async function runShell(input: {
       cleanup();
       try {
         const hasArtifact = input.artifacts && artifactBytes > input.maxOutputBytes;
+        const completeStdout = Buffer.concat(artifactStdout);
+        const completeStderr = Buffer.concat(artifactStderr);
         const artifactData = hasArtifact
-          ? Buffer.concat([stdoutHeader, ...artifactStdout, stderrHeader, ...artifactStderr])
+          ? Buffer.concat([stdoutHeader, completeStdout, stderrHeader, completeStderr])
           : undefined;
+        const stdoutBudget =
+          completeStderr.byteLength === 0
+            ? input.maxOutputBytes
+            : Math.ceil(input.maxOutputBytes / 2);
+        const stderrBudget =
+          completeStdout.byteLength === 0
+            ? input.maxOutputBytes
+            : Math.floor(input.maxOutputBytes / 2);
+        const stdoutPreview = hasArtifact
+          ? preview(completeStdout, stdoutBudget)
+          : {
+              data: Buffer.concat(stdout),
+              headBytes: retained,
+              tailBytes: 0,
+              omittedBytes: 0,
+            };
+        const stderrPreview = hasArtifact
+          ? preview(completeStderr, stderrBudget)
+          : { data: Buffer.concat(stderr), headBytes: 0, tailBytes: 0, omittedBytes: 0 };
         const persisted = hasArtifact
           ? await input.artifacts?.write({
               mediaType: 'text/plain; charset=utf-8',
               data: artifactData ?? new Uint8Array(),
+              ...(input.authorization && { authorization: input.authorization }),
             })
           : undefined;
         resolve(
@@ -90,14 +131,17 @@ async function runShell(input: {
             executable: input.executableName,
             exitCode,
             signal,
-            stdout: Buffer.concat(stdout).toString('utf8'),
-            stderr: Buffer.concat(stderr).toString('utf8'),
+            stdout: stdoutPreview.data.toString('utf8'),
+            stderr: stderrPreview.data.toString('utf8'),
             outcome,
             ...(persisted && {
               artifact: {
                 reference: persisted.reference,
                 bytes: artifactData?.byteLength ?? 0,
                 truncated: outcome === 'output-limit',
+                headBytes: stdoutPreview.headBytes + stderrPreview.headBytes,
+                tailBytes: stdoutPreview.tailBytes + stderrPreview.tailBytes,
+                omittedBytes: stdoutPreview.omittedBytes + stderrPreview.omittedBytes,
               },
             }),
           }),
@@ -214,24 +258,76 @@ export function createShellCodingTool(
       if (!(await stat(cwd.absolute)).isDirectory()) {
         throw new Error('Coding tool cwd is not a directory');
       }
-      await authorizeCodingTool(config, {
+      const shellAuthorization = {
         operation: 'shell',
         executable: input.executable,
         args: input.args,
         cwd: cwd.relative,
-      });
+      } as const;
+      await authorizeCodingTool(config, shellAuthorization);
+      let executablePath = executable;
+      let executableArgs = input.args;
+      let environment = config.environment ?? {};
+      if (config.sandbox) {
+        const grade = await probeAgentProcessSandbox(config.sandbox.adapter);
+        if (grade.grade === 'unavailable') {
+          codingRefusal(
+            'SANDBOX_UNAVAILABLE',
+            'The configured process sandbox is unavailable',
+            {
+              details: { reason: grade.reason },
+            },
+          );
+        }
+        const missing = missingSandboxRestrictions(grade, config.sandbox.required);
+        if (missing.length > 0) {
+          codingRefusal(
+            'SANDBOX_INSUFFICIENT',
+            'The process sandbox lacks required restrictions',
+            {
+              details: { missing, grade: grade.grade },
+            },
+          );
+        }
+        try {
+          const prepared = await config.sandbox.adapter.prepare({
+            executable,
+            args: input.args,
+            cwd: cwd.absolute,
+            environment,
+          });
+          executablePath = prepared.executable;
+          executableArgs = [...prepared.args];
+          environment = prepared.environment ?? environment;
+        } catch (error) {
+          const refreshed = await probeAgentProcessSandbox(config.sandbox.adapter, {
+            refresh: true,
+          });
+          codingRefusal(
+            'SANDBOX_UNAVAILABLE',
+            'The process sandbox failed while preparing a command',
+            {
+              details: {
+                grade: refreshed.grade,
+                reason: error instanceof Error ? error.message : 'unknown sandbox error',
+              },
+            },
+          );
+        }
+      }
       return runShell({
         executableName: input.executable,
-        executable,
-        args: input.args,
+        executable: executablePath,
+        args: executableArgs,
         cwd: cwd.absolute,
-        environment: config.environment ?? {},
+        environment,
         ...(signal && { signal }),
         timeoutMs: limits.shellTimeoutMs,
         terminationGraceMs: limits.shellTerminationGraceMs,
         maxOutputBytes: limits.maxShellOutputBytes,
         maxArtifactBytes: limits.maxArtifactBytes,
         ...(config.artifacts && { artifacts: config.artifacts }),
+        authorization: shellAuthorization,
       });
     },
   });

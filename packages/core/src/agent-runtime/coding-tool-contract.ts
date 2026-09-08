@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AgentProcessSandbox, AgentSandboxRestriction } from './sandbox';
 
 export const AgentCodingToolLimitsSchema = z
   .object({
@@ -66,6 +67,14 @@ export const AgentCodingToolAuthorizationSchema = z.discriminatedUnion('operatio
     .strict(),
   z
     .object({
+      operation: z.literal('artifact-search'),
+      reference: z.string().min(1),
+      query: z.string().min(1),
+      maxMatches: z.int().positive(),
+    })
+    .strict(),
+  z
+    .object({
       operation: z.literal('shell'),
       executable: z.string().min(1),
       args: z.array(z.string()),
@@ -98,6 +107,10 @@ export interface AgentCodingToolConfig {
   executables?: Readonly<Record<string, string>>;
   environment?: Readonly<Record<string, string>>;
   artifacts?: AgentCodingArtifactStore;
+  sandbox?: {
+    adapter: AgentProcessSandbox;
+    required: readonly AgentSandboxRestriction[];
+  };
   search?: {
     /** Directory basenames omitted from workspace search at every depth. */
     excludeDirectories?: readonly string[];
@@ -106,17 +119,32 @@ export interface AgentCodingToolConfig {
 }
 
 export interface AgentCodingArtifactStore {
+  /** Original admission checked before artifact bytes are read. */
+  authorization?(
+    reference: string,
+  ):
+    | AgentCodingToolAuthorization
+    | undefined
+    | Promise<AgentCodingToolAuthorization | undefined>;
   write(input: {
     mediaType: string;
     data: Uint8Array;
+    authorization?: AgentCodingToolAuthorization;
   }): { reference: string } | Promise<{ reference: string }>;
-  read(input: {
+  read(input: { reference: string; offset: number; maxBytes: number }):
+    | { data: Uint8Array; totalBytes?: number; authorization?: AgentCodingToolAuthorization }
+    | Promise<{
+        data: Uint8Array;
+        totalBytes?: number;
+        authorization?: AgentCodingToolAuthorization;
+      }>;
+  search?(input: {
     reference: string;
-    offset: number;
-    maxBytes: number;
+    query: string;
+    maxMatches: number;
   }):
-    | { data: Uint8Array; totalBytes?: number }
-    | Promise<{ data: Uint8Array; totalBytes?: number }>;
+    | readonly { line: number; text: string }[]
+    | Promise<readonly { line: number; text: string }[]>;
 }
 
 export interface AgentCodingToolDefinition {
@@ -215,6 +243,9 @@ export const ShellOutputSchema = z
         reference: z.string().min(1),
         bytes: z.int().nonnegative(),
         truncated: z.boolean(),
+        headBytes: z.int().nonnegative(),
+        tailBytes: z.int().nonnegative(),
+        omittedBytes: z.int().nonnegative(),
       })
       .strict()
       .optional(),

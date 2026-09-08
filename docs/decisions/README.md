@@ -199,6 +199,8 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0171](0171-geoip-swaps-complete-reader-generations.md) | GeoIP swaps complete reader generations | Accepted — City and optional ASN swap together, in-flight reads drain and failed reloads retain the last known good reader |
 | [0172](0172-a-path-policy-runs-before-discovery-or-reading.md) | A path policy runs before discovery or reading | Accepted — one host path decision gates direct file effects and filters discovery before any selected content is opened |
 | [0173](0173-a-read-snapshot-does-not-reserve-the-wal-writer.md) | A read snapshot does not reserve the WAL writer | Accepted — one transaction access hint preserves adapter compatibility while SQLite reads use `BEGIN` and mutations retain `BEGIN IMMEDIATE` |
+| [0174](0174-runtime-operations-are-durable-run-facts.md) | Runtime operations are durable run facts | Accepted — model requests and compaction update one revision-checked run projection before provider work |
+| [0175](0175-the-event-ledger-is-the-agent-runtime-source-of-truth.md) | The event ledger is the agent runtime source of truth | Accepted — one append-only conversation sequence owns replay while normalized tables and checkpoints remain bounded views |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

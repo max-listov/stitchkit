@@ -111,7 +111,7 @@ describe('agent runtime terminalization', () => {
     expect((await store.loadSnapshot('conversation-preflight')).messages).toHaveLength(0);
   });
 
-  test('commits a provider failure when prompt construction fails before streaming', async () => {
+  test('commits a runtime failure when prompt construction fails before streaming', async () => {
     const store = createMemoryAgentRuntimeStore();
     const events: AgentRuntimeEvent[] = [];
     const failure = new Error('internal provider setup failed');
@@ -156,12 +156,12 @@ describe('agent runtime terminalization', () => {
     await ticket.accepted;
     const terminal = await ticket.result;
 
-    expect(terminal.reason).toBe('provider_failure');
+    expect(terminal.reason).toBe('runtime_failure');
     expect(terminal.run.state).toBe('failed');
     expect(terminal.message.status).toBe('failed');
     const snapshot = await store.loadSnapshot('conversation-1');
     expect(snapshot.runs).toHaveLength(1);
-    expect(snapshot.runs[0]?.terminalReason).toBe('provider_failure');
+    expect(snapshot.runs[0]?.terminalReason).toBe('runtime_failure');
     expect(snapshot.messages[0]?.metadata).toEqual({ channel: 'test' });
     const terminalEvent = events.find((event) => event.type === 'terminal');
     // `partial` now says something about the run rather than which event kind
@@ -415,7 +415,7 @@ describe('agent runtime terminalization', () => {
       metadata: {},
     }).result;
 
-    expect(result.reason).toBe('provider_failure');
+    expect(result.reason).toBe('runtime_failure');
     expect(result.run.state).toBe('failed');
     expect(result.message.status).toBe('failed');
     expect(result.metrics).toBeUndefined();
@@ -914,6 +914,10 @@ describe('agent runtime terminalization', () => {
         loadSnapshot: () => Promise.reject(new Error('not used')),
         loadRun: () => Promise.reject(new Error('not used')),
         listActiveRuns: () => Promise.reject(new Error('not used')),
+        appendEvent: () => Promise.reject(new Error('not used')),
+        readEvents: () => Promise.reject(new Error('not used')),
+        exportConversation: () => Promise.reject(new Error('not used')),
+        importConversation: () => Promise.reject(new Error('not used')),
         acceptInputAndAssignRun: () => Promise.reject(new Error('admission failed')),
         acquireRun: () => Promise.reject(new Error('not used')),
         checkpointRunAssistant: () => Promise.reject(new Error('not used')),

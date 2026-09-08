@@ -12,6 +12,12 @@ import {
   AgentTerminalReasonSchema,
   AgentUsageSchema,
 } from './schemas';
+import type {
+  AgentStoreEventEnvelope,
+  AgentStoreEventPage,
+  AppendAgentStoreEvent,
+  ReadAgentStoreEvents,
+} from './store-events';
 
 export const AgentStoreConflictSchema = z.object({
   outcome: z.literal('conflict'),
@@ -225,4 +231,12 @@ export interface AgentRuntimeStore {
    * once at whichever level it plugs in.
    */
   scanRecoverable(input: { cursor?: string; limit: number }): Promise<AgentRecoverablePage>;
+  /** Append one declared non-transition fact without creating a second history store. */
+  appendEvent(input: AppendAgentStoreEvent): Promise<AgentStoreEventEnvelope>;
+  /** Read one bounded ordered slice of the canonical conversation event log. */
+  readEvents(input: ReadAgentStoreEvents): Promise<AgentStoreEventPage>;
+  /** Deterministic canonical archive bytes for one conversation's durable event log. */
+  exportConversation(conversationId: string): Promise<Uint8Array>;
+  /** Restore a canonical archive into an empty conversation event log. */
+  importConversation(bytes: Uint8Array): Promise<{ conversationId: string; events: number }>;
 }

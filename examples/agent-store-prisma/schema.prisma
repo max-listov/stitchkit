@@ -47,3 +47,17 @@ model AgentRuntimeMessage {
 
   @@id([conversationId, id])
 }
+
+model AgentRuntimeEvent {
+  conversationId String
+  seq            Int
+  eventId        String   @unique
+  schemaVersion  Int
+  kind           String
+  occurredAt     DateTime
+  ignorable      Boolean
+  payload        String
+
+  @@id([conversationId, seq])
+  @@index([conversationId, occurredAt])
+}

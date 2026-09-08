@@ -54,6 +54,17 @@ export const AgentReasoningDeltaEventSchema = AgentTransientReasoningIdentitySch
 export const AgentReasoningEndEventSchema = AgentTransientReasoningIdentitySchema.extend({
   type: z.literal('reasoning-end'),
 });
+/**
+ * A retried attempt starts over: everything transient this run published
+ * before it — deltas, reasoning — is withdrawn. Without this a subscriber
+ * concatenated the cut attempt's partial text with the recovered answer.
+ */
+export const AgentAttemptResetEventSchema = EventIdentitySchema.extend({
+  type: z.literal('attempt-reset'),
+  runtimeEpoch: z.string().min(1),
+  sequence: z.int().nonnegative(),
+  attempt: z.int().positive(),
+});
 export const AgentCheckpointEventSchema = EventIdentitySchema.extend({
   type: z.literal('assistant-checkpoint'),
   eventId: AgentRecordIdSchema,
@@ -99,6 +110,7 @@ export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
   AgentReasoningStartEventSchema,
   AgentReasoningDeltaEventSchema,
   AgentReasoningEndEventSchema,
+  AgentAttemptResetEventSchema,
   AgentCheckpointEventSchema,
   AgentRunStateEventSchema,
   AgentRunOperationEventSchema,

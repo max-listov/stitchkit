@@ -527,6 +527,27 @@ try {
             `[consumer-lane] node: ${runtime} operation revision produced no proof`,
           );
         }
+        // The durable capabilities of 0.86.0, each proven on the installed
+        // artifact rather than in-repo — three releases shipped broken with
+        // every in-repo gate green, and this is where that class is caught.
+        for (const [file, label] of [
+          ['projections.mjs', 'projections'],
+          ['event-search.mjs', 'event search'],
+          ['spill.mjs', 'spill'],
+          ['schedules.mjs', 'schedules'],
+          ['children.mjs', 'children'],
+          ['sandbox-grade.mjs', 'sandbox grade'],
+          ['retry-boundary.mjs', 'retry boundary'],
+          ['migration.mjs', 'migration'],
+        ]) {
+          const output = step(`node: ${label} (${runtime})`, () =>
+            run(runtime, [`src/${file}`], dir),
+          );
+          if (!output.includes(`packed ${label}: ok`)) {
+            failed = true;
+            console.error(`[consumer-lane] node: ${runtime} ${label} produced no proof`);
+          }
+        }
       }
     }
   }

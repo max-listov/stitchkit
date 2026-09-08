@@ -15,6 +15,166 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.86.0] — 2026-09-08
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications that branch on `AgentTerminalReason` or show it
+to a person; applications implementing `AgentRuntimeStore` or an
+`AgentRuntimeStoreDriver` (Prisma, Postgres, anything not built in); operators
+of SQLite store files; subscribers that switch exhaustively over
+`AgentRuntimeEvent` (including browser reducers).
+
+- **A failure this runtime owns no longer reports `provider_failure`.** Three
+  values join the enum — `storage_conflict` (an owned mutation lost its
+  compare-and-set or the store refused it), `output_rejected` (the
+  application's own `protocol.acceptTerminal` refused the finished message) and
+  `runtime_failure` (this runtime, or a check the SDK runs on what this runtime
+  handed it, failed). Runs that ended `provider_failure` for these reasons now
+  end with the matching one, so a branch keyed on `provider_failure` stops
+  seeing them. `// before: reason === 'provider_failure'` → `// after:
+  reason === 'provider_failure' || reason === 'storage_conflict' ||
+  reason === 'output_rejected' || reason === 'runtime_failure'` for "did it
+  fail", and the specific value for what to tell a person. See the 0.86.0
+  migration in the upgrading guide.
+- **Direct stores add the canonical event-ledger methods, and drivers add the
+  table behind them.** `AgentRuntimeStore` gains `appendEvent`, bounded
+  `readEvents`, `exportConversation` and `importConversation`.
+  `AgentRuntimeStoreDriver` gains a **required** `events: { append, list }` —
+  a driver passed to `createAgentRuntimeStore` implements the ledger table
+  itself; the store composes the methods over it. The Prisma example shows the
+  table and both operations
+  (`examples/agent-store-prisma/schema.prisma`, `adapter.ts`). See the 0.86.0
+  migration in the upgrading guide for the driver section.
+- **The built-in SQLite stores migrate schema 1 → 2 on open, once, forward
+  only.** The first open of a version-1 file writes one `runtime/baseline`
+  event per conversation and sets the version to 2 in one transaction; a
+  0.85.x package then refuses the file (`Unsupported … schema version 2`).
+  Back the file up before upgrading. Version 2 requires SQLite built with FTS5
+  (`SELECT sqlite_compileoption_used('ENABLE_FTS5')`); a build without it is
+  refused at open with `requires FTS5 support`.
+- **Every run operation and every provider request now write to the ledger.**
+  Each store mutation appends a `runtime/transition`, and each model step
+  appends a `provider/request` before the provider is called. Bodies are
+  content-addressed: a message is written once per conversation as
+  `provider/message` (`{ sha256, message }`, binary parts as
+  `{ binary: true, sha256, bytes }` references) and a request names its instructions and messages by hash
+  (`{ runId, attempt, stepNumber, modelId, instructionsSha256, messageShas,
+  bodySha256 }`), so the ledger grows with new messages rather than with every
+  step's copy of the history. A checkpoint transition carries the draft's hash
+  and size, not the draft; the terminal commit carries the message. For an
+  external driver that is one more row per operation and per step, plus one
+  per new message, on the hot path; there is no opt-out, because the ledger is
+  the history.- **`AgentRuntimeEvent` gains the transient `attempt-reset` event.** Published
+  before a retried attempt's first delta, with `runtimeEpoch`, `sequence` and
+  `attempt`; `reduceAgentControlEvent` drops the run's transient text on it.
+  A reducer that switches exhaustively over `event.type` stops compiling until
+  it handles the case; a reducer that ignores unknown events keeps the failed
+  attempt's partial text on screen. `// before: switch (event.type) { … }` →
+  `// after: case 'attempt-reset': transient = { text: '', reasoning: '' }`.
+  Exported as `AgentAttemptResetEventSchema` from `stitchkit/agent-runtime` and
+  `stitchkit/agent-runtime/browser`.
+
+### Added
+
+- **Agent runtime history is reconstructable from one versioned event ledger.**
+  SQLite schema 2 migrates version 1 conversations through a baseline event,
+  keeps normalized operational tables, adds deterministic projection
+  checkpoints and FTS5 event search, and supports canonical byte-stable
+  conversation export/import. Unknown event versions are skippable only when
+  their envelope explicitly opts in. Direct `AgentRuntimeStore`
+  implementations add `appendEvent`, `readEvents`, `exportConversation` and
+  `importConversation`. → ADR 0175. A conversation export is one read transaction over events, companions and the snapshot. The store conformance suite appends twenty events concurrently and reads them back; the Prisma example passes it by re-running a transaction on a ledger key collision — under `SERIALIZABLE` a unique violation is a serialization conflict — and maps `ignorable` only when set.
+- **Projections fold events with a persisted checkpoint.**
+  `defineAgentProjection`, `createAgentProjectionRegistry` and
+  `createSqliteAgentProjectionStore` keep one row per conversation and
+  projection with the `uptoSeq` it was folded to — stale is possible, wrong is
+  not, and a reader always sees how far behind it is. Built-in:
+  `agentConversationCardProjection`, `agentSummaryProjection`,
+  `agentUsageProjection`, `agentOutlineProjection`, `agentStateSlotsProjection`,
+  `agentScheduleSummaryProjection`.
+- **Typed state slots survive compaction.** `defineStateSlot`,
+  `createAgentStateSlotStore` and `renderAgentStateSlots` keep goal, plan and
+  choices as `state/set` events and render them into every provider request
+  from the ledger, not from the history compaction rewrites; `agentGoalStateSlot`
+  and `agentTodoStateSlot` ship with `createAgentStateTools`.
+- **Events are searchable in the SQLite store.** `createSqliteAgentEventSearch`
+  over an FTS5 index answers with the exact `conversationId` and `seq`, denies
+  another conversation's events unless `authorizeConversation` says otherwise,
+  and `createAgentEventSearchTools` exposes `session_search`, `session_trace`
+  and `session_event`. Without an authorizer the query is bound to the requester's conversation in SQL; with one, foreign candidates are refused page by page until the requester's limit is met, so a louder neighbour cannot starve a match.
+- **Oversized tool output spills whole instead of being cut.**
+  `createSqliteAgentSpillStore` is an `AgentCodingArtifactStore`: a shell
+  result over `limits.maxShellOutputBytes` is kept in full as a conversation
+  artifact, the model receives head, tail, omitted byte count and an
+  `artifact.reference`, and `read_output`/`search_output` re-check the
+  originating authorization before returning any of it. Retention cleanup
+  writes `spill/deleted` with the size; export carries the bytes.
+- **A conversation can schedule its own input.** `createAgentScheduleService`
+  keeps `after`, `at` and `every` durably, delivers through the caller's
+  `dispatch` with `idempotencyKey: schedule:<id>:<occurrence>`, marks a firing missed across a
+  restart `late` with `lateByMs`, and requires an explicit IANA `timeZone` for
+  `every`; `schedule_*` tools for the agent. A row is claimed under compare-and-set before `dispatch`, one tick runs at a time, a `dispatch` that throws is recorded as `schedule/failed` with the row left due and the timer armed, and `every` fires once after an idle stretch. Delivery identity is `idempotencyKey: schedule:<id>:<occurrence>`.
+- **Child runs inherit a bounded seed and a budget.**
+  `createSqliteAgentChildManager` spawns a child from the parent's ledger up to
+  `seedUptoSeq`, stops it at the next step boundary when `usd`, `tokens` or
+  `milliseconds` run out (`child-budget` policy, overrun recorded), records
+  `spawned → running → finished | stopped | lost`, and — given to
+  `createAgentRuntime` as `children` — stops the parent's children after the
+  parent's terminal is durable. `createAgentChildTools` exposes `subagent`,
+  `subagent_fork`, `list_agents`. `agentChildBudgetStopPolicy` is the child
+  runtime's own stop policy — `recordStepUsage` at every step boundary,
+  `policy_stop` as `child-budget` when the budget is spent; `recordStepUsage`
+  reports `enforced: false` when the deciding process holds no handle. The cascade runs once, from the executor that committed the parent's terminal, on an explicit stop — interrupted, cancelled, timed out, shut down — and not on success, supersession or failure, where the conversation goes on and the children with it; a child this process holds no handle for is `lost`, not `stopped`; a late result never rewrites `stopped` or `lost`; a spawn that throws leaves no row; the host's stop and reachability calls are bounded.
+- **The shell tool reports its sandbox grade.** `probeAgentProcessSandbox`
+  probes once per process, `recordAgentSandboxProbe` writes `sandbox/probed`
+  with the grade and the required restrictions it lacks, and a missing required
+  restriction refuses `run_command` with `SANDBOX_UNAVAILABLE` — a different
+  code from a policy refusal — without running anything.
+- **Provider stream failures retry only at a durable step boundary.**
+  `loop.retry` (`AgentRetryPolicy`) retries a `stream-cut` or other retryable
+  provider failure before any tool call in that attempt, drops the attempt's
+  partial output, and records `retry/scheduled` then `retry/started`; a failure
+  after a tool has executed is never retried. Off unless configured. The runtime publishes `attempt-reset` before the next attempt's first delta, checkpoints the draft after the partial output is discarded, hands an input injected into the failed attempt back so the retry sees it and the terminal absorbs only what was answered, and keeps the failed attempt's `finish-step` usage in the run's spend.
+- **The tool catalog is inspectable and collision-checked.** `describeToolCatalog`
+  lists every tool with its origin, final name and schema size; two sources
+  producing one final name refuse at start naming both, and a schema-byte
+  budget is a warning unless made a refusal.
+- **The SQLite handle shares its connection and its transaction.**
+  `createBunSqliteAgentRuntimeStore` / `createNodeSqliteAgentRuntimeStore`
+  return `{ store, conversations, database, transaction, close }`. The SQLite
+  companions — `createSqliteAgentProjectionStore`, `createSqliteAgentSpillStore`,
+  `createSqliteAgentChildManager`, `createAgentScheduleService` — take
+  `{ sqlite }` and write their rows and events through `transaction`
+  (`SqliteStoreTransaction`), in the store's own serialization, so a row and its
+  event land together or not at all. A store call from inside a scope is refused
+  with an error rather than queued behind the transaction it is in.
+- **Provider failure fixtures have their own packed test entrypoint.**
+  `stitchkit/agent-runtime/testing` exposes a credential-free OpenAI-compatible
+  fault server, replay provider and deterministic race controls. Runtime
+  `loop.retry` records scheduled/started attempts and never automatically
+  repeats an attempt that already invoked a tool.
+
+### Fixed
+
+- **A subscriber can accumulate a run's text again.** The transient
+  `sequence` advanced on every stream part, published or not, so a run's first
+  delta reached subscribers as sequence 4 behind an unpublished `text-start`:
+  every cursor saw a gap on the first delta of every run, the control view
+  flagged a resync and never accumulated the text it exists for. The sequence
+  now counts published transient events only. Older than this release.
+- **A durable record no longer blames an upstream that was never contacted.**
+  `context_overflow` was carved out of `provider_failure` for exactly this
+  reason in an earlier release; the same misclassification remained at three
+  other sites. A store conflict — including the one 0.85.2 fixed, which ended
+  runs with zero provider calls — an acceptance refusal after a perfectly good
+  answer, and this runtime's own callback failing before any provider call all
+  said the provider failed. Provider origin is now marked where it is known,
+  at the `doStream` boundary, rather than assumed by elimination. The runtime
+  claims only failures it can identify as its own: an error part it cannot
+  identify is still the provider's, which is what an error part overwhelmingly
+  is.
+
 ## [0.85.2] — 2026-09-08
 
 ### Fixed

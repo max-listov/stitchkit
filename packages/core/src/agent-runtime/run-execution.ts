@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   type Instructions,
   type LanguageModelCallStartEvent,
@@ -15,9 +17,12 @@ import { AgentContextOverflowError } from './context-refusal';
 import { deferredToolRepair } from './deferred-tools-internal';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistoryDetailed } from './history';
-import type { AgentInjectionRegistry } from './injection';
+import type { AgentInjectableInput, AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
+import { classifyProviderFailure } from './provider-failure';
+import { hasProviderOrigin, isOwnInputRefusal } from './provider-origin';
+import { recordAgentRetryDecision } from './retry-policy';
 import { createRunMutationQueue } from './run-mutation-queue';
 import { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import type { AgentContextUsage, AgentRuntimeConfig } from './runtime';
@@ -47,6 +52,8 @@ import {
   type AgentUsageValue,
   runStateForTerminalReason,
 } from './schemas';
+import { createAgentStateSlotStore, renderAgentStateSlots } from './state-slots';
+import { canonicalAgentJson } from './store-events';
 import {
   AgentRuntimeConflictError,
   appliedSnapshot,
@@ -114,6 +121,53 @@ export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
  * run. Dependencies arrive as parameters rather than as a closure over the
  * whole factory, so what a run can touch is visible in one place.
  */
+/**
+ * The terminal reason for a failure this runtime raises on its own behalf.
+ *
+ * `undefined` means the runtime cannot claim the failure — which, at both call
+ * sites, leaves it the provider's. One function because both sites answer the
+ * same question and used to answer it differently.
+ */
+function failureThisRuntimeOwns(error: unknown): AgentTerminalReason | undefined {
+  if (error instanceof AgentContextOverflowError) return 'context_overflow';
+  if (error instanceof AgentRuntimeConflictError) return 'storage_conflict';
+  if (isOwnInputRefusal(error)) return 'runtime_failure';
+  return undefined;
+}
+
+/**
+ * A model message with its binary parts replaced by references.
+ *
+ * `JSON.stringify` turns a `Uint8Array` into an object of numeric keys and a
+ * `Buffer` into `{ type: 'Buffer', data: [...] }` — four to five times the
+ * bytes, in the ledger, on every step that carried the attachment. The
+ * record names the bytes by hash and size instead.
+ */
+function withoutBinaryParts(message: ModelMessage): unknown {
+  const reference = (value: unknown): unknown => {
+    if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+      const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
+      return {
+        binary: true,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes: bytes.byteLength,
+      };
+    }
+    if (value instanceof URL) return value.toString();
+    if (Array.isArray(value)) return value.map(reference);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+          key,
+          reference(entry),
+        ]),
+      );
+    }
+    return value;
+  };
+  return reference(message);
+}
+
 export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
   dependencies: RunExecutorDependencies<CONTEXT, TOOLS>,
 ) {
@@ -257,6 +311,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     const absorbed = new Map<string, string[]>();
     let eventsSinceCheckpoint = 0;
     let sequence = 0;
+    /**
+     * The next transient sequence — taken only when something is published.
+     *
+     * It used to advance on every stream part, published or not, so a run's
+     * first delta arrived as sequence 4 behind an unpublished `text-start`:
+     * every subscriber's cursor saw a gap on the first delta of every run,
+     * flagged a resync and stopped accumulating the text it was for.
+     */
+    const transientSequence = (): number => {
+      sequence += 1;
+      return sequence;
+    };
     let terminalReason: AgentTerminalReason = 'success';
     // A requeued run re-executes from scratch and pays the provider again, so
     // its figure continues the one the earlier attempt persisted rather than
@@ -265,6 +331,17 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // never survived to emit.
     let nonModelUsage: AgentUsage | undefined = input.acceptedRun.usage;
     let modelUsage: AgentUsage | undefined;
+    /**
+     * What retried attempts cost. Kept apart from `modelUsage` because the
+     * SDK's `finish` part carries the total for the attempt that finished and
+     * `mergeModelTotals` takes that total as authoritative — folding an
+     * abandoned attempt into the same figure lost it on the next `finish`.
+     */
+    let abandonedUsage: AgentUsage | undefined;
+    const billedUsage = (): AgentUsage | undefined =>
+      abandonedUsage && modelUsage
+        ? addUsage(abandonedUsage, modelUsage)
+        : (abandonedUsage ?? modelUsage);
     let usage: AgentUsage | undefined = nonModelUsage;
     // Whether the provider ever told us the run was over. It is the difference
     // between a total and a floor, and it is the only thing `partial` can
@@ -404,7 +481,8 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           // spend carried by a recovered attempt stay in a separate subtotal,
           // so reconciling the provider total cannot replace either one.
           nonModelUsage = addUsage(nonModelUsage, compacted.usage);
-          usage = modelUsage ? addUsage(nonModelUsage, modelUsage) : nonModelUsage;
+          const billed = billedUsage();
+          usage = billed ? addUsage(nonModelUsage, billed) : nonModelUsage;
         }
       }
 
@@ -479,6 +557,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       // gets it. `ai` refuses a system-role entry inside `messages`, so a
       // compacted conversation used to fail every run after the compaction.
       let carriedSystem: readonly string[] = [];
+      let durableSystem: readonly string[] = [];
+      if (config.stateSlots && config.stateSlots.length > 0) {
+        const slotValues = await createAgentStateSlotStore({
+          store: config.store,
+          definitions: config.stateSlots,
+        }).list(run.conversationId);
+        const renderedSlots = renderAgentStateSlots(slotValues);
+        if (renderedSlots) {
+          durableSystem = [renderedSlots];
+          carriedSystem = durableSystem;
+        }
+      }
       const projectHistory = async (source: AgentSnapshot) => {
         if (config.history?.project) return config.history.project(source.messages);
         const detailed = await projectAgentHistoryDetailed(source.messages, {
@@ -508,7 +598,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             );
           }
         }
-        carriedSystem = detailed.system;
+        carriedSystem = [...durableSystem, ...detailed.system];
         return [...detailed.messages];
       };
       /**
@@ -567,9 +657,19 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         });
       }
       /** What this boundary takes on, projected for the provider. */
+      /**
+       * What the current attempt took from the injection registry.
+       *
+       * `take` removes an entry, so a retry that starts over from `history`
+       * would run without it — and the terminal would still absorb it, marking
+       * a person's input answered by a model that never saw it. The retry
+       * hands these back before its first step.
+       */
+      let takenThisAttempt: AgentInjectableInput[] = [];
       const takeInjectedMessages = async (): Promise<ModelMessage[]> => {
         const taken = injection?.take(input.key, run.id) ?? [];
         if (taken.length === 0) return [];
+        takenThisAttempt.push(...taken);
         const messages: ModelMessage[] = [];
         for (const entry of taken) {
           // Only this admission's own message, never a re-projection of the
@@ -591,395 +691,594 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         return messages;
       };
       const fallbackModel = selectedModel.model;
-      const result = streamAgentTextBoundary<TOOLS>({
-        model: fallbackModel,
-        tools,
-        instructions: withCarriedSystem(prompt.instructions),
-        messages: history,
-        abortSignal: executionSignal,
-        maxRetries: 0,
-        stopWhen: stopConditions,
-        onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
-          operationLifecycle.noteProviderCall(event.callId);
-        },
-        repairToolCall: deferredToolRepair(config.loop?.prepareStep),
-        ...(config.loop?.toolApproval && {
-          toolApproval: config.loop.toolApproval,
-          runtimeContext: input.context,
-        }),
-        ...(config.loop?.toolApprovalSecret && {
-          experimental_toolApprovalSecret: config.loop.toolApprovalSecret,
-        }),
-        prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
-          // The SDK can prepare the next step before the consumer has read
-          // that previous step's `finish-step` stream part. Derive the
-          // provider-reported fill from the completed step the SDK hands us,
-          // rather than depending on stream-consumer scheduling.
-          const previousStep = options.steps.at(-1);
-          if (previousStep) {
-            lastPromptTokens =
-              selectedModel?.normalizeUsage?.({
-                usage: previousStep.usage,
-                providerMetadata: previousStep.providerMetadata,
-              })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
-          }
-          const prepared = await config.loop?.prepareStep?.({
-            ...options,
-            ...runtimeContext,
+      const requestModelId = selectedModel.descriptor.modelId;
+      let retryAttempt = 1;
+      /** The last `prepareStep` override of the instructions, which the SDK carries forward. */
+      let instructionsOverride: unknown;
+      /**
+       * Message bodies already in this conversation's ledger, by content hash.
+       *
+       * The request record used to carry every message of every step: O(N·K)
+       * per run, O(N²) over a conversation's life, and one durable write of
+       * the whole history on the hot path before every provider call. Now a
+       * body is written once as `provider/message` and every request names
+       * its messages by sha256. One paged read of the ledger per run seeds the
+       * set — the same order of work as reading the history for the prompt,
+       * which every run already does.
+       */
+      const knownMessageShas = new Set<string>();
+      {
+        let fromSeq: number | undefined;
+        do {
+          const page = await config.store.readEvents({
+            conversationId: run.conversationId,
+            ...(fromSeq && { fromSeq }),
+            limit: 10_000,
           });
-          const injected = await takeInjectedMessages();
-          // The SDK carries a `prepareStep` message list into the next step,
-          // so appending only what was taken *this* boundary is right — and
-          // appending the whole accumulated list would duplicate it.
-          const preparedStep =
-            injected.length === 0
-              ? prepared
-              : {
-                  ...prepared,
-                  messages: [...(prepared?.messages ?? options.messages), ...injected],
-                };
-          return {
-            ...preparedStep,
-            model: await operationLifecycle.prepareModel(
+          for (const event of page.items) {
+            if (event.kind !== 'provider/message') continue;
+            const sha = (event.payload as { sha256?: unknown } | null)?.sha256;
+            if (typeof sha === 'string') knownMessageShas.add(sha);
+          }
+          fromSeq = page.nextSeq;
+        } while (fromSeq !== undefined);
+      }
+      const recordProviderRequest = async (request: {
+        stepNumber: number;
+        attempt: number;
+        instructions: ReturnType<typeof withCarriedSystem>;
+        messages: readonly ModelMessage[];
+      }): Promise<void> => {
+        const messageShas: string[] = [];
+        for (const message of request.messages) {
+          // Through JSON first: the SDK's messages carry `undefined` fields and
+          // provider metadata that a canonical encoder must not see.
+          const body = canonicalAgentJson(
+            JSON.parse(JSON.stringify(withoutBinaryParts(message))),
+          );
+          const sha256 = createHash('sha256').update(body).digest('hex');
+          messageShas.push(sha256);
+          if (knownMessageShas.has(sha256)) continue;
+          await config.store.appendEvent({
+            conversationId: run.conversationId,
+            kind: 'provider/message',
+            payload: { sha256, message: JSON.parse(body) },
+          });
+          knownMessageShas.add(sha256);
+        }
+        const instructionsSha256 = createHash('sha256')
+          .update(
+            typeof request.instructions === 'string'
+              ? request.instructions
+              : canonicalAgentJson(
+                  JSON.parse(
+                    JSON.stringify(withoutBinaryParts(request.instructions as never)),
+                  ),
+                ),
+          )
+          .digest('hex');
+        const bodySha256 = createHash('sha256')
+          .update(instructionsSha256)
+          .update(messageShas.join(','))
+          .digest('hex');
+        await config.store.appendEvent({
+          conversationId: run.conversationId,
+          kind: 'provider/request',
+          payload: {
+            runId: run.id,
+            attempt: request.attempt,
+            stepNumber: request.stepNumber,
+            modelId: requestModelId,
+            instructionsSha256,
+            messageShas,
+            bodySha256,
+          },
+        });
+      };
+      for (;;) {
+        const attemptPartStart = parts.length;
+        let retrying = false;
+        // Once a retry is decided the rest of this attempt's stream is drained
+        // for its `finish-step` only: the provider bills those tokens whether
+        // or not the answer was kept, so they belong in this run's spend.
+        let draining = false;
+        const result = streamAgentTextBoundary<TOOLS>({
+          model: fallbackModel,
+          tools,
+          instructions: withCarriedSystem(prompt.instructions),
+          messages: history,
+          abortSignal: executionSignal,
+          maxRetries: 0,
+          stopWhen: stopConditions,
+          onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
+            operationLifecycle.noteProviderCall(event.callId);
+          },
+          repairToolCall: deferredToolRepair(config.loop?.prepareStep),
+          ...(config.loop?.toolApproval && {
+            toolApproval: config.loop.toolApproval,
+            runtimeContext: input.context,
+          }),
+          ...(config.loop?.toolApprovalSecret && {
+            experimental_toolApprovalSecret: config.loop.toolApprovalSecret,
+          }),
+          prepareStep: async (options: Parameters<PrepareStepFunction<TOOLS>>[0]) => {
+            // The SDK can prepare the next step before the consumer has read
+            // that previous step's `finish-step` stream part. Derive the
+            // provider-reported fill from the completed step the SDK hands us,
+            // rather than depending on stream-consumer scheduling.
+            const previousStep = options.steps.at(-1);
+            if (previousStep) {
+              lastPromptTokens =
+                selectedModel?.normalizeUsage?.({
+                  usage: previousStep.usage,
+                  providerMetadata: previousStep.providerMetadata,
+                })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
+            }
+            const prepared = await config.loop?.prepareStep?.({
+              ...options,
+              ...runtimeContext,
+            });
+            const injected = await takeInjectedMessages();
+            // The SDK carries a `prepareStep` message list into the next step,
+            // so appending only what was taken *this* boundary is right — and
+            // appending the whole accumulated list would duplicate it.
+            const preparedStep =
+              injected.length === 0
+                ? prepared
+                : {
+                    ...prepared,
+                    messages: [...(prepared?.messages ?? options.messages), ...injected],
+                  };
+            const providerMessages = preparedStep?.messages ?? options.messages;
+            // After the previous step's checkpoint has landed (that is what
+            // `prepareModel` waits for) and before `doStream`: the request is
+            // recorded in ledger order, and the provider is not called until
+            // it is.
+            const model = await operationLifecycle.prepareModel(
               preparedStep?.model ?? fallbackModel,
               options.stepNumber,
               generateId(),
-            ),
-          };
-        },
-      });
+            );
+            // What the provider is told, not what the prompt composed: a
+            // `prepareStep` may override `instructions`/`system`, and the SDK
+            // carries that override into every later step of the call.
+            const override = preparedStep as
+              | { instructions?: unknown; system?: unknown }
+              | undefined;
+            if (override?.instructions !== undefined)
+              instructionsOverride = override.instructions;
+            else if (override?.system !== undefined) instructionsOverride = override.system;
+            await recordProviderRequest({
+              stepNumber: options.stepNumber,
+              attempt: retryAttempt,
+              instructions: (instructionsOverride ??
+                withCarriedSystem(prompt.instructions)) as ReturnType<
+                typeof withCarriedSystem
+              >,
+              messages: providerMessages,
+            });
+            return { ...preparedStep, model };
+          },
+        });
 
-      for await (const part of result.stream) {
-        idleDeadline.touch();
-        eventsSinceCheckpoint += 1;
-        sequence += 1;
-        if (
-          firstOutputAt === undefined &&
-          ((part.type === 'text-delta' && part.text.length > 0) ||
+        for await (const part of result.stream) {
+          idleDeadline.touch();
+          if (draining) {
+            if (part.type === 'finish-step') {
+              const failedStepUsage =
+                selectedModel.normalizeUsage?.({
+                  usage: part.usage,
+                  providerMetadata: part.providerMetadata,
+                }) ?? normalizeSdkUsage(part.usage);
+              abandonedUsage = abandonedUsage
+                ? addUsage(abandonedUsage, failedStepUsage)
+                : failedStepUsage;
+              const billed = billedUsage();
+              usage =
+                nonModelUsage && billed
+                  ? addUsage(nonModelUsage, billed)
+                  : (billed ?? nonModelUsage);
+            }
+            continue;
+          }
+          eventsSinceCheckpoint += 1;
+          if (
+            part.type === 'error' &&
+            config.loop?.retry &&
+            failureThisRuntimeOwns(part.error) === undefined
+          ) {
+            const invokedTool = parts
+              .slice(attemptPartStart)
+              .some((candidate) => candidate.type === 'tool-call');
+            const decision = invokedTool
+              ? { retry: false, delayMs: 0 }
+              : await recordAgentRetryDecision({
+                  store: config.store,
+                  conversationId: run.conversationId,
+                  attempt: retryAttempt,
+                  failure: classifyProviderFailure(part.error),
+                  policy: config.loop.retry,
+                });
+            if (decision.retry) {
+              await operationLifecycle.finish('failed');
+              parts.splice(attemptPartStart);
+              // Hand back what this attempt took, and stop claiming it was
+              // answered: the next attempt takes it again at its own boundary.
+              for (const entry of takenThisAttempt) {
+                injection?.offer(input.key, entry);
+                const ids = absorbed.get(entry.runId);
+                if (ids) {
+                  const kept = ids.filter((id) => id !== entry.input.id);
+                  if (kept.length === 0) absorbed.delete(entry.runId);
+                  else absorbed.set(entry.runId, kept);
+                }
+              }
+              takenThisAttempt = [];
+              // Checkpoint after the splice: the durable draft must not carry
+              // the output the retry is discarding.
+              await checkpoint();
+              eventsSinceCheckpoint = 0;
+              if (decision.delayMs > 0) {
+                await delay(decision.delayMs, undefined, { signal: executionSignal });
+              }
+              retryAttempt += 1;
+              await config.store.appendEvent({
+                conversationId: run.conversationId,
+                kind: 'retry/started',
+                payload: { attempt: retryAttempt },
+              });
+              retrying = true;
+              draining = true;
+              continue;
+            }
+          }
+          if (
+            firstOutputAt === undefined &&
+            ((part.type === 'text-delta' && part.text.length > 0) ||
+              (part.type === 'reasoning-delta' && part.text.length > 0) ||
+              (part.type === 'tool-input-delta' && part.delta.length > 0) ||
+              part.type === 'tool-call')
+          ) {
+            firstOutputAt = performance.now();
+          }
+          if (
+            (part.type === 'text-delta' && part.text.length > 0) ||
             (part.type === 'reasoning-delta' && part.text.length > 0) ||
             (part.type === 'tool-input-delta' && part.delta.length > 0) ||
-            part.type === 'tool-call')
-        ) {
-          firstOutputAt = performance.now();
-        }
-        if (
-          (part.type === 'text-delta' && part.text.length > 0) ||
-          (part.type === 'reasoning-delta' && part.text.length > 0) ||
-          (part.type === 'tool-input-delta' && part.delta.length > 0) ||
-          part.type === 'tool-call'
-        ) {
-          await operationLifecycle.firstOutput();
-        }
-        if (part.type === 'text-delta') {
-          appendText(parts, part.text);
-          await publish({
-            type: 'assistant-delta',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            textDelta: part.text,
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-start') {
-          reasoningPartIndex = undefined;
-          updateReasoning('', part.providerMetadata);
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-start',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-delta') {
-          updateReasoning(part.text, part.providerMetadata);
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-delta',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            textDelta: part.text,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'reasoning-end') {
-          updateReasoning('', part.providerMetadata);
-          reasoningPartIndex = undefined;
-          const provider = providerEnvelope(part.providerMetadata);
-          await publish({
-            type: 'reasoning-end',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            ...(provider && { provider }),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-call') {
-          const provider = providerEnvelope(part.providerMetadata);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-call',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              input: jsonValue(part.input),
+            part.type === 'tool-call'
+          ) {
+            await operationLifecycle.firstOutput();
+          }
+          if (part.type === 'text-delta') {
+            appendText(parts, part.text);
+            await publish({
+              type: 'assistant-delta',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
+              textDelta: part.text,
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'reasoning-start') {
+            reasoningPartIndex = undefined;
+            updateReasoning('', part.providerMetadata);
+            const provider = providerEnvelope(part.providerMetadata);
+            await publish({
+              type: 'reasoning-start',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
               ...(provider && { provider }),
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'started',
-            input: jsonValue(part.input),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-result') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              outcome: 'success',
-              output: jsonValue(part.output),
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'completed',
-            output: jsonValue(part.output),
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-error') {
-          internalCause = part.error;
-          if (isToolExecutionControlError(part.error)) {
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'reasoning-delta') {
+            updateReasoning(part.text, part.providerMetadata);
+            const provider = providerEnvelope(part.providerMetadata);
+            await publish({
+              type: 'reasoning-delta',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
+              textDelta: part.text,
+              ...(provider && { provider }),
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'reasoning-end') {
+            updateReasoning('', part.providerMetadata);
+            reasoningPartIndex = undefined;
+            const provider = providerEnvelope(part.providerMetadata);
+            await publish({
+              type: 'reasoning-end',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
+              ...(provider && { provider }),
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'tool-call') {
+            const provider = providerEnvelope(part.providerMetadata);
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-call',
+                callId: part.toolCallId,
+                toolName: part.toolName,
+                input: jsonValue(part.input),
+                ...(provider && { provider }),
+              }),
+            );
             await publish({
               type: 'tool-status',
               conversationId: run.conversationId,
               runId: run.id,
               runtimeEpoch,
-              sequence,
+              sequence: transientSequence(),
               callId: part.toolCallId,
               toolName: part.toolName,
-              status: 'interrupted',
+              status: 'started',
+              input: jsonValue(part.input),
               emittedAt: now().toISOString(),
             });
-            await checkpoint();
-            throw part.error;
-          }
-          const output = isAgentToolError(part.error)
-            ? jsonValue(part.error.output)
-            : { message: 'Tool execution failed' };
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
+          } else if (part.type === 'tool-result') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-result',
+                callId: part.toolCallId,
+                toolName: part.toolName,
+                outcome: 'success',
+                output: jsonValue(part.output),
+              }),
+            );
+            await publish({
+              type: 'tool-status',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
               callId: part.toolCallId,
               toolName: part.toolName,
-              outcome: 'error',
+              status: 'completed',
+              output: jsonValue(part.output),
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'tool-error') {
+            internalCause = part.error;
+            if (isToolExecutionControlError(part.error)) {
+              await publish({
+                type: 'tool-status',
+                conversationId: run.conversationId,
+                runId: run.id,
+                runtimeEpoch,
+                sequence: transientSequence(),
+                callId: part.toolCallId,
+                toolName: part.toolName,
+                status: 'interrupted',
+                emittedAt: now().toISOString(),
+              });
+              await checkpoint();
+              throw part.error;
+            }
+            const output = isAgentToolError(part.error)
+              ? jsonValue(part.error.output)
+              : { message: 'Tool execution failed' };
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-result',
+                callId: part.toolCallId,
+                toolName: part.toolName,
+                outcome: 'error',
+                output,
+              }),
+            );
+            await publish({
+              type: 'tool-status',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
+              callId: part.toolCallId,
+              toolName: part.toolName,
+              status: 'failed',
               output,
-            }),
-          );
-          await publish({
-            type: 'tool-status',
-            conversationId: run.conversationId,
-            runId: run.id,
-            runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'failed',
-            output,
-            emittedAt: now().toISOString(),
-          });
-        } else if (part.type === 'tool-output-denied') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-result',
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'tool-output-denied') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-result',
+                callId: part.toolCallId,
+                toolName: part.toolName,
+                outcome: 'error',
+                output: { message: 'Tool output denied' },
+              }),
+            );
+            await publish({
+              type: 'tool-status',
+              conversationId: run.conversationId,
+              runId: run.id,
+              runtimeEpoch,
+              sequence: transientSequence(),
               callId: part.toolCallId,
               toolName: part.toolName,
-              outcome: 'error',
+              status: 'failed',
               output: { message: 'Tool output denied' },
-            }),
-          );
+              emittedAt: now().toISOString(),
+            });
+          } else if (part.type === 'source') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'source',
+                sourceId: part.id,
+                ...(part.sourceType === 'url' && { url: part.url }),
+                ...(part.title && { title: part.title }),
+              }),
+            );
+          } else if (part.type === 'file' && config.persistGeneratedFile) {
+            const persisted = await config.persistGeneratedFile(part.file);
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'file',
+                mediaType: part.file.mediaType,
+                reference: persisted.reference,
+                ...(persisted.filename && { filename: persisted.filename }),
+              }),
+            );
+          } else if (part.type === 'file') {
+            throw new Error('persistGeneratedFile is required for generated file output');
+          } else if (part.type === 'reasoning-file' && config.persistGeneratedFile) {
+            const persisted = await config.persistGeneratedFile(part.file);
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'file',
+                mediaType: part.file.mediaType,
+                reference: persisted.reference,
+                ...(persisted.filename && { filename: persisted.filename }),
+              }),
+            );
+          } else if (part.type === 'reasoning-file') {
+            throw new Error('persistGeneratedFile is required for generated reasoning files');
+          } else if (part.type === 'tool-approval-request') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-approval-request',
+                approvalId: part.approvalId,
+                callId: part.toolCall.toolCallId,
+                ...(part.isAutomatic !== undefined && { isAutomatic: part.isAutomatic }),
+                ...(part.signature && { signature: part.signature }),
+              }),
+            );
+          } else if (part.type === 'tool-approval-response') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'tool-approval-response',
+                approvalId: part.approvalId,
+                approved: part.approved,
+                ...(part.reason && { reason: part.reason }),
+              }),
+            );
+          } else if (part.type === 'custom') {
+            const provider = providerEnvelope(part.providerMetadata);
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'provider',
+                envelope: {
+                  schemaVersion: 1,
+                  provider: 'ai-sdk-custom',
+                  data: { kind: part.kind, ...(provider && { provider: provider.data }) },
+                },
+              }),
+            );
+          } else if (part.type === 'raw') {
+            parts.push(
+              AgentMessagePartSchema.parse({
+                type: 'provider',
+                envelope: {
+                  schemaVersion: 1,
+                  provider: 'ai-sdk-raw',
+                  data: { value: jsonValue(part.rawValue) },
+                },
+              }),
+            );
+          } else if (part.type === 'abort') {
+            terminalReason = 'interrupted';
+          } else if (part.type === 'error') {
+            // AI SDK projects exceptions raised around the call into the stream
+            // as an error part, so this branch carries both the provider's
+            // failures and some of this runtime's own. Each failure the runtime
+            // can identify as its own is named as its own; anything it cannot
+            // identify stays the provider's, which is what an error part
+            // overwhelmingly is.
+            terminalReason = failureThisRuntimeOwns(part.error) ?? 'provider_failure';
+            internalCause = part.error;
+          } else if (part.type === 'finish-step') {
+            await operationLifecycle.finish(
+              part.finishReason === 'error' ? 'failed' : 'completed',
+            );
+            const stepTrace = trace ? config.observe?.rootTrace(trace) : undefined;
+            const stepUsage =
+              selectedModel.normalizeUsage?.({
+                usage: part.usage,
+                providerMetadata: part.providerMetadata,
+              }) ?? normalizeSdkUsage(part.usage);
+            lastPromptTokens = stepUsage.inputTokens;
+            modelUsage = addUsage(modelUsage, stepUsage);
+            usage = nonModelUsage
+              ? addUsage(nonModelUsage, billedUsage() ?? modelUsage)
+              : billedUsage();
+            config.observe?.emit({
+              schemaVersion: 1,
+              eventId: generateId(),
+              type: 'step-finished',
+              conversationId: run.conversationId,
+              runId: run.id,
+              traceId: stepTrace?.traceId ?? trace?.traceId ?? generateId(),
+              spanId: stepTrace?.spanId ?? generateId(),
+              ...(stepTrace?.parentSpanId && { parentSpanId: stepTrace.parentSpanId }),
+              state: run.state,
+              modelId: selectedModel.descriptor.modelId,
+              step,
+              usage: stepUsage,
+              emittedAt: now().toISOString(),
+            });
+            step += 1;
+          } else if (part.type === 'finish' && part.finishReason !== 'stop') {
+            // A provider that errors mid-stream still delivers a `finish`, and
+            // this branch used to overwrite the `provider_failure` the `error`
+            // part had just set — reporting a stop policy that does not exist,
+            // with no `policyName`, for a provider outage. A reason an earlier
+            // part already decided describes the same event and wins.
+            if (terminalReason === 'success') {
+              terminalReason =
+                part.finishReason === 'error' ? 'provider_failure' : 'provider_stop';
+              // Which cap it hit — `length`, `content-filter`, `other` — is the
+              // provider's word and belongs in the operator-only cause, not in a
+              // terminal reason the core would have to grow a member for each of.
+              internalCause ??= { finishReason: part.finishReason };
+            }
+          }
+          if (part.type === 'finish') {
+            sawProviderFinish = true;
+            // This line used to graft the LAST STEP's cost onto every step's
+            // tokens — a successful three-step run reported a third of the money
+            // beside all of the tokens, and called it `provider-reported`.
+            modelUsage = mergeModelTotals(normalizeSdkUsage(part.totalUsage), modelUsage);
+            usage = nonModelUsage
+              ? addUsage(nonModelUsage, billedUsage() ?? modelUsage)
+              : billedUsage();
+          }
+          const structuralBoundary = [
+            'tool-call',
+            'tool-result',
+            'tool-error',
+            'tool-output-denied',
+            'tool-approval-request',
+            'tool-approval-response',
+            'finish-step',
+          ].includes(part.type);
+          if (structuralBoundary || eventsSinceCheckpoint >= checkpointEveryEvents) {
+            await checkpoint();
+            eventsSinceCheckpoint = 0;
+            if (part.type === 'finish-step') operationLifecycle.checkpointStep(step - 1);
+          }
+        }
+        if (retrying) {
+          // Subscribers drop what the failed attempt streamed before the next
+          // attempt's first delta arrives.
           await publish({
-            type: 'tool-status',
+            type: 'attempt-reset',
             conversationId: run.conversationId,
             runId: run.id,
             runtimeEpoch,
-            sequence,
-            callId: part.toolCallId,
-            toolName: part.toolName,
-            status: 'failed',
-            output: { message: 'Tool output denied' },
+            sequence: transientSequence(),
+            attempt: retryAttempt,
             emittedAt: now().toISOString(),
           });
-        } else if (part.type === 'source') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'source',
-              sourceId: part.id,
-              ...(part.sourceType === 'url' && { url: part.url }),
-              ...(part.title && { title: part.title }),
-            }),
-          );
-        } else if (part.type === 'file' && config.persistGeneratedFile) {
-          const persisted = await config.persistGeneratedFile(part.file);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'file',
-              mediaType: part.file.mediaType,
-              reference: persisted.reference,
-              ...(persisted.filename && { filename: persisted.filename }),
-            }),
-          );
-        } else if (part.type === 'file') {
-          throw new Error('persistGeneratedFile is required for generated file output');
-        } else if (part.type === 'reasoning-file' && config.persistGeneratedFile) {
-          const persisted = await config.persistGeneratedFile(part.file);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'file',
-              mediaType: part.file.mediaType,
-              reference: persisted.reference,
-              ...(persisted.filename && { filename: persisted.filename }),
-            }),
-          );
-        } else if (part.type === 'reasoning-file') {
-          throw new Error('persistGeneratedFile is required for generated reasoning files');
-        } else if (part.type === 'tool-approval-request') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-approval-request',
-              approvalId: part.approvalId,
-              callId: part.toolCall.toolCallId,
-              ...(part.isAutomatic !== undefined && { isAutomatic: part.isAutomatic }),
-              ...(part.signature && { signature: part.signature }),
-            }),
-          );
-        } else if (part.type === 'tool-approval-response') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'tool-approval-response',
-              approvalId: part.approvalId,
-              approved: part.approved,
-              ...(part.reason && { reason: part.reason }),
-            }),
-          );
-        } else if (part.type === 'custom') {
-          const provider = providerEnvelope(part.providerMetadata);
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'provider',
-              envelope: {
-                schemaVersion: 1,
-                provider: 'ai-sdk-custom',
-                data: { kind: part.kind, ...(provider && { provider: provider.data }) },
-              },
-            }),
-          );
-        } else if (part.type === 'raw') {
-          parts.push(
-            AgentMessagePartSchema.parse({
-              type: 'provider',
-              envelope: {
-                schemaVersion: 1,
-                provider: 'ai-sdk-raw',
-                data: { value: jsonValue(part.rawValue) },
-              },
-            }),
-          );
-        } else if (part.type === 'abort') {
-          terminalReason = 'interrupted';
-        } else if (part.type === 'error') {
-          // AI SDK projects `prepareStep` exceptions into the stream as an
-          // error part. Preserve only the public typed refusal; arbitrary
-          // callback and provider failures remain provider failures.
-          terminalReason =
-            part.error instanceof AgentContextOverflowError
-              ? 'context_overflow'
-              : 'provider_failure';
-          internalCause = part.error;
-        } else if (part.type === 'finish-step') {
-          await operationLifecycle.finish(
-            part.finishReason === 'error' ? 'failed' : 'completed',
-          );
-          const stepTrace = trace ? config.observe?.rootTrace(trace) : undefined;
-          const stepUsage =
-            selectedModel.normalizeUsage?.({
-              usage: part.usage,
-              providerMetadata: part.providerMetadata,
-            }) ?? normalizeSdkUsage(part.usage);
-          lastPromptTokens = stepUsage.inputTokens;
-          modelUsage = addUsage(modelUsage, stepUsage);
-          usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
-          config.observe?.emit({
-            schemaVersion: 1,
-            eventId: generateId(),
-            type: 'step-finished',
-            conversationId: run.conversationId,
-            runId: run.id,
-            traceId: stepTrace?.traceId ?? trace?.traceId ?? generateId(),
-            spanId: stepTrace?.spanId ?? generateId(),
-            ...(stepTrace?.parentSpanId && { parentSpanId: stepTrace.parentSpanId }),
-            state: run.state,
-            modelId: selectedModel.descriptor.modelId,
-            step,
-            usage: stepUsage,
-            emittedAt: now().toISOString(),
-          });
-          step += 1;
-        } else if (part.type === 'finish' && part.finishReason !== 'stop') {
-          // A provider that errors mid-stream still delivers a `finish`, and
-          // this branch used to overwrite the `provider_failure` the `error`
-          // part had just set — reporting a stop policy that does not exist,
-          // with no `policyName`, for a provider outage. A reason an earlier
-          // part already decided describes the same event and wins.
-          if (terminalReason === 'success') {
-            terminalReason =
-              part.finishReason === 'error' ? 'provider_failure' : 'provider_stop';
-            // Which cap it hit — `length`, `content-filter`, `other` — is the
-            // provider's word and belongs in the operator-only cause, not in a
-            // terminal reason the core would have to grow a member for each of.
-            internalCause ??= { finishReason: part.finishReason };
-          }
+          continue;
         }
-        if (part.type === 'finish') {
-          sawProviderFinish = true;
-          // This line used to graft the LAST STEP's cost onto every step's
-          // tokens — a successful three-step run reported a third of the money
-          // beside all of the tokens, and called it `provider-reported`.
-          modelUsage = mergeModelTotals(normalizeSdkUsage(part.totalUsage), modelUsage);
-          usage = nonModelUsage ? addUsage(nonModelUsage, modelUsage) : modelUsage;
-        }
-        const structuralBoundary = [
-          'tool-call',
-          'tool-result',
-          'tool-error',
-          'tool-output-denied',
-          'tool-approval-request',
-          'tool-approval-response',
-          'finish-step',
-        ].includes(part.type);
-        if (structuralBoundary || eventsSinceCheckpoint >= checkpointEveryEvents) {
-          await checkpoint();
-          eventsSinceCheckpoint = 0;
-          if (part.type === 'finish-step') operationLifecycle.checkpointStep(step - 1);
-        }
+        break;
       }
       await operationLifecycle.finish(
         executionSignal.aborted
@@ -1011,7 +1310,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             ...(terminalPolicyName && { policyName: terminalPolicyName }),
           }))
         ) {
-          terminalReason = 'provider_failure';
+          terminalReason = 'output_rejected';
           internalCause = new Error('Agent terminal output was rejected by the protocol');
         }
       }
@@ -1050,9 +1349,19 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
                 : 'run-interrupted',
           }),
         );
+      } else if (error instanceof AgentContextOverflowError) {
+        terminalReason = 'context_overflow';
+      } else if (error instanceof AgentRuntimeConflictError) {
+        // The store refused an owned mutation. Nothing upstream failed, and in
+        // the case this was written for the provider was never called at all.
+        terminalReason = 'storage_conflict';
       } else {
+        // A throw reaching here is the runtime's own unless it was marked at
+        // the provider boundary — the same argument as `context_overflow`
+        // above, applied to every failure this runtime raises on its behalf.
         terminalReason =
-          error instanceof AgentContextOverflowError ? 'context_overflow' : 'provider_failure';
+          failureThisRuntimeOwns(error) ??
+          (hasProviderOrigin(error) ? 'provider_failure' : 'runtime_failure');
       }
     } finally {
       // In a `finally` because the `catch` above does its own I/O: a
@@ -1163,6 +1472,28 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     // transport, so emitting it for a run someone else committed would deliver
     // the same turn twice. Gating both on `committedByCaller` is why an
     // executor that lost the race reported nothing at all.
+    // The parent's terminal is durable by now. Children belong to the
+    // conversation, not to this run: they are stopped when this run ended by
+    // an explicit stop — interrupted, cancelled, timed out, shut down — and
+    // left alone when the conversation goes on without it (a successful or
+    // policy-stopped answer, a successor that superseded it, a failure a
+    // retry may follow), bounded by their own budgets. A failure here is this
+    // run's to report, not to hide and not to fail the committed terminal
+    // with — it rides into the operator event as the cause.
+    if (
+      config.children &&
+      terminal.committedByCaller &&
+      (terminalReason === 'interrupted' ||
+        terminalReason === 'cancelled' ||
+        terminalReason === 'timeout' ||
+        terminalReason === 'shutdown')
+    ) {
+      try {
+        await config.children.stopChildren(run.conversationId);
+      } catch (error) {
+        internalCause ??= error;
+      }
+    }
     emitSpend({
       eventId: terminal.committedByCaller
         ? agentDurableEventId('terminal', run.id, observedVersion)

@@ -109,6 +109,8 @@ continuations and reconnectable control compose there. Bounded direct file, sear
 shell and opaque-artifact tools live in the peer-free
 `stitchkit/agent-runtime/coding-tools` leaf. Neither surface owns process placement,
 restart, credentials, model catalogs or OS isolation.
+Credential-free replay, scripted provider failures and deterministic race
+controls live in `stitchkit/agent-runtime/testing` for Bun and Node tests.
 The separately installed `stitchkit-tui` package adds a maintained Bun/OpenTUI host over those
 headless contracts; its `stitchkit-tui/core` entrypoint exposes renderer-neutral terminal state
 without React, OpenTUI or agent-runtime imports. Neither enters the core dependency graph.
@@ -437,6 +439,7 @@ peer — an install pulls in only what the project actually uses.
 | `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
 | Headless harness | optional surface | `stitchkit/agent-runtime/harness`; uses the same optional `ai` peer and canonical runtime. |
 | Agent coding tools | optional surface | `stitchkit/agent-runtime/coding-tools`; peer-free, host-authorized direct file and shell tools. |
+| Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free local fault server, replay and race fixtures. |
 | `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |

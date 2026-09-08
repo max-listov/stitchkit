@@ -20,6 +20,7 @@ export const AGENT_CODING_TOOL_NAMES = {
   listDirectory: 'list_directory',
   readFile: 'read_file',
   readOutput: 'read_output',
+  searchOutput: 'search_output',
   runCommand: 'run_command',
   searchFiles: 'search_files',
   writeFile: 'write_file',
@@ -76,6 +77,8 @@ export function createAgentCodingTools(
             offset: input.offset,
             maxBytes,
           });
+          const originAuthorization = await artifacts.authorization?.(input.reference);
+          if (originAuthorization) await authorizeCodingTool(config, originAuthorization);
           const result = await artifacts.read({
             reference: input.reference,
             offset: input.offset,
@@ -99,6 +102,50 @@ export function createAgentCodingTools(
         },
       }),
     );
+    if (artifacts.search) {
+      const search = artifacts.search;
+      artifactTools.push(
+        defineRuntimeTool({
+          name: AGENT_CODING_TOOL_NAMES.searchOutput,
+          description: 'Search a durable spilled output without loading it into context.',
+          identity: { serviceName: 'coding', action: 'search-artifact', method: 'POST' },
+          input: z
+            .object({
+              reference: z.string().min(1),
+              query: z.string().min(1),
+              maxMatches: z.int().positive().max(limits.maxSearchResults).default(20),
+            })
+            .strict(),
+          output: z
+            .object({
+              reference: z.string(),
+              matches: z.array(z.object({ line: z.int().positive(), text: z.string() })),
+            })
+            .strict(),
+          transports: ['AGENT'],
+          handler: async ({ input }) => {
+            await authorizeCodingTool(config, {
+              operation: 'artifact-search',
+              reference: input.reference,
+              query: input.query,
+              maxMatches: input.maxMatches,
+            });
+            const originAuthorization = await artifacts.authorization?.(input.reference);
+            if (originAuthorization) await authorizeCodingTool(config, originAuthorization);
+            return {
+              reference: input.reference,
+              matches: [
+                ...(await search({
+                  reference: input.reference,
+                  query: input.query,
+                  maxMatches: input.maxMatches,
+                })),
+              ],
+            };
+          },
+        }),
+      );
+    }
   }
   const commandTools = Object.keys(config.executables ?? {}).length
     ? [createShellCodingTool(config, limits)]

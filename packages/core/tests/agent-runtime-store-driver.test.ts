@@ -123,7 +123,7 @@ describe('agent runtime store driver', () => {
     ]);
     const recoveredResult = outcomes.find((outcome) => outcome.runId === queued.id)?.result;
     if (!recoveredResult) throw new Error('resumed recovery did not expose its result');
-    expect((await recoveredResult).reason).toBe('provider_failure');
+    expect((await recoveredResult).reason).toBe('runtime_failure');
     await runtime.close({ forceTimeoutMs: 1_000 });
   });
 

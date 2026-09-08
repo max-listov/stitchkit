@@ -25,6 +25,8 @@ const REFUSAL_STATUS = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  SANDBOX_UNAVAILABLE: 503,
+  SANDBOX_INSUFFICIENT: 503,
 } as const;
 
 export type CodingRefusalCode = keyof typeof REFUSAL_STATUS;

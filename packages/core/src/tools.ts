@@ -95,6 +95,9 @@ export {
 } from './tools/list-names';
 export {
   buildToolManifest,
+  describeToolCatalog,
+  type ToolCatalogConfig,
+  type ToolCatalogEntry,
   type ToolManifestConfig,
   type ToolManifestEntry,
 } from './tools/manifest';

@@ -30,6 +30,11 @@ export const ENTRYPOINTS = [
   { subpath: './observability', source: 'src/observability/index.ts', browser: false },
   { subpath: './agent-runtime', source: 'src/agent-runtime.ts', browser: false },
   {
+    subpath: './agent-runtime/testing',
+    source: 'src/agent-runtime-testing.ts',
+    browser: false,
+  },
+  {
     subpath: './agent-runtime/harness',
     source: 'src/agent-runtime-harness.ts',
     browser: false,

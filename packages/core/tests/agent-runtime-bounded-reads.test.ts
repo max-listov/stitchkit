@@ -113,7 +113,7 @@ describe('a run is read without its conversation', () => {
       runId: admission.runId,
     });
     expect(view?.run.id).toBe(admission.runId);
-    expect(view?.run.terminalReason).toBe('provider_failure');
+    expect(view?.run.terminalReason).toBe('runtime_failure');
     // The answer comes back with the run, which is what makes this enough for
     // the terminal path's conflict retry.
     expect(view?.assistant?.id).toBe(admission.assistantMessageId);

@@ -9,6 +9,7 @@ import type {
 import type { z } from 'zod';
 import type { ToolLifecycle } from '../tools/execute';
 import { createRuntimeAdmissionLanes } from './admission-lanes';
+import type { AgentChildManager } from './children';
 import type { AgentCompactionResult } from './compaction';
 import {
   type AgentInputPolicy,
@@ -29,6 +30,7 @@ import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
 import type { AgentTerminalAcceptanceInput } from './protocol';
+import type { AgentRetryPolicy } from './retry-policy';
 import { createRunExecutor } from './run-execution';
 import { findRun } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
@@ -44,6 +46,7 @@ import {
   type AgentSnapshot,
   type AgentUsageValue,
 } from './schemas';
+import type { AnyAgentStateSlot } from './state-slots';
 import type {
   AgentRecoverableDescriptor,
   AgentRuntimeStore,
@@ -213,6 +216,8 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     toolApproval?: ToolApprovalConfiguration<TOOLS, CONTEXT>;
     /** Enables the SDK's HMAC binding between approval request and exact tool call/input. */
     toolApprovalSecret?: string | Uint8Array;
+    /** Retry provider stream failures only before any tool call in that attempt. */
+    retry?: AgentRetryPolicy;
   };
   history?: {
     compact?(input: {
@@ -226,6 +231,16 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     interruptedAssistant?: AgentHistoryProjectionOptions['interruptedAssistant'];
     evidencePolicy?: AgentHistoryEvidencePolicy;
   };
+  /** Durable state injected on every provider request, including after compaction. */
+  stateSlots?: readonly AnyAgentStateSlot[];
+  /**
+   * Children of a conversation stop when their parent's run does.
+   *
+   * Given, the executor calls `stopChildren` after a run of the parent
+   * conversation is interrupted, cancelled, timed out or shut down — after
+   * the parent's terminal is durable, so the cascade can never undo it.
+   */
+  children?: Pick<AgentChildManager, 'stopChildren'>;
   publish?: AgentRuntimePublisher;
   onPublishError?(input: { event: AgentRuntimeEvent; error: unknown }): void | Promise<void>;
   observe?: AgentObservability;
