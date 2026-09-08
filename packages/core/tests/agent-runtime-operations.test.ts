@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { type LanguageModel, simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV3, MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
@@ -655,5 +656,129 @@ describe('agent runtime durable operation lifecycle', () => {
     expect(failed?.operation.firstOutputAt).toBeUndefined();
     expect(JSON.stringify(failed)).not.toContain(secret);
     await failedRuntime.close();
+  });
+
+  /**
+   * The shape a consumer reported against published 0.85.1: a store whose
+   * mutations are genuinely asynchronous, and a checkpoint on every event. Both
+   * owned writes read the run revision before their own `await`, so the second
+   * one names a revision that the first has already spent — and the run failed
+   * with `provider_failure` having never called the provider.
+   */
+  test('reaches the provider once when every owned mutation defers', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    const durable = createMemoryAgentRuntimeStore();
+    const mutations: { kind: string; outcome: string }[] = [];
+    const deferred: AgentRuntimeStore = {
+      ...durable,
+      async checkpointRunAssistant(input) {
+        await setImmediate();
+        const result = await durable.checkpointRunAssistant(input);
+        mutations.push({ kind: 'checkpoint', outcome: result.outcome });
+        return result;
+      },
+      async recordRunOperation(input) {
+        await setImmediate();
+        const result = await durable.recordRunOperation(input);
+        mutations.push({ kind: 'operation', outcome: result.outcome });
+        return result;
+      },
+    };
+    let calls = 0;
+    const runtime = createAgentRuntime({
+      ...runtimeConfig(
+        new MockLanguageModelV4({
+          doStream: async () => {
+            calls += 1;
+            return {
+              stream: simulateReadableStream({
+                chunks: [
+                  { type: 'text-start', id: 'answer' },
+                  { type: 'text-delta', id: 'answer', delta: 'done' },
+                  { type: 'text-end', id: 'answer' },
+                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+                ],
+              }),
+            };
+          },
+        }),
+        events,
+        deferred,
+      ),
+      loop: { checkpointEveryEvents: 1 },
+    });
+
+    const result = await submit(runtime).result;
+    expect(result.reason).toBe('success');
+    expect(calls).toBe(1);
+    expect(result.message.parts).toEqual([{ type: 'text', text: 'done' }]);
+    expect(mutations.filter((mutation) => mutation.outcome !== 'applied')).toEqual([]);
+    expect(operations(events).at(-1)?.operation).toMatchObject({
+      kind: 'model-request',
+      phase: 'completed',
+    });
+    await runtime.close();
+  });
+
+  test('keeps concurrent runs on their own revisions when the store defers', async () => {
+    const events: AgentRuntimeEvent[] = [];
+    const durable = createMemoryAgentRuntimeStore();
+    const conflicts: string[] = [];
+    const deferred: AgentRuntimeStore = {
+      ...durable,
+      async checkpointRunAssistant(input) {
+        await setImmediate();
+        const result = await durable.checkpointRunAssistant(input);
+        if (result.outcome === 'conflict') conflicts.push('checkpoint');
+        return result;
+      },
+      async recordRunOperation(input) {
+        await setImmediate();
+        const result = await durable.recordRunOperation(input);
+        if (result.outcome === 'conflict') conflicts.push('operation');
+        return result;
+      },
+    };
+    const runtime = createAgentRuntime({
+      ...runtimeConfig(
+        new MockLanguageModelV4({
+          doStream: async () => ({
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'text-start', id: 'answer' },
+                { type: 'text-delta', id: 'answer', delta: 'done' },
+                { type: 'text-end', id: 'answer' },
+                { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+              ],
+            }),
+          }),
+        }),
+        events,
+        deferred,
+      ),
+      loop: { checkpointEveryEvents: 1 },
+    });
+
+    // Independent conversations: each run owns its own revision, and the queue
+    // is per run, so this says the fix did not serialize the whole runtime.
+    const [first, second] = await Promise.all([
+      runtime.submit({
+        conversationId: 'conversation-a',
+        idempotencyKey: 'input-a',
+        context: {},
+        parts: [{ type: 'text', text: 'hello' }],
+        metadata: {},
+      }).result,
+      runtime.submit({
+        conversationId: 'conversation-b',
+        idempotencyKey: 'input-b',
+        context: {},
+        parts: [{ type: 'text', text: 'hello' }],
+        metadata: {},
+      }).result,
+    ]);
+    expect([first.reason, second.reason]).toEqual(['success', 'success']);
+    expect(conflicts).toEqual([]);
+    await runtime.close();
   });
 });

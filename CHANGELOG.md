@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.85.2] — 2026-09-08
+
+### Fixed
+
+- **An asynchronous store no longer fails a run before the provider is
+  called.** The assistant checkpoint and the model-request admission are two
+  owned mutations of one run, written by two independent schedules — the stream
+  consumer and the SDK's model middleware — and each named the revision it read
+  before its own `await`. Where the store answered on a later tick (a worker, a
+  socket, a real database) the second write named a spent revision, the losing
+  compare-and-set threw out of `wrapStream`, and the run ended
+  `provider_failure` with zero provider calls; frequent checkpoints
+  (`checkpointEveryEvents: 1`) made it reliable. Owned mutations of a run now
+  take their turn in one per-run queue and read the revision inside that turn.
+  Independent runs are unaffected — the queue is per run — and fencing,
+  cancellation and checkpoint durability are unchanged. Proven on the packed
+  tarball by a consumer-lane fixture, not only in-repo. → ADR 0174 (amended).
+
 ## [0.85.1] — 2026-09-07
 
 ### Fixed

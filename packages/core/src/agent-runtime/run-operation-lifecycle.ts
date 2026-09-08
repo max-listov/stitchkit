@@ -1,6 +1,7 @@
 import { type LanguageModel, wrapLanguageModel } from 'ai';
 import type { AgentRuntimeEvent } from './event-schema';
 import { agentDurableEventId } from './event-schema';
+import type { RunMutationQueue } from './run-mutation-queue';
 import { findRun } from './runtime-internals';
 import {
   type AgentRun,
@@ -20,6 +21,8 @@ export interface AgentRunOperationLifecycleConfig {
   acceptSnapshot(snapshot: AgentSnapshot): void;
   publish(event: AgentRuntimeEvent): Promise<void>;
   now(): Date;
+  /** The order every owned mutation of this run takes its turn in. */
+  serialize: RunMutationQueue;
 }
 
 /** One durable latest-operation state machine for an executing run. */
@@ -29,32 +32,35 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
   let checkpointedStep = -1;
   const checkpointWaiters = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
 
-  const record = async (operation: AgentRunOperation): Promise<void> => {
-    const current = config.currentRun();
-    const snapshot = appliedSnapshot(
-      await config.store.recordRunOperation({
-        conversationId: current.conversationId,
-        runId: current.id,
-        expectedRevision: current.revision,
-        ownerId: config.runtimeEpoch,
-        ...(current.fencingToken !== undefined && { fencingToken: current.fencingToken }),
+  const record = (operation: AgentRunOperation): Promise<void> =>
+    // Inside the queue, so the revision this names is the one the mutation
+    // before it produced rather than one read before an unrelated `await`.
+    config.serialize(async () => {
+      const current = config.currentRun();
+      const snapshot = appliedSnapshot(
+        await config.store.recordRunOperation({
+          conversationId: current.conversationId,
+          runId: current.id,
+          expectedRevision: current.revision,
+          ownerId: config.runtimeEpoch,
+          ...(current.fencingToken !== undefined && { fencingToken: current.fencingToken }),
+          operation,
+        }),
+        'run operation',
+      );
+      config.acceptSnapshot(snapshot);
+      const run = findRun(snapshot.runs, current.id);
+      active = operation;
+      await config.publish({
+        type: 'run-operation',
+        eventId: agentDurableEventId('run-operation', run.id, snapshot.version),
+        conversationId: run.conversationId,
+        runId: run.id,
+        snapshotVersion: snapshot.version,
         operation,
-      }),
-      'run operation',
-    );
-    config.acceptSnapshot(snapshot);
-    const run = findRun(snapshot.runs, current.id);
-    active = operation;
-    await config.publish({
-      type: 'run-operation',
-      eventId: agentDurableEventId('run-operation', run.id, snapshot.version),
-      conversationId: run.conversationId,
-      runId: run.id,
-      snapshotVersion: snapshot.version,
-      operation,
-      emittedAt: config.now().toISOString(),
+        emittedAt: config.now().toISOString(),
+      });
     });
-  };
   const startModelRequest = (callId: string, step: number): Promise<void> =>
     record(
       AgentRunOperationSchema.parse({

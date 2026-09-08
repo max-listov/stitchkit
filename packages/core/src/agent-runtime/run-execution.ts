@@ -18,6 +18,7 @@ import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
+import { createRunMutationQueue } from './run-mutation-queue';
 import { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import type { AgentContextUsage, AgentRuntimeConfig } from './runtime';
 import {
@@ -279,9 +280,18 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     let terminalPolicyName: string | undefined;
     const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs);
     const executionSignal = idleDeadline.signal;
+    /**
+     * Owned mutations of this run take their turn here.
+     *
+     * The assistant checkpoint and the model-request admission are written by
+     * two independent schedules — the stream consumer and the SDK's model
+     * middleware — against one compare-and-set revision.
+     */
+    const serialize = createRunMutationQueue();
     const operationLifecycle = createAgentRunOperationLifecycle({
       store: config.store,
       runtimeEpoch,
+      serialize,
       currentRun: () => run,
       acceptSnapshot: (next) => {
         snapshot = next;
@@ -320,45 +330,46 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       );
     };
 
-    const checkpoint = async (): Promise<void> => {
-      assistant = AgentMessageSchema.parse({
-        ...assistant,
-        parts,
-        updatedAt: now().toISOString(),
-      });
-      snapshot = appliedSnapshot(
-        await config.store.checkpointRunAssistant({
+    const checkpoint = (): Promise<void> =>
+      serialize(async () => {
+        assistant = AgentMessageSchema.parse({
+          ...assistant,
+          parts,
+          updatedAt: now().toISOString(),
+        });
+        snapshot = appliedSnapshot(
+          await config.store.checkpointRunAssistant({
+            conversationId: run.conversationId,
+            runId: run.id,
+            expectedRevision: run.revision,
+            ownerId: runtimeEpoch,
+            ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
+            assistant,
+            usage: statedUsage(usage),
+          }),
+          'assistant checkpoint',
+        );
+        observedVersion = snapshot.version;
+        run = findRun(snapshot.runs, run.id);
+        const checkpointMetrics = {
+          // Always true here, and now for a reason rather than by construction:
+          // a checkpoint is by definition taken before the provider has finished.
+          partial: true,
+          durationMs: performance.now() - runStartedAt,
+          usage: statedUsage(usage),
+          ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
+        };
+        await publish({
+          type: 'assistant-checkpoint',
+          eventId: agentDurableEventId('assistant-checkpoint', run.id, observedVersion),
           conversationId: run.conversationId,
           runId: run.id,
-          expectedRevision: run.revision,
-          ownerId: runtimeEpoch,
-          ...(run.fencingToken !== undefined && { fencingToken: run.fencingToken }),
-          assistant,
-          usage: statedUsage(usage),
-        }),
-        'assistant checkpoint',
-      );
-      observedVersion = snapshot.version;
-      run = findRun(snapshot.runs, run.id);
-      const checkpointMetrics = {
-        // Always true here, and now for a reason rather than by construction:
-        // a checkpoint is by definition taken before the provider has finished.
-        partial: true,
-        durationMs: performance.now() - runStartedAt,
-        usage: statedUsage(usage),
-        ...(firstOutputAt !== undefined && { ttftMs: firstOutputAt - runStartedAt }),
-      };
-      await publish({
-        type: 'assistant-checkpoint',
-        eventId: agentDurableEventId('assistant-checkpoint', run.id, observedVersion),
-        conversationId: run.conversationId,
-        runId: run.id,
-        snapshotVersion: observedVersion,
-        message: assistant,
-        metrics: checkpointMetrics,
-        emittedAt: now().toISOString(),
+          snapshotVersion: observedVersion,
+          message: assistant,
+          metrics: checkpointMetrics,
+          emittedAt: now().toISOString(),
+        });
       });
-    };
 
     try {
       if (config.history?.compact) {

@@ -518,6 +518,15 @@ try {
           failed = true;
           console.error(`[consumer-lane] node: ${runtime} drain bound produced no proof`);
         }
+        const revisionOutput = step(`node: operation revision (${runtime})`, () =>
+          run(runtime, ['src/operation-revision.mjs'], dir),
+        );
+        if (!revisionOutput.includes('packed operation revision: ok')) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: ${runtime} operation revision produced no proof`,
+          );
+        }
       }
     }
   }

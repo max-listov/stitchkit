@@ -73,9 +73,22 @@ idempotency remains necessary for crash-safe effects.
 
 The next model request is a separate boundary: its middleware waits until the
 previous step-finish checkpoint has committed before recording the next request
-and entering `doStream`. This removes the revision race between the SDK's
-producer loop and the runtime's stream consumer. It does not move tool execution
-behind persistence; it orders only the following provider request.
+and entering `doStream`. It does not move tool execution behind persistence; it
+orders only the following provider request.
+
+That ordering is between steps, and it is not by itself enough. Within one step
+the assistant checkpoint and the model-request admission are still two owned
+mutations issued by two independent schedules, and each one used to name the
+revision it read before its own `await`. A store that answers on a later tick —
+any store crossing a worker, a socket or a real database — therefore let the
+second write name a revision the first had already spent: the loser threw a
+store conflict out of `wrapStream`, and the run reported `provider_failure`
+without the provider having been called. Every owned mutation of a run now takes
+its turn in one per-run queue and reads the current revision inside that turn,
+so the revision a mutation names is the one its predecessor produced. The queue
+is per run, so independent runs still proceed in parallel; the terminal commit
+keeps its bounded retry, which suits a mutation whose repetition the store
+recognises as a duplicate.
 
 ## Consequences
 

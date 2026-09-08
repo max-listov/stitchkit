@@ -102,7 +102,10 @@ paths make request start a fail-closed pre-`doStream` admission boundary;
 first output is the first non-empty text/reasoning/tool-argument delta or complete tool call. Structural tool,
 approval and step boundaries checkpoint independently from the ordinary delta batch, without
 claiming persistence before a tool effect; the following provider step waits for the prior
-step-finish checkpoint. → ADR 0174.
+step-finish checkpoint. Owned mutations of one run — assistant checkpoint and operation record
+alike — take their turn in a per-run queue and read the current revision inside that turn, so an
+asynchronous store cannot make two of them name the same revision; independent runs still proceed
+in parallel, and the terminal commit keeps its bounded retry. → ADR 0174.
 
 `createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
 caller-provided model per run, loads bounded typed resources, composes them through the canonical

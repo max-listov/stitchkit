@@ -1,8 +1,28 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isDirectInvocation, runUpgradeCli } from '../src/upgrade-cli';
+
+const created: string[] = [];
+
+/** A directory this test owns, and takes with it when it ends. */
+function temporaryDirectory(prefix: string): string {
+  const path = mkdtempSync(join(tmpdir(), prefix));
+  created.push(path);
+  return path;
+}
+
+afterEach(() => {
+  for (const path of created.splice(0)) rmSync(path, { recursive: true, force: true });
+});
 
 const changelog = `# Changelog
 
@@ -25,7 +45,7 @@ const changelog = `# Changelog
 
 /** A project that depends on stitchkit, as the binary will find one. */
 function consumer(installed: string | undefined): string {
-  const dir = mkdtempSync(join(tmpdir(), 'stitchkit-upgrade-cli-'));
+  const dir = temporaryDirectory('stitchkit-upgrade-cli-');
   if (installed !== undefined) {
     const packageDirectory = join(dir, 'node_modules', 'stitchkit');
     mkdirSync(packageDirectory, { recursive: true });
@@ -113,7 +133,7 @@ describe('the binary runs when it is launched the way an install launches it', (
    * Bun resolves `argv[1]` itself, so the broken comparison passes there.
    */
   test('recognises itself through the link an install creates', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stitchkit-upgrade-link-'));
+    const dir = temporaryDirectory('stitchkit-upgrade-link-');
     const target = join(dir, 'upgrade-cli.js');
     const link = join(dir, 'stitchkit');
     writeFileSync(target, '');
@@ -122,7 +142,7 @@ describe('the binary runs when it is launched the way an install launches it', (
   });
 
   test('recognises itself when run in place, and refuses an unrelated path', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stitchkit-upgrade-self-'));
+    const dir = temporaryDirectory('stitchkit-upgrade-self-');
     const target = join(dir, 'upgrade-cli.js');
     const other = join(dir, 'something-else.js');
     writeFileSync(target, '');
