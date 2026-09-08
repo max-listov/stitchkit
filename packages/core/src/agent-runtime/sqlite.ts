@@ -103,7 +103,9 @@ const ConversationHeadRowSchema = z.object({
 });
 const CountRowSchema = z.object({ count: z.number().int().nonnegative() });
 const MessagePageRowSchema = z.object({
+  row_id: z.number().int().positive(),
   position: z.number().int().nonnegative(),
+  active: z.union([z.literal(0), z.literal(1)]),
   payload: z.string(),
 });
 const EventRowSchema = z.object({
@@ -210,12 +212,29 @@ function parseConversationCursor(cursor: string): string {
   return z.tuple([z.string().min(1)]).parse(parseJson(cursor))[0];
 }
 
-function messageCursor(position: number): string {
-  return encodeJson([position]);
+/**
+ * Position, then the row's own identity.
+ *
+ * Position alone stopped being unique the moment a page could contain
+ * compacted messages: a compaction summary is written at the position of the
+ * first message it replaced, and a later compaction of that summary adds a
+ * third row there. Ordering and paging on the pair keeps the sequence stable
+ * and a boundary exact. A cursor from an earlier version carries the position
+ * only and still means what it meant — everything past that position.
+ */
+function messageCursor(position: number, rowId: number): string {
+  return encodeJson([position, rowId]);
 }
 
-function parseMessageCursor(cursor: string): number {
-  return z.tuple([z.int().nonnegative()]).parse(parseJson(cursor))[0];
+function parseMessageCursor(cursor: string): { position: number; rowId?: number } {
+  const parsed = z
+    .union([
+      z.tuple([z.int().nonnegative(), z.int().positive()]),
+      z.tuple([z.int().nonnegative()]),
+    ])
+    .parse(parseJson(cursor));
+  const [position, rowId] = parsed;
+  return { position, ...(rowId !== undefined && { rowId }) };
 }
 
 function messagePreview(message: z.infer<typeof AgentMessageSchema>): string {
@@ -402,25 +421,44 @@ export function createSqliteAgentRuntimeStore(
           version: row.version,
         });
       },
+      /**
+       * Read, compare, then write — rather than a conditional upsert whose
+       * outcome is read back from `changes`.
+       *
+       * `changes` cannot carry that decision here. This boundary is satisfied
+       * structurally by a raw driver handle (ADR 0142), and `bun:sqlite`
+       * reports a count that also includes what the event table's AFTER INSERT
+       * trigger and FTS5's deferred index flush wrote during the same
+       * statement: a head upsert that moved exactly one row reported five, and
+       * `changes === 1` read that as a conflict. `importConversation` refused
+       * every conversation that had a run, into a target it had just found
+       * empty.
+       *
+       * The conditional upsert was also silently not a compare-and-swap on the
+       * insert path: `ON CONFLICT ... WHERE` guards the update branch only, so
+       * a first write applied whatever `expectedVersion` it was given.
+       *
+       * Safe as two statements because every caller is inside the store's
+       * `BEGIN IMMEDIATE` transaction, which no second writer — in this
+       * process or another — can interleave with.
+       */
       async compareAndSwap(transaction, input) {
-        const result = transaction
-          .prepare(`
-            INSERT INTO stitchkit_agent_runtime_heads (conversation_id, version)
-            VALUES (?, ?)
-            ON CONFLICT (conversation_id) DO UPDATE SET version = excluded.version
-            WHERE stitchkit_agent_runtime_heads.version = ?
-          `)
-          .run(input.conversationId, input.next.version, input.expectedVersion);
-        if (result.changes === 1) return { outcome: 'applied' };
         const current = transaction
           .prepare(
             'SELECT version FROM stitchkit_agent_runtime_heads WHERE conversation_id = ?',
           )
           .get(input.conversationId);
-        return {
-          outcome: 'conflict',
-          actualVersion: missing(current) ? 0 : HeadRowSchema.parse(current).version,
-        };
+        const actualVersion = missing(current) ? 0 : HeadRowSchema.parse(current).version;
+        if (actualVersion !== input.expectedVersion)
+          return { outcome: 'conflict', actualVersion };
+        transaction
+          .prepare(`
+            INSERT INTO stitchkit_agent_runtime_heads (conversation_id, version)
+            VALUES (?, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET version = excluded.version
+          `)
+          .run(input.conversationId, input.next.version);
+        return { outcome: 'applied' };
       },
     },
     runs: {
@@ -899,7 +937,7 @@ export function createSqliteAgentRuntimeStore(
           const items = pageRows.map((row) => {
             const latestRaw = database
               .prepare(`
-                SELECT position, payload FROM stitchkit_agent_runtime_messages
+                SELECT payload FROM stitchkit_agent_runtime_messages
                 WHERE conversation_id = ? AND active = 1
                 ORDER BY position DESC LIMIT 1
               `)
@@ -908,7 +946,7 @@ export function createSqliteAgentRuntimeStore(
               throw new Error('Agent conversation head has no active history');
             }
             const latest = AgentMessageSchema.parse(
-              parseJson(MessagePageRowSchema.parse(latestRaw).payload),
+              parseJson(MessageRowSchema.parse(latestRaw).payload),
             );
             const active = CountRowSchema.parse(
               database
@@ -942,16 +980,29 @@ export function createSqliteAgentRuntimeStore(
           }
           const cursor = input.cursor ? parseMessageCursor(input.cursor) : undefined;
           const before = input.direction === 'before';
+          const direction = before ? 'DESC' : 'ASC';
+          const comparison =
+            cursor === undefined
+              ? ''
+              : cursor.rowId === undefined
+                ? `AND position ${before ? '<' : '>'} ?`
+                : `AND (position, rowid) ${before ? '<' : '>'} (?, ?)`;
           const rows = database
             .prepare(`
-              SELECT position, payload FROM stitchkit_agent_runtime_messages
-              WHERE conversation_id = ? AND active = 1
-              ${cursor === undefined ? '' : before ? 'AND position < ?' : 'AND position > ?'}
-              ORDER BY position ${before ? 'DESC' : 'ASC'} LIMIT ?
+              SELECT rowid AS row_id, position, active, payload
+              FROM stitchkit_agent_runtime_messages
+              WHERE conversation_id = ?
+              ${input.includeCompacted === true ? '' : 'AND active = 1'}
+              ${comparison}
+              ORDER BY position ${direction}, rowid ${direction} LIMIT ?
             `)
             .all(
               input.conversationId,
-              ...(cursor === undefined ? [] : [cursor]),
+              ...(cursor === undefined
+                ? []
+                : cursor.rowId === undefined
+                  ? [cursor.position]
+                  : [cursor.position, cursor.rowId]),
               input.limit + 1,
             )
             .map((row) => MessagePageRowSchema.parse(row));
@@ -959,9 +1010,16 @@ export function createSqliteAgentRuntimeStore(
           const pageRows = rows.slice(0, input.limit);
           const ordered = before ? [...pageRows].reverse() : pageRows;
           const boundary = pageRows.at(-1);
+          const items = ordered.map((row) => ({
+            message: AgentMessageSchema.parse(parseJson(row.payload)),
+            active: row.active === 1,
+          }));
           return AgentConversationMessagePageSchema.parse({
-            items: ordered.map((row) => AgentMessageSchema.parse(parseJson(row.payload))),
-            ...(hasMore && boundary ? { nextCursor: messageCursor(boundary.position) } : {}),
+            items: items.map((entry) => entry.message),
+            compacted: items.filter((entry) => !entry.active).map((entry) => entry.message.id),
+            ...(hasMore && boundary
+              ? { nextCursor: messageCursor(boundary.position, boundary.row_id) }
+              : {}),
           });
         }),
     },

@@ -1,5 +1,6 @@
 import { AgentMessageSchema, AgentRunSchema, type AgentUsage } from '../agent-runtime/schemas';
 import type { AgentRuntimeStore } from '../agent-runtime/store';
+import { createMemoryAgentRuntimeStore } from '../agent-runtime/store-driver';
 import { decodeAgentConversationArchive } from '../agent-runtime/store-events';
 
 /**
@@ -94,6 +95,7 @@ export async function runAgentStoreConformance(
       `${run}-causal-active`,
       `${run}-interrupt-priority`,
       `${run}-ledger`,
+      `${run}-archive`,
     ],
   };
   const store = await config.createStore(context);
@@ -132,8 +134,10 @@ async function conformanceScenario(
     causalActiveConversationId,
     interruptPriorityConversationId,
     ledgerConversationId,
+    archiveConversationId,
   ] = conversationIds;
   if (ledgerConversationId) await ledgerScenario(store, ledgerConversationId);
+  if (archiveConversationId) await archiveScenario(store, archiveConversationId);
   if (
     !conversationId ||
     !recoveryConversationId ||
@@ -996,6 +1000,70 @@ async function ledgerScenario(
   if (decoded.events.length !== 22) {
     throw new Error(
       `Agent store conformance expected 22 archived events, received ${decoded.events.length}`,
+    );
+  }
+}
+
+/**
+ * A conversation that actually happened, carried into this adapter.
+ *
+ * The export half is checked beside the ledger; import needs a target whose
+ * event log is empty, so the archive is produced by the reference store and
+ * lands here on an identity nothing has written to. A conversation with a turn
+ * in it is the whole point: an archive whose snapshot holds a run takes the
+ * head compare-and-swap path, and a SQLite store that decided that swap by the
+ * driver's `changes` refused every such archive while reporting the target
+ * empty.
+ */
+async function archiveScenario(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  const origin = createMemoryAgentRuntimeStore();
+  const inputMessage = userMessage(conversationId, 'archived-input');
+  const run = queuedRun(conversationId, inputMessage.id, 'archived-run');
+  requireOutcome(
+    await origin.acceptInputAndAssignRun({
+      idempotencyKey: 'archived-request',
+      input: inputMessage,
+      run,
+    }),
+    'applied',
+  );
+  await origin.appendEvent({
+    conversationId,
+    kind: 'state/set',
+    payload: { name: 'topic', value: 'archive' },
+  });
+
+  const imported = await store.importConversation(
+    await origin.exportConversation(conversationId),
+  );
+  if (imported.conversationId !== conversationId || imported.events !== 2) {
+    throw new Error(
+      `Agent store conformance expected 2 imported events for ${conversationId}, received ${imported.events} for ${imported.conversationId}`,
+    );
+  }
+
+  const restored = await store.loadSnapshot(conversationId);
+  const expected = await origin.loadSnapshot(conversationId);
+  if (
+    restored.version !== expected.version ||
+    restored.messages.map((message) => message.id).join(',') !==
+      expected.messages.map((message) => message.id).join(',') ||
+    restored.runs.map((entry) => `${entry.id}:${entry.state}`).join(',') !==
+      expected.runs.map((entry) => `${entry.id}:${entry.state}`).join(',')
+  ) {
+    throw new Error(
+      `Agent store conformance expected the imported snapshot to match its archive, received version ${restored.version} with ${restored.messages.length} messages and ${restored.runs.length} runs`,
+    );
+  }
+  const events = await store.readEvents({ conversationId, limit: 10 });
+  if (events.items.map((event) => event.kind).join(',') !== 'runtime/transition,state/set') {
+    throw new Error(
+      `Agent store conformance expected the imported ledger to keep its kinds, received ${events.items
+        .map((event) => event.kind)
+        .join(',')}`,
     );
   }
 }

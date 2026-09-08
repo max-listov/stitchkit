@@ -28,6 +28,24 @@ of the range if you want a different one.
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.87.0
+
+Only if your project implements `AgentConversationReader` itself. A message page
+now names which of its messages compaction removed:
+
+```ts
+// before
+return { items, ...(nextCursor && { nextCursor }) }
+
+// after
+return { items, compacted: [], ...(nextCursor && { nextCursor }) }
+```
+
+An empty array is the honest answer for a reader that pages only the active
+history; it is what the SQLite reader returns unless the caller asks for
+`includeCompacted`. Calling the reader needs no change, and no data migration is
+involved.
+
 ## Released migration: 0.86.0
 
 Only if you branch on `AgentTerminalReason` or show it to a person. Three

@@ -424,8 +424,14 @@ and supplies atomicity; Stitchkit owns transition validation and revision
 arithmetic. The executable reference is
 [`examples/agent-store-prisma/adapter.ts`](../../examples/agent-store-prisma/adapter.ts).
 `compareAndSwap` returns either `{ outcome: 'applied' }` or
-`{ outcome: 'conflict', actualVersion }`. The head contains only schema version,
-conversation identity and monotonic version. Runs and admission receipts are normalized records;
+`{ outcome: 'conflict', actualVersion }`. Decide that outcome by reading the
+version, comparing it and then writing unconditionally — inside the transaction
+the adapter supplies, that is atomic. A conditional upsert is the shorter thing
+to write and it is wrong twice: `ON CONFLICT ... WHERE` guards the update branch
+only, so the first write to a conversation applies whatever `expectedVersion` it
+was given, and the affected-row count that would report the outcome is the
+driver's, which need not be the rows the statement moved. The head contains only
+schema version, conversation identity and monotonic version. Runs and admission receipts are normalized records;
 recovery queries active run states directly instead of maintaining a second projection.
 An admission receipt retains its canonical input, and a terminal run retains its canonical
 assistant, so physical product-history compaction cannot break idempotent retries.
@@ -497,6 +503,31 @@ companions — `createSqliteAgentProjectionStore`, `createSqliteAgentSpillStore`
 `createSqliteAgentChildManager`, `createAgentScheduleService` — take `{ sqlite }`
 and write their rows and events through it, so a row and its event land
 together or not at all.
+
+`conversations.messages` pages the model's history: what compaction removed is
+not in it, which is the point of compaction. A person reading back their own
+conversation needs the other view, and asks for it explicitly:
+
+```ts
+const page = await conversations.messages({
+  conversationId,
+  limit: 50,
+  direction: 'after',
+  includeCompacted: true,
+})
+const removed = new Set(page.compacted)
+```
+
+`items` stays one sequence in the order it happened, and `compacted` names the
+ids inside it that the model no longer sees — the boundary is a mark on the
+conversation, not a second list. A compaction summary sits at the position of
+the first message it replaced, so it appears at the head of the block it
+stands for. Without the flag the page is exactly what it was, `compacted`
+empty. The v1 → v2 migration baseline records the same thing: the whole
+sequence, with `compacted` naming what had been folded away. A file migrated
+by 0.86.0 has a baseline built from the active history only — the messages
+themselves are still in the store and this read reaches them, but that one
+event cannot be rewritten after the fact.
 
 ### Retried provider streams
 

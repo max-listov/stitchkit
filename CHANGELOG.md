@@ -15,6 +15,89 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.87.0] — 2026-09-08
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications that implement `AgentConversationReader`
+themselves. Applications that only call the reader returned by the SQLite store
+need no change.
+
+- **A message page says which of its messages compaction removed.**
+  `AgentConversationMessagePage` gains a required `compacted: string[]`, so a
+  reader that builds the page itself now names the ids in `items` that are no
+  longer part of the model's history — an empty array when it does not page
+  them at all.
+
+  ```ts
+  // before
+  return { items, ...(nextCursor && { nextCursor }) }
+
+  // after
+  return { items, compacted: [], ...(nextCursor && { nextCursor }) }
+  ```
+
+### Added
+
+- **The history compaction removed can be read.** `conversations.messages`
+  takes `includeCompacted`, off by default. With it the page carries the whole
+  conversation in the order it happened, and `compacted` names the ids the
+  model no longer sees. Those rows were always in the store and no public read
+  reached them — every path filtered the active history — so an application
+  that shows a person their own long conversation had to keep a second copy of
+  it beside the store, which is the copy the event ledger exists to make
+  unnecessary. Paging is exact across a compaction boundary: a summary is
+  written at the position of the first message it replaced, so position alone
+  stopped identifying a row, and the page cursor now carries the row identity
+  beside it. A cursor issued by an earlier version still means what it meant.
+
+### Fixed
+
+- **The v1 → v2 baseline carries the compacted history.** The migration built
+  each conversation's `runtime/baseline` from the active messages only, so for
+  exactly the conversations long enough to have been compacted the ledger could
+  not reconstruct what the person had said, while the normalized table still
+  held it. The baseline now records the whole sequence with `compacted` naming
+  what had been folded away. A file already migrated by 0.86.0 keeps the
+  baseline it got — one event cannot be rewritten after the fact — and its
+  compacted messages remain readable through `includeCompacted`.
+- **A conversation that has a turn in it can be imported again.**
+  `importConversation` refused every archive whose snapshot carried a run —
+  that is, every conversation anyone actually had — with `Conversation archive
+  snapshot target is not empty`, into a target it had just reported empty. The
+  SQLite head compare-and-swap read its outcome from the driver's `changes`
+  count, and `bun:sqlite` counts what the event table's `AFTER INSERT` trigger
+  and FTS5's deferred index flush wrote during the same statement: an import
+  appends the whole archived ledger before it writes the head, so a swap that
+  moved one row reported five and was read as a conflict. The swap now reads
+  the version, compares it, and writes unconditionally inside the store's
+  `BEGIN IMMEDIATE` transaction. Export was never affected, and the memory
+  store never had the defect. Reported from a real consumer against published
+  0.86.0.
+- **A first head write is a compare-and-swap.** The same conditional upsert
+  guarded only its update branch, so a swap against a conversation with no head
+  row applied whatever `expectedVersion` it was given instead of conflicting.
+  No path in the runtime reaches it — a version above zero implies the row —
+  but the shipped Prisma example adapter carried the same shape and is fixed
+  with it.
+
+### Changed
+
+- **`SqliteStatement.run`'s `changes` is documented as advisory.** The boundary
+  is satisfied structurally by a raw driver handle, so the number is that
+  driver's, and it may count trigger and virtual-table writes. Nothing in the
+  runtime decides correctness by it any more: the schedule claim, the firing
+  finalize and the cancellation each read their row and then write, the way the
+  head swap does. No input reached those three — each wrote before it appended
+  its event — and their observable behaviour is unchanged.
+- **`runAgentStoreConformance` imports a conversation that has a run.** The kit
+  now announces an eighth conversation identity and carries a reference archive
+  with one accepted turn into the adapter under test, then compares the
+  restored snapshot and ledger against it. Adapters that provision from
+  `context.conversationIds`, as the kit has always required, need no change; an
+  adapter that cannot import a run-bearing archive now fails the kit instead of
+  passing it.
+
 ## [0.86.0] — 2026-09-08
 
 ### ⚠️ Breaking changes

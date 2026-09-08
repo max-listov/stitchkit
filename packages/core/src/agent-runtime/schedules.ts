@@ -49,6 +49,36 @@ const ScheduleRowSchema = z.object({
   updated_at: z.string(),
 });
 
+/**
+ * Row reads that decide a conditional write, because `changes` cannot.
+ *
+ * The claim, the finalize and the cancellation each used to be one guarded
+ * UPDATE whose outcome was `changes === 1`. That number is the driver's, and
+ * `bun:sqlite` counts what the event table's AFTER INSERT trigger and FTS5's
+ * deferred index flush wrote during the same statement — which is how
+ * `importConversation` came to refuse a target it had just found empty.
+ *
+ * No input reaches these three that way today: each writes before it appends
+ * its event, so no indexed write precedes it inside its own transaction. They
+ * are written the safe way regardless, because the assumption is unsound on
+ * the default driver and one reordering away from mattering — an inflated
+ * count reads a claim as lost and a firing as cancelled, and an inflated count
+ * over a no-op UPDATE publishes `schedule/cancelled` for a row nothing
+ * cancelled. Each reads its row first and writes unconditionally, inside the
+ * store's `BEGIN IMMEDIATE` transaction.
+ */
+const ClaimRowSchema = z.object({
+  state: z.enum(['scheduled', 'cancelled', 'completed']),
+  claim_until: z.string().nullable(),
+});
+const FinalizeRowSchema = z.object({
+  state: z.enum(['scheduled', 'cancelled', 'completed']),
+  claim_owner: z.string().nullable(),
+});
+const StateRowSchema = z.object({
+  state: z.enum(['scheduled', 'cancelled', 'completed']),
+});
+
 function parseSchedule(raw: unknown): AgentSchedule {
   const row = ScheduleRowSchema.parse(raw);
   return AgentScheduleSchema.parse({
@@ -150,16 +180,25 @@ export function createAgentScheduleService(input: {
    * mid-dispatch does not park the schedule forever.
    */
   const claim = (id: string, until: string, at: string): Promise<boolean> =>
-    input.sqlite.transaction(
-      async (scope) =>
-        scope.database
-          .prepare(`
-            UPDATE stitchkit_agent_runtime_schedules
-            SET claim_owner = ?, claim_until = ?, updated_at = ?
-            WHERE id = ? AND state = 'scheduled' AND (claim_until IS NULL OR claim_until < ?)
-          `)
-          .run(owner, until, at, id, at).changes === 1,
-    );
+    input.sqlite.transaction(async (scope) => {
+      const raw = scope.database
+        .prepare(`
+          SELECT state, claim_until FROM stitchkit_agent_runtime_schedules WHERE id = ?
+        `)
+        .get(id);
+      if (raw === null || raw === undefined) return false;
+      const row = ClaimRowSchema.parse(raw);
+      if (row.state !== 'scheduled') return false;
+      if (row.claim_until !== null && row.claim_until >= at) return false;
+      scope.database
+        .prepare(`
+          UPDATE stitchkit_agent_runtime_schedules
+          SET claim_owner = ?, claim_until = ?, updated_at = ?
+          WHERE id = ?
+        `)
+        .run(owner, until, at, id);
+      return true;
+    });
 
   const runTick = async () => {
     if (closed) return;
@@ -230,15 +269,28 @@ export function createAgentScheduleService(input: {
         // Only the row this process still holds, and only while it is still
         // scheduled: a `cancelSchedule` that landed during `dispatch` stays a
         // cancellation, it is not written back to `scheduled`.
+        const held = scope.database
+          .prepare(`
+            SELECT state, claim_owner FROM stitchkit_agent_runtime_schedules WHERE id = ?
+          `)
+          .get(schedule.id);
         const settled =
+          held !== null &&
+          held !== undefined &&
+          (() => {
+            const row = FinalizeRowSchema.parse(held);
+            return row.state === 'scheduled' && row.claim_owner === owner;
+          })();
+        if (settled) {
           scope.database
             .prepare(`
               UPDATE stitchkit_agent_runtime_schedules
               SET state = ?, occurrence = ?, next_at = ?, updated_at = ?,
                 claim_owner = NULL, claim_until = NULL
-              WHERE id = ? AND state = 'scheduled' AND claim_owner = ?
+              WHERE id = ?
             `)
-            .run(state, occurrence, nextAt, at, schedule.id, owner).changes === 1;
+            .run(state, occurrence, nextAt, at, schedule.id);
+        }
         if (lateByMs > 0) {
           await scope.appendEvent({
             conversationId: schedule.conversationId,
@@ -357,24 +409,30 @@ export function createAgentScheduleService(input: {
   const cancelSchedule = async (conversationId: string, id: string): Promise<boolean> => {
     const observedAt = now().toISOString();
     const changed = await input.sqlite.transaction(async (scope) => {
-      const count = scope.database
+      const raw = scope.database
+        .prepare(`
+          SELECT state FROM stitchkit_agent_runtime_schedules
+          WHERE id = ? AND conversation_id = ?
+        `)
+        .get(id, conversationId);
+      if (raw === null || raw === undefined) return false;
+      if (StateRowSchema.parse(raw).state !== 'scheduled') return false;
+      scope.database
         .prepare(`
           UPDATE stitchkit_agent_runtime_schedules SET state = 'cancelled', updated_at = ?
-          WHERE id = ? AND conversation_id = ? AND state = 'scheduled'
+          WHERE id = ? AND conversation_id = ?
         `)
-        .run(observedAt, id, conversationId).changes;
-      if (count > 0) {
-        await scope.appendEvent({
-          conversationId,
-          kind: 'schedule/cancelled',
-          occurredAt: observedAt,
-          payload: { id },
-        });
-      }
-      return count;
+        .run(observedAt, id, conversationId);
+      await scope.appendEvent({
+        conversationId,
+        kind: 'schedule/cancelled',
+        occurredAt: observedAt,
+        payload: { id },
+      });
+      return true;
     });
-    if (changed > 0) arm();
-    return changed > 0;
+    if (changed) arm();
+    return changed;
   };
 
   return {

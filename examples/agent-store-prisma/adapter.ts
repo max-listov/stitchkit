@@ -111,22 +111,34 @@ export function createPrismaAgentStoreFixture(input: {
             })
           : undefined;
       },
+      /**
+       * Read the version, compare it here, then write unconditionally.
+       *
+       * A conditional upsert reads shorter and is wrong twice. Its `ON
+       * CONFLICT ... WHERE` guards the update branch only, so the first write
+       * to a conversation applies whatever `expectedVersion` it was handed;
+       * and its affected-row count is the driver's, which need not be the
+       * number of rows this statement moved. Both are safe to decide here
+       * because the transaction is SERIALIZABLE.
+       */
       async compareAndSwap(transaction, operation) {
         const conversationStorageId = storageId(operation.conversationId);
-        const affected = await transaction.$executeRaw`
-          INSERT INTO "AgentRuntimeState" ("conversationId", "version")
-          VALUES (${conversationStorageId}, ${operation.next.version})
-          ON CONFLICT ("conversationId") DO UPDATE
-          SET "version" = EXCLUDED."version"
-          WHERE "AgentRuntimeState"."version" = ${operation.expectedVersion}
-        `;
-        if (affected !== 1) {
-          const current = await transaction.agentRuntimeState.findUnique({
-            where: { conversationId: conversationStorageId },
-            select: { version: true },
-          });
-          return { outcome: 'conflict', actualVersion: current?.version ?? 0 };
+        const current = await transaction.agentRuntimeState.findUnique({
+          where: { conversationId: conversationStorageId },
+          select: { version: true },
+        });
+        const actualVersion = current?.version ?? 0;
+        if (actualVersion !== operation.expectedVersion) {
+          return { outcome: 'conflict', actualVersion };
         }
+        await transaction.agentRuntimeState.upsert({
+          where: { conversationId: conversationStorageId },
+          create: {
+            conversationId: conversationStorageId,
+            version: operation.next.version,
+          },
+          update: { version: operation.next.version },
+        });
         return { outcome: 'applied' };
       },
     },

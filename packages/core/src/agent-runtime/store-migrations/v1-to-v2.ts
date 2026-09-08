@@ -12,6 +12,10 @@ const PayloadRowSchema = z.object({
   payload: z.string(),
   terminal_assistant_payload: z.string().nullable().optional(),
 });
+const HistoryRowSchema = z.object({
+  payload: z.string(),
+  active: z.union([z.literal(0), z.literal(1)]),
+});
 const AdmissionRowSchema = z.object({
   conversation_id: z.string(),
   idempotency_key: z.string(),
@@ -135,12 +139,28 @@ function writeBaselines(database: SqliteDatabase, migratedAt: string): void {
     ) VALUES (?, 1, ?, 1, 'runtime/baseline', ?, 0, ?)
   `);
   for (const conversation of conversations) {
-    const messages = database
+    // The whole conversation, compacted part included, in the order it
+    // happened. A baseline that carried only the active rows made the ledger's
+    // promise false for exactly the conversations that had run long enough to
+    // be compacted: those messages existed in the normalized table and in no
+    // event, so nothing could reconstruct what the person had actually said.
+    // `compacted` marks them inside the one sequence rather than starting a
+    // second list; a 0.86.0 baseline has no such field and still reads as the
+    // active history it was.
+    const rows = database
       .prepare(
-        'SELECT payload FROM stitchkit_agent_runtime_messages WHERE conversation_id = ? AND active = 1 ORDER BY position',
+        'SELECT payload, active FROM stitchkit_agent_runtime_messages WHERE conversation_id = ? ORDER BY position, rowid',
       )
       .all(conversation.conversation_id)
-      .map((row) => AgentMessageSchema.parse(parseJson(PayloadRowSchema.parse(row).payload)));
+      .map((row) => {
+        const parsed = HistoryRowSchema.parse(row);
+        return {
+          message: AgentMessageSchema.parse(parseJson(parsed.payload)),
+          active: parsed.active === 1,
+        };
+      });
+    const messages = rows.map((row) => row.message);
+    const compacted = rows.filter((row) => !row.active).map((row) => row.message.id);
     const runs = database
       .prepare(
         'SELECT payload, terminal_assistant_payload FROM stitchkit_agent_runtime_runs WHERE conversation_id = ? ORDER BY created_at, run_id',
@@ -194,6 +214,7 @@ function writeBaselines(database: SqliteDatabase, migratedAt: string): void {
           version: conversation.version,
         },
         messages,
+        ...(compacted.length > 0 && { compacted }),
         runs,
         admissions,
       }),

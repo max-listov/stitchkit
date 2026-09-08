@@ -869,7 +869,7 @@ Server-only optional application runtime. See the
 | `searchAgentModelCatalog` | function | deterministic bounded search over a loaded canonical catalog |
 | `AgentModelSelectionSchema` / `AgentModelSelection` / `AgentModelSelectionStore` | schema / _type_ | durable per-conversation model choice; runtime resolvers receive run and snapshot to recover the model pinned to input metadata |
 | `createMemoryAgentModelSelectionStore` | function | process-local selection reference adapter |
-| `AgentConversationReader` | _type_ | optional bounded conversation-summary and message-history reader; not part of the required runtime store contract |
+| `AgentConversationReader` | _type_ | optional bounded conversation-summary and message-history reader; `messages` takes `includeCompacted` and every page names its `compacted` ids; not part of the required runtime store contract |
 | `AgentConversationSummarySchema` / `AgentConversationSummary` | schema / _type_ | bounded durable conversation list item with version, activity and preview |
 | `AgentConversationPageSchema` / `AgentConversationPage` | schema / _type_ | cursor-paged conversation summaries |
 | `AgentConversationMessagePageSchema` / `AgentConversationMessagePage` | schema / _type_ | cursor-paged durable message history |

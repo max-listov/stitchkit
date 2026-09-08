@@ -22,6 +22,13 @@ const AGENT_RUNTIME_TERMS = [
   // split three failures out of `provider_failure` — the third time this list
   // was too narrow for the break it was meant to count.
   'AgentTerminalReason',
+  // The conversation reader is this surface's read side, and an application
+  // that shows a person their own history is a consumer of it. Left out, the
+  // table read "most recently 0.86.0" in the release that made a message page
+  // say which of its messages compaction removed — the fourth time this list
+  // was too narrow for the break it was meant to count.
+  'AgentConversationReader',
+  'AgentConversationMessagePage',
 ] as const;
 
 /**
@@ -111,14 +118,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 17 of the 31 minors since 0.56.2, most recently 0.86.0');
+  expect(sentence).toBe('redefined in 18 of the 32 minors since 0.56.2, most recently 0.87.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 7 of the 31 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 7 of the 32 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${application}_`);
 
@@ -126,7 +133,7 @@ test('the maturity table carries the figure the changelog supports', async () =>
     surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
   );
   expect(observability).toBe(
-    'redefined in 1 of the 31 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 1 of the 32 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${observability}_`);
 });
