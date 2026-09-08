@@ -367,7 +367,10 @@ otherwise costs a whole gate run — editing `release-train.json` after a green
 local gate invalidates the memo, and 0.87.0 paid exactly that.
 
 Step 4 does not re-run the gate: the SHA already has a green push run, and
-`pre-push` asks GitHub rather than assuming. Where a release commit goes
+`pre-push` asks GitHub rather than assuming. It does start a second CI run, on
+master, for a SHA already proven on the branch — expected, and deliberately not
+suppressed: nothing waits for it, and the alternative is a network call inside
+the one job every other job waits on. Where a release commit goes
 straight to master instead, the full local gate runs first, because pushing it
 there publishes it. Pushing the release commit to master before it is green forces the tag onto
 whatever fix lands next — `git show <tag>` then points at the wrong change, and
