@@ -210,6 +210,28 @@ export function chooseHeavyConcurrency(
   };
 }
 
+/**
+ * Sample available memory until the returned reader is called, then answer with
+ * the lowest value seen. `undefined` where the host cannot be measured at all,
+ * which is not the same fact as "there was plenty" and must not print like it.
+ */
+export function startMemoryFloor(
+  measure: () => number | undefined = availableMemoryGib,
+  everyMs = 2_000,
+): () => number | undefined {
+  let floor = measure();
+  if (floor === undefined) return () => undefined;
+  const timer = setInterval(() => {
+    const sample = measure();
+    if (sample !== undefined && (floor === undefined || sample < floor)) floor = sample;
+  }, everyMs);
+  timer.unref?.();
+  return () => {
+    clearInterval(timer);
+    return floor;
+  };
+}
+
 /** The number alone, for callers that do not print the reason. */
 export function heavyConcurrency(
   raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
@@ -235,7 +257,20 @@ export async function runBounded(
   concurrency: number,
   execute: (step: string) => Promise<void> = runStep,
   report: (line: string) => void = (line) => process.stderr.write(line),
+  /**
+   * The memory floor while the lanes ran, printed only when one fails.
+   *
+   * A lane dying to a signal looks identical whatever killed it, and the first
+   * explanation anyone reaches for is memory. On 2026-09-08 a `supervised-lane`
+   * build died to SIGTERM, the run was called an out-of-memory kill, and a
+   * direct reproduction of the same two lanes side by side then passed with
+   * 7.1 GiB still available — so the diagnosis was wrong and nothing in the
+   * output could have said so. Recording the floor makes the next such death
+   * answer that question instead of inviting a guess.
+   */
+  watchMemory: () => () => number | undefined = startMemoryFloor,
 ): Promise<void> {
+  const memoryFloor = watchMemory();
   const queue = [...steps];
   const workers = Array.from(
     { length: Math.min(Math.max(1, concurrency), queue.length) },
@@ -248,6 +283,12 @@ export async function runBounded(
         } catch (error) {
           report(
             `[gate] ${step} FAILED: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+          const floor = memoryFloor();
+          report(
+            floor === undefined
+              ? '[gate] memory during the lanes was not measurable on this host\n'
+              : `[gate] memory floor while the lanes ran: ${floor.toFixed(2)} GiB available\n`,
           );
           report('[gate] cancelling the other heavy lanes; their SIGTERM is a consequence\n');
           throw error;

@@ -48,11 +48,25 @@ export interface ReleaseTagPush {
   sha: string;
 }
 
+/** Branch refs a release may land on directly, and be tagged from. */
+export const DEFAULT_BRANCH_REFS = ['refs/heads/master', 'refs/heads/main'] as const;
+
 export interface PrePushPlan {
   verify: boolean;
   releaseTags: ReleaseTagPush[];
   /** Local SHAs of the pushed branch tips — where a release commit can sit. */
   branchHeads: string[];
+  /**
+   * The subset of those tips going to a branch a tag can be cut from.
+   *
+   * Which branch a release commit lands on decides who gates it. On master it
+   * is published the moment it is pushed, and a red CI run there is repaired
+   * only by a NEW release commit — so the expensive local gate runs first. On
+   * any other branch CI gates that exact SHA before master ever sees it, and a
+   * red run is repaired by amending the commit, so paying the same eight
+   * minutes locally buys nothing.
+   */
+  defaultBranchHeads: string[];
 }
 
 function preOneMinor(version: string): number | null {
@@ -369,6 +383,7 @@ export function classifyPrePush(input: string): PrePushPlan {
   let verify = false;
   const releaseTags = new Map<string, string>();
   const branchHeads = new Set<string>();
+  const defaultBranchHeads = new Set<string>();
   for (const line of input.split('\n')) {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4) continue;
@@ -381,6 +396,9 @@ export function classifyPrePush(input: string): PrePushPlan {
     if (remoteRef.startsWith('refs/heads/')) {
       verify = true;
       branchHeads.add(localSha);
+      if (DEFAULT_BRANCH_REFS.some((ref) => ref === remoteRef)) {
+        defaultBranchHeads.add(localSha);
+      }
     }
     if (remoteRef.startsWith('refs/tags/')) {
       const tag = remoteRef.slice('refs/tags/'.length);
@@ -399,6 +417,7 @@ export function classifyPrePush(input: string): PrePushPlan {
     verify,
     releaseTags: [...releaseTags].map(([tag, sha]) => ({ tag, sha })),
     branchHeads: [...branchHeads],
+    defaultBranchHeads: [...defaultBranchHeads],
   };
 }
 
@@ -434,10 +453,13 @@ export type LocalGateProfile = 'none' | 'fast' | 'full';
  */
 export function localGateProfile(
   plan: PrePushPlan,
-  pushesReleaseCommit: boolean,
+  releaseCommitShas: readonly string[],
 ): LocalGateProfile {
   if (!plan.verify) return 'none';
-  return pushesReleaseCommit ? 'full' : 'fast';
+  const landsOnDefaultBranch = releaseCommitShas.some((sha) =>
+    plan.defaultBranchHeads.includes(sha),
+  );
+  return landsOnDefaultBranch ? 'full' : 'fast';
 }
 
 /** Fail unless the tag points at the current release head of the default branch. */
@@ -510,7 +532,13 @@ export async function prePushMetadataGate(
   for (const commit of releaseCommits) {
     await checks.validateCommit(commit);
   }
-  return { profile: localGateProfile(plan, releaseCommits.length > 0), releaseCommits };
+  return {
+    profile: localGateProfile(
+      plan,
+      releaseCommits.map((commit) => commit.sha),
+    ),
+    releaseCommits,
+  };
 }
 
 export function assertReleaseCommitSubject(
@@ -554,6 +582,53 @@ export function selectSuccessfulCiRun(runs: readonly CiRunSummary[], sha: string
       .map((run) => run.conclusion ?? 'pending')
       .join(', ')}`,
   );
+}
+
+/**
+ * Has CI already answered for these exact commits?
+ *
+ * The local release gate exists because a red run on a release commit sitting
+ * on master cannot be repaired in place. A commit that reached master by
+ * fast-forward from a release branch has already had that run, on this exact
+ * SHA, and it was green — which is a stronger statement than the local gate
+ * makes, because CI also runs the two lanes no other kernel can. Re-running
+ * eight local minutes to re-answer it is the duplication this whole path
+ * exists to remove.
+ *
+ * Three outcomes, not two: green, a named refusal, and "could not ask". The
+ * last one is not green — it runs the gate — but it says so, because a gate
+ * that runs for eight minutes should never leave a reader guessing whether it
+ * ran because the answer was no or because nobody could reach GitHub.
+ */
+export async function ciAlreadyAnsweredFor(
+  shas: readonly string[],
+  ask: (sha: string) => Promise<readonly CiRunSummary[]>,
+): Promise<{ green: boolean; because: string }> {
+  if (shas.length === 0) return { green: false, because: 'no release commit in this push' };
+  for (const sha of shas) {
+    let runs: readonly CiRunSummary[];
+    try {
+      runs = await ask(sha);
+    } catch (error) {
+      return {
+        green: false,
+        because: `could not ask GitHub about ${sha.slice(0, 7)} (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      };
+    }
+    try {
+      selectSuccessfulCiRun(runs, sha);
+    } catch (error) {
+      return { green: false, because: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return {
+    green: true,
+    because: `a successful push run already exists for ${shas
+      .map((sha) => sha.slice(0, 7))
+      .join(', ')}`,
+  };
 }
 
 /**
@@ -924,6 +999,32 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify(plan));
     return;
   }
+  if (command === 'check') {
+    /**
+     * The same metadata gate the push runs, against the working tree, before
+     * anything expensive.
+     *
+     * `preflight` needs a tag; this one derives them from `release-train.json`,
+     * which is the point: the mistake it catches is a train that names a
+     * version the manifest no longer has. Every check here reads one file and a
+     * regular expression, and the gate behind it takes minutes. The order used
+     * to be the other way round — the train was noticed at `git push`, after
+     * the gate, and the edit that fixed it invalidated the gate's memo, so the
+     * whole suite ran a second time for a one-line file. That is a full gate
+     * run per occurrence, and it cost one on 0.87.0.
+     */
+    const train = await readReleaseTrain(root);
+    const checked: string[] = [];
+    for (const entry of train.releases) {
+      const tag = releaseTagForTarget(entry.target, entry.version);
+      await validateReleaseTag(root, tag);
+      checked.push(tag);
+    }
+    process.stderr.write(
+      `[release] working tree carries release metadata for ${checked.join(', ')}\n`,
+    );
+    return;
+  }
   if (command === 'candidate') {
     if (!argument) throw new Error('Usage: release-plan.ts candidate <sha>');
     const sha = await output(['git', 'rev-parse', `${argument}^{commit}`]);
@@ -951,7 +1052,7 @@ async function main(): Promise<void> {
   }
   if (command === 'pre-push') {
     const plan = classifyPrePush(await Bun.stdin.text());
-    const { profile } = await prePushMetadataGate(plan, {
+    const { profile, releaseCommits } = await prePushMetadataGate(plan, {
       validateTag: async (tag, sha) => {
         const validated = await validateReleaseTag(root, tag);
         await assertReleaseSubjectForTag(
@@ -983,6 +1084,29 @@ async function main(): Promise<void> {
       await run(['bun', 'scripts/verify.ts', '--fast', '--if-changed']);
     }
     if (profile === 'full') {
+      const landing = releaseCommits
+        .filter((commit) => plan.defaultBranchHeads.includes(commit.sha))
+        .map((commit) => commit.sha);
+      const answered = await ciAlreadyAnsweredFor(landing, async (sha) =>
+        CiRunListSchema(
+          JSON.parse(
+            await output([
+              'gh',
+              'api',
+              `repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=completed`,
+              '--jq',
+              '.workflow_runs',
+            ]),
+          ),
+        ),
+      );
+      if (answered.green) {
+        process.stderr.write(
+          `[gate] release commit already gated by CI: ${answered.because}. Fast-forwarding master publishes a tree CI has answered for on this exact SHA.\n`,
+        );
+        return;
+      }
+      process.stderr.write(`[gate] running the release gate locally: ${answered.because}\n`);
       await run(['bun', 'scripts/verify.ts', '--release', '--if-changed']);
     }
     return;
@@ -1024,7 +1148,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: release-plan.ts <preflight TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
+    'Usage: release-plan.ts <check|preflight TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
   );
 }
 

@@ -8,6 +8,7 @@ import {
   assertReleaseSubjectForTag,
   assertTagOnReleaseHead,
   assertVersionCalibre,
+  ciAlreadyAnsweredFor,
   classifyPrePush,
   decidePublishAction,
   extractReleaseNotes,
@@ -66,11 +67,13 @@ describe('release plan', () => {
       verify: true,
       releaseTags: [],
       branchHeads: [SHA],
+      defaultBranchHeads: [],
     });
     expect(classifyPrePush(`refs/tags/v1.2.3 ${ZERO} refs/tags/v1.2.3 ${SHA}\n`)).toEqual({
       verify: false,
       releaseTags: [],
       branchHeads: [],
+      defaultBranchHeads: [],
     });
     expect(
       classifyPrePush(
@@ -80,6 +83,7 @@ describe('release plan', () => {
       verify: true,
       releaseTags: [{ tag: 'v1.2.3', sha: SHA }],
       branchHeads: [SHA],
+      defaultBranchHeads: [SHA],
     });
   });
 
@@ -90,11 +94,13 @@ describe('release plan', () => {
       verify: true,
       releaseTags: [],
       branchHeads: [SHA],
+      defaultBranchHeads: [SHA],
     });
     expect(classifyPrePush(`${SHA} ${SHA} refs/tags/v9.9.9 ${ZERO}\n`)).toEqual({
       verify: false,
       releaseTags: [{ tag: 'v9.9.9', sha: SHA }],
       branchHeads: [],
+      defaultBranchHeads: [],
     });
     expect(
       classifyPrePush(
@@ -104,6 +110,7 @@ describe('release plan', () => {
       verify: true,
       releaseTags: [{ tag: 'create-stitchkit-v1.0.0', sha: SHA }],
       branchHeads: [SHA],
+      defaultBranchHeads: [SHA],
     });
   });
 
@@ -548,18 +555,54 @@ describe('a migration guide reads newest first', () => {
 });
 
 describe('the local gate runs where a red CI run cannot be paid for', () => {
-  const branch = { verify: true, releaseTags: [], branchHeads: [SHA] };
+  const toMaster = {
+    verify: true,
+    releaseTags: [],
+    branchHeads: [SHA],
+    defaultBranchHeads: [SHA],
+  };
+  const toReleaseBranch = {
+    verify: true,
+    releaseTags: [],
+    branchHeads: [SHA],
+    defaultBranchHeads: [],
+  };
 
   test('an ordinary push runs the fast half', () => {
-    expect(localGateProfile(branch, false)).toBe('fast');
+    expect(localGateProfile(toMaster, [])).toBe('fast');
   });
 
-  test('a push carrying the release commit runs everything', () => {
+  test('a release commit pushed to master runs everything', () => {
     // This is the one commit whose red run cannot be repaired in place: the tag
     // must sit on a `release(...)` commit AND on the branch head, so a red run
     // costs a whole new release commit. That asymmetry is the entire argument
     // for the expensive local gate — not a general distrust of CI.
-    expect(localGateProfile(branch, true)).toBe('full');
+    expect(localGateProfile(toMaster, [SHA])).toBe('full');
+  });
+
+  test('the same commit pushed to a release branch leaves the gate to CI', () => {
+    // Nothing is published by that push. CI runs on the exact SHA, master is
+    // fast-forwarded to it only once that run is green, and a red one is
+    // repaired by amending — so the eight local minutes buy nothing here. It
+    // is the same commit and the same tree; only where it lands differs, and
+    // that is exactly what the old boolean could not say.
+    expect(localGateProfile(toReleaseBranch, [SHA])).toBe('fast');
+  });
+
+  test('a release commit riding along to master still runs everything', () => {
+    // Pushing several branches at once must not let the release commit's own
+    // landing go ungated because a topic branch was in the same push.
+    expect(
+      localGateProfile(
+        {
+          verify: true,
+          releaseTags: [],
+          branchHeads: [SHA, '2'.repeat(40)],
+          defaultBranchHeads: [SHA],
+        },
+        [SHA],
+      ),
+    ).toBe('full');
   });
 
   test('a tag-only push gates on metadata alone', () => {
@@ -568,8 +611,13 @@ describe('the local gate runs where a red CI run cannot be paid for', () => {
     // for.
     expect(
       localGateProfile(
-        { verify: false, releaseTags: [{ tag: 'v1.0.0', sha: SHA }], branchHeads: [] },
-        false,
+        {
+          verify: false,
+          releaseTags: [{ tag: 'v1.0.0', sha: SHA }],
+          branchHeads: [],
+          defaultBranchHeads: [],
+        },
+        [],
       ),
     ).toBe('none');
   });
@@ -746,6 +794,55 @@ describe('a release commit is checked before it costs a gate', () => {
   });
 });
 
+describe('CI answering for the exact SHA replaces the local release gate', () => {
+  const green = [{ id: 7, head_sha: SHA, event: 'push', conclusion: 'success' }];
+
+  test('a green push run for the SHA means the gate has already run', async () => {
+    const answered = await ciAlreadyAnsweredFor([SHA], async () => green);
+    expect(answered.green).toBe(true);
+    expect(answered.because).toContain(SHA.slice(0, 7));
+  });
+
+  test('a red run is not an answer, and says which', async () => {
+    const answered = await ciAlreadyAnsweredFor([SHA], async () => [
+      { id: 7, head_sha: SHA, event: 'push', conclusion: 'failure' },
+    ]);
+    expect(answered.green).toBe(false);
+    expect(answered.because).toContain('failure');
+  });
+
+  test('a pull-request run for the same SHA is not the push run the release needs', async () => {
+    const answered = await ciAlreadyAnsweredFor([SHA], async () => [
+      { id: 7, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
+    ]);
+    expect(answered.green).toBe(false);
+  });
+
+  test('unreachable GitHub is not green, and does not look like a red run', async () => {
+    // The distinction the gate line prints: it ran because the answer was no,
+    // or because nobody could ask. Collapsing those is how a skipped gate
+    // becomes unexplainable.
+    const answered = await ciAlreadyAnsweredFor([SHA], async () => {
+      throw new Error('gh: not authenticated');
+    });
+    expect(answered.green).toBe(false);
+    expect(answered.because).toContain('could not ask GitHub');
+  });
+
+  test('every landing commit must be answered for, not just the first', async () => {
+    const other = '2'.repeat(40);
+    const answered = await ciAlreadyAnsweredFor([SHA, other], async (sha) =>
+      sha === SHA ? green : [],
+    );
+    expect(answered.green).toBe(false);
+    expect(answered.because).toContain(other);
+  });
+
+  test('nothing landing means nothing has been answered for', async () => {
+    expect((await ciAlreadyAnsweredFor([], async () => green)).green).toBe(false);
+  });
+});
+
 describe('the cheap metadata check runs before the expensive gate', () => {
   const order: string[] = [];
   const recording = (releaseCommits: { sha: string; subject: string }[]) => ({
@@ -761,7 +858,7 @@ describe('the cheap metadata check runs before the expensive gate', () => {
   test('a pushed release commit is validated, and the profile is the expensive one', async () => {
     order.length = 0;
     const decision = await prePushMetadataGate(
-      { verify: true, releaseTags: [], branchHeads: [SHA] },
+      { verify: true, releaseTags: [], branchHeads: [SHA], defaultBranchHeads: [SHA] },
       recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
     );
     // The regression this whole change exists for: before it, nothing here
@@ -775,7 +872,7 @@ describe('the cheap metadata check runs before the expensive gate', () => {
     const checks = recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]);
     await expect(
       prePushMetadataGate(
-        { verify: true, releaseTags: [], branchHeads: [SHA] },
+        { verify: true, releaseTags: [], branchHeads: [SHA], defaultBranchHeads: [SHA] },
         {
           ...checks,
           validateCommit: () => Promise.reject(new Error('no Who must act line')),
@@ -787,7 +884,7 @@ describe('the cheap metadata check runs before the expensive gate', () => {
   test('an ordinary push reads no release metadata and stays fast', async () => {
     order.length = 0;
     const decision = await prePushMetadataGate(
-      { verify: true, releaseTags: [], branchHeads: [SHA] },
+      { verify: true, releaseTags: [], branchHeads: [SHA], defaultBranchHeads: [SHA] },
       recording([]),
     );
     expect(order).toEqual([]);
@@ -797,7 +894,12 @@ describe('the cheap metadata check runs before the expensive gate', () => {
   test('a tag push still checks the tag, and checks it first', async () => {
     order.length = 0;
     const decision = await prePushMetadataGate(
-      { verify: true, releaseTags: [{ tag: 'v9.9.0', sha: SHA }], branchHeads: [SHA] },
+      {
+        verify: true,
+        releaseTags: [{ tag: 'v9.9.0', sha: SHA }],
+        branchHeads: [SHA],
+        defaultBranchHeads: [SHA],
+      },
       recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
     );
     expect(order).toEqual(['tag:v9.9.0', `commit:${SHA}`]);

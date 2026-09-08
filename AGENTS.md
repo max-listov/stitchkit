@@ -123,6 +123,7 @@ bun run verify:fast    # lockfile · lint · check · test — what an ordinary 
 bun scripts/verify.ts --release # release-train targets; heavy lanes run at most two at once, fewer when the host cannot hold them
 bun run build          # build dist/ + generate llms.txt
 bun run lint:fix       # auto-fix formatting / safe lint
+bun run release:check  # release metadata of the WORKING TREE, before the gate — one second
 bun run update:starter # move the template's framework range + lockfile together
 bun packages/core/src/upgrade-cli.ts upgrade --from X.Y.Z  # the plan a consumer gets, from this tree
 ```
@@ -146,14 +147,23 @@ picks by what a red run would cost on the commit being pushed:
 | Push | Local gate | Why |
 | --- | --- | --- |
 | ordinary branch push | `lockfile`, `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| push carrying the `release(...)` commit | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
+| `release(...)` commit to a **`release/**`** branch | metadata, then the same fast half | nothing is published; CI gates that exact SHA before master sees it |
+| `release(...)` commit **to master** with no green run for its SHA | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
+| `release(...)` commit to master that CI already passed | metadata only | the fast-forward publishes a tree CI has answered for on this exact SHA |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
-The release row is the whole argument. `assert-subject` requires a tag to sit
+The release rows are the whole argument. `assert-subject` requires a tag to sit
 on a `release(<scope>): … in X.Y.Z` commit and `assert-head` requires that
-commit to be the branch head, so a red run on an already-pushed release commit
-is repaired only by making a **new** release commit. Everywhere else, red is
-two and a half minutes and a fix.
+commit to be the branch head, so a red run on an already-pushed **master**
+release commit is repaired only by making a **new** release commit. That
+asymmetry is what the expensive local gate buys, and it exists only where the
+commit lands on master unproven. Push the same commit to `release/X.Y.Z` first
+and CI answers for the exact SHA before anything is published — a red run there
+is repaired by amending the commit. The local gate then has nothing left to
+prove, and `ciAlreadyAnsweredFor` says so out loud rather than skipping
+silently: it prints whether it skipped because the run was green, because it was
+not, or because GitHub could not be reached. Everywhere else, red is two and a
+half minutes and a fix.
 
 **The publication-privacy scan runs on both pushes and is never memoised.** It
 reads the index, and the memo's key is a working-tree hash that counts untracked
@@ -334,9 +344,32 @@ question at release time is not "is there a `### Added` section" but "is there a
 `### ⚠️ Breaking changes` section" — that one alone moves the minor.
 
 **Order inside a release.** `release-train.json` lists every package/version to publish. The
-`release(train): …` commit is the LAST commit of the release: land every fix first, run the
-package-aware local gate once, make the release commit, wait for one green exact-SHA run, then
-push all selected tags with `bun run release:train`. Pushing the release commit before it is green forces the tag onto
+`release(train): …` commit is the LAST commit of the release. Land every fix first, then:
+
+```bash
+# 1. Everything the release commit will carry: version bumps, release-train.json,
+#    the changelog section, the promoted migration heading. Then, in one second:
+bun run release:check
+# 2. The commit, on its own branch. Nothing is published by this push.
+git switch -c release/0.87.2 && git commit -m 'release(train): publish core in 0.87.2'
+git push -u origin release/0.87.2
+# 3. Wait for the push run of ci.yml for this exact SHA (see below).
+# 4. Fast-forward master to the proven SHA, then tag it.
+git push origin HEAD:master
+bun run release:train
+```
+
+`release:check` runs the same metadata gate the push runs, against the working
+tree, before anything expensive: version against manifest, breaking section
+against its `**Who must act:**` line and against the version calibre, the
+promoted migration heading. It costs a second, and the mistake it catches
+otherwise costs a whole gate run — editing `release-train.json` after a green
+local gate invalidates the memo, and 0.87.0 paid exactly that.
+
+Step 4 does not re-run the gate: the SHA already has a green push run, and
+`pre-push` asks GitHub rather than assuming. Where a release commit goes
+straight to master instead, the full local gate runs first, because pushing it
+there publishes it. Pushing the release commit to master before it is green forces the tag onto
 whatever fix lands next — `git show <tag>` then points at the wrong change, and
 the release commit keeps a red run forever (that is what 0.55.0 did). Two gates
 hold the shape, both in the publishing workflow, so neither depends on local

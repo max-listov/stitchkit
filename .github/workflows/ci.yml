@@ -4,7 +4,11 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # `release/**` is where a release commit is gated before master sees it:
+    # the publishing workflow needs a successful PUSH run for the exact SHA,
+    # which a pull-request run is not, and master is fast-forwarded to that SHA
+    # only once this run is green.
+    branches: [master, main, 'release/**']
   pull_request:
   schedule:
     - cron: '17 3 * * *'
@@ -101,6 +105,41 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun --filter stitchkit check
       - run: bun --filter stitchkit test
+      - run: bun --filter stitchkit build
+
+  # Split out of `portable` rather than appended to it. Measured on the 0.87.1
+  # run: types 6 s, tests 71 s, build 11 s, then the four lanes 87 s — 3 m 12 s
+  # in one job while every other lane had finished, which made this job the
+  # whole run's critical path. Side by side the two halves answer in the time
+  # of the longer one.
+  portable-lanes:
+    name: Framework packed and smoke lanes
+    if: needs.plan.outputs.portable == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      STARTER_TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun --filter stitchkit build
       - run: bun run test:agent-store-postgres
       - run: bun run smoke:next-ssr
@@ -258,7 +297,18 @@ jobs:
   artifacts:
     name: Exact release artifacts
     if: always() && needs.plan.outputs.artifacts == 'true'
-    needs: [plan, repository, portable, tui, starter-package, darwin-contained-files, supervised, starter]
+    needs:
+      [
+        plan,
+        repository,
+        portable,
+        portable-lanes,
+        tui,
+        starter-package,
+        darwin-contained-files,
+        supervised,
+        starter,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -292,7 +342,19 @@ jobs:
   result:
     name: Required evidence complete
     if: always()
-    needs: [plan, repository, portable, tui, starter-package, darwin-contained-files, supervised, starter, artifacts]
+    needs:
+      [
+        plan,
+        repository,
+        portable,
+        portable-lanes,
+        tui,
+        starter-package,
+        darwin-contained-files,
+        supervised,
+        starter,
+        artifacts,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Fail closed on any selected lane

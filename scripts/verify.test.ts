@@ -4,6 +4,7 @@ import {
   chooseHeavyConcurrency,
   HEAVY_LANE_MEMORY_GIB,
   runBounded,
+  startMemoryFloor,
 } from './verify';
 
 test('bounded release lanes never exceed the declared local concurrency', async () => {
@@ -39,6 +40,69 @@ test('a failing lane is named before its siblings are cancelled', async () => {
   expect(lines[0]).toContain('boom FAILED');
   expect(lines[0]).toContain('exited with 1');
   expect(lines.join('')).toContain('cancelling the other heavy lanes');
+});
+
+test('a failing lane reports the memory floor it ran through', async () => {
+  // Why the number is here at all: the one failure this gate has produced was
+  // read as an out-of-memory kill, and a reproduction with 7.1 GiB to spare
+  // said otherwise. The floor turns that question into a line of output.
+  const lines: string[] = [];
+  const samples = [9.5, 6.25, 8.1];
+  await expect(
+    runBounded(
+      ['boom'],
+      1,
+      async () => {
+        throw new Error('`bun run boom` exited with 1');
+      },
+      (line) => lines.push(line),
+      () => {
+        let lowest = Number.POSITIVE_INFINITY;
+        for (const sample of samples) lowest = Math.min(lowest, sample);
+        return () => lowest;
+      },
+    ),
+  ).rejects.toThrow('exited with 1');
+  expect(lines.join('')).toContain('memory floor while the lanes ran: 6.25 GiB available');
+});
+
+test('an unmeasurable host says so instead of printing a number', async () => {
+  // The third outcome. "Could not measure" printed as a figure would be a
+  // measurement that never happened.
+  const lines: string[] = [];
+  await expect(
+    runBounded(
+      ['boom'],
+      1,
+      async () => {
+        throw new Error('boom');
+      },
+      (line) => lines.push(line),
+      () => () => undefined,
+    ),
+  ).rejects.toThrow('boom');
+  expect(lines.join('')).toContain('not measurable on this host');
+  expect(lines.join('')).not.toContain('GiB available');
+});
+
+test('the floor keeps the lowest sample, not the last', async () => {
+  const readings = [9, 4.5, 7];
+  let index = 0;
+  const stop = startMemoryFloor(() => readings[Math.min(index++, readings.length - 1)], 1);
+  while (index < readings.length) await Bun.sleep(2);
+  await Bun.sleep(2);
+  // 9 first, then 4.5, then 7: the answer is the dip, not where it ended.
+  expect(stop()).toBe(4.5);
+});
+
+test('a host with no memory reading never starts a sampler', () => {
+  let calls = 0;
+  const stop = startMemoryFloor(() => {
+    calls += 1;
+    return undefined;
+  }, 1);
+  expect(stop()).toBeUndefined();
+  expect(calls).toBe(1);
 });
 
 test('a lane that succeeds reports nothing', () => {

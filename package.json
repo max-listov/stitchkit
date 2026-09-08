@@ -38,6 +38,7 @@
     "release:core": "bun scripts/release-plan.ts release core",
     "release:starter": "bun scripts/release-plan.ts release create-stitchkit",
     "release:tui": "bun scripts/release-plan.ts release tui",
+    "release:check": "bun scripts/release-plan.ts check",
     "release:train": "bun scripts/release-plan.ts release train",
     "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms",
     "test:template": "cd packages/create-stitchkit/template && bun test scripts",

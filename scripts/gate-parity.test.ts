@@ -56,6 +56,38 @@ describe('CI evidence parity', () => {
     }
   });
 
+  test('every evidence job is required by the assembly jobs', () => {
+    // A lane split out of another one is evidence nobody waits for until it is
+    // in `needs`: the release artifact would assemble while it was still
+    // running, and a red one would arrive after publication.
+    // From the `jobs:` section only — `push:` and `schedule:` sit at the same
+    // indentation under `on:`, and counting them as jobs is a test that fails
+    // for a reason having nothing to do with what it checks.
+    const section = CI.slice(CI.indexOf('\njobs:'));
+    const jobs = [...section.matchAll(/^ {2}([a-z][a-z-]*):$/gm)].map(
+      (match) => match[1] ?? '',
+    );
+    const evidence = jobs.filter(
+      (job) => job !== 'plan' && job !== 'artifacts' && job !== 'result',
+    );
+    expect(evidence).toContain('portable-lanes');
+    for (const block of ['artifacts', 'result']) {
+      const needs =
+        section.slice(section.indexOf(`  ${block}:`)).match(/needs:\s*\[([^\]]*)\]/)?.[1] ??
+        '';
+      const listed = needs.split(',').map((entry) => entry.trim());
+      for (const job of evidence) expect(listed).toContain(job);
+    }
+  });
+
+  test('a release commit is gated on its own branch before master sees it', () => {
+    // The push trigger is what makes the branch run a PUSH run for the exact
+    // SHA, which is the only kind `select-ci-run` accepts. Without it the
+    // release branch produces no evidence and the local gate is the only gate.
+    expect(CI).toContain("branches: [master, main, 'release/**']");
+    expect(PLAN).toContain('ciAlreadyAnsweredFor');
+  });
+
   test('real Darwin qualification is packed and deliberately narrow', () => {
     expect(CI).toContain('runner: macos-15');
     expect(CI).toContain('runner: macos-15-intel');
