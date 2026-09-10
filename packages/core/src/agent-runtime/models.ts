@@ -156,6 +156,17 @@ export interface AgentLanguageModelProvider {
     usage: LanguageModelUsage;
     providerMetadata?: unknown;
   }): AgentUsage;
+  /**
+   * Which upstream provider actually answered this step, when the SDK reports
+   * it, for the response identity a completed step publishes.
+   *
+   * Here for the same reason `normalizeUsage` is here: the shape is one
+   * gateway's, not the runtime's. Read in the neutral core it would put a
+   * vendor key into a boundary whose whole rule is that it has no domain
+   * model, and the second gateway to report the same fact under another name
+   * would have to be added there too. → ADR 0002.
+   */
+  resolveResponseProvider?(input: { providerMetadata?: unknown }): string | undefined;
 }
 
 export interface AgentModelRegistryConfig<
@@ -169,6 +180,7 @@ export interface AgentResolvedModel {
   descriptor: AgentModelDescriptor;
   model: LanguageModel;
   normalizeUsage?: AgentLanguageModelProvider['normalizeUsage'];
+  resolveResponseProvider?: AgentLanguageModelProvider['resolveResponseProvider'];
 }
 
 export interface AgentModelRegistry<MODEL_KEY extends string> {
@@ -234,6 +246,9 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDesc
         descriptor: selected,
         model: provider.create(selected.modelId),
         ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
+        ...(provider.resolveResponseProvider && {
+          resolveResponseProvider: provider.resolveResponseProvider,
+        }),
       };
     },
     snapshot(input) {

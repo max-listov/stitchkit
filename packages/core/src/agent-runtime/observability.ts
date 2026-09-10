@@ -6,6 +6,7 @@ import {
 import type { ObservabilitySinkStatus } from '../observability/status';
 import { childSpan, createTraceContext } from '../observability/trace';
 import {
+  AgentProviderResponseSchema,
   AgentRecordIdSchema,
   AgentRunStateSchema,
   AgentTerminalReasonSchema,
@@ -42,6 +43,7 @@ export const AgentStepFinishedEventSchema = AgentRunEventBaseSchema.extend({
   ttftMs: z.number().nonnegative().optional(),
   /** What this one step reported — the provider's own figure, per step. */
   usage: AgentUsageSchema,
+  response: AgentProviderResponseSchema,
 });
 
 export const AgentRunTerminalEventSchema = AgentRunEventBaseSchema.extend({

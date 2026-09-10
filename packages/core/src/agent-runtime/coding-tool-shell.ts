@@ -252,7 +252,9 @@ export function createShellCodingTool(
       // refused everywhere else.
       const cwd = await existingCodingPath(
         root,
-        input.cwd === '.' ? '.' : boundedCodingRelativePath(input.cwd, limits.maxPathBytes),
+        input.cwd === '.'
+          ? '.'
+          : boundedCodingRelativePath(root, input.cwd, limits.maxPathBytes),
         limits.maxPathBytes,
       );
       if (!(await stat(cwd.absolute)).isDirectory()) {

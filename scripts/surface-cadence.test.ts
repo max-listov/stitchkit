@@ -118,14 +118,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 18 of the 32 minors since 0.56.2, most recently 0.87.0');
+  expect(sentence).toBe('redefined in 19 of the 33 minors since 0.56.2, most recently 0.88.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 7 of the 32 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 7 of the 33 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${application}_`);
 
@@ -133,7 +133,7 @@ test('the maturity table carries the figure the changelog supports', async () =>
     surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
   );
   expect(observability).toBe(
-    'redefined in 1 of the 32 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 1 of the 33 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${observability}_`);
 });

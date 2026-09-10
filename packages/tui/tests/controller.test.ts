@@ -99,6 +99,9 @@ function fakeHarness(input?: {
     async interrupt() {
       throw new Error('fixture does not interrupt');
     },
+    async abandon() {
+      throw new Error('fixture does not abandon');
+    },
     async recover() {
       return [];
     },

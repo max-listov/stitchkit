@@ -1,13 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  createAgentObservability,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/agent-runtime';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -42,6 +47,128 @@ function twoStepModel() {
 }
 
 describe('the request ledger', () => {
+  test('keeps provider response identity in observability and memory/SQLite ledgers', async () => {
+    for (const kind of ['memory', 'sqlite']) {
+      const filename = join(tmpdir(), `stitchkit-response-${crypto.randomUUID()}.sqlite`);
+      const sqlite =
+        kind === 'sqlite' ? createBunSqliteAgentRuntimeStore({ filename }) : undefined;
+      const store = sqlite?.store ?? createMemoryAgentRuntimeStore();
+      const observed: unknown[] = [];
+      const observability = createAgentObservability({
+        write: (event) => {
+          observed.push(event);
+        },
+      });
+      const runtime = createAgentRuntime({
+        protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+        store,
+        models: {
+          resolve: () => ({
+            descriptor: {
+              provider: 'test',
+              modelId: 'identity-model',
+              contextWindow: 8_000,
+              capabilities: [],
+            },
+            // The upstream name is the ADAPTER's to read: the neutral runtime
+            // carries what its model resolves and never learns one gateway's
+            // metadata key. `openRouterProvider` supplies this in production,
+            // and its own reading of `openrouter.provider` is pinned beside it.
+            resolveResponseProvider: ({ providerMetadata }) => {
+              const metadata = providerMetadata as
+                | { openrouter?: { provider?: unknown } }
+                | undefined;
+              const name = metadata?.openrouter?.provider;
+              return typeof name === 'string' ? name : undefined;
+            },
+            model: new MockLanguageModelV4({
+              doStream: async () => ({
+                stream: simulateReadableStream({
+                  chunks: [
+                    {
+                      type: 'response-metadata',
+                      id: 'gen-1',
+                      modelId: 'identity-model',
+                      timestamp: new Date(0),
+                    },
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'done' },
+                    { type: 'text-end', id: 't' },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'stop', raw: undefined },
+                      usage,
+                      providerMetadata: {
+                        openrouter: { provider: 'DeepInfra', ignored: true },
+                      },
+                    },
+                  ],
+                } as never),
+              }),
+            }),
+          }),
+        },
+        prompt: () => ({
+          instructions: 'x',
+          sections: [],
+          instructionTokens: { provenance: 'unavailable' },
+          contextDecision: 'unavailable',
+        }),
+        tools: () => ({}),
+        observe: observability,
+      });
+      expect(
+        (
+          await runtime.submit({
+            conversationId: `identity-${kind}`,
+            idempotencyKey: 'identity-input',
+            context: {},
+            parts: [{ type: 'text', text: 'go' }],
+          }).result
+        ).reason,
+      ).toBe('success');
+      await observability.flush();
+      expect(observed).toContainEqual(
+        expect.objectContaining({
+          type: 'step-finished',
+          response: { id: 'gen-1', provider: 'DeepInfra' },
+        }),
+      );
+      await runtime.close();
+      await observability.close();
+
+      if (sqlite) {
+        await sqlite.close();
+        const reopened = createBunSqliteAgentRuntimeStore({ filename, initialize: false });
+        const responses = (
+          await reopened.store.readEvents({ conversationId: `identity-${kind}`, limit: 100 })
+        ).items.filter((event) => event.kind === 'provider/response');
+        expect(responses.map((event) => event.payload)).toEqual([
+          {
+            runId: expect.any(String),
+            attempt: 1,
+            stepNumber: 0,
+            response: { id: 'gen-1', provider: 'DeepInfra' },
+          },
+        ]);
+        await reopened.close();
+        await rm(filename, { force: true });
+      } else {
+        const responses = (
+          await store.readEvents({ conversationId: `identity-${kind}`, limit: 100 })
+        ).items.filter((event) => event.kind === 'provider/response');
+        expect(responses.map((event) => event.payload)).toEqual([
+          {
+            runId: expect.any(String),
+            attempt: 1,
+            stepNumber: 0,
+            response: { id: 'gen-1', provider: 'DeepInfra' },
+          },
+        ]);
+      }
+    }
+  });
+
   /**
    * Every step used to write every message of its history; two runs of a
    * conversation wrote the whole history four times. A body is now written

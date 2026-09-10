@@ -127,6 +127,94 @@ describe('agent runtime store driver', () => {
     await runtime.close({ forceTimeoutMs: 1_000 });
   });
 
+  test('an operator abandons one foreign run through the runtime without touching storage', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    const input = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'orphan-input',
+      conversationId: 'orphan-conversation',
+      role: 'user',
+      status: 'committed',
+      parts: [{ type: 'text', text: 'hello' }],
+      createdAt: '2026-09-09T00:00:00.000Z',
+      updatedAt: '2026-09-09T00:00:00.000Z',
+    });
+    const run = AgentRunSchema.parse({
+      schemaVersion: 1,
+      id: 'orphan-run',
+      conversationId: input.conversationId,
+      inputMessageIds: [input.id],
+      assistantMessageId: 'orphan-assistant',
+      state: 'queued',
+      revision: 0,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    });
+    const admitted = await store.acceptInputAndAssignRun({
+      idempotencyKey: 'orphan-request',
+      input,
+      run,
+    });
+    if (admitted.outcome !== 'applied') throw new Error('fixture admission failed');
+    const acquired = await store.acquireRun({
+      conversationId: run.conversationId,
+      runId: run.id,
+      expectedRevision: run.revision,
+      ownerId: 'dead-process',
+    });
+    if (acquired.outcome !== 'applied') throw new Error('fixture acquisition failed');
+    const acquiredRun = acquired.snapshot.runs.find(({ id }) => id === run.id);
+    if (!acquiredRun) throw new Error('fixture run missing');
+    const published: Array<{ type: string; state?: string }> = [];
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'test',
+            modelId: 'test-model',
+            contextWindow: 1_000,
+            capabilities: [],
+          },
+          model: new MockLanguageModelV4(),
+        }),
+      },
+      prompt: () => {
+        throw new Error('not used');
+      },
+      tools: () => ({}),
+      publish: (event) => {
+        published.push(event);
+      },
+    });
+
+    const abandoned = await runtime.abandon({
+      conversationId: run.conversationId,
+      runId: run.id,
+      expectedRevision: acquiredRun.revision,
+      staleOwner: true,
+    });
+    expect(abandoned.outcome).toBe('applied');
+    const view = await store.loadRun({ conversationId: run.conversationId, runId: run.id });
+    expect(view?.run.state).toBe('abandoned');
+    expect(view?.run.terminalReason).toBe('abandoned');
+    expect(view?.assistant?.status).toBe('failed');
+    expect((await store.scanRecoverable({ limit: 10 })).items).toEqual([]);
+    expect(published).toContainEqual(
+      expect.objectContaining({ type: 'run-state', state: 'abandoned' }),
+    );
+
+    const stale = await runtime.abandon({
+      conversationId: run.conversationId,
+      runId: run.id,
+      expectedRevision: acquiredRun.revision,
+      staleOwner: true,
+    });
+    expect(stale.outcome).toBe('conflict');
+    await runtime.close();
+  });
+
   test('does not resume a queued successor while an acquired predecessor is unresolved', async () => {
     const store = createMemoryAgentRuntimeStore();
     const message = (id: string) =>

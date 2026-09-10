@@ -148,6 +148,38 @@ describe('agent prompt and model policy', () => {
     expect(constructed).toBeFalse();
   });
 
+  test('a resolved model carries its provider adapter hooks', () => {
+    // Both hooks answer a question only the adapter can: how this gateway
+    // reports usage, and which upstream actually answered. A registry that
+    // resolves the model and drops them leaves the runtime with a step whose
+    // response has no provider and a usage figure with the wrong provenance —
+    // silently, because everything still typechecks and runs.
+    const registry = defineModelRegistry({
+      providers: {
+        test: {
+          create: () => new MockLanguageModelV4(),
+          normalizeUsage: () => ({
+            inputTokens: { value: 1, provenance: 'provider-reported' },
+            outputTokens: { provenance: 'unavailable' },
+            cost: { provenance: 'unavailable' },
+          }),
+          resolveResponseProvider: () => 'Upstream',
+        },
+      },
+      models: {
+        text: {
+          provider: 'test',
+          modelId: 'text-only',
+          contextWindow: 1_000,
+          capabilities: [],
+        },
+      },
+    });
+    const resolved = registry.resolve('text');
+    expect(resolved.resolveResponseProvider?.({ providerMetadata: {} })).toBe('Upstream');
+    expect(resolved.normalizeUsage).toBeDefined();
+  });
+
   test('preserves provider options on structured system instructions', async () => {
     const prompt = composeAgentPrompt([
       { name: 'stable', stability: 'stable', render: () => 'cache me' },

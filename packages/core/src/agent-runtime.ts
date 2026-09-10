@@ -203,6 +203,7 @@ export { type AgentRetryPolicy, recordAgentRetryDecision } from './agent-runtime
 export {
   type AgentContextUsage,
   type AgentRuntime,
+  type AgentRuntimeAbandonInput,
   type AgentRuntimeAdmission,
   type AgentRuntimeConfig,
   type AgentRuntimeInput,

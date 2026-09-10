@@ -119,7 +119,9 @@ export function createListingCodingTools(
     handler: async ({ input }) => {
       const root = await realpath(config.root);
       const relative =
-        input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
+        input.path === '.'
+          ? '.'
+          : boundedCodingRelativePath(root, input.path, limits.maxPathBytes);
       await authorizeCodingPathChain(config, relative);
       await authorizeCodingTool(config, { operation: 'list', path: relative });
       const listing = await listContainedDirectory(
@@ -161,8 +163,11 @@ export function createListingCodingTools(
     output: GlobOutputSchema,
     transports: ['AGENT'],
     handler: async ({ input }) => {
+      const root = await realpath(config.root);
       const relative =
-        input.path === '.' ? '.' : boundedCodingRelativePath(input.path, limits.maxPathBytes);
+        input.path === '.'
+          ? '.'
+          : boundedCodingRelativePath(root, input.path, limits.maxPathBytes);
       await authorizeCodingPathChain(config, relative);
       await authorizeCodingTool(config, {
         operation: 'glob',
@@ -178,7 +183,6 @@ export function createListingCodingTools(
           hint: 'Use only `**`, `*` and `?`.',
         });
       }
-      const root = await realpath(config.root);
       const scan = await scanContainedFiles({
         root,
         maxDepth: limits.maxSearchDepth,

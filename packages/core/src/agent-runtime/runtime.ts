@@ -128,6 +128,18 @@ export interface AgentRuntimeInterruptInput {
 }
 
 /**
+ * Operator evidence for terminalizing one run whose former executor is known
+ * to be gone. The revision makes that evidence stale-safe: a run that moved
+ * after the operator read it is not closed.
+ */
+export interface AgentRuntimeAbandonInput {
+  conversationId: string;
+  runId: string;
+  expectedRevision: number;
+  staleOwner: true;
+}
+
+/**
  * How full the model's context is, as the runtime knows it.
  *
  * The runtime is the only party that knows: the consumer counts what it sends,
@@ -269,6 +281,7 @@ export interface AgentRuntime<CONTEXT = unknown> {
     result: Promise<AgentRuntimeResult>;
   };
   interrupt(input: AgentRuntimeInterruptInput): Promise<AgentStoreMutationResult>;
+  abandon(input: AgentRuntimeAbandonInput): Promise<AgentStoreMutationResult>;
   recover(
     options: AgentRuntimeRecoverOptions<CONTEXT>,
   ): Promise<readonly AgentRuntimeRecoveryOutcome[]>;
@@ -838,6 +851,39 @@ export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
         coordinator.stop(input.conversationKey ?? input.conversationId, 'user-interrupt');
       }
       return requested;
+    },
+    async abandon(input) {
+      if (input.staleOwner !== true) {
+        throw new TypeError('Abandoning a run requires explicit staleOwner evidence');
+      }
+      const releaseAdmission = beginAdmission();
+      try {
+        const abandoned = await config.store.recoverRun({
+          conversationId: input.conversationId,
+          runId: input.runId,
+          expectedRevision: input.expectedRevision,
+          action: 'abandon',
+        });
+        if (abandoned.outcome === 'applied') {
+          const abandonedRun = findRun(abandoned.snapshot.runs, input.runId);
+          await publish({
+            type: 'run-state',
+            eventId: agentDurableEventId(
+              'run-state',
+              abandonedRun.id,
+              abandoned.snapshot.version,
+            ),
+            conversationId: abandonedRun.conversationId,
+            runId: abandonedRun.id,
+            snapshotVersion: abandoned.snapshot.version,
+            state: abandonedRun.state,
+            emittedAt: now().toISOString(),
+          });
+        }
+        return abandoned;
+      } finally {
+        releaseAdmission();
+      }
     },
     async recover(options) {
       if (admissionClosed) throw closedError();

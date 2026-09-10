@@ -69,6 +69,31 @@ describe('provider usage normalisation is usable without the runtime', () => {
     );
   });
 
+  test('the adapter names the upstream provider, and names nobody when it cannot', () => {
+    // The other half of the response identity a completed step publishes. The
+    // runtime asks its model and never reads this key itself, so if this
+    // reading is wrong nothing else in the framework is in a position to
+    // notice. An empty or absent name is ABSENT, not an empty string: a
+    // response identity carrying `provider: ''` would claim the gateway
+    // answered and named nobody.
+    const provider = openRouterProvider({ apiKey: 'test-key' });
+    const resolve = provider.resolveResponseProvider;
+    if (!resolve) throw new Error('openRouterProvider must resolve a response provider');
+    expect(resolve({ providerMetadata: { openrouter: { provider: 'DeepInfra' } } })).toBe(
+      'DeepInfra',
+    );
+    for (const metadata of [
+      undefined,
+      {},
+      { openrouter: {} },
+      { openrouter: { provider: '' } },
+      { openrouter: { provider: 7 } },
+      { openrouter: 'DeepInfra' },
+    ]) {
+      expect(resolve({ providerMetadata: metadata })).toBeUndefined();
+    }
+  });
+
   test('a non-integer count is refused rather than rounded into a fact', () => {
     const fractional = {
       ...usage,

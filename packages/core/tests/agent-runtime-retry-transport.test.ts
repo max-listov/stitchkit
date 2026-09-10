@@ -25,6 +25,12 @@ describe('a retry on the transport', () => {
         const chunks: Record<string, unknown>[] =
           calls === 1
             ? [
+                {
+                  type: 'response-metadata',
+                  id: 'failed-generation',
+                  modelId: 'fault',
+                  timestamp: new Date(0),
+                },
                 { type: 'text-start', id: 'a' },
                 { type: 'text-delta', id: 'a', delta: 'partial' },
                 { type: 'error', error: new AgentProviderStreamCutError() },
@@ -33,9 +39,16 @@ describe('a retry on the transport', () => {
                   type: 'finish',
                   finishReason: { unified: 'error', raw: undefined },
                   usage: usage(7),
+                  providerMetadata: { openrouter: { provider: 'FirstProvider' } },
                 },
               ]
             : [
+                {
+                  type: 'response-metadata',
+                  id: 'recovered-generation',
+                  modelId: 'fault',
+                  timestamp: new Date(1),
+                },
                 { type: 'text-start', id: 'b' },
                 { type: 'text-delta', id: 'b', delta: 'recovered' },
                 { type: 'text-end', id: 'b' },
@@ -43,15 +56,17 @@ describe('a retry on the transport', () => {
                   type: 'finish',
                   finishReason: { unified: 'stop', raw: undefined },
                   usage: usage(3),
+                  providerMetadata: { openrouter: { provider: 'SecondProvider' } },
                 },
               ];
         return { stream: simulateReadableStream({ chunks } as never) };
       },
     });
     const events: AgentRuntimeEvent[] = [];
+    const store = createMemoryAgentRuntimeStore();
     const runtime = createAgentRuntime({
       protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
-      store: createMemoryAgentRuntimeStore(),
+      store,
       models: {
         resolve: () => ({
           descriptor: {
@@ -59,6 +74,15 @@ describe('a retry on the transport', () => {
             modelId: 'fault',
             contextWindow: 8_000,
             capabilities: [],
+          },
+          // A retry answered by a different upstream is the point of this
+          // assertion, and the upstream name is the adapter's to read.
+          resolveResponseProvider: ({ providerMetadata }) => {
+            const metadata = providerMetadata as
+              | { openrouter?: { provider?: unknown } }
+              | undefined;
+            const name = metadata?.openrouter?.provider;
+            return typeof name === 'string' ? name : undefined;
           },
           model,
         }),
@@ -98,6 +122,23 @@ describe('a retry on the transport', () => {
 
     // The cut attempt's tokens are part of this run's spend.
     expect(result.metrics?.usage.inputTokens.value).toBe(10);
+    const responses = (
+      await store.readEvents({ conversationId: 'r', limit: 100 })
+    ).items.filter((event) => event.kind === 'provider/response');
+    expect(responses.map((event) => event.payload)).toEqual([
+      {
+        runId: result.run.id,
+        attempt: 1,
+        stepNumber: 0,
+        response: { id: 'failed-generation', provider: 'FirstProvider' },
+      },
+      {
+        runId: result.run.id,
+        attempt: 2,
+        stepNumber: 0,
+        response: { id: 'recovered-generation', provider: 'SecondProvider' },
+      },
+    ]);
     await runtime.close();
   });
 });

@@ -229,4 +229,24 @@ describe('an ordinary coding-tool outcome never looks like a server fault', () =
       console.error = original;
     }
   });
+
+  test('an absolute path inside the workspace returns the exact relative recovery path', async () => {
+    const absolute = path.join(root, 'existing.ts');
+    const envelope = await refusalOf('read_file', { path: absolute });
+    expect(envelope).toContain('"BAD_REQUEST"');
+    expect(envelope).toContain('"recoveryPath":"existing.ts"');
+    expect(envelope).toContain('Use the workspace-relative path `existing.ts`.');
+
+    const mounted = tools.read_file;
+    if (!mounted?.execute) throw new Error('read_file is not mounted');
+    const recovered = await mounted.execute({ path: 'existing.ts' }, options);
+    expect(recovered).toMatchObject({ path: 'existing.ts', text: 'kept' });
+  });
+
+  test('an absolute path outside the workspace offers no replacement address', async () => {
+    const envelope = await refusalOf('read_file', { path: path.join(tmpdir(), 'outside.ts') });
+    expect(envelope).toContain('"BAD_REQUEST"');
+    expect(envelope).not.toContain('recoveryPath');
+    expect(envelope).toContain('no workspace-relative equivalent');
+  });
 });

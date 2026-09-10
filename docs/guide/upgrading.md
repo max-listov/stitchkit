@@ -28,6 +28,37 @@ of the range if you want a different one.
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
 
+## Released migration: 0.88.0
+
+Two mechanical edits, and only if your project builds these values rather than only reading them.
+
+A completed step event now carries the provider's response identity, and the field is required:
+
+```ts
+// before
+{ type: 'step-finished', step: 0, usage }
+
+// after
+{ type: 'step-finished', step: 0, usage, response: { id: generationId } }
+```
+
+Every event the runtime emits already has it, so a sink that only reads them needs no change. A
+fixture, a test double or a pipeline that re-validates events persisted by an earlier version does:
+give the older records a response identity, or keep parsing them with the schema they were written
+under.
+
+If you implement the whole `AgentRuntime` interface — usually a mock — add the new method:
+
+```ts
+// before
+const fake: AgentRuntime = { submit, interrupt, recover, close }
+
+// after
+const fake: AgentRuntime = { submit, interrupt, abandon, recover, close }
+```
+
+No data migration is involved, and nothing in the store changes shape.
+
 ## Released migration: 0.87.0
 
 Only if your project implements `AgentConversationReader` itself. A message page

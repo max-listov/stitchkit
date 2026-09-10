@@ -15,6 +15,70 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.88.0] — 2026-09-10
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications that construct an `AgentStepFinishedEvent` themselves — a test
+double, a replay fixture, a pipeline that re-validates persisted operator events — and
+applications that implement or mock the `AgentRuntime` interface rather than only calling the
+one `createAgentRuntime` returns.
+
+- **A completed step event carries its provider response identity.**
+  `AgentStepFinishedEventSchema` gains a required `response`, so an event built or re-parsed
+  without one is now refused. A step the runtime emits always has it; a persisted event from an
+  earlier version does not.
+
+  ```ts
+  // before
+  { type: 'step-finished', step: 0, usage }
+
+  // after
+  { type: 'step-finished', step: 0, usage, response: { id: generationId } }
+  ```
+
+- **`AgentRuntime` gains `abandon`.** Anything typed as the whole interface must supply it.
+
+  ```ts
+  // before
+  const fake: AgentRuntime = { submit, interrupt, recover, close }
+
+  // after
+  const fake: AgentRuntime = { submit, interrupt, abandon, recover, close }
+  ```
+
+### Added
+
+- **Completed agent steps expose their provider response identity.** `step-finished.response`
+  carries the provider-assigned response ID and, when the model's adapter can name it, the selected
+  upstream provider — `AgentLanguageModelProvider.resolveResponseProvider`, which
+  `openRouterProvider` implements, so the neutral runtime never reads one gateway's metadata key.
+  The same object is retained in one `provider/response` ledger event with run, retry attempt and
+  step identity; run totals remain computed aggregates.
+- **A zero-coverage coding search explains its filter.** `search_files.include` now publishes its
+  anchored workspace-relative glob semantics, `scannedFiles` names the post-filter count, and a
+  filter that rejected every file the scan reached returns a recovery hint without turning a valid
+  empty result into an error. An empty tree and a host-refused path produce the same empty result
+  with no hint: the number that would have blamed the pattern has three causes, and only one of
+  them is the pattern.
+- **A known orphan run can be closed without editing its storage adapter.**
+  `runtime.abandon({ conversationId, runId, expectedRevision, staleOwner: true })`
+  applies the existing canonical abandonment transition, atomically fails the
+  assistant projection, removes the run from recovery scans and publishes its
+  state. The expected revision refuses stale operator evidence. Store
+  conformance now verifies that the canonical record and recovery index agree
+  after abandonment.
+
+### Fixed
+
+- **An absolute coding-tool path no longer suggests deleting one slash.** If it is inside the
+  configured workspace, the refusal carries the exact `recoveryPath`; an external absolute path
+  remains refused without a misleading replacement.
+- **A storage failure releases the provider stream before runtime recovery I/O.** Every model
+  attempt owns a private abort signal. Abrupt consumer exit aborts that attempt before bounded
+  iterator cleanup, so a retained AI SDK tee branch cannot keep generation or the next queue lane
+  alive; cleanup failure remains secondary to the original runtime/storage failure.
+
 ## [0.87.1] — 2026-09-08
 
 ### Fixed

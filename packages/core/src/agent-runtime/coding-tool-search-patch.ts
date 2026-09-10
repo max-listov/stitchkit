@@ -41,8 +41,13 @@ const SearchInputSchema = z
     regex: z.boolean().default(false),
     /** Lines of surrounding context to return with each content match. */
     context: z.int().nonnegative().max(10).default(0),
-    /** Only search files whose relative path matches this `**`/`*`/`?` pattern. */
-    include: z.string().min(1).optional(),
+    include: z
+      .string()
+      .min(1)
+      .describe(
+        'Anchored `**`/`*`/`?` pattern matched against the whole workspace-relative path. `*` does not cross `/`; use `**/` to include matching files in subdirectories.',
+      )
+      .optional(),
   })
   .strict();
 const SearchOutputSchema = z
@@ -59,9 +64,15 @@ const SearchOutputSchema = z
         .strict(),
     ),
     truncated: z.boolean(),
-    scannedFiles: z.int().nonnegative(),
+    scannedFiles: z
+      .int()
+      .nonnegative()
+      .describe(
+        'Files admitted by include and host authorization that reached path or content comparison.',
+      ),
     skippedDirectories: z.int().nonnegative(),
     skippedSymlinks: z.int().nonnegative(),
+    hint: z.string().min(1).optional(),
   })
   .strict();
 
@@ -154,6 +165,12 @@ export function createSearchAndPatchCodingTools(
         config.search?.excludeDirectories ?? DEFAULT_EXCLUDED_DIRECTORIES,
       );
       const included = input.include ? compileWorkspaceGlob(input.include) : null;
+      // Counted, because the hint below judges this filter and must not judge
+      // it on a number that has three meanings. Zero scanned files is "the
+      // pattern rejected them", "the host refused them" or "there were none" —
+      // and a hint that blames the pattern for the other two sends a reader to
+      // rewrite a glob that was never at fault.
+      let rejectedByInclude = 0;
       const scan = await scanContainedFiles({
         root,
         maxDepth: limits.maxSearchDepth,
@@ -166,7 +183,10 @@ export function createSearchAndPatchCodingTools(
         excludeDirectory: (relative) =>
           relative.split(path.sep).some((segment) => excluded.has(segment)),
         authorizePath: async (candidate, kind) => {
-          if (kind === 'file' && included && !included.test(candidate)) return false;
+          if (kind === 'file' && included && !included.test(candidate)) {
+            rejectedByInclude += 1;
+            return false;
+          }
           return await isCodingPathAuthorized(config, candidate);
         },
       });
@@ -220,6 +240,11 @@ export function createSearchAndPatchCodingTools(
         scannedFiles: scan.files.length,
         skippedDirectories: scan.skippedDirectories,
         skippedSymlinks: scan.skippedSymlinks,
+        ...(input.include &&
+          scan.files.length === 0 &&
+          rejectedByInclude > 0 && {
+            hint: `The anchored include pattern \`${input.include}\` rejected all ${rejectedByInclude} ${rejectedByInclude === 1 ? 'file' : 'files'} the scan reached. \`*\` does not cross \`/\`; use a pattern such as \`**/*.ts\` for matching files in subdirectories.`,
+          }),
       };
     },
   });
@@ -233,7 +258,7 @@ export function createSearchAndPatchCodingTools(
     transports: ['AGENT'],
     handler: async ({ input }) => {
       const root = await realpath(config.root);
-      const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      const relative = boundedCodingRelativePath(root, input.path, limits.maxPathBytes);
       await authorizeCodingPathChain(config, relative);
       const parent = await openContainedParent(root, relative).catch((error: unknown) =>
         refuseMissingCodingPath(error, relative),

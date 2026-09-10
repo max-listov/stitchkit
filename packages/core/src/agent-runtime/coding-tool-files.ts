@@ -53,7 +53,7 @@ export function createFileCodingTools(
     transports: ['AGENT'],
     handler: async ({ input }) => {
       const root = await realpath(config.root);
-      const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      const relative = boundedCodingRelativePath(root, input.path, limits.maxPathBytes);
       await authorizeCodingPathChain(config, relative);
       const handle = await openContainedFile(root, relative).catch((error: unknown) =>
         refuseMissingCodingPath(error, relative),
@@ -103,7 +103,7 @@ export function createFileCodingTools(
     transports: ['AGENT'],
     handler: async ({ input }) => {
       const root = await realpath(config.root);
-      const relative = boundedCodingRelativePath(input.path, limits.maxPathBytes);
+      const relative = boundedCodingRelativePath(root, input.path, limits.maxPathBytes);
       await authorizeCodingPathChain(config, relative);
       const bytes = Buffer.byteLength(input.content);
       if (bytes > limits.maxWriteBytes) {

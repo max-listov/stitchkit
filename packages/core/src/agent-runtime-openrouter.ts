@@ -279,7 +279,24 @@ export function openRouterProvider(
     create: (modelId) => provider.chat(modelId),
     normalizeUsage: ({ usage, providerMetadata }) =>
       normalizeOpenRouterUsage(usage, providerMetadata),
+    resolveResponseProvider: ({ providerMetadata }) => readUpstreamProvider(providerMetadata),
   };
+}
+
+/**
+ * Which upstream OpenRouter routed this step to.
+ *
+ * `@openrouter/ai-sdk-provider` puts it in `providerMetadata.openrouter.provider`.
+ * A missing or empty value is absent, never an empty string: a response
+ * identity that carries `provider: ''` would say the gateway answered the
+ * question and named nobody.
+ */
+function readUpstreamProvider(metadata: unknown): string | undefined {
+  if (!isRecord(metadata)) return undefined;
+  const openrouter = metadata.openrouter;
+  if (!isRecord(openrouter)) return undefined;
+  const name = openrouter.provider;
+  return typeof name === 'string' && name.length > 0 ? name : undefined;
 }
 
 /** Same rule as `normalizeSdkUsage`: a non-integer is not a token count. */

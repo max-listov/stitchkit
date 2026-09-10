@@ -886,6 +886,7 @@ Server-only optional application runtime. See the
 | `AgentAdmissionEventSchema` | schema | post-commit admission projection; removes store rereads but does not imply exactly-once delivery |
 | `AgentRunMetricsSchema` | schema | optional provenance-aware usage and timings; `partial` says the provider never reported the run finished, so the figure beside it is not a confirmed total |
 | `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with causal per-conversation scheduling, context resolver and explicit evidence policy |
+| `AgentRuntimeAbandonInput` | _type_ | one known orphan identity, expected revision and mandatory stale-owner evidence for `runtime.abandon()` |
 | `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
@@ -895,13 +896,15 @@ Server-only optional application runtime. See the
 | `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps; request admission is awaited before provider invocation |
 | `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
+| `AgentProviderResponseSchema` / `AgentProviderResponse` | schema / _type_ | provider-assigned response ID and the optional upstream provider the model's own adapter resolves, shared by `step-finished.response` and durable `provider/response` facts |
+| `AgentStepFinishedEventSchema` / `AgentStepFinishedEvent` | schema / _type_ | one completed provider step with required usage and provider response identity |
 
 ### Durable capability layer
 
 | Export | Kind | Summary |
 |--------|------|---------|
 | `AgentConversationArchiveSchema` / `AgentConversationArchive` / `encodeAgentConversationArchive` / `decodeAgentConversationArchive` / `canonicalAgentJson` | schema / _type_ / functions | canonical validated conversation archive with exact ledger events, recovery projection and durable spill payloads |
-| `AgentStoreEventEnvelopeSchema` / `AgentStoreEventEnvelope` / `AgentStoreEventKindSchema` / `AgentStoreEventKind` / `AgentStoreEventPageSchema` / `AgentStoreEventPage` | schema / _type_ | append-only event envelope, closed current vocabulary and bounded page |
+| `AgentStoreEventEnvelopeSchema` / `AgentStoreEventEnvelope` / `AgentStoreEventKindSchema` / `AgentStoreEventKind` / `AgentStoreEventPageSchema` / `AgentStoreEventPage` | schema / _type_ | append-only event envelope, closed current vocabulary (including `provider/request` and `provider/response`) and bounded page |
 | `AppendAgentStoreEventSchema` / `AppendAgentStoreEvent` / `ReadAgentStoreEventsSchema` / `ReadAgentStoreEvents` | schema / _type_ | required append and bounded-read store contracts |
 | `AgentStoreTransitionSchema` / `AgentStoreTransition` / `AgentStoreEventDraft` / `AgentStoreEventDecodeAccepted` / `AgentStoreEventDecodeIgnored` / `AgentStoreEventDecodeResult` / `decodeAgentStoreEvent` | schema / _types_ / function | normalized runtime mutations, append drafts and strict current/ignorable future-event decoding outcomes |
 | `defineAgentProjection` / `AgentProjectionDefinition` / `AgentProjectionValue` / `createAgentProjectionRegistry` / `createSqliteAgentProjectionStore` | functions / _type_ | deterministic folds with persisted version and honest `uptoSeq` checkpoints |
@@ -924,7 +927,7 @@ Server-only optional application runtime. See the
 The entrypoint deliberately exports the schemas beside their inferred types so persistence and
 transport adapters validate the same records. Runtime composition types are `AgentRuntime`,
 `AgentRuntimeConfig`, `AgentRuntimeInput`, `AgentRuntimeProtocolInput`, `AgentRuntimeRunContext`,
-`AgentRuntimeResult`, `AgentRuntimeInterruptInput`, `AgentRuntimeRecoveryInput`,
+`AgentRuntimeResult`, `AgentRuntimeInterruptInput`, `AgentRuntimeAbandonInput`, `AgentRuntimeRecoveryInput`,
 `AgentRuntimeRecoveryDecision`, `AgentRuntimeRecoveryOutcome`, `AgentRuntimePublisher`,
 `AgentInputPolicy`, `AgentStopReason`, `AgentCoordinatedRun`, `AgentRunTicket`,
 `AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult` and
@@ -1141,6 +1144,13 @@ so denying `credentials` denies `credentials/token.txt` but not `credentials-bac
 admission happens before descent and file admission before opening; `search_files.include` is also
 applied before content is read. Requested paths must use `/` — a backslash is refused, because the
 containment walk reads it as a separator while a callback would read it as one name.
+Absolute paths remain refused; an absolute path inside the canonical root carries an exact
+workspace-relative `recoveryPath`, while one outside the root carries no replacement. The
+`search_files.include` schema states that its pattern is anchored to the whole workspace-relative
+path, `*` does not cross `/`, and `**/` is required for nested matches. `scannedFiles` is the
+post-include/post-authorization comparison count. A `hint` is added only when the filter itself
+produced the zero — it rejected every file the scan reached — never when there was nothing to
+reject or the host refused it.
 `run_command` is intentionally outside this guarantee because an executable needs process isolation,
 not path filtering, to constrain its filesystem access. → ADR 0172.
 

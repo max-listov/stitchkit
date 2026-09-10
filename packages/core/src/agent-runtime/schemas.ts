@@ -13,6 +13,16 @@ export const AgentProviderEnvelopeSchema = z.object({
 
 export type AgentProviderEnvelope = z.infer<typeof AgentProviderEnvelopeSchema>;
 
+/** Provider-assigned identity for one completed model step. */
+export const AgentProviderResponseSchema = z
+  .object({
+    id: z.string().min(1),
+    provider: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type AgentProviderResponse = z.infer<typeof AgentProviderResponseSchema>;
+
 export const AgentTextPartSchema = z.object({
   type: z.literal('text'),
   text: z.string(),

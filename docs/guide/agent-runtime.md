@@ -311,6 +311,11 @@ root and cwd are path boundaries, not a security sandbox: isolate the process wh
 must not access the rest of the machine. Path admission does not constrain `run_command`; an
 executable requires process isolation for that guarantee. → ADR 0172
 
+An absolute path is still refused. When it is inside the canonical workspace root, the refusal
+includes the exact workspace-relative `recoveryPath`; an absolute path outside the root has no
+suggested replacement. Applying the suggestion still passes the same descriptor-relative
+containment and symlink checks.
+
 `edit_file` replaces one exact snippet. `oldText` is itself the freshness guard for the region it
 changes, so the digest is the optional `expectedSha256` and an edit is one call; pass the digest
 `read_file` returned when you want the whole-file guarantee, and read the `sha256` it returns to
@@ -334,7 +339,11 @@ Host-level causes stay scrubbed to `INTERNAL_SERVER_ERROR` and name nothing outs
 `list_directory` marks excluded directories rather than hiding them, and `glob` reports
 `skippedDirectories` beside its matches: an empty result from a tree whose files all live under an
 excluded directory is not "no files", and a model told only "nothing found" concludes the wrong
-thing. `search_files` takes `regex`, `context` lines and an `include` pattern; regex is bounded by
+thing. `search_files` takes `regex`, `context` lines and an anchored `include` pattern matched
+against the whole workspace-relative path. `*` does not cross `/`, so files in subdirectories need
+`**/`; `scannedFiles` counts files admitted by both that filter and host authorization. A `hint`
+explains the zero only when the filter produced it, rejecting every file the scan reached; an empty
+tree and a host refusal return the same empty result without blaming the pattern. Regex is bounded by
 refusing backreferences and lookaround and capping line length rather than by a timeout, because a
 JavaScript `RegExp` cannot be interrupted once it starts backtracking. With an optional `AgentCodingArtifactStore`, shell output beyond the inline
 preview continues into an opaque bounded artifact and `read_output` reads slices without
@@ -544,10 +553,14 @@ what was published, so a cursor sees no gap on an ordinary stream.
 
 ### Event ledger, projections and durable capabilities
 
-`AgentRuntimeStore` exposes bounded `readEvents`, declared `appendEvent`,
-canonical `exportConversation` and empty-target `importConversation`. Runtime
-transitions and exact provider requests enter the same append-only ledger; the
-normalized head/run/message tables remain the fast operational projection.
+`AgentRuntimeStore` exposes bounded `readEvents`, declared `appendEvent`, canonical
+`exportConversation` and empty-target `importConversation`. Runtime transitions, exact provider
+requests and completed provider response identities enter the same append-only ledger. A
+`provider/response` payload binds `response: { id, provider? }` to its `runId`, retry `attempt` and
+`stepNumber`; `step-finished.response` projects the same object to the operator sink. The optional
+upstream name comes from the model provider's own `resolveResponseProvider` — `openRouterProvider`
+supplies it — so the runtime carries the fact without learning any gateway's metadata key. The normalized
+head/run/message tables remain the fast operational projection.
 
 Use `defineAgentProjection` with `createSqliteAgentProjectionStore` for a
 deterministic versioned fold. Every value reports `uptoSeq`, so a caller can
@@ -838,6 +851,24 @@ gated that way: a losing execution still ran, and still spent whatever it spent,
 own usage. The two channels answer to different readers — delivering a turn twice is a user's
 problem, and omitting a run's cost is an operator's.
 `runtime.stop(key)` is the process-local signal-only escape hatch.
+
+When an operator has positive evidence that another process owning one known
+run is gone, close that run through the runtime boundary rather than updating
+an adapter table or JSON payload directly:
+
+```ts
+await runtime.abandon({
+  conversationId,
+  runId,
+  expectedRevision: run.revision,
+  staleOwner: true,
+})
+```
+
+The revision protects against stale operator evidence. The mutation updates the
+canonical run and failed assistant atomically, removes the run from recovery
+indexes, and publishes the resulting `run-state`. A run that moved since it was
+read returns a conflict; `staleOwner: true` is mandatory evidence, not a default.
 
 ## Store operations
 
@@ -1282,6 +1313,10 @@ spent nothing, and an omitted object could not tell you which one you had.
 
 Two costs in different currencies do not add: the sum reports `unavailable`
 rather than picking a label. The core records a currency and never converts one.
+
+`step-finished.response` identifies the provider response for that one step. The terminal event
+does not copy the last response: response identity remains per-step, while every terminal usage
+figure remains a `computed` aggregate.
 
 **A run's figure is durable, and that is where to read it when a channel loses
 it.** `AgentRun.usage` is written at every checkpoint and again with the terminal

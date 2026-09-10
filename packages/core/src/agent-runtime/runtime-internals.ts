@@ -4,6 +4,7 @@ import {
   AgentJsonObjectSchema,
   type AgentMessagePart,
   AgentMessagePartSchema,
+  AgentProviderResponseSchema,
   type AgentRun,
   type AgentTerminalReason,
   type AgentUsage,
@@ -32,6 +33,21 @@ export function providerEnvelope(value: unknown) {
   const parsed = AgentJsonObjectSchema.safeParse(value);
   if (!parsed.success) return undefined;
   return { schemaVersion: 1, provider: 'ai-sdk', data: parsed.data };
+}
+
+/**
+ * Keep only the provider facts that form the public response identity.
+ *
+ * The upstream provider name arrives already resolved, from the model's own
+ * adapter. Reading it out of `providerMetadata` here would name one gateway's
+ * key inside the neutral runtime — the boundary whose rule is that it carries
+ * no vendor's model. → `AgentLanguageModelProvider.resolveResponseProvider`.
+ */
+export function providerResponseIdentity(id: string, provider: string | undefined) {
+  return AgentProviderResponseSchema.parse({
+    id,
+    ...(typeof provider === 'string' && provider.length > 0 ? { provider } : {}),
+  });
 }
 
 export function appendText(parts: AgentMessagePart[], text: string): void {

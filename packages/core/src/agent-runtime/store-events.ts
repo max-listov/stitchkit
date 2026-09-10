@@ -15,6 +15,7 @@ export const AgentStoreEventKindSchema = z.enum([
   'runtime/baseline',
   'runtime/transition',
   'provider/request',
+  'provider/response',
   'provider/message',
   'state/set',
   'spill/created',

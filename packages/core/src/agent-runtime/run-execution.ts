@@ -20,6 +20,7 @@ import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectableInput, AgentInjectionRegistry } from './injection';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
+import { ownedProviderStream } from './owned-provider-stream';
 import { classifyProviderFailure } from './provider-failure';
 import { hasProviderOrigin, isOwnInputRefusal } from './provider-origin';
 import { recordAgentRetryDecision } from './retry-policy';
@@ -36,6 +37,7 @@ import {
   mergeModelTotals,
   normalizeSdkUsage,
   providerEnvelope,
+  providerResponseIdentity,
   statedUsage,
 } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
@@ -352,6 +354,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     let step = 0;
     let selectedModel: AgentResolvedModel | undefined;
     let internalCause: unknown;
+    let providerStreamCleanupFailure: unknown;
     let reasoningPartIndex: number | undefined;
     let firstOutputAt: number | undefined;
     let terminalPolicyName: string | undefined;
@@ -775,6 +778,30 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           },
         });
       };
+      const recordProviderResponse = async (response: {
+        id: string;
+        providerMetadata: unknown;
+        stepNumber: number;
+        attempt: number;
+      }) => {
+        const identity = providerResponseIdentity(
+          response.id,
+          selectedModel?.resolveResponseProvider?.({
+            providerMetadata: response.providerMetadata,
+          }),
+        );
+        await config.store.appendEvent({
+          conversationId: run.conversationId,
+          kind: 'provider/response',
+          payload: {
+            runId: run.id,
+            attempt: response.attempt,
+            stepNumber: response.stepNumber,
+            response: identity,
+          },
+        });
+        return identity;
+      };
       for (;;) {
         const attemptPartStart = parts.length;
         let retrying = false;
@@ -782,12 +809,15 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         // for its `finish-step` only: the provider bills those tokens whether
         // or not the answer was kept, so they belong in this run's spend.
         let draining = false;
+        const providerAttempt = retryAttempt;
+        const attemptAbort = new AbortController();
+        const attemptSignal = AbortSignal.any([executionSignal, attemptAbort.signal]);
         const result = streamAgentTextBoundary<TOOLS>({
           model: fallbackModel,
           tools,
           instructions: withCarriedSystem(prompt.instructions),
           messages: history,
-          abortSignal: executionSignal,
+          abortSignal: attemptSignal,
           maxRetries: 0,
           stopWhen: stopConditions,
           onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
@@ -850,7 +880,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             else if (override?.system !== undefined) instructionsOverride = override.system;
             await recordProviderRequest({
               stepNumber: options.stepNumber,
-              attempt: retryAttempt,
+              attempt: providerAttempt,
               instructions: (instructionsOverride ??
                 withCarriedSystem(prompt.instructions)) as ReturnType<
                 typeof withCarriedSystem
@@ -861,10 +891,22 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
           },
         });
 
-        for await (const part of result.stream) {
+        for await (const part of ownedProviderStream({
+          stream: result.stream,
+          abort: () => attemptAbort.abort(new Error('Agent runtime released provider stream')),
+          onCleanupFailure: (error) => {
+            providerStreamCleanupFailure = error;
+          },
+        })) {
           idleDeadline.touch();
           if (draining) {
             if (part.type === 'finish-step') {
+              await recordProviderResponse({
+                id: part.response.id,
+                providerMetadata: part.providerMetadata,
+                stepNumber: step,
+                attempt: providerAttempt,
+              });
               const failedStepUsage =
                 selectedModel.normalizeUsage?.({
                   usage: part.usage,
@@ -1194,6 +1236,12 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
             terminalReason = failureThisRuntimeOwns(part.error) ?? 'provider_failure';
             internalCause = part.error;
           } else if (part.type === 'finish-step') {
+            const response = await recordProviderResponse({
+              id: part.response.id,
+              providerMetadata: part.providerMetadata,
+              stepNumber: step,
+              attempt: providerAttempt,
+            });
             await operationLifecycle.finish(
               part.finishReason === 'error' ? 'failed' : 'completed',
             );
@@ -1221,6 +1269,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
               modelId: selectedModel.descriptor.modelId,
               step,
               usage: stepUsage,
+              response,
               emittedAt: now().toISOString(),
             });
             step += 1;
@@ -1316,7 +1365,23 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       }
     } catch (error) {
       operationLifecycle.failStepCheckpoints(error);
-      internalCause = error;
+      // Both failures, with the primary one still leading. An object literal
+      // here would stop being an `Error`: a sink that prints `internalCause`
+      // renders `[object Object]` and loses the stack, and the message a reader
+      // needs is the storage failure, not the cleanup that followed it. The
+      // conformance kit already composes a primary with a teardown failure this
+      // way, and one shape for one idea is the whole rule.
+      internalCause =
+        providerStreamCleanupFailure === undefined
+          ? error
+          : new AggregateError(
+              [error, providerStreamCleanupFailure],
+              `${error instanceof Error ? error.message : String(error)} (provider stream cleanup also failed: ${
+                providerStreamCleanupFailure instanceof Error
+                  ? providerStreamCleanupFailure.message
+                  : String(providerStreamCleanupFailure)
+              })`,
+            );
       const latest = await config.store.loadRun({
         conversationId: run.conversationId,
         runId: run.id,

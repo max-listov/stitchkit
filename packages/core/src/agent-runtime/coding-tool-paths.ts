@@ -25,9 +25,15 @@ function inputPath(root: string, requested: string, maxPathBytes: number): strin
     });
   }
   if (path.isAbsolute(requested)) {
+    const relative = path.relative(root, requested);
+    const recoveryPath = within(root, requested)
+      ? relative.split(path.sep).join('/') || '.'
+      : undefined;
     codingRefusal('BAD_REQUEST', 'Paths must be relative to the workspace root', {
-      details: { path: requested },
-      hint: 'Drop the leading slash and pass a path relative to the workspace root.',
+      details: { path: requested, ...(recoveryPath && { recoveryPath }) },
+      hint: recoveryPath
+        ? `Use the workspace-relative path \`${recoveryPath}\`.`
+        : 'Pass a path relative to the workspace root; absolute paths outside it have no workspace-relative equivalent.',
     });
   }
   const resolved = path.resolve(root, requested);
@@ -40,8 +46,15 @@ function inputPath(root: string, requested: string, maxPathBytes: number): strin
   return resolved;
 }
 
-export function boundedCodingRelativePath(requested: string, maxPathBytes: number): string {
-  inputPath(path.parse(process.cwd()).root, requested, maxPathBytes);
+export function boundedCodingRelativePath(
+  root: string,
+  requested: string,
+  maxPathBytes: number,
+): string {
+  // Absolute spellings need the configured root to produce a truthful recovery
+  // path. Relative spellings keep reaching the segment guard below first, so a
+  // traversal is still explained as a traversal rather than a generic escape.
+  if (path.isAbsolute(requested)) inputPath(root, requested, maxPathBytes);
   // A BACKSLASH IS A SEPARATOR TO THE WALK AND A LETTER TO THE POLICY.
   //
   // `contained-files` splits on `[\\/]`, so `a\\b` reaches `openat` as two
@@ -74,6 +87,7 @@ export function boundedCodingRelativePath(requested: string, maxPathBytes: numbe
       hint: 'Pass a plain workspace-relative path — `.`, `..` and empty segments are refused.',
     });
   }
+  inputPath(root, requested, maxPathBytes);
   return requested;
 }
 

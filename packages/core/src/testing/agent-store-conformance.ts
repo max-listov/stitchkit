@@ -615,6 +615,21 @@ async function conformanceScenario(
   if (terminalRun?.state !== 'abandoned' || terminalMessage?.status !== 'failed') {
     throw new Error('Abandon recovery did not atomically terminalize its assistant record');
   }
+  const abandonedView = await store.loadRun({
+    conversationId: recoveryConversationId,
+    runId: abandonedRun.id,
+  });
+  if (
+    abandonedView?.run.state !== 'abandoned' ||
+    abandonedView.run.terminalReason !== 'abandoned' ||
+    abandonedView.assistant?.status !== 'failed'
+  ) {
+    throw new Error('The canonical run record disagrees with its abandoned index projection');
+  }
+  const afterAbandon = await store.scanRecoverable({ limit: 100 });
+  if (afterAbandon.items.some((item) => item.run.id === abandonedRun.id)) {
+    throw new Error('The recoverable index still exposes a canonically abandoned run');
+  }
 
   await assertCausalHistoryOrder(store, causalHistoryConversationId);
   await assertActiveRunCausalOrder(store, causalActiveConversationId);

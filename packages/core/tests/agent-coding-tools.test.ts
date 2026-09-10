@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ToolSet } from 'ai';
+import { z } from 'zod';
 import { ShellOutputSchema } from '../src/agent-runtime/coding-tool-contract';
 import {
   type AgentCodingToolAuthorization,
@@ -37,6 +38,87 @@ async function expectProcessGone(pid: number): Promise<void> {
 }
 
 describe('host-authorized Agent coding tools', () => {
+  test('publishes anchored include semantics and explains zero post-filter coverage', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-include-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'src', 'nested'), { recursive: true });
+    await writeFile(
+      path.join(root, 'src', 'nested', 'match.ts'),
+      'export const needle = true;\n',
+    );
+    const definitions = createAgentCodingTools({ root, authorize: () => true });
+    const definition = definitions.find(({ name }) => name === 'search_files');
+    if (!definition?.output) throw new Error('search_files definition is missing');
+    const inputSchema = JSON.stringify(z.toJSONSchema(definition.input));
+    const outputSchema = JSON.stringify(z.toJSONSchema(definition.output));
+    expect(inputSchema).toContain('Anchored');
+    expect(inputSchema).toContain('whole workspace-relative path');
+    expect(inputSchema).toContain('`*` does not cross `/`');
+    expect(inputSchema).toContain('`**/`');
+    expect(outputSchema).toContain('admitted by include and host authorization');
+
+    const tools = mountAgent([], { runtimeTools: definitions });
+    const options = { toolCallId: 'include-coverage', messages: [], context: undefined };
+    for (const mode of ['content', 'path']) {
+      const query = mode === 'content' ? 'needle' : 'match.ts';
+      expect(
+        await executable(tools, 'search_files')({ query, mode, include: '*.ts' }, options),
+      ).toMatchObject({
+        matches: [],
+        scannedFiles: 0,
+        hint: expect.stringContaining('rejected all 1 file'),
+      });
+      expect(
+        await executable(tools, 'search_files')({ query, mode, include: '**/*.ts' }, options),
+      ).toMatchObject({
+        matches: [expect.objectContaining({ path: path.join('src', 'nested', 'match.ts') })],
+        scannedFiles: 1,
+      });
+      expect(await executable(tools, 'search_files')({ query, mode }, options)).toMatchObject({
+        matches: [expect.objectContaining({ path: path.join('src', 'nested', 'match.ts') })],
+        scannedFiles: 1,
+      });
+    }
+  });
+
+  test('an empty workspace does not blame the include pattern for its zero', async () => {
+    // The hint judges the filter, so it may only appear where the filter is
+    // what produced the zero. A workspace with nothing to reject returns the
+    // same empty result and no accusation — otherwise the reader rewrites a
+    // glob that was never at fault.
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-empty-'));
+    roots.push(root);
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
+    });
+    const options = { toolCallId: 'include-empty', messages: [], context: undefined };
+    const empty = await executable(tools, 'search_files')(
+      { query: 'needle', mode: 'content', include: '*.ts' },
+      options,
+    );
+    expect(empty).toMatchObject({ matches: [], scannedFiles: 0 });
+    expect(empty).not.toHaveProperty('hint');
+
+    // And the other half of the same question: a file the HOST refused is not
+    // the pattern's doing either.
+    const guarded = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-guarded-'));
+    roots.push(guarded);
+    await writeFile(path.join(guarded, 'secret.ts'), 'export const needle = true;\n');
+    const refusing = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root: guarded,
+        authorize: () => true,
+        authorizePath: ({ path: candidate }) => candidate === '.',
+      }),
+    });
+    const refused = await executable(refusing, 'search_files')(
+      { query: 'needle', mode: 'content', include: '**/*.ts' },
+      { toolCallId: 'include-guarded', messages: [], context: undefined },
+    );
+    expect(refused).toMatchObject({ matches: [], scannedFiles: 0 });
+    expect(refused).not.toHaveProperty('hint');
+  });
+
   test('searches bounded content and applies one digest-guarded atomic patch', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-patch-'));
     roots.push(root);

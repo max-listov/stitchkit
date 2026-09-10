@@ -15,6 +15,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { ApiError, createLiveStateController } from 'stitchkit';
 import {
   AgentContextOverflowError,
+  AgentProviderResponseSchema,
   composeAgentPrompt,
   createAgentRuntime,
   createAgentStateSlotStore,
@@ -184,6 +185,10 @@ check(
   packedAgentTerminal.reason === 'runtime_failure' &&
     packedAgentTerminal.run.state === 'failed',
 );
+check(
+  'the packed agent runtime exposes the stale-safe orphan boundary',
+  typeof packedAgentRuntime.abandon === 'function',
+);
 await packedAgentRuntime.close();
 
 const packedGoal = defineStateSlot({
@@ -207,6 +212,27 @@ check(
   'the packed agent ledger round-trips canonical archive bytes',
   new TextDecoder().decode(await packedRestoredStore.exportConversation('packed-durable')) ===
     new TextDecoder().decode(packedArchive),
+);
+await packedDurableStore.appendEvent({
+  conversationId: 'packed-durable',
+  kind: 'provider/response',
+  payload: {
+    runId: 'packed-run',
+    attempt: 1,
+    stepNumber: 0,
+    response: { id: 'packed-generation', provider: 'PackedProvider' },
+  },
+});
+const packedProviderResponseEvent = (
+  await packedDurableStore.readEvents({ conversationId: 'packed-durable', limit: 100 })
+).items.find((event) => event.kind === 'provider/response');
+const packedProviderResponse = z
+  .object({ response: AgentProviderResponseSchema })
+  .parse(packedProviderResponseEvent?.payload).response;
+check(
+  'the packed agent ledger exposes provider response identity through the public schema',
+  packedProviderResponse.id === 'packed-generation' &&
+    packedProviderResponse.provider === 'PackedProvider',
 );
 
 const packedCatalog = describeToolCatalog({

@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-08-23
+updated: 2026-09-10
 ---
 
 # Agent application runtime architecture
@@ -107,6 +107,12 @@ alike — take their turn in a per-run queue and read the current revision insid
 asynchronous store cannot make two of them name the same revision; independent runs still proceed
 in parallel, and the terminal commit keeps its bounded retry. → ADR 0174.
 
+Each provider attempt has a runtime-owned abort controller composed with the run signal. Leaving
+its consumer loop before natural completion aborts that attempt before bounded iterator cleanup.
+This is required because the AI SDK result stream is a tee branch: closing the branch alone need
+not release the retained provider branch. Cleanup failure is retained as a secondary internal
+cause and cannot replace the storage, runtime or consumer failure that ended consumption.
+
 `createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
 caller-provided model per run, loads bounded typed resources, composes them through the canonical
 prompt budget and records an observation-only applied profile containing the actual model
@@ -143,6 +149,8 @@ and run record, not from active history.
 `runtime.recover()` scans indexed active states in the normalized run store. Queued work resumes only when no acquired
 predecessor blocks it. Acquired work defaults to skip; requeue and abandon require explicit evidence.
 Each run returns its own outcome so one corrupt record does not hide the rest of the pass.
+For one known orphan, `runtime.abandon()` is the same canonical transition behind an operator-facing
+revision check; consumers never update an indexed state column or serialized run body themselves.
 The harness adds no replay rule: completed tool evidence reopens from the canonical store, while
 requeueing an acquired run still requires the runtime's explicit replay-safe evidence. External
 effects remain idempotent only when the application uses stable run/call identity at its own
@@ -156,7 +164,8 @@ current exported schema, and write only the current version. Unknown future vers
 - Source regression tests cover protocol/store, loop, fencing, coordination, compaction, delivery,
   observability and hostile history.
 - `runAgentStoreConformance` executes the same atomicity/race contract against memory and external
-  transactional adapters, including duplicate terminal recovery after physical compaction.
+  transactional adapters, including duplicate terminal recovery after physical compaction and
+  agreement between an abandoned canonical record and the recoverable index.
 - Public bounded barriers/traces from `stitchkit/testing` run from packed Bun and Node consumers.
 - The official PostgreSQL/Prisma fixture proves duplicate/coalesced admission, stale checkpoint,
   terminal race, compaction conflict, constant-size heads, normalized recovery and rollback on real transactions.

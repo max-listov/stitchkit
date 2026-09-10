@@ -4,7 +4,7 @@ description: "One append-only conversation ledger owns replayable facts; normali
 type: decision
 status: accepted
 created: 2026-09-08
-updated: 2026-09-08
+updated: 2026-09-10
 ---
 
 # ADR 0175 — The event ledger is the agent runtime source of truth
@@ -85,8 +85,12 @@ projection, while the ledger is its append-only history.
   while its event was still appended.
 - A conversation export is one read transaction over events, companions and
   the snapshot.
-- Each retried attempt is a separate `provider/request` under the same
-  `stepNumber`; the ledger records what was sent, not what was answered.
+- Each retried attempt is a separate `provider/request` under the same `stepNumber`. Each completed
+  attempt also appends one `provider/response` with the same run, attempt and step identity plus
+  `response: { id, provider? }`. The response ID is assigned by the provider; the optional provider
+  is whatever the model's adapter resolves from its own metadata, so the neutral ledger carries no
+  gateway's key. Operator `step-finished.response` carries the same
+  object, while `run-terminal` deliberately does not copy the last step identity.
 - The request record is content-addressed. Reproducing a request body from
   the normalized history is not possible in general — the SDK attaches
   provider metadata to text parts, an application `prepareStep` may add
