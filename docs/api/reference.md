@@ -874,6 +874,12 @@ Server-only optional application runtime. See the
 | `AgentConversationPageSchema` / `AgentConversationPage` | schema / _type_ | cursor-paged conversation summaries |
 | `AgentConversationMessagePageSchema` / `AgentConversationMessagePage` | schema / _type_ | cursor-paged durable message history |
 | `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware signed context budget; irreducible reservation deficits are `oversized`, not compactable history |
+| `SeedConversationInputSchema` / `SeedConversationInput` | schema / _type_ | atomic once-seeding input; partial imported identity sets are refused |
+| `AgentSeedReceiptSchema` / `AgentSeedReceipt` | schema / _type_ | durable seed receipt retained beyond compaction and implemented by custom store drivers |
+| `createLocalStepDurability` | function | record JSON step results and park on time/events; a replay returns recorded results, while unrecorded effects require host idempotency |
+| `StepDurabilityLedger` / `LocalStepDurability` / `LocalStepDurabilityOptions` / `StepRunOptions` | _type_ | the narrow ledger the port needs, the step/read surface, and its construction and per-step options |
+| `DURABILITY_STEP_EVENT_KIND` | const | the ledger event kind a recorded step is written under |
+| `StepResultDecodeError` / `StepResultNotSerializableError` / `StepAbortedError` / `ParkRecordDecodeError` / `ParkAbortedError` | class | fail-closed decode of a recorded step or park, a body whose result cannot be serialized, an aborted step, and a park collapsed around an aborted waiter |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
 | `selectCompactableHistory` | function | which oldest whole complete turns may be summarised away — the half of compaction that needs no store (→ ADR 0142) |
 | `SelectCompactableHistoryOptions` / `CompactableHistory` | _type_ | message list, retained-turn count and evidence policy in; `leadingSummary`, `compactable` and `retained` out |
@@ -914,10 +920,12 @@ Server-only optional application runtime. See the
 | `agentGoalStateSlot` / `agentTodoStateSlot` / `createAgentStateTools` | constants / function | built-in goal/todo state and bound `goal_*` / `todo_write` Agent tools |
 | `AgentSandboxGradeSchema` / `AgentSandboxGrade` / `AgentSandboxRestrictionSchema` / `AgentSandboxRestriction` / `AgentProcessSandbox` | schema / _type_ | host-provided process sandbox capability and explicit restriction vocabulary |
 | `probeAgentProcessSandbox` / `missingSandboxRestrictions` / `recordAgentSandboxProbe` | functions | process-cached probe, fail-closed required-gap calculation and durable probe record |
+| `AgentSandboxProcess` / `AgentSandboxOutputStream` | _types_ | structural child/output interface for optional lifecycle-owned `AgentProcessSandbox.spawn`, without Node ambient type dependencies |
 | `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createSqliteAgentEventSearch` / `createAgentEventSearchTools` | schema / _type_ / functions | authorized FTS5 search with exact event addresses and `session_*` tools |
 | `createSqliteAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
 | `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `createAgentScheduleService` / `createAgentScheduleTools` | schema / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, stable dispatch identity and Agent tools |
 | `AgentChildBudgetSchema` / `AgentChildBudget` / `AgentChildStateSchema` / `AgentChildState` / `AgentChildRecordSchema` / `AgentChildRecord` | schema / _type_ | durable child graph, bounded seed and measured budget state |
+| `AgentChildBlockingKindSchema` / `AgentChildBlockingKind` / `AgentChildBlockingSourceSchema` / `AgentChildBlockingSource` / `AgentChildBlockingEventSchema` / `AgentChildBlockingEvent` / `AgentChildBlockingDecision` | schemas / _types_ | parent-owned request identities; responses discriminate approval decisions from JSON input values |
 | `AgentChildHandle` / `AgentChildManager` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
 | `AgentToolDefinition` | _type_ | peer-neutral shape returned by the bound agent-only state, search, schedule and child tool factories |
 | `AgentProviderStreamCutError` | class | explicit retryable provider stream truncation evidence |
@@ -945,7 +953,11 @@ recognises a failure carried inside a *successful* tool result, in both the bare
 
 `normalizeOpenRouterUsage` is the same normalisation `openRouterProvider`
 applies, exported so an application calling the SDK directly gets provenance-correct numbers
-without adopting the runtime.
+without adopting the runtime. Pass each completed SDK step's usage, including `raw`.
+Token provenance comes from the original OpenRouter fields: missing fields remain
+`unavailable`, even when the SDK substitutes zero. Aggregate usage without `raw` cannot
+establish reported token counts. Explicit zero remains `provider-reported`; cost is never
+estimated from token prices.
 
 `AgentContextUsage` reaches every step through `AgentRuntimeRunContext.contextUsage`: how full the
 model's context is, as `usedTokens` (an `AgentUsageValue`, so it carries the provenance that says
@@ -1104,6 +1116,9 @@ and introduces no store, queue or model-provider implementation of its own.
 | `AgentHarnessControlServer` / `AgentHarnessControlConnection` | _type_ | host server and detachable connection lifecycle; `deliver` is serialized, while required out-of-band `onOverflow` closes/aborts a slow transport before reconnect |
 | `AgentHarnessControlServerConfig` | _type_ | explicit per-connection pending-event and server-wide concurrent attachment-snapshot bounds for failure-isolated control delivery |
 | `AgentHarnessPendingApproval` / `AgentHarnessApprovalDecision` | _type_ | exact durable pending request and allow/deny successor input |
+| `AgentHarnessApprovalRequest` | _type_ | the pending request as a response-time policy sees it: approval id, call id, tool name and input |
+| `AgentHarnessApprovalAuthorization` / `AgentHarnessApprovalAuthorizationResult` | _type_ | response-time policy input (responder, conversation, request, proposed decision) and its `allowed` / `rejected` result |
+| `AgentHarnessApprovalRejectedError` | class | thrown when the response policy refuses a responder; the pending request is left answerable |
 
 Resources default to at most 64 entries, 1 MiB of total UTF-8 text and 128 diagnostics. Duplicate
 names and exceeded bounds fail before the provider step. Recovery remains the underlying runtime's
@@ -1420,6 +1435,8 @@ payload.
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
 | `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT' \| 'CLI'`; omission still means MCP+Agent only |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
+| `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
+| `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
 | `CliConfig` | _type_ | config for `createCli`, including program-level `defaultCommand` selection and command-scoped `optionAliases` / `positionals` policy |
 | `CliPresentationPolicyConfig` | _type_ | reusable default-command, short-alias and explicit-positional policy inherited by `CliConfig` |
@@ -1579,6 +1596,36 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
+
+---
+
+## `stitchkit/tools/connections`
+
+Server-only subexport that consumes external MCP servers and OpenAPI specifications
+as typed tools, without adding a peer dependency to `stitchkit/tools`. Foreign
+operations mount as the same `RuntimeToolDefinition`s our own produce, so
+`mountAgent({ runtimeTools })` runs them through the canonical lifecycle, hooks
+and approval path.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineMcpClientConnection` | function | declare one external MCP server connection over Streamable HTTP with an optional SSE fallback |
+| `defineOpenApiConnection` | function | declare one OpenAPI document (object, JSON text or JSON URL) as a tool surface |
+| `mountConnections` | function | discover every connection and return readonly `RuntimeToolDefinition`s for `mountAgent` |
+| `ConnectionAuthorizationRequiredError` | class | typed reauthorization signal raised on `401` with credentials resolved again on the next call |
+| `ConnectionBudgetExceededError` | class | the mount would expose more foreign tools than its declared budget |
+| `ConnectionRequestError` | class | any non-`2xx` connection response other than the reauthorization signal |
+| `ConnectionUrlError` | class | a non-http(s) URL or a request host the SSRF fence refused |
+| `ConnectionTokenProvider` | _type_ | `() => string \| undefined \| Promise<string \| undefined>` — the lazily resolved credential |
+| `ConnectionBudget` | _type_ | `{ maxTools? }` ceiling on one `mountConnections` call |
+| `ConnectionDefinition` | _type_ | either a defined MCP client or OpenAPI connection |
+| `ConnectionMountOptions` | _type_ | shared `{ lifecycle?, budget? }` mount policy |
+| `McpClientConnection` | _type_ | a defined MCP client connection |
+| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key and allowed hosts |
+| `McpConnectionTransport` | _type_ | `{ url, headers? }` for one MCP endpoint |
+| `McpToolFilter` | _type_ | `{ allow?, block? }` discovered-tool filter |
+| `OpenApiConnection` | _type_ | a defined OpenAPI connection |
+| `OpenApiConnectionConfig` | _type_ | name, spec, base URL, token provider, instance key and allowed hosts |
 
 ---
 
@@ -1954,3 +2001,16 @@ Browser- and server-render-safe React data-layer helpers. Needs the
 For the rationale behind these APIs — why `Bun.serve` and not a framework, why
 two context types, why thin wrappers — see the
 [Architecture Decisions](../decisions/).
+
+## `stitchkit/agent-runtime/sandbox`
+
+Optional server-only namespace sandbox. Exports:
+`createSandboxCodingTools` composes the existing coding profile over a handle's
+host-only `SandboxCodingBinding`, with shared authorization, command collection and lifecycle.
+`createBubblewrapSandboxBackend`, `createSandboxSession`, `SandboxError`,
+`SandboxCommandSchema`, `SandboxNetworkPolicySchema`, `SandboxStateSchema`.
+Its types are `BubblewrapSandboxConfig`, `SandboxBackend`, `SandboxCommand`,
+`SandboxCreateInput`, `SandboxDriver`, `SandboxHandle`, `SandboxNetworkPolicy`,
+`SandboxPrewarmInput`, `SandboxProcess`, `SandboxRunOptions`, `SandboxSession`,
+and `SandboxState`. The [sandbox guide](../guide/sandbox.md) specifies lifecycle,
+network enforcement, gateway credentials and platform/resource boundaries.

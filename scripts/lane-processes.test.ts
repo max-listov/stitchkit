@@ -15,6 +15,25 @@ import {
 
 const hasProcfs = existsSync('/proc/self/cwd');
 
+test.skipIf(!hasProcfs)('a pending supervisor home is not an abandoned lane', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'supervised-lane-'));
+  const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'], {
+    cwd: tmpdir(),
+    env: { ...process.env, PM2_HOME: join(directory, 'pm2') },
+    stdout: 'ignore',
+    stderr: 'ignore',
+  });
+  try {
+    expect(await abandonedLaneProcesses()).not.toContain(child.pid);
+    await rm(directory, { recursive: true, force: true });
+    expect(await abandonedLaneProcesses()).toContain(child.pid);
+  } finally {
+    child.kill();
+    await child.exited;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);

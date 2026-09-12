@@ -193,6 +193,12 @@ export {
   PORTABLE_JSON_SCHEMA_FORMATS,
 } from './tools/portable-formats';
 export {
+  type AgentToolRegistry,
+  type AgentToolRegistryBuilder,
+  type AgentToolRegistryInput,
+  defineToolRegistry,
+} from './tools/registry';
+export {
   createRuntimeToolFactory,
   defineRuntimeTool,
   type RuntimeAgentModelOutput,

@@ -94,12 +94,25 @@ export interface HeadlessAgentHarnessConfig<CONTEXT, TOOLS extends ToolSet>
     contextWindow: number;
   }): AgentPromptBudget | Promise<AgentPromptBudget>;
   estimateResourceTokens?(text: string): AgentTokenCount | Promise<AgentTokenCount>;
+  /** Parent-owned children expose requests through pendingApprovals only, not presentation events/snapshots. */
+  blockingPresentation?: 'local' | 'parent';
   limits?: Partial<AgentHarnessLimits>;
   onProfile?(event: AgentHarnessProfileEvent): void | Promise<void>;
   onProfileError?(input: {
     event: AgentHarnessProfileEvent;
     error: unknown;
   }): void | Promise<void>;
+  /**
+   * Response-time authorization. It runs before a decision is written and may
+   * reject a responder without dropping the pending request, so a later valid
+   * responder can still answer. Absent means the signed request alone
+   * authorizes the response, exactly as before. → ADR 0177
+   */
+  authorizeApprovalResponse?(
+    input: AgentHarnessApprovalAuthorization,
+  ):
+    | AgentHarnessApprovalAuthorizationResult
+    | Promise<AgentHarnessApprovalAuthorizationResult>;
 }
 
 export interface HeadlessAgentHarness<CONTEXT> extends AgentRuntime<CONTEXT> {
@@ -130,6 +143,34 @@ export interface AgentHarnessApprovalDecision<_CONTEXT = unknown> {
   context: unknown;
   metadata?: unknown;
 }
+
+/** One pending request as the response-time policy sees it. */
+export interface AgentHarnessApprovalRequest {
+  approvalId: string;
+  callId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface AgentHarnessApprovalAuthorization {
+  /**
+   * The identity the caller supplies for this decision. The harness does not
+   * authenticate it — the application wires its verified session principal
+   * here — but it is what the policy judges, never a field from the request body.
+   */
+  responder: unknown;
+  conversationId: string;
+  request: AgentHarnessApprovalRequest;
+  approved: boolean;
+}
+
+/**
+ * A response-time decision. `rejected` judges the responder, not the approval:
+ * the request stays pending and another responder may still answer it.
+ */
+export type AgentHarnessApprovalAuthorizationResult =
+  | { status: 'allowed' }
+  | { status: 'rejected'; reason: string };
 
 export interface HarnessPromptProfile {
   conversationId: string;

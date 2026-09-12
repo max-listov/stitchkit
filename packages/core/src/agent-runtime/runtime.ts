@@ -19,6 +19,7 @@ import {
   assertCloseBudgets,
   createAgentSessionCoordinator,
 } from './coordinator';
+import type { LocalStepDurability } from './durability';
 import {
   type AgentRuntimeEvent,
   type AgentRuntimePublisher,
@@ -184,6 +185,17 @@ export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends ToolSet = ToolSet> = 
 export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   protocol: AgentRuntimeProtocolInput<CONTEXT>;
   store: AgentRuntimeStore;
+  /** Tool-call durability; the host retains process placement and cross-process run leases. */
+  durability?:
+    | true
+    | ((input: {
+        store: AgentRuntimeStore;
+        conversationId: string;
+        runId: string;
+        toolName: string;
+        toolCallId: string;
+        signal?: AbortSignal;
+      }) => LocalStepDurability);
   models: {
     preflight?(input: { context: CONTEXT; conversationId: string }): void | Promise<void>;
     resolve(input: {
@@ -196,6 +208,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   prompt(input: {
     context: CONTEXT;
     signal: AbortSignal;
+    event: 'session.started' | 'turn.started';
     model: AgentResolvedModel;
     snapshot: AgentSnapshot;
   }): ComposedAgentPrompt | Promise<ComposedAgentPrompt>;
@@ -211,6 +224,8 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     /**
      * How long the provider stream may produce nothing before the run is ended
      * as `timeout`. Default 60 000; `null` disables it.
+     * Starts at the provider-call boundary and pauses during local tool execution.
+     * Preparation and approval waiting are outside this clock; tool deadlines are host-owned.
      *
      * There used to be no default, so a hung provider held the conversation's
      * lane forever — the guide states the consequence itself ("a hung

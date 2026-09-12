@@ -25,13 +25,37 @@ export const AgentSandboxGradeSchema = z.discriminatedUnion('grade', [
 export type AgentSandboxRestriction = z.infer<typeof AgentSandboxRestrictionSchema>;
 export type AgentSandboxGrade = z.infer<typeof AgentSandboxGradeSchema>;
 
+/** Structural process surface keeps optional launchers independent of Node ambient types. */
+export interface AgentSandboxProcess {
+  readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: string | null;
+  readonly stdout: AgentSandboxOutputStream;
+  readonly stderr: AgentSandboxOutputStream;
+  kill(signal: 'SIGKILL'): boolean;
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  on(
+    event: 'exit' | 'close',
+    listener: (code: number | null, signal: string | null) => void,
+  ): unknown;
+}
+
+export interface AgentSandboxOutputStream {
+  readonly destroyed: boolean;
+  on(event: 'data', listener: (chunk: Uint8Array) => void): unknown;
+  destroy(): unknown;
+}
+
 export interface AgentProcessSandbox {
+  /** Optional lifecycle-owned launcher; the coding profile still owns output and deadline handling. */
+  spawn?(input: Parameters<AgentProcessSandbox['prepare']>[0]): AgentSandboxProcess;
   probe(): AgentSandboxGrade | Promise<AgentSandboxGrade>;
   prepare(input: {
     executable: string;
     args: readonly string[];
     cwd: string;
     environment: Readonly<Record<string, string>>;
+    required?: readonly AgentSandboxRestriction[];
   }):
     | {
         executable: string;

@@ -96,6 +96,7 @@ export async function runAgentStoreConformance(
       `${run}-interrupt-priority`,
       `${run}-ledger`,
       `${run}-archive`,
+      `${run}-seed`,
     ],
   };
   const store = await config.createStore(context);
@@ -122,6 +123,37 @@ export async function runAgentStoreConformance(
   if (failure !== undefined) throw failure;
 }
 
+async function seedScenario(store: AgentRuntimeStore, conversationId: string): Promise<void> {
+  const input = {
+    conversationId,
+    seedKey: 'brief',
+    inputs: [userMessage(conversationId, 'seed-a'), userMessage(conversationId, 'seed-b')],
+  };
+  const first = await store.seedConversationInput(input);
+  requireOutcome(first, 'applied');
+  const before = await store.loadSnapshot(conversationId);
+  if (before.messages.map((message) => message.id).join(',') !== 'seed-a,seed-b')
+    throw new Error('Seed conformance: complete ordered seed missing');
+  await Promise.all([store.seedConversationInput(input), store.seedConversationInput(input)]);
+  const repeated = await store.loadSnapshot(conversationId);
+  if (repeated.version !== before.version || repeated.messages.length !== 2)
+    throw new Error('Seed conformance: replay changed history');
+  const compacted = await store.replaceCompactedRange({
+    conversationId,
+    expectedVersion: repeated.version,
+    replacedMessageIds: ['seed-a', 'seed-b'],
+    summary: AgentMessageSchema.parse({
+      ...userMessage(conversationId, 'seed-summary'),
+      role: 'summary',
+    }),
+  });
+  requireOutcome(compacted, 'applied');
+  await store.seedConversationInput(input);
+  const after = await store.loadSnapshot(conversationId);
+  if (after.messages.some((message) => message.id === 'seed-a' || message.id === 'seed-b'))
+    throw new Error('Seed conformance: compacted instructions resurrected');
+}
+
 async function conformanceScenario(
   store: AgentRuntimeStore,
   conversationIds: readonly string[],
@@ -135,7 +167,9 @@ async function conformanceScenario(
     interruptPriorityConversationId,
     ledgerConversationId,
     archiveConversationId,
+    seedConversationId,
   ] = conversationIds;
+  if (seedConversationId) await seedScenario(store, seedConversationId);
   if (ledgerConversationId) await ledgerScenario(store, ledgerConversationId);
   if (archiveConversationId) await archiveScenario(store, archiveConversationId);
   if (

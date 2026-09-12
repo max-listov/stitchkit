@@ -9,6 +9,7 @@ import type {
   AgentCodingToolDefinition,
   AgentCodingToolLimits,
 } from './coding-tool-contract';
+import { CodingDeniedEntrySchema } from './coding-tool-contract';
 import { compileWorkspaceGlob, DEFAULT_EXCLUDED_DIRECTORIES } from './coding-tool-listing';
 import {
   authorizeCodingPath,
@@ -72,6 +73,13 @@ const SearchOutputSchema = z
       ),
     skippedDirectories: z.int().nonnegative(),
     skippedSymlinks: z.int().nonnegative(),
+    /**
+     * Entries the host's path policy refused. Kept apart from the include
+     * pattern's own rejections: "the host hid this" and "your pattern did not
+     * match" are different answers and were previously both silent.
+     */
+    denied: z.array(CodingDeniedEntrySchema).optional(),
+    deniedTruncated: z.boolean().optional(),
     hint: z.string().min(1).optional(),
   })
   .strict();
@@ -182,13 +190,14 @@ export function createSearchAndPatchCodingTools(
         }),
         excludeDirectory: (relative) =>
           relative.split(path.sep).some((segment) => excluded.has(segment)),
-        authorizePath: async (candidate, kind) => {
-          if (kind === 'file' && included && !included.test(candidate)) {
+        includeFile: (candidate) => {
+          if (included && !included.test(candidate)) {
             rejectedByInclude += 1;
             return false;
           }
-          return await isCodingPathAuthorized(config, candidate);
+          return true;
         },
+        authorizePath: (candidate) => isCodingPathAuthorized(config, candidate),
       });
       const matcher = input.regex ? compileSearchRegex(input.query) : null;
       const hit = (line: string): boolean => {
@@ -240,6 +249,13 @@ export function createSearchAndPatchCodingTools(
         scannedFiles: scan.files.length,
         skippedDirectories: scan.skippedDirectories,
         skippedSymlinks: scan.skippedSymlinks,
+        ...(scan.denied.length > 0 && {
+          denied: scan.denied
+            .slice(0, limits.maxSearchResults)
+            .map(({ relative, kind }) => ({ path: relative, kind })),
+          deniedTruncated:
+            scan.deniedTruncated || scan.denied.length > limits.maxSearchResults,
+        }),
         ...(input.include &&
           scan.files.length === 0 &&
           rejectedByInclude > 0 && {
@@ -310,7 +326,7 @@ export function createSearchAndPatchCodingTools(
           const replacements = input.replaceAll ? count : 1;
           const changed = input.replaceAll
             ? source.replaceAll(input.oldText, input.newText)
-            : source.replace(input.oldText, input.newText);
+            : source.replace(input.oldText, () => input.newText);
           const bytes = Buffer.byteLength(changed);
           const resultSha256 = sha256(changed);
           if (bytes > limits.maxWriteBytes) {

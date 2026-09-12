@@ -18,6 +18,10 @@ function foreignKeyStore(parents: ReadonlySet<string>): AgentRuntimeStore {
   };
   return {
     ...inner,
+    seedConversationInput: (input) => {
+      guard(input.conversationId);
+      return inner.seedConversationInput(input);
+    },
     acceptInputAndAssignRun: (input) => {
       guard(input.input.conversationId);
       return inner.acceptInputAndAssignRun(input);
@@ -50,6 +54,22 @@ function foreignKeyStore(parents: ReadonlySet<string>): AgentRuntimeStore {
 }
 
 describe('the conformance kit can be given a fixture', () => {
+  test('once-seeding is a load-bearing adapter requirement', async () => {
+    await expect(
+      runAgentStoreConformance({
+        createStore: () => {
+          const store = createMemoryAgentRuntimeStore();
+          return {
+            ...store,
+            seedConversationInput: async (input) => ({
+              outcome: 'applied' as const,
+              snapshot: await store.loadSnapshot(input.conversationId),
+            }),
+          };
+        },
+      }),
+    ).rejects.toThrow('Seed conformance: complete ordered seed missing');
+  });
   test('a store that needs a parent row passes the whole kit', async () => {
     const parents = new Set<string>();
     let created = 0;
@@ -72,10 +92,9 @@ describe('the conformance kit can be given a fixture', () => {
     // Nothing left behind, and nothing preselected: the kit chose the ids and
     // said so, rather than the adapter having to guess a global fixture name.
     expect(parents.size).toBe(0);
-    // Six normalized scenarios, the ledger scenario and the archive round
-    // trip: eight identities.
-    expect(announced.length).toBe(8);
-    expect(new Set(announced).size).toBe(8);
+    // Six normalized scenarios, ledger, archive and once-seeding.
+    expect(announced.length).toBe(9);
+    expect(new Set(announced).size).toBe(9);
     for (const id of announced) expect(id).toStartWith('conformance-');
   });
 

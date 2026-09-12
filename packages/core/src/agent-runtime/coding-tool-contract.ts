@@ -94,6 +94,23 @@ export type AgentCodingToolPathAuthorization = z.infer<
   typeof AgentCodingToolPathAuthorizationSchema
 >;
 
+/**
+ * One entry the host's path policy refused while listing or searching.
+ *
+ * Only the workspace-relative path and kind travel — never content — so a
+ * caller can tell "the host will not let me see this" from "this is not here".
+ * The absence of this fact is what made a denied `.env` indistinguishable from
+ * a file that does not exist.
+ */
+export const CodingDeniedEntrySchema = z
+  .object({
+    path: z.string().min(1),
+    kind: z.enum(['file', 'directory', 'symlink', 'other']),
+  })
+  .strict();
+
+export type CodingDeniedEntry = z.infer<typeof CodingDeniedEntrySchema>;
+
 export interface AgentCodingToolConfig {
   root: string;
   authorize(input: AgentCodingToolAuthorization): boolean | Promise<boolean>;

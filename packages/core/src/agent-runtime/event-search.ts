@@ -19,8 +19,21 @@ const SearchRowSchema = z.object({
   snippet: z.string(),
 });
 
+/**
+ * Turn a natural-language query into FTS5 terms joined by `AND`.
+ *
+ * Quoting the whole query turned every multi-word request into an exact phrase,
+ * so "deploy decision yesterday" matched only those three words adjacent in
+ * that order and answered `[]` when they merely occurred — a silent zero read
+ * as "the journal never said this". Terms are joined by `AND` instead: all
+ * words must occur, not in order. Each term is quoted as a literal, so query
+ * punctuation stays data and never becomes FTS5 syntax.
+ */
 function literalFtsQuery(query: string): string {
-  return `"${query.replaceAll('"', '""')}"`;
+  const terms = query.split(/\s+/u).filter((term) => /[\p{L}\p{N}]/u.test(term));
+  if (terms.length === 0)
+    throw new TypeError('Event search query must contain searchable terms');
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' AND ');
 }
 
 export function createSqliteAgentEventSearch(input: {

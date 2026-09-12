@@ -38,6 +38,14 @@ model AgentRuntimeAdmission {
   @@unique([conversationId, inputMessageId])
 }
 
+model AgentRuntimeSeed {
+  conversationId String
+  seedKey String
+  payload String
+
+  @@id([conversationId, seedKey])
+}
+
 model AgentRuntimeMessage {
   conversationId String
   id             String

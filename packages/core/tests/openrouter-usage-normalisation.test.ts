@@ -23,6 +23,12 @@ const usage = {
   totalTokens: 1_540,
   inputTokenDetails: { cacheReadTokens: 800, cacheWriteTokens: undefined },
   outputTokenDetails: { reasoningTokens: 64 },
+  raw: {
+    prompt_tokens: 1_200,
+    completion_tokens: 340,
+    prompt_tokens_details: { cached_tokens: 800 },
+    completion_tokens_details: { reasoning_tokens: 64 },
+  },
 } as unknown as Parameters<typeof normalizeOpenRouterUsage>[0];
 
 describe('provider usage normalisation is usable without the runtime', () => {
@@ -99,6 +105,7 @@ describe('provider usage normalisation is usable without the runtime', () => {
       ...usage,
       inputTokens: 12.5,
       outputTokens: -1,
+      raw: { prompt_tokens: 12.5, completion_tokens: -1 },
     } as unknown as Parameters<typeof normalizeOpenRouterUsage>[0];
     const normalized = normalizeOpenRouterUsage(fractional, {});
     expect(normalized.inputTokens).toEqual({ provenance: 'unavailable' });

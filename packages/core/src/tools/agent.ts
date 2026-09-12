@@ -3,14 +3,17 @@ import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
 import { AgentToolError } from './agent-tool-error';
+import { resolveToolDurability } from './durability-context';
 import {
   type ErrorHintFn,
   isToolExecutionControlError,
   type ToolCallHooks,
   type ToolLifecycle,
+  toolCauseFromResult,
   toolResultFromError,
 } from './execute';
 import { createToolRunner, formatToolError, type ToolExtend } from './mount';
+import type { AgentToolRegistry } from './registry';
 import type { RuntimeToolDefinition } from './runtime-tool';
 import { collectToolSurface } from './surface';
 
@@ -39,6 +42,11 @@ export interface AgentMountConfig {
   errorHint?: ErrorHintFn;
   /** Framework-managed pathless operations mounted beside contract tools. */
   runtimeTools?: readonly RuntimeToolDefinition[];
+  /**
+   * A composed tool registry. Mutually exclusive with `runtimeTools`: one
+   * declaration of the runtime surface, not two lists to reconcile.
+   */
+  registry?: AgentToolRegistry;
 }
 
 export function mountAgent(
@@ -46,6 +54,10 @@ export function mountAgent(
   config: AgentMountConfig = {},
 ): ToolSet {
   const serviceList = Array.isArray(services) ? services : [services];
+  if (config.registry && config.runtimeTools) {
+    throw new Error('mountAgent accepts either runtimeTools or a registry, not both');
+  }
+  const runtimeTools = config.registry ? config.registry.tools : config.runtimeTools;
   const tools: ToolSet = {};
   const runTool = createToolRunner({
     source: 'agent',
@@ -59,7 +71,7 @@ export function mountAgent(
   });
 
   for (const entry of collectToolSurface({
-    surface: { services: serviceList, runtimeTools: config.runtimeTools },
+    surface: { services: serviceList, runtimeTools },
     transport: 'AGENT',
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
@@ -73,7 +85,29 @@ export function mountAgent(
     });
     const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
       const args = isRecord(rawArgs) ? rawArgs : {};
-      const result = await runTool(mountable, args, {
+      const durability = resolveToolDurability(
+        options.context,
+        options.toolCallId,
+        options.abortSignal,
+      );
+      const executeTool = durability
+        ? createToolRunner({
+            source: 'agent',
+            extend: config.extend,
+            context: {
+              ...config.context,
+              step: durability.step,
+              sleep: durability.sleep,
+              waitFor: durability.waitFor,
+            },
+            hooks: config.hooks,
+            lifecycle: config.lifecycle,
+            errorHint: config.errorHint,
+            coerceJsonArgs: config.coerceJsonArgs,
+            onOutputStrip: config.onOutputStrip,
+          })
+        : runTool;
+      const result = await executeTool(mountable, args, {
         signal: options.abortSignal,
       }).catch((err: unknown) => {
         if (isToolExecutionControlError(err)) throw err;
@@ -83,7 +117,10 @@ export function mountAgent(
         );
       });
       if (result.ok) return result.data;
-      throw new AgentToolError(formatToolError(result, mountable.name, config.errorHint));
+      throw new AgentToolError(
+        formatToolError(result, mountable.name, config.errorHint),
+        toolCauseFromResult(result),
+      );
     };
 
     const presenter = entry.kind === 'runtime' ? entry.definition.present?.agent : undefined;

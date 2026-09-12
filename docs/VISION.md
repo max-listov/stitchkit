@@ -141,7 +141,8 @@ the published package before release.
 - Remove copied agent-runtime mechanics from consuming applications through a
   server-only additive harness, while retaining `createAgentRuntime` and `mountAgent` as smaller
   independent composition paths and keeping process placement, model catalogs, credentials and
-  workspace isolation with the embedding host. Reuse optional terminal mechanics through
+  workspace isolation policy with the embedding host. Offer an explicit optional Linux sandbox
+  backend for hosts that need namespace isolation and credential brokering. Reuse optional terminal mechanics through
   the renderer-neutral `stitchkit-tui/core` state layer or the maintained root agent host,
   not copied application shells, a second loop or an integrated god factory.
 - Remove copied process lifecycle, timer, admission and operational-projection

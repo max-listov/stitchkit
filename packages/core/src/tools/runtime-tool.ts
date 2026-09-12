@@ -1,6 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
+import type { LocalStepDurability } from '../agent-runtime/durability';
 import type {
   EndpointMcpPolicy,
   EndpointToolAnnotations,
@@ -40,6 +41,9 @@ export type RuntimeToolHandlerContext<
 > = RuntimeContext & {
   params: undefined;
   input: z.output<TInput>;
+  step?: LocalStepDurability['step'];
+  sleep?: LocalStepDurability['sleep'];
+  waitFor?: LocalStepDurability['waitFor'];
 } & RuntimeMcpInput<TMcp>;
 
 export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput extends ZodType

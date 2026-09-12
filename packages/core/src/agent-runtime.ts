@@ -1,6 +1,13 @@
 export type { AgentToolDefinition } from './agent-runtime/agent-tool';
 export { createAgentChildTools } from './agent-runtime/child-tools';
 export {
+  type AgentChildBlockingDecision,
+  type AgentChildBlockingEvent,
+  AgentChildBlockingEventSchema,
+  type AgentChildBlockingKind,
+  AgentChildBlockingKindSchema,
+  type AgentChildBlockingSource,
+  AgentChildBlockingSourceSchema,
   type AgentChildBudget,
   AgentChildBudgetSchema,
   type AgentChildHandle,
@@ -57,6 +64,19 @@ export {
   type DeferredAgentToolSurfaceConfig,
   type DeferredAgentToolSurfaceDefinition,
 } from './agent-runtime/deferred-tools';
+export {
+  createLocalStepDurability,
+  DURABILITY_STEP_EVENT_KIND,
+  type LocalStepDurability,
+  type LocalStepDurabilityOptions,
+  ParkAbortedError,
+  ParkRecordDecodeError,
+  StepAbortedError,
+  type StepDurabilityLedger,
+  StepResultDecodeError,
+  StepResultNotSerializableError,
+  type StepRunOptions,
+} from './agent-runtime/durability';
 export {
   type AgentEventSearchResult,
   AgentEventSearchResultSchema,
@@ -224,6 +244,8 @@ export {
   type AgentProcessSandbox,
   type AgentSandboxGrade,
   AgentSandboxGradeSchema,
+  type AgentSandboxOutputStream,
+  type AgentSandboxProcess,
   type AgentSandboxRestriction,
   AgentSandboxRestrictionSchema,
   missingSandboxRestrictions,
@@ -281,6 +303,8 @@ export {
   ReplaceCompactedRangeSchema,
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
+  type SeedConversationInput,
+  SeedConversationInputSchema,
 } from './agent-runtime/store';
 export {
   ACTIVE_AGENT_RUN_STATES,
@@ -291,6 +315,8 @@ export {
   type AgentRuntimeHead,
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
+  type AgentSeedReceipt,
+  AgentSeedReceiptSchema,
   type AgentStoreCompareAndSwapResult,
   type AgentStoredRun,
   AgentStoredRunSchema,

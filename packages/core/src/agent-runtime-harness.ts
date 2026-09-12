@@ -1,5 +1,9 @@
 export {
+  type AgentHarnessApprovalAuthorization,
+  type AgentHarnessApprovalAuthorizationResult,
   type AgentHarnessApprovalDecision,
+  AgentHarnessApprovalRejectedError,
+  type AgentHarnessApprovalRequest,
   type AgentHarnessControlConnection,
   type AgentHarnessControlServer,
   type AgentHarnessControlServerConfig,

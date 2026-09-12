@@ -239,20 +239,51 @@ export function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
 export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | undefined) {
   if (timeoutMs === undefined) {
     const noop = (): void => undefined;
-    return { signal: parent, touch: noop, dispose: noop };
+    return {
+      signal: parent,
+      touch: noop,
+      start: noop,
+      stop: noop,
+      suspend: noop,
+      resume: noop,
+      dispose: noop,
+    };
   }
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const touch = (): void => {
+  let active = false;
+  let suspended = 0;
+  const clear = (): void => {
     if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const touch = (): void => {
+    clear();
+    if (!active || suspended > 0 || controller.signal.aborted) return;
     timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
   };
-  touch();
   return {
     signal: AbortSignal.any([parent, controller.signal]),
     touch,
+    start() {
+      active = true;
+      touch();
+    },
+    stop() {
+      active = false;
+      clear();
+    },
+    suspend() {
+      suspended += 1;
+      clear();
+    },
+    resume() {
+      suspended = Math.max(0, suspended - 1);
+      touch();
+    },
     dispose() {
-      if (timer !== undefined) clearTimeout(timer);
+      active = false;
+      clear();
     },
   };
 }

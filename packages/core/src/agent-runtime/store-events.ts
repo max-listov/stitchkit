@@ -9,6 +9,7 @@ import {
   RecoverAgentRunSchema,
   ReplaceCompactedRangeSchema,
   RequestRunInterruptSchema,
+  SeedConversationInputSchema,
 } from './store';
 
 export const AgentStoreEventKindSchema = z.enum([
@@ -30,6 +31,10 @@ export const AgentStoreEventKindSchema = z.enum([
   'retry/scheduled',
   'retry/started',
   'sandbox/probed',
+  'approval/response-rejected',
+  'durability/step',
+  'durability/park',
+  'durability/event',
 ]);
 
 export type AgentStoreEventKind = z.infer<typeof AgentStoreEventKindSchema>;
@@ -43,6 +48,7 @@ export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('recover'), input: RecoverAgentRunSchema }).strict(),
   z.object({ type: z.literal('terminal'), input: CommitRunTerminalSchema }).strict(),
   z.object({ type: z.literal('compact'), input: ReplaceCompactedRangeSchema }).strict(),
+  z.object({ type: z.literal('seed'), input: SeedConversationInputSchema }).strict(),
 ]);
 
 export type AgentStoreTransition = z.infer<typeof AgentStoreTransitionSchema>;

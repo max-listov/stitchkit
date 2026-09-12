@@ -38,6 +38,67 @@ async function expectProcessGone(pid: number): Promise<void> {
 }
 
 describe('host-authorized Agent coding tools', () => {
+  test('search bounds denied entries independently of include filtering', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-search-denied-'));
+    roots.push(root);
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        writeFile(path.join(root, `file-${i}.txt`), 'match'),
+      ),
+    );
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: ({ path: relative }) => relative === '.',
+        limits: { maxSearchResults: 2 },
+      }),
+    });
+    const result = await executable(tools, 'search_files')(
+      { query: 'match' },
+      { toolCallId: 'denied', messages: [], context: undefined },
+    );
+    expect(result.denied).toHaveLength(2);
+    expect(result.deniedTruncated).toBe(true);
+    const filtered = await executable(tools, 'search_files')(
+      { query: 'match', include: '*.ts' },
+      { toolCallId: 'filtered', messages: [], context: undefined },
+    );
+    expect(filtered.denied ?? []).toHaveLength(0);
+  });
+  test('EOF respects ASCII byte caps, non-UTF8 is named and replacement is literal', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-contracts-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'ascii.txt'), 'abcde');
+    await writeFile(path.join(root, 'invalid.txt'), Buffer.from([255, 255]));
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
+    });
+    const options = { toolCallId: 'contracts', messages: [], context: undefined };
+    const read = await executable(tools, 'read_file')(
+      { path: 'ascii.txt', maxBytes: 1 },
+      options,
+    );
+    expect(read).toMatchObject({ text: 'a', bytes: 1, nextOffset: 1, truncated: true });
+    await expect(
+      executable(tools, 'read_file')({ path: 'invalid.txt' }, options),
+    ).rejects.toMatchObject({
+      output: { error: 'BAD_REQUEST', details: { reason: 'invalid_utf8' } },
+    });
+    await executable(tools, 'edit_file')(
+      {
+        path: 'ascii.txt',
+        oldText: 'abcde',
+        newText: 'cost=$$PRICE and $& marker',
+        expectedSha256: read.sha256,
+      },
+      options,
+    );
+    expect(await readFile(path.join(root, 'ascii.txt'), 'utf8')).toBe(
+      'cost=$$PRICE and $& marker',
+    );
+  });
+
   test('publishes anchored include semantics and explains zero post-filter coverage', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-include-'));
     roots.push(root);
@@ -450,6 +511,17 @@ describe('host-authorized Agent coding tools', () => {
     const glob = await executable(tools, 'glob')({ pattern: '**' }, options);
     expect(glob.paths).toEqual(['outside-include.txt', path.join('src', 'ordinary.ts')]);
 
+    // A path the host refuses is not an absent path: every discovery surface
+    // names it, so a model cannot conclude `.env` is not there. Order is the
+    // caller's, not asserted here.
+    const deniedPaths = (entries: readonly { path: string }[]) =>
+      entries.map(({ path: candidate }) => candidate).sort();
+    expect(deniedPaths(listing.denied ?? [])).toEqual(['.env', 'credentials']);
+    expect(deniedPaths(glob.denied ?? [])).toEqual(['.env', 'credentials']);
+    expect(deniedPaths(content.denied ?? [])).toEqual(['.env', 'credentials']);
+    // The host's refusals are kept apart from the include pattern's own.
+    expect(content.denied).not.toContainEqual({ path: 'outside-include.txt', kind: 'file' });
+
     const originalError = console.error;
     console.error = () => undefined;
     await expect(
@@ -858,6 +930,28 @@ describe('host-authorized Agent coding tools', () => {
     expect(await cancelled).toMatchObject({ executable: 'sleep', outcome: 'cancelled' });
   });
 
+  test('run_command aligns the retained preview so a multi-byte cut leaves no replacement glyph', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-shell-utf8-'));
+    roots.push(root);
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        executables: { printf: '/usr/bin/printf' },
+        limits: { maxShellOutputBytes: 5 },
+      }),
+    });
+    const output = await executable(tools, 'run_command')(
+      { executable: 'printf', args: ['€€€'] },
+      { toolCallId: 'shell-utf8', messages: [], context: undefined },
+    );
+    expect(output.stdout).not.toContain('\uFFFD');
+    // The fifth byte falls inside the second character, so the preview is
+    // pulled back to the first boundary (byte 3) rather than emitting half a
+    // glyph; the dropped bytes are reported as omitted, not lost.
+    expect(output).toMatchObject({ stdout: '€', outcome: 'output-limit' });
+  });
+
   test('does not spawn a command for a pre-aborted invocation', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-pre-abort-'));
     roots.push(root);
@@ -1011,5 +1105,136 @@ describe('host-authorized Agent coding tools', () => {
       ),
     ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
     console.error = originalError;
+  });
+
+  test('read_file resumes on a character boundary instead of refusing a multi-byte slice', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-utf8-'));
+    roots.push(root);
+    // Three bytes per character, so a byte window lands inside one at offsets
+    // that used to make the fatal decoder answer INTERNAL_SERVER_ERROR.
+    const content = '€'.repeat(6);
+    await writeFile(path.join(root, 'euro.txt'), content);
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
+    });
+    const options = { toolCallId: 'utf8', messages: [], context: undefined };
+
+    // A window smaller than one character must still make progress: the slice
+    // is extended to the whole character rather than trimmed to nothing.
+    const single = await executable(tools, 'read_file')(
+      { path: 'euro.txt', offset: 0, maxBytes: 1 },
+      options,
+    );
+    expect(single).toMatchObject({ text: '€', bytes: 3, truncated: true, nextOffset: 3 });
+
+    let offset = 0;
+    let stitched = '';
+    for (let guard = 0; guard < 20; guard += 1) {
+      const page = await executable(tools, 'read_file')(
+        { path: 'euro.txt', offset, maxBytes: 4 },
+        options,
+      );
+      expect(page.text).not.toContain('\uFFFD');
+      stitched += page.text;
+      if (!page.truncated) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset;
+    }
+    expect(stitched).toBe(content);
+  });
+
+  test('read_file resumes past a mid-character offset instead of refusing the slice', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-utf8-start-'));
+    roots.push(root);
+    // Three bytes per character: offsets 1 and 2 land on the continuation
+    // bytes of the FIRST character. The end was aligned but the start was not,
+    // so the fatal decoder received a bare fragment and the call surfaced as
+    // INTERNAL_SERVER_ERROR.
+    const content = '€€€';
+    await writeFile(path.join(root, 'euro.txt'), content);
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
+    });
+    const options = { toolCallId: 'utf8-start', messages: [], context: undefined };
+
+    for (const offset of [1, 2]) {
+      const page = await executable(tools, 'read_file')(
+        { path: 'euro.txt', offset, maxBytes: 64 },
+        options,
+      );
+      expect(page.text).not.toContain('\uFFFD');
+      // Resumes at the next character boundary (byte 3), not at the raw offset.
+      expect(page).toMatchObject({ text: '€€', bytes: 6, truncated: false });
+    }
+  });
+
+  test('names paths the host policy refuses instead of dropping them from discovery', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-denied-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'kept'));
+    await writeFile(path.join(root, 'visible.txt'), 'nothing secret here\n');
+    await writeFile(path.join(root, '.env'), 'SECRET_MARKER=1\n');
+    await mkdir(path.join(root, 'private'));
+    await writeFile(path.join(root, 'private', 'token.txt'), 'SECRET_MARKER=2\n');
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: ({ path: candidate }) =>
+          candidate !== '.env' && candidate !== 'private',
+      }),
+    });
+    const options = { toolCallId: 'denied', messages: [], context: undefined };
+
+    const listing = await executable(tools, 'list_directory')({ path: '.' }, options);
+    expect(listing.entries.map(({ name }: { name: string }) => name)).toEqual([
+      'kept',
+      'visible.txt',
+    ]);
+    expect(listing.denied).toEqual([
+      { path: '.env', kind: 'file' },
+      { path: 'private', kind: 'directory' },
+    ]);
+
+    const glob = await executable(tools, 'glob')({ pattern: '**' }, options);
+    expect(glob.paths).toEqual(['visible.txt']);
+    expect(glob.denied).toEqual([
+      { path: '.env', kind: 'file' },
+      { path: 'private', kind: 'directory' },
+    ]);
+
+    const search = await executable(tools, 'search_files')(
+      { query: 'visible', mode: 'path' },
+      options,
+    );
+    expect(search.matches).toEqual([{ path: 'visible.txt' }]);
+    expect(search.denied).toEqual([
+      { path: '.env', kind: 'file' },
+      { path: 'private', kind: 'directory' },
+    ]);
+  });
+
+  test('glob scopes denied entries to the requested path', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-glob-denied-'));
+    roots.push(root);
+    await mkdir(path.join(root, 'src'));
+    await writeFile(path.join(root, '.env'), 'SECRET_MARKER=root\n');
+    await writeFile(path.join(root, 'src', 'secret.env'), 'SECRET_MARKER=inner\n');
+    await writeFile(path.join(root, 'src', 'allowed.ts'), 'export const allowed = true;\n');
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: ({ path: candidate }) =>
+          candidate !== '.env' && candidate !== path.join('src', 'secret.env'),
+      }),
+    });
+    const options = { toolCallId: 'glob-denied', messages: [], context: undefined };
+
+    const glob = await executable(tools, 'glob')({ pattern: '*.ts', path: 'src' }, options);
+    expect(glob.paths).toEqual([path.join('src', 'allowed.ts')]);
+    // The root refusal lies outside the requested path and must not be named;
+    // the refusal inside `src` still is.
+    expect(glob.denied).toEqual([{ path: path.join('src', 'secret.env'), kind: 'file' }]);
   });
 });

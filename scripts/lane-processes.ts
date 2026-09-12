@@ -1,6 +1,6 @@
 import { readdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse, resolve, sep } from 'node:path';
 
 /**
  * A lane owns the processes it starts — including when it dies badly.
@@ -91,6 +91,17 @@ async function abandonedSupervisorDaemons(): Promise<number[]> {
       ?.slice('PM2_HOME='.length);
     if (!home || !looksLikeALaneDirectory(home)) continue;
     if (await exists(home)) continue;
+    // Build children inherit PM2_HOME before PM2 creates it. Only a missing
+    // lane root proves abandonment; a missing future home does not.
+    const absoluteHome = resolve(home);
+    const root = parse(absoluteHome).root;
+    const parts = absoluteHome.slice(root.length).split(sep);
+    const laneIndex = parts.findIndex((part) =>
+      LANE_DIRECTORY_PREFIXES.some((prefix) => part.startsWith(prefix)),
+    );
+    if (laneIndex < 0 || (await exists(join(root, ...parts.slice(0, laneIndex + 1))))) {
+      continue;
+    }
     abandoned.push(pid);
   }
   return abandoned;

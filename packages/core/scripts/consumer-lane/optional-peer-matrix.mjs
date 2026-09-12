@@ -121,6 +121,19 @@ export const OPTIONAL_PEER_MATRIX = [
     },
   },
   {
+    id: 'tools-connections',
+    subpath: './tools/connections',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/tools/connections', 'mountConnections'),
+    runtimePeers: [],
+    // RuntimeToolDefinition exposes the canonical MCP/agent presenter types;
+    // mounting connections itself still executes without either runtime peer.
+    declarationPeers: ['@modelcontextprotocol/server', 'ai'],
+    execute: true,
+  },
+  {
     id: 'cli',
     subpath: './cli',
     fixture: 'minimal',
@@ -322,6 +335,17 @@ export const OPTIONAL_PEER_MATRIX = [
     installedPeers: FIXTURE_PEERS.minimal,
     target: 'node',
     source: featureSource('stitchkit/agent-runtime/coding-tools', 'createAgentCodingTools'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'agent-runtime-sandbox',
+    subpath: './agent-runtime/sandbox',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-runtime/sandbox', 'createBubblewrapSandboxBackend'),
     runtimePeers: [],
     declarationPeers: [],
     execute: true,

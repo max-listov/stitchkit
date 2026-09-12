@@ -33,6 +33,31 @@ export interface ContainedFileScan {
   truncated: boolean;
   skippedDirectories: number;
   skippedSymlinks: number;
+  /**
+   * Entries the host's `authorizePath` rejected while walking. A denied path
+   * used to disappear from every listing exactly like an absent one; naming
+   * them is what lets a caller tell "the host refused this" from "there is
+   * nothing here". Only the name and kind are carried — never content.
+   */
+  denied: readonly { relative: string; kind: ContainedEntryKind }[];
+  /** The `denied` list hit its cap; there are more refusals than named. */
+  deniedTruncated: boolean;
+}
+
+export type ContainedEntryKind = 'file' | 'directory' | 'symlink' | 'other';
+
+function containedEntryKind(entry: {
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}): ContainedEntryKind {
+  return entry.isDirectory()
+    ? 'directory'
+    : entry.isSymbolicLink()
+      ? 'symlink'
+      : entry.isFile()
+        ? 'file'
+        : 'other';
 }
 
 export interface ContainedFileHandle {
@@ -279,6 +304,9 @@ export async function listContainedDirectory(
     bytes?: number;
   }[];
   truncated: boolean;
+  /** Direct children the host's policy refused, capped at `maxEntries`. */
+  denied: { name: string; kind: ContainedEntryKind }[];
+  deniedTruncated: boolean;
 }> {
   let current = await openPinnedDirectory(root);
   try {
@@ -296,10 +324,15 @@ export async function listContainedDirectory(
     }
     const raw = [...(await listAt(current))];
     raw.sort((left, right) => left.name.localeCompare(right.name));
-    const admitted = [];
+    const admitted: ContainedDirectoryEntry[] = [];
+    const denied: { name: string; kind: ContainedEntryKind }[] = [];
     for (const entry of raw) {
       const entryPath = relative === '.' ? entry.name : path.join(relative, entry.name);
-      if (!authorizePath || (await authorizePath(entryPath))) admitted.push(entry);
+      if (authorizePath && !(await authorizePath(entryPath))) {
+        denied.push({ name: entry.name, kind: containedEntryKind(entry) });
+        continue;
+      }
+      admitted.push(entry);
     }
     const entries: {
       name: string;
@@ -307,13 +340,7 @@ export async function listContainedDirectory(
       bytes?: number;
     }[] = [];
     for (const entry of admitted.slice(0, maxEntries)) {
-      const kind = entry.isDirectory()
-        ? 'directory'
-        : entry.isSymbolicLink()
-          ? 'symlink'
-          : entry.isFile()
-            ? 'file'
-            : 'other';
+      const kind = containedEntryKind(entry);
       if (kind !== 'file') {
         entries.push({ name: entry.name, kind });
         continue;
@@ -330,7 +357,12 @@ export async function listContainedDirectory(
       if (left.kind === right.kind) return left.name.localeCompare(right.name);
       return left.kind === 'directory' ? -1 : right.kind === 'directory' ? 1 : 0;
     });
-    return { entries, truncated: admitted.length > maxEntries };
+    return {
+      entries,
+      truncated: admitted.length > maxEntries,
+      denied: denied.slice(0, maxEntries),
+      deniedTruncated: denied.length > maxEntries,
+    };
   } finally {
     await current.close();
   }
@@ -660,6 +692,7 @@ export async function scanContainedFiles(input: {
   readMaxBytes?: number;
   skipUnreadable?: boolean;
   excludeDirectory?: (relative: string) => boolean;
+  includeFile?: (relative: string) => boolean;
   authorizePath?: (
     relative: string,
     kind: 'file' | 'directory' | 'symlink' | 'other',
@@ -669,6 +702,8 @@ export async function scanContainedFiles(input: {
   let truncated = false;
   let skippedDirectories = 0;
   let skippedSymlinks = 0;
+  const denied: { relative: string; kind: ContainedEntryKind }[] = [];
+  let deniedTruncated = false;
   const root = await openPinnedDirectory(input.root);
   const visit = async (
     directory: ContainedFileHandle,
@@ -693,7 +728,12 @@ export async function scanContainedFiles(input: {
           : entry.isFile()
             ? 'file'
             : 'other';
-      if (input.authorizePath && !(await input.authorizePath(relative, kind))) continue;
+      if (kind === 'file' && input.includeFile && !input.includeFile(relative)) continue;
+      if (input.authorizePath && !(await input.authorizePath(relative, kind))) {
+        if (denied.length < input.maxFiles) denied.push({ relative, kind });
+        else deniedTruncated = true;
+        continue;
+      }
       if (entry.isSymbolicLink()) {
         if (input.symlinks === 'refuse') {
           throw new Error(`Contained file traversal refuses symlink: ${relative}`);
@@ -750,5 +790,5 @@ export async function scanContainedFiles(input: {
   } finally {
     await root.close();
   }
-  return { files, truncated, skippedDirectories, skippedSymlinks };
+  return { files, truncated, skippedDirectories, skippedSymlinks, denied, deniedTruncated };
 }

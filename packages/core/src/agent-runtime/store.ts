@@ -163,6 +163,21 @@ export const ReplaceCompactedRangeSchema = z.object({
   replacedMessageIds: z.array(AgentRecordIdSchema).min(1),
   summary: AgentMessageSchema,
 });
+/**
+ * One keyed, once-only write of user instructions into durable history.
+ *
+ * User-role prompt sections are context, not framework policy (→ ADR 0178), so
+ * they reach the model as ordinary user messages. This is the durable boundary
+ * that makes "once" real: the caller names the seed with a stable key, and the
+ * store records that the key was written. The record survives history
+ * replacement and compaction, so clearing the conversation does not resurrect
+ * text the caller never asked to seed twice.
+ */
+export const SeedConversationInputSchema = z.object({
+  conversationId: AgentRecordIdSchema,
+  seedKey: z.string().min(1),
+  inputs: z.array(AgentMessageSchema).min(1),
+});
 
 export type AcceptInputAndAssignRun = z.infer<typeof AcceptInputAndAssignRunSchema>;
 export type AcquireAgentRun = z.infer<typeof AcquireAgentRunSchema>;
@@ -172,6 +187,7 @@ export type CommitRunTerminal = z.infer<typeof CommitRunTerminalSchema>;
 export type RequestRunInterrupt = z.infer<typeof RequestRunInterruptSchema>;
 export type RecoverAgentRun = z.infer<typeof RecoverAgentRunSchema>;
 export type ReplaceCompactedRange = z.infer<typeof ReplaceCompactedRangeSchema>;
+export type SeedConversationInput = z.infer<typeof SeedConversationInputSchema>;
 
 export const AgentRecoverableDescriptorSchema = z.object({
   conversationId: AgentRecordIdSchema,
@@ -222,6 +238,16 @@ export interface AgentRuntimeStore {
   recoverRun(input: RecoverAgentRun): Promise<AgentStoreMutationResult>;
   commitRunTerminal(input: CommitRunTerminal): Promise<AgentStoreMutationResult>;
   replaceCompactedRange(input: ReplaceCompactedRange): Promise<AgentStoreMutationResult>;
+  /**
+   * Write user-role instructions into durable history exactly once per key.
+   *
+   * The messages become ordinary user history (no run owns them), so they
+   * appear in `snapshot().messages`, compaction may summarize them, and a
+   * history replacement removes them. A subsequent call with the same
+   * `seedKey` is a no-op even after that removal, because "already seeded" is
+   * recorded beside the history rather than inferred from it. → ADR 0178
+   */
+  seedConversationInput(input: SeedConversationInput): Promise<AgentStoreMutationResult>;
   /**
    * One bounded page of recoverable runs.
    *

@@ -46,7 +46,10 @@ export function isToolExecutionControlError(
  * it out-of-band for the lifetime of the result object. A WeakMap keeps the
  * public envelope and its JSON representation unchanged.
  */
-const normalizedToolErrors = new WeakMap<ToolFailure, AppError>();
+const normalizedToolErrors = new WeakMap<
+  ToolFailure,
+  { normalized: AppError; cause: unknown }
+>();
 
 export interface ToolCallContext {
   source: TransportSource;
@@ -177,19 +180,24 @@ export function toolResultFromError(err: unknown): ToolFailure {
     details: appErr.details ?? { message: appErr.message },
     ...(appErr.hint && { hint: appErr.hint }),
   };
-  normalizedToolErrors.set(result, appErr);
+  normalizedToolErrors.set(result, { normalized: appErr, cause: err });
   return result;
 }
 
 /** Recover the normalized AppError behind one canonical failed tool result. */
 export function toolErrorFromResult(result: ToolFailure): AppError {
   const retained = normalizedToolErrors.get(result);
-  if (retained) return retained;
+  if (retained) return retained.normalized;
 
   const details = isRecord(result.details) ? result.details : undefined;
   const message = typeof details?.message === 'string' ? details.message : result.code;
   const status = isStitchErrorCode(result.code) ? STITCH_ERROR_STATUS[result.code] : 500;
   return new AppError(result.code, message, status, details, result.hint);
+}
+
+/** Original in-process failure; never part of the serialized tool envelope. */
+export function toolCauseFromResult(result: ToolFailure): unknown {
+  return normalizedToolErrors.get(result)?.cause;
 }
 
 export async function executeToolMethod(

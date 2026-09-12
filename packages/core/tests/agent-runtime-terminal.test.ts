@@ -926,6 +926,7 @@ describe('agent runtime terminalization', () => {
         recoverRun: () => Promise.reject(new Error('not used')),
         commitRunTerminal: () => Promise.reject(new Error('not used')),
         replaceCompactedRange: () => Promise.reject(new Error('not used')),
+        seedConversationInput: () => Promise.reject(new Error('not used')),
         scanRecoverable: () => Promise.reject(new Error('not used')),
       },
       models: {

@@ -537,6 +537,8 @@ try {
           ['schedules.mjs', 'schedules'],
           ['children.mjs', 'children'],
           ['sandbox-grade.mjs', 'sandbox grade'],
+          ['sandbox-backend.mjs', 'sandbox backend'],
+          ['sandbox-composition.mjs', 'sandbox composition'],
           ['retry-boundary.mjs', 'retry boundary'],
           ['migration.mjs', 'migration'],
         ]) {

@@ -36,6 +36,8 @@ import {
   ReplaceCompactedRangeSchema,
   type RequestRunInterrupt,
   RequestRunInterruptSchema,
+  type SeedConversationInput,
+  SeedConversationInputSchema,
 } from './store';
 import {
   type AgentConversationArchive,
@@ -83,6 +85,23 @@ export type AgentRuntimeHead = z.infer<typeof AgentRuntimeHeadSchema>;
 export type AgentStoredRun = z.infer<typeof AgentStoredRunSchema>;
 export type AgentAdmissionReceipt = z.infer<typeof AgentAdmissionReceiptSchema>;
 
+/**
+ * The durable record that a keyed user-instruction seed already happened.
+ *
+ * Kept beside the history rather than derived from it: compaction and `clear`
+ * legitimately remove the seeded messages, and the seed must not return when
+ * they do. `messageIds` lets an archive round trip match an imported seed's
+ * messages without this record.
+ */
+export const AgentSeedReceiptSchema = z.object({
+  schemaVersion: z.literal(1),
+  conversationId: AgentRecordIdSchema,
+  seedKey: z.string().min(1),
+  messageIds: z.array(AgentRecordIdSchema).min(1),
+});
+
+export type AgentSeedReceipt = z.infer<typeof AgentSeedReceiptSchema>;
+
 export const AgentHistoryMutationSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('admit'), input: AgentMessageSchema }),
   z.object({
@@ -93,6 +112,10 @@ export const AgentHistoryMutationSchema = z.discriminatedUnion('type', [
     type: z.literal('replace-compacted-range'),
     replacedMessageIds: z.array(AgentRecordIdSchema).min(1),
     summary: AgentMessageSchema,
+  }),
+  z.object({
+    type: z.literal('seed'),
+    message: AgentMessageSchema,
   }),
 ]);
 
@@ -162,8 +185,28 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
     ): Promise<AgentAdmissionReceipt | undefined>;
     create(transaction: TRANSACTION, receipt: AgentAdmissionReceipt): Promise<void>;
   };
+  seeds: {
+    load(
+      transaction: TRANSACTION,
+      input: { conversationId: string; seedKey: string },
+    ): Promise<AgentSeedReceipt | undefined>;
+    create(transaction: TRANSACTION, receipt: AgentSeedReceipt): Promise<void>;
+  };
   history: {
     load(transaction: TRANSACTION, conversationId: string): Promise<readonly AgentMessage[]>;
+    /**
+     * Whether any stored message — active or compacted — already carries this
+     * identity.
+     *
+     * `load` deliberately hides compacted rows, so a seed restored into a
+     * conversation whose receipts were not restored can match a message the
+     * active view does not show. Optional because a driver with no inactive
+     * store has nothing `load` hides; the seed write is idempotent either way.
+     */
+    hasMessage?(
+      transaction: TRANSACTION,
+      input: { conversationId: string; messageId: string },
+    ): Promise<boolean>;
     apply(transaction: TRANSACTION, mutation: AgentHistoryMutation): Promise<void>;
   };
   events: {
@@ -224,7 +267,8 @@ type StoreOperation =
   | { type: 'interrupt'; input: RequestRunInterrupt }
   | { type: 'recover'; input: RecoverAgentRun }
   | { type: 'terminal'; input: CommitRunTerminal }
-  | { type: 'compact'; input: ReplaceCompactedRange };
+  | { type: 'compact'; input: ReplaceCompactedRange }
+  | { type: 'seed'; input: SeedConversationInput };
 
 interface ReducedApplied {
   outcome: 'applied';
@@ -238,6 +282,7 @@ interface ReducedApplied {
    */
   runRecords?: readonly AgentStoredRun[];
   admissionReceipt?: AgentAdmissionReceipt;
+  seedReceipt?: AgentSeedReceipt;
   historyMutations?: readonly AgentHistoryMutation[];
 }
 
@@ -481,6 +526,7 @@ function applied(
   effects?: {
     runRecords?: readonly AgentStoredRun[];
     admissionReceipt?: AgentAdmissionReceipt;
+    seedReceipt?: AgentSeedReceipt;
     historyMutations?: readonly AgentHistoryMutation[];
   },
 ): ReducedApplied {
@@ -496,6 +542,7 @@ function applied(
     }),
     ...(effects?.runRecords?.length && { runRecords: effects.runRecords }),
     ...(effects?.admissionReceipt && { admissionReceipt: effects.admissionReceipt }),
+    ...(effects?.seedReceipt && { seedReceipt: effects.seedReceipt }),
     ...(effects?.historyMutations?.length && { historyMutations: effects.historyMutations }),
   };
 }
@@ -572,6 +619,44 @@ function reduceStore(current: AgentSnapshot, operation: StoreOperation): Reduced
         runRecords: [AgentStoredRunSchema.parse({ schemaVersion: 1, run: assignedRun })],
         admissionReceipt,
         historyMutations: [{ type: 'admit', input: input.input }],
+      },
+    );
+  }
+
+  if (operation.type === 'seed') {
+    const conversationId = operation.input.conversationId;
+    if (current.conversationId !== conversationId) return { outcome: 'not_found' };
+    for (const message of operation.input.inputs) {
+      if (
+        message.conversationId !== conversationId ||
+        message.role !== 'user' ||
+        message.status !== 'committed' ||
+        message.runId !== undefined
+      ) {
+        throw new TypeError(
+          'Seeded conversation input must be committed unowned user messages',
+        );
+      }
+    }
+    // Prepend: user instructions lead the durable conversation they were seeded
+    // ahead of, even though the first turn's input was admitted before the
+    // prompt definitions existed to seed them.
+    return applied(
+      current,
+      { messages: [...operation.input.inputs, ...current.messages] },
+      {
+        seedReceipt: AgentSeedReceiptSchema.parse({
+          schemaVersion: 1,
+          conversationId,
+          seedKey: operation.input.seedKey,
+          messageIds: operation.input.inputs.map((message) => message.id),
+        }),
+        // Applied front-first, so the persisted order matches the snapshot:
+        // each prepend lands ahead of the one before it.
+        historyMutations: [...operation.input.inputs].reverse().map((message) => ({
+          type: 'seed' as const,
+          message,
+        })),
       },
     );
   }
@@ -942,7 +1027,6 @@ function operationConversationId(operation: StoreOperation): string {
     ? operation.input.input.conversationId
     : operation.input.conversationId;
 }
-
 function mergeRunRecords(...groups: readonly (readonly AgentStoredRun[])[]): AgentStoredRun[] {
   const records = new Map<string, AgentStoredRun>();
   for (const group of groups) {
@@ -1071,7 +1155,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
       const operationRunId =
         operation.type === 'accept'
           ? operation.input.coalesceIntoRunId
-          : operation.type === 'compact'
+          : operation.type === 'compact' || operation.type === 'seed'
             ? undefined
             : operation.input.runId;
       const [stored, messages, activeRecords, operationRecord, duplicateReceipt] =
@@ -1100,6 +1184,48 @@ export function createAgentRuntimeStore<TRANSACTION>(
         operationRecord ? [operationRecord] : [],
       );
       const current = snapshotOf(head, messages, records);
+      if (operation.type === 'seed') {
+        // Exactly once. The receipt is the durable "already seeded" fact and it
+        // outlives history replacement; the message-identity check covers an
+        // imported conversation whose receipts were not restored, including a
+        // seed whose message survives only as a compacted row that the active
+        // view no longer shows. Both are read and acted on inside one
+        // transaction, so concurrent admission cannot write the seed twice.
+        const existing = await driver.seeds.load(transaction, {
+          conversationId,
+          seedKey: operation.input.seedKey,
+        });
+        if (existing) return { outcome: 'applied', snapshot: current };
+        let collisions = 0;
+        for (const message of operation.input.inputs) {
+          if (
+            current.messages.some((candidate) => candidate.id === message.id) ||
+            (driver.history.hasMessage &&
+              (await driver.history.hasMessage(transaction, {
+                conversationId,
+                messageId: message.id,
+              })))
+          )
+            collisions++;
+        }
+        if (collisions > 0 && collisions < operation.input.inputs.length) {
+          throw new TypeError(
+            'Partial instruction seed collision: restore the complete seed before retrying',
+          );
+        }
+        if (collisions > 0) {
+          await driver.seeds.create(
+            transaction,
+            AgentSeedReceiptSchema.parse({
+              schemaVersion: 1,
+              conversationId,
+              seedKey: operation.input.seedKey,
+              messageIds: operation.input.inputs.map((message) => message.id),
+            }),
+          );
+          return { outcome: 'applied', snapshot: current };
+        }
+      }
       if (duplicateReceipt) {
         const duplicateRecord = await driver.runs.load(transaction, {
           conversationId,
@@ -1186,6 +1312,9 @@ export function createAgentRuntimeStore<TRANSACTION>(
       }
       if (reduced.admissionReceipt) {
         await driver.admissions.create(transaction, reduced.admissionReceipt);
+      }
+      if (reduced.seedReceipt) {
+        await driver.seeds.create(transaction, reduced.seedReceipt);
       }
       for (const mutation of reduced.historyMutations ?? []) {
         await driver.history.apply(transaction, mutation);
@@ -1408,6 +1537,11 @@ export function createAgentRuntimeStore<TRANSACTION>(
         type: 'compact',
         input: ReplaceCompactedRangeSchema.parse(input),
       }),
+    seedConversationInput: (input) =>
+      mutate({
+        type: 'seed',
+        input: SeedConversationInputSchema.parse(input),
+      }),
     async scanRecoverable(input) {
       const parsed = AgentRecoverableScanInputSchema.parse(input);
       return AgentRecoverablePageSchema.parse(await driver.scanRecoverable(parsed));
@@ -1420,6 +1554,7 @@ interface MemoryTransaction {
   heads: Map<string, AgentRuntimeHead>;
   runs: Map<string, Map<string, AgentStoredRun>>;
   admissions: Map<string, Map<string, AgentAdmissionReceipt>>;
+  seeds: Map<string, Map<string, AgentSeedReceipt>>;
   histories: Map<string, AgentMessage[]>;
   events: Map<string, AgentStoreEventEnvelope[]>;
 }
@@ -1460,6 +1595,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
   let heads = new Map<string, AgentRuntimeHead>();
   let runs = new Map<string, Map<string, AgentStoredRun>>();
   let admissions = new Map<string, Map<string, AgentAdmissionReceipt>>();
+  let seeds = new Map<string, Map<string, AgentSeedReceipt>>();
   let histories = new Map<string, AgentMessage[]>();
   let events = new Map<string, AgentStoreEventEnvelope[]>();
   let transactionTail = Promise.resolve();
@@ -1479,6 +1615,9 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         admissions: cloneNestedMap(admissions, (receipt) =>
           AgentAdmissionReceiptSchema.parse(structuredClone(receipt)),
         ),
+        seeds: cloneNestedMap(seeds, (receipt) =>
+          AgentSeedReceiptSchema.parse(structuredClone(receipt)),
+        ),
         histories: cloneHistoryMap(histories),
         events: new Map(
           [...events].map(([conversationId, stored]) => [
@@ -1493,6 +1632,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         heads = transaction.heads;
         runs = transaction.runs;
         admissions = transaction.admissions;
+        seeds = transaction.seeds;
         histories = transaction.histories;
         events = transaction.events;
         return result;
@@ -1509,6 +1649,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         transaction.heads.delete(conversationId);
         transaction.runs.delete(conversationId);
         transaction.admissions.delete(conversationId);
+        transaction.seeds.delete(conversationId);
         transaction.histories.delete(conversationId);
         transaction.events.delete(conversationId);
       },
@@ -1600,10 +1741,30 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         transaction.admissions.set(receipt.conversationId, conversationAdmissions);
       },
     },
+    seeds: {
+      async load(transaction, input) {
+        const receipt = transaction.seeds.get(input.conversationId)?.get(input.seedKey);
+        return receipt ? AgentSeedReceiptSchema.parse(structuredClone(receipt)) : undefined;
+      },
+      async create(transaction, rawReceipt) {
+        const receipt = AgentSeedReceiptSchema.parse(structuredClone(rawReceipt));
+        const conversationSeeds = transaction.seeds.get(receipt.conversationId) ?? new Map();
+        if (conversationSeeds.has(receipt.seedKey)) {
+          throw new TypeError('Conversation seed identity is already reserved');
+        }
+        conversationSeeds.set(receipt.seedKey, receipt);
+        transaction.seeds.set(receipt.conversationId, conversationSeeds);
+      },
+    },
     history: {
       async load(transaction, conversationId) {
         return (transaction.histories.get(conversationId) ?? []).map((message) =>
           AgentMessageSchema.parse(structuredClone(message)),
+        );
+      },
+      async hasMessage(transaction, input) {
+        return (transaction.histories.get(input.conversationId) ?? []).some(
+          (message) => message.id === input.messageId,
         );
       },
       async apply(transaction, rawMutation) {
@@ -1613,7 +1774,9 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
             ? mutation.input.conversationId
             : mutation.type === 'upsert-assistant'
               ? mutation.message.conversationId
-              : mutation.summary.conversationId;
+              : mutation.type === 'seed'
+                ? mutation.message.conversationId
+                : mutation.summary.conversationId;
         const current = transaction.histories.get(conversationId) ?? [];
         if (mutation.type === 'admit') {
           transaction.histories.set(conversationId, [...current, mutation.input]);
@@ -1621,6 +1784,22 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
         }
         if (mutation.type === 'upsert-assistant') {
           transaction.histories.set(conversationId, replaceMessage(current, mutation.message));
+          return;
+        }
+        if (mutation.type === 'seed') {
+          // A seed identity already present in history is replaced in place,
+          // never prepended twice: a driver-level retry that slipped past the
+          // shared check must stay idempotent instead of corrupting history.
+          const existingIndex = current.findIndex(
+            (message) => message.id === mutation.message.id,
+          );
+          if (existingIndex === -1) {
+            transaction.histories.set(conversationId, [mutation.message, ...current]);
+          } else {
+            const next = [...current];
+            next[existingIndex] = mutation.message;
+            transaction.histories.set(conversationId, next);
+          }
           return;
         }
         const replaced = new Set(mutation.replacedMessageIds);

@@ -1,5 +1,38 @@
 # Upgrading stitchkit
 
+## Released migration: 0.89.0
+
+1. Custom `AgentRuntimeStore` adapters implement `seedConversationInput`; custom
+   `AgentRuntimeStoreDriver` adapters implement `seeds.load` and `seeds.create` together
+   with atomic, ordered history insertion. Use the maintained Prisma example and run
+   `runAgentStoreConformance` against the adapter. Built-in memory and SQLite
+   stores already implement the contract; SQLite migrates to schema version 3.
+2. OpenRouter usage normalization consumes each completed SDK step's `usage`, including
+   `raw`, rather than aggregate usage. Missing counters stay `unavailable`.
+
+   ```ts
+   // before: normalizeOpenRouterUsage(await result.usage, metadata)
+   // after:
+   for (const step of await result.steps) {
+     const usage = normalizeOpenRouterUsage(step.usage, step.providerMetadata);
+     // Persist the step's measured usage with its provenance.
+   }
+   ```
+
+3. Durable step bodies return lossless JSON. Convert dates explicitly, reject invalid
+   numbers upstream, and return `null` after an effect-only operation.
+
+   ```ts
+   await context.step('send', async () => {
+     await sendIdempotently();
+     return null;
+   });
+   ```
+
+   First execution, replay and concurrent callers receive detached values. Persistence
+   does not make external effects transactional; the host retains idempotency and recovery.
+
+
 How to move a consuming project from one stitchkit version to another — including
 across many versions at once (a project frozen on an old version, then jumped
 forward). The process is mechanical: stitchkit marks every breaking change in one

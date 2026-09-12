@@ -15,6 +15,7 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
   beforeEach(async () => {
     await fixture?.prisma.agentRuntimeMessage.deleteMany();
     await fixture?.prisma.agentRuntimeAdmission.deleteMany();
+    await fixture?.prisma.agentRuntimeSeed.deleteMany();
     await fixture?.prisma.agentRuntimeRun.deleteMany();
     await fixture?.prisma.agentRuntimeState.deleteMany();
   });

@@ -1152,15 +1152,25 @@ the product has a narrower definition; it receives the candidate message,
 terminal reason and optional policy name, and runs before persistence. A false
 result fails the candidate instead of rewriting an already committed success.
 
-`loop.idleTimeoutMs` is inactivity, not total duration: the deadline resets on
-every model stream event. A stalled call aborts with durable reason `timeout`;
-user interruption and shutdown remain distinct.
+`loop.idleTimeoutMs` measures provider silence. It starts immediately before the
+provider call, resets on stream activity, and pauses while local tools execute.
+Resource preparation, child waits and approval waiting do not spend this budget.
+The host gives tools their own deadlines. A stalled provider still aborts with
+durable reason `timeout`; caller interruption and shutdown reach tools directly.
 
 Reconnect loads the durable snapshot. Missing transient deltas do not mean the
 canonical result was lost. Exactly-once external delivery requires the
 application's transactional outbox or stable-ID deduplication.
 
 ## Managed tools
+
+Durable `step` bodies return lossless JSON: finite numbers (excluding negative zero),
+strings, booleans, null, dense arrays and plain data objects. Return `null` explicitly
+for effect-only bodies and convert Date values to strings. Unsupported values are
+refused after the body, so external effects still require idempotency. First results
+and replay are detached snapshots; mutating a returned object cannot rewrite a record.
+The optional [sandbox coding profile](sandbox.md#coding-tool-integration) reuses the
+same tool mounting, authorization and output handling for namespace-backed commands.
 
 Always compose `toolFenceLifecycle` into `mountAgent`. It checks ownership
 before a managed side effect and again before accepting its result. Fence loss

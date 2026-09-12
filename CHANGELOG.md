@@ -15,6 +15,132 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.89.0] — 2026-09-12
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications implementing `AgentRuntimeStore` or `AgentRuntimeStoreDriver`,
+and applications normalizing OpenRouter usage. Custom stores add ordered once-seeding;
+OpenRouter callers pass raw per-step usage. New durability users return lossless JSON.
+See the 0.89.0 migration in the upgrading guide.
+
+- **OpenRouter token provenance requires raw step usage.** `normalizeOpenRouterUsage` and the
+  runtime read original counters rather than SDK defaults. Pass `step.usage` from each
+  completed SDK step; normalized-only or aggregate records without `raw` yield unavailable
+  token counts. Missing cache/reasoning counts no longer become provider-reported zero.
+
+- **Durability results must be lossless JSON.** `step<T>` accepts JSON-compatible types and
+  rejects non-finite numbers, negative zero, Date/class instances, undefined, sparse arrays
+  and accessors at runtime. First execution and replay return detached JSON snapshots.
+  Effect-only bodies must return `null`: `step('send', async () => { await send(); return null; })`.
+  Convert dates explicitly with `toISOString()` before returning them. Rejected results do not
+  undo external effects; idempotency remains the host's responsibility.
+- **`AgentRuntimeStore` gains `seedConversationInput`.** A custom store adapter must implement it;
+  the memory and SQLite drivers already do. The SQLite schema moves to version 3 with an automatic
+  migration. The method writes user-role prompt instructions into a conversation's durable history
+  exactly once, ahead of the conversation, so they can be summarized by compaction and removed by a
+  history replacement instead of being re-injected on every call. → ADR 0178
+
+  ```ts
+  // before: an adapter implemented the existing store members only
+  // after:  add
+  async seedConversationInput({ conversationId, seedKey, inputs }) { /* … */ }
+  ```
+
+- **A custom store driver gains a required `seeds` member.** `AgentRuntimeStoreDriver` now needs
+  `seeds: { load, create }` in addition to its history mutation, so a driver that only implemented
+  the previous members must add it. Memory, SQLite and the Prisma example implement it;
+  the public conformance kit verifies ordered once-seeding and compaction survival.
+
+### Fixed
+
+- Parallel verification no longer reaps a live supervised build before its isolated
+  PM2 home has been created; abandonment requires the lane directory to be gone.
+- Provider silence deadlines exclude resource preparation, local tool execution and approval
+  waiting. Provider calls still time out before the first chunk and between chunks; caller
+  cancellation remains active during tools and child waits.
+- Connection calls isolate credentials, refuse redirects, bound SSE reads and retain typed
+  authorization causes through the standard mount. Lifecycle executes once.
+- Instruction seed budgets are counted once; partial imports fail explicitly. Coding reads
+  obey EOF byte limits, report invalid UTF-8, preserve literal replacement text and bound denied lists.
+
+### Added
+
+- `createSandboxCodingTools` connects the maintained coding profile to a sandbox workspace.
+  File authorization, UTF-8, shell deadlines/output/artifacts are shared with the host profile;
+  sandbox stop and command admission cover both session and coding launches.
+- **Optional Linux process sandbox.** `stitchkit/agent-runtime/sandbox` supplies a Bubblewrap
+  backend, reusable byte-file templates, durable workspace reconnect and bounded command execution.
+  Network namespaces deny direct egress; an explicit HTTP Unix-socket gateway brokers configured
+  origin headers on the host. Existing coding tools remain unchanged. See the sandbox guide for
+  platform requirements, trusted-upstream and resource-isolation limits. → ADR 0181
+- **Durable once-seeding of user-role instructions.** `composeAgentPrompt` reports user-role
+  sections separately and the runtime seeds them into durable history once; a retry or replay writes
+  one copy, and a history replacement does not resurrect them. → ADR 0178
+- **The parent owns a child's blocking events.** `AgentChildManager` presents a child's approval or
+  input request on the parent once (child-local ids rewritten to parent-scoped ids, unanswered
+  siblings retained) and routes approval decisions or JSON input values back. A child harness uses
+  `blockingPresentation: 'parent'` to keep requests out of its presentation stream. The
+  `subagent` tool result and `list_agents` are proven to read one source. → ADR 0179
+- **A local durability port for tool bodies.** `createLocalStepDurability` over the store: `step(name,
+  fn)` replays recorded JSON results. `createAgentRuntime({ durability: true })` exposes
+  `step/sleep/waitFor` in mounted handler context; a factory can replace the port. Timers and
+  event waits preserve ledger facts across host-driven recovery, with optional external-write
+  notifications. In-flight maps are store-scoped; undecodable records fail closed. → ADR 0182
+- **External MCP and OpenAPI servers are consumable as typed tools.** The new server-only entrypoint
+  `stitchkit/tools/connections` provides `defineMcpClientConnection`, `defineOpenApiConnection` and
+  `mountConnections`: MCP over Streamable HTTP with an SSE fallback only on `400/404/405`,
+  per-call credential resolution, a typed `401` reauthorization cause while `403` passes through, OpenAPI
+  operations with bounded local references and qualified names, redirect refusal and a host guard
+  that remote specs cannot expand. Unsupported OpenAPI semantics are refused at mount. No peer
+  dependency enters `stitchkit/tools`. → ADR 0180
+- **Prompt sections declare their authority.** `AgentPromptSection.role` (default `system`) splits
+  framework policy from caller-supplied context; `composeAgentPrompt` reports user-role sections
+  separately and the runtime carries them into provider history ahead of the durable conversation,
+  so retrieved or tenant context can no longer sit at system authority. → ADR 0178
+- **Approval responses are authorized separately from the request.**
+  `createHeadlessAgentHarness` accepts `authorizeApprovalResponse`, a response-time policy that
+  judges the responder rather than the signature; a refusal is recorded as a durable
+  `approval/response-rejected` event with its reason and leaves the request pending for another
+  responder. Absent the policy, behaviour is unchanged. → ADR 0177
+- **Tool compositions replace and disable built-ins by name.** `defineToolRegistry({ defaults })`
+  declares the runtime surface once and refuses a `replace`/`disable` name outside those defaults
+  instead of leaving a default silently in place; `mountAgent` accepts a `registry` in place of
+  `runtimeTools`. → ADR 0176
+- **Coding discovery names the paths the host refuses.** `list_directory`, `glob` and
+  `search_files` gained an optional `denied` list of `{ path, kind }` — with
+  `deniedTruncated` when the list is cut — present only when there is something to report.
+  A path rejected by `authorizePath` used to vanish exactly like an absent one, so a model
+  read "the host hid this" as "this is not here". Only the name and kind travel, never
+  content, and `search_files` keeps the host's refusals apart from the include pattern's own.
+
+### Fixed
+
+- **`read_file` resumes on a UTF-8 boundary.** A byte window whose end fell inside a
+  multi-byte character made the fatal decoder throw, surfacing as `INTERNAL_SERVER_ERROR`
+  on some offsets and succeeding on others for the same file. The window is now aligned to a
+  character boundary — extended to the whole character when the window is smaller than one —
+  and `nextOffset` names the start of the next character, so successive windows stitch back
+  to the original file. A caller-supplied `offset` inside a character now resumes at the next
+  character boundary instead of throwing the same unnamed refusal. A file that is genuinely
+  not UTF-8 is still refused. `run_command`'s retained output is aligned the same way, on the
+  artifact path and without artifacts, so a byte budget no longer leaves a replacement glyph.
+- **Connections enforce their declared network bounds.** `defineMcpClientConnection`'s
+  `allowHosts` is now honoured on every MCP request, and a legacy-SSE server's discovered
+  `endpoint` is host-fenced before the client POSTs a bearer token to it; requests carry a
+  default timeout and responses are size-bounded, with `ConnectionBudget.maxSchemaBytes`
+  enforced over the mounted foreign schemas. SSE framing also accepts CRLF, and a non-2xx SSE
+  POST no longer leaves an orphaned pending response.
+- **Coding discovery scopes what it reports.** `glob` now scopes its `denied` entries to the
+  requested path, and a re-seeded conversation whose compacted seed survived without a receipt
+  resolves idempotently instead of failing a `UNIQUE` constraint.
+- **Journal event search treats a multi-word query as all words, not one phrase.**
+  `createSqliteAgentEventSearch` quoted the whole query, so a query of two or more words
+  matched only the adjacent phrase and returned `[]` when the words merely occurred — a
+  silent zero read as "the journal never said this". Terms are now quoted individually and
+  joined with `AND`, still escaped as literal text, and a query that reduces to no terms is
+  an error rather than an empty result.
+
 ## [0.88.0] — 2026-09-10
 
 ### ⚠️ Breaking changes

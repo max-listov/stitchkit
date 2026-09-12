@@ -48,6 +48,12 @@ describe('event search under a louder neighbour', () => {
       payload: { text: 'one needle' },
     });
     const search = createSqliteAgentEventSearch({ database });
+    await expect(
+      search({ requestingConversationId: 'quiet', query: '--- !!!' }),
+    ).rejects.toThrow('searchable terms');
+    expect(
+      await search({ requestingConversationId: 'quiet', query: '--- needle !!!' }),
+    ).toHaveLength(1);
     expect(
       await search({ requestingConversationId: 'quiet', query: 'needle', limit: 20 }),
     ).toEqual([expect.objectContaining({ conversationId: 'quiet', seq: 1 })]);
@@ -64,6 +70,32 @@ describe('event search under a louder neighbour', () => {
     expect(
       await shut({ requestingConversationId: 'quiet', query: 'needle', limit: 20 }),
     ).toEqual([expect.objectContaining({ conversationId: 'quiet', seq: 1 })]);
+    await runtime.close();
+  });
+
+  test('a multi-word query means every word, not one exact phrase', async () => {
+    const database = sqlite();
+    const runtime = createSqliteAgentRuntimeStore({ database });
+    await runtime.store.appendEvent({
+      conversationId: 'talk',
+      kind: 'state/set',
+      payload: { text: 'the deploy happened before the review' },
+    });
+    await runtime.store.appendEvent({
+      conversationId: 'talk',
+      kind: 'state/set',
+      payload: { text: 'unrelated shipping note' },
+    });
+    const search = createSqliteAgentEventSearch({ database });
+    // Both words occur in the first event, but not adjacent and not in order:
+    // the phrase-only query answered `[]` here, which reads as "never said".
+    expect(await search({ requestingConversationId: 'talk', query: 'deploy review' })).toEqual(
+      [expect.objectContaining({ conversationId: 'talk', seq: 1 })],
+    );
+    // A query of only whitespace is an error, never a silent empty result.
+    await expect(search({ requestingConversationId: 'talk', query: '   ' })).rejects.toThrow(
+      TypeError,
+    );
     await runtime.close();
   });
 });

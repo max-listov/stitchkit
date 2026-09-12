@@ -16,6 +16,7 @@ import {
   AgentHistoryMutationSchema,
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
+  AgentSeedReceiptSchema,
   AgentStoredRunSchema,
   createAgentRuntimeStore,
 } from './store-driver';
@@ -32,6 +33,10 @@ import {
   createAgentRuntimeSqliteV2Tables,
   migrateAgentRuntimeSqliteV1ToV2,
 } from './store-migrations/v1-to-v2';
+import {
+  createAgentRuntimeSqliteV3Tables,
+  migrateAgentRuntimeSqliteV2ToV3,
+} from './store-migrations/v2-to-v3';
 
 export type { SqliteDatabase, SqliteStatement, SqliteValue } from '../internal/sqlite';
 
@@ -88,6 +93,11 @@ const AdmissionRowSchema = z.object({
   run_id: z.string(),
   assistant_message_id: z.string(),
 });
+const SeedRowSchema = z.object({
+  conversation_id: z.string(),
+  seed_key: z.string(),
+  message_ids: z.string(),
+});
 const MessageRowSchema = z.object({ payload: z.string() });
 const PositionedMessageRowSchema = z.object({ position: z.number().int().nonnegative() });
 const RecoverableRowSchema = z.object({
@@ -138,12 +148,13 @@ const ArchiveSpillRowSchema = z.object({
   payload: z.instanceof(Uint8Array),
 });
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const TABLES = [
   'stitchkit_agent_runtime_heads',
   'stitchkit_agent_runtime_runs',
   'stitchkit_agent_runtime_admissions',
   'stitchkit_agent_runtime_messages',
+  'stitchkit_agent_runtime_seeds',
   'stitchkit_agent_runtime_events',
   'stitchkit_agent_runtime_projections',
   'stitchkit_agent_runtime_spills',
@@ -275,6 +286,13 @@ export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
       const version = Number(MetaRowSchema.parse(versionRow).value);
       if (version === 1) {
         migrateAgentRuntimeSqliteV1ToV2(database);
+        migrateAgentRuntimeSqliteV2ToV3(database);
+        initializeSqliteConversationPurge(database);
+        database.exec('COMMIT');
+        return;
+      }
+      if (version === 2) {
+        migrateAgentRuntimeSqliteV2ToV3(database);
         initializeSqliteConversationPurge(database);
         database.exec('COMMIT');
         return;
@@ -336,9 +354,10 @@ export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
       );
     `);
     createAgentRuntimeSqliteV2Tables(database);
+    createAgentRuntimeSqliteV3Tables(database);
     database
       .prepare(
-        "INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '2')",
+        "INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '3')",
       )
       .run();
     initializeSqliteConversationPurge(database);
@@ -587,6 +606,40 @@ export function createSqliteAgentRuntimeStore(
           );
       },
     },
+    seeds: {
+      async load(transaction, input) {
+        const value = transaction
+          .prepare(`
+            SELECT conversation_id, seed_key, message_ids
+            FROM stitchkit_agent_runtime_seeds
+            WHERE conversation_id = ? AND seed_key = ?
+          `)
+          .get(input.conversationId, input.seedKey);
+        if (missing(value)) return undefined;
+        const row = SeedRowSchema.parse(value);
+        return AgentSeedReceiptSchema.parse({
+          schemaVersion: 1,
+          conversationId: row.conversation_id,
+          seedKey: row.seed_key,
+          messageIds: z.array(z.string().min(1)).parse(parseJson(row.message_ids)),
+        });
+      },
+      async create(transaction, rawReceipt) {
+        const receipt = AgentSeedReceiptSchema.parse(rawReceipt);
+        transaction
+          .prepare(`
+            INSERT INTO stitchkit_agent_runtime_seeds (
+              conversation_id, seed_key, message_ids, created_at
+            ) VALUES (?, ?, ?, ?)
+          `)
+          .run(
+            receipt.conversationId,
+            receipt.seedKey,
+            encodeJson(receipt.messageIds),
+            new Date().toISOString(),
+          );
+      },
+    },
     history: {
       async load(transaction, conversationId) {
         return transaction
@@ -599,6 +652,18 @@ export function createSqliteAgentRuntimeStore(
             AgentMessageSchema.parse(parseJson(MessageRowSchema.parse(value).payload)),
           );
       },
+      async hasMessage(transaction, input) {
+        // Deliberately ignores `active`: a compacted seed still occupies its
+        // `(conversation_id, id)` row, and the seed write is idempotent against
+        // it whether or not the active view shows it.
+        const row = transaction
+          .prepare(`
+            SELECT count(*) AS count FROM stitchkit_agent_runtime_messages
+            WHERE conversation_id = ? AND id = ?
+          `)
+          .get(input.conversationId, input.messageId);
+        return CountRowSchema.parse(row).count > 0;
+      },
       async apply(transaction, rawMutation) {
         const mutation = AgentHistoryMutationSchema.parse(rawMutation);
         const message =
@@ -606,7 +671,36 @@ export function createSqliteAgentRuntimeStore(
             ? mutation.input
             : mutation.type === 'upsert-assistant'
               ? mutation.message
-              : mutation.summary;
+              : mutation.type === 'seed'
+                ? mutation.message
+                : mutation.summary;
+        if (mutation.type === 'seed') {
+          // Prepended, so user instructions lead the conversation they seed.
+          // The reducer emits these front-most-first, so each prepend lands
+          // ahead of the previous one and the persisted order matches.
+          transaction
+            .prepare(`
+              UPDATE stitchkit_agent_runtime_messages SET position = position + 1
+              WHERE conversation_id = ?
+            `)
+            .run(mutation.message.conversationId);
+          transaction
+            .prepare(`
+              INSERT INTO stitchkit_agent_runtime_messages
+                (conversation_id, id, position, active, payload)
+              VALUES (?, ?, 0, 1, ?)
+              ON CONFLICT (conversation_id, id) DO UPDATE SET
+                position = excluded.position,
+                active = excluded.active,
+                payload = excluded.payload
+            `)
+            .run(
+              mutation.message.conversationId,
+              mutation.message.id,
+              encodeJson(mutation.message),
+            );
+          return;
+        }
         if (mutation.type === 'replace-compacted-range') {
           const parameters = mutation.replacedMessageIds;
           const rows = transaction

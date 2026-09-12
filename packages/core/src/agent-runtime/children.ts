@@ -1,128 +1,41 @@
 import { randomUUID } from 'node:crypto';
-import type { LanguageModelUsage } from 'ai';
-import { z } from 'zod';
+import { createChildBlockingRelay } from './child-blocking';
+import {
+  type AgentChildBudget,
+  AgentChildBudgetSchema,
+  type AgentChildHandle,
+  type AgentChildManager,
+  type AgentChildRecord,
+  AgentChildRecordSchema,
+  type AgentChildState,
+  AgentChildStateSchema,
+  parseChild,
+  usageNumbers,
+} from './children-contract';
 import { AgentConversationPurgedError } from './purge';
-import type { AgentRuntimeStopPolicy } from './runtime';
-import { normalizeSdkUsage } from './runtime-internals';
 import type { AgentUsage } from './schemas';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 import { type AgentStoreEventEnvelope, encodeAgentConversationArchive } from './store-events';
 
-export const AgentChildBudgetSchema = z
-  .object({
-    usd: z.number().positive().optional(),
-    tokens: z.int().positive().optional(),
-    milliseconds: z.int().positive().optional(),
-  })
-  .strict();
-export type AgentChildBudget = z.infer<typeof AgentChildBudgetSchema>;
-
-export const AgentChildStateSchema = z.enum([
-  'spawned',
-  'running',
-  'finished',
-  'stopped',
-  'lost',
-]);
-export type AgentChildState = z.infer<typeof AgentChildStateSchema>;
-
-export const AgentChildRecordSchema = z
-  .object({
-    parentConversationId: z.string().min(1),
-    childConversationId: z.string().min(1),
-    seedUptoSeq: z.int().nonnegative(),
-    state: AgentChildStateSchema,
-    budget: AgentChildBudgetSchema,
-    usage: z
-      .object({
-        tokens: z.int().nonnegative(),
-        usd: z.number().nonnegative(),
-        milliseconds: z.int().nonnegative(),
-      })
-      .strict(),
-    resultReference: z.string().optional(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })
-  .strict();
-export type AgentChildRecord = z.infer<typeof AgentChildRecordSchema>;
-
-const ChildRowSchema = z.object({
-  parent_conversation_id: z.string(),
-  child_conversation_id: z.string(),
-  seed_upto_seq: z.int().nonnegative(),
-  state: AgentChildStateSchema,
-  budget_payload: z.string(),
-  usage_payload: z.string(),
-  result_reference: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-function parseChild(raw: unknown): AgentChildRecord {
-  const row = ChildRowSchema.parse(raw);
-  return AgentChildRecordSchema.parse({
-    parentConversationId: row.parent_conversation_id,
-    childConversationId: row.child_conversation_id,
-    seedUptoSeq: row.seed_upto_seq,
-    state: row.state,
-    budget: JSON.parse(row.budget_payload),
-    usage: JSON.parse(row.usage_payload),
-    ...(row.result_reference && { resultReference: row.result_reference }),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  });
-}
-
-function usageNumbers(usage: AgentUsage): { tokens?: number; usd?: number } {
-  const inputTokens = usage.inputTokens.value;
-  const outputTokens = usage.outputTokens.value;
-  return {
-    ...(inputTokens !== undefined && outputTokens !== undefined
-      ? { tokens: inputTokens + outputTokens }
-      : {}),
-    ...(usage.cost?.currency === 'USD' && usage.cost.value !== undefined
-      ? { usd: usage.cost.value }
-      : {}),
-  };
-}
-
-export interface AgentChildHandle {
-  result: Promise<{ resultReference?: string }>;
-  stopPolicy(name: string): void | Promise<void>;
-  sendMessage?(input: unknown): void | Promise<void>;
-  reachable?(): boolean | Promise<boolean>;
-}
-
-export interface AgentChildManager {
-  spawnChild(request: {
-    parentConversationId: string;
-    childConversationId?: string;
-    seedUptoSeq?: number;
-    childInput: unknown;
-    budget: AgentChildBudget;
-  }): Promise<AgentChildRecord>;
-  listChildren(parentConversationId: string): readonly AgentChildRecord[];
-  recordStepUsage(request: {
-    childConversationId: string;
-    usage: AgentUsage;
-    elapsedMs: number;
-  }): Promise<{
-    stop: boolean;
-    /** Whether a stop was delivered to the child's host from this process. */
-    enforced: boolean;
-    policyName?: string;
-    overrun: { tokens: number; usd: number; milliseconds: number };
-  }>;
-  stopChildren(parentConversationId: string): Promise<void>;
-  sendMessage(
-    parentConversationId: string,
-    childConversationId: string,
-    input: unknown,
-  ): Promise<void>;
-  interruptChild(parentConversationId: string, childConversationId: string): Promise<void>;
-  waitChild(childConversationId: string): Promise<void>;
-}
+export type {
+  AgentChildBlockingDecision,
+  AgentChildBlockingEvent,
+  AgentChildBlockingKind,
+  AgentChildBlockingSource,
+  AgentChildBudget,
+  AgentChildHandle,
+  AgentChildManager,
+  AgentChildRecord,
+  AgentChildState,
+} from './children-contract';
+export {
+  AgentChildBlockingEventSchema,
+  AgentChildBlockingKindSchema,
+  AgentChildBlockingSourceSchema,
+  AgentChildBudgetSchema,
+  AgentChildRecordSchema,
+  AgentChildStateSchema,
+} from './children-contract';
 
 export function createSqliteAgentChildManager(input: {
   sqlite: SqliteAgentRuntimeStore;
@@ -141,7 +54,6 @@ export function createSqliteAgentChildManager(input: {
   const store = input.sqlite.store;
   const handles = new Map<string, AgentChildHandle>();
   const settlements = new Map<string, Promise<void>>();
-
   const currentState = (childConversationId: string): AgentChildState | undefined => {
     const raw = database
       .prepare(
@@ -324,48 +236,70 @@ export function createSqliteAgentChildManager(input: {
       childInput: request.childInput,
       budget,
     });
-    await input.sqlite.transaction(async (scope) => {
-      scope.database
-        .prepare(`
+    void handle.result.catch(() => undefined);
+    try {
+      await input.sqlite.transaction(async (scope) => {
+        scope.database
+          .prepare(`
           INSERT INTO stitchkit_agent_runtime_children (
             parent_conversation_id, child_conversation_id, seed_upto_seq, state,
             budget_payload, usage_payload, result_reference, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
         `)
-        .run(
-          record.parentConversationId,
-          record.childConversationId,
-          record.seedUptoSeq,
-          record.state,
-          JSON.stringify(record.budget),
-          JSON.stringify(record.usage),
-          createdAt,
-          createdAt,
-        );
-      await scope.appendEvent({
-        conversationId: record.parentConversationId,
-        kind: 'child/spawned',
-        occurredAt: createdAt,
-        payload: { childConversationId, seedUptoSeq, budget },
+          .run(
+            record.parentConversationId,
+            record.childConversationId,
+            record.seedUptoSeq,
+            record.state,
+            JSON.stringify(record.budget),
+            JSON.stringify(record.usage),
+            createdAt,
+            createdAt,
+          );
+        await scope.appendEvent({
+          conversationId: record.parentConversationId,
+          kind: 'child/spawned',
+          occurredAt: createdAt,
+          payload: { childConversationId, seedUptoSeq, budget },
+        });
       });
-    });
+      await updateState(record, 'running');
+    } catch (cause) {
+      try {
+        await handle.stopPolicy('spawn-persistence-failed');
+      } catch (cleanup) {
+        throw new AggregateError([cause, cleanup], 'Child persistence and stop both failed');
+      }
+      try {
+        if (isLive(childConversationId))
+          await updateState(record, 'lost', undefined, { reason: 'spawn-persistence-failed' });
+      } catch (cleanup) {
+        throw new AggregateError(
+          [cause, cleanup],
+          'Child stopped but persistence reconciliation failed',
+        );
+      }
+      throw cause;
+    }
     handles.set(childConversationId, handle);
-    await updateState(record, 'running');
     // A late `result` after the cascade has already recorded `stopped` or
     // `lost` must not rewrite that: only a live child settles.
     const settlement = handle.result.then(
       async (result) => {
         handles.delete(childConversationId);
+        retireChildBlocking(childConversationId);
         if (settleable(childConversationId)) {
           await updateState(record, 'finished', result.resultReference);
         }
       },
       async () => {
         handles.delete(childConversationId);
+        retireChildBlocking(childConversationId);
         if (settleable(childConversationId)) await updateState(record, 'stopped');
       },
     );
     settlements.set(childConversationId, settlement);
+    void settlement.catch(() => undefined);
     return { ...record, state: 'running', updatedAt: now().toISOString() };
   };
 
@@ -485,6 +419,7 @@ export function createSqliteAgentChildManager(input: {
               stopDurationMs: Math.max(0, performance.now() - startedAt),
             });
           }
+          retireChildBlocking(record.childConversationId);
           return;
         }
         await bounded(
@@ -495,6 +430,7 @@ export function createSqliteAgentChildManager(input: {
         await updateState(record, 'stopped', undefined, {
           stopDurationMs: Math.max(0, performance.now() - startedAt),
         });
+        retireChildBlocking(record.childConversationId);
       }),
     );
   };
@@ -511,6 +447,9 @@ export function createSqliteAgentChildManager(input: {
     if (!handle) throw new TypeError('Child host handle is unavailable');
     return { child, handle };
   };
+
+  const { retireChildBlocking, listChildBlocking, respondToChildBlocking } =
+    createChildBlockingRelay({ store, now, handles, listChildren, activeChild, bounded });
 
   const sendMessage = async (
     parentConversationId: string,
@@ -535,6 +474,7 @@ export function createSqliteAgentChildManager(input: {
       policyName: 'parent-interrupt',
       stopDurationMs: Math.max(0, performance.now() - startedAt),
     });
+    retireChildBlocking(childConversationId);
   };
 
   const waitChild = async (childConversationId: string): Promise<void> => {
@@ -549,43 +489,9 @@ export function createSqliteAgentChildManager(input: {
     sendMessage,
     interruptChild,
     waitChild,
+    listChildBlocking,
+    respondToChildBlocking,
   };
 }
 
-/**
- * The child runtime's own budget policy.
- *
- * `recordStepUsage` measures and decides; something has to call it at every
- * step boundary of the child's run, and that is the child's runtime. Given to
- * `createAgentRuntime({ loop: { stopPolicies: [agentChildBudgetStopPolicy(…)] } })`
- * in the host that runs the child, it records the last step's usage and stops
- * the run as `policy_stop` (`child-budget`) when the budget is spent — the
- * enforcement the guide promises, in the package rather than in every host.
- */
-export function agentChildBudgetStopPolicy(input: {
-  manager: Pick<AgentChildManager, 'recordStepUsage'>;
-  childConversationId: string;
-  /** Cost of a step, when a USD budget is set; tokens come from the step itself. */
-  cost?: (step: { usage: LanguageModelUsage }) => AgentUsage['cost'];
-}): AgentRuntimeStopPolicy {
-  let stepsSeen = 0;
-  let lastBoundary = performance.now();
-  return {
-    name: 'child-budget',
-    when: async ({ steps }) => {
-      const step = steps.at(-1);
-      if (!step || steps.length <= stepsSeen) return false;
-      stepsSeen = steps.length;
-      const elapsedMs = Math.max(0, performance.now() - lastBoundary);
-      lastBoundary = performance.now();
-      const usage = normalizeSdkUsage(step.usage);
-      const cost = input.cost?.({ usage: step.usage });
-      const boundary = await input.manager.recordStepUsage({
-        childConversationId: input.childConversationId,
-        usage: { ...usage, ...(cost && { cost }) },
-        elapsedMs,
-      });
-      return boundary.stop;
-    },
-  };
-}
+export { agentChildBudgetStopPolicy } from './child-budget-policy';

@@ -13,23 +13,13 @@ import {
   AgentStoreEventPageSchema,
   createAgentRuntimeStore,
 } from 'stitchkit/agent-runtime';
+import { decodePayload, encodePayload, storageId } from './adapter-codec';
+import { createPrismaSeedDriver } from './adapter-seeds';
 import { Prisma, PrismaClient } from './generated/client';
 
 export interface PrismaAgentStoreFixture {
   prisma: PrismaClient;
   store: ReturnType<typeof createAgentRuntimeStore<Prisma.TransactionClient>>;
-}
-
-function encodePayload(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
-}
-
-function decodePayload(value: string): unknown {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-}
-
-function storageId(value: string): string {
-  return Buffer.from(value, 'utf8').toString('base64url');
 }
 
 function recoveryCursor(conversationId: string, runId: string): string {
@@ -305,7 +295,18 @@ export function createPrismaAgentStoreFixture(input: {
         });
       },
     },
+    seeds: createPrismaSeedDriver(),
     history: {
+      async hasMessage(transaction, input) {
+        return (
+          (await transaction.agentRuntimeMessage.count({
+            where: {
+              conversationId: storageId(input.conversationId),
+              id: storageId(input.messageId),
+            },
+          })) > 0
+        );
+      },
       async load(transaction, conversationId) {
         const rows = await transaction.agentRuntimeMessage.findMany({
           where: { conversationId: storageId(conversationId), active: true },
@@ -318,7 +319,7 @@ export function createPrismaAgentStoreFixture(input: {
         const message =
           mutation.type === 'admit'
             ? mutation.input
-            : mutation.type === 'upsert-assistant'
+            : mutation.type === 'upsert-assistant' || mutation.type === 'seed'
               ? mutation.message
               : mutation.summary;
         const conversationStorageId = storageId(message.conversationId);
@@ -372,13 +373,16 @@ export function createPrismaAgentStoreFixture(input: {
           } else {
             const last = await transaction.agentRuntimeMessage.findFirst({
               where: { conversationId: conversationStorageId },
-              orderBy: { position: 'desc' },
+              orderBy: { position: mutation.type === 'seed' ? 'asc' : 'desc' },
             });
             await transaction.agentRuntimeMessage.create({
               data: {
                 conversationId: conversationStorageId,
                 id: storageId(message.id),
-                position: (last?.position ?? -1) + 1,
+                position:
+                  mutation.type === 'seed'
+                    ? (last?.position ?? 0) - 1
+                    : (last?.position ?? -1) + 1,
                 payload: encodePayload(message),
               },
             });

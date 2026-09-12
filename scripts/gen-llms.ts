@@ -67,6 +67,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'process-local resources, readiness, admission, schedules, projections and optional provider adapters',
   ],
   [
+    'sandbox.md',
+    'Optional process sandbox',
+    'Linux Bubblewrap sessions, durable workspace reconnect, network policy and host credential brokering',
+  ],
+  [
     'primitives.md',
     'Generic application primitives',
     'lifecycle transitions, owner scope, permissions, exact money and quantities, deadlines, audit, delivery and exports — declared, not persisted',

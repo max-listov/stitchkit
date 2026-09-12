@@ -7,6 +7,7 @@ import type {
   AgentCodingToolDefinition,
   AgentCodingToolLimits,
 } from './coding-tool-contract';
+import { CodingDeniedEntrySchema } from './coding-tool-contract';
 import {
   authorizeCodingPathChain,
   authorizeCodingTool,
@@ -47,6 +48,12 @@ const ListOutputSchema = z
         .strict(),
     ),
     truncated: z.boolean(),
+    /**
+     * Direct children the host's path policy refused. Present only when there
+     * were any: their absence is what made a denied file look absent.
+     */
+    denied: z.array(CodingDeniedEntrySchema).optional(),
+    deniedTruncated: z.boolean().optional(),
   })
   .strict();
 
@@ -62,6 +69,9 @@ const GlobOutputSchema = z
     /** Directories skipped as noise; a zero result with a positive count is not "no files". */
     skippedDirectories: z.int().nonnegative(),
     scannedFiles: z.int().nonnegative(),
+    /** Entries the host's path policy refused while walking. Never content. */
+    denied: z.array(CodingDeniedEntrySchema).optional(),
+    deniedTruncated: z.boolean().optional(),
   })
   .strict();
 
@@ -151,6 +161,15 @@ export function createListingCodingTools(
           ...(entry.kind === 'directory' && excluded.has(entry.name) && { excluded: true }),
         })),
         truncated: listing.truncated,
+        // A denied child is real too, and printing nothing would make it
+        // indistinguishable from one that is not on the disk at all.
+        ...(listing.denied.length > 0 && {
+          denied: listing.denied.map((entry) => ({
+            path: relative === '.' ? entry.name : path.join(relative, entry.name),
+            kind: entry.kind,
+          })),
+          deniedTruncated: listing.deniedTruncated,
+        }),
       };
     },
   });
@@ -199,6 +218,15 @@ export function createListingCodingTools(
         .filter((candidate) => matcher.test(candidate.slice(prefix.length)))
         .sort();
       const paths = matched.slice(0, limits.maxSearchResults);
+      // A denied entry is only ours to report when it sits under the same
+      // `path` the caller asked about. The walk covers the whole tree, so
+      // without this a glob scoped to `src` named refusals at the root and in
+      // unrelated subtrees the caller never asked to see.
+      const scopedDenied = scan.denied.filter((entry) => entry.relative.startsWith(prefix));
+      const denied = scopedDenied.slice(0, limits.maxSearchResults).map((entry) => ({
+        path: entry.relative,
+        kind: entry.kind,
+      }));
       return {
         paths,
         // Two different facts, reported separately: the tree was not fully
@@ -208,6 +236,11 @@ export function createListingCodingTools(
         resultTruncated: matched.length > paths.length,
         skippedDirectories: scan.skippedDirectories,
         scannedFiles: scan.files.length,
+        // A denied path is not a missing one: name it rather than let it vanish.
+        ...(denied.length > 0 && {
+          denied,
+          deniedTruncated: scan.deniedTruncated || scopedDenied.length > denied.length,
+        }),
       };
     },
   });

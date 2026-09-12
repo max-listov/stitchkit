@@ -22,6 +22,11 @@ export const ENTRYPOINTS = [
   { subpath: './tools', source: 'src/tools.ts', browser: false },
   { subpath: './tools/contract', source: 'src/tools-contract.ts', browser: true },
   { subpath: './tools/invoker', source: 'src/tool-invoker.ts', browser: false },
+  {
+    subpath: './tools/connections',
+    source: 'src/tools/connections/index.ts',
+    browser: false,
+  },
   { subpath: './cli', source: 'src/cli.ts', browser: false },
   { subpath: './remote', source: 'src/remote.ts', browser: true },
   { subpath: './contract', source: 'src/contract/index.ts', browser: true },
@@ -29,6 +34,11 @@ export const ENTRYPOINTS = [
   { subpath: './server', source: 'src/server/index.ts', browser: false },
   { subpath: './observability', source: 'src/observability/index.ts', browser: false },
   { subpath: './agent-runtime', source: 'src/agent-runtime.ts', browser: false },
+  {
+    subpath: './agent-runtime/sandbox',
+    source: 'src/agent-runtime-sandbox.ts',
+    browser: false,
+  },
   {
     subpath: './agent-runtime/testing',
     source: 'src/agent-runtime-testing.ts',

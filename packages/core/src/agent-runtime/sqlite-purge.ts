@@ -7,6 +7,7 @@ const OWNED_TABLES = [
   'stitchkit_agent_runtime_projections',
   'stitchkit_agent_runtime_events',
   'stitchkit_agent_runtime_messages',
+  'stitchkit_agent_runtime_seeds',
   'stitchkit_agent_runtime_admissions',
   'stitchkit_agent_runtime_runs',
   'stitchkit_agent_runtime_heads',

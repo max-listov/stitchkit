@@ -14,10 +14,23 @@ import {
 } from './harness-resources';
 import { composeAgentPrompt } from './prompt';
 import { createAgentRuntime } from './runtime';
-import type { AgentSnapshot } from './schemas';
+import type { AgentMessage, AgentSnapshot } from './schemas';
 
 export * from './harness-contract';
 export * from './harness-file-resources';
+
+/**
+ * The response-time policy refused this responder. The pending request is left
+ * in place, so a different responder may still answer it. → ADR 0177
+ */
+export class AgentHarnessApprovalRejectedError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(`Approval response rejected: ${reason}`);
+    this.name = 'AgentHarnessApprovalRejectedError';
+    this.reason = reason;
+  }
+}
 
 function activeRunId(snapshot: AgentSnapshot): string {
   const active = snapshot.runs.filter(
@@ -49,6 +62,7 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
     onProfile,
     onProfileError,
     publish: applicationPublish,
+    blockingPresentation = 'local',
     ...runtimeConfig
   } = config;
   const limits = resolveHarnessLimits(inputLimits);
@@ -89,7 +103,21 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
     return emitting;
   };
 
-  const publish: AgentRuntimePublisher = async (event) => {
+  const presentationMessage = (message: AgentMessage): AgentMessage =>
+    blockingPresentation === 'parent'
+      ? {
+          ...message,
+          parts: message.parts.filter((part) => part.type !== 'tool-approval-request'),
+        }
+      : message;
+  const publish: AgentRuntimePublisher = async (rawEvent) => {
+    let event = rawEvent;
+    if (
+      blockingPresentation === 'parent' &&
+      (event.type === 'assistant-checkpoint' || event.type === 'terminal')
+    ) {
+      event = { ...event, message: presentationMessage(event.message) };
+    }
     try {
       await applicationPublish?.(event);
     } finally {
@@ -106,7 +134,7 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
     ...runtimeConfig,
     models,
     publish,
-    prompt: async ({ context, signal, model, snapshot }) => {
+    prompt: async ({ context, signal, model, snapshot, event }) => {
       const loaded = validateHarnessResources(
         await resources.load({ context, signal, model, snapshot }),
         limits,
@@ -137,6 +165,7 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
       return prompt({
         context,
         signal,
+        event,
         budget: await promptBudget({
           context,
           contextWindow: model.descriptor.contextWindow,
@@ -194,7 +223,10 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
 
   return {
     ...runtime,
-    snapshot: (conversationId) => config.store.loadSnapshot(conversationId),
+    snapshot: async (conversationId) => {
+      const snapshot = await config.store.loadSnapshot(conversationId);
+      return { ...snapshot, messages: snapshot.messages.map(presentationMessage) };
+    },
     subscribe(listener) {
       subscribers.add(listener);
       return () => subscribers.delete(listener);
@@ -206,6 +238,38 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
       );
       if (pending.length !== 1) {
         throw new Error('Approval request is missing, stale or already answered');
+      }
+      const request = pending[0];
+      if (!request) {
+        throw new Error('Approval request is missing, stale or already answered');
+      }
+      const authorization = config.authorizeApprovalResponse
+        ? await config.authorizeApprovalResponse({
+            responder: input.context,
+            conversationId: input.conversationId,
+            request: {
+              approvalId: request.approvalId,
+              callId: request.callId,
+              toolName: request.toolName,
+              input: request.input,
+            },
+            approved: input.approved,
+          })
+        : ({ status: 'allowed' } as const);
+      if (authorization.status === 'rejected') {
+        // The policy judged the responder, not the approval: record the refusal
+        // and leave the request pending so a valid responder can still answer.
+        await runtimeConfig.store.appendEvent({
+          conversationId: input.conversationId,
+          kind: 'approval/response-rejected',
+          payload: {
+            approvalId: request.approvalId,
+            callId: request.callId,
+            toolName: request.toolName,
+            reason: authorization.reason,
+          },
+        });
+        throw new AgentHarnessApprovalRejectedError(authorization.reason);
       }
       const ticket = runtime.submit({
         conversationId: input.conversationId,

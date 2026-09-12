@@ -31,11 +31,20 @@ export type AgentTokenCount = z.infer<typeof AgentTokenCountSchema>;
 export interface AgentPromptSectionContext<CONTEXT> {
   context: CONTEXT;
   signal: AbortSignal;
+  event: 'session.started' | 'turn.started';
 }
 
 export interface AgentPromptSection<CONTEXT> {
   name: string;
   stability: 'stable' | 'dynamic';
+  /**
+   * Authority of this section. `system` (default) is framework policy: it stays
+   * outside history and is rebuilt on every call. `user` is context an
+   * application, a provider or a memory produced — it reaches the model as
+   * ordinary user history, ahead of the durable conversation, never as system
+   * authority. → ADR 0178
+   */
+  role?: 'system' | 'user';
   render(input: AgentPromptSectionContext<CONTEXT>): string | Promise<string>;
   estimateTokens?(text: string): AgentTokenCount | Promise<AgentTokenCount>;
 }
@@ -50,8 +59,24 @@ export interface AgentPromptBudget {
 
 export interface ComposedAgentPrompt {
   instructions: Instructions;
-  sections: readonly { name: string; stability: 'stable' | 'dynamic'; text: string }[];
+  sections: readonly {
+    name: string;
+    stability: 'stable' | 'dynamic';
+    role: 'system' | 'user';
+    text: string;
+  }[];
+  /**
+   * User-role sections, in declaration order. They are carried to the model as
+   * user history before the durable conversation, so `instructions` never
+   * contains them. Blank sections materialize nothing.
+   */
+  userInstructions?: readonly { name: string; text: string }[];
   instructionTokens: AgentTokenCount;
+  userInstructionTokens?: AgentTokenCount;
+  /** Reconcile the reservation after the runtime atomically seeds durable history. */
+  finalizeSeed?(
+    inserted: boolean,
+  ): Pick<ComposedAgentPrompt, 'contextDecision' | 'availableHistoryTokens'>;
   availableHistoryTokens?: number;
   contextDecision: 'fits' | 'requires-compaction' | 'oversized' | 'unavailable';
 }
@@ -242,6 +267,7 @@ export async function selectAgentHistory(
 export interface ComposeAgentPromptOptions<CONTEXT> {
   context: CONTEXT;
   signal: AbortSignal;
+  event?: 'session.started' | 'turn.started';
   budget?: AgentPromptBudget;
   historyTokens?: AgentTokenCount;
   oversizePolicy?: 'reject' | 'compact';
@@ -255,14 +281,30 @@ function knownValue(value: AgentTokenCount): number | undefined {
 
 export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSection<CONTEXT>[]) {
   return async (options: ComposeAgentPromptOptions<CONTEXT>): Promise<ComposedAgentPrompt> => {
-    const rendered: { name: string; stability: 'stable' | 'dynamic'; text: string }[] = [];
-    let total = 0;
-    let unavailable = false;
-    let estimated = false;
+    const event = z
+      .enum(['session.started', 'turn.started'])
+      .parse(options.event ?? 'turn.started');
+    const rendered: {
+      name: string;
+      stability: 'stable' | 'dynamic';
+      role: 'system' | 'user';
+      text: string;
+    }[] = [];
+    let systemTotal = 0;
+    let userTotal = 0;
+    let systemUnavailable = false;
+    let userUnavailable = false;
+    let systemEstimated = false;
+    let userEstimated = false;
 
     for (const section of sections) {
-      const text = await section.render({ context: options.context, signal: options.signal });
-      rendered.push({ name: section.name, stability: section.stability, text });
+      const role = section.role ?? 'system';
+      const text = await section.render({
+        context: options.context,
+        signal: options.signal,
+        event,
+      });
+      rendered.push({ name: section.name, stability: section.stability, role, text });
       // Parsed, like the per-message counts in `selectAgentHistory`: both come
       // from a consumer callback, and only one of them was checked. A
       // `3.5`-token section survived here and reached the window arithmetic.
@@ -273,16 +315,25 @@ export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSectio
         count = AgentTokenCountSchema.parse(await options.estimateFallback(text));
       } else count = { provenance: 'unavailable' };
       const value = knownValue(count);
-      if (value === undefined) unavailable = true;
-      else total += value;
-      if (count.provenance === 'estimated') estimated = true;
+      if (role === 'user') {
+        if (value === undefined) userUnavailable = true;
+        else userTotal += value;
+        if (count.provenance === 'estimated') userEstimated = true;
+      } else {
+        if (value === undefined) systemUnavailable = true;
+        else systemTotal += value;
+        if (count.provenance === 'estimated') systemEstimated = true;
+      }
     }
 
     // A sum across sections, so `computed` — see the same call in
     // `selectAgentHistory`.
-    const instructionTokens: AgentTokenCount = unavailable
+    const instructionTokens: AgentTokenCount = systemUnavailable
       ? { provenance: 'unavailable' }
-      : { value: total, provenance: estimated ? 'estimated' : 'computed' };
+      : { value: systemTotal, provenance: systemEstimated ? 'estimated' : 'computed' };
+    const userInstructionTokens: AgentTokenCount = userUnavailable
+      ? { provenance: 'unavailable' }
+      : { value: userTotal, provenance: userEstimated ? 'estimated' : 'computed' };
     let availableHistoryTokens: number | undefined;
     let contextDecision: ComposedAgentPrompt['contextDecision'] = 'unavailable';
     if (options.budget) {
@@ -328,13 +379,39 @@ export function composeAgentPrompt<CONTEXT>(sections: readonly AgentPromptSectio
       }
     }
 
-    const instructionText = rendered.map((section) => section.text).join('\n\n');
+    const instructionText = rendered
+      .filter((section) => section.role === 'system')
+      .map((section) => section.text)
+      .join('\n\n');
+    const userInstructions = rendered
+      .filter((section) => section.role === 'user' && section.text.trim().length > 0)
+      .map((section) => ({ name: section.name, text: section.text }));
     return {
       instructions: options.adaptInstructions
         ? await options.adaptInstructions(instructionText)
         : instructionText,
       sections: rendered,
+      userInstructions,
       instructionTokens,
+      userInstructionTokens,
+      finalizeSeed: (inserted) => {
+        const seedTokens = inserted ? knownValue(userInstructionTokens) : 0;
+        if (availableHistoryTokens === undefined || seedTokens === undefined)
+          return { contextDecision: 'unavailable' };
+        const available = availableHistoryTokens - seedTokens;
+        const history = options.historyTokens ? knownValue(options.historyTokens) : undefined;
+        const decision =
+          history === undefined
+            ? 'unavailable'
+            : available < 0
+              ? 'oversized'
+              : history <= available
+                ? 'fits'
+                : options.oversizePolicy === 'compact'
+                  ? 'requires-compaction'
+                  : 'oversized';
+        return { availableHistoryTokens: available, contextDecision: decision };
+      },
       contextDecision,
       ...(availableHistoryTokens !== undefined && { availableHistoryTokens }),
     };

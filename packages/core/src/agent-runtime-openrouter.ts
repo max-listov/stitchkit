@@ -300,14 +300,14 @@ function readUpstreamProvider(metadata: unknown): string | undefined {
 }
 
 /** Same rule as `normalizeSdkUsage`: a non-integer is not a token count. */
-function reported(value: number | undefined): AgentUsage['inputTokens'] {
-  return value === undefined || !Number.isSafeInteger(value) || value < 0
+function reported(value: unknown): AgentUsage['inputTokens'] {
+  return typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0
     ? { provenance: 'unavailable' }
     : { value, provenance: 'provider-reported' };
 }
 
 function reportedUsd(value: number | undefined): AgentUsage['cost'] {
-  return value === undefined
+  return value === undefined || !Number.isFinite(value) || value < 0
     ? { provenance: 'unavailable' }
     : { value, currency: 'USD', provenance: 'provider-reported' };
 }
@@ -326,29 +326,25 @@ function readCost(metadata: unknown): number | undefined {
 /**
  * Read OpenRouter's token counts and cost out of one SDK step, with provenance.
  *
- * Exported, and that is the point of it existing here at all. The same function
- * has always run inside `openRouterProvider`, which means it was reachable only
- * by building the whole agent runtime — durable store, execution protocol and
- * recovery included. An application that calls `generateText` directly, and only
- * wants an honest number for its own ledger, could not reach it and derived it
- * again; two of them did, and more than half of the two files agree line for
- * line.
- *
- * What is easy to get wrong when deriving it again is not the arithmetic but the
- * provenance: a number the provider reported, a number nobody reported and a
- * zero are three different facts, and a value invented for a missing field is
- * the one that reads as true and is not.
+ * Raw step usage is authoritative: the SDK adapter substitutes zero for some
+ * absent counters. Normalized counters (including aggregate usage without raw)
+ * therefore cannot establish provider-reported provenance. Use each SDK step.
  */
 export function normalizeOpenRouterUsage(
   usage: LanguageModelUsage,
   providerMetadata: unknown,
 ): AgentUsage {
+  const raw = isRecord(usage.raw) ? usage.raw : {};
+  const prompt = isRecord(raw.prompt_tokens_details) ? raw.prompt_tokens_details : {};
+  const completion = isRecord(raw.completion_tokens_details)
+    ? raw.completion_tokens_details
+    : {};
   return {
-    inputTokens: reported(usage.inputTokens),
-    outputTokens: reported(usage.outputTokens),
-    reasoningTokens: reported(usage.outputTokenDetails.reasoningTokens),
-    cacheReadTokens: reported(usage.inputTokenDetails.cacheReadTokens),
-    cacheWriteTokens: reported(usage.inputTokenDetails.cacheWriteTokens),
+    inputTokens: reported(raw.prompt_tokens),
+    outputTokens: reported(raw.completion_tokens),
+    reasoningTokens: reported(completion.reasoning_tokens),
+    cacheReadTokens: reported(prompt.cached_tokens),
+    cacheWriteTokens: reported(prompt.cache_write_tokens),
     cost: reportedUsd(readCost(providerMetadata)),
   };
 }

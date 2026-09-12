@@ -12,9 +12,11 @@ import {
 } from 'ai';
 import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
 import { isAgentToolError } from '../tools/agent-tool-error';
+import { createToolDurabilityContext } from '../tools/durability-context';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
 import { deferredToolRepair } from './deferred-tools-internal';
+import { createLocalStepDurability } from './durability';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import { projectAgentHistoryDetailed } from './history';
 import type { AgentInjectableInput, AgentInjectionRegistry } from './injection';
@@ -91,6 +93,44 @@ function snapshotForRunPrompt(snapshot: AgentSnapshot, runId: string): AgentSnap
     messages: snapshot.messages.filter(
       (message) => !ownedIds.has(message.id) || eligibleIds.has(message.id),
     ),
+  });
+}
+
+/**
+ * The conversation-level key under which user-role prompt sections are seeded.
+ *
+ * One key per conversation: the ADR's once-seeding is "on the first turn", so a
+ * later set of definitions does not add a second copy — a changed brief belongs
+ * to whichever run seeded the conversation first. → ADR 0178
+ */
+const USER_INSTRUCTION_SEED_KEY = 'prompt.user-instructions';
+
+/**
+ * The durable identity of one seeded user-instruction message.
+ *
+ * Deterministic from the conversation and the section position, so a
+ * conversation imported from an archive — whose seed receipt was not part of
+ * that archive — matches the messages already in its history rather than
+ * seeding a second copy.
+ */
+function seededInstructionMessage(input: {
+  conversationId: string;
+  seedKey: string;
+  index: number;
+  text: string;
+  createdAt: string;
+}): AgentMessage {
+  return AgentMessageSchema.parse({
+    schemaVersion: 1,
+    id: createHash('sha256')
+      .update(`${input.conversationId}\u0000${input.seedKey}\u0000${input.index}`)
+      .digest('hex'),
+    conversationId: input.conversationId,
+    role: 'user',
+    status: 'committed',
+    parts: [{ type: 'text', text: input.text }],
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
   });
 }
 
@@ -535,16 +575,53 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         run,
         snapshot,
       });
-      const promptSnapshot = snapshotForRunPrompt(snapshot, run.id);
-      const [prompt, tools] = await Promise.all([
+      let promptSnapshot = snapshotForRunPrompt(snapshot, run.id);
+      const [composedPrompt, tools] = await Promise.all([
         config.prompt({
           context: input.context,
           signal: executionSignal,
+          event: promptSnapshot.runs[0]?.id === run.id ? 'session.started' : 'turn.started',
           model: selectedModel,
           snapshot: promptSnapshot,
         }),
         config.tools(runtimeContext),
       ]);
+      // User-role instructions are durable history, not a per-call prelude:
+      // seeded once under one conversation key and read back from the store, so
+      // compaction may summarize them, a clear removes them, and a retry or
+      // replay cannot append a second copy. → ADR 0178
+      let prompt = composedPrompt;
+      let userInstructionsInserted = false;
+      if (prompt.userInstructions && prompt.userInstructions.length > 0) {
+        const seededAt = now().toISOString();
+        const seeded = await config.store.seedConversationInput({
+          conversationId: run.conversationId,
+          seedKey: USER_INSTRUCTION_SEED_KEY,
+          inputs: prompt.userInstructions.map((section, index) =>
+            seededInstructionMessage({
+              conversationId: run.conversationId,
+              seedKey: USER_INSTRUCTION_SEED_KEY,
+              index,
+              text: section.text,
+              createdAt: seededAt,
+            }),
+          ),
+        });
+        const seededSnapshot = appliedSnapshot(seeded, 'user instruction seed');
+        const previousIds = new Set(snapshot.messages.map((message) => message.id));
+        userInstructionsInserted = seededSnapshot.messages.some(
+          (message) =>
+            !previousIds.has(message.id) &&
+            message.role === 'user' &&
+            message.runId === undefined,
+        );
+        snapshot = seededSnapshot;
+        observedVersion = snapshot.version;
+        run = findRun(snapshot.runs, run.id);
+        promptSnapshot = snapshotForRunPrompt(snapshot, run.id);
+      }
+      if (prompt.finalizeSeed)
+        prompt = { ...prompt, ...prompt.finalizeSeed(userInstructionsInserted) };
       // This runtime's own decision, taken before any provider call. It used to
       // land in the catch-all below and commit `provider_failure` — a durable
       // record blaming an upstream that was never contacted.
@@ -627,7 +704,11 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         });
         return [...detailed.messages];
       };
-      const history = await projectHistory(promptSnapshot);
+      const projectedHistory = await projectHistory(promptSnapshot);
+      // User-role instructions already live in that durable projection — they
+      // were seeded above and survive every retry of this run, so there is
+      // nothing to prepend here. → ADR 0178
+      const history: ModelMessage[] = [...projectedHistory];
       // `Instructions` is `string | SystemModelMessage | SystemModelMessage[]`,
       // so the composed prompt is normalised before the carried entries join it.
       const withCarriedSystem = (instructions: Instructions): Instructions => {
@@ -815,14 +896,43 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         const result = streamAgentTextBoundary<TOOLS>({
           model: fallbackModel,
           tools,
+          ...(config.durability && {
+            toolsContext: Object.fromEntries(
+              Object.keys(tools).map((toolName) => [
+                toolName,
+                createToolDurabilityContext((toolCallId, signal) => {
+                  const port = config.durability;
+                  if (typeof port === 'function')
+                    return port({
+                      store: config.store,
+                      conversationId: run.conversationId,
+                      runId: run.id,
+                      toolName,
+                      toolCallId,
+                      signal,
+                    });
+                  return createLocalStepDurability({
+                    store: config.store,
+                    conversationId: run.conversationId,
+                    runId: JSON.stringify([run.id, toolName, toolCallId]),
+                    signal,
+                  });
+                }),
+              ]),
+            ),
+          }),
           instructions: withCarriedSystem(prompt.instructions),
           messages: history,
           abortSignal: attemptSignal,
           maxRetries: 0,
           stopWhen: stopConditions,
           onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
+            idleDeadline.start();
             operationLifecycle.noteProviderCall(event.callId);
           },
+          onLanguageModelCallEnd: () => idleDeadline.stop(),
+          onToolExecutionStart: () => idleDeadline.suspend(),
+          onToolExecutionEnd: () => idleDeadline.resume(),
           repairToolCall: deferredToolRepair(config.loop?.prepareStep),
           ...(config.loop?.toolApproval && {
             toolApproval: config.loop.toolApproval,
