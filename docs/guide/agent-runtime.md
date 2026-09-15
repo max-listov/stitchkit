@@ -332,8 +332,11 @@ authorization payload, so no directory is created before a host approves it.
 
 **Every ordinary outcome is a refusal a model can act on** — a missing file is `NOT_FOUND`, an
 existing file without `overwrite` is `CONFLICT`, an ambiguous snippet is `CONFLICT` carrying its
-occurrence count, a path outside the root is `FORBIDDEN` — each with a `hint` naming the next move.
+occurrence count, a path outside the root is `FORBIDDEN`, an unknown spilled-output reference is
+`SPILL_REFERENCE_UNKNOWN` — each with a `hint` naming the next move.
 Host-level causes stay scrubbed to `INTERNAL_SERVER_ERROR` and name nothing outside the workspace.
+Every refusal code is a member of `STITCH_ERROR_STATUS`, so its status survives an envelope that
+crosses a process boundary and is rebuilt from the wire.
 → ADR 0139
 
 `list_directory` marks excluded directories rather than hiding them, and `glob` reports
@@ -599,7 +602,11 @@ chat messages.
 `createSqliteAgentSpillStore` persists oversized output separately and records
 its locator, hash and lifecycle in the ledger. `read_output` and
 `search_output` re-run both locator authorization and the originating tool
-authorization before reading bytes. `createSqliteAgentEventSearch` returns the
+authorization before reading bytes. A reference the store does not hold is a
+refusal like any other — `SPILL_REFERENCE_UNKNOWN` / 404, naming the reference
+and pointing at the one the spilling command returned. The lookup is scoped by
+conversation, so a reference belonging to another conversation is absent rather
+than forbidden, and the refusal cannot tell a model that it exists elsewhere. `createSqliteAgentEventSearch` returns the
 exact conversation and event sequence; cross-conversation results are denied
 unless `authorizeConversation` approves each target.
 `createAgentEventSearchTools` supplies `session_search`, `session_trace` and

@@ -325,6 +325,62 @@ describe('agent runtime durable capabilities', () => {
     await runtime.close();
   });
 
+  test('an unknown spill reference refuses by name on every read path', async () => {
+    // All three paths carried their own copy of the lookup and its refusal.
+    // Asserting them together is the point: the promise is that a model sees
+    // the same answer whichever of the three it happens to reach.
+    const runtime = createSqliteAgentRuntimeStore({ database: sqlite() });
+    const spills = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'own' });
+    const absent = 'no-such-reference';
+    const refusals = [
+      () => spills.authorization?.(absent),
+      () => spills.read({ reference: absent, offset: 0, maxBytes: 8 }),
+      () => spills.search({ reference: absent, query: 'x', maxMatches: 1 }),
+    ];
+    for (const attempt of refusals) {
+      expect(attempt).toThrow(
+        expect.objectContaining({
+          code: 'SPILL_REFERENCE_UNKNOWN',
+          status: 404,
+          details: { message: expect.stringContaining(absent), reference: absent },
+        }),
+      );
+    }
+    await runtime.close();
+  });
+
+  test('a reference held by another conversation refuses as an unknown one', async () => {
+    // Non-disclosure by construction rather than by a second branch: the lookup
+    // is scoped by conversation, so the foreign row is simply not there. The
+    // control matters — without reading the same reference successfully from
+    // its OWN conversation, this test would pass against a store that lost the
+    // row entirely and would prove nothing about disclosure.
+    const database = sqlite();
+    const runtime = createSqliteAgentRuntimeStore({ database });
+    const mine = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'mine' });
+    const theirs = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'theirs' });
+    const written = await theirs.write({
+      mediaType: 'text/plain',
+      data: new TextEncoder().encode('secret line\n'),
+    });
+    expect(
+      new TextDecoder().decode(
+        (await theirs.read({ reference: written.reference, offset: 0, maxBytes: 64 })).data,
+      ),
+    ).toBe('secret line\n');
+    let refused: unknown;
+    try {
+      await mine.read({ reference: written.reference, offset: 0, maxBytes: 64 });
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused).toMatchObject({ code: 'SPILL_REFERENCE_UNKNOWN', status: 404 });
+    // Neither the payload nor the fact that the row exists elsewhere.
+    expect(JSON.stringify(refused)).not.toContain('secret');
+    expect(JSON.stringify(refused)).not.toContain('theirs');
+    await runtime.close();
+  });
+
   test('spill lookup retains originating authorization and cleanup facts', async () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });

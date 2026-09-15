@@ -20,6 +20,7 @@
  * count plus a sentence — would have reached the model as `{"occurrences":3}`
  * with no sentence. A gate checking only the code is green on exactly that.
  */
+import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,9 +29,12 @@ import {
   AGENT_CODING_TOOL_NAMES,
   createAgentCodingTools,
 } from '../src/agent-runtime/coding-tools';
+import { createSqliteAgentSpillStore } from '../src/agent-runtime/spill';
+import { createSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
 import { mountAgent } from '../src/tools/agent';
 
 let root = '';
+let closeSpills: (() => Promise<void>) | undefined;
 let tools: ReturnType<typeof mountAgent>;
 const options = { toolCallId: 'refusal', messages: [], context: undefined };
 
@@ -158,6 +162,26 @@ const CASES: readonly RefusalCase[] = [
     code: 'BAD_REQUEST',
     says: 'not a valid regular expression',
   },
+  {
+    // The case this gate could not see until an artifact store was mounted
+    // here: with none, `read_output` and `search_output` were not mounted
+    // either, so "every tool has a refusal" was vacuously true for exactly the
+    // two tools that had none. In the run that prompted this, a model passed a
+    // background session id, met an empty INTERNAL_SERVER_ERROR three times and
+    // declared the tool broken.
+    tool: 'read_output',
+    what: 'a reference the store does not hold',
+    input: { reference: 'not-a-spill-reference' },
+    code: 'SPILL_REFERENCE_UNKNOWN',
+    says: 'No spilled output is held under',
+  },
+  {
+    tool: 'search_output',
+    what: 'a reference the store does not hold',
+    input: { reference: 'not-a-spill-reference', query: 'x' },
+    code: 'SPILL_REFERENCE_UNKNOWN',
+    says: 'No spilled output is held under',
+  },
 ];
 
 beforeAll(async () => {
@@ -167,12 +191,22 @@ beforeAll(async () => {
   await symlink(path.join(root, 'existing.ts'), path.join(root, 'link.ts'));
   await writeFile(path.join(root, 'nested-file.ts'), 'x');
   await Bun.$`mkdir -p ${path.join(root, 'nested')}`.quiet();
+  // A real spill store, not a stub: the refusal under test is the store's own,
+  // and mounting one is also what makes `read_output` / `search_output` visible
+  // to the enumeration gate below.
+  const runtime = createSqliteAgentRuntimeStore({ database: new Database(':memory:') });
+  closeSpills = () => runtime.close();
   tools = mountAgent([], {
-    runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
+    runtimeTools: createAgentCodingTools({
+      root,
+      authorize: () => true,
+      artifacts: createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'refusals' }),
+    }),
   });
 });
 
 afterAll(async () => {
+  await closeSpills?.();
   if (root) await rm(root, { recursive: true, force: true });
 });
 
@@ -190,9 +224,10 @@ async function refusalOf(tool: string, input: Record<string, unknown>): Promise<
 
 describe('an ordinary coding-tool outcome never looks like a server fault', () => {
   test('every mounted coding tool has at least one registered refusal', () => {
-    // Mechanical, so a new tool cannot arrive without one. `read_output` and
-    // `run_command` are absent from this profile (no artifact store, no declared
-    // executables) and are therefore not mounted at all.
+    // Mechanical, so a new tool cannot arrive without one. `run_command` is
+    // absent from this profile (no declared executables) and is therefore not
+    // mounted at all; the artifact tools ARE mounted here, because the two of
+    // them were the whole blind spot this gate used to carry.
     const mounted = Object.values(AGENT_CODING_TOOL_NAMES).filter((name) => name in tools);
     const covered = new Set(CASES.map((entry) => entry.tool));
     expect(mounted.filter((name) => !covered.has(name))).toEqual([]);

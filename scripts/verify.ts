@@ -150,10 +150,40 @@ export function availableMemoryGib(meminfo?: string): number | undefined {
       return undefined;
     }
   }
-  const match = text.match(/^MemAvailable:\s+(\d+) kB$/m);
-  if (!match?.[1]) return undefined;
-  return Number(match[1]) / 1024 / 1024;
+  const field = (name: string): number | undefined => {
+    const match = text?.match(new RegExp(`^${name}:\\s+(\\d+) kB$`, 'm'));
+    return match?.[1] === undefined ? undefined : Number(match[1]) / 1024 / 1024;
+  };
+  const available = field('MemAvailable');
+  if (available === undefined) return undefined;
+  // `MemAvailable` counts what the kernel could hand over *including* what it
+  // would evict — and evicting needs somewhere to put it. With swap spent there
+  // is nowhere, so the same number is paid for in thrashing instead of pages,
+  // and lanes sized against it are killed rather than slowed.
+  //
+  // Measured here on 2026-09-15 during the 0.90.0 release: `9.2 GiB available`
+  // with `SwapFree` at 110 MiB of 16 GiB chose two heavy lanes, and three runs
+  // in a row were killed. `MemFree` in that same minute was 0.4 GiB.
+  //
+  // So when swap is effectively gone, the honest figure is what is free right
+  // now, not what could be freed. No swap configured at all is NOT that case —
+  // a host without swap never promised eviction into it, and its `MemAvailable`
+  // is the ordinary answer.
+  const swapTotal = field('SwapTotal');
+  const swapFree = field('SwapFree');
+  if (swapTotal === undefined || swapFree === undefined || swapTotal === 0) return available;
+  if (swapFree / swapTotal > SWAP_EXHAUSTED_FRACTION) return available;
+  return Math.min(available, field('MemFree') ?? available);
 }
+
+/**
+ * Below this much of swap left, `MemAvailable` is a promise the host cannot keep.
+ *
+ * Five percent rather than zero because the last pages go fast and the gate
+ * takes minutes: a run that starts at exactly zero free swap and one that starts
+ * at two percent end the same way.
+ */
+export const SWAP_EXHAUSTED_FRACTION = 0.05;
 
 export interface HeavyConcurrencyChoice {
   readonly concurrency: number;
@@ -206,7 +236,7 @@ export function chooseHeavyConcurrency(
   const concurrency = Math.min(MAX_HEAVY_CONCURRENCY, Math.max(1, affordable));
   return {
     concurrency,
-    because: `${available.toFixed(1)} GiB available, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
+    because: `${available.toFixed(1)} GiB affordable, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
   };
 }
 

@@ -4,6 +4,7 @@ import type {
   AgentCodingArtifactStore,
   AgentCodingToolAuthorization,
 } from './coding-tool-contract';
+import { refuseUnknownSpillReference } from './coding-tool-refusals';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 
 const SpillRowSchema = z.object({
@@ -38,7 +39,16 @@ export function createSqliteAgentSpillStore(input: {
 } {
   const now = input.now ?? (() => new Date());
   const database = input.sqlite.database;
-  const authorization = (reference: string) => {
+  /**
+   * The one lookup all three read paths share.
+   *
+   * Authorization, read and search each carried their own copy of this query
+   * and its refusal, so "an unknown reference refuses in words" was three
+   * separate promises to keep. The scope is deliberate: `conversation_id` is
+   * part of the WHERE clause, so a reference held by another conversation is
+   * indistinguishable from one that was never written.
+   */
+  const rowFor = (reference: string) => {
     const raw = database
       .prepare(`
         SELECT payload, bytes, authorization_payload
@@ -46,9 +56,11 @@ export function createSqliteAgentSpillStore(input: {
         WHERE reference_id = ? AND conversation_id = ?
       `)
       .get(reference, input.conversationId);
-    if (raw === null || raw === undefined) throw new TypeError('Unknown spill reference');
-    return decodeAuthorization(SpillRowSchema.parse(raw).authorization_payload);
+    if (raw === null || raw === undefined) refuseUnknownSpillReference(reference);
+    return SpillRowSchema.parse(raw);
   };
+  const authorization = (reference: string) =>
+    decodeAuthorization(rowFor(reference).authorization_payload);
   const write: AgentCodingArtifactStore['write'] = async (request) => {
     const reference = randomUUID();
     const createdAt = now();
@@ -87,15 +99,7 @@ export function createSqliteAgentSpillStore(input: {
     return { reference };
   };
   const read: AgentCodingArtifactStore['read'] = async (request) => {
-    const raw = database
-      .prepare(`
-        SELECT payload, bytes, authorization_payload
-        FROM stitchkit_agent_runtime_spills
-        WHERE reference_id = ? AND conversation_id = ?
-      `)
-      .get(request.reference, input.conversationId);
-    if (raw === null || raw === undefined) throw new TypeError('Unknown spill reference');
-    const row = SpillRowSchema.parse(raw);
+    const row = rowFor(request.reference);
     return {
       data: row.payload.slice(request.offset, request.offset + request.maxBytes),
       totalBytes: row.bytes,
@@ -105,15 +109,7 @@ export function createSqliteAgentSpillStore(input: {
     };
   };
   const search = (request: { reference: string; query: string; maxMatches: number }) => {
-    const raw = database
-      .prepare(`
-        SELECT payload, bytes, authorization_payload
-        FROM stitchkit_agent_runtime_spills
-        WHERE reference_id = ? AND conversation_id = ?
-      `)
-      .get(request.reference, input.conversationId);
-    if (raw === null || raw === undefined) throw new TypeError('Unknown spill reference');
-    const row = SpillRowSchema.parse(raw);
+    const row = rowFor(request.reference);
     const matches: { line: number; text: string }[] = [];
     new TextDecoder('utf-8', { fatal: true })
       .decode(row.payload)

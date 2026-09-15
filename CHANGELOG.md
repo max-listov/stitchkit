@@ -15,6 +15,52 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.1] — 2026-09-15
+
+### Fixed
+
+- **An unknown spilled-output reference is a refusal, not a server fault.** The
+  SQLite spill store threw a bare `TypeError('Unknown spill reference')`, which
+  is not an `AppError`, so `toolResultFromError` scrubbed it to
+  `{"error":"INTERNAL_SERVER_ERROR","details":{"message":"Internal server
+  error"}}`. A model that passed the wrong identifier — a background terminal
+  session id where a spill reference was wanted — could not tell "fix the
+  argument" from "the store is broken"; in the run this was reported from, it
+  retried the same call three times and declared the tool broken. It now refuses
+  with `SPILL_REFERENCE_UNKNOWN` / 404, naming the reference and hinting at the
+  one the spilling command returned. Authorization, `read` and `search` shared
+  three copies of the lookup and its refusal; they now share one, so the answer
+  cannot differ by path. The lookup is scoped by conversation, so a reference
+  held by another conversation refuses identically and discloses nothing.
+
+- **A coding-tool refusal keeps its declared status across a process boundary.**
+  Those refusals carried their own private `code → status` map, while
+  `toolErrorFromResult` — which rebuilds an envelope that reached another
+  process through MCP or the CLI — resolves the status from
+  `STITCH_ERROR_STATUS`. Every refusal code missing from that map came back
+  `500`: measured, `SANDBOX_UNAVAILABLE` → 500 against its declared 503, with
+  `NOT_FOUND` → 404 and `WAIT_TIMEOUT` → 408 as controls. `SANDBOX_UNAVAILABLE`,
+  `SANDBOX_INSUFFICIENT` and `SPILL_REFERENCE_UNKNOWN` join the framework
+  vocabulary, and the refusal list is now an allowlist of names typed against
+  it — a refusal code absent from the framework map is a compile error rather
+  than a 500 on the wire.
+
+- **The mechanical refusal gate can see the artifact tools.** It enumerates
+  mounted coding tools and refuses one with no registered refusal, and
+  `read_output` / `search_output` are mounted only when an artifact store is —
+  which the gate's own profile did not do. "Every tool has a refusal" was
+  vacuously true for exactly the two tools that had none.
+  `packages/core/tests/coding-tool-refusals.test.ts` now mounts a real spill
+  store.
+
+- **Heavy release lanes no longer count memory that swap cannot back.**
+  `verify --release` sized its lane concurrency from `MemAvailable` alone. On a
+  host whose swap was 97% consumed that read 9.2 GiB and chose two lanes, and
+  the pair was killed; with swap exhausted the reclaimable half of that figure
+  is not reclaimable. It now falls back to `MemFree` when free swap is under 5%
+  of swap total — 0.97 GiB and one lane on the host that prompted this — and
+  says `GiB affordable` rather than `GiB available`.
+
 ## [0.90.0] — 2026-09-15
 
 ### ⚠️ Breaking changes

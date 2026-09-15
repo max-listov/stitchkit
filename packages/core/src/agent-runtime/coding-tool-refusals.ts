@@ -17,19 +17,30 @@
  * keeps being scrubbed. Default-deny: a cause with no case here is internal.
  */
 
-import { AppError } from '../contract/errors';
+import { AppError, STITCH_ERROR_STATUS, type StitchErrorCode } from '../contract/errors';
 
-/** Codes a coding tool may hand a model, with the status each one carries. */
-const REFUSAL_STATUS = {
-  BAD_REQUEST: 400,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  CONFLICT: 409,
-  SANDBOX_UNAVAILABLE: 503,
-  SANDBOX_INSUFFICIENT: 503,
-} as const;
+/**
+ * The codes a coding tool may hand a model — an allowlist of names, not a
+ * second status map.
+ *
+ * It used to carry its own `code → status` object, and the two maps disagreed
+ * where it mattered: `toolErrorFromResult` rebuilds an envelope that crossed a
+ * process boundary and reads the status from `STITCH_ERROR_STATUS`, so a
+ * refusal missing there arrived as a 500 no matter what this file declared.
+ * `satisfies readonly StitchErrorCode[]` now makes that unrepresentable — a
+ * refusal code absent from the framework vocabulary is a compile error here.
+ */
+const REFUSAL_CODES = [
+  'BAD_REQUEST',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'CONFLICT',
+  'SANDBOX_UNAVAILABLE',
+  'SANDBOX_INSUFFICIENT',
+  'SPILL_REFERENCE_UNKNOWN',
+] as const satisfies readonly StitchErrorCode[];
 
-export type CodingRefusalCode = keyof typeof REFUSAL_STATUS;
+export type CodingRefusalCode = (typeof REFUSAL_CODES)[number];
 
 /**
  * Refuse with a reason the model actually receives.
@@ -52,7 +63,7 @@ export function codingRefusal(
   throw new AppError(
     code,
     message,
-    REFUSAL_STATUS[code],
+    STITCH_ERROR_STATUS[code],
     { message, ...options.details },
     options.hint,
   );
@@ -112,4 +123,32 @@ export function refuseMissingCodingPath(error: unknown, relative: string): never
     });
   }
   throw error;
+}
+
+/**
+ * Refuse a spill reference the store does not hold.
+ *
+ * The same failure this module was written for, one layer down. The SQLite
+ * spill store threw a bare `TypeError('Unknown spill reference')`, which is not
+ * an `AppError`, so `toolResultFromError` scrubbed it to an empty
+ * `INTERNAL_SERVER_ERROR`: a model that passed the wrong identifier — a
+ * background terminal session id instead of a spill reference — could not tell
+ * "fix the argument" from "the store is broken". Observed: it retried the same
+ * call three times and declared the tool broken.
+ *
+ * The reference is echoed back because it is the model's own input: naming it
+ * tells the model which of its arguments to replace, and leaks nothing it did
+ * not already send. A reference belonging to ANOTHER conversation refuses
+ * through this same path — the lookup is scoped by conversation, so a foreign
+ * reference is simply absent, and the refusal cannot distinguish the two.
+ */
+export function refuseUnknownSpillReference(reference: string): never {
+  codingRefusal(
+    'SPILL_REFERENCE_UNKNOWN',
+    `No spilled output is held under \`${reference}\``,
+    {
+      details: { reference },
+      hint: 'Use the reference returned by the command that spilled its output, not a session or call id.',
+    },
+  );
 }

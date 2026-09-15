@@ -39,6 +39,9 @@ const onError = createErrorHook({
     STREAM_TERMINAL_MISSING: 'internal',
     STREAM_LIFETIME_EXCEEDED: 'timeout',
     GRAMMY_WEBHOOK_NOT_ACCEPTING: 'unavailable',
+    SANDBOX_UNAVAILABLE: 'unavailable',
+    SANDBOX_INSUFFICIENT: 'unavailable',
+    SPILL_REFERENCE_UNKNOWN: 'not_found',
     INTERNAL_SERVER_ERROR: 'internal',
     // `satisfies Record<StitchErrorCode, …>` HERE on purpose: this fixture is
     // the one place that should notice a new framework code, so adding one

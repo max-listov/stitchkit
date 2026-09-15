@@ -173,3 +173,31 @@ test('available memory is read from MemAvailable, and unreadable is not zero', (
   expect(availableMemoryGib('MemTotal: 23000000 kB\n')).toBeUndefined();
   expect(availableMemoryGib('')).toBeUndefined();
 });
+
+test('with swap spent, MemAvailable is a promise the host cannot keep', () => {
+  // A shape measured on a development host during a release: the kernel offers
+  // 9.2 GiB, and the only place it could evict to is 110 MiB of a 16 GiB swap.
+  // Sized against the offer, two heavy lanes were killed three runs running.
+  const spent =
+    'MemTotal:       24024064 kB\nMemFree:          410236 kB\n' +
+    'MemAvailable:    9646080 kB\nSwapTotal:      16777212 kB\nSwapFree:         112640 kB\n';
+  expect(availableMemoryGib(spent)).toBeCloseTo(0.39, 1);
+  expect(chooseHeavyConcurrency('', () => availableMemoryGib(spent)).concurrency).toBe(1);
+
+  // The control on a known-good input: the same host with swap to spare answers
+  // with the offer, unchanged. Without this the fix would read as "always
+  // MemFree", which would pin every healthy host to one lane.
+  const roomy = spent.replace('SwapFree:         112640 kB', 'SwapFree:       16000000 kB');
+  expect(availableMemoryGib(roomy)).toBeCloseTo(9.2, 1);
+  expect(chooseHeavyConcurrency('', () => availableMemoryGib(roomy)).concurrency).toBe(2);
+
+  // A host with no swap at all never promised eviction into it, so its
+  // MemAvailable is the ordinary answer rather than a suspect one.
+  const swapless = spent
+    .replace('SwapTotal:      16777212 kB', 'SwapTotal:             0 kB')
+    .replace('SwapFree:         112640 kB', 'SwapFree:              0 kB');
+  expect(availableMemoryGib(swapless)).toBeCloseTo(9.2, 1);
+
+  // And a host that reports no swap fields at all — macOS — is unchanged.
+  expect(availableMemoryGib('MemAvailable: 9646080 kB\n')).toBeCloseTo(9.2, 1);
+});

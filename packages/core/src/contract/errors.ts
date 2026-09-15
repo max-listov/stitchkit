@@ -149,6 +149,17 @@ export const STITCH_ERROR_STATUS = {
   STREAM_FRAME_TOO_LARGE: 500,
   STREAM_TERMINAL_MISSING: 500,
   STREAM_LIFETIME_EXCEEDED: 408,
+  // Coding-tool refusals (→ `coding-tool-refusals.ts`). They too reach a model
+  // through a tool result, and they used to live in a private status map beside
+  // that vocabulary. A second map is a second source of truth, and it leaked in
+  // one exact place: `toolErrorFromResult` rebuilds an envelope that crossed a
+  // process boundary (MCP, CLI) and resolves its status HERE, so a refusal
+  // absent from this map came back 500 — the declared 503 never survived the
+  // hop. Measured before the fix: `SANDBOX_UNAVAILABLE` → 500, against
+  // `NOT_FOUND` → 404 and `WAIT_TIMEOUT` → 408 as controls.
+  SANDBOX_UNAVAILABLE: 503,
+  SANDBOX_INSUFFICIENT: 503,
+  SPILL_REFERENCE_UNKNOWN: 404,
   INTERNAL_SERVER_ERROR: 500,
 } satisfies Record<string, number>;
 

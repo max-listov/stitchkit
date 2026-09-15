@@ -16,6 +16,7 @@ import {
 } from '../src/contract';
 import { formatZodError, normalizeError, zodIssues } from '../src/internal/errors';
 import { createServer, implement } from '../src/server';
+import { toolErrorFromResult } from '../src/tools/execute';
 
 describe('stitch error registry', () => {
   test('STITCH_ERROR_STATUS maps codes → status (incl. METHOD_NOT_ALLOWED 405)', () => {
@@ -23,6 +24,26 @@ describe('stitch error registry', () => {
     expect(STITCH_ERROR_STATUS.NOT_FOUND).toBe(404);
     expect(STITCH_ERROR_STATUS.VALIDATION_ERROR).toBe(400);
     expect(STITCH_ERROR_STATUS.INTERNAL_SERVER_ERROR).toBe(500);
+  });
+
+  test('a coding-tool refusal keeps its declared status across a serialized envelope', () => {
+    // `toolErrorFromResult` resolves the status from STITCH_ERROR_STATUS, and
+    // the retention map behind it is in-process only — so an envelope that
+    // crossed to another process (MCP, the CLI) is rebuilt from the wire alone.
+    // While the coding-tool refusals kept their own private status map, every
+    // code missing here came back 500: a declared 503 arrived as a server
+    // fault. Measured before the fix: SANDBOX_UNAVAILABLE → 500.
+    const rebuilt = (code: string) =>
+      toolErrorFromResult(
+        JSON.parse(JSON.stringify({ ok: false, code, details: { message: 'x' } })),
+      ).status;
+    expect(rebuilt('SANDBOX_UNAVAILABLE')).toBe(503);
+    expect(rebuilt('SANDBOX_INSUFFICIENT')).toBe(503);
+    expect(rebuilt('SPILL_REFERENCE_UNKNOWN')).toBe(404);
+    // Controls: one framework code that was always mapped, and one app-owned
+    // code that must still fall back to 500 rather than acquire a status.
+    expect(rebuilt('WAIT_TIMEOUT')).toBe(408);
+    expect(rebuilt('BOT_NOT_FOUND')).toBe(500);
   });
 
   test('isStitchErrorCode guards framework vs app codes', () => {

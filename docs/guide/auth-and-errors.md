@@ -513,7 +513,10 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `FILE_INSPECTION_REJECTED`, `FILE_TOO_LARGE`, `FILE_EXISTS`,
 `REALTIME_CONTRACT_VIOLATION`, `APPLICATION_NOT_ACCEPTING`, `WAIT_TIMEOUT`,
 `WAIT_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
-`OPERATION_NOT_SUCCEEDED`, `INTERNAL_SERVER_ERROR` — a set that grows in
+`OPERATION_NOT_SUCCEEDED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
+`STREAM_TERMINAL_MISSING`, `STREAM_LIFETIME_EXCEEDED`,
+`GRAMMY_WEBHOOK_NOT_ACCEPTING`, `SANDBOX_UNAVAILABLE`, `SANDBOX_INSUFFICIENT`,
+`SPILL_REFERENCE_UNKNOWN`, `INTERNAL_SERVER_ERROR` — a set that grows in
 ordinary releases, each addition named in the changelog. They are
 published as **`STITCH_ERROR_STATUS`** (the `code → status` map) and
 **`StitchErrorCode`** (its `keyof`), with **`isStitchErrorCode()`** (→ ADR 0026).
