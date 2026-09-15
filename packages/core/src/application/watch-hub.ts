@@ -40,11 +40,13 @@
 import { type BackoffPolicy, createBackoff } from '../browser/resumable';
 import { argumentsDigest, stableValue } from '../internal/stable-digest';
 import {
+  type WatchHave,
   type WatchKey,
   type WatchStateFrame,
   type WatchValueFrame,
   watchKeyString,
 } from '../live/watch-contract';
+import { deltaWins, diff } from '../live/watch-delta';
 import type { StitchLogger } from '../logger';
 
 /** The operation a watched read runs — `OperationIdentity`'s two stable halves. */
@@ -61,7 +63,15 @@ export interface WatchSubscriber {
 }
 
 export interface AttachedWatcher {
-  open(key: WatchKey, args: unknown): { accepted: boolean; reason?: string };
+  /**
+   * Start watching a key.
+   *
+   * `have` is what the caller already holds from an earlier connection. Offered,
+   * it turns a reconnection into a difference — or into nothing at all when the
+   * answer has not moved — instead of the whole value again. Omitted, the caller
+   * is treated as holding nothing, which is what a first subscription is.
+   */
+  open(key: WatchKey, args: unknown, have?: WatchHave): { accepted: boolean; reason?: string };
   close(key: WatchKey): void;
   /** The connection went away. Releases every key this subscriber held. */
   detach(): void;
@@ -112,6 +122,20 @@ export interface WatchHubConfig {
   holdMs?: number;
   /** Retry pacing after a failed read. */
   backoff?: BackoffPolicy;
+  /**
+   * How many bytes of superseded values one key may keep, for differences.
+   *
+   * A difference needs the value the receiver actually holds, which is no longer
+   * the current one. This is the ceiling on that memory, per key, and it is a
+   * byte budget rather than a count of revisions because the thing being
+   * protected is the process's heap and revisions have no size.
+   *
+   * Zero disables differences entirely: every frame carries the whole value,
+   * which is what this hub did before they existed. Default 262144 (256 KiB),
+   * which holds several revisions of the large answers differences are for and
+   * a great many small ones.
+   */
+  deltaMemoryBytes?: number;
   /** Whether two answers are the same. Defaults to key-order-independent JSON equality. */
   same?(previous: unknown, next: unknown): boolean;
   logger?: StitchLogger;
@@ -143,6 +167,28 @@ interface Source {
   revision: number;
   value?: unknown;
   signature?: string;
+  fingerprint?: string;
+  /**
+   * Superseded values by revision, oldest first, under a byte ceiling.
+   *
+   * Insertion order is the eviction order, which is why this is a `Map` and not
+   * an object: the oldest revision is the one least likely to still be anyone's
+   * baseline.
+   */
+  readonly history: Map<number, { value: unknown; fingerprint: string; bytes: number }>;
+  historyBytes: number;
+  /**
+   * The revision each subscriber is known to hold — the base its next difference
+   * is taken against.
+   *
+   * "Known to hold" means delivered without throwing, not acknowledged. There is
+   * no ack on this protocol and adding one would put a round trip in front of
+   * every frame; the socket is ordered and reliable while it is up, and when it
+   * is not the subscriber re-declares what it has in `open`. A frame whose
+   * delivery threw does not advance the baseline, so the next one is taken
+   * against what actually arrived.
+   */
+  readonly baselines: Map<WatchSubscriber, number>;
   reading: boolean;
   dirty: boolean;
   state: WatchStateFrame;
@@ -174,6 +220,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
   const held = new Map<WatchSubscriber, Set<string>>();
   const maxWatches = config.maxWatchesPerSubscriber ?? 64;
   const holdMs = config.holdMs ?? 0;
+  const deltaMemoryBytes = config.deltaMemoryBytes ?? 262_144;
   const same =
     config.same ??
     ((previous, next) =>
@@ -191,14 +238,16 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
    * snapshot listeners for the same reason — one consumer's bug is not the
    * framework's to propagate.
    */
-  function tell(key: WatchKey, deliver: () => void): void {
+  function tell(key: WatchKey, deliver: () => void): boolean {
     try {
       deliver();
+      return true;
     } catch (error) {
       config.logger?.warn?.('[stitchkit] watch subscriber threw', {
         key: watchKeyString(key),
         error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 
@@ -209,13 +258,118 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
     }
   }
 
-  function publish(source: Source, value: unknown): void {
+  /**
+   * Remember the value a subscriber may still be holding, under the byte ceiling.
+   *
+   * Called with the value being *superseded*, because that is the only one a
+   * difference can be taken against: the current value is `source.value` and
+   * needs no memory.
+   */
+  function remember(
+    source: Source,
+    revision: number,
+    value: unknown,
+    fingerprint: string,
+  ): void {
+    if (deltaMemoryBytes === 0) return;
+    const bytes = (JSON.stringify(value) ?? 'null').length;
+    if (bytes > deltaMemoryBytes) return;
+    source.history.set(revision, { value, fingerprint, bytes });
+    source.historyBytes += bytes;
+    for (const [oldest, entry] of source.history) {
+      if (source.historyBytes <= deltaMemoryBytes) break;
+      source.history.delete(oldest);
+      source.historyBytes -= entry.bytes;
+    }
+  }
+
+  /**
+   * The frame this one subscriber should receive — a difference when it saves,
+   * the value when it does not.
+   *
+   * The choice is per subscriber and it has to be: eight panels on one key can
+   * each be holding a different revision, one of them having just joined with
+   * nothing at all. A single broadcast frame would have to be the value, which
+   * is the behaviour this replaces.
+   */
+  function frameFor(source: Source, subscriber: WatchSubscriber): WatchValueFrame {
+    const value = source.value;
+    const fingerprint = source.fingerprint ?? valueFingerprint(value);
+    const full: WatchValueFrame = {
+      kind: 'full',
+      key: source.key,
+      revision: source.revision,
+      fingerprint,
+      value,
+    };
+    const base = source.baselines.get(subscriber);
+    if (base === undefined) return full;
+    // Already current — which happens when a subscriber reconnected holding the
+    // answer that is still the answer. Saying so costs tens of bytes; saying it
+    // with the value costs the value.
+    if (base === source.revision) {
+      return { kind: 'unchanged', key: source.key, revision: source.revision, fingerprint };
+    }
+    const held = source.history.get(base);
+    if (!held) return full;
+    const delta = diff(held.value, value);
+    if (delta === undefined || !deltaWins(delta, value)) return full;
+    return {
+      kind: 'delta',
+      key: source.key,
+      revision: source.revision,
+      fingerprint,
+      base,
+      delta,
+    };
+  }
+
+  /**
+   * Believe a reconnecting subscriber about what it holds, as far as the
+   * fingerprint goes.
+   *
+   * The revision it names is a hint about *where* to look; the fingerprint is
+   * what decides. They are checked in that order against the current value first
+   * — the common case is a page that came back to an answer that never moved —
+   * and then against the superseded values still in memory.
+   *
+   * A fingerprint that matches nothing is not an error and is not announced: the
+   * subscriber simply has no baseline, and the next frame is the whole value,
+   * which is exactly right for a client holding something this hub cannot
+   * reconstruct.
+   */
+  function adoptBaseline(source: Source, subscriber: WatchSubscriber, have: WatchHave): void {
+    if (source.fingerprint === have.fingerprint) {
+      source.baselines.set(subscriber, source.revision);
+      return;
+    }
+    const named = source.history.get(have.revision);
+    if (named?.fingerprint === have.fingerprint) {
+      source.baselines.set(subscriber, have.revision);
+      return;
+    }
+    for (const [revision, entry] of source.history) {
+      if (entry.fingerprint !== have.fingerprint) continue;
+      source.baselines.set(subscriber, revision);
+      return;
+    }
+  }
+
+  function deliver(source: Source, subscriber: WatchSubscriber): boolean {
+    const frame = frameFor(source, subscriber);
+    const delivered = tell(source.key, () => subscriber.value(frame));
+    if (delivered) source.baselines.set(subscriber, source.revision);
+    return delivered;
+  }
+
+  function publish(source: Source, value: unknown, fingerprint: string): void {
+    if (source.fingerprint !== undefined) {
+      remember(source, source.revision, source.value, source.fingerprint);
+    }
     source.revision += 1;
     source.value = value;
-    const frame: WatchValueFrame = { key: source.key, revision: source.revision, value };
-    for (const subscriber of source.subscribers) {
-      tell(source.key, () => subscriber.value(frame));
-    }
+    source.fingerprint = fingerprint;
+    for (const subscriber of source.subscribers) deliver(source, subscriber);
   }
 
   async function pump(source: Source): Promise<void> {
@@ -234,7 +388,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
           const signature = JSON.stringify(stableValue(value));
           const unchanged = source.signature !== undefined && same(source.value, value);
           source.signature = signature;
-          if (!unchanged) publish(source, value);
+          if (!unchanged) publish(source, value, valueFingerprint(value));
           if (source.state.phase !== 'live') {
             announceState(source, { key: source.key, phase: 'live' });
           }
@@ -287,6 +441,9 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
       subscribers: new Set(),
       unsubscribes: [],
       revision: 0,
+      history: new Map(),
+      historyBytes: 0,
+      baselines: new Map(),
       reading: false,
       dirty: true,
       state: { key, phase: 'opening' },
@@ -335,7 +492,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
       const keys = new Set<string>();
       held.set(subscriber, keys);
       return {
-        open(key, args) {
+        open(key, args, have) {
           if (closed) return { accepted: false, reason: 'the watch hub is closed' };
           const operation = { service: key.service, action: key.action };
           if (!config.watchable(operation)) {
@@ -355,6 +512,10 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
           const source = acquire(operation, key, args);
           source.subscribers.add(subscriber);
           keys.add(id);
+          // What the caller says it already holds, believed only as far as the
+          // fingerprint bears out: a revision on its own would let a value from
+          // a previous life of this key pass for the current one.
+          if (have) adoptBaseline(source, subscriber, have);
           // A subscriber arriving after the answer is known gets it now, from
           // memory, before any network happens. That is the difference between a
           // panel that paints and a panel that spins.
@@ -367,11 +528,14 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
           // for exactly this, so it is used instead of hiding the failure.
           try {
             if (source.signature !== undefined) {
-              subscriber.value({ key, revision: source.revision, value: source.value });
+              const frame = frameFor(source, subscriber);
+              subscriber.value(frame);
+              source.baselines.set(subscriber, source.revision);
             }
             subscriber.state(source.state);
           } catch (error) {
             source.subscribers.delete(subscriber);
+            source.baselines.delete(subscriber);
             keys.delete(id);
             release(source);
             return {
@@ -388,6 +552,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
           const source = sources.get(id);
           if (!source) return;
           source.subscribers.delete(subscriber);
+          source.baselines.delete(subscriber);
           release(source);
         },
         detach() {
@@ -395,6 +560,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
             const source = sources.get(id);
             if (!source) continue;
             source.subscribers.delete(subscriber);
+            source.baselines.delete(subscriber);
             release(source);
           }
           keys.clear();
@@ -445,6 +611,17 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
       }
     },
   };
+}
+
+/**
+ * The identity of a value, order-independent and synchronous.
+ *
+ * The same digest the watch key is built from, over `{ value }` rather than over
+ * arguments — one implementation, because two hashes that had to agree across a
+ * socket and were written twice would eventually not.
+ */
+function valueFingerprint(value: unknown): string {
+  return argumentsDigest({ value });
 }
 
 /** An `ApiError`-shaped failure carries a code; anything else does not, and says so by absence. */

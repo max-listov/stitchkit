@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import { LiveStatePhaseSchema, LiveStateStopReasonSchema } from '../browser/live-state';
 import type { RealtimeContract } from '../realtime/contract';
+import { WatchDeltaSchema } from './watch-delta';
 
 /** The identity of one watched read: an operation plus the arguments it was asked with. */
 export const WatchKeySchema = z
@@ -44,7 +45,24 @@ export const WatchKeySchema = z
   .readonly();
 export type WatchKey = z.infer<typeof WatchKeySchema>;
 
-export const WatchOpenSchema = z.object({ key: WatchKeySchema, args: z.unknown() }).readonly();
+/**
+ * What a subscriber already holds, offered when it opens a key.
+ *
+ * Both halves are needed and neither is redundant. The revision says *which*
+ * answer it has; the fingerprint proves it is that answer and not a different
+ * one wearing the same number — revisions restart at zero when a hub restarts or
+ * a key is released and re-acquired, so a bare revision would let a client keep
+ * a value from a previous life of the source and be told it was current.
+ */
+export const WatchHaveSchema = z
+  .object({ revision: z.number().int().nonnegative(), fingerprint: z.string().min(1) })
+  .strict()
+  .readonly();
+export type WatchHave = z.infer<typeof WatchHaveSchema>;
+
+export const WatchOpenSchema = z
+  .object({ key: WatchKeySchema, args: z.unknown(), have: WatchHaveSchema.optional() })
+  .readonly();
 
 export const WatchAcceptedSchema = z
   .object({
@@ -55,17 +73,53 @@ export const WatchAcceptedSchema = z
   .strict()
   .readonly();
 
-export const WatchValueSchema = z
-  .object({
-    key: WatchKeySchema,
-    /**
-     * Monotonic per key. A frame carrying a revision no newer than the one the
-     * receiver already has is a late answer to an older question and is dropped.
-     */
-    revision: z.number().int().nonnegative(),
-    value: z.unknown(),
-  })
-  .readonly();
+/**
+ * A new answer, said in one of three ways.
+ *
+ * Three shapes rather than one with optional fields, because "which of these is
+ * it" then has an answer the parser enforces instead of a convention the two
+ * ends have to keep separately. A frame that carried both a value and a
+ * difference, or neither, would be accepted by a shape with optionals and means
+ * nothing; here it cannot be written.
+ *
+ * `fingerprint` is on all three and is the identity of the value the receiver
+ * holds *after* applying the frame. It is what makes reassembly checkable: a
+ * client that applies a difference and arrives somewhere else knows immediately,
+ * rather than rendering a plausible wrong answer until the next full value
+ * happens along. It is order-independent, so the two ends agree even though
+ * rebuilding an object from a difference does not preserve key order.
+ */
+const watchValueParts = {
+  key: WatchKeySchema,
+  /**
+   * Monotonic per key. A frame carrying a revision no newer than the one the
+   * receiver already has is a late answer to an older question and is dropped.
+   */
+  revision: z.number().int().nonnegative(),
+  /** `argumentsDigest({ value })` of the value this frame leaves the receiver holding. */
+  fingerprint: z.string().min(1),
+};
+
+export const WatchValueSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('full'), ...watchValueParts, value: z.unknown() }).readonly(),
+  z
+    .object({
+      kind: z.literal('delta'),
+      ...watchValueParts,
+      /** The revision the difference is against — what the receiver must already hold. */
+      base: z.number().int().nonnegative(),
+      delta: WatchDeltaSchema,
+    })
+    .readonly(),
+  /**
+   * The answer the subscriber already has is still current.
+   *
+   * Sent in reply to an `open` that offered a matching `have`, and it is the
+   * whole point of offering one: a page that reconnects with the current answer
+   * pays a frame of tens of bytes instead of the value again.
+   */
+  z.object({ kind: z.literal('unchanged'), ...watchValueParts }).readonly(),
+]);
 
 export const WatchStateSchema = z
   .object({

@@ -10,32 +10,50 @@ import { z } from 'zod';
 import { createWatchHub, type WatchSubscriber, watchKey } from '../src/application/watch-hub';
 import { createRealtimeClient } from '../src/browser/socket-io';
 import { defineContract } from '../src/contract';
+import { argumentsDigest } from '../src/internal/stable-digest';
 import { createWatchClient, watchTransport } from '../src/live/watch-client';
 import {
   WATCH_CLOSE,
   WATCH_OPEN,
   WATCH_STATE,
   WATCH_VALUE,
+  type WatchKey,
   type WatchStateFrame,
   type WatchValueFrame,
   watchContract,
 } from '../src/live/watch-contract';
+import { apply } from '../src/live/watch-delta';
 
 const notes = { service: 'notes', action: 'list' } as const;
 const folders = { service: 'notes', action: 'folders' } as const;
 
-/** A subscriber that records what it was told. */
+/**
+ * A subscriber that records what it was told, and what that leaves it holding.
+ *
+ * Two records rather than one, because the frames and the value are now
+ * different questions: `values` is what crossed the wire — which is where the
+ * size assertions live — and `seen` is the answer a component would have
+ * received, rebuilt the way the real client rebuilds it. A test that only kept
+ * frames could not tell a correct difference from a wrong one.
+ */
 function recorder(): WatchSubscriber & {
   values: WatchValueFrame[];
+  seen: unknown[];
   states: WatchStateFrame[];
 } {
   const values: WatchValueFrame[] = [];
+  const seen: unknown[] = [];
   const states: WatchStateFrame[] = [];
+  let held: unknown;
   return {
     values,
+    seen,
     states,
     value: (frame) => {
       values.push(frame);
+      if (frame.kind === 'full') held = frame.value;
+      else if (frame.kind === 'delta') held = apply(held, frame.delta);
+      seen.push(held);
     },
     state: (frame) => {
       states.push(frame);
@@ -65,6 +83,23 @@ async function settle(): Promise<void> {
   await Bun.sleep(2);
 }
 
+/**
+ * A whole-value frame as the hub builds one.
+ *
+ * The fingerprint is computed rather than written, because a literal one would
+ * be a second implementation of the identity the two ends have to agree on —
+ * and a test that hard-codes it goes green on a client that stopped checking.
+ */
+function fullFrame(key: WatchKey, revision: number, value: unknown) {
+  return {
+    kind: 'full' as const,
+    key,
+    revision,
+    fingerprint: argumentsDigest({ value }),
+    value,
+  };
+}
+
 describe('one read per question', () => {
   test('two subscribers to the same question cause one read', async () => {
     let reads = 0;
@@ -84,8 +119,8 @@ describe('one read per question', () => {
     await settle();
 
     expect(hub.readCount()).toBe(1);
-    expect(first.values.at(-1)?.value).toEqual({ notes: 1 });
-    expect(second.values.at(-1)?.value).toEqual({ notes: 1 });
+    expect(first.seen.at(-1)).toEqual({ notes: 1 });
+    expect(second.seen.at(-1)).toEqual({ notes: 1 });
   });
 
   test('two different questions cause two reads', async () => {
@@ -225,7 +260,7 @@ describe('what causes a re-read', () => {
     gates[1]?.();
     await settle();
 
-    expect(subscriber.values.map((frame) => frame.value)).toEqual(['first', 'second']);
+    expect(subscriber.seen).toEqual(['first', 'second']);
     expect(hub.readCount()).toBe(2);
   });
 });
@@ -260,7 +295,7 @@ describe('a failed read says what failed, in words', () => {
     // The retry is the hub's own; nothing outside had to ask for it.
     await Bun.sleep(30);
     expect(subscriber.states.at(-1)?.phase).toBe('live');
-    expect(subscriber.values.at(-1)?.value).toEqual({ ok: true });
+    expect(subscriber.seen.at(-1)).toEqual({ ok: true });
   });
 });
 
@@ -312,7 +347,7 @@ describe('a subscriber that arrives late, and one that leaves', () => {
     hub.attach(late).open(key, {});
     // Synchronously, with no await between opening and reading the record.
     expect(late.values).toHaveLength(1);
-    expect(late.values[0]?.value).toEqual({ n: 1 });
+    expect(late.seen[0]).toEqual({ n: 1 });
     expect(hub.readCount()).toBe(1);
   });
 
@@ -361,7 +396,7 @@ describe('the hub options that change what it does', () => {
     const late = recorder();
     hub.attach(late).open(key, {});
     expect(hub.readCount()).toBe(1);
-    expect(late.values[0]?.value).toEqual({ n: 1 });
+    expect(late.seen[0]).toEqual({ n: 1 });
   });
 
   test('a supplied comparator decides what counts as a change', async () => {
@@ -419,10 +454,10 @@ describe('the client shares one subscription', () => {
   );
 
   /** The key the client sent on its `open` — asserted present rather than chained past. */
-  function sentKey(sent: { event: string; payload: unknown }[]): unknown {
+  function sentKey(sent: { event: string; payload: unknown }[]): WatchKey {
     const open = sent.find((frame) => frame.event === WATCH_OPEN);
     if (!open) throw new Error('the client never opened a watch');
-    return (open.payload as { key: unknown }).key;
+    return (open.payload as { key: WatchKey }).key;
   }
 
   function fakeTransport(options: { connected?: boolean } = {}) {
@@ -489,7 +524,7 @@ describe('the client shares one subscription', () => {
     expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(1);
 
     const key = sentKey(fake.sent);
-    fake.deliver(WATCH_VALUE, { key, revision: 1, value: { n: 7 } });
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { n: 7 }));
     expect(firstSeen).toEqual([{ n: 7 }]);
     expect(secondSeen).toEqual([{ n: 7 }]);
 
@@ -518,8 +553,8 @@ describe('the client shares one subscription', () => {
     await settle();
     const key = sentKey(fake.sent);
 
-    fake.deliver(WATCH_VALUE, { key, revision: 2, value: 'newer' });
-    fake.deliver(WATCH_VALUE, { key, revision: 1, value: 'older' });
+    fake.deliver(WATCH_VALUE, fullFrame(key, 2, 'newer'));
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, 'older'));
     expect(seen).toEqual(['newer']);
   });
 
@@ -529,7 +564,7 @@ describe('the client shares one subscription', () => {
     const drop = watch.list({}).subscribe({ value: () => undefined });
     await settle();
     const key = sentKey(fake.sent);
-    fake.deliver(WATCH_VALUE, { key, revision: 1, value: { n: 3 } });
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { n: 3 }));
     drop();
 
     const seen: unknown[] = [];
@@ -585,7 +620,7 @@ describe('the client shares one subscription', () => {
     expect(opens[1]?.payload).toEqual(opens[0]?.payload);
 
     const key = sentKey(fake.sent);
-    fake.deliver(WATCH_VALUE, { key, revision: 1, value: { n: 5 } });
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { n: 5 }));
     expect(seen).toEqual([{ n: 5 }]);
   });
 
@@ -637,6 +672,109 @@ describe('the client shares one subscription', () => {
     watch.list({ folder: 'a' }).subscribe({ value: () => undefined });
     await settle();
     expect(fake.sent.filter((frame) => frame.event === WATCH_OPEN)).toHaveLength(1);
+  });
+
+  test('a reconnection offers what the client still holds', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    watch.list({}).subscribe({ value: () => undefined });
+    await settle();
+    const key = sentKey(fake.sent);
+    const frame = fullFrame(key, 4, { n: 1 });
+    fake.deliver(WATCH_VALUE, frame);
+
+    fake.setConnected(false, 'transport close');
+    fake.setConnected(true);
+    await settle();
+
+    const opens = fake.sent.filter((sent) => sent.event === WATCH_OPEN);
+    expect(opens).toHaveLength(2);
+    // The revision and the identity the server itself gave for this value — not
+    // one recomputed here, so a disagreement between the two ends surfaces as a
+    // difference that will not apply instead of being papered over.
+    const resumed = opens.at(1)?.payload as { have?: unknown } | undefined;
+    expect(resumed?.have).toEqual({ revision: 4, fingerprint: frame.fingerprint });
+  });
+
+  test('a difference is folded, and the listener sees the whole answer', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    const seen: unknown[] = [];
+    watch.list({}).subscribe({ value: (value) => seen.push(value) });
+    await settle();
+    const key = sentKey(fake.sent);
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { items: [1, 2, 3], at: 'a' }));
+    const next = { items: [1, 2, 3], at: 'b' };
+    fake.deliver(WATCH_VALUE, {
+      kind: 'delta',
+      key,
+      revision: 2,
+      base: 1,
+      fingerprint: argumentsDigest({ value: next }),
+      delta: { t: 'obj', set: { at: { t: 'set', v: 'b' } } },
+    });
+    expect(seen).toEqual([{ items: [1, 2, 3], at: 'a' }, next]);
+  });
+
+  test('a difference that will not apply resynchronises that key, in the open', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    const states: WatchStateFrame[] = [];
+    const seen: unknown[] = [];
+    watch
+      .list({})
+      .subscribe({ value: (value) => seen.push(value), state: (s) => states.push(s) });
+    await settle();
+    const key = sentKey(fake.sent);
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { items: [1, 2, 3] }));
+
+    // A difference against a revision this client never held.
+    fake.deliver(WATCH_VALUE, {
+      kind: 'delta',
+      key,
+      revision: 9,
+      base: 8,
+      fingerprint: 'f'.repeat(32),
+      delta: { t: 'obj', set: { items: { t: 'set', v: [] } } },
+    });
+    await settle();
+
+    expect(states.at(-1)?.phase).toBe('resync-required');
+    // Said, then repaired: the key is closed and opened again, offering nothing.
+    expect(fake.sent.filter((sent) => sent.event === WATCH_CLOSE)).toHaveLength(1);
+    const opens = fake.sent.filter((sent) => sent.event === WATCH_OPEN);
+    expect(opens).toHaveLength(2);
+    const reopened = opens.at(1)?.payload as { have?: unknown } | undefined;
+    expect(reopened).toBeDefined();
+    expect(reopened?.have).toBeUndefined();
+    // And nothing plausible-but-wrong reached the listener.
+    expect(seen).toEqual([{ items: [1, 2, 3] }]);
+  });
+
+  test('a rebuilt value that disagrees with the fingerprint is refused', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    const states: WatchStateFrame[] = [];
+    const seen: unknown[] = [];
+    watch
+      .list({})
+      .subscribe({ value: (value) => seen.push(value), state: (s) => states.push(s) });
+    await settle();
+    const key = sentKey(fake.sent);
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { at: 'a' }));
+    // A difference that applies cleanly — and lands somewhere the server says it
+    // is not. Without the fingerprint check this is the silent wrong answer.
+    fake.deliver(WATCH_VALUE, {
+      kind: 'delta',
+      key,
+      revision: 2,
+      base: 1,
+      fingerprint: argumentsDigest({ value: { at: 'c' } }),
+      delta: { t: 'obj', set: { at: { t: 'set', v: 'b' } } },
+    });
+    await settle();
+    expect(states.at(-1)?.phase).toBe('resync-required');
+    expect(seen).toEqual([{ at: 'a' }]);
   });
 
   test('the state channel reaches the subscriber', async () => {

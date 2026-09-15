@@ -291,6 +291,9 @@
     },
     "logger": {
       "test": "a supplied logger hears about a failed read"
+    },
+    "deltaMemoryBytes": {
+      "test": "a hub told to keep no history sends values, never differences"
     }
   },
   "WatchClientConfig": {
@@ -308,17 +311,35 @@
     }
   },
   "ApiErrorRetryConfig": {
-    "attempts": { "test": "attempts stops query retries at the declared budget" },
-    "never": { "test": "never excludes an application error code from retries" },
-    "statusRanges": { "test": "statusRanges chooses the inclusive retryable HTTP range" },
-    "network": { "test": "network false refuses an unclassified transport failure" }
+    "attempts": {
+      "test": "attempts stops query retries at the declared budget"
+    },
+    "never": {
+      "test": "never excludes an application error code from retries"
+    },
+    "statusRanges": {
+      "test": "statusRanges chooses the inclusive retryable HTTP range"
+    },
+    "network": {
+      "test": "network false refuses an unclassified transport failure"
+    }
   },
   "QueryClientFactoryConfig": {
-    "queryClient": { "test": "queryClient defaults are preserved by the factory" },
-    "retry": { "test": "retry config becomes the default query retry predicate" },
-    "onMutationError": { "test": "onMutationError is installed on the mutation cache" },
-    "serverCache": { "test": "serverCache owns request-local QueryClient identity" },
-    "server": { "test": "server selector chooses request cache or browser singleton" }
+    "queryClient": {
+      "test": "queryClient defaults are preserved by the factory"
+    },
+    "retry": {
+      "test": "retry config becomes the default query retry predicate"
+    },
+    "onMutationError": {
+      "test": "onMutationError is installed on the mutation cache"
+    },
+    "serverCache": {
+      "test": "serverCache owns request-local QueryClient identity"
+    },
+    "server": {
+      "test": "server selector chooses request cache or browser singleton"
+    }
   },
   "EventTopicDeclaration": {
     "schema": {

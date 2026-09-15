@@ -225,13 +225,49 @@ Nothing an open can fail with escapes as a rejected promise: a disconnected
 socket, a timeout, a refusal all arrive as `unavailable` carrying the error's own
 code and message, and the next connection retries.
 
+The re-open carries what the client still holds, so a reconnection is usually
+cheap: the hub answers with a difference, or with nothing at all when the answer
+has not moved. That needs the key to still exist on the server — set `holdMs`
+past your reconnect delay, or the last detach releases the source and the page
+pays the whole value once.
+
+### Large answers cross as differences
+
+A frame carries the value, a **difference** to a revision this subscriber already
+holds, or `unchanged`. The hub chooses per subscriber and sends a difference only
+when it is genuinely smaller; your `value` listener sees the rebuilt value either
+way and needs no code for this.
+
+It matters when an answer is large and moves a little: a ~75 KB list in which two
+timestamps change, republished every fifteen seconds, was a megabyte per
+subscriber per minute before and is a frame under a kilobyte now.
+
+```ts
+createWatchHub({
+  // Superseded values kept per key, so a difference has something to be taken
+  // against. Default 262144. Set 0 to send whole values only.
+  deltaMemoryBytes: 256 * 1024,
+  holdMs: 30_000,
+  // …
+});
+```
+
+Reassembly is checked against the server's fingerprint on every frame. If a
+difference will not apply — a client that missed a revision, a hub that restarted
+— that **one key** resynchronises: your `state` listener sees `resync-required`
+and the whole value follows. Other keys on the same socket are untouched.
+
+Both ends must come from the same major release: a client older than 0.90 reads a
+difference frame as a value of `undefined`.
+
 ### `watch` or `createLiveStateController`?
 
 > **If you would have written `applyEvent` as `(_, next) => next`, you want
-> `watch`: the server sends the value whole.** `createLiveStateController` is for
-> a server that sends *deltas* you have to fold. `watch` is that controller with
-> the fold fixed to replacement, plus the key sharing and the retention — so
-> applying both to one value is always a mistake.
+> `watch`: whatever crosses the wire, what your `value` listener receives is the
+> whole answer.** `createLiveStateController` is for a server whose *protocol* is
+> deltas that your code folds. `watch` may send a difference too, but it folds it
+> for you and hands you the value — so applying both to one value is always a
+> mistake.
 
 ### What it cannot promise
 

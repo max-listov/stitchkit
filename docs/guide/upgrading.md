@@ -1,5 +1,31 @@
 # Upgrading stitchkit
 
+## Released migration: 0.90.0
+
+1. `stitchkit.watch.value` is a discriminated union on `kind` — `full`, `delta`,
+   `unchanged` — and every frame carries `fingerprint`. **Both ends must come from
+   the same major.** A client older than this release reads a `delta` frame as a
+   value of `undefined`, silently; upgrade the hub and the pages that talk to it
+   together, or set `deltaMemoryBytes: 0` on the hub until they are.
+
+   Applications using `createWatchClient` need no code change: it rebuilds the
+   value and hands the listener the whole answer as before. Code that reads
+   `WatchValueFrame.value` directly — a hand-written subscriber, a test double —
+   narrows on `kind` first.
+
+   ```ts
+   // before: frame.value
+   // after:
+   if (frame.kind === 'full') hold(frame.value);
+   else if (frame.kind === 'delta') hold(applyWatchDelta(held, frame.delta));
+   // 'unchanged' leaves what you hold standing
+   ```
+
+2. `AttachedWatcher.open` takes an optional third argument, `have`. A custom
+   server binding that forwards `stitchkit.watch.open` should pass the payload's
+   `have` through; omitting it costs a whole value on every reconnection and is
+   otherwise harmless.
+
 ## Released migration: 0.89.0
 
 1. Custom `AgentRuntimeStore` adapters implement `seedConversationInput`; custom

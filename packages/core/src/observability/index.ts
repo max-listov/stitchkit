@@ -29,6 +29,7 @@ export {
   createBoundedLogger,
   DEFAULT_REDACT_PATHS,
 } from './bounded-logger';
+export { auditChanges } from './changes';
 export {
   type DimensionCollision,
   getRequestContext,
@@ -54,6 +55,12 @@ export {
   sanitizePayload,
   truncatePreview,
 } from './sanitize';
+export {
+  createSpooledSink,
+  type SpooledSink,
+  type SpooledSinkConfig,
+  type SpoolRecovery,
+} from './spool';
 export {
   type ObservabilityDrainReport,
   ObservabilityDrainReportSchema,

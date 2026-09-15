@@ -42,6 +42,8 @@ export {
   WATCH_OPEN,
   WATCH_STATE,
   WATCH_VALUE,
+  type WatchHave,
+  WatchHaveSchema,
   type WatchKey,
   WatchKeySchema,
   type WatchStateFrame,
@@ -51,3 +53,12 @@ export {
   watchContract,
   watchKeyString,
 } from './live/watch-contract';
+export {
+  apply as applyWatchDelta,
+  deltaWins as watchDeltaWins,
+  diff as watchDiff,
+  type WatchArrayOp,
+  WatchArrayOpSchema,
+  type WatchDelta,
+  WatchDeltaSchema,
+} from './live/watch-delta';

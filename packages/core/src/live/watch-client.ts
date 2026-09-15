@@ -50,11 +50,13 @@ import {
   WATCH_OPEN,
   WATCH_STATE,
   WATCH_VALUE,
+  type WatchHave,
   type WatchKey,
   type WatchStateFrame,
   type WatchValueFrame,
   watchKeyString,
 } from './watch-contract';
+import { apply } from './watch-delta';
 
 export interface WatchListeners<TValue> {
   value(value: TValue): void;
@@ -128,7 +130,7 @@ export interface WatchTransport {
   emit(event: typeof WATCH_CLOSE, payload: { key: WatchKey }): unknown;
   request(
     event: typeof WATCH_OPEN,
-    payload: { key: WatchKey; args: unknown },
+    payload: { key: WatchKey; args: unknown; have?: WatchHave },
     options: { timeoutMs: number },
   ): Promise<{ accepted: boolean; reason?: string }>;
   /**
@@ -162,6 +164,16 @@ interface Entry {
   value?: unknown;
   hasValue: boolean;
   /**
+   * The server's identity for the value held, carried back on the next `open`.
+   *
+   * Kept rather than recomputed so that what is offered is what the server
+   * actually said, not this client's opinion of the value it built — if those
+   * two ever disagree, offering the recomputed one would hide the disagreement
+   * and offering the server's one surfaces it as a difference that will not
+   * apply.
+   */
+  fingerprint?: string;
+  /**
    * Whether the **current** connection has been told about this key.
    *
    * On the entry rather than on a handle: two handles asking one question share
@@ -191,17 +203,84 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     for (const listener of [...entry.listeners]) listener.state?.(state);
   }
 
+  /**
+   * Start this one key over.
+   *
+   * Only this key: a difference that will not apply says nothing about the other
+   * questions on the same socket, and tearing down the connection to fix one
+   * stale list would take every other panel down with it. The held value is
+   * dropped first, so the re-open offers nothing and is answered with the whole
+   * value.
+   *
+   * The phase is `resync-required` and it is published rather than hidden —
+   * this is a real event in the life of a watched read, and a client that
+   * repaired itself in silence would make a recurring failure invisible.
+   */
+  function resynchronise(entry: Entry, message: string): void {
+    entry.hasValue = false;
+    entry.value = undefined;
+    entry.revision = 0;
+    entry.fingerprint = undefined;
+    entry.opened = false;
+    publishState(entry, { key: entry.key, phase: 'resync-required', message });
+    config.transport.emit(WATCH_CLOSE, { key: entry.key });
+    void open(entry);
+  }
+
   config.transport.on(WATCH_VALUE, (frame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
+    if (frame.kind === 'unchanged') {
+      // The value held is still current. Adopt the revision it was confirmed at
+      // so the next difference is taken against the right base.
+      if (!entry.hasValue) {
+        resynchronise(entry, 'the server confirmed a value this client does not hold');
+        return;
+      }
+      entry.revision = frame.revision;
+      entry.fingerprint = frame.fingerprint;
+      return;
+    }
     // A frame no newer than what is held is a late answer to an older question.
     // The hub reads one at a time so this should not happen; dropping it anyway
     // costs one comparison and means the rule is stated where a reader can see it.
     if (entry.hasValue && frame.revision <= entry.revision) return;
+    let value: unknown;
+    if (frame.kind === 'full') {
+      value = frame.value;
+    } else {
+      if (!entry.hasValue || entry.revision !== frame.base) {
+        resynchronise(
+          entry,
+          `a difference against revision ${frame.base} arrived while holding ${
+            entry.hasValue ? String(entry.revision) : 'nothing'
+          }`,
+        );
+        return;
+      }
+      try {
+        value = apply(entry.value, frame.delta);
+      } catch (error) {
+        resynchronise(entry, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      // The rebuilt value is checked against the server's identity for it, every
+      // time. Reassembly is the one step on this path that can be wrong while
+      // looking right, and an unchecked difference would hand a component a
+      // plausible answer that nobody holds.
+      if (argumentsDigest({ value }) !== frame.fingerprint) {
+        resynchronise(
+          entry,
+          'the rebuilt value did not match the fingerprint the server sent',
+        );
+        return;
+      }
+    }
     entry.revision = frame.revision;
-    entry.value = frame.value;
+    entry.value = value;
+    entry.fingerprint = frame.fingerprint;
     entry.hasValue = true;
-    for (const listener of [...entry.listeners]) listener.value(frame.value);
+    for (const listener of [...entry.listeners]) listener.value(value);
   });
 
   config.transport.on(WATCH_STATE, (frame) => {
@@ -267,9 +346,15 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     if (entry.opened) return;
     entry.opened = true;
     try {
+      // What this client already holds travels with the open, so a reconnection
+      // costs a difference — or nothing at all — instead of the value again.
+      const have: WatchHave | undefined =
+        entry.hasValue && entry.fingerprint !== undefined
+          ? { revision: entry.revision, fingerprint: entry.fingerprint }
+          : undefined;
       const acknowledgement = await config.transport.request(
         WATCH_OPEN,
-        { key: entry.key, args: entry.args },
+        { key: entry.key, args: entry.args, ...(have !== undefined && { have }) },
         { timeoutMs: openTimeoutMs },
       );
       if (!acknowledgement.accepted) {

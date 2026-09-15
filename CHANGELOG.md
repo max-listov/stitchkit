@@ -15,6 +15,62 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.0] — 2026-09-15
+
+### ⚠️ Breaking changes
+
+**Who must act:** applications that bind the watch protocol themselves or read
+`WatchValueFrame.value` directly — a hand-written subscriber, a test double, a custom
+server binding. Applications using `createWatchClient` and the starter's binding need
+no code change. **Both ends must come from the same major:** a client older than 0.90.0
+reads a `delta` frame as a value of `undefined`, silently.
+
+- **`stitchkit.watch.value` is a discriminated union on `kind`.** `full` carries the value,
+  `delta` carries a structural difference against a `base` revision, `unchanged` says the
+  value held is still current. Every frame carries `fingerprint`, the order-independent
+  digest of the value the receiver holds after applying it.
+
+  ```ts
+  // before: frame.value
+  // after:
+  if (frame.kind === 'full') hold(frame.value);
+  else if (frame.kind === 'delta') hold(applyWatchDelta(held, frame.delta));
+  // 'unchanged' leaves what you hold standing
+  ```
+
+- **`AttachedWatcher.open` takes an optional third argument, `have`.** A custom server
+  binding forwarding `stitchkit.watch.open` should pass the payload's `have` through;
+  omitting it costs a whole value on every reconnection and is otherwise harmless.
+
+### Added
+
+- **Watched reads cross as differences.** The hub chooses per subscriber, from the revision
+  it last delivered to that subscriber, and sends a difference only when it is strictly
+  smaller than the value. Measured: a ~75 KB list answer with one field changed crosses as a
+  frame under 1 KB. `deltaMemoryBytes` (default 262144, `0` disables) bounds the superseded
+  values kept per key. → ADR 0183.
+- **A reconnection offers what it holds.** `stitchkit.watch.open` may carry
+  `have: { revision, fingerprint }`; a subscriber returning to an answer that has not moved
+  is told `unchanged` instead of being sent the value again. Requires the key to still exist
+  on the hub — set `holdMs` past your reconnect delay.
+- **Reassembly is checked.** The client verifies the rebuilt value against the server's
+  fingerprint on every frame and resynchronises **that one key** on any mismatch, publishing
+  `resync-required`. Other keys on the same socket are untouched.
+- **`watchDiff` / `applyWatchDelta` / `watchDeltaWins`** and the `WatchDelta` shapes are
+  exported from `stitchkit/live` for applications building their own binding.
+- **`auditChanges`** — the sink `filter` most projects were writing themselves: drops `GET`,
+  `HEAD` and `OPTIONS`, keeps `401` and `403` whatever the verb was, keeps an unrecognised
+  verb. One predicate across HTTP, MCP and agent calls. → ADR 0184.
+- **`createSpooledSink`** — writes the audit row to a local append-only file before offering
+  it to the store and replays what a previous process left undelivered. At least once; the
+  store must be idempotent on the record key (`spanId` by default).
+
+### Unchanged on purpose
+
+- **Auditing stays opt-in.** `createHandler` and the tool mounts are untouched. Making a
+  decision about audit mandatory at startup was considered and rejected — the measurement it
+  rested on counted projects without an HTTP surface as projects that had forgotten. → ADR 0184.
+
 ## [0.89.0] — 2026-09-12
 
 ### ⚠️ Breaking changes

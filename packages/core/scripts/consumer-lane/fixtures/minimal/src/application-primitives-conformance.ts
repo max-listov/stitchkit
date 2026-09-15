@@ -32,6 +32,7 @@ import {
   type WatchSubscriber,
   watchKey,
 } from 'stitchkit/application';
+import { applyWatchDelta } from 'stitchkit/live';
 
 const failures: string[] = [];
 const check = (name: string, ok: boolean): void => {
@@ -87,8 +88,16 @@ const hub = createWatchHub({
   },
 });
 const received: unknown[] = [];
+// A frame is the value, a difference to a revision this subscriber holds, or
+// nothing-changed. This is the whole of the 0.90.0 migration for a subscriber
+// written by hand — `createWatchClient` does it for you.
+let held: unknown;
 const subscriber: WatchSubscriber = {
-  value: (frame) => void received.push(frame.value),
+  value: (frame) => {
+    if (frame.kind === 'full') held = frame.value;
+    else if (frame.kind === 'delta') held = applyWatchDelta(held, frame.delta);
+    received.push(held);
+  },
   state: () => undefined,
 };
 const key = watchKey({ service: 'notes', action: 'list' }, { folder: 'a' });

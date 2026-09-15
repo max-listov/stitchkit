@@ -257,7 +257,10 @@ realtime contract from `stitchkit`, and the server halves live in `stitchkit/app
 | `watchContract` | const | the four-event realtime contract a watched read travels on |
 | `WATCH_OPEN` / `WATCH_CLOSE` / `WATCH_VALUE` / `WATCH_STATE` | const | the event names of that contract |
 | `WatchKey` / `WatchKeySchema` / `watchKeyString` | type / schema / function | `(service, action, arguments digest)` — the identity both ends compute the same way |
-| `WatchValueFrame` / `WatchValueSchema` / `WatchStateFrame` / `WatchStateSchema` | _types_ | a value with its monotonic revision, and a phase from `LiveStatePhase` with the read's own code and message |
+| `WatchValueFrame` / `WatchValueSchema` / `WatchStateFrame` / `WatchStateSchema` | _types_ | one answer — `full`, `delta` or `unchanged`, with its monotonic revision and fingerprint — and a phase from `LiveStatePhase` with the read's own code and message |
+| `WatchHave` / `WatchHaveSchema` | type / schema | what a reconnecting subscriber already holds, offered on `open`: a revision and the fingerprint that proves it |
+| `WatchDelta` / `WatchDeltaSchema` / `WatchArrayOp` / `WatchArrayOpSchema` | _types_ / schemas | a structural difference over parsed JSON — objects by changed and dropped key, arrays by runs copied from the previous value |
+| `watchDiff` / `applyWatchDelta` / `watchDeltaWins` | functions | build a difference (`undefined` when equal), rebuild the value from one (throws rather than inventing), and whether it is actually smaller than the value |
 
 ---
 
@@ -1278,6 +1281,8 @@ audit event. See the [Observability guide](../guide/observability.md).
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
+| `auditChanges` | function | the sink `filter` most projects write themselves — drops `GET`/`HEAD`/`OPTIONS`, keeps `401`/`403` whatever the verb, keeps an unrecognised verb |
+| `createSpooledSink` / `SpooledSink` / `SpooledSinkConfig` / `SpoolRecovery` | function / _types_ | spool the row to an append-only file before the store and replay what a previous process left undelivered — at least once, keyed on `spanId` |
 | `createDimensionsProjector` / `DimensionsProjector` / `DimensionsProjectorConfig` / `ProjectedDimensions` | function / _type_ | typed request/result/error attribution projected into the existing request context |
 | `DimensionCollision` / `SetRequestDimensionsOptions` | _type_ | explicit overwrite, preserve or error policy for dimension keys |
 | `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |

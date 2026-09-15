@@ -14,9 +14,10 @@ stitchkit answers this at two levels.
   sanitisation and `createObservability` with independent request/tool sinks.
   [Start here ↓](#the-observability-module)
 
-stitchkit still ships no logger and no audit store — those are the app's choice.
-What it ships is the machinery that turns a completed call into a clean,
-normalised record.
+stitchkit still ships no logger and no audit store, and auditing stays opt-in —
+those are the app's choice (→ ADR 0012, reaffirmed in ADR 0184). What it ships is
+the machinery that turns a completed call into a clean, normalised record, keeps
+the ones worth keeping, and does not lose them when the store is down.
 
 ## The observability module
 
@@ -252,6 +253,69 @@ queryable across all three:
 | `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled |
 | `resultSize` / `responseBytes` | result item count + serialised size |
 | `userId` / `ipAddress` / `userAgent` | identity |
+
+### Write the calls that changed something
+
+`auditChanges` is the filter most projects end up writing, shipped so they do not
+have to write it six ways:
+
+```ts
+import { auditChanges, createObservability } from 'stitchkit/observability';
+
+createObservability({
+  request: { write: saveAuditRow, filter: auditChanges },
+  tools: { write: saveAuditRow, filter: auditChanges },
+});
+```
+
+It drops `GET`, `HEAD` and `OPTIONS`, keeps everything else, and keeps `401` and
+`403` **whatever the verb was** — a refused read is the row an audit exists to
+hold, and a filter that drops every `GET` drops exactly that. An unrecognised
+verb is kept: an extra row costs bytes, a missing one costs the answer to "who
+changed this", silently and only later.
+
+One filter across HTTP, MCP and agent calls, because a tool call carries its
+contract verb in `httpMethod` while its `method` is the literal `TOOL`.
+
+Narrower policy stays yours — compose it:
+
+```ts
+filter: (event) => auditChanges(event) && event.serviceName !== 'health',
+```
+
+### Keeping the row when the store is down
+
+A sink is fire-and-forget, so an unreachable store means the event is simply
+gone — and a store is most likely to be unreachable during an incident, which is
+the window whose rows someone will later want most.
+
+`createSpooledSink` writes the row to a local append-only file first, offers it
+to the store second, and marks it delivered third. What a previous process left
+unmarked is replayed:
+
+```ts
+import { createSpooledSink } from 'stitchkit/observability';
+
+const audit = createSpooledSink({
+  path: '/var/lib/app/audit.ndjson',
+  write: saveAuditRow,
+});
+
+// Once, at startup, before the sink is wired — and await it.
+const { replayed, failed } = await audit.recover();
+
+createObservability({ request: { write: audit.write, filter: auditChanges } });
+```
+
+The guarantee is **at least once**. A crash between the store accepting a row and
+the file recording that it did replays the row, so **the store must be idempotent
+on the record key** — `event.spanId` by default, unique per call. A unique index
+on it turns the duplicate into a no-op; without one, replay writes the row twice.
+Exactly-once would need the file and the database to share a transaction. They do
+not.
+
+One process, one path. Two processes pointed at the same file replay each other's
+records: harmless against an idempotent store, wasteful always.
 
 ### Request context
 
