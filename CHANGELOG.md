@@ -41,6 +41,21 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ### Fixed
 
+- **Output past the pipe buffer is no longer lost to a slow reader.** The
+  default writer called `writeSync` and ignored the byte count it returns. Once
+  anything in the process has touched `process.stdout` the descriptor is
+  non-blocking, so a write into a pipe whose reader has not started yet stores
+  what the 64 KB buffer takes, returns that count and throws nothing: the tail
+  vanished with exit code `0`, at exactly 65536 bytes — the same number as the
+  truncation the synchronous writer had been introduced to fix, which is why it
+  read as already fixed for so long. A consuming CLI saw `… | jq` fail with
+  "Unfinished string at column 65536" while the same command redirected to a
+  file wrote the whole result. The writer now loops on the returned count and
+  treats a full buffer (`EAGAIN`) as a wait rather than a failure, which is what
+  a blocking write into an undrained pipe is supposed to do; where an exotic
+  descriptor still forces the async fallback, the default `exit` waits for that
+  write instead of cutting it off, and output that could not be delivered at all
+  now exits non-zero.
 - **Help survives a managed surface that cannot resolve.** A CLI whose commands
   come from a running server declares them with a factory, and the factory needs
   an identity. When `resolveAuth` failed — server down, key file missing — the
