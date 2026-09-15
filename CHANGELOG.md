@@ -15,6 +15,46 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.3] — 2026-09-15
+
+### Added
+
+- **A trailing positional may be a list.** When the last field of a command's
+  declared `positionals` is an array, it takes every remaining argv token,
+  coerced by the element type: `myapp handoff proj a.md b.md` instead of
+  `--files '["a.md","b.md"]'`. One token is a one-element list, so the parsed
+  shape never depends on how many a caller happened to pass, and command help
+  says which field is the list (`<to> <files...>`). The flag form still works;
+  passing both forms in one call is an argument error rather than a silent
+  merge. Only the trailing position is variadic — an array declared earlier
+  keeps taking exactly one JSON token, unchanged.
+- **`globalOptions` — the application's own invocation context.** A CLI's
+  globals were only ever the framework's (`--json`, `--wait`, …), so an app that
+  needed `--caller <key>` or `--root <dir>` had to read an environment variable
+  or parse argv itself, next to the parser it already had. Declare them as a Zod
+  object and `createCli` lifts them out of argv wherever they stand — before or
+  after the command name — validates them, keeps them out of every operation's
+  arguments, and hands them to `resolveAuth(globals)`, `context(auth, globals)`
+  and a native command's `globals`. A name that collides with a framework option
+  or with a field of any command is refused at startup instead of shadowing it
+  silently, and both help levels list them under `Application options:`.
+
+### Fixed
+
+- **Help survives a managed surface that cannot resolve.** A CLI whose commands
+  come from a running server declares them with a factory, and the factory needs
+  an identity. When `resolveAuth` failed — server down, key file missing — the
+  rejection escaped `createCli` and `--help` printed *nothing*: not the native
+  commands, which never depended on identity, and not the reason. Calling such a
+  name was worse than silence, because the surface never resolved and the answer
+  would have been `Unknown command` — a claim that the name does not exist when
+  the truth is that it could not be looked up. Top-level help now lists the
+  native commands and one line naming the refusal (`Managed commands are
+  unavailable: UNREACHABLE: socket closed`), and an unresolvable name answers
+  with that refusal and the exit code its error class declares through
+  `exitCodes`. Identity is still resolved at most once per invocation, failure
+  included.
+
 ## [0.90.2] — 2026-09-15
 
 ### Fixed
