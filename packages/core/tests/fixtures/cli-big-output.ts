@@ -9,6 +9,14 @@ import { createCli } from '../../src/tools/cli';
 
 const SIZE = Number(process.env.STITCHKIT_TEST_PAYLOAD_SIZE ?? 200_000);
 
+// Touching `process.stdout` is what makes fd 1 NON-BLOCKING — the runtime
+// creates the WriteStream and sets O_NONBLOCK on it. Any real CLI does this the
+// moment it calls `console.log` once, anywhere. It is opt-in here so the two
+// tests stay one subject each: the original one proves a blocking descriptor is
+// not cut by `process.exit`, this flag turns the descriptor into the one where
+// a short `writeSync` silently drops the tail.
+if (process.env.STITCHKIT_TEST_NONBLOCKING_STDOUT === '1') void process.stdout;
+
 const contract = defineContract(
   { prefix: 'big', scope: 'public' },
   {
