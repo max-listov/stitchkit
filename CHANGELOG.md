@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.2] — 2026-09-15
+
+### Fixed
+
+- **The guide's list of stitchkit's own error codes is held against the
+  registry.** `docs/guide/auth-and-errors.md` enumerates `STITCH_ERROR_STATUS`
+  in prose so it can be read, and the guide warns about itself that the
+  enumeration is what goes stale — naming one drift that stopped a consumer's
+  map compiling. Nothing stood behind the warning, and the list had gone stale
+  again: five of thirty-one codes were missing (`STREAM_ITEM_INVALID`,
+  `STREAM_FRAME_TOO_LARGE`, `STREAM_TERMINAL_MISSING`,
+  `STREAM_LIFETIME_EXCEEDED`, `GRAMMY_WEBHOOK_NOT_ACCEPTING`) while every gate
+  in the repository, `error-registry-completeness` included, stayed green. The
+  list is now complete and checked for set equality in both directions: a
+  missing code sends a reader hunting for a vocabulary that is already
+  published, an invented one sends them to map a code the framework never
+  throws.
+
 ## [0.90.1] — 2026-09-15
 
 ### Fixed
