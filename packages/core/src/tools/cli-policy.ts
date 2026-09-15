@@ -17,7 +17,12 @@ export interface CliCommandPresentation {
   presentationSchema: Record<string, unknown>;
   /** Canonical field name → one short alias. */
   aliases: ReadonlyMap<string, string>;
-  /** `undefined` retains automatic non-boolean schema order. */
+  /**
+   * `undefined` retains automatic non-boolean schema order. A trailing ARRAY
+   * field is variadic — it takes every remaining token. An array declared
+   * anywhere else keeps taking exactly one (a JSON-array token), and command
+   * help says which is which: only the variadic tail renders as `<name...>`.
+   */
   positionals?: readonly string[];
 }
 

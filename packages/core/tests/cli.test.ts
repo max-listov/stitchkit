@@ -10,7 +10,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { defineContract, notFound } from '../src/contract';
+import { AppError, defineContract, notFound } from '../src/contract';
 import { isRecord } from '../src/internal/typed';
 import { implement } from '../src/server';
 import { type CliConfig, createCli } from '../src/tools/cli';
@@ -1423,5 +1423,331 @@ describe('createCli — passthrough', () => {
       passthrough: { set_config: 'opts' },
     });
     expect(JSON.parse(out).args.opts).toEqual({ retries: 5 });
+  });
+});
+
+describe('createCli — trailing variadic positional', () => {
+  const HandoffInput = z.object({ to: z.string(), files: z.array(z.string()) });
+  const handoff = defineCliCommand({
+    name: 'handoff',
+    description: 'Hand a batch of files to a project',
+    input: HandoffInput,
+    output: HandoffInput,
+    handler: ({ input }) => input,
+  });
+  const policy = { commands: [handoff], positionals: { handoff: ['to', 'files'] } };
+
+  test('the trailing array field takes every remaining token', async () => {
+    const many = await run(['handoff', 'proj', 'a.md', 'b.md', '--json'], policy);
+    expect(many.code).toBe(0);
+    expect(JSON.parse(many.out)).toEqual({ to: 'proj', files: ['a.md', 'b.md'] });
+
+    // One token is a one-element LIST, not a scalar — otherwise the shape of
+    // the parsed argument would depend on how many files a caller happened to
+    // pass, which is the very thing a variadic tail exists to avoid.
+    const one = await run(['handoff', 'proj', 'a.md', '--json'], policy);
+    expect(JSON.parse(one.out)).toEqual({ to: 'proj', files: ['a.md'] });
+  });
+
+  test('elements are coerced one by one, by the array element type', async () => {
+    const NumbersInput = z.object({ label: z.string(), ports: z.array(z.number()) });
+    const numbers = defineCliCommand({
+      name: 'numbers',
+      description: 'A numeric trailing list',
+      input: NumbersInput,
+      output: NumbersInput,
+      handler: ({ input }) => input,
+    });
+    const result = await run(['numbers', 'edge', '80', '443', '--json'], {
+      commands: [numbers],
+      positionals: { numbers: ['label', 'ports'] },
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ label: 'edge', ports: [80, 443] });
+  });
+
+  test('no tokens for a required list is a validation failure naming the field', async () => {
+    const missing = await run(['handoff', 'proj', '--json'], {
+      ...policy,
+      stdin: async () => null,
+    });
+    expect(missing.code).toBe(1);
+    expect(missing.err).toContain('files');
+  });
+
+  test('the positional tail and the flag form together are refused, not merged', async () => {
+    const both = await run(['handoff', 'proj', 'a.md', '--files', '["b.md"]'], policy);
+    expect(both.code).toBe(2);
+    expect(both.err).toContain('--files conflicts with the positional values');
+  });
+
+  test('help marks the variadic tail and leaves a non-trailing array alone', async () => {
+    const help = await run(['handoff', '--help'], policy);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('Usage: widget handoff <to> <files...>');
+
+    // The control that keeps this honest: an array positional that is NOT last
+    // still takes exactly one token, and help must not promise a list.
+    const OrderedInput = z.object({
+      first: z.string(),
+      tags: z.array(z.string()),
+      last: z.string(),
+    });
+    const ordered = defineCliCommand({
+      name: 'ordered',
+      description: 'An array positional in the middle',
+      input: OrderedInput,
+      output: OrderedInput,
+      handler: ({ input }) => input,
+    });
+    const middle = {
+      commands: [ordered],
+      positionals: { ordered: ['first', 'tags', 'last'] },
+    };
+    const orderedHelp = await run(['ordered', '--help'], middle);
+    expect(orderedHelp.out).toContain('Usage: widget ordered <first> <tags> <last>');
+    const run3 = await run(['ordered', 'a', '["x","y"]', 'z', '--json'], middle);
+    expect(JSON.parse(run3.out)).toEqual({ first: 'a', tags: ['x', 'y'], last: 'z' });
+  });
+});
+
+describe('createCli — help survives an unresolved dynamic surface', () => {
+  const serve = defineCliCommand({
+    name: 'serve',
+    description: 'Run the server',
+    // Named `bind`, not `port`: `no-fixed-ports` scans every line of this
+    // directory for a literal `port:` and this fixture binds nothing at all.
+    input: z.object({ bind: z.number().default(8080) }),
+    output: z.object({ bind: z.number() }),
+    handler: ({ input }) => input,
+  });
+  const managed = defineRuntimeTool({
+    name: 'handoff_read',
+    description: 'Read one handoff',
+    identity: { serviceName: 'handoff', action: 'read', method: 'GET' },
+    input: z.object({ handoffId: z.string() }),
+    output: z.object({ handoffId: z.string() }),
+    transports: ['CLI'],
+    handler: ({ input }) => input,
+  });
+  const unreachable = {
+    commands: [serve],
+    services: [],
+    runtimeTools: () => [managed],
+    resolveAuth: (): never => {
+      throw new AppError('UNREACHABLE', 'socket closed');
+    },
+    exitCodes: { UNREACHABLE: 69 },
+  };
+
+  test('top-level help lists the native commands and names the reason', async () => {
+    const help = await run(['--help'], unreachable);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('serve');
+    expect(help.out).toContain('Managed commands are unavailable: UNREACHABLE: socket closed');
+    // The managed name is genuinely absent — the reason line is not decoration
+    // over a list that quietly resolved anyway.
+    expect(help.out).not.toContain('handoff_read');
+  });
+
+  test('a managed name answers with the refusal, never "Unknown command"', async () => {
+    const called = await run(['handoff_read', '--handoffId', 'u'], unreachable);
+    expect(called.code).toBe(69);
+    expect(called.err).toContain('socket closed');
+    expect(called.err).not.toContain('Unknown command');
+  });
+
+  test('native commands and their help do not depend on resolution at all', async () => {
+    const executed = await run(['serve', '--bind', '9000', '--json'], unreachable);
+    expect(executed.code).toBe(0);
+    expect(JSON.parse(executed.out)).toEqual({ bind: 9000 });
+
+    const help = await run(['serve', '--help'], unreachable);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('Usage: widget serve');
+  });
+
+  test('a non-AppError refusal still reports, and resolution is attempted once', async () => {
+    let attempts = 0;
+    const cfg = {
+      commands: [serve],
+      services: [],
+      runtimeTools: () => [managed],
+      resolveAuth: (): never => {
+        attempts += 1;
+        throw new Error('no key file at /home/someone/.config/key.json');
+      },
+    };
+    const called = await run(['handoff_read', '--handoffId', 'u'], cfg);
+    // A raw throw is scrubbed to the generic internal failure by the shared
+    // error model — the CLI must not leak a path the rest of the framework hides.
+    expect(called.code).toBe(1);
+    expect(called.err).toContain('INTERNAL_SERVER_ERROR');
+    expect(called.err).not.toContain('/home/someone');
+    expect(attempts).toBe(1);
+  });
+
+  test('a surface that resolves is unchanged — same commands, same exit codes', async () => {
+    const ok = await run(['handoff_read', '--handoffId', 'u', '--json'], {
+      commands: [serve],
+      services: [],
+      runtimeTools: () => [managed],
+      resolveAuth: () => ({ userId: 'u1' }),
+    });
+    expect(ok.code).toBe(0);
+    expect(JSON.parse(ok.out)).toEqual({ handoffId: 'u' });
+  });
+});
+
+describe('createCli — application global options', () => {
+  const globalOptions = z.object({
+    root: z.string().optional().describe('Checkout the call speaks for'),
+    verbose: z.boolean().optional(),
+  });
+  const managed = defineRuntimeTool({
+    name: 'handoff_read',
+    description: 'Read one handoff',
+    identity: { serviceName: 'handoff', action: 'read', method: 'GET' },
+    input: z.object({ handoffId: z.string() }),
+    output: z.object({ handoffId: z.string(), root: z.string().optional() }),
+    transports: ['CLI'],
+    handler: (ctx) => ({
+      handoffId: ctx.input.handoffId,
+      root: typeof ctx.root === 'string' ? ctx.root : undefined,
+    }),
+  });
+
+  function harness(extra: Partial<CliConfig> = {}): {
+    cfg: Partial<CliConfig>;
+    seen: { auth?: unknown; context?: unknown; operation?: unknown };
+  } {
+    const seen: { auth?: unknown; context?: unknown; operation?: unknown } = {};
+    return {
+      seen,
+      cfg: {
+        globalOptions,
+        services: [],
+        runtimeTools: () => [managed],
+        resolveAuth: (g: unknown) => {
+          seen.auth = g;
+          return { userId: 'u1' };
+        },
+        context: (_auth: unknown, g: unknown) => {
+          seen.context = g;
+          return isRecord(g) ? { root: g.root } : {};
+        },
+        hooks: {
+          afterToolCall: ({ args }) => {
+            seen.operation = args;
+          },
+        },
+        ...extra,
+      },
+    };
+  }
+
+  test('the flag reaches resolveAuth and context from either side of the command', async () => {
+    for (const argv of [
+      ['handoff_read', '--root', '/x', '--handoffId', 'u', '--json'],
+      ['--root', '/x', 'handoff_read', '--handoffId', 'u', '--json'],
+      ['--root=/x', 'handoff_read', '--handoffId', 'u', '--json'],
+    ]) {
+      const { cfg, seen } = harness();
+      const result = await run(argv, cfg);
+      expect(result.code).toBe(0);
+      expect(seen.auth).toEqual({ root: '/x' });
+      expect(seen.context).toEqual({ root: '/x' });
+      // The operation is handed its OWN arguments and nothing else.
+      expect(seen.operation).toEqual({ handoffId: 'u' });
+      expect(JSON.parse(result.out)).toEqual({ handoffId: 'u', root: '/x' });
+    }
+  });
+
+  test('an undeclared flag stays undefined and a boolean global needs no value', async () => {
+    const bare = harness();
+    await run(['handoff_read', '--handoffId', 'u', '--json'], bare.cfg);
+    expect(bare.seen.auth).toEqual({});
+
+    const flagged = harness();
+    await run(['--verbose', 'handoff_read', '--handoffId', 'u', '--json'], flagged.cfg);
+    expect(flagged.seen.auth).toEqual({ verbose: true });
+  });
+
+  test('an invalid value is an argument error that names the flag', async () => {
+    const { cfg } = harness({ globalOptions: z.object({ depth: z.number().optional() }) });
+    const bad = await run(['handoff_read', '--depth', 'deep', '--handoffId', 'u'], cfg);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain('--depth');
+  });
+
+  test('a value after `--` is a literal, not a global', async () => {
+    const EchoInput = z.object({ words: z.array(z.string()) });
+    const echo = defineCliCommand({
+      name: 'echo',
+      description: 'Echo the words',
+      input: EchoInput,
+      output: EchoInput,
+      handler: ({ input, globals }) => ({
+        words: [...input.words, String(globals.root ?? 'none')],
+      }),
+    });
+    const result = await run(['echo', '--json', '--', '--root', 'tail'], {
+      globalOptions,
+      commands: [echo],
+      positionals: { echo: ['words'] },
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ words: ['--root', 'tail', 'none'] });
+  });
+
+  test('a native command receives the globals beside its own input', async () => {
+    const whoami = defineCliCommand({
+      name: 'whoami',
+      description: 'Report the invocation context',
+      input: z.object({}),
+      output: z.object({ root: z.string().optional() }),
+      handler: ({ globals }) => ({
+        root: typeof globals.root === 'string' ? globals.root : undefined,
+      }),
+    });
+    const result = await run(['--root', '/w', 'whoami', '--json'], {
+      globalOptions,
+      commands: [whoami],
+      services: [],
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ root: '/w' });
+  });
+
+  test('both help levels document the application options', async () => {
+    const { cfg } = harness();
+    const top = await run(['--help'], cfg);
+    expect(top.out).toContain('Application options:');
+    expect(top.out).toContain('--root <string>');
+    expect(top.out).toContain('Checkout the call speaks for');
+
+    const command = await run(['handoff_read', '--help'], cfg);
+    expect(command.out).toContain('Application options:');
+    expect(command.out).toContain('--root <string>');
+  });
+
+  test('a shadowed or reserved name is refused at startup, never silently', async () => {
+    await expect(
+      run(['--help'], {
+        globalOptions: z.object({ json: z.string().optional() }),
+        services: [],
+      }),
+    ).rejects.toThrow('"--json" is reserved by the framework');
+
+    const clashing = defineCliCommand({
+      name: 'push',
+      description: 'A command whose field collides with a global',
+      input: z.object({ root: z.string() }),
+      output: z.object({ root: z.string() }),
+      handler: ({ input }) => input,
+    });
+    await expect(
+      run(['push', '--root', '/x'], { globalOptions, commands: [clashing], services: [] }),
+    ).rejects.toThrow('shadowed by application global options: root');
   });
 });

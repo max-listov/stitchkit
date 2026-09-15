@@ -21,6 +21,7 @@
  */
 import { writeSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import type { ZodObject, z } from 'zod';
 import { safeJsonParse } from '../internal/safe-json';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
@@ -29,6 +30,7 @@ import type { ServiceDef, StitchLogger } from '../server/types';
 import {
   CliArgumentError,
   describeSchemaFields,
+  extractCliGlobalOptions,
   parseCliArgs,
   RESERVED_CLI_OPTIONS,
   routeCliArgv,
@@ -52,11 +54,13 @@ import {
   type ToolCallHooks,
   type ToolLifecycle,
   type ToolResult,
+  toolErrorFromResult,
   toolResultFromError,
 } from './execute';
 import { type JsonSchemaField, jsonSchemaFields } from './json-schema';
 import { createToolRunner, type MountableTool } from './mount';
 import { assertUniqueToolName } from './names';
+import { buildToolPresentationSchema } from './presentation';
 import type { RuntimeToolDefinition } from './runtime-tool';
 import { objectShapeKeys } from './schema';
 import { collectToolSurface } from './surface';
@@ -68,6 +72,7 @@ export type CliSurfaceSource<TAuth, TValue> =
 export interface CliConfig<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
+  TGlobals extends ZodObject = ZodObject,
 > extends CliPresentationPolicyConfig {
   /** Program name — shown in help and unknown-command messages. */
   name: string;
@@ -85,13 +90,27 @@ export interface CliConfig<
    * promise of one.
    */
   auth?: TAuth | Promise<TAuth>;
-  /** Lazily resolve identity only when a managed command/surface actually needs it. */
-  resolveAuth?: () => TAuth | Promise<TAuth>;
+  /**
+   * Lazily resolve identity only when a managed command/surface actually needs
+   * it. Receives the application's global options, so `--caller <key>` can
+   * select WHICH identity this invocation speaks as.
+   */
+  resolveAuth?: (globals: z.output<TGlobals>) => TAuth | Promise<TAuth>;
+  /**
+   * The application's OWN global options — invocation context that belongs to
+   * no single operation: which identity key, which checkout, which profile.
+   * Declared as a Zod object of optional fields; `createCli` lifts these flags
+   * out of argv wherever they stand (before or after the command name),
+   * validates them against this schema and keeps them out of every operation's
+   * arguments. A name that collides with a framework option or with a field of
+   * any command is a startup error, never silent shadowing.
+   */
+  globalOptions?: TGlobals;
   /**
    * Context merged into every handler. Typed against the app's context shape
    * when the CLI is built via `createToolkit<AppContext>()`.
    */
-  context?: (auth: Awaited<TAuth> | undefined) => TContext;
+  context?: (auth: Awaited<TAuth> | undefined, globals: z.output<TGlobals>) => TContext;
   /** Explicit cancellation for this invocation; applications may bind SIGINT to it. */
   signal?: AbortSignal;
   /** Tool-call observability hooks — `afterToolCall` fires for every result,
@@ -247,12 +266,32 @@ function collectPassthrough(
   toolArgs[field] = base ? { ...base, ...bag } : bag;
 }
 
-function renderTopHelp(
-  name: string,
-  version: string,
-  commands: Map<string, CliCommandPresentation>,
-  defaultCommand?: string,
-): string {
+/** The application's own global options, rendered like the framework's own. */
+function applicationOptionLines(fields: readonly JsonSchemaField[]): string[] {
+  if (fields.length === 0) return [];
+  const labels = new Map(
+    fields.map((field) => [field.name, `--${field.name} <${typeLabel(field.schema)}>`]),
+  );
+  const width = Math.max(...fields.map((field) => labels.get(field.name)?.length ?? 0));
+  return [
+    '',
+    'Application options:',
+    ...fields.map((field) =>
+      `  ${padRight(labels.get(field.name) ?? `--${field.name}`, width)}  ${field.description ?? ''}`.trimEnd(),
+    ),
+  ];
+}
+
+function renderTopHelp(input: {
+  name: string;
+  version: string;
+  commands: Map<string, CliCommandPresentation>;
+  defaultCommand?: string;
+  applicationOptions: readonly JsonSchemaField[];
+  /** Why the managed surface is missing from this listing, when it is. */
+  unavailable?: string;
+}): string {
+  const { name, version, commands, defaultCommand } = input;
   const lines = [
     `${name} ${version}`,
     '',
@@ -266,10 +305,16 @@ function renderTopHelp(
       `  ${padRight(command, width)}  ${summarize(descriptor.description)}${command === defaultCommand ? ' (default)' : ''}`,
     );
   }
+  // Naming the reason is the whole point: a command list that silently lost
+  // most of itself reads as a CLI that never had those commands.
+  if (input.unavailable !== undefined) {
+    lines.push('', `Managed commands are unavailable: ${input.unavailable}`);
+  }
   lines.push('', 'Global options:');
   const optWidth = Math.max(...GLOBAL_OPTIONS.map(([flag]) => flag.length));
   for (const [flag, desc] of GLOBAL_OPTIONS)
     lines.push(`  ${padRight(flag, optWidth)}  ${desc}`);
+  lines.push(...applicationOptionLines(input.applicationOptions));
   lines.push('', `Run "${name} <command> --help" for command-specific flags.`);
   return `${lines.join('\n')}\n`;
 }
@@ -278,24 +323,32 @@ function renderCommandHelp(
   name: string,
   command: string,
   descriptor: CliCommandPresentation,
+  applicationOptions: readonly JsonSchemaField[] = [],
 ): string {
   const fields = jsonSchemaFields(descriptor.presentationSchema);
   const fieldsByName = new Map(fields.map((field) => [field.name, field]));
+  const kinds = describeSchemaFields(descriptor.argumentSchema);
   const positionals: JsonSchemaField[] = [];
   const positionalNames =
     descriptor.positionals ??
-    [...describeSchemaFields(descriptor.argumentSchema)]
-      .filter(([, info]) => info.kind !== 'boolean')
-      .map(([fieldName]) => fieldName);
+    [...kinds].filter(([, info]) => info.kind !== 'boolean').map(([fieldName]) => fieldName);
   for (const fieldName of positionalNames) {
     const field = fieldsByName.get(fieldName);
     if (field) positionals.push(field);
   }
+  // Only an explicit policy makes a trailing array field variadic, so only
+  // there does the usage line promise a list.
+  const variadicTail =
+    descriptor.positionals !== undefined &&
+    kinds.get(descriptor.positionals[descriptor.positionals.length - 1] ?? '')?.kind ===
+      'array'
+      ? descriptor.positionals[descriptor.positionals.length - 1]
+      : undefined;
   const positionalSyntax = new Map(
-    positionals.map((field) => [
-      field.name,
-      field.required ? `<${field.name}>` : `[${field.name}]`,
-    ]),
+    positionals.map((field) => {
+      const label = field.name === variadicTail ? `${field.name}...` : field.name;
+      return [field.name, field.required ? `<${label}>` : `[${label}]`];
+    }),
   );
   const usage = [
     `Usage: ${name} ${command}`,
@@ -322,6 +375,8 @@ function renderCommandHelp(
     }
     lines.push('');
   }
+  const applicationLines = applicationOptionLines(applicationOptions);
+  if (applicationLines.length > 0) lines.push(...applicationLines.slice(1), '');
   return `${lines.join('\n')}\n`;
 }
 
@@ -350,17 +405,28 @@ function assertCommandShape(
   descriptor: CliCommandPresentation,
   exists: boolean,
   passthroughField?: string,
+  applicationGlobals: ReadonlySet<string> = new Set(),
 ): void {
   assertUniqueToolName(name, exists, 'CLI command');
   if (name === 'help' || name === 'version') {
     throw new Error(`[stitchkit] CLI command "${name}" is reserved`);
   }
-  const conflicting = jsonSchemaFields(descriptor.presentationSchema)
-    .map((field) => field.name)
-    .filter((field) => RESERVED_CLI_OPTIONS.has(field));
+  const fieldNames = jsonSchemaFields(descriptor.presentationSchema).map(
+    (field) => field.name,
+  );
+  const conflicting = fieldNames.filter((field) => RESERVED_CLI_OPTIONS.has(field));
   if (conflicting.length > 0) {
     throw new Error(
       `[stitchkit] CLI command "${name}" declares reserved option field(s): ${conflicting.join(', ')}`,
+    );
+  }
+  // An application global is stripped from argv before any command parses it,
+  // so a command field of the same name could never receive a value. Say so at
+  // startup instead of losing the argument at every call.
+  const shadowed = fieldNames.filter((field) => applicationGlobals.has(field));
+  if (shadowed.length > 0) {
+    throw new Error(
+      `[stitchkit] CLI command "${name}" declares field(s) shadowed by application global options: ${shadowed.join(', ')}`,
     );
   }
   if (passthroughField !== undefined && descriptor.aliases.has(passthroughField)) {
@@ -471,7 +537,8 @@ async function downloadResults(
 export async function createCli<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
->(config: CliConfig<TAuth, TContext>): Promise<void> {
+  TGlobals extends ZodObject = ZodObject,
+>(config: CliConfig<TAuth, TContext, TGlobals>): Promise<void> {
   // Synchronous by default: the async `process.stdout.write` buffers, and the
   // `process.exit` right after a print truncates anything past the pipe
   // buffer (observed: a 70 KB JSON cut at exactly 65536 bytes). `writeSync`
@@ -493,6 +560,23 @@ export async function createCli<
     throw new Error('[stitchkit] createCli: use either auth or resolveAuth, not both');
   }
 
+  const applicationOptions = config.globalOptions
+    ? jsonSchemaFields(
+        buildToolPresentationSchema({
+          inputSchema: config.globalOptions,
+          unrepresentable: 'any',
+        }),
+      )
+    : [];
+  const applicationGlobalNames = new Set(applicationOptions.map((field) => field.name));
+  for (const name of applicationGlobalNames) {
+    if (RESERVED_CLI_OPTIONS.has(name)) {
+      throw new Error(
+        `[stitchkit] CLI global option "--${name}" is reserved by the framework`,
+      );
+    }
+  }
+
   const nativeCommands = new Map<string, CliCommandDefinition>();
   const nativeHelp = new Map<string, CliCommandPresentation>();
   for (const definition of config.commands ?? []) {
@@ -506,12 +590,31 @@ export async function createCli<
       descriptor,
       nativeCommands.has(definition.name),
       config.passthrough?.[definition.name],
+      applicationGlobalNames,
     );
     nativeCommands.set(definition.name, definition);
     nativeHelp.set(definition.name, descriptor);
   }
 
-  const route = routeCliArgv(argv, config.defaultCommand);
+  // The application's globals come off argv BEFORE routing: they may stand
+  // before the command name as easily as after it, and no command's parser
+  // should ever see them.
+  let globals: Record<string, unknown>;
+  let routableArgv: string[];
+  try {
+    const lifted = extractCliGlobalOptions(argv, config.globalOptions);
+    globals = lifted.globals;
+    routableArgv = lifted.argv;
+  } catch (error) {
+    if (!(error instanceof CliArgumentError)) throw error;
+    stderr(`${error.message}\n`);
+    return exit(2);
+  }
+  // The application declared this shape; `extractCliGlobalOptions` validated
+  // against it. This is the one bridge between the two.
+  const typedGlobals = globals as z.output<TGlobals>;
+
+  const route = routeCliArgv(routableArgv, config.defaultCommand);
   if (route.error) {
     stderr(`${route.error}\n`);
     return exit(2);
@@ -535,7 +638,7 @@ export async function createCli<
     const descriptor = nativeHelp.get(command);
     if (!descriptor) throw new Error('[stitchkit] native CLI descriptor invariant failed');
     if (helpRequested) {
-      stdout(renderCommandHelp(config.name, command, descriptor));
+      stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
       return exit(0);
     }
     const prepared = await prepareInvocation(
@@ -551,7 +654,7 @@ export async function createCli<
     }
     const { toolArgs, options } = prepared;
     if (options.help) {
-      stdout(renderCommandHelp(config.name, command, descriptor));
+      stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
       return exit(0);
     }
     if (options.wait) {
@@ -576,6 +679,7 @@ export async function createCli<
       options,
       { stdout, stderr },
       config.coerceJsonArgs ?? true,
+      globals,
     );
     const emission = prepareCliCommandEmission(native, result, options);
     let emittedExitCode: number;
@@ -599,13 +703,54 @@ export async function createCli<
 
   let authPromise: Promise<Awaited<TAuth> | undefined> | undefined;
   const resolveIdentity = (): Promise<Awaited<TAuth> | undefined> => {
-    authPromise ??= Promise.resolve(config.resolveAuth ? config.resolveAuth() : config.auth);
+    // An async IIFE, not `Promise.resolve(...)`: a `resolveAuth` that throws
+    // SYNCHRONOUSLY would otherwise escape before the memo is assigned, and the
+    // next caller would run it a second time.
+    authPromise ??= (async (): Promise<Awaited<TAuth> | undefined> =>
+      config.resolveAuth ? await config.resolveAuth(typedGlobals) : await config.auth)();
     return authPromise;
   };
   const dynamicSurface =
     typeof config.services === 'function' || typeof config.runtimeTools === 'function';
-  const buildManagedSurface = async (forExecution: boolean) => {
-    const auth = dynamicSurface || forExecution ? await resolveIdentity() : undefined;
+  /**
+   * The managed surface, or the reason there isn't one.
+   *
+   * A CLI whose command set comes from a running server cannot list those
+   * commands when the server is unreachable — but it still HAS native commands,
+   * and it knows why the rest are missing. Letting the rejection escape printed
+   * neither, and answering `Unknown command` would be a lie: the name is not
+   * unknown, it is unresolvable. Only identity resolution is caught here; a
+   * configuration fault in the surface itself is still a startup error.
+   */
+  type ManagedSurface =
+    | {
+        resolved: true;
+        auth: Awaited<TAuth> | undefined;
+        help: Map<string, CliCommandPresentation>;
+        tools: Map<string, MountableTool>;
+      }
+    | {
+        resolved: false;
+        failure: Extract<ToolResult, { ok: false }>;
+        reason: string;
+        help: Map<string, CliCommandPresentation>;
+      };
+  const buildManagedSurface = async (forExecution: boolean): Promise<ManagedSurface> => {
+    let auth: Awaited<TAuth> | undefined;
+    if (dynamicSurface || forExecution) {
+      try {
+        auth = await resolveIdentity();
+      } catch (error) {
+        const failure = toolResultFromError(error);
+        const normalized = toolErrorFromResult(failure);
+        return {
+          resolved: false,
+          failure,
+          reason: `${normalized.code}: ${normalized.message}`,
+          help: new Map(nativeHelp),
+        };
+      }
+    }
     const services =
       typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
     const runtimeTools =
@@ -628,12 +773,13 @@ export async function createCli<
         descriptor,
         help.has(mountable.name),
         config.passthrough?.[mountable.name],
+        applicationGlobalNames,
       );
       tools.set(mountable.name, mountable);
       help.set(mountable.name, descriptor);
     }
     assertCliPoliciesResolved(help, config);
-    return { auth, help, tools };
+    return { resolved: true, auth, help, tools };
   };
 
   const topLevelHelp =
@@ -644,8 +790,34 @@ export async function createCli<
     command === '-h';
   const managed = await buildManagedSurface(!topLevelHelp && !helpRequested);
   if (topLevelHelp) {
-    stdout(renderTopHelp(config.name, config.version, managed.help, config.defaultCommand));
+    stdout(
+      renderTopHelp({
+        name: config.name,
+        version: config.version,
+        commands: managed.help,
+        defaultCommand: config.defaultCommand,
+        applicationOptions,
+        ...(managed.resolved ? {} : { unavailable: managed.reason }),
+      }),
+    );
     return exit(0);
+  }
+  if (!managed.resolved) {
+    // Every native command already dispatched above, so this name could only
+    // have come from the surface that failed to resolve. Report THAT, with the
+    // exit code its error class declares.
+    return exit(
+      emitResult(
+        managed.failure,
+        { stdout, stderr },
+        {
+          json: beforeSeparator.includes('--json'),
+          toolName: command ?? config.name,
+          errorHint: config.errorHint,
+          exitCodes: { ...DEFAULT_EXIT_CODES, ...config.exitCodes },
+        },
+      ),
+    );
   }
 
   const tool = managed.tools.get(command);
@@ -658,7 +830,7 @@ export async function createCli<
   const descriptor = managed.help.get(command);
   if (!descriptor) throw new Error('[stitchkit] managed CLI descriptor invariant failed');
   if (helpRequested) {
-    stdout(renderCommandHelp(config.name, command, descriptor));
+    stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
     return exit(0);
   }
   const prepared = await prepareInvocation(
@@ -688,7 +860,7 @@ export async function createCli<
   }
 
   if (options.help) {
-    stdout(renderCommandHelp(config.name, command, descriptor));
+    stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
     return exit(0);
   }
 
@@ -699,7 +871,7 @@ export async function createCli<
 
   const runTool = createToolRunner({
     source: 'cli',
-    context: { ...config.context?.(managed.auth), signal: config.signal },
+    context: { ...config.context?.(managed.auth, typedGlobals), signal: config.signal },
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,

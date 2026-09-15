@@ -9,6 +9,13 @@ import { buildToolPresentationSchema } from './presentation';
 export interface CliCommandContext<TInput extends ZodObject> extends CliWriters {
   input: z.output<TInput>;
   options: Readonly<CliRunOptions>;
+  /**
+   * The application's own global options for this invocation, already validated
+   * against `CliConfig.globalOptions`. Empty when the CLI declares none. Typed
+   * loosely because a command is defined independently of the CLI it is mounted
+   * on — read it through the same schema the application declared.
+   */
+  globals: Readonly<Record<string, unknown>>;
 }
 
 export interface CliCommandDefinitionBase<TInput extends ZodObject> {
@@ -110,6 +117,7 @@ export async function executeCliCommand(
   options: CliRunOptions,
   writers: CliWriters,
   coerceJson: boolean,
+  globals: Readonly<Record<string, unknown>> = {},
 ): Promise<ToolResult> {
   let parsed: ReturnType<typeof definition.input.safeParse>;
   try {
@@ -131,6 +139,7 @@ export async function executeCliCommand(
     const data: unknown = await definition.handler({
       input: parsed.data,
       options,
+      globals,
       ...writers,
     });
     const checked = validateDeclaredOutput(definition.output, data);

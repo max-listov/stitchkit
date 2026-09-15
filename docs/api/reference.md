@@ -1443,14 +1443,14 @@ payload.
 | `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
 | `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
-| `CliConfig` | _type_ | config for `createCli`, including program-level `defaultCommand` selection and command-scoped `optionAliases` / `positionals` policy |
+| `CliConfig` | _type_ | config for `createCli`, including program-level `defaultCommand` selection, application-wide `globalOptions` and command-scoped `optionAliases` / `positionals` policy |
 | `CliPresentationPolicyConfig` | _type_ | reusable default-command, short-alias and explicit-positional policy inherited by `CliConfig` |
 | `CliSurfaceSource` | _type_ | static managed surface or identity-dependent surface factory for `createCli` |
 | `CliCommandDefinition` | _type_ | Zod-first CLI-only command union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
 | `CliCommandDefinitionWithOutput` | _type_ | native command with declared output schema, validated handler result and typed optional `present` / `exitCode` callbacks |
 | `CliCommandDefinitionWithoutOutput` | _type_ | void native command with no output schema |
-| `CliCommandContext` | _type_ | parsed native command input, global options and injected writers |
+| `CliCommandContext` | _type_ | parsed native command input, framework run options, the application's `globals` and injected writers |
 | `CliWaitConfig` | _type_ | `--wait` polling config |
 | `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
@@ -1949,14 +1949,14 @@ SDK nor the `ai` peer.
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
 | `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
-| `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `optionAliases` and `positionals` define the shared command presentation policy |
+| `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `globalOptions`, `optionAliases` and `positionals` define the shared command presentation policy |
 | `CliPresentationPolicyConfig` | _type_ | shared command presentation-policy subset of `CliConfig` |
 | `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
 | `CliCommandDefinition` | _type_ | native command definition union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
 | `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output and typed optional `present` / successful `exitCode` callbacks |
 | `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
-| `CliCommandContext` | _type_ | parsed input, global options and stdout/stderr writers |
+| `CliCommandContext` | _type_ | parsed input, framework run options, the application's `globals` and stdout/stderr writers |
 | `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, …) |
 | `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
 | `CliWaitConfig` | _type_ | per-command `--wait` polling config; optional `failed(result)` maps a terminal domain failure to `WAIT_FAILED` and a non-zero exit |

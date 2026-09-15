@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import { isUnsafeKey } from '../internal/safe-json';
 import { isRecord } from '../internal/typed';
+import { coerceJsonArgs } from './coerce';
 
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
@@ -538,9 +539,32 @@ export function parseCliArgs(
           .filter(([, info]) => info.kind !== 'boolean')
           .map(([name]) => name)
       : [...config.positionals];
+  // A trailing ARRAY field swallows every remaining token — `handoff proj a.md
+  // b.md` instead of `--files '["a.md","b.md"]'`. Only an EXPLICIT positional
+  // policy opts into this: under the automatic schema order an array field is
+  // just one more field in the list, and making it variadic there would turn a
+  // caller's extra token from a loud `Unexpected positional argument` into a
+  // silent element of some unrelated array.
+  const variadicTail =
+    config.positionals !== undefined &&
+    fields.get(fillable[fillable.length - 1] ?? '')?.kind === 'array'
+      ? fillable[fillable.length - 1]
+      : undefined;
   let pi = 0;
   for (const key of fillable) {
     if (pi >= positionals.length) break;
+    if (key === variadicTail) {
+      // Both forms at once has no defensible meaning — one of the two lists
+      // would silently win, and which one would depend on argument order.
+      if (flags.has(key)) {
+        throw new CliArgumentError(
+          `--${key} conflicts with the positional values for "${key}" — pass one form, not both`,
+        );
+      }
+      toolArgs[key] = coerceField(fields.get(key), positionals.slice(pi));
+      pi = positionals.length;
+      break;
+    }
     if (flags.has(key)) continue;
     const value = positionals[pi++];
     if (value !== undefined) toolArgs[key] = coerceField(fields.get(key), [value]);
@@ -592,4 +616,82 @@ export function parseCliArgs(
   }
 
   return { toolArgs, options };
+}
+
+/** The application's own global options, lifted out of one invocation's argv. */
+export interface CliGlobalOptionsParse {
+  /** argv with the application-global tokens removed, ready for routing. */
+  argv: string[];
+  /** The validated values, as the application's own schema types them. */
+  globals: Record<string, unknown>;
+}
+
+/**
+ * Lift the APPLICATION's global options out of argv, wherever they stand.
+ *
+ * These are not arguments of any operation: which identity key to use, which
+ * checkout a call speaks for, which profile. They belong to the invocation, so
+ * they may precede the command name as easily as follow it — and a command's
+ * own parser must never see them, or an app-global would read as an unknown
+ * flag on every operation that does not declare it.
+ *
+ * Stripping them BEFORE routing is what keeps this one grammar rather than two:
+ * `routeCliArgv` then sees a command where a command is, `parseCliArgs` sees
+ * only operation arguments, and `passthrough` cannot swallow an app-global into
+ * a freeform bag. The token shape is the same `classifyLongOptionToken` the
+ * framework's own globals use, so `--root /x`, `--root=/x` and a bare boolean
+ * `--verbose` all behave as they do everywhere else.
+ *
+ * `--` ends the sweep: past it every token is a literal value, so a positional
+ * that happens to read as `--root` survives intact.
+ */
+export function extractCliGlobalOptions(
+  argv: readonly string[],
+  schema: z.ZodObject | undefined,
+): CliGlobalOptionsParse {
+  if (schema === undefined) return { argv: [...argv], globals: {} };
+  const fields = describeSchemaFields(schema);
+  const rest: string[] = [];
+  const raw = new Map<string, string[]>();
+  let ended = false;
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === undefined) continue;
+    if (!ended && token === '--') ended = true;
+    const option = ended ? undefined : classifyLongOptionToken(token);
+    // A framework-global name wins — an application may not redeclare one, and
+    // that is refused at startup rather than silently resolved here.
+    const info =
+      option && option.globalKind === undefined ? fields.get(option.name) : undefined;
+    if (!option || !info) {
+      rest.push(token);
+      continue;
+    }
+    let { value } = option;
+    if (value === undefined && info.kind === 'boolean') {
+      value = 'true';
+    } else if (value === undefined) {
+      const next = argv[i + 1];
+      if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
+        value = next;
+        i++;
+      } else {
+        throw new CliArgumentError(`--${option.name} requires a value`);
+      }
+    }
+    const existing = raw.get(option.name);
+    if (existing) existing.push(value);
+    else raw.set(option.name, [value]);
+  }
+
+  const args: Record<string, unknown> = {};
+  for (const [name, values] of raw) args[name] = coerceField(fields.get(name), values);
+  const parsed = schema.safeParse(coerceJsonArgs(args, schema));
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const field = issue?.path[0];
+    const where = typeof field === 'string' ? `--${field}` : 'application option';
+    throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
+  }
+  return { argv: rest, globals: parsed.data };
 }

@@ -225,6 +225,30 @@ command schema. `-f` / `-f=false` are boolean forms; values accept `-n 100` and
 bundles such as `-fn`, attached values such as `-n100`, `--no-f` and unknown
 short flags are rejected. Canonical `--no-follow` remains available.
 
+### A trailing list
+
+When the LAST declared positional is an array field, it takes every remaining
+token, each coerced by the array's element type:
+
+```ts
+positionals: { handoff: ['to', 'files'] }   // files: z.array(z.string())
+```
+
+```
+myapp handoff proj a.md b.md     → { to: 'proj', files: ['a.md', 'b.md'] }
+myapp handoff proj a.md          → { to: 'proj', files: ['a.md'] }
+```
+
+One token is a one-element list, not a scalar, so the parsed shape never depends
+on how many a caller happened to pass. Command help marks it:
+`Usage: myapp handoff <to> <files...>`. The flag form still works
+(`--files '["a.md","b.md"]'`, or a repeated `--files`) — but passing both forms
+in one call is an argument error rather than a silent merge.
+
+Only the trailing position is variadic. An array declared anywhere else in the
+list keeps taking exactly one token (a JSON array), and its help stays `<tags>`,
+so the usage line always says which field is the list.
+
 `positionals` replaces automatic schema-order selection only for the named
 command. An empty array disables argv positionals. Fields remain available as
 long/short options and stdin still fills the first required unset field with the
@@ -255,6 +279,68 @@ diagnostics remain ordinary stderr text. This keeps stdout pipeable and
 `2>/dev/null` clean. The process exit code carries the error class (`0` ok,
 `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
 …) — override per app with `exitCodes`.
+
+## Application global options
+
+`--json` and friends above are the framework's. An application usually has
+globals of its own — which identity key to use, which checkout a call speaks
+for, which profile — and they belong to no single operation:
+
+```ts
+await createCli({
+  name: 'myapp',
+  version: '1.0.0',
+  globalOptions: z.object({
+    caller: z.string().optional().describe('Identity key file'),
+    root: z.string().optional().describe('Checkout the call speaks for'),
+  }),
+  resolveAuth: (globals) => loadIdentity(globals.caller),
+  context: (auth, globals) => ({ auth, root: globals.root }),
+  runtimeTools: (auth) => catalogFor(auth),
+})
+```
+
+```
+myapp --root /srv/app handoff_read --handoffId u
+myapp handoff_read --root /srv/app --handoffId u   # the same call
+```
+
+These flags are lifted out of argv wherever they stand — before or after the
+command name — validated against the declared schema, and kept out of every
+operation's arguments: `handoff_read` above receives `{ handoffId: 'u' }` and
+nothing else. The values reach `resolveAuth(globals)`, `context(auth, globals)`
+and a native command's `globals`. An invalid value is an argument error naming
+the flag; a name that collides with a framework option, or with a field of any
+command, is refused at startup rather than shadowing it silently. Past a bare
+`--` every token is a literal, so a positional value that reads like a global
+survives intact.
+
+Both help levels list them under `Application options:`.
+
+## When the managed surface cannot resolve
+
+A CLI whose commands come from a running server declares them with a factory,
+and that factory needs an identity. When `resolveAuth` fails — the server is
+down, the key file is missing — the commands it would have named are unknown to
+the CLI, but the native ones are not:
+
+```
+$ myapp --help
+myapp 1.0.0
+...
+Commands:
+  serve  Run the server
+
+Managed commands are unavailable: UNREACHABLE: socket closed
+```
+
+Help still lists what does not depend on identity and says, in one line, why the
+rest is missing. Calling a name the CLI cannot resolve answers with that same
+refusal and the exit code its error class declares through `exitCodes` — never
+`Unknown command`, which would claim the name does not exist when the truth is
+that it could not be looked up. A native command and its help still run: they
+never needed an identity. Identity is still resolved at most once per
+invocation, failure included.
 
 Per-command help derives the positional form from the same resolved policy as
 the argv parser. For example, a required `action` and optional `profile` render as
