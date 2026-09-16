@@ -6,6 +6,7 @@ import {
   type ToolPresentationSchema,
 } from './flatten';
 import { toJsonSchema } from './json-schema';
+import { withDefsDialect } from './json-schema-dialect';
 
 export interface ToolPresentationConfig {
   paramsSchema?: z.ZodType;
@@ -30,30 +31,89 @@ function hasLocalReference(value: unknown): boolean {
   return Object.values(value).some(hasLocalReference);
 }
 
-function rewriteLocalReferences(value: unknown, namespace: string): unknown {
+/**
+ * Definition names carry their namespace as a prefix rather than living inside a
+ * per-namespace wrapper. A nested `definitions` block is a valid JSON Pointer
+ * target and an unreadable one: a reader that looks for definitions where the
+ * dialect puts them — at the document root — never finds `#/definitions/input/
+ * definitions/x`, and our own MCP client was one such reader.
+ */
+const NAMESPACE_SEPARATOR = '__';
+
+const DEFINITION_KEYWORDS = ['definitions', '$defs'];
+
+interface RewriteTargets {
+  /** Set when a reference points at the document root rather than a definition. */
+  rootReferenced: boolean;
+}
+
+function rewriteReference(
+  reference: string,
+  namespace: string,
+  targets: RewriteTargets,
+): string {
+  if (reference === '#' || reference === '#/') {
+    targets.rootReferenced = true;
+    return `#/definitions/${namespace}`;
+  }
+  const segments = reference.slice(2).split('/');
+  const [keyword, name, ...rest] = segments;
+  if (keyword !== undefined && name !== undefined && DEFINITION_KEYWORDS.includes(keyword)) {
+    const renamed = `${namespace}${NAMESPACE_SEPARATOR}${name}`;
+    return ['#', 'definitions', renamed, ...rest].join('/');
+  }
+  targets.rootReferenced = true;
+  return `#/definitions/${namespace}/${segments.join('/')}`;
+}
+
+function rewriteLocalReferences(
+  value: unknown,
+  namespace: string,
+  targets: RewriteTargets,
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((child) => rewriteLocalReferences(child, namespace));
+    return value.map((child) => rewriteLocalReferences(child, namespace, targets));
   }
   if (!isRecord(value)) return value;
   const rewritten: ToolPresentationSchema = {};
   for (const [key, child] of Object.entries(value)) {
     rewritten[key] =
       key === '$ref' && typeof child === 'string' && child.startsWith('#')
-        ? `#/definitions/${namespace}${child.slice(1)}`
-        : rewriteLocalReferences(child, namespace);
+        ? rewriteReference(child, namespace, targets)
+        : rewriteLocalReferences(child, namespace, targets);
   }
   return rewritten;
 }
 
-/** Keep component-local `#` references local after params/input are merged. */
+/**
+ * Keep component-local `#` references local after params/input are merged, with
+ * every definition hoisted to the document root under a namespaced name.
+ */
 function namespaceLocalReferences(
   schema: ToolPresentationSchema | undefined,
   namespace: string,
 ): ToolPresentationSchema | undefined {
   if (!schema || !hasLocalReference(schema)) return schema;
-  const rewritten = rewriteLocalReferences(schema, namespace);
+  const targets: RewriteTargets = { rootReferenced: false };
+  const rewritten = rewriteLocalReferences(schema, namespace, targets);
   if (!isRecord(rewritten)) return schema;
-  return { ...rewritten, definitions: { [namespace]: rewritten } };
+
+  const definitions: Record<string, unknown> = {};
+  const body: ToolPresentationSchema = {};
+  for (const [key, value] of Object.entries(rewritten)) {
+    if (DEFINITION_KEYWORDS.includes(key)) {
+      if (isRecord(value)) {
+        for (const [name, definition] of Object.entries(value)) {
+          definitions[`${namespace}${NAMESPACE_SEPARATOR}${name}`] = definition;
+        }
+      }
+      continue;
+    }
+    body[key] = value;
+  }
+  if (targets.rootReferenced) definitions[namespace] = withoutDialect(body);
+  if (Object.keys(definitions).length === 0) return body;
+  return { ...body, definitions };
 }
 
 function objectProperties(schema: ToolPresentationSchema): ToolPresentationSchema | null {
@@ -66,6 +126,27 @@ function requiredKeys(schema: ToolPresentationSchema): string[] {
     : [];
 }
 
+/**
+ * Definitions belong to the document, not to a branch of it: a `#/definitions/x`
+ * reference is resolved from the root, so an `allOf` merge has to lift both
+ * branches' definitions up with it.
+ */
+function hoistDefinitions(schema: ToolPresentationSchema): ToolPresentationSchema {
+  const branches = Array.isArray(schema.allOf) ? schema.allOf : [];
+  const definitions: Record<string, unknown> = {};
+  const lifted = branches.map((branch) => {
+    if (!isRecord(branch) || !isRecord(branch.definitions)) return branch;
+    Object.assign(definitions, branch.definitions);
+    const rest: ToolPresentationSchema = {};
+    for (const [key, value] of Object.entries(branch)) {
+      if (key !== 'definitions') rest[key] = value;
+    }
+    return rest;
+  });
+  if (Object.keys(definitions).length === 0) return schema;
+  return { ...schema, allOf: lifted, definitions };
+}
+
 function mergeObjectSchemas(
   left: ToolPresentationSchema,
   right: ToolPresentationSchema,
@@ -73,7 +154,7 @@ function mergeObjectSchemas(
 ): ToolPresentationSchema {
   const leftProperties = objectProperties(left);
   const rightProperties = objectProperties(right);
-  if (!leftProperties || !rightProperties) return { allOf: [left, right] };
+  if (!leftProperties || !rightProperties) return hoistDefinitions({ allOf: [left, right] });
 
   const conflicts = Object.keys(leftProperties).filter((key) => key in rightProperties);
   if (conflicts.length > 0) {
@@ -165,7 +246,14 @@ export function isObjectPresentationSchema(schema: ToolPresentationSchema): bool
   return schema.type === 'object' && isRecord(schema.properties);
 }
 
-/** Metadata passed to the Zod identity carrier; the SDK supplies its own dialect. */
+/**
+ * Metadata passed to the Zod identity carrier.
+ *
+ * The SDK supplies its own dialect and it is 2020-12, so the document has to
+ * speak 2020-12: a draft-07 `definitions` block under a 2020-12 `$schema` is a
+ * document that says one thing and does another, and a client that believes the
+ * stamp cannot resolve a single `#/definitions/...` pointer in it.
+ */
 export function presentationMetadata(schema: ToolPresentationSchema): ToolPresentationSchema {
-  return withoutDialect(schema);
+  return withDefsDialect(withoutDialect(schema));
 }

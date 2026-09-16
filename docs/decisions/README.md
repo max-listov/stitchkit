@@ -210,6 +210,8 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0182](0182-a-durability-port-exposes-step-sleep-and-wait.md) | A durability port exposes step, sleep and wait over the store | Accepted — runtime-tool bodies checkpoint memoized steps and park on time or an event through a swappable port over our store; no workflow SDK |
 | [0183](0183-a-watched-value-may-cross-as-a-difference.md) | A watched value may cross as a difference to a revision the subscriber holds | Accepted — `full`/`delta`/`unchanged` chosen per subscriber, fingerprint-checked reassembly, per-key resync, and never sent when it is not smaller |
 | [0184](0184-audit-machinery-not-audit-policy.md) | The audit layer ships the filter and the spool, and stays optional | Accepted — `auditChanges` and `createSpooledSink` become machinery; audit on by default was rejected on a re-measurement that found absent surfaces, not forgetting |
+| [0185](0185-a-served-schema-speaks-the-dialect-it-is-stamped-with.md) | A served schema speaks the dialect it is stamped with | Accepted — MCP metadata moves to `$defs`, definitions hoist to the document root, the client refuses to believe a contradicted stamp, and one unconvertible tool no longer takes the connection down |
+| [0186](0186-the-cli-owns-its-own-distribution.md) | The CLI surface owns aggregates, profiles and its own distribution | Accepted — `--count-by`/`--sum`/`--top`/`--table`, never-substituted named profiles, a manifest-generated installer with a decompressed-bytes digest, and `transports` opt-in for discovered tools |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

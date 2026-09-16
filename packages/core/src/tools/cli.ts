@@ -48,6 +48,7 @@ import {
   type CliCommandPresentation,
   type CliPresentationPolicyConfig,
 } from './cli-policy';
+import { renderCliView } from './cli-view';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
   type ErrorHintFn,
@@ -173,6 +174,10 @@ const GLOBAL_OPTIONS = [
   ['--quiet', 'Suppress non-essential stderr output'],
   ['--dry-run', 'Print the resolved call without executing it'],
   ['--help, -h', 'Show help for a command'],
+  ['--count-by <field>', 'Count records per distinct value of a field'],
+  ['--sum <field>', 'Total a numeric field, optionally grouped by --by'],
+  ['--top <n> --by <f>', 'Keep only the n largest groups'],
+  ['--table <a,b>', 'Render the named fields as an aligned table'],
 ] as const;
 
 /** Default stdin reader — `null` on an interactive TTY (nothing piped). */
@@ -968,6 +973,25 @@ export async function createCli<
       config.maxDownloadBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
       config.downloadTimeoutMs,
     );
+  }
+
+  // A view replaces the payload, never the outcome: a failed call still reports
+  // its own error and exit code, because an aggregate over an error is not an
+  // answer to the question that was asked.
+  if (options.view && result.ok) {
+    let viewed: ReturnType<typeof renderCliView>;
+    try {
+      viewed = renderCliView(result.data, options.view);
+    } catch (error) {
+      if (!(error instanceof CliArgumentError)) throw error;
+      stderr(`${error.message}\n`);
+      return exit(2);
+    }
+    if (viewed.kind === 'text') {
+      stdout(viewed.text);
+      return exit(downloadsOk ? 0 : 1);
+    }
+    result = { ...result, data: viewed.data };
   }
 
   const exitCode = emitResult(

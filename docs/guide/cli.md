@@ -271,6 +271,10 @@ same Zod schema an HTTP or MCP call does.
 | `--quiet`             | Suppress non-essential stderr output                       |
 | `--dry-run`           | Print the resolved call without executing                  |
 | `--help`, `-h`        | Usage — top-level or per-command flag table                |
+| `--count-by <field>`  | Count records per distinct value — see [Aggregate views](#aggregate-views) |
+| `--sum <f> [--by <g>]`| Total a numeric field, optionally grouped                  |
+| `--top <n> --by <f>`  | Keep only the n largest groups                             |
+| `--table <a,b>`       | Render named fields as an aligned table                    |
 
 stdout carries the result; structured errors and progress go to stderr. With
 `--json`, a success or structured failure is exactly one compact,
@@ -384,6 +388,172 @@ myapp generate "a fox" --wait --output-dir ./out
 # background — frees the agent; a notification fires on exit
 myapp generate "a fox" --wait --json > result.json &
 ```
+
+## Aggregate views
+
+The CLI's audience is agents, scripts and `jq`, so output is JSON. That settles
+the *encoding*; it does not settle whether the answer to "how many items per
+status" should be every item. Measured on a live server, one ordinary question:
+
+| call | characters returned |
+|---|---|
+| the listing (98 records) | 34 750 |
+| `--count-by status` | ~90 |
+
+An agent pays for every one of those characters in its context window, and `|
+jq` does not help: the bytes have been read into the conversation by the time
+`jq` sees them. So the aggregate is computed on the result, before anything is
+written.
+
+```bash
+myapp item_list --count-by status          # { "active": 33, "idle": 33, "stopped": 32 }
+myapp item_list --count-by status --top 2  # the two largest groups
+myapp item_list --sum messages             # 4753
+myapp item_list --sum messages --by status # one total per status
+myapp item_list --top 5 --by status        # same view, written the other way round
+myapp item_list --table id,status          # the one human-facing shape
+```
+
+`--by` always names the **grouping** field, in every form it appears in, so the
+grammar has one meaning rather than two. Groups are ordered largest first, which
+is what makes `--top` a defined slice rather than an arbitrary one.
+
+Three rules worth knowing before you rely on them:
+
+- **A field the result does not carry is an argument error.** A group of zero
+  over a misspelled field is indistinguishable from a true empty answer, and the
+  caller reads it as data. The message names the fields that *are* there.
+- **An aggregate needs a collection** — the result itself when it is an array,
+  or the single array field of a result object. An aggregate over a scalar, or
+  over an object with two array fields, is refused rather than guessed.
+- **Without a view flag the output is byte-for-byte what it was.** The flags are
+  reserved CLI behaviour like `--json`; they never reach a tool argument.
+
+A failed call still reports its own error and exit code. An aggregate over an
+error is not an answer to the question that was asked.
+
+## Named profiles
+
+A CLI that talks to a deployed server needs an address and a credential per
+environment, and the way a person picks one is a name: `--profile prod`.
+`globalOptions` gives the flag a home and `resolveAuth(globals)` gives it a
+resolution point. The rule that makes the mechanism safe is easy to write the
+wrong way round, because the unsafe version reads as kindness:
+
+> the named profile does not exist, but exactly one profile is configured — use it.
+
+That is correct exactly while a single profile exists. The day a second appears
+it is a command run against the wrong deployment, with nothing in the output to
+say so. **A profile named explicitly and not found is a refusal, never a
+substitution.** Substitution survives only where it cannot be wrong: no name was
+given at all and exactly one profile exists — and even then it is announced on
+stderr. The distinction has to be drawn at resolution; one step later, "prod" and
+"prod by default" are the same string.
+
+`createCliProfileStore` is that rule, plus the twenty lines every consumer of
+this shape writes:
+
+```ts
+import { createCliProfileStore } from 'stitchkit/cli'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { z } from 'zod'
+
+const profiles = createCliProfileStore({
+  directory: join(homedir(), '.config/myapp/profiles'),
+  schema: z.object({ url: z.url(), token: z.string().min(1) }),
+  createHint: (name, path) => `write ${path} with {"url","token"} for "${name}"`,
+})
+
+await createCli({
+  name: 'myapp',
+  version,
+  globalOptions: z.object({ profile: z.string().optional() }),
+  resolveAuth: (globals) => profiles.resolve(globals.profile).value,
+  services,
+})
+```
+
+Files are written `0600` in a `0700` directory — and a profile file other users
+can read is refused with the `chmod` that fixes it, because it holds a
+credential.
+
+## Distribution and self-update
+
+`createCli` ships no executable, and that is right — but the step after the
+executable is not application logic either. It is the same problem for every
+consumer, with the same three traps:
+
+1. **The installer cannot parse the manifest.** A `curl … | sh` runs on a
+   machine where nothing is installed yet, including `jq`. So the installer is
+   generated *from* the manifest, server-side, with the URL and digest already
+   substituted — it parses no JSON at all.
+2. **Replacing a running binary is a rename, not a write.** Anything else can
+   leave a half-written executable on someone's PATH when the connection drops.
+3. **The digest covers the decompressed bytes** — the file that will actually be
+   executed, not the archive that was transferred.
+
+The framework owns the manifest shape, the installer generation and the update
+primitive. The application owns where the assets live, which platforms it
+publishes and who may download them.
+
+```ts
+import {
+  CliBuildManifestSchema, assertCliPublishable, renderCliInstaller,
+  selectCliBuildAsset, checkCliUpdate, applyCliUpdate,
+} from 'stitchkit/cli'
+
+// Publishing: refuse to republish one version from a different commit —
+// otherwise everyone who already installed it never receives the fix.
+assertCliPublishable(previous, next)
+
+// Serving: one generated script per target, no JSON on the wire.
+renderCliInstaller({ manifest, asset: selectCliBuildAsset(manifest, target)!, binaryName: 'myapp' })
+
+// Checking: bounded, at most once per interval, silent on any failure.
+const check = await checkCliUpdate({ manifestUrl, currentVersion, lastCheckedAt })
+if (check.status === 'outdated' && check.asset) {
+  // Replacing is always an explicit command, never a side effect of a check.
+  await applyCliUpdate({ asset: check.asset })
+}
+```
+
+`checkCliUpdate` has **four** answers, not three: `skipped`, `current`,
+`outdated` and `unknown`. "Could not ask" is not "up to date" — collapsing them
+is how a tool goes quiet about its own staleness for months. It never throws,
+and a command still exits with the code it earned.
+
+Carry the build stamp inside the binary (`CliBuildStampSchema`,
+`formatCliBuildStamp`) so the tool can say what it is rather than leaving the
+reader to infer it from behaviour.
+
+## Commands discovered from a running server
+
+A CLI compiled from contracts carries the surface of the build it was compiled
+from. One built from discovery carries the surface the server has *right now* —
+which matters, because a long-lived MCP client freezes schemas at connect time
+and then refuses the server's own newer fields:
+
+```ts
+const discovered = await mountConnections([
+  defineMcpClientConnection({
+    name: 'api',
+    transport: { url },
+    token: () => key,
+    transports: ['CLI'],   // the opt-in: this server's tools are commands
+  }),
+])
+await createCli({ name: 'myapp', version, runtimeTools: discovered, commands: [...] })
+```
+
+`transports` is where the opt-in belongs: a whole server becomes a set of
+commands, and a connection without it still contributes nothing to the CLI —
+exposure stays explicit, as it is everywhere else in the framework.
+
+One unconvertible schema no longer takes the connection down with it. The tool
+is skipped and **named** (`onSkippedTool`, or a stderr line by default), so a
+surface of two hundred tools is not lost to one.
+
 
 ## Auth parity
 

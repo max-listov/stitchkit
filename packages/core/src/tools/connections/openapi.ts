@@ -12,7 +12,13 @@ import {
   withConnectionDeadline,
 } from './limits';
 import { assertOpenApiOperation, resolveOpenApiDocument } from './openapi-document';
-import { sanitizeToolName, withConnectionToken, zodObjectFromJsonSchema } from './runtime';
+import {
+  type ConnectionToolSkipReporter,
+  mountToolsTolerantly,
+  sanitizeToolName,
+  withConnectionToken,
+  zodObjectFromJsonSchema,
+} from './runtime';
 import { jsonSchemaBytes, recordForeignSchemaBytes } from './schema-budget';
 import { assertAllowedHost, assertConnectionUrl, connectionAllowedHosts } from './ssrf';
 import type { OpenApiConnection } from './types';
@@ -35,6 +41,7 @@ interface ResolvedOpenApiAuth {
 export async function mountOpenApiConnection(
   connection: OpenApiConnection,
   instanceId: string,
+  onSkipped: ConnectionToolSkipReporter,
 ): Promise<RuntimeToolDefinition[]> {
   const timeoutMs = connectionTimeoutMs(connection.timeoutMs);
   const maxResponseBytes = connectionMaxResponseBytes(connection.maxResponseBytes);
@@ -53,86 +60,96 @@ export async function mountOpenApiConnection(
   const operations = collectOperations(document);
   const names = new Set<string>();
 
-  return operations.map((entry) => {
-    assertOpenApiOperation(document, entry.operation, entry.pathItem);
-    const rawName = operationKey(entry);
-    const name = uniqueToolName(connection.name, rawName, names);
-    const description =
-      typeof entry.operation.description === 'string'
-        ? entry.operation.description
-        : `${entry.method} ${entry.path}`;
-    const schema = operationInputSchema(document, entry);
-    const input = zodObjectFromJsonSchema(schema);
-    const auth = resolveAuth(document, entry.operation);
-    const definition = defineRuntimeTool({
-      name,
-      description,
-      identity: {
-        serviceName: connection.name,
-        action: rawName,
-        method: entry.method,
-      },
-      input,
-      output: z.unknown(),
-      handler: (context) =>
-        withConnectionToken(
-          { instanceId, provider: connection.token, context },
-          async (token) => {
-            const args = isRecord(context.input) ? context.input : {};
-            const url = buildOperationUrl(baseUrl, entry, args);
-            assertAllowedHost(url, allowedHosts, connection.name);
-            const headers: Record<string, string> = { accept: 'application/json' };
-            for (const parameter of operationParameters(document, entry)) {
-              const value = args[parameter.name];
-              if (value === undefined) continue;
-              if (parameter.in === 'query')
-                url.searchParams.set(parameter.name, String(value));
-              else if (parameter.in === 'header') headers[parameter.name] = String(value);
-              else if (parameter.in === 'cookie') {
-                const cookie = `${parameter.name}=${encodeURIComponent(String(value))}`;
-                headers.cookie = headers.cookie ? `${headers.cookie}; ${cookie}` : cookie;
+  return mountToolsTolerantly(
+    operations,
+    connection.name,
+    operationKey,
+    (entry) => {
+      assertOpenApiOperation(document, entry.operation, entry.pathItem);
+      const rawName = operationKey(entry);
+      const name = uniqueToolName(connection.name, rawName, names);
+      const description =
+        typeof entry.operation.description === 'string'
+          ? entry.operation.description
+          : `${entry.method} ${entry.path}`;
+      const schema = operationInputSchema(document, entry);
+      const input = zodObjectFromJsonSchema(schema);
+      const auth = resolveAuth(document, entry.operation);
+      const definition = defineRuntimeTool({
+        name,
+        description,
+        identity: {
+          serviceName: connection.name,
+          action: rawName,
+          method: entry.method,
+        },
+        ...(connection.transports && { transports: connection.transports }),
+        input,
+        output: z.unknown(),
+        handler: (context) =>
+          withConnectionToken(
+            { instanceId, provider: connection.token, context },
+            async (token) => {
+              const args = isRecord(context.input) ? context.input : {};
+              const url = buildOperationUrl(baseUrl, entry, args);
+              assertAllowedHost(url, allowedHosts, connection.name);
+              const headers: Record<string, string> = { accept: 'application/json' };
+              for (const parameter of operationParameters(document, entry)) {
+                const value = args[parameter.name];
+                if (value === undefined) continue;
+                if (parameter.in === 'query')
+                  url.searchParams.set(parameter.name, String(value));
+                else if (parameter.in === 'header') headers[parameter.name] = String(value);
+                else if (parameter.in === 'cookie') {
+                  const cookie = `${parameter.name}=${encodeURIComponent(String(value))}`;
+                  headers.cookie = headers.cookie ? `${headers.cookie}; ${cookie}` : cookie;
+                }
               }
-            }
-            const body = requestBody(entry.operation);
-            applyAuth(auth, token, url, headers);
+              const body = requestBody(entry.operation);
+              applyAuth(auth, token, url, headers);
 
-            return withConnectionDeadline(
-              connection.name,
-              timeoutMs,
-              context.signal,
-              async (signal) => {
-                const requestInit: RequestInit = { method: entry.method, headers, signal };
-                if (body && args.body !== undefined) {
-                  headers['content-type'] = 'application/json';
-                  requestInit.body = JSON.stringify(args.body);
-                }
+              return withConnectionDeadline(
+                connection.name,
+                timeoutMs,
+                context.signal,
+                async (signal) => {
+                  const requestInit: RequestInit = { method: entry.method, headers, signal };
+                  if (body && args.body !== undefined) {
+                    headers['content-type'] = 'application/json';
+                    requestInit.body = JSON.stringify(args.body);
+                  }
 
-                const response = await fetchConnection(
-                  url,
-                  requestInit,
-                  allowedHosts,
-                  connection.name,
-                );
-                if (response.status === 401) {
-                  await response.body?.cancel();
-                  throw new ConnectionAuthorizationRequiredError(connection.name, instanceId);
-                }
-                if (!response.ok) {
-                  throw new ConnectionRequestError(
+                  const response = await fetchConnection(
+                    url,
+                    requestInit,
+                    allowedHosts,
                     connection.name,
-                    response.status,
-                    (await safeText(response, maxResponseBytes)).slice(0, 512),
                   );
-                }
-                return readResponse(response, maxResponseBytes, connection.name);
-              },
-            );
-          },
-        ),
-    });
-    recordForeignSchemaBytes(definition, jsonSchemaBytes(schema));
-    return definition;
-  });
+                  if (response.status === 401) {
+                    await response.body?.cancel();
+                    throw new ConnectionAuthorizationRequiredError(
+                      connection.name,
+                      instanceId,
+                    );
+                  }
+                  if (!response.ok) {
+                    throw new ConnectionRequestError(
+                      connection.name,
+                      response.status,
+                      (await safeText(response, maxResponseBytes)).slice(0, 512),
+                    );
+                  }
+                  return readResponse(response, maxResponseBytes, connection.name);
+                },
+              );
+            },
+          ),
+      });
+      recordForeignSchemaBytes(definition, jsonSchemaBytes(schema));
+      return definition;
+    },
+    onSkipped,
+  );
 }
 
 async function loadOpenApiDocument(

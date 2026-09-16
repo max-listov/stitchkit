@@ -3,6 +3,7 @@ import { ConnectionBudgetExceededError } from './errors';
 import { connectionInstanceId } from './instance';
 import { mountMcpConnection } from './mcp';
 import { mountOpenApiConnection } from './openapi';
+import { reportSkippedConnectionTool } from './runtime';
 import { foreignSchemaBytes } from './schema-budget';
 import type { ConnectionDefinition, ConnectionMountOptions } from './types';
 
@@ -19,12 +20,13 @@ export async function mountConnections(
   options: ConnectionMountOptions = {},
 ): Promise<readonly RuntimeToolDefinition[]> {
   const tools: RuntimeToolDefinition[] = [];
+  const onSkipped = options.onSkippedTool ?? reportSkippedConnectionTool;
   for (const connection of connections) {
     const instanceId = instanceIdOf(connection);
     const mounted =
       connection.kind === 'mcp'
-        ? await mountMcpConnection(connection, instanceId)
-        : await mountOpenApiConnection(connection, instanceId);
+        ? await mountMcpConnection(connection, instanceId, onSkipped)
+        : await mountOpenApiConnection(connection, instanceId, onSkipped);
     tools.push(...mounted);
   }
   const limit = options.budget?.maxTools;

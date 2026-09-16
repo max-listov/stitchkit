@@ -12,6 +12,7 @@
  * explicit `allowHosts`), and credentials are resolved separately for each call.
  */
 
+export type { RuntimeToolTransport } from '../runtime-tool';
 export { defineMcpClientConnection, defineOpenApiConnection } from './define';
 export {
   ConnectionAuthorizationRequiredError,
@@ -20,7 +21,11 @@ export {
   ConnectionUrlError,
 } from './errors';
 export { mountConnections } from './mount';
-export type { ConnectionTokenProvider } from './runtime';
+export type {
+  ConnectionTokenProvider,
+  ConnectionToolSkipReporter,
+  SkippedConnectionTool,
+} from './runtime';
 export type {
   ConnectionBudget,
   ConnectionDefinition,

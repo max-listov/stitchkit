@@ -22,6 +22,18 @@ import { isUnsafeKey } from '../internal/safe-json';
 import { isRecord } from '../internal/typed';
 import { coerceJsonArgs } from './coerce';
 
+/**
+ * A requested aggregate view over the result.
+ *
+ * `--by` always names the grouping field, in every form it appears in, so the
+ * grammar has one meaning rather than two: `--top 5 --by status` is the five
+ * largest groups of `status`, exactly as `--count-by status --top 5` is.
+ */
+export type CliResultView =
+  | { kind: 'count'; field: string; top?: number }
+  | { kind: 'sum'; field: string; by?: string; top?: number }
+  | { kind: 'table'; fields: readonly string[] };
+
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
   /** `--json` — emit compact success/error JSON records for scripts. */
@@ -38,6 +50,8 @@ export interface CliRunOptions {
   dryRun: boolean;
   /** `--help` / `-h` — print usage for the command. */
   help: boolean;
+  /** `--count-by` / `--sum` / `--top` / `--table` — aggregate instead of the collection. */
+  view?: CliResultView;
 }
 
 export interface ParsedCliArgs {
@@ -76,7 +90,8 @@ interface FieldInfo {
 const NUMERIC_VALUE = /^-(\d+\.?\d*|\.\d+)$/;
 
 const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help']);
-const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir']);
+const VIEW_OPTIONS = new Set(['count-by', 'sum', 'by', 'top', 'table']);
+const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir', ...VIEW_OPTIONS]);
 export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);
 
 interface CliLongOptionToken {
@@ -408,6 +423,7 @@ export function parseCliArgs(
   }
   const flags = new Map<string, string[]>();
   const boolFlags = new Map<string, boolean>();
+  const viewFlags = new Map<string, string>();
   const positionals: string[] = [];
 
   const pushFlag = (name: string, value: string): void => {
@@ -484,6 +500,9 @@ export function parseCliArgs(
           throw new CliArgumentError('--wait-timeout must be a positive number');
         }
         options.waitTimeout = timeout;
+      } else if (VIEW_OPTIONS.has(name)) {
+        if (viewFlags.has(name)) throw new CliArgumentError(`--${name} was given twice`);
+        viewFlags.set(name, value);
       } else {
         options.outputDir = value;
       }
@@ -527,6 +546,9 @@ export function parseCliArgs(
     }
     pushFlag(name, value);
   }
+
+  const view = resolveCliView(viewFlags);
+  if (view) options.view = view;
 
   // ── Build the tool-argument object ──
   const toolArgs: Record<string, unknown> = {};
@@ -694,4 +716,80 @@ export function extractCliGlobalOptions(
     throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
   }
   return { argv: rest, globals: parsed.data };
+}
+
+/**
+ * Turn the raw view flags into one view, or refuse the combination.
+ *
+ * Refusing here rather than at emission time is the point: a caller who asked
+ * for two aggregates at once, or for `--by` with nothing to group, gets the
+ * message before the command runs, not a shape they did not ask for after it.
+ */
+function resolveCliView(flags: ReadonlyMap<string, string>): CliResultView | undefined {
+  if (flags.size === 0) return undefined;
+  const countBy = flags.get('count-by');
+  const sum = flags.get('sum');
+  const table = flags.get('table');
+  const by = flags.get('by');
+  const rawTop = flags.get('top');
+
+  const named = [
+    ['--count-by', countBy],
+    ['--sum', sum],
+    ['--table', table],
+  ].filter(([, value]) => value !== undefined);
+  if (named.length > 1) {
+    throw new CliArgumentError(
+      `${named.map(([flag]) => flag).join(' and ')} ask for different shapes — pass one`,
+    );
+  }
+
+  let top: number | undefined;
+  if (rawTop !== undefined) {
+    top = Number(rawTop);
+    if (!Number.isInteger(top) || top <= 0) {
+      throw new CliArgumentError('--top must be a positive whole number');
+    }
+  }
+
+  if (table !== undefined) {
+    if (by !== undefined || top !== undefined) {
+      throw new CliArgumentError('--table lists records; it takes neither --by nor --top');
+    }
+    const fields = table
+      .split(',')
+      .map((field) => field.trim())
+      .filter(Boolean);
+    if (fields.length === 0) throw new CliArgumentError('--table needs at least one field');
+    return { kind: 'table', fields };
+  }
+
+  if (sum !== undefined) {
+    if (top !== undefined && by === undefined) {
+      throw new CliArgumentError('--top needs --by: a single sum has nothing to rank');
+    }
+    return {
+      kind: 'sum',
+      field: sum,
+      ...(by !== undefined && { by }),
+      ...(top !== undefined && { top }),
+    };
+  }
+
+  if (countBy !== undefined) {
+    if (by !== undefined) {
+      throw new CliArgumentError('--count-by already names the grouping field; drop --by');
+    }
+    return { kind: 'count', field: countBy, ...(top !== undefined && { top }) };
+  }
+
+  if (by !== undefined) {
+    if (top === undefined) {
+      throw new CliArgumentError(
+        '--by groups a view; pass --count-by, --sum or --top with it',
+      );
+    }
+    return { kind: 'count', field: by, top };
+  }
+  throw new CliArgumentError('--top needs --by, --count-by or --sum to rank');
 }

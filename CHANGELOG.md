@@ -15,6 +15,80 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.4] — 2026-09-16
+
+### Added
+
+- **Aggregate views on the CLI: `--count-by`, `--sum`, `--top`, `--table`.** The
+  CLI's audience is agents and scripts, which is why output is JSON — but
+  answering "how many per status" by shipping the whole collection is a separate
+  decision, and an expensive one. Measured on a live server: a 98-record listing
+  is 34 750 characters of an agent's context window; `--count-by status` is about
+  ninety. `| jq` cannot recover that, because the bytes have already been read
+  into the conversation by the time the pipe sees them. `--by` names the grouping
+  field in every form it appears in; groups come back largest first, so `--top`
+  is a defined slice. A field no record carries is an argument error naming the
+  fields that exist, never a silent empty group, and an aggregate needs a
+  collection — over a scalar it is refused rather than guessed. Without a view
+  flag the emitted bytes are unchanged, and the flags never reach a tool
+  argument.
+- **`createCliProfileStore` — named credential profiles that are never
+  substituted.** A CLI that talks to more than one deployment picks an
+  environment by name, and the convenient implementation of that is the unsafe
+  one: *the named profile does not exist, but exactly one is configured — use
+  it.* It is correct while a single profile exists and a wrong-environment
+  command the day a second appears. So a name given and not found is a refusal
+  that names the path and how to create it; substitution survives only where no
+  name was given and exactly one profile exists, and it is announced on stderr.
+  Files are `0600` in a `0700` directory, and a profile other users can read is
+  refused with the `chmod` that fixes it.
+- **CLI distribution and self-update.** A build manifest schema
+  (`CliBuildManifestSchema`), an installer generated from it
+  (`renderCliInstaller`), a bounded update check (`checkCliUpdate`) and a
+  verified atomic replace (`applyCliUpdate`). The installer parses no JSON — a
+  `curl … | sh` machine has no `jq`, so the URL and digest are substituted
+  server-side. The digest covers the **decompressed** bytes, because those are
+  what will be executed. The replace is a rename inside the target's own
+  directory, so an interrupted download can never leave a half-written
+  executable on a PATH. `assertCliPublishable` refuses republishing one version
+  from a different commit, and the check has four answers — `skipped`,
+  `current`, `outdated`, `unknown` — because "could not ask" is not "up to
+  date". Checking never replaces anything by itself. → ADR 0186
+- **`transports` on a connection — discovered tools as CLI commands.**
+  `mountConnections` and `createCli` already composed into a CLI whose surface is
+  the one the server has right now rather than the one the binary was compiled
+  against, except that discovered tools were filtered out of the CLI projection
+  with no declarative way in. Naming `transports: ['CLI']` on a connection makes
+  that server's tools commands; a connection without it still contributes
+  nothing, so exposure stays explicit.
+- **`coerceJsonArgs`, `routeCliArgv`, `extractCliGlobalOptions` and
+  `CliArgumentError` are exported from `stitchkit/cli`.** `parseCliArgs`
+  deliberately leaves array and object values as strings for the pass that runs
+  next; a consumer that parses argv and sends the call itself needs both halves,
+  and reaching for the `stitchkit/tools` barrel to get one function pulls the MCP
+  and AI peers into a binary this entrypoint is careful to avoid.
+
+### Fixed
+
+- **A stitchkit MCP surface is readable by the stitchkit MCP client again.**
+  `mountConnections` threw `Reference not found:
+  #/definitions/input/definitions/__schema0` against a server that is itself
+  built on stitchkit, and on one real surface of 205 tools five carried such a
+  reference — enough to lose the whole connection, because the mount was
+  all-or-nothing. Two defects underneath. The served document declared the
+  2020-12 dialect (the SDK stamps it) while using draft-07's `definitions`
+  keyword, so any reader that registers subschemas from the keyword its dialect
+  names found nothing to resolve against; MCP metadata now moves to `$defs` and
+  carries its pointers with it. And definitions were nested one level deeper than
+  a reader looks, because namespacing wrapped each schema instead of prefixing
+  its definition names; they are hoisted to the document root now, `allOf`
+  merges included. The client also no longer believes a contradicted stamp, which
+  is how it reaches every stitchkit server published before this release. → ADR 0185
+- **One unconvertible discovered tool no longer takes the connection down.**
+  `mountConnections` builds per tool, skips what it cannot build and names it —
+  through `onSkippedTool`, or a stderr line naming the connection, the tool and
+  the reason.
+
 ## [0.90.3] — 2026-09-15
 
 ### Added

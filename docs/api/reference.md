@@ -1624,13 +1624,16 @@ and approval path.
 | `ConnectionTokenProvider` | _type_ | `() => string \| undefined \| Promise<string \| undefined>` — the lazily resolved credential |
 | `ConnectionBudget` | _type_ | `{ maxTools? }` ceiling on one `mountConnections` call |
 | `ConnectionDefinition` | _type_ | either a defined MCP client or OpenAPI connection |
-| `ConnectionMountOptions` | _type_ | shared `{ lifecycle?, budget? }` mount policy |
+| `ConnectionMountOptions` | _type_ | shared `{ lifecycle?, budget?, onSkippedTool? }` mount policy |
+| `ConnectionToolSkipReporter` | _type_ | `(skipped) => void` — called per discovered tool the mount could not build; defaults to a stderr line, and the rest of the surface still mounts |
+| `SkippedConnectionTool` | _type_ | `{ connection, tool, reason }` — which tool was not mounted, and why |
+| `RuntimeToolTransport` | _type_ | `'MCP' \| 'AGENT' \| 'CLI'` — the surfaces a connection's `transports` may name |
 | `McpClientConnection` | _type_ | a defined MCP client connection |
-| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key and allowed hosts |
+| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts and `transports` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
 | `McpConnectionTransport` | _type_ | `{ url, headers? }` for one MCP endpoint |
 | `McpToolFilter` | _type_ | `{ allow?, block? }` discovered-tool filter |
 | `OpenApiConnection` | _type_ | a defined OpenAPI connection |
-| `OpenApiConnectionConfig` | _type_ | name, spec, base URL, token provider, instance key and allowed hosts |
+| `OpenApiConnectionConfig` | _type_ | name, spec, base URL, token provider, instance key, allowed hosts and `transports` |
 
 ---
 
@@ -1946,6 +1949,33 @@ SDK nor the `ai` peer.
 | `createCli` | function | build and run a CLI from contracts — [guide](../guide/cli.md) |
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
 | `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
+| `routeCliArgv` | function | select the command out of argv without duplicating the global-option grammar (advanced) |
+| `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
+| `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, without the `stitchkit/tools` barrel |
+| `CliArgumentError` | class | the refusal `parseCliArgs` and the view flags raise; a CLI reports it and exits `2` |
+| `renderCliView` | function | compute an aggregate over a result (`--count-by`, `--sum`, `--top`, `--table`) — [guide](../guide/cli.md#aggregate-views) |
+| `createCliProfileStore` | function | named `0600` credential profiles resolved by name, with the never-substitute rule built in — [guide](../guide/cli.md#named-profiles) |
+| `CliProfileError` | class | an `AppError` refusing a named profile that is missing, unreadable or shared between users |
+| `renderCliInstaller` | function | generate the one-line installer from a build manifest, with the URL and digest substituted — [guide](../guide/cli.md#distribution-and-self-update) |
+| `checkCliUpdate` | function | bounded, interval-limited, never-throwing check for a newer published build |
+| `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename |
+| `assertCliPublishable` | function | refuse republishing one version from a different commit |
+| `selectCliBuildAsset` | function | the asset for one target, or `undefined` |
+| `currentCliBuildTarget` | function | `{ platform, arch }` of the running process |
+| `formatCliBuildStamp` | function | one line saying what the running build is |
+| `compareCliVersions` | function | compare two versions, or `undefined` when they are not comparable |
+| `CliBuildManifestSchema` / `CliBuildManifest` | schema / _type_ | name, version, commit, build time and assets |
+| `CliBuildAssetSchema` / `CliBuildAsset` | schema / _type_ | one download; `size` and `sha256` describe the **decompressed** bytes |
+| `CliBuildTargetSchema` / `CliBuildTarget` | schema / _type_ | `{ platform, arch }` |
+| `CliBuildStampSchema` / `CliBuildStamp` | schema / _type_ | the version/commit/build time carried inside a binary |
+| `CliInstallerConfig` | _type_ | manifest, asset, binary name and default install directory |
+| `CliUpdateCheckConfig` / `CliUpdateCheck` | _type_ | check inputs, and its four answers — `skipped`, `current`, `outdated`, `unknown` |
+| `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs and the replaced path, byte count and digest |
+| `CliProfileStore` / `CliProfileStoreConfig` / `ResolvedCliProfile` | _type_ | the profile store, its directory/schema/hint config, and one resolution |
+| `CliResultView` | _type_ | the requested aggregate — `count`, `sum` or `table` |
+| `CliViewOutput` | _type_ | a JSON value, or the one human-facing text shape |
+| `CliGlobalOptionsParse` | _type_ | `{ argv, globals }` returned by `extractCliGlobalOptions` |
+| `CliArgvRoute` | _type_ | `{ command, commandArgv, topLevelHelp, version, error? }` returned by `routeCliArgv` |
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
 | `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
