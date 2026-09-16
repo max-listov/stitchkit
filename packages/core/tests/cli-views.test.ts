@@ -33,6 +33,16 @@ const contract = defineContract(
         items: z.array(z.object({ id: z.string(), status: z.string(), messages: z.number() })),
       }),
     },
+    partial: {
+      method: 'GET',
+      path: '/partial',
+      desc: 'Records that do not all carry the field',
+      toolName: 'item_partial',
+      expose: ['CLI'],
+      output: z.object({
+        items: z.array(z.object({ id: z.string(), weight: z.number().optional() })),
+      }),
+    },
     one: {
       method: 'GET',
       path: '/one',
@@ -46,6 +56,9 @@ const contract = defineContract(
 
 const service = implement(contract, {
   list: () => ({ items: ITEMS }),
+  partial: () => ({
+    items: [{ id: 'light', weight: 1 }, { id: 'unweighed' }, { id: 'heavy', weight: 9 }],
+  }),
   one: () => ({ id: 'item-0' }),
 });
 
@@ -167,5 +180,83 @@ describe('createCli — aggregate views', () => {
     const { out } = await run(['--help']);
     expect(out).toContain('--count-by <field>');
     expect(out).toContain('--table <a,b>');
+  });
+
+  test('--sort --top --table answers "the n largest records", the question a CLI gets asked', async () => {
+    const { out, code } = await run([
+      'item_list',
+      '--top',
+      '3',
+      '--sort',
+      'messages',
+      '--table',
+      'id,messages',
+    ]);
+    expect(code).toBe(0);
+    const lines = out.trimEnd().split('\n');
+    expect(lines).toHaveLength(5); // header, rule, three records
+    expect(lines[2]).toContain('item-97');
+    expect(lines[4]).toContain('item-95');
+  });
+
+  test('--sort without --table returns the ordered records as JSON', async () => {
+    const { out } = await run(['item_list', '--sort', 'messages', '--top', '2', '--json']);
+    expect(JSON.parse(out)).toEqual([
+      { id: 'item-97', status: ITEMS[97]?.status, messages: 97 },
+      { id: 'item-96', status: ITEMS[96]?.status, messages: 96 },
+    ]);
+  });
+
+  test('--ascending flips the record order', async () => {
+    const { out } = await run([
+      'item_list',
+      '--sort',
+      'messages',
+      '--ascending',
+      '--top',
+      '1',
+    ]);
+    expect(JSON.parse(out)).toEqual([{ id: 'item-0', status: ITEMS[0]?.status, messages: 0 }]);
+  });
+
+  test('--table alone still lists every record, unordered', async () => {
+    const { out } = await run(['item_list', '--table', 'id']);
+    expect(out.trimEnd().split('\n')).toHaveLength(ITEMS.length + 2);
+  });
+
+  test('--top keeps one meaning: the n leading entries of the view asked for', async () => {
+    const groups = await run(['item_list', '--count-by', 'status', '--top', '1']);
+    expect(Object.keys(JSON.parse(groups.out))).toHaveLength(1);
+    const records = await run(['item_list', '--sort', 'messages', '--top', '1', '--json']);
+    expect(JSON.parse(records.out)).toHaveLength(1);
+  });
+
+  test('ordering and grouping are not mixed: --sort with --by or --count-by is refused', async () => {
+    expect((await run(['item_list', '--sort', 'messages', '--by', 'status'])).err).toContain(
+      '--by groups a view',
+    );
+    expect(
+      (await run(['item_list', '--sort', 'messages', '--count-by', 'status'])).err,
+    ).toContain('pass one');
+  });
+
+  test('--top over unordered records has no n largest', async () => {
+    const { err, code } = await run(['item_list', '--table', 'id', '--top', '3']);
+    expect(code).toBe(2);
+    expect(err).toContain('--top needs --sort here');
+  });
+
+  test('--ascending alone orders nothing', async () => {
+    expect((await run(['item_list', '--ascending'])).err).toContain('--ascending orders');
+  });
+
+  test('a record missing the sort field stays last in both directions', async () => {
+    const { out } = await run(['item_partial', '--sort', 'weight', '--json']);
+    const ordered: Array<{ id: string }> = JSON.parse(out);
+    expect(ordered.map((record) => record.id)).toEqual(['heavy', 'light', 'unweighed']);
+
+    const up = await run(['item_partial', '--sort', 'weight', '--ascending', '--json']);
+    const ascending: Array<{ id: string }> = JSON.parse(up.out);
+    expect(ascending.map((record) => record.id)).toEqual(['light', 'heavy', 'unweighed']);
   });
 });

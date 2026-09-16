@@ -32,7 +32,13 @@ import { coerceJsonArgs } from './coerce';
 export type CliResultView =
   | { kind: 'count'; field: string; top?: number }
   | { kind: 'sum'; field: string; by?: string; top?: number }
-  | { kind: 'table'; fields: readonly string[] };
+  | {
+      kind: 'records';
+      sort?: string;
+      ascending?: boolean;
+      top?: number;
+      table?: readonly string[];
+    };
 
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
@@ -66,6 +72,8 @@ export interface CliArgvRoute {
   commandArgv: string[];
   topLevelHelp: boolean;
   version: boolean;
+  /** `--help <substring>` — narrow the command list instead of printing it whole. */
+  helpFilter?: string;
   error?: string;
 }
 
@@ -89,8 +97,8 @@ interface FieldInfo {
 /** A `-`-leading token that still reads as a value: a negative number. */
 const NUMERIC_VALUE = /^-(\d+\.?\d*|\.\d+)$/;
 
-const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help']);
-const VIEW_OPTIONS = new Set(['count-by', 'sum', 'by', 'top', 'table']);
+const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help', 'ascending']);
+const VIEW_OPTIONS = new Set(['count-by', 'sum', 'by', 'top', 'table', 'sort']);
 const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir', ...VIEW_OPTIONS]);
 export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);
 
@@ -124,10 +132,40 @@ function classifyLongOptionToken(token: string): CliLongOptionToken | undefined 
  * byte-for-byte. With a default, recognised leading globals may precede an
  * explicit command; a remaining option token belongs to the default command.
  */
+const HELP_TOKENS = new Set(['--help', '-h', 'help']);
+
+/**
+ * The substring after a help token, in any of the forms a person types it.
+ *
+ * `--help=false` is NOT one of them: `--help` is a reserved boolean and the
+ * inline form has always been its negation, so a boolean word keeps the meaning
+ * it had. Only a value that is not one narrows the listing.
+ */
+function helpFilterFrom(
+  token: string | undefined,
+  rest: readonly string[],
+): string | undefined {
+  if (token?.startsWith('--help=')) {
+    const value = token.slice('--help='.length).trim();
+    if (value.length === 0 || isReservedBoolWord(value)) return undefined;
+    return value;
+  }
+  if (token === undefined || !HELP_TOKENS.has(token)) return undefined;
+  const next = rest[0];
+  return next !== undefined && !next.startsWith('-') ? next : undefined;
+}
+
 export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRoute {
   if (defaultCommand === undefined) {
     const [command, ...commandArgv] = argv;
-    return { command, commandArgv, topLevelHelp: false, version: false };
+    const helpFilter = helpFilterFrom(command, commandArgv);
+    return {
+      command,
+      commandArgv,
+      topLevelHelp: false,
+      version: false,
+      ...(helpFilter !== undefined && { helpFilter }),
+    };
   }
 
   const globals: string[] = [];
@@ -143,8 +181,18 @@ export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRo
         error: 'A command is required before "--"',
       };
     }
-    if (token === '--help' || token === '-h') {
-      return { commandArgv: [], topLevelHelp: true, version: false };
+    // `--help=false` is the reserved boolean's negation and keeps that meaning;
+    // only a non-boolean inline value asks the narrower question.
+    const inlineHelpFilter =
+      token.startsWith('--help=') && !isReservedBoolWord(token.slice('--help='.length));
+    if (token === '--help' || token === '-h' || inlineHelpFilter) {
+      const helpFilter = helpFilterFrom(token, argv.slice(index + 1));
+      return {
+        commandArgv: [],
+        topLevelHelp: true,
+        version: false,
+        ...(helpFilter !== undefined && { helpFilter }),
+      };
     }
     if (token === '--version' || token === 'version') {
       return { commandArgv: [], topLevelHelp: false, version: true };
@@ -185,7 +233,13 @@ export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRo
       if (!option.inline) {
         const value = argv[index + 1];
         if (value === '--help' || value === '-h') {
-          return { commandArgv: [], topLevelHelp: true, version: false };
+          const helpFilter = helpFilterFrom(value, argv.slice(index + 2));
+          return {
+            commandArgv: [],
+            topLevelHelp: true,
+            version: false,
+            ...(helpFilter !== undefined && { helpFilter }),
+          };
         }
         if (value === '--version' || value === 'version') {
           return { commandArgv: [], topLevelHelp: false, version: true };
@@ -301,6 +355,12 @@ const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
 const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
 
 /** Strict boolean for a RESERVED option — an unrecognised value is a usage error, never a silent `true`. */
+/** True for a value the reserved-boolean grammar already claims. */
+export function isReservedBoolWord(value: string): boolean {
+  const word = value.toLowerCase();
+  return TRUE_WORDS.has(word) || FALSE_WORDS.has(word);
+}
+
 function parseReservedBool(name: string, value: string): boolean {
   const v = value.toLowerCase();
   if (TRUE_WORDS.has(v)) return true;
@@ -424,6 +484,7 @@ export function parseCliArgs(
   const flags = new Map<string, string[]>();
   const boolFlags = new Map<string, boolean>();
   const viewFlags = new Map<string, string>();
+  let ascending = false;
   const positionals: string[] = [];
 
   const pushFlag = (name: string, value: string): void => {
@@ -484,6 +545,7 @@ export function parseCliArgs(
       else if (name === 'json') options.json = enabled;
       else if (name === 'wait') options.wait = enabled;
       else if (name === 'quiet') options.quiet = enabled;
+      else if (name === 'ascending') ascending = enabled;
       else options.help = enabled;
       continue;
     }
@@ -547,7 +609,7 @@ export function parseCliArgs(
     pushFlag(name, value);
   }
 
-  const view = resolveCliView(viewFlags);
+  const view = resolveCliView(viewFlags, ascending);
   if (view) options.view = view;
 
   // ── Build the tool-argument object ──
@@ -725,8 +787,16 @@ export function extractCliGlobalOptions(
  * for two aggregates at once, or for `--by` with nothing to group, gets the
  * message before the command runs, not a shape they did not ask for after it.
  */
-function resolveCliView(flags: ReadonlyMap<string, string>): CliResultView | undefined {
-  if (flags.size === 0) return undefined;
+function resolveCliView(
+  flags: ReadonlyMap<string, string>,
+  ascending: boolean,
+): CliResultView | undefined {
+  if (flags.size === 0) {
+    if (ascending) {
+      throw new CliArgumentError('--ascending orders a record view; pass --sort with it');
+    }
+    return undefined;
+  }
   const countBy = flags.get('count-by');
   const sum = flags.get('sum');
   const table = flags.get('table');
@@ -736,7 +806,6 @@ function resolveCliView(flags: ReadonlyMap<string, string>): CliResultView | und
   const named = [
     ['--count-by', countBy],
     ['--sum', sum],
-    ['--table', table],
   ].filter(([, value]) => value !== undefined);
   if (named.length > 1) {
     throw new CliArgumentError(
@@ -752,16 +821,44 @@ function resolveCliView(flags: ReadonlyMap<string, string>): CliResultView | und
     }
   }
 
-  if (table !== undefined) {
-    if (by !== undefined || top !== undefined) {
-      throw new CliArgumentError('--table lists records; it takes neither --by nor --top');
+  const sort = flags.get('sort');
+
+  // `--table` and `--sort` describe the same view — the records themselves — so
+  // they compose. `--top` keeps the single meaning it has everywhere: the n
+  // leading entries of whatever view was asked for, groups or records.
+  if (table !== undefined || sort !== undefined) {
+    if (countBy !== undefined || sum !== undefined) {
+      throw new CliArgumentError(
+        `${table !== undefined ? '--table' : '--sort'} lists records; --count-by and --sum aggregate them — pass one`,
+      );
     }
-    const fields = table
-      .split(',')
-      .map((field) => field.trim())
-      .filter(Boolean);
-    if (fields.length === 0) throw new CliArgumentError('--table needs at least one field');
-    return { kind: 'table', fields };
+    if (by !== undefined) {
+      throw new CliArgumentError('--by groups a view; a record view orders with --sort');
+    }
+    if (top !== undefined && sort === undefined) {
+      throw new CliArgumentError(
+        '--top needs --sort here: unordered records have no n largest',
+      );
+    }
+    let fields: string[] | undefined;
+    if (table !== undefined) {
+      fields = table
+        .split(',')
+        .map((field) => field.trim())
+        .filter(Boolean);
+      if (fields.length === 0) throw new CliArgumentError('--table needs at least one field');
+    }
+    return {
+      kind: 'records',
+      ...(sort !== undefined && { sort }),
+      ...(ascending && { ascending }),
+      ...(top !== undefined && { top }),
+      ...(fields && { table: fields }),
+    };
+  }
+
+  if (ascending) {
+    throw new CliArgumentError('--ascending orders a record view; pass --sort with it');
   }
 
   if (sum !== undefined) {
@@ -791,5 +888,5 @@ function resolveCliView(flags: ReadonlyMap<string, string>): CliResultView | und
     }
     return { kind: 'count', field: by, top };
   }
-  throw new CliArgumentError('--top needs --by, --count-by or --sum to rank');
+  throw new CliArgumentError('--top needs --sort, --by, --count-by or --sum to rank');
 }

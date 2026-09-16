@@ -271,9 +271,12 @@ same Zod schema an HTTP or MCP call does.
 | `--quiet`             | Suppress non-essential stderr output                       |
 | `--dry-run`           | Print the resolved call without executing                  |
 | `--help`, `-h`        | Usage — top-level or per-command flag table                |
+| `--help <text>`       | List only the commands matching a substring                |
 | `--count-by <field>`  | Count records per distinct value — see [Aggregate views](#aggregate-views) |
 | `--sum <f> [--by <g>]`| Total a numeric field, optionally grouped                  |
-| `--top <n> --by <f>`  | Keep only the n largest groups                             |
+| `--sort <field>`      | Order records by a field, largest first                    |
+| `--ascending`         | Flip `--sort` to smallest first                            |
+| `--top <n>`           | Keep the n leading entries of the view asked for           |
 | `--table <a,b>`       | Render named fields as an aligned table                    |
 
 stdout carries the result; structured errors and progress go to stderr. With
@@ -283,6 +286,34 @@ diagnostics remain ordinary stderr text. This keeps stdout pipeable and
 `2>/dev/null` clean. The process exit code carries the error class (`0` ok,
 `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
 …) — override per app with `exitCodes`.
+
+### A narrower question than "all of them"
+
+On a discovered surface `--help` is the only way to learn what exists, and that
+can be two hundred commands. At that size the list stops being an answer: it
+scrolls past a person and costs an agent the same context an unfiltered result
+would. So there is a question between "one command" and "all of them":
+
+```bash
+myapp --help broadcast     # also: -h broadcast · help broadcast · --help=broadcast
+```
+
+```
+Commands matching "broadcast" (3 of 205):
+  broadcast_send    Send a broadcast to every subscriber
+  broadcast_cancel  Stop a running broadcast
+  announce_publish  Publish an announcement as a broadcast
+```
+
+The description is searched as well as the name, because the word someone knows
+is often in the sentence rather than the name — `announce_publish` above is
+matched that way. The count says what was left out.
+
+**No match is an exit code**, not an empty success: `0` over an empty list reads
+as "there are none", which is a different statement from "none of these". It
+exits with whatever `NOT_FOUND` maps to (`4` by default). Bare `--help` is
+unchanged, and `--help=false` still means what it always did — the reserved
+boolean's negation — so one value never carries two meanings.
 
 ## Application global options
 
@@ -414,9 +445,20 @@ myapp item_list --top 5 --by status        # same view, written the other way ro
 myapp item_list --table id,status          # the one human-facing shape
 ```
 
-`--by` always names the **grouping** field, in every form it appears in, so the
-grammar has one meaning rather than two. Groups are ordered largest first, which
-is what makes `--top` a defined slice rather than an arbitrary one.
+Two words, one each: **`--by` groups, `--sort` orders.** That leaves `--top` a
+single meaning everywhere — *the n leading entries of the view you asked for* —
+so the question a CLI actually gets asked composes out of the parts:
+
+```bash
+myapp item_list --top 5 --sort messages --table id,messages   # the five biggest, as a table
+myapp item_list --sort messages --top 5 --json                # the same five, as records
+myapp item_list --sort name --ascending                       # ordered the other way
+```
+
+Groups come back largest first for the same reason. A record that carries no
+value for the sort field sorts **last in both directions**: it is not the
+smallest, it is not on the scale at all, and letting it lead an ascending list
+would answer a question nobody asked.
 
 Three rules worth knowing before you rely on them:
 
@@ -428,6 +470,8 @@ Three rules worth knowing before you rely on them:
   over an object with two array fields, is refused rather than guessed.
 - **Without a view flag the output is byte-for-byte what it was.** The flags are
   reserved CLI behaviour like `--json`; they never reach a tool argument.
+- **Ordering and grouping do not mix.** `--sort` with `--by`, `--count-by` or
+  `--sum` is refused rather than given a second meaning.
 
 A failed call still reports its own error and exit code. An aggregate over an
 error is not an answer to the question that was asked.
@@ -507,8 +551,12 @@ import {
 // otherwise everyone who already installed it never receives the fix.
 assertCliPublishable(previous, next)
 
-// Serving: one generated script per target, no JSON on the wire.
-renderCliInstaller({ manifest, asset: selectCliBuildAsset(manifest, target)!, binaryName: 'myapp' })
+// Serving: omit `asset` and one script covers every published target, selecting
+// by uname at run time — otherwise that dispatch is the last hand-written piece
+// of the install path, and every publisher writes the same x86_64 → x64 table.
+renderCliInstaller({ manifest, binaryName: 'myapp' })
+// Or pin one target explicitly:
+renderCliInstaller({ manifest, asset: selectCliBuildAsset(manifest, target), binaryName: 'myapp' })
 
 // Checking: bounded, at most once per interval, silent on any failure.
 const check = await checkCliUpdate({ manifestUrl, currentVersion, lastCheckedAt })
@@ -553,6 +601,28 @@ exposure stays explicit, as it is everywhere else in the framework.
 One unconvertible schema no longer takes the connection down with it. The tool
 is skipped and **named** (`onSkippedTool`, or a stderr line by default), so a
 surface of two hundred tools is not lost to one.
+
+**A remote refusal keeps its code.** A failed `tools/call` used to become a
+one-sentence `Error` with the result discarded, which cost three things at once:
+the code (so `exitCodes` had nothing to map and every remote failure exited `1`),
+the message the operator needed, and the error's own class — a plain `Error` is
+an *unexpected* error to the runner, so it printed a code frame of the framework
+bundle before the JSON failure and was then scrubbed to `INTERNAL_SERVER_ERROR`.
+A structured `{ error, details }` body is now relayed as the contract error it
+is, on every transport; anything else fails as `UPSTREAM_TOOL_ERROR` carrying
+what the server did send. Not `INTERNAL_SERVER_ERROR`, because nothing of ours
+broke.
+
+**On the CLI a discovered command prints the answer, not the envelope.**
+`tools/call` returns `{ content: [...], structuredContent? }`, and an agent mount
+needs exactly that — the parts are what a model is shown. The CLI is different in
+kind, because the handler's value is what gets printed, piped and aggregated:
+handed the envelope, `--count-by status` groups the *content parts* and answers
+`no record carries the field "status" — available: text, type`. So the CLI
+transport unwraps, and only it: `structuredContent` when the server sent one, a
+lone text part when it parses as JSON, its text when it does not. Several parts,
+an image or audio pass through whole — picking one of many would be inventing an
+answer.
 
 
 ## Auth parity

@@ -206,6 +206,103 @@ describe('generated installer', () => {
     expect(check).toBeGreaterThan(decompress);
   });
 
+  test('omitting the asset renders one script that selects the target itself', () => {
+    const manifest: CliBuildManifest = {
+      name: 'app',
+      version: '1.2.0',
+      commit: 'a'.repeat(40),
+      builtAt: '2026-09-16T00:00:00.000Z',
+      assets: [
+        {
+          platform: 'linux',
+          arch: 'x64',
+          url: 'https://example.com/app-linux-x64.gz',
+          compression: 'gzip',
+          size: BINARY.length,
+          sha256: DIGEST,
+        },
+        {
+          platform: 'darwin',
+          arch: 'arm64',
+          url: 'https://example.com/app-darwin-arm64.gz',
+          compression: 'gzip',
+          size: BINARY.length,
+          sha256: DIGEST,
+        },
+      ],
+    };
+    const script = renderCliInstaller({ manifest, binaryName: 'app' });
+    // The mapping the publisher would otherwise write from memory, every time.
+    expect(script).toContain('x86_64|amd64) arch=x64');
+    expect(script).toContain('aarch64|arm64) arch=arm64');
+    expect(script).toContain('linux/x64)');
+    expect(script).toContain('darwin/arm64)');
+    // An unpublished combination is named, with what is published beside it.
+    expect(script).toContain('no published build for $platform/$arch');
+    expect(script).toContain('linux/x64, darwin/arm64');
+    // Still no JSON on the wire.
+    const commands = script
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+    expect(commands).not.toContain('jq');
+  });
+
+  test('the dispatching script installs the target it is run on', async () => {
+    const directory = scratch();
+    const assets = Bun.serve({ port: 0, fetch: () => new Response(GZIPPED) });
+    servers.push(assets);
+    const here = currentCliBuildTarget();
+    const manifest: CliBuildManifest = {
+      name: 'app',
+      version: '1.2.0',
+      commit: 'a'.repeat(40),
+      builtAt: '2026-09-16T00:00:00.000Z',
+      assets: [
+        {
+          platform: 'plan9',
+          arch: 'sparc',
+          url: 'http://127.0.0.1:1/never.gz',
+          compression: 'gzip',
+          size: 1,
+          sha256: '0'.repeat(64),
+        },
+        {
+          ...here,
+          url: `http://127.0.0.1:${assets.port}/app.gz`,
+          compression: 'gzip',
+          size: BINARY.length,
+          sha256: DIGEST,
+        },
+      ],
+    };
+    const script = join(directory, 'install.sh');
+    writeFileSync(script, renderCliInstaller({ manifest, binaryName: 'app' }));
+    const install = join(directory, 'bin');
+    const run = Bun.spawn({
+      cmd: ['sh', script],
+      env: { ...process.env, INSTALL_DIR: install },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(await run.exited).toBe(0);
+    expect(readFileSync(join(install, 'app'))).toEqual(BINARY);
+  });
+
+  test('a manifest with no assets is refused rather than rendered', () => {
+    expect(() =>
+      renderCliInstaller({
+        manifest: {
+          name: 'app',
+          version: '1.0.0',
+          commit: 'a',
+          builtAt: '2026-09-16T00:00:00.000Z',
+          assets: [],
+        },
+      }),
+    ).toThrow(/installs nothing/);
+  });
+
   test('it actually installs, run by a real shell', async () => {
     const directory = scratch();
     const assets = Bun.serve({

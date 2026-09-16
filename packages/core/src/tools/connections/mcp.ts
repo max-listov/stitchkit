@@ -3,6 +3,7 @@ import { isRecord } from '../../internal/typed';
 import { defineRuntimeTool, type RuntimeToolDefinition } from '../runtime-tool';
 import { connectionMaxResponseBytes, connectionTimeoutMs } from './limits';
 import { McpHttpClient } from './mcp-client';
+import { mcpToolFailure, unwrapMcpResult } from './mcp-envelope';
 import {
   type ConnectionToolSkipReporter,
   mountToolsTolerantly,
@@ -75,10 +76,15 @@ export async function mountMcpConnection(
                 token,
                 context.signal,
               );
-              if (isRecord(result) && result.isError === true) {
-                throw new Error(`External MCP tool "${name}" returned an error`);
-              }
-              return result;
+              // The failure is relayed on every transport, not just the CLI:
+              // a lost error code is missing information, not a presentation
+              // choice.
+              if (isRecord(result) && result.isError === true)
+                throw mcpToolFailure(name, result);
+              // The CLI prints, pipes and aggregates this value, so on that
+              // transport the answer is the answer — not the envelope carrying
+              // it. Every other transport keeps the parts it needs.
+              return context.source === 'cli' ? unwrapMcpResult(result) : result;
             },
           ).finally(() => client.teardown());
         },

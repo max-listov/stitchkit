@@ -135,10 +135,59 @@ function renderTable(records: readonly unknown[], fields: readonly string[]): st
   return `${[line(fields), line(widths.map((width) => '-'.repeat(width))), ...rows.map(line)].join('\n')}\n`;
 }
 
+/**
+ * Compare two field values for the record order.
+ *
+ * A record that carries no value for the field sorts last in **both**
+ * directions. It is not the smallest — it is not on the scale at all, and
+ * letting it lead an ascending list would answer a question nobody asked.
+ */
+function compareFieldValues(left: unknown, right: unknown): number {
+  if (left === undefined || left === null)
+    return right === undefined || right === null ? 0 : 1;
+  if (right === undefined || right === null) return -1;
+  if (typeof left === 'number' && typeof right === 'number') return left - right;
+  if (typeof left === 'bigint' || typeof right === 'bigint') {
+    return Number(left) - Number(right);
+  }
+  return groupKey(left).localeCompare(groupKey(right));
+}
+
+/**
+ * The record view: the records themselves, optionally ordered and cut.
+ *
+ * `--sort` orders records and `--by` groups them — one word each, so `--top`
+ * keeps the single meaning it has everywhere: the n leading entries of the view
+ * that was asked for. "The five largest, as a table" is those two composed,
+ * which is the question a CLI is actually asked.
+ */
+function renderRecords(
+  records: readonly unknown[],
+  view: { sort?: string; ascending?: boolean; top?: number; table?: readonly string[] },
+): CliViewOutput {
+  let selected = [...records];
+  if (view.sort !== undefined) {
+    const path = assertFieldPresent(records, view.sort);
+    const direction = view.ascending ? 1 : -1;
+    selected.sort((left, right) => {
+      const order = compareFieldValues(readField(left, path), readField(right, path));
+      // An absent value stays last whichever way the scale runs, so it is
+      // excluded from the direction flip rather than dragged to the front.
+      const absent =
+        readField(left, path) === undefined || readField(right, path) === undefined;
+      return absent ? order : order * direction;
+    });
+  }
+  if (view.top !== undefined) selected = selected.slice(0, view.top);
+  return view.table
+    ? { kind: 'text', text: renderTable(selected, view.table) }
+    : { kind: 'json', data: selected };
+}
+
 /** Compute the requested view, or refuse it with a message naming the field. */
 export function renderCliView(data: unknown, view: CliResultView): CliViewOutput {
   const records = selectRecords(data);
-  if (view.kind === 'table') return { kind: 'text', text: renderTable(records, view.fields) };
+  if (view.kind === 'records') return renderRecords(records, view);
 
   if (view.kind === 'count') {
     const path = assertFieldPresent(records, view.field);

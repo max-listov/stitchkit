@@ -1968,11 +1968,11 @@ SDK nor the `ai` peer.
 | `CliBuildAssetSchema` / `CliBuildAsset` | schema / _type_ | one download; `size` and `sha256` describe the **decompressed** bytes |
 | `CliBuildTargetSchema` / `CliBuildTarget` | schema / _type_ | `{ platform, arch }` |
 | `CliBuildStampSchema` / `CliBuildStamp` | schema / _type_ | the version/commit/build time carried inside a binary |
-| `CliInstallerConfig` | _type_ | manifest, asset, binary name and default install directory |
+| `CliInstallerConfig` | _type_ | manifest, binary name, default install directory, and an optional `asset` — omit it for one script that selects the target by `uname` |
 | `CliUpdateCheckConfig` / `CliUpdateCheck` | _type_ | check inputs, and its four answers — `skipped`, `current`, `outdated`, `unknown` |
 | `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs and the replaced path, byte count and digest |
 | `CliProfileStore` / `CliProfileStoreConfig` / `ResolvedCliProfile` | _type_ | the profile store, its directory/schema/hint config, and one resolution |
-| `CliResultView` | _type_ | the requested aggregate — `count`, `sum` or `table` |
+| `CliResultView` | _type_ | the requested view — `count`, `sum`, or `records` (ordered and/or table-rendered) |
 | `CliViewOutput` | _type_ | a JSON value, or the one human-facing text shape |
 | `CliGlobalOptionsParse` | _type_ | `{ argv, globals }` returned by `extractCliGlobalOptions` |
 | `CliArgvRoute` | _type_ | `{ command, commandArgv, topLevelHelp, version, error? }` returned by `routeCliArgv` |

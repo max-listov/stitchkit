@@ -11,8 +11,13 @@ import type { CliBuildAsset, CliBuildManifest } from './cli-manifest';
 
 export interface CliInstallerConfig {
   manifest: CliBuildManifest;
-  /** The asset this script installs — one script per target. */
-  asset: CliBuildAsset;
+  /**
+   * The asset this script installs. Omit it to render one script covering every
+   * asset in the manifest, selected by `uname` at run time — otherwise the
+   * dispatch is the one hand-written piece left in the install path, and every
+   * publisher writes the same `uname -s`/`uname -m` mapping from memory.
+   */
+  asset?: CliBuildAsset;
   /** The name the binary takes on the PATH; defaults to the manifest name. */
   binaryName?: string;
   /** Default install directory; overridable by `INSTALL_DIR` at run time. */
@@ -35,20 +40,23 @@ function shellQuote(value: string): string {
 export function renderCliInstaller(config: CliInstallerConfig): string {
   const binary = config.binaryName ?? config.manifest.name;
   const installDir = config.installDir ?? '$HOME/.local/bin';
-  const decompress =
-    config.asset.compression === 'gzip'
-      ? '  gzip -dc "$tmp/download" > "$tmp/binary"\n'
-      : '  mv "$tmp/download" "$tmp/binary"\n';
+  const assets = config.asset ? [config.asset] : config.manifest.assets;
+  if (assets.length === 0) {
+    throw new Error('[stitchkit] a build manifest with no assets installs nothing');
+  }
+  const selection =
+    assets.length === 1 && assets[0] !== undefined
+      ? singleTarget(assets[0])
+      : unameDispatch(assets);
   return `#!/bin/sh
 # ${binary} ${config.manifest.version} (${config.manifest.commit})
 # Generated from the build manifest — it parses no JSON and needs no jq.
 set -eu
 
-url=${shellQuote(config.asset.url)}
-sha256=${shellQuote(config.asset.sha256)}
-size=${shellQuote(String(config.asset.size))}
 binary=${shellQuote(binary)}
 dir="\${INSTALL_DIR:-${installDir}}"
+
+${selection}
 
 fetch() {
   if command -v curl >/dev/null 2>&1; then
@@ -78,7 +86,12 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 fetch "$url" "$tmp/download"
-${decompress}
+if [ "$compression" = "gzip" ]; then
+  gzip -dc "$tmp/download" > "$tmp/binary"
+else
+  mv "$tmp/download" "$tmp/binary"
+fi
+
 actual="$(digest "$tmp/binary")"
 if [ "$actual" != "$sha256" ]; then
   echo "checksum mismatch: expected $sha256, got $actual" >&2
@@ -103,4 +116,54 @@ case ":$PATH:" in
   *) echo "note: $dir is not on your PATH" >&2 ;;
 esac
 `;
+}
+
+/** One published target: the three facts inline, nothing to select. */
+function singleTarget(asset: CliBuildAsset): string {
+  return [
+    `url=${shellQuote(asset.url)}`,
+    `sha256=${shellQuote(asset.sha256)}`,
+    `size=${shellQuote(String(asset.size))}`,
+    `compression=${shellQuote(asset.compression)}`,
+  ].join('\n');
+}
+
+/**
+ * Several published targets: pick one by `uname`, still without parsing JSON.
+ *
+ * The mapping is the script's, not the caller's, because `uname -m` says
+ * `x86_64` and `aarch64` where a manifest says `x64` and `arm64`, and every
+ * publisher that writes this by hand writes the same table from memory. An
+ * unpublished combination is named, with what *is* published beside it.
+ */
+function unameDispatch(assets: readonly CliBuildAsset[]): string {
+  const cases = assets
+    .map(
+      (asset) => `  ${asset.platform}/${asset.arch})
+    url=${shellQuote(asset.url)}
+    sha256=${shellQuote(asset.sha256)}
+    size=${shellQuote(String(asset.size))}
+    compression=${shellQuote(asset.compression)}
+    ;;`,
+    )
+    .join('\n');
+  const published = assets.map((asset) => `${asset.platform}/${asset.arch}`).join(', ');
+  return `case "$(uname -s)" in
+  Darwin) platform=darwin ;;
+  Linux) platform=linux ;;
+  *) platform="$(uname -s)" ;;
+esac
+case "$(uname -m)" in
+  x86_64|amd64) arch=x64 ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) arch="$(uname -m)" ;;
+esac
+
+case "$platform/$arch" in
+${cases}
+  *)
+    echo "no published build for $platform/$arch — published: ${published}" >&2
+    exit 1
+    ;;
+esac`;
 }

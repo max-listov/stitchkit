@@ -15,6 +15,74 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.5] — 2026-09-16
+
+Three gaps a consuming project found on the first live surface after adopting
+0.90.4 — each one a place where the framework handed over parts of the job and
+kept the composition for itself.
+
+### Fixed
+
+- **A connection-mounted command on the CLI prints the answer, not the MCP
+  envelope.** `tools/call` returns `{ content: [...], structuredContent? }`, and
+  an agent mount needs exactly that — the parts are what a model is shown. The
+  CLI is different in kind, because the handler's value is what gets printed,
+  piped and aggregated. Handed the envelope, the first real command answered
+  `no record carries the field "status" — available: text, type`: it was
+  grouping the content parts. `--json` had the same defect one layer down, with
+  the answer a JSON *string* inside `content[0].text`, so every consumer
+  unwrapped before anything else worked. The CLI transport now unwraps, and only
+  it: `structuredContent` when the server sent one, a lone text part when it
+  parses as JSON, its text when it does not. Several parts, an image or audio
+  pass through whole — picking one of many would be inventing an answer.
+
+- **A remote tool's refusal keeps its code and details.** `mountConnections` ended
+  a failed `tools/call` by throwing a one-sentence `Error` and discarding the
+  result. Three things went with it: the code, so `exitCodes` had nothing to map
+  and "not found" and "no rights" both exited `1` — the per-class exit codes the
+  CLI surface exists to provide could not work over a connection at all; the
+  message the operator needed; and the error's own class, because a plain `Error`
+  is an *unexpected* error to the runner, which printed a code frame of the
+  minified framework bundle before the JSON failure and then scrubbed the whole
+  thing to `INTERNAL_SERVER_ERROR`. A structured `{ error, details }` body is now
+  relayed as the contract error it is, on every transport — losing a code is
+  missing information, not a presentation choice. A refusal without one fails as
+  `UPSTREAM_TOOL_ERROR` carrying what the server did send; the status is 502
+  either way, because whatever the code says the failure happened upstream.
+
+### Added
+
+- **`--sort <field>` and `--ascending` — the n largest *records*.** 0.90.4 gave
+  `--top` to groups and left "the five biggest, as a table" with no expression,
+  because `--table` took neither `--by` nor `--top`. Two readings of `--top`
+  would have been exactly the ambiguity that release removed from `--by`, so
+  ordering gets its own word: **`--by` groups, `--sort` orders**, and `--top`
+  keeps one meaning throughout — the n leading entries of the view that was
+  asked for. `--table` and `--sort` describe the same view and therefore
+  compose: `--top 5 --sort messages --table id,messages`. `--sort` without
+  `--table` returns the ordered records as JSON. A record carrying no value for
+  the sort field stays **last in both directions**: it is not the smallest, it
+  is not on the scale. `--sort` together with `--by`, `--count-by` or `--sum` is
+  refused rather than given a second meaning.
+- **`--help <substring>` — a narrower question than "all of them".** On a
+  discovered surface `--help` is the only way to learn what exists, and that can
+  be two hundred commands and 230 lines: at that size the list stops being an
+  answer, scrolling past a person and costing an agent the same context an
+  unfiltered result would. The filter matches a command's name *or* its
+  description — the word someone knows is often in the sentence rather than the
+  name — and the heading says how many of the total matched. No match exits with
+  whatever `NOT_FOUND` maps to rather than succeeding over an empty list, because
+  `0` there reads as "there are none", a different statement from "none of
+  these". `-h <text>`, `help <text>` and `--help=<text>` are the same question;
+  bare `--help` is byte-for-byte unchanged, and `--help=false` keeps its meaning
+  as the reserved boolean's negation.
+- **`renderCliInstaller` renders every published target in one script.** Omit
+  `asset` and the script selects by `uname` at run time, mapping `x86_64` →
+  `x64` and `aarch64` → `arm64` itself, and naming an unpublished combination
+  with what *is* published beside it. Passing one `asset` still pins one target.
+  That dispatch was the last hand-written piece of the install path, and it is
+  the same table every publisher writes from memory. It still parses no JSON.
+
 ## [0.90.4] — 2026-09-16
 
 ### Added

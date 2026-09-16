@@ -31,6 +31,7 @@ import {
   CliArgumentError,
   describeSchemaFields,
   extractCliGlobalOptions,
+  isReservedBoolWord,
   parseCliArgs,
   RESERVED_CLI_OPTIONS,
   routeCliArgv,
@@ -174,9 +175,12 @@ const GLOBAL_OPTIONS = [
   ['--quiet', 'Suppress non-essential stderr output'],
   ['--dry-run', 'Print the resolved call without executing it'],
   ['--help, -h', 'Show help for a command'],
+  ['--help <text>', 'List only the commands matching a substring'],
   ['--count-by <field>', 'Count records per distinct value of a field'],
   ['--sum <field>', 'Total a numeric field, optionally grouped by --by'],
-  ['--top <n> --by <f>', 'Keep only the n largest groups'],
+  ['--sort <field>', 'Order the records by a field, largest first'],
+  ['--ascending', 'Flip --sort to smallest first'],
+  ['--top <n>', 'Keep the n leading entries of the view asked for'],
   ['--table <a,b>', 'Render the named fields as an aligned table'],
 ] as const;
 
@@ -287,6 +291,28 @@ function applicationOptionLines(fields: readonly JsonSchemaField[]): string[] {
   ];
 }
 
+/**
+ * Commands matching a substring, by name or by description.
+ *
+ * A discovered surface can be two hundred commands, at which point the full list
+ * stops being an answer: it scrolls past a person and costs an agent the same
+ * context an unfiltered result would. The description is searched too, because
+ * the word someone knows is often in the sentence rather than the name.
+ */
+function filterCommands(
+  commands: Map<string, CliCommandPresentation>,
+  filter: string,
+): Map<string, CliCommandPresentation> {
+  const needle = filter.toLowerCase();
+  return new Map(
+    [...commands].filter(
+      ([command, descriptor]) =>
+        command.toLowerCase().includes(needle) ||
+        descriptor.description.toLowerCase().includes(needle),
+    ),
+  );
+}
+
 function renderTopHelp(input: {
   name: string;
   version: string;
@@ -295,14 +321,20 @@ function renderTopHelp(input: {
   applicationOptions: readonly JsonSchemaField[];
   /** Why the managed surface is missing from this listing, when it is. */
   unavailable?: string;
+  /** Narrow the listing; the counted line says what was left out. */
+  filter?: string;
 }): string {
-  const { name, version, commands, defaultCommand } = input;
+  const { name, version, defaultCommand } = input;
+  const commands =
+    input.filter === undefined ? input.commands : filterCommands(input.commands, input.filter);
   const lines = [
     `${name} ${version}`,
     '',
     `Usage: ${name} ${defaultCommand ? '[command]' : '<command>'} [args] [--flags]`,
     '',
-    'Commands:',
+    input.filter === undefined
+      ? 'Commands:'
+      : `Commands matching "${input.filter}" (${commands.size} of ${input.commands.size}):`,
   ];
   const width = Math.max(0, ...[...commands.keys()].map((key) => key.length));
   for (const [command, descriptor] of commands) {
@@ -314,6 +346,12 @@ function renderTopHelp(input: {
   // most of itself reads as a CLI that never had those commands.
   if (input.unavailable !== undefined) {
     lines.push('', `Managed commands are unavailable: ${input.unavailable}`);
+  }
+  // A filtered listing is an answer to one question; repeating the whole option
+  // table under it would bury the answer the reader asked for.
+  if (input.filter !== undefined) {
+    lines.push('', `Run "${name} <command> --help" for command-specific flags.`);
+    return `${lines.join('\n')}\n`;
   }
   lines.push('', 'Global options:');
   const optWidth = Math.max(...GLOBAL_OPTIONS.map(([flag]) => flag.length));
@@ -843,9 +881,29 @@ export async function createCli<
     command === undefined ||
     command === 'help' ||
     command === '--help' ||
-    command === '-h';
+    command === '-h' ||
+    // `--help=<substring>` is the same question written inline; without this it
+    // routed as an unknown command name. `--help=false` stays what it always
+    // was — the boolean negation — so the inline form keeps one meaning per
+    // value rather than two.
+    (command.startsWith('--help=') && !isReservedBoolWord(command.slice('--help='.length)));
   const managed = await buildManagedSurface(!topLevelHelp && !helpRequested);
   if (topLevelHelp) {
+    const helpFilter =
+      route.helpFilter ?? (command !== undefined ? commandArgv[0] : undefined);
+    const filter =
+      helpFilter !== undefined && !helpFilter.startsWith('-') ? helpFilter : undefined;
+    // Nothing matched is a fact a script branches on, not an empty success —
+    // an exit 0 over an empty list reads as "there are none", which is a
+    // different statement from "none of these".
+    if (filter !== undefined && filterCommands(managed.help, filter).size === 0) {
+      stderr(
+        `no command matches "${filter}" (${managed.help.size} available)\n` +
+          (managed.resolved ? '' : `Managed commands are unavailable: ${managed.reason}\n`),
+      );
+      const codes = { ...DEFAULT_EXIT_CODES, ...config.exitCodes };
+      return exit(codes.NOT_FOUND ?? 4);
+    }
     stdout(
       renderTopHelp({
         name: config.name,
@@ -853,6 +911,7 @@ export async function createCli<
         commands: managed.help,
         defaultCommand: config.defaultCommand,
         applicationOptions,
+        ...(filter !== undefined && { filter }),
         ...(managed.resolved ? {} : { unavailable: managed.reason }),
       }),
     );
