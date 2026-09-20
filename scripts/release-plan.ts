@@ -1042,7 +1042,11 @@ async function main(): Promise<void> {
     const sha = await output(['git', 'rev-parse', `${argument}^{commit}`]);
     const subject = await output(['git', 'log', '-1', '--format=%s', sha]);
     if (releaseScopeForSubject(subject) === 'train') {
-      await validateReleaseCommit(root, { sha, subject });
+      // Candidate identity is immutable release metadata. The mutable starter
+      // registry check already ran before the release commit was pushed; doing
+      // it again would make late/idempotent observer registration depend on
+      // packages published by the very same train.
+      await validateReleaseCommit(root, { sha, subject }, { checkStarterLockfile: false });
       const read = readFromCommit(sha);
       const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
       const releases = await Promise.all(
@@ -1050,7 +1054,7 @@ async function main(): Promise<void> {
           const plan = await validateReleaseTag(
             root,
             releaseTagForTarget(entry.target, entry.version),
-            { read },
+            { read, checkStarterLockfile: false },
           );
           return releaseCandidateIdentity(plan, sha);
         }),
@@ -1058,7 +1062,11 @@ async function main(): Promise<void> {
       process.stdout.write(JSON.stringify({ schemaVersion: 1, sha, releases }));
       return;
     }
-    const plan = await validateReleaseCommit(root, { sha, subject });
+    const plan = await validateReleaseCommit(
+      root,
+      { sha, subject },
+      { checkStarterLockfile: false },
+    );
     process.stdout.write(JSON.stringify(releaseCandidateIdentity(plan, sha)));
     return;
   }

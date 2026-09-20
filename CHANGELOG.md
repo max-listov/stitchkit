@@ -18,7 +18,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 ### Fixed
 
 - Release workflows now remain safely rerunnable after another package in the
-  same train reaches npm, and tolerate normal multi-minute registry processing.
+  same train reaches npm, candidate registration stays repeatable after
+  publication, and registry polling tolerates normal multi-minute processing.
 
 ## [0.90.6] — 2026-09-20
 
