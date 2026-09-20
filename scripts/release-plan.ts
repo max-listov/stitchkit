@@ -657,6 +657,12 @@ export function decidePublishAction(
 export interface ValidateReleaseTagOptions {
   fetch?: FetchLike;
   /**
+   * The mutable registry check belongs to candidate creation. A tag workflow
+   * consumes the exact candidate CI already approved and must remain rerunnable
+   * after another package in the same train becomes public.
+   */
+  checkStarterLockfile?: boolean;
+  /**
    * Which tree to judge. The working tree by default; a pre-push check reads
    * the commit being pushed, because that is what the push publishes.
    */
@@ -693,7 +699,7 @@ export async function validateReleaseTag(
   // checks this: outside a release a lockfile lagging its range is ordinary and
   // legitimate, and gating it there would turn every framework publication into
   // a template chore.
-  if (plan.target === 'create-stitchkit') {
+  if (plan.target === 'create-stitchkit' && options.checkStarterLockfile !== false) {
     await assertStarterLockfileIsCurrent(root, options.fetch, read);
   }
   return { ...plan, notes };
@@ -999,6 +1005,12 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify(plan));
     return;
   }
+  if (command === 'release-metadata') {
+    if (!argument) throw new Error('Usage: release-plan.ts release-metadata <tag>');
+    const plan = await validateReleaseTag(root, argument, { checkStarterLockfile: false });
+    process.stdout.write(JSON.stringify(plan));
+    return;
+  }
   if (command === 'check') {
     /**
      * The same metadata gate the push runs, against the working tree, before
@@ -1148,7 +1160,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: release-plan.ts <check|preflight TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
+    'Usage: release-plan.ts <check|preflight TAG|release-metadata TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
   );
 }
 

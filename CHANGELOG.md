@@ -15,6 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- Release workflows now remain safely rerunnable after another package in the
+  same train reaches npm, and tolerate normal multi-minute registry processing.
+
 ## [0.90.6] — 2026-09-20
 
 ### Added

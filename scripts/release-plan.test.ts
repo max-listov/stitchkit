@@ -782,7 +782,14 @@ describe('a release commit is checked before it costs a gate', () => {
       return;
     }
     const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
-    const validated = await validateReleaseCommit(root, { sha, subject });
+    // A historical release commit must keep validating after newer versions
+    // appear on npm. Its mutable registry gate was answered before tagging;
+    // this assertion checks the immutable metadata carried by the commit.
+    const validated = await validateReleaseCommit(
+      root,
+      { sha, subject },
+      { checkStarterLockfile: false },
+    );
     const manifest: unknown = JSON.parse(
       await Bun.$`git show ${sha}:${validated.packageDir}/package.json`.text(),
     );

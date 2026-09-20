@@ -98,4 +98,9 @@ describe('target-aware CI graph', () => {
     expect(release).toContain('select-ci-run "$GITHUB_SHA"');
     expect(release).toContain('name: release-packages');
   });
+
+  test('tag reruns rebuild immutable metadata without repeating candidate registry checks', () => {
+    expect(release).toContain('release-plan.ts release-metadata "$GITHUB_REF_NAME"');
+    expect(release).not.toContain('release-plan.ts preflight "$GITHUB_REF_NAME"');
+  });
 });

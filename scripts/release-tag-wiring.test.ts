@@ -95,6 +95,17 @@ describe('the starter lockfile gate is attached to the starter channel', () => {
     expect(npm.calls()).toBe(1);
   });
 
+  test('release metadata is stable after the candidate registry snapshot changes', async () => {
+    const npm = registry(['0.60.0', '0.60.1', '0.60.2']);
+    const root = await releaseTree(CURRENT);
+    const plan = await validateReleaseTag(root, 'create-stitchkit-v0.4.2', {
+      fetch: npm.fetch,
+      checkStarterLockfile: false,
+    });
+    expect(plan.target).toBe('create-stitchkit');
+    expect(npm.calls()).toBe(0);
+  });
+
   test('a starter tag with a stale lockfile is refused — the exact 0.4.1 shape', async () => {
     const npm = registry(['0.60.0', '0.60.1']);
     const root = await releaseTree({ ...CURRENT, range: '^0.60.0', locked: '0.60.0' });

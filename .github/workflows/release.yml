@@ -43,7 +43,10 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Validate tag, package version and release notes
-        run: bun scripts/release-plan.ts preflight "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-plan.json"
+        # The exact candidate CI already ran the mutable registry checks. This
+        # step rebuilds only immutable metadata so a workflow can be rerun after
+        # another package in the same train has reached npm.
+        run: bun scripts/release-plan.ts release-metadata "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-plan.json"
 
       - name: Require successful CI for the exact release SHA
         id: ci
