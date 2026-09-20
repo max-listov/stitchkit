@@ -60,7 +60,9 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: canonical query client factory
+## Released migration: 0.6.1
+
+### Canonical query client factory
 
 This migration is additive, but it has a dependency order: first upgrade to a
 Stitchkit release that exports `createQueryClientFactory` from

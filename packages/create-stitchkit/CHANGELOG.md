@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-09-20
+
 ### Changed
 
 - **The generated frontend carries the canonical React Query runtime shape.**
@@ -21,6 +23,9 @@ step is overwritten by the next release.
   a test that keeps it there. It does not depend on an unreleased Stitchkit
   export; `UPGRADING.md` records the one-step cutover to
   `createQueryClientFactory` after the matching core release is available.
+- **The generated workspace now targets Stitchkit `^0.90.5` and current stable
+  dependencies.** Its root and agent lockfiles were regenerated independently while
+  preserving the single `catalog.stitchkit` source and workspace `catalog:` links.
 
 ## [0.6.0] — 2026-09-02
 

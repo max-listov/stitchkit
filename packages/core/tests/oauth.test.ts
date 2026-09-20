@@ -82,6 +82,12 @@ describe('signJwt / verifyJwt round-trip', () => {
 });
 
 describe('PKCE S256', () => {
+  test('matches the RFC 7636 appendix B vector', async () => {
+    expect(await deriveCodeChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe(
+      'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+    );
+  });
+
   test('matching verifier passes', async () => {
     const verifier = 'a'.repeat(64);
     const challenge = await deriveCodeChallenge(verifier);

@@ -1,6 +1,6 @@
 {
   "name": "stitchkit-tui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Composable terminal UI for the Stitchkit headless agent runtime",
   "license": "MIT",
   "author": "Max Listov <maxlistov@gmail.com>",
@@ -40,16 +40,16 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "@opentui/core": "^0.5.9",
-    "@opentui/react": "^0.5.9",
-    "ai": "^7.0.0",
-    "react": "^19.2.8",
+    "@opentui/core": "^0.5.11",
+    "@opentui/react": "^0.5.11",
+    "ai": "^7.0.107",
+    "react": "^19.3.0",
     "stitchkit": "workspace:^",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0",
-    "@types/react": "^19.2.18",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
     "typescript": "^7.0.2"
   },
   "engines": {

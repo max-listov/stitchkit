@@ -30,7 +30,19 @@ async function archive(prefix: string): Promise<string> {
 
 try {
   await run(['mkdir', '-p', artifacts, consumer], root);
-  await run(['bun', 'pm', 'pack', '--destination', artifacts], join(root, 'packages/core'));
+  await run(
+    [
+      'bun',
+      '../../scripts/package-build-lock.ts',
+      '--',
+      'bun',
+      'pm',
+      'pack',
+      '--destination',
+      artifacts,
+    ],
+    join(root, 'packages/core'),
+  );
   await run(['bun', 'pm', 'pack', '--destination', artifacts], join(root, 'packages/tui'));
 
   const coreArchive = await archive('stitchkit-0.');

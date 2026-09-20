@@ -1,6 +1,6 @@
 {
   "name": "create-stitchkit",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Create a production-shaped Stitchkit application",
   "license": "MIT",
   "author": "Max Listov <maxlistov@gmail.com>",
@@ -73,16 +73,16 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@opentui/core": "^0.5.9",
-    "@opentui/react": "^0.5.9",
-    "@openrouter/ai-sdk-provider": "^3.0.0",
-    "@types/bun": "^1.4.0",
-    "@types/react": "^19.2.18",
-    "ai": "^7.0.84",
-    "react": "^19.2.8",
+    "@opentui/core": "^0.5.11",
+    "@opentui/react": "^0.5.11",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "ai": "^7.0.107",
+    "react": "^19.3.0",
     "stitchkit": "workspace:*",
     "typescript": "^7.0.2"
   },

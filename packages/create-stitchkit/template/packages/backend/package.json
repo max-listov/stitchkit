@@ -17,15 +17,15 @@
     "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@prisma/adapter-pg": "^7.9.1",
-    "@socket.io/bun-engine": "^0.1.1",
-    "ai": "^7.0.78",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@socket.io/bun-engine": "^0.1.2",
+    "ai": "^7.0.107",
     "socket.io": "^4.8.3",
     "stitchkit": "catalog:",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
   }
 }

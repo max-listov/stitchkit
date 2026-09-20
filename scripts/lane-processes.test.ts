@@ -565,16 +565,38 @@ test.skipIf(!hasProcfs)(
 );
 
 test('the sweep defaults to the system temp directory', async () => {
-  // Every test above hands it a tree of its own, so nothing else would notice
-  // if the default stopped being the directory the lanes actually use.
+  // Exercise the real default in an isolated process whose system temp root is
+  // private to this test. Scanning the host-wide temp directory makes this test
+  // contend with every live lane and turns their open descriptors into its
+  // runtime, which is why the old version timed out under the full suite.
   const root = await mkdtemp(join(tmpdir(), 'lane-sweep-default-'));
-  const directory = await mkdtemp(join(tmpdir(), 'stitchkit-starter-lane-'));
+  const directory = await mkdtemp(join(root, 'stitchkit-starter-lane-'));
   try {
     // Old enough to sweep, and empty, so the default root reaches it.
     const sevenHoursAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
     await utimes(directory, sevenHoursAgo, sevenHoursAgo);
 
-    expect(await sweepAbandonedTemporaryDirectories()).toContain(directory);
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        '-e',
+        `const lane = await import(${JSON.stringify(join(import.meta.dir, 'lane-processes.ts'))}); process.stdout.write(JSON.stringify(await lane.sweepAbandonedTemporaryDirectories()));`,
+      ],
+      {
+        cwd: import.meta.dir,
+        env: { ...process.env, TMPDIR: root },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(stderr).toBe('');
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toContain(directory);
     expect(existsSync(directory)).toBe(false);
   } finally {
     await rm(directory, { recursive: true, force: true });

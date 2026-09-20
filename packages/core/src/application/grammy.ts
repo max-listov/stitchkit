@@ -116,6 +116,17 @@ export interface GrammyWebhookResource<C extends Context> {
   ): Promise<void>;
 }
 
+type GrammyNodeAbortSignal = Parameters<Bot<Context>['init']>[0];
+
+/**
+ * grammY's Node declaration replaces the platform signal with the
+ * `abort-controller` declaration, even though its implementation and
+ * `node-fetch` consume the same abort-event protocol as a native signal.
+ */
+function grammyNodeSignal(signal: AbortSignal): GrammyNodeAbortSignal {
+  return signal as unknown as GrammyNodeAbortSignal;
+}
+
 /**
  * In `STITCH_ERROR_STATUS`, like every other code the framework throws
  * (→ ADR 0105), and branded for the same reason as `ApplicationAdmissionError`.
@@ -166,7 +177,7 @@ export function createGrammyWebhookResource<C extends Context>(
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     ...(config.required !== undefined && { required: config.required }),
     async start(context) {
-      await config.bot.init(context.signal);
+      await config.bot.init(grammyNodeSignal(context.signal));
     },
     activate() {
       accepting = true;

@@ -1,0 +1,10 @@
+{
+  "name": "stitchkit-consumer-google",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "google-auth-library": "^11.1.0"
+  }
+}

@@ -98,6 +98,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'scopes, createAuthHook, JWT/cookies, the AppError model, the stitch error-code registry',
   ],
   [
+    'oauth.md',
+    'OAuth & OpenID Connect',
+    'browser Authorization Code + PKCE transactions and the optional Google OIDC server adapter',
+  ],
+  [
     'observability.md',
     'Observability',
     'request and tool-call observability, W3C trace context, createObservability',

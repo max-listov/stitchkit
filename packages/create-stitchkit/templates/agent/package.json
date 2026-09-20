@@ -16,16 +16,16 @@
     "build": "bun build src/index.ts --outdir dist --target bun --packages external"
   },
   "dependencies": {
-    "@openrouter/ai-sdk-provider": "^3.0.0",
-    "ai": "^7.0.87",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.107",
     "stitchkit": "file:../../../core",
     "stitchkit-tui": "file:../../../tui",
-    "zod": "4.5.4"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "@types/bun": "^1.4.0",
-    "@types/react": "^19.2.14",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
     "typescript": "^7.0.2"
   },
   "engines": {

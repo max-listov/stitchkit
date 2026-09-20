@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-09-20
+
+### Changed
+
+- Updated the OpenTUI, AI SDK, React and Zod runtime set to their current compatible
+  stable releases, with matching React and Bun declarations for consumers.
+
 ## [0.1.1] — 2026-08-30
 
 ### Fixed

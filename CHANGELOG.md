@@ -15,6 +15,40 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.6] — 2026-09-20
+
+### Added
+
+- **Browser Authorization Code + PKCE transactions in `stitchkit/oauth`.** The new
+  browser-safe entrypoint creates authorization URLs, stores one-time state and
+  verifier records, and consumes callbacks with bounded expiry, replay protection,
+  safe return paths and provider errors that do not expose credentials.
+- **A Google OpenID Connect server adapter in `stitchkit/google`.** It exchanges an
+  authorization code through the official optional `google-auth-library` peer,
+  requires an exact redirect allowlist, validates issuer, audience, expiry and nonce,
+  and returns a small stable identity without leaking tokens into application state.
+
+### Fixed
+
+- **Unix-socket servers no longer forward Bun's TCP-only `http2` option.** The Unix
+  variant now strips it beside the other transport-specific settings.
+- **grammY startup accepts the native application abort signal on its Node typing
+  boundary.** Runtime cancellation was already compatible; the adapter now makes that
+  compatibility explicit instead of failing consumer type-checks.
+- **The lane temporary-directory test is isolated from concurrent lanes.** Its real
+  default-path proof runs in a child process with a private system temp root, removing
+  the full-suite timeout caused by scanning unrelated live descriptors.
+- **Concurrent packed lanes serialize the shared core build.** Two release lanes can no
+  longer clean `dist` underneath each other's `prepack`, which previously produced a
+  JavaScript-only tarball during a parallel full gate.
+
+### Changed
+
+- **Supported dependencies and consumer fixtures track current stable releases.** The
+  MCP Apps peer accepts both the existing 1.x line and current 2.x, while development
+  and optional-peer lanes exercise 2.x; the `srvx` peer likewise keeps its supported
+  0.12 line while adding 1.x.
+
 ## [0.90.5] — 2026-09-16
 
 Three gaps a consuming project found on the first live surface after adopting

@@ -7,7 +7,13 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.76.1"
+    "stitchkit": "^0.90.5"
+  },
+  "overrides": {
+    "@playwright/test": "1.63.0",
+    "playwright": "1.63.0",
+    "playwright-core": "1.63.0",
+    "zod": "4.6.5"
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",
@@ -37,22 +43,22 @@
     "gen:declaration": "bun scripts/declaration.ts"
   },
   "dependencies": {
-    "dotenv": "^17.4.2"
+    "dotenv": "^18.0.1"
   },
   "devDependencies": {
     "@app/config": "workspace:*",
     "@app/shared": "workspace:*",
     "@axe-core/playwright": "^4.13.0",
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.14",
     "@modelcontextprotocol/client": "^2.0.0",
-    "@playwright/test": "^1.62.1",
-    "@types/bun": "^1.4.0",
-    "@types/node": "^26.4.0",
-    "oxc-parser": "^0.147.0",
+    "@playwright/test": "^1.63.0",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.6.2",
+    "oxc-parser": "^0.150.0",
     "socket.io-client": "^4.8.3",
     "stitchkit": "catalog:",
     "typescript": "^7.0.2",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "engines": {
     "bun": ">=1.2.0",

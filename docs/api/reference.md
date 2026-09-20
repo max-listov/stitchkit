@@ -1837,6 +1837,35 @@ adapter is used.
 
 ---
 
+## `stitchkit/oauth`
+
+Browser-safe, provider-neutral Authorization Code + PKCE transaction mechanics. Navigation,
+token exchange, identity and sessions remain application-owned. See the [OAuth guide](../guide/oauth.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createAuthorizationCodeClient` / `AuthorizationCodeClient` / `AuthorizationCodeClientConfig` | function / _type_ | begin one S256 authorization request and consume its versioned pending transaction exactly once |
+| `BeginAuthorizationCodeInput` / `BeginAuthorizationCodeResult` / `ConsumeAuthorizationCodeInput` / `ConsumedAuthorizationCode` | _type_ | inputs and safe protocol result around caller-validated context |
+| `AuthorizationCodeStorage` / `AuthorizationCodeCrypto` | _type_ | injected browser capabilities; neither is read at module initialisation |
+| `AuthorizationCodeClientError` / `AuthorizationCodeClientErrorCode` | class / _type_ | fixed safe failure codes for configuration, context, storage, transaction and state failures |
+| `safeInternalReturnPath` | function | accept only a single-slash current-origin path without backslashes or ASCII controls |
+
+---
+
+## `stitchkit/google`
+
+Server-only Google code exchange and verified OIDC identity. This entry requires the optional
+`google-auth-library` peer. See the [OAuth guide](../guide/oauth.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createGoogleOidcClient` / `GoogleOidcClient` / `GoogleOidcClientConfig` | function / _type_ | exact-redirect, deadline-bounded code exchange and verified identity projection |
+| `ExchangeGoogleAuthorizationCodeInput` / `GoogleOidcIdentity` / `GoogleOidcClaims` | _type_ | callback input, provider-neutral result and verifier seam claims |
+| `GoogleOidcExchangeInput` / `GoogleOidcTokenTransport` / `GoogleOidcIdTokenVerifier` | _type_ | injectable transport and verifier boundaries used by production and deterministic tests |
+| `GoogleOidcError` / `GoogleOidcErrorCode` | class / _type_ | safe `MISCONFIGURED`, `INVALID_CREDENTIAL` or retryable `UPSTREAM_UNAVAILABLE` failure |
+
+---
+
 ## `stitchkit/declaration`
 
 Zod-only, dependency-free. The **project declaration**: the single

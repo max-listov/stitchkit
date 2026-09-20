@@ -94,6 +94,8 @@ export const ENTRYPOINTS = [
   { subpath: './release', source: 'src/release.ts', browser: true },
   { subpath: './tracking/server', source: 'src/tracking-server.ts', browser: false },
   { subpath: './geo', source: 'src/geo.ts', browser: false },
+  { subpath: './oauth', source: 'src/oauth.ts', browser: true },
+  { subpath: './google', source: 'src/google.ts', browser: false },
   { subpath: './declaration', source: 'src/declaration.ts', browser: true },
   { subpath: './node', source: 'src/node.ts', browser: false },
 ];

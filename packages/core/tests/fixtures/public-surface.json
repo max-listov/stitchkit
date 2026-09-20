@@ -2114,6 +2114,33 @@
     "createMaxMindGeoIpLoader",
     "mapGeoIpRecord"
   ],
+  "stitchkit/oauth": [
+    "AuthorizationCodeClient",
+    "AuthorizationCodeClientConfig",
+    "AuthorizationCodeClientError",
+    "AuthorizationCodeClientErrorCode",
+    "AuthorizationCodeCrypto",
+    "AuthorizationCodeStorage",
+    "BeginAuthorizationCodeInput",
+    "BeginAuthorizationCodeResult",
+    "ConsumeAuthorizationCodeInput",
+    "ConsumedAuthorizationCode",
+    "createAuthorizationCodeClient",
+    "safeInternalReturnPath"
+  ],
+  "stitchkit/google": [
+    "ExchangeGoogleAuthorizationCodeInput",
+    "GoogleOidcClaims",
+    "GoogleOidcClient",
+    "GoogleOidcClientConfig",
+    "GoogleOidcError",
+    "GoogleOidcErrorCode",
+    "GoogleOidcExchangeInput",
+    "GoogleOidcIdTokenVerifier",
+    "GoogleOidcIdentity",
+    "GoogleOidcTokenTransport",
+    "createGoogleOidcClient"
+  ],
   "stitchkit/declaration": [
     "BindingVariableSchema",
     "PROJECT_DECLARATION_SCHEMA_VERSION",

@@ -78,6 +78,7 @@ import { createSocketIOClient } from 'stitchkit'
 import { createCursorQuery, createCacheBridge } from 'stitchkit/react'
 import { AgentRunSchema, AgentRuntimeEventSchema } from 'stitchkit/agent-runtime/browser'
 import { parseSSE } from 'stitchkit'
+import { createAuthorizationCodeClient } from 'stitchkit/oauth'
 ```
 
 Server code imports server entrypoints:
@@ -90,6 +91,7 @@ import { createAgentRuntime, defineAgentProtocol } from 'stitchkit/agent-runtime
 import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun'
 import { createApplication, defineManagedResource } from 'stitchkit/application'
 import { implementRemote } from 'stitchkit/remote'
+import { createGoogleOidcClient } from 'stitchkit/google'
 ```
 
 The root `stitchkit` entrypoint is browser-safe. Server, tool, optional managed

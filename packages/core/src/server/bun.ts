@@ -289,10 +289,12 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     // and silently ignores `port` beside `unix`, which would mask config bugs.
     // TCP-only passthrough keys are stripped the same way: Bun's unix options
     // variant types them out, and they are meaningless on a socket file.
-    const { reusePort, ipv6Only, http3, http1, idleTimeout, ...unixExtra } = bunExtra ?? {};
+    const { reusePort, ipv6Only, http3, http2, http1, idleTimeout, ...unixExtra } =
+      bunExtra ?? {};
     void reusePort;
     void ipv6Only;
     void http3;
+    void http2;
     void http1;
     void idleTimeout;
     runtime = trackedWebSocket

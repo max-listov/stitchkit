@@ -35,6 +35,7 @@ class ControlledBot extends Bot<Context> {
   startCalls = 0;
   stopCalls = 0;
   initCalls = 0;
+  initSignal: unknown;
   updateCalls = 0;
   private resolvePolling: () => void = () => undefined;
   private rejectPolling: (error: unknown) => void = () => undefined;
@@ -47,8 +48,9 @@ class ControlledBot extends Bot<Context> {
     super('test-token', { botInfo });
   }
 
-  override init(): Promise<void> {
+  override init(signal?: Parameters<Bot<Context>['init']>[0]): Promise<void> {
     this.initCalls += 1;
+    this.initSignal = signal;
     return Promise.resolve();
   }
 
@@ -247,6 +249,7 @@ describe('grammY application adapters', () => {
     const app = createApplication({ id: 'webhook', resources: [webhook.resource] });
     await app.start();
     expect(bot.initCalls).toBe(1);
+    expect(bot.initSignal).toBeInstanceOf(AbortSignal);
 
     const accepted = webhook.handleUpdate({ update_id: 1 });
     await Promise.resolve();

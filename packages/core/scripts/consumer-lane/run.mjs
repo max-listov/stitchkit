@@ -58,7 +58,7 @@ if (unknownArguments.length > 0) {
 const containedFilesOnly = arguments_.includes('--contained-files-only');
 const FIXTURES = containedFilesOnly
   ? ['node']
-  : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo'];
+  : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo', 'google'];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -129,7 +129,19 @@ try {
   //    produce an identical file list, so the artifact under test is the one
   //    that ships.
   const packOutput = step('pack', () =>
-    run('bun', ['pm', 'pack', '--destination', workdir], pkgRoot),
+    run(
+      'bun',
+      [
+        '../../scripts/package-build-lock.ts',
+        '--',
+        'bun',
+        'pm',
+        'pack',
+        '--destination',
+        workdir,
+      ],
+      pkgRoot,
+    ),
   );
   const tarball = (packOutput.match(/\S+\.tgz/) ?? [])[0]
     ? join(workdir, (packOutput.match(/[\w.@-]+\.tgz/) ?? [])[0])
@@ -183,6 +195,15 @@ try {
     if (PEER_FREE_FIXTURES.includes(name) && existsSync(join(dir, 'node_modules', 'grammy'))) {
       failed = true;
       console.error(`[consumer-lane] ${name}: unexpectedly installed optional peer grammy`);
+    }
+    if (
+      PEER_FREE_FIXTURES.includes(name) &&
+      existsSync(join(dir, 'node_modules', 'google-auth-library'))
+    ) {
+      failed = true;
+      console.error(
+        `[consumer-lane] ${name}: unexpectedly installed optional peer google-auth-library`,
+      );
     }
     if (
       PEER_FREE_FIXTURES.includes(name) &&

@@ -254,7 +254,6 @@ try {
   const corePackage = join(repositoryRoot, 'packages/core/package.json');
   const templateTarget = await readStarterStitchkitTarget(templateRoot);
 
-  if (mode === 'head') await run(['bun', '--filter', 'stitchkit', 'build'], repositoryRoot);
   await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot);
 
   const createTarball = join(packed, 'create-stitchkit.tgz');
@@ -302,7 +301,16 @@ try {
     expectedVersion = await packageVersion(corePackage);
     coreTarball = join(packed, 'stitchkit.tgz');
     await run(
-      ['bun', 'pm', 'pack', '--ignore-scripts', '--filename', coreTarball],
+      [
+        'bun',
+        '../../scripts/package-build-lock.ts',
+        '--',
+        'bun',
+        'pm',
+        'pack',
+        '--filename',
+        coreTarball,
+      ],
       join(repositoryRoot, 'packages/core'),
     );
   }

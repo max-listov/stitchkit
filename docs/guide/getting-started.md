@@ -54,6 +54,8 @@ own, recorded as an ADR.
 | `stitchkit/tracking/server` | server (Bun or Node) | evolving | the decisions a tracking backend makes — dispositions, visit lease over an application-owned store, active intervals, presence; no database |
 | `stitchkit/release` | browser **and** server | evolving | a page follows the release it was built for — `createReleaseMarker` on the server, `createReleaseWatcher` in the browser, the `X-Build-Id` header and a socket event between them |
 | `stitchkit/geo` | server (Bun or Node) | evolving | managed GeoIP reader generations, last-known-good reload and the optional MaxMind adapter |
+| `stitchkit/oauth` | browser **and** server | evolving | provider-neutral Authorization Code + PKCE request and one-shot callback transaction mechanics |
+| `stitchkit/google` | server (Bun or Node) | evolving | optional Google code exchange and verified OIDC identity adapter |
 | `stitchkit/observability` | server | stable<br>_redefined in 1 of the 35 minors since 0.56.2, most recently 0.83.0_ | request/tool event projections — `createObservability`, trace context, sanitisation |
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the store and managed-resource conformance kits |
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
@@ -180,6 +182,8 @@ map — feature → packages:
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
 | MaxMind GeoIP (`stitchkit/geo`) | `maxmind` |
+| Browser OAuth client (`stitchkit/oauth`) | — |
+| Google OIDC verifier (`stitchkit/google`) | `google-auth-library` |
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
 | Socket.IO client | `socket.io-client` (runtime peer; unrelated root declarations remain peer-free) |
@@ -216,6 +220,7 @@ package. MCP hosts and client E2E additionally install
 - [MCP & agents](./mcp-and-agents.md) — contracts as AI tools.
 - [Realtime](./realtime.md) — Socket.IO and the cache bridge.
 - [Auth & errors](./auth-and-errors.md) — scopes, auth hooks, the error model.
+- [Browser OAuth and Google OIDC](./oauth.md) — PKCE transaction and verified provider identity.
 - [Testing & deployment](./testing-and-deployment.md).
 - [API reference](../api/reference.md) — every export, by entrypoint.
 
