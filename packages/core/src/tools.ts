@@ -121,6 +121,13 @@ export {
   RESOURCE_MIME_TYPE,
 } from './tools/mcp-app';
 export {
+  MCP_CATALOG_META_KEY,
+  type McpCatalogStamp,
+  mcpCatalogMeta,
+  mcpCatalogStamp,
+  readMcpCatalogStamp,
+} from './tools/mcp-catalog';
+export {
   createMcpHandler,
   createMcpHttpRoute,
   type McpHandlerConfig,

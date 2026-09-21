@@ -252,7 +252,8 @@ describe('framework runtime tools', () => {
       { type: 'text', text: 'asset:forest' },
       { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
     ]);
-    expect(mcp._meta).toEqual({ surface: 'mcp' });
+    expect(mcp._meta).toMatchObject({ surface: 'mcp' });
+    expect(mcp._meta?.['stitchkit/catalog']).toMatchObject({ tools: 1 });
     expect(agent).toEqual({
       type: 'content',
       value: [

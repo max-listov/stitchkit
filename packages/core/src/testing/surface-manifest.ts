@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { type ZodType, z } from 'zod';
 import type { EndpointMcpPolicy, HttpMethod } from '../contract';
+import { compareCodepoints, serializeCanonicalJson } from '../internal/canonical-json';
 import { joinRoutePath } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
@@ -147,26 +148,8 @@ export interface SurfaceManifestConfig {
   extensions?: readonly SurfaceManifestExtension[];
 }
 
-function compareCodepoints(left: string, right: string): number {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
-}
-
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!isRecord(value)) return value;
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort(compareCodepoints)) {
-    result[key] = canonicalValue(value[key]);
-  }
-  return result;
-}
-
 /** Canonical bytes used by snapshots and schema digests. Arrays retain order. */
-export function serializeSurfaceValue(value: unknown): string {
-  return JSON.stringify(canonicalValue(value));
-}
+export const serializeSurfaceValue = serializeCanonicalJson;
 
 function digestValue(value: unknown): string {
   return createHash('sha256').update(serializeSurfaceValue(value)).digest('hex').slice(0, 16);

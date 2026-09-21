@@ -4,7 +4,7 @@ description: Deterministic discovery, routing metadata, caching and capability b
 type: architecture
 status: active
 created: 2026-08-09
-updated: 2026-08-20
+updated: 2026-09-21
 ---
 
 # MCP protocol semantics
@@ -28,6 +28,33 @@ validated operation plus canonical lifecycle, hooks, cancellation and
 introspection. Their direct `mount*` forms remain explicit raw MCP presentation
 adapters over the same mechanics. View-file batches additionally share one
 total byte budget and retain structured per-item failures beside valid media.
+
+## Catalog stamp
+
+A consumer holds its own copy of the catalog, and from inside that copy a change
+on the server is invisible. A session that listed the tools hours ago sends
+arguments the contract no longer has, is refused, and reads the refusal as a
+fault in the source — because nothing in the refusal mentions the catalog.
+
+So every advertised tool and every tool result carries
+`_meta["stitchkit/catalog"] = { digest, tools }`: the fingerprint of the exact
+advertised surface (`mcpCatalogStamp`), covering each tool's name, description,
+input schema, output schema and annotations. A consumer stores the stamp when it
+lists, compares it on responses it was already receiving, and so learns its copy
+is stale **without making a request to find out** — including on the refusal a
+stale copy causes, which is when the question actually gets asked.
+
+`notifications/tools/list_changed` is the push-shaped answer to the same
+problem, and this framework cannot send it: `createMcpHandler` is stateless by
+construction — a fresh server per request, no session, no retained stream — so
+there is nothing to notify. That is a real boundary, stated rather than papered
+over, and it is why the signal rides on responses instead. The rule in *Cache
+policy* below is unchanged: no list-change capability is advertised without an
+implementation.
+
+The stamp is computed once per prepared surface, not per request, and covers the
+tools the framework advertises. Raw SDK registrations (`rawTools`) stay
+consumer-owned and are outside it.
 
 ## Cache policy
 

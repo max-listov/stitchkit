@@ -41,6 +41,12 @@ export interface RealtimeRejectionIssue {
   path: string;
   code: string;
   message: string;
+  /**
+   * The union branch the issue came from, when the refused field was a union.
+   * Without it a refused union reports only its own position and the word
+   * `invalid_union`, which names no field at all.
+   */
+  branch?: number;
 }
 
 /**
@@ -120,7 +126,15 @@ function parseIssues(value: unknown): RealtimeRejectionIssue[] | undefined {
     const code = Reflect.get(entry, 'code');
     const message = Reflect.get(entry, 'message');
     if (typeof path === 'string' && typeof code === 'string' && typeof message === 'string') {
-      issues.push({ path, code, message });
+      const branch = Reflect.get(entry, 'branch');
+      issues.push({
+        path,
+        code,
+        message,
+        ...(typeof branch === 'number' &&
+          Number.isInteger(branch) &&
+          branch > 0 && { branch }),
+      });
     }
   }
   return issues.length > 0 ? issues : undefined;

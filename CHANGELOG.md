@@ -15,6 +15,36 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- **Every advertised MCP tool and every tool result now carries a catalog
+  stamp** — `_meta["stitchkit/catalog"] = { digest, tools }`, the fingerprint of
+  the exact advertised surface. A long-lived consumer stores it when it lists the
+  tools and compares it on responses it was already receiving, so it learns its
+  own copy of the contract is stale **without making a request to find out** —
+  including on the refusal that a stale copy causes, which is when the question
+  actually gets asked. `mcpCatalogStamp`, `readMcpCatalogStamp`,
+  `mcpCatalogMeta`, `MCP_CATALOG_META_KEY` and `McpCatalogStamp` are exported
+  from `stitchkit/tools`. `notifications/tools/list_changed` is the push-shaped
+  answer to the same problem and `createMcpHandler` cannot send it — it is
+  stateless by construction, so there is no retained session to notify; that
+  boundary is stated in `docs/architecture/mcp-semantics.md` rather than papered
+  over.
+
+### Fixed
+
+- **A refused union now names the branch and the field instead of only
+  `(root)`.** Zod reports a failed `z.union` as one issue — code
+  `invalid_union`, path `(root)`, message `Invalid input` — and every per-branch
+  reason it computed was discarded on the way to the wire. The refusal therefore
+  said that a request was wrong and nothing about what would have been right, so
+  whoever hit it blamed the source. `zodIssues` now descends into the branches:
+  the union's own issue carries a message naming each branch and where it
+  failed, and each branch failure arrives as its own issue with a full path and
+  a `branch` number. `formatZodError` and realtime rejection reports carry the
+  same detail. Additive — the issue shape gained an optional field and lost
+  nothing.
+
 ## [0.90.7] — 2026-09-21
 
 ### Fixed

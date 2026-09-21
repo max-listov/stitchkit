@@ -254,6 +254,42 @@ finite `surfaces` registry when identities share a provably immutable surface.
 Stitchkit never advertises list-change or subscription capabilities
 without an implementation.
 
+### Knowing your catalog is stale — the catalog stamp
+
+A client lists the tools once and keeps that list. If the server's contract
+moves afterwards, the client's copy is wrong and *nothing tells it so*: calls
+are refused, and from inside the client a refusal looks like a broken server.
+This is the most expensive shape a contract disagreement takes, because the
+party able to fix it is the one with no evidence.
+
+Every advertised tool and every tool result therefore carries the fingerprint of
+the catalog it came from:
+
+```ts
+import { readMcpCatalogStamp } from 'stitchkit/tools';
+
+const listed = await client.listTools();
+let known = readMcpCatalogStamp(listed.tools[0]?._meta); // { digest, tools }
+
+const result = await client.callTool({ name: 'record_journal', arguments });
+const live = readMcpCatalogStamp(result._meta);
+if (live && known && live.digest !== known.digest) {
+  // The catalog moved under us. Re-list before blaming the result.
+  known = readMcpCatalogStamp((await client.listTools()).tools[0]?._meta);
+}
+```
+
+The comparison costs nothing and runs on a response you were already receiving —
+including a refusal, which is exactly when a stale catalog is the likeliest
+explanation. `notifications/tools/list_changed` is the push-shaped answer to the
+same problem and `createMcpHandler` cannot send it: it is stateless by
+construction, so there is no retained session to push down.
+
+The digest covers each advertised tool's name, description, input schema, output
+schema and annotations, and nothing else — it moves when the contract moves and
+not when a handler does. Raw SDK registrations stay consumer-owned and are
+outside it.
+
 ### Typed MCP call metadata
 
 Contract handlers, runtime-tool handlers/factories, lifecycle and tool hooks all

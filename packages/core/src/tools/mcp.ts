@@ -16,6 +16,12 @@ import {
 } from './execute';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './mcp-app';
 import {
+  type McpCatalogStamp,
+  mcpCatalogStamp,
+  stampToolRegistration,
+  stampToolResult,
+} from './mcp-catalog';
+import {
   formatMcpResult,
   type McpSchemaValidationConfig,
   type McpSurfaceDefinition,
@@ -61,6 +67,8 @@ export interface McpMountConfig {
 
 interface PreparedMcpMountConfig extends McpMountConfig {
   multiRoundRuntime?: McpRoundRuntime;
+  /** The catalog this surface advertises, stamped onto listings and results. */
+  catalog?: McpCatalogStamp;
 }
 
 /**
@@ -90,7 +98,10 @@ export function mountMcp(
     schemaValidation: config.schemaValidation,
     logger: config.logger,
   });
-  mountPreparedMcp(mcpServer, prepared, config);
+  mountPreparedMcp(mcpServer, prepared, {
+    ...config,
+    catalog: mcpCatalogStamp({ contractTools: prepared, runtimeTools: [] }),
+  });
 }
 
 /** Register a prepared immutable surface onto one fresh server/runtime. */
@@ -140,37 +151,43 @@ export function mountPreparedMcp(
       };
     }
 
-    mcpServer.registerTool(mountable.name, toolConfig, async (rawArgs, mcpContext) =>
-      runInMcpRequestContext(mcpContext, mountable.name, async () => {
-        const args = isRecord(rawArgs) ? rawArgs : {};
-        try {
-          const round = await resolveMcpRound({
-            tool: mountable,
-            rawArgs: args,
-            context: mcpContext,
-            policy: mountable.method.mcp,
-            runtime: config.multiRoundRuntime,
-            runTool,
-            formatFailure: (result) =>
-              formatMcpResult(result, 'none', mountable.name, config.errorHint),
-          });
-          if (round.kind === 'response') return round.response;
-          const result = await runTool(mountable, args, round.context);
-          return formatMcpResult(
-            result,
-            descriptor.outputMode,
-            mountable.name,
-            config.errorHint,
-          );
-        } catch (err) {
-          return formatMcpResult(
-            toolResultFromError(err),
-            'none',
-            mountable.name,
-            config.errorHint,
-          );
-        }
-      }),
+    mcpServer.registerTool(
+      mountable.name,
+      stampToolRegistration(toolConfig, config.catalog),
+      async (rawArgs, mcpContext) =>
+        stampToolResult(
+          await runInMcpRequestContext(mcpContext, mountable.name, async () => {
+            const args = isRecord(rawArgs) ? rawArgs : {};
+            try {
+              const round = await resolveMcpRound({
+                tool: mountable,
+                rawArgs: args,
+                context: mcpContext,
+                policy: mountable.method.mcp,
+                runtime: config.multiRoundRuntime,
+                runTool,
+                formatFailure: (result) =>
+                  formatMcpResult(result, 'none', mountable.name, config.errorHint),
+              });
+              if (round.kind === 'response') return round.response;
+              const result = await runTool(mountable, args, round.context);
+              return formatMcpResult(
+                result,
+                descriptor.outputMode,
+                mountable.name,
+                config.errorHint,
+              );
+            } catch (err) {
+              return formatMcpResult(
+                toolResultFromError(err),
+                'none',
+                mountable.name,
+                config.errorHint,
+              );
+            }
+          }),
+          config.catalog,
+        ),
     );
   }
 }
@@ -349,7 +366,9 @@ export function buildMcpServerFromPrepared<TAuth>(
   };
   const server = new McpServer(config.serverInfo, serverOptions);
   const context = config.context?.(auth);
+  const catalog = mcpCatalogStamp(prepared);
   mountPreparedMcp(server, prepared.contractTools, {
+    catalog,
     context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,
@@ -368,6 +387,7 @@ export function buildMcpServerFromPrepared<TAuth>(
     }),
   });
   mountPreparedRuntimeMcp(server, prepared.runtimeTools, {
+    catalog,
     context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,

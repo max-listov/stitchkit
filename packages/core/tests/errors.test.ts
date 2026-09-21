@@ -303,3 +303,104 @@ describe('the issue projection is reachable from the browser entry and equals th
     }
   });
 });
+
+/*
+ * A refused union names the branch and the field.
+ *
+ * Zod reports a failed `z.union` as one issue: code `invalid_union`, path `(root)`, message
+ * `Invalid input`. Every per-branch reason it computed sits in `issue.errors` and was discarded
+ * on the way to the wire. The result is a refusal that says a request was wrong and nothing about
+ * what would have been right — and a caller holding a stale idea of the contract reads that as
+ * "the source is broken", because no other reading is available. Two agents spent an evening on
+ * exactly one such refusal.
+ */
+describe('a refused union names its branches', () => {
+  const schema = z.object({
+    payload: z.union([
+      z.object({ kind: z.literal('a'), by: z.string() }),
+      z.object({ kind: z.literal('b'), actor: z.string() }),
+    ]),
+  });
+
+  function refusal() {
+    const result = schema.safeParse({ payload: { kind: 'b', by: 'max' } });
+    if (result.success) throw new Error('Expected failure');
+    return result.error;
+  }
+
+  test('the union issue keeps its own path and gains every branch reason', () => {
+    const [union] = zodIssues(refusal());
+    expect(union?.path).toBe('payload');
+    expect(union?.code).toBe('invalid_union');
+    // The renamed field is the whole answer: branch 2 wants `actor`, the caller sent `by`.
+    expect(union?.message).toContain('branch 1 at payload.kind');
+    expect(union?.message).toContain('branch 2 at payload.actor');
+  });
+
+  test('each branch failure arrives as its own addressable issue', () => {
+    expect(zodIssues(refusal()).slice(1)).toEqual([
+      {
+        path: 'payload.kind',
+        code: 'invalid_value',
+        message: expect.any(String),
+        branch: 1,
+      },
+      {
+        path: 'payload.actor',
+        code: 'invalid_type',
+        message: expect.any(String),
+        branch: 2,
+      },
+    ]);
+  });
+
+  test('the text projection carries the branch too', () => {
+    const formatted = formatZodError(refusal());
+    expect(formatted).toContain('payload.actor (branch 2)');
+  });
+
+  test('an ordinary issue carries no branch at all', () => {
+    const result = z.object({ name: z.string() }).safeParse({ name: 5 });
+    if (result.success) throw new Error('Expected failure');
+    expect(zodIssues(result.error)).toEqual([
+      { path: 'name', code: 'invalid_type', message: expect.any(String) },
+    ]);
+  });
+
+  test('a discriminated union that cannot pick a branch is left alone', () => {
+    const discriminated = z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('a'), by: z.string() }),
+      z.object({ kind: z.literal('b'), actor: z.string() }),
+    ]);
+    const result = discriminated.safeParse({ kind: 'c' });
+    if (result.success) throw new Error('Expected failure');
+    const issues = zodIssues(result.error);
+    // Zod already names the field and the accepted values here, and attaches no
+    // branch errors to descend into — so there is nothing to add and one issue.
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.path).toBe('kind');
+    expect(issues[0]?.message).toContain("'a' | 'b'");
+  });
+
+  test('a nested union reports the inner branch, not just the outer one', () => {
+    const nested = z.object({
+      outer: z.union([
+        z.object({ tag: z.literal('x'), inner: z.union([z.number(), z.boolean()]) }),
+        z.object({ tag: z.literal('y') }),
+      ]),
+    });
+    const result = nested.safeParse({ outer: { tag: 'x', inner: 'text' } });
+    if (result.success) throw new Error('Expected failure');
+    const paths = zodIssues(result.error).map((issue) => issue.path);
+    expect(paths).toContain('outer.inner');
+  });
+
+  test('the envelope a caller receives carries the branch detail', () => {
+    const settled = normalizeError(refusal());
+    expect(settled.code).toBe('VALIDATION_ERROR');
+    const wire = (settled.details as { issues: ZodIssueSummary[] }).issues;
+    expect(wire.some((issue) => issue.branch === 2 && issue.path === 'payload.actor')).toBe(
+      true,
+    );
+  });
+});

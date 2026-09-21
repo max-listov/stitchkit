@@ -1565,6 +1565,25 @@ A native remote-connector auth surface for MCP — [guide](../guide/mcp-and-agen
 | `RefreshData` | _type_ | a stored refresh-token record |
 | `RegisteredClient` | _type_ | a registered OAuth client |
 
+### Catalog stamp
+
+Every advertised tool and every tool result carries the fingerprint of the catalog it came
+from, so a long-lived consumer can see that its own copy is stale **without making a
+request for it**. `createMcpHandler` is stateless by construction and therefore has no
+retained session to push `notifications/tools/list_changed` down; the stamp needs none.
+
+Store the stamp beside the tools when you list them, compare it against the one on every
+result, and re-list when they differ — including on a refusal, which is exactly when a
+stale catalog is the likeliest explanation and the least visible one.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `mcpCatalogStamp` | function | fingerprint one prepared MCP surface (`{ digest, tools }`) |
+| `readMcpCatalogStamp` | function | read a peer's stamp out of `_meta`, or `null` when there is none |
+| `mcpCatalogMeta` | function | the `_meta` fragment a stamped tool or result carries |
+| `MCP_CATALOG_META_KEY` | const | the namespaced `_meta` key (`stitchkit/catalog`) |
+| `McpCatalogStamp` | _type_ | `{ digest, tools }` — the catalog fingerprint and its tool count |
+
 ### MCP Apps (widgets)
 
 Interactive MCP resources — [ADR 0019](../decisions/0019-generic-native-tools.md).

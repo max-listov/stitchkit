@@ -112,7 +112,10 @@ describe('framework-owned native MCP registration', () => {
 
     expect(result.content).toEqual(content);
     expect(result.structuredContent).toEqual({ assetId: 'asset-1' });
-    expect(result._meta).toEqual(meta);
+    // The presenter's own `_meta` survives, and the framework's catalog stamp
+    // rides alongside it — a consumer reads the catalog off any result.
+    expect(result._meta).toMatchObject(meta);
+    expect(result._meta?.['stitchkit/catalog']).toMatchObject({ tools: 1 });
     await client.close();
   });
 

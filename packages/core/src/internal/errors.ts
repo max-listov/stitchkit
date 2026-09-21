@@ -7,14 +7,6 @@ function issuePath(path: ReadonlyArray<PropertyKey>): string {
   return path.length > 0 ? path.map(String).join('.') : '(root)';
 }
 
-export function formatZodError(error: z.ZodError): string {
-  const issues = error.issues.slice(0, 5);
-  const lines = issues.map((issue) => `${issuePath(issue.path)}: ${issue.message}`);
-  const suffix =
-    error.issues.length > 5 ? `\n...and ${error.issues.length - 5} more issues` : '';
-  return lines.join('\n') + suffix;
-}
-
 /** One field-level validation issue — the structured sibling of `formatZodError`. */
 export interface ZodIssueSummary {
   /** Dotted path to the offending field (`(root)` for a top-level issue). */
@@ -23,20 +15,114 @@ export interface ZodIssueSummary {
   code: string;
   /** Human-readable message for this field. */
   message: string;
+  /**
+   * 1-based index of the union branch that produced this issue, counted within
+   * the nearest enclosing union. Absent when no union was involved.
+   */
+  branch?: number;
+}
+
+/**
+ * How deep the descent into nested unions goes. A union of unions of unions is
+ * already past the point where naming every branch helps a reader, and the
+ * depth is what bounds an otherwise quadratic expansion.
+ */
+const MAX_UNION_DEPTH = 3;
+
+/** How many branches a union's own summary line describes before it says "more". */
+const MAX_DESCRIBED_BRANCHES = 5;
+
+/**
+ * The per-branch failures Zod attaches to an `invalid_union` issue, or
+ * `undefined` when there are none.
+ *
+ * A discriminated union whose discriminator itself does not match reports
+ * `invalid_union` with an EMPTY `errors` and a `message` that already names the
+ * accepted values — nothing to descend into, and nothing to improve.
+ */
+function unionBranches(issue: z.core.$ZodIssue): readonly z.core.$ZodIssue[][] | undefined {
+  const errors: unknown = Reflect.get(issue, 'errors');
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  if (!errors.every((branch) => Array.isArray(branch))) return undefined;
+  return errors as readonly z.core.$ZodIssue[][];
+}
+
+/**
+ * One line naming why each branch was rejected.
+ *
+ * This is the whole point of the descent. Zod's own message for a failed union
+ * is the literal string `Invalid input` at path `(root)`: it says that nothing
+ * matched, and nothing about what would have. A caller holding a stale idea of
+ * the contract reads that as "the server is broken", because the refusal offers
+ * no other reading.
+ */
+function unionSummary(
+  branches: readonly z.core.$ZodIssue[][],
+  prefix: ReadonlyArray<PropertyKey>,
+): string {
+  const described = branches.slice(0, MAX_DESCRIBED_BRANCHES).map((issues, index) => {
+    const first = issues[0];
+    if (!first) return `branch ${index + 1} reported no reason`;
+    return `branch ${index + 1} at ${issuePath([...prefix, ...first.path])}: ${first.message}`;
+  });
+  const rest = branches.length - described.length;
+  const suffix = rest > 0 ? `; ...and ${rest} more branches` : '';
+  return `No union branch matched — ${described.join('; ')}${suffix}`;
+}
+
+function collectIssues(
+  issues: readonly z.core.$ZodIssue[],
+  prefix: ReadonlyArray<PropertyKey>,
+  branch: number | undefined,
+  depth: number,
+  into: ZodIssueSummary[],
+): void {
+  for (const issue of issues) {
+    const path = [...prefix, ...issue.path];
+    const branches = depth < MAX_UNION_DEPTH ? unionBranches(issue) : undefined;
+    into.push({
+      path: issuePath(path),
+      code: issue.code,
+      message: branches ? unionSummary(branches, path) : issue.message,
+      ...(branch !== undefined && { branch }),
+    });
+    if (!branches) continue;
+    branches.forEach((branchIssues, index) => {
+      collectIssues(branchIssues, path, index + 1, depth + 1, into);
+    });
+  }
 }
 
 /**
  * Project a `ZodError` into structured, wire-safe field issues — path / code /
- * message only, nothing server-internal. For a machine client that matches on
- * fields rather than parsing the text `message`. Returns every issue; a caller
- * that bounds response size slices it (see `normalizeError`).
+ * message (and a union branch, where one applies) — nothing server-internal.
+ * For a machine client that matches on fields rather than parsing the text
+ * `message`. Returns every issue; a caller that bounds response size slices it
+ * (see `normalizeError`).
+ *
+ * A failed union contributes its own issue AND one issue per branch failure, so
+ * the refusal names the branch and the path instead of only `(root)`.
  */
 export function zodIssues(error: z.ZodError): ZodIssueSummary[] {
-  return error.issues.map((issue) => ({
-    path: issuePath(issue.path),
-    code: issue.code,
-    message: issue.message,
-  }));
+  const issues: ZodIssueSummary[] = [];
+  collectIssues(error.issues, [], undefined, 0, issues);
+  return issues;
+}
+
+/** How many issues the text projection prints before it says "more". */
+const MAX_FORMATTED_ISSUES = 5;
+
+export function formatZodError(error: z.ZodError): string {
+  const all = zodIssues(error);
+  const shown = all.slice(0, MAX_FORMATTED_ISSUES);
+  const lines = shown.map((issue) => {
+    const where =
+      issue.branch === undefined ? issue.path : `${issue.path} (branch ${issue.branch})`;
+    return `${where}: ${issue.message}`;
+  });
+  const suffix =
+    all.length > shown.length ? `\n...and ${all.length - shown.length} more issues` : '';
+  return lines.join('\n') + suffix;
 }
 
 /** Cap on structured issues carried in a `VALIDATION_ERROR`'s `details`. */
