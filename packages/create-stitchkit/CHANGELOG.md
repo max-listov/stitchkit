@@ -12,6 +12,31 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-09-21
+
+### Fixed
+
+- **A scaffold installs the framework the manifest promises.** 0.6.1 rode in the
+  same release train as stitchkit 0.90.6 and therefore shipped a lockfile
+  resolving 0.90.5: a lockfile is written by an install, so it could not name a
+  version that train had not published yet. Every scaffold from 0.6.1 got a
+  framework one release behind the one its own range allowed. The template now
+  targets `^0.90.7` over a lockfile resolving 0.90.7, and the framework's release
+  machinery refuses that shape of train outright.
+
+### Changed
+
+- **The generated frontend takes its QueryClient from the framework.**
+  `lib/query-client.ts` now calls `createQueryClientFactory` from
+  `stitchkit/react` instead of restating it locally. The local copy spelled the
+  query retry as a plain `1`, which retries an unauthorized, forbidden or invalid
+  request exactly as eagerly as a network blip; the framework predicate retries
+  server failures and network faults and leaves the rest alone. Request-local
+  server identity, the browser singleton, pending dehydration and the
+  no-retry-for-mutations rule are unchanged in behaviour. This is the cutover
+  `UPGRADING.md` recorded under *Released migration: 0.6.1* — adopting it in a
+  project you already own remains optional.
+
 ## [0.6.1] — 2026-09-20
 
 ### Changed

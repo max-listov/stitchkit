@@ -1,36 +1,17 @@
-import {
-  defaultShouldDehydrateQuery,
-  environmentManager,
-  QueryClient,
-  type QueryClientConfig,
-} from '@tanstack/react-query';
 import { cache } from 'react';
+import { createQueryClientFactory } from 'stitchkit/react';
 
-// The template targets the published catalog release, so it cannot import
-// `createQueryClientFactory` yet; the retry policy below is the part of that
-// factory a released core already lets it state. UPGRADING names the cutover.
-const config = {
-  defaultOptions: {
-    // One retry for queries, none for mutations — a mutation retried on a
-    // timeout may run twice; a query only reads.
-    queries: { staleTime: 30_000, retry: 1 },
-    mutations: { retry: false },
-    dehydrate: {
-      shouldDehydrateQuery: (query) =>
-        defaultShouldDehydrateQuery(query) || query.state.status === 'pending',
-    },
+// One request-local server client and one browser singleton, both from the
+// framework. The local construction this replaced was a second implementation
+// of the same thing: it restated the dehydration policy and the mutation rule,
+// and it spelled the query retry as a plain `1`, which retries an unauthorized
+// or invalid request exactly as eagerly as a network blip. `apiErrorRetry` —
+// the factory's default — retries what is worth retrying and nothing else.
+// Project-specific cache configuration and mutation toasts belong in these
+// options, never in a copy of the framework's retry predicate.
+export const getQueryClient = createQueryClientFactory({
+  serverCache: cache,
+  queryClient: {
+    defaultOptions: { queries: { staleTime: 30_000 } },
   },
-} satisfies QueryClientConfig;
-
-function createQueryClient(): QueryClient {
-  return new QueryClient(config);
-}
-
-const getServerQueryClient = cache(createQueryClient);
-let browserQueryClient: QueryClient | undefined;
-
-export function getQueryClient(): QueryClient {
-  if (environmentManager.isServer()) return getServerQueryClient();
-  browserQueryClient ??= createQueryClient();
-  return browserQueryClient;
-}
+});

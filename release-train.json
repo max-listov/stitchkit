@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "releases": [
     {
-      "target": "core",
-      "version": "0.90.7"
+      "target": "create-stitchkit",
+      "version": "0.6.2"
     }
   ]
 }

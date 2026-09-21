@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ApiError } from 'stitchkit';
 import { getQueryClient } from './query-client';
 
 describe('query dehydration policy', () => {
@@ -20,9 +21,25 @@ describe('query dehydration policy', () => {
     expect(shouldDehydrate(pending)).toBe(true);
   });
 
-  test('retries a query once and never retries a mutation', () => {
+  test('retries a server failure once and never retries a mutation', () => {
+    // Asserted through the decision, not through the literal: the policy is a
+    // predicate now, and `retry === 1` would pass for a client that retries an
+    // unauthorized request too.
     const defaults = getQueryClient().getDefaultOptions();
-    expect(defaults.queries?.retry).toBe(1);
+    const retry = defaults.queries?.retry;
+    if (typeof retry !== 'function') throw new Error('query retry policy is required');
+    const serverFailure = new ApiError('INTERNAL_SERVER_ERROR', 500);
+    expect(retry(0, serverFailure)).toBe(true);
+    expect(retry(1, serverFailure)).toBe(false);
     expect(defaults.mutations?.retry).toBe(false);
+  });
+
+  test('a request the user cannot repeat into success is not retried', () => {
+    const defaults = getQueryClient().getDefaultOptions();
+    const retry = defaults.queries?.retry;
+    if (typeof retry !== 'function') throw new Error('query retry policy is required');
+    for (const code of ['UNAUTHORIZED', 'FORBIDDEN', 'VALIDATION_ERROR']) {
+      expect(retry(0, new ApiError(code, 401))).toBe(false);
+    }
   });
 });
