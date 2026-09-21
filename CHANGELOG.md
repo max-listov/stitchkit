@@ -15,11 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.7] — 2026-09-21
+
 ### Fixed
 
 - Release workflows now remain safely rerunnable after another package in the
   same train reaches npm, candidate registration stays repeatable after
   publication, and registry polling tolerates normal multi-minute processing.
+- **A release train may no longer publish the framework together with the
+  starter that has to pin it.** The starter's lockfile is written by an install,
+  so it can only resolve a version npm already serves; a train doing both at
+  once states two things that cannot both hold, and the starter it publishes is
+  a version behind from its first minute. `create-stitchkit@0.6.1` shipped that
+  way. The refusal is narrow — a starter deliberately targeting an older minor
+  still rides along with a new one — and it reads the train file rather than the
+  registry, so every attempt at the same commit gets the same answer.
+- **The starter lockfile gate now also refuses a pin npm does not serve.** Its
+  staleness comparison only ever looked downward, so a lockfile naming a version
+  above the newest published one passed every check and left the scaffold to die
+  at `bun install` on the consumer's machine.
 
 ## [0.90.6] — 2026-09-20
 

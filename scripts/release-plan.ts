@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import {
   packageDirectory,
   type ReleaseTarget,
+  type ReleaseTrain,
   ReleaseTrainSchema,
   readReleaseTrain,
   releaseTrainEntry,
@@ -12,6 +13,7 @@ import {
   type FetchLike,
   type ReleaseTreeReader,
   readFromWorkingTree,
+  readStarterResolution,
 } from './starter-lockfile';
 
 const ZERO_SHA = /^0+$/;
@@ -787,6 +789,9 @@ export async function validateReleaseCommit(
   if (scope === 'train') {
     const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
     assertReleaseCommitSubject(commit.subject, '', 'train');
+    // Tree-local, so it holds everywhere the train is judged — including the
+    // candidate path, which deliberately skips the mutable registry checks.
+    await assertTrainDoesNotOutrunTheStarter(root, train, read);
     let first: (ReleasePlan & { notes: string }) | undefined;
     for (const release of train.releases) {
       const plan = await validateReleaseTag(
@@ -810,6 +815,42 @@ export async function validateReleaseCommit(
 
 function releaseTagForTarget(target: ReleaseTarget, version: string): string {
   return releaseTagFor(target === 'create-stitchkit' ? 'starter' : target, version);
+}
+
+/**
+ * Refuse a train that publishes a framework the starter in it is required to pin.
+ *
+ * The starter's lockfile can only resolve a version npm already serves — it is
+ * written by `bun install`, which fetches. So a train carrying both core@X and
+ * the starter, where X satisfies the starter's range, states two things that
+ * cannot both be true: the lockfile must resolve the newest version the range
+ * allows (which becomes X the moment the train publishes it), and the lockfile
+ * cannot name X before that publication.
+ *
+ * Nothing caught this because both halves were checked against the live
+ * registry, where X is simply absent until it is not: the starter passed every
+ * gate at push time and became stale a minute later, when its own train
+ * published the framework. 0.6.1 shipped that way and scaffolds 0.90.5 while
+ * 0.90.6 is latest. The answer is not a cleverer moment to ask npm — it is that
+ * the starter belongs in a LATER train than the framework it tracks.
+ *
+ * The check stays narrow on purpose: a starter deliberately targeting an older
+ * minor is unaffected by a new minor of the framework, so the two ride together
+ * without conflict, and that release is still legal.
+ */
+export async function assertTrainDoesNotOutrunTheStarter(
+  root: string,
+  train: ReleaseTrain,
+  read: ReleaseTreeReader,
+): Promise<void> {
+  const core = releaseTrainEntry(train, 'core');
+  const starter = releaseTrainEntry(train, 'create-stitchkit');
+  if (!core || !starter) return;
+  const { range } = await readStarterResolution(root, read);
+  if (!Bun.semver.satisfies(core.version, range)) return;
+  throw new Error(
+    `This train publishes stitchkit ${core.version} and create-stitchkit ${starter.version} together, and the starter's range "${range}" allows ${core.version}. Its lockfile would have to resolve ${core.version} to be correct, and it cannot: a lockfile can only pin a framework npm already serves. Release the framework in this train, then run \`bun run update:starter\` and release the starter in the next one.`,
+  );
 }
 
 export async function assertReleaseSubjectForTag(
@@ -1026,6 +1067,7 @@ async function main(): Promise<void> {
      * run per occurrence, and it cost one on 0.87.0.
      */
     const train = await readReleaseTrain(root);
+    await assertTrainDoesNotOutrunTheStarter(root, train, readFromWorkingTree(root));
     const checked: string[] = [];
     for (const entry of train.releases) {
       const tag = releaseTagForTarget(entry.target, entry.version);

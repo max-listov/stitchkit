@@ -75,6 +75,24 @@ describe('a starter release is two halves', () => {
     }
   });
 
+  test('a lockfile pinning a version npm does not serve is refused', () => {
+    // The staleness comparison only looks downward, so a pin ABOVE the newest
+    // published version satisfies every other check here while naming something
+    // the registry cannot answer for. The scaffold then dies at `bun install`
+    // on the consumer's machine. This is also the shape a train would produce
+    // by hand-pinning the framework version it is about to publish.
+    expect(() =>
+      assertLockfileResolvesNewest('0.60.2', '^0.60.0', ['0.60.0', '0.60.1']),
+    ).toThrow(/npm does not serve/);
+  });
+
+  test('the published check does not fire for an older deliberate target', () => {
+    // The refusal above must not swallow the legitimate case it sits next to.
+    expect(() =>
+      assertLockfileResolvesNewest('0.59.4', '^0.59.0', ['0.59.4', '0.60.1']),
+    ).not.toThrow();
+  });
+
   test('the refusal for an unsatisfiable range names the next step too', () => {
     // Two of the three refusals said what to run; this one did not, and the
     // record claimed all of them did.

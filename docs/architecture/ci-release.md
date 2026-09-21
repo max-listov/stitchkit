@@ -24,13 +24,21 @@ selected by the manifest points at that same branch head and consumes the same C
   "schemaVersion": 1,
   "releases": [
     { "target": "core", "version": "0.71.0" },
-    { "target": "create-stitchkit", "version": "0.4.5" }
+    { "target": "stitchkit-tui", "version": "0.1.3" }
   ]
 }
 ```
 
 The pre-push and tag gates parse the manifest, require each version to equal its package manifest,
 validate that package's changelog/migration channel and refuse a tag not selected by the train.
+
+One pair may not share a train: **core and `create-stitchkit`, when the core version satisfies the
+starter's `catalog.stitchkit` range.** The starter's lockfile is produced by an install and can only
+resolve a framework npm already serves, while the starter gate requires it to resolve the newest
+version its range allows — which the train itself is about to create. Both halves are true and
+incompatible, so the train is refused and the starter goes in the next one, after
+`bun run update:starter`. The check reads `release-train.json` and the template manifest, never the
+registry, so it returns the same verdict on every attempt at one commit.
 `bun run release:train` creates and pushes all selected tags after the exact-SHA push CI is green.
 Single-package legacy commands remain valid, but a coordinated release never needs bookkeeping
 commits between tags.

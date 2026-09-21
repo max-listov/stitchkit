@@ -102,6 +102,18 @@ export function assertLockfileResolvesNewest(
       `template/bun.lock resolves stitchkit ${locked}, which its own range "${range}" does not even allow. Run \`bun run update:starter\` in the template and commit the lockfile.`,
     );
   }
+  // A lockfile may point FORWARD as easily as backward, and only this asks.
+  // The staleness check compares against the newest published version, so a pin
+  // above it passes every comparison here while naming something npm cannot
+  // serve: a scaffold then fails at `bun install`, on the consumer's machine,
+  // with no hint that the starter shipped the impossible pin. The only way to
+  // write such a lockfile is by hand, which is also the only way a release
+  // train could try to pin the framework version it has not published yet.
+  if (!published.includes(locked)) {
+    throw new Error(
+      `template/bun.lock resolves stitchkit ${locked}, which npm does not serve (${published.length} versions seen). A scaffold from this release would ask the registry for a version that is not there. The lockfile can only pin a published framework, so release the framework first and then run \`bun run update:starter\`.`,
+    );
+  }
   if (Bun.semver.order(locked, newest) < 0) {
     throw new Error(
       `template/bun.lock resolves stitchkit ${locked}, but the range "${range}" it ships with allows ${newest}, which is published. A scaffold from this release would install ${locked} — the manifest would promise one framework version and the install would deliver an older one. Run \`bun run update:starter\` in the template and commit both files.`,

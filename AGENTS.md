@@ -332,7 +332,20 @@ published version that range allows**, which is a gate (`scripts/starter-lockfil
 not a habit. 0.4.1 shipped a `^0.60.0` range over a lockfile pinning 0.60.0 on
 the day 0.60.1 existed: every manifest read as correct and a real scaffold
 installed the previous framework. The registry is an external dependency of
-that gate, so an unreachable registry is a refusal, never a silent pass.
+that gate, so an unreachable registry is a refusal, never a silent pass. It also
+refuses a lockfile pinning a version npm does **not** serve: the staleness
+comparison only looks downward, and a forward pin would leave the scaffold to
+fail at `bun install` on someone else's machine.
+
+**The starter rides in a LATER train than the framework it tracks.** A train
+that publishes core@X and `create-stitchkit` together, where X satisfies the
+starter's range, is refused by `assertTrainDoesNotOutrunTheStarter` — because
+the starter's lockfile is written by an install and cannot name X until X is
+public, while the rule above requires exactly that once X exists. 0.6.1 rode in
+0.90.6's train, passed every gate at push time because 0.90.6 was not published
+yet, and became a scaffold on 0.90.5 one minute later. Release the framework,
+wait for npm, run `bun run update:starter`, then tag the starter. A starter
+deliberately targeting an older minor is outside this and still rides along.
 
 **Which number moves.** The minor is reserved as the *breaking* signal — that is
 what makes a consumer's caret (`^0.56.0` = `< 0.57.0`) a real gate: crossing it
