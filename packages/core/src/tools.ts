@@ -124,7 +124,6 @@ export {
   MCP_CATALOG_META_KEY,
   type McpCatalogStamp,
   mcpCatalogMeta,
-  mcpCatalogStamp,
   readMcpCatalogStamp,
 } from './tools/mcp-catalog';
 export {

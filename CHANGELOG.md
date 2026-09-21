@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.90.8] — 2026-09-21
+
 ### Added
 
 - **Every advertised MCP tool and every tool result now carries a catalog

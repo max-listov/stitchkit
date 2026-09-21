@@ -1574,11 +1574,11 @@ retained session to push `notifications/tools/list_changed` down; the stamp need
 
 Store the stamp beside the tools when you list them, compare it against the one on every
 result, and re-list when they differ — including on a refusal, which is exactly when a
-stale catalog is the likeliest explanation and the least visible one.
+stale catalog is the likeliest explanation and the least visible one. The server side
+needs no wiring: every mount stamps what it advertises.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `mcpCatalogStamp` | function | fingerprint one prepared MCP surface (`{ digest, tools }`) |
 | `readMcpCatalogStamp` | function | read a peer's stamp out of `_meta`, or `null` when there is none |
 | `mcpCatalogMeta` | function | the `_meta` fragment a stamped tool or result carries |
 | `MCP_CATALOG_META_KEY` | const | the namespaced `_meta` key (`stitchkit/catalog`) |

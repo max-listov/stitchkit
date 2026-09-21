@@ -473,7 +473,6 @@
     "listContractToolNames",
     "listToolNames",
     "mcpCatalogMeta",
-    "mcpCatalogStamp",
     "mountAgent",
     "mountDownload",
     "mountMcp",
