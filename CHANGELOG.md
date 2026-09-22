@@ -15,6 +15,53 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.93.0] — 2026-09-22
+
+### ⚠️ Breaking changes
+
+- **The surface snapshot records what an operation asks before it runs, and
+  `manifestVersion` is `3`.** `mcp.inputRequired` changes the contract a host is
+  coded against — an operation gains or loses a question — and the snapshot did
+  not move a byte for it. Measured on 0.92.0: the same operation with and
+  without a declared round produced byte-identical manifests, so a consumer was
+  holding the link "declared → state key configured" with a test of their own.
+  An operation row now carries `mcp`: `null`, a list of `{key, message, schema}`,
+  or `'resolved-per-call'` when a resolver decides them. A committed snapshot on
+  an older version is refused by name, with the remedy in the message.
+  `// before: manifest.operations[0]  // no trace of a declared round` →
+  `// after:  manifest.operations[0].mcp  // null | [{ key, message, schema }] | { inputRequired: 'resolved-per-call' }`
+  → ADR 0195
+
+**Who must act:** anyone with a committed surface snapshot — regenerate it once
+and review the diff, which is large because the field is added to every
+operation row, most of them `null`; and anyone whose own test held the link
+between a declared `inputRequired` and its configured state key, who can now
+drop it.
+
+### Added
+
+- **A native command that returns a result is invokable in process.**
+  `createCliInvoker` excluded `config.commands` wholesale, on the reasoning that
+  a native command prints by construction. That is true of the half declaring
+  `output?: never` and was applied to both halves; a consumer measured six of
+  their eight native commands declaring `output`, and a `describe` line that had
+  worked in their stream began answering `NOT_FOUND`. The invoker now admits a
+  native command if and only if it declares `output`. `present` is not called —
+  it is stdout formatting and there is no stdout — while `exitCode` is applied
+  through the same function the command line uses. Whatever a handler writes
+  comes back as `CliInvocationResult.written` instead of interleaving with the
+  caller's own output. A printing command is still outside, now for its own
+  reason. → ADR 0194
+
+- **`SURFACE_MANIFEST_VERSION`, `SurfaceManifestOperationMcp` and
+  `SurfaceManifestOperationMcpSchema`** from `stitchkit/testing`, for reading
+  and asserting the new row.
+
+### Changed
+
+- **`CliConfig.commands` moved to `CliInvokerConfig`.** One declaration for both
+  surfaces; `createCli` keeps the field it always had.
+
 ## [0.92.0] — 2026-09-22
 
 ### ⚠️ Breaking changes
