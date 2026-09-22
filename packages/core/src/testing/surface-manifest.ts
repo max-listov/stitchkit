@@ -18,6 +18,9 @@ import {
 import { toJsonSchema } from '../tools/json-schema';
 import { staticInputRounds } from '../tools/mcp-round-policy';
 
+/** The snapshot format's own version — bumped whenever an operation gains a field. */
+export const SURFACE_MANIFEST_VERSION = 3;
+
 const HttpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
 const ToolTransportSchema = z.enum(['MCP', 'AGENT', 'CLI']);
 const SurfaceTransportSchema = z.enum(['HTTP', 'MCP', 'AGENT', 'CLI', 'REALTIME']);
@@ -29,6 +32,26 @@ export const SurfaceSchemaDigestsSchema = z.object({
   multipart: z.string().nullable(),
 });
 
+/**
+ * The questions an operation asks before it runs, as the host sees them.
+ *
+ * `null` means the operation declares no MCP policy at all. A list means those
+ * exact rounds; `'resolved-per-call'` means a resolver decides them and only
+ * the fact that it does is fixed at declaration time. Gaining, losing or
+ * changing any of this changes the contract a host is coded against, so it
+ * belongs in the snapshot that review reads.
+ */
+export const SurfaceManifestOperationMcpSchema = z
+  .object({
+    inputRequired: z.union([
+      z.array(
+        z.object({ key: z.string(), message: z.string(), schema: z.string().nullable() }),
+      ),
+      z.literal('resolved-per-call'),
+    ]),
+  })
+  .nullable();
+
 export const SurfaceManifestOperationSchema = z.object({
   kind: z.enum(['contract', 'runtime']),
   service: z.string(),
@@ -37,6 +60,7 @@ export const SurfaceManifestOperationSchema = z.object({
   scope: z.string().nullable(),
   description: z.string(),
   schemas: SurfaceSchemaDigestsSchema,
+  mcp: SurfaceManifestOperationMcpSchema,
   http: z.array(z.object({ method: HttpMethodSchema, path: z.string() })),
 });
 
@@ -80,7 +104,7 @@ export const SurfaceManifestRealtimeEventSchema = z.object({
 });
 
 export const SurfaceManifestSchema = z.object({
-  manifestVersion: z.literal(2),
+  manifestVersion: z.literal(SURFACE_MANIFEST_VERSION),
   digestVersion: z.literal(1),
   operations: z.array(SurfaceManifestOperationSchema),
   toolSurfaces: z.array(SurfaceManifestToolSurfaceSchema),
@@ -92,6 +116,7 @@ export const SurfaceManifestSchema = z.object({
 
 export type SurfaceManifest = z.infer<typeof SurfaceManifestSchema>;
 export type SurfaceManifestOperation = z.infer<typeof SurfaceManifestOperationSchema>;
+export type SurfaceManifestOperationMcp = z.infer<typeof SurfaceManifestOperationMcpSchema>;
 export type SurfaceManifestTool = z.infer<typeof SurfaceManifestToolSchema>;
 export type SurfaceManifestToolSurface = z.infer<typeof SurfaceManifestToolSurfaceSchema>;
 export type SurfaceManifestRealtimeEvent = z.infer<typeof SurfaceManifestRealtimeEventSchema>;
@@ -233,27 +258,41 @@ function operationFrom(
       output: schemaDigest(source.outputSchema, 'output'),
       multipart: multipartDigest(source.multipart),
     },
+    mcp: mcpRoundsOf(source),
     http: [],
   };
 }
 
+/**
+ * What a tool's multi-round declaration looks like from outside.
+ *
+ * A policy whose rounds are chosen per call has no list to write down, and
+ * pretending it has an empty one would make a dynamic tool indistinguishable
+ * from a tool that asks nothing. The marker says which kind it is, which is the
+ * part of it that is actually fixed at declaration time.
+ *
+ * One function, because the snapshot and the fingerprint must not be able to
+ * disagree about what was declared: the fingerprint decides whether two
+ * declarations of one operation conflict, the snapshot decides whether a change
+ * is visible to review, and a shape that drifts between them would let a
+ * contract change pass one and fail the other.
+ */
+function mcpRoundsOf(source: OperationSource): SurfaceManifestOperationMcp {
+  if (!source.mcp) return null;
+  const declared = staticInputRounds(source.mcp);
+  return {
+    inputRequired: declared
+      ? declared.map((request) => ({
+          key: request.key,
+          message: request.message,
+          schema: schemaDigest(request.schema, 'input'),
+        }))
+      : 'resolved-per-call',
+  };
+}
+
 function operationFingerprint(source: OperationSource): string {
-  // A policy whose rounds are chosen per call has no list to fingerprint, and
-  // pretending it has an empty one would make a dynamic tool indistinguishable
-  // from a tool that asks nothing. The marker says which kind it is, which is
-  // the part of it that is actually fixed at declaration time.
-  const declaredRounds = source.mcp ? staticInputRounds(source.mcp) : undefined;
-  const mcp = source.mcp
-    ? {
-        inputRequired: declaredRounds
-          ? declaredRounds.map((request) => ({
-              key: request.key,
-              message: request.message,
-              schema: schemaDigest(request.schema, 'input'),
-            }))
-          : 'resolved-per-call',
-      }
-    : null;
+  const mcp = mcpRoundsOf(source);
   return serializeSurfaceValue({
     method: source.method,
     serviceName: source.serviceName,
@@ -487,7 +526,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
   }
 
   return SurfaceManifestSchema.parse({
-    manifestVersion: 2,
+    manifestVersion: SURFACE_MANIFEST_VERSION,
     digestVersion: 1,
     operations: [...operations.values()].sort(
       (left, right) =>
@@ -515,6 +554,17 @@ export function assertSurfaceManifestSnapshot(
   manifest: SurfaceManifest,
   snapshot: SurfaceManifest,
 ): void {
+  // A snapshot from an older format fails the schema on a literal, and the
+  // resulting "expected 3, received 2" says nothing about what to do. The
+  // remedy is always the same and belongs in the message.
+  const committed = (snapshot as { manifestVersion?: unknown }).manifestVersion;
+  if (committed !== SURFACE_MANIFEST_VERSION) {
+    throw new Error(
+      `Surface snapshot is manifestVersion ${String(committed)}; this build writes ` +
+        `${SURFACE_MANIFEST_VERSION}. Regenerate it and review the diff — the format ` +
+        'changed, so the first regeneration is expected to be large.',
+    );
+  }
   const actual = serializeSurfaceValue(SurfaceManifestSchema.parse(manifest));
   const expected = serializeSurfaceValue(SurfaceManifestSchema.parse(snapshot));
   if (actual !== expected) {

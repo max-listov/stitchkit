@@ -1740,6 +1740,8 @@ handler pipeline without opening a TCP port.
 | `TransportObservation` | _type_ | validated normalized driver result |
 | `SurfaceManifest` / `SurfaceManifestConfig` | _type_ | deterministic surface snapshot and its inputs |
 | `SurfaceManifestOperation` / `SurfaceManifestOperationSchema` | _type_ / schema | one contract or runtime operation row |
+| `SurfaceManifestOperationMcp` / `SurfaceManifestOperationMcpSchema` | _type_ / schema | the rounds an operation declares before it runs: a fixed list, `'resolved-per-call'`, or `null` for no MCP policy |
+| `SURFACE_MANIFEST_VERSION` | const | the format version this build writes; a committed snapshot on an older one is refused by name |
 | `SurfaceManifestTool` / `SurfaceManifestToolSchema` | _type_ / schema | one mounted tool row with advertised input digest |
 | `SurfaceManifestToolSurface` / `SurfaceManifestToolSurfaceSchema` | _type_ / schema | one static transport projection, optionally keyed for a finite MCP surface |
 | `SurfaceManifestRealtimeEvent` / `SurfaceManifestRealtimeEventSchema` | _type_ / schema | one named directional realtime event with input/output args and ack digests |

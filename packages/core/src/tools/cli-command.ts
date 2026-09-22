@@ -70,6 +70,39 @@ export interface PreparedCliCommandEmission {
   successExitCode: number;
 }
 
+/**
+ * Whether a native command yields a value at all.
+ *
+ * The two halves of `CliCommandDefinition` are not the same kind of thing: one
+ * returns a validated result and lets the frame print it, the other prints
+ * itself and returns nothing. Only the first can be executed somewhere that has
+ * no stdout to print to — an in-process invocation, a stream of JSON lines —
+ * and this is the test that decides it.
+ */
+export function cliCommandReturnsResult(
+  definition: CliCommandDefinition,
+): definition is CliCommandDefinitionWithOutput<ZodObject, ZodType> {
+  return definition.output !== undefined;
+}
+
+/**
+ * The exit code a successful result earns, or a throw naming the offence.
+ *
+ * Shared, because a command run in process must exit-code identically to the
+ * same command typed at a prompt; two copies of this rule would eventually
+ * disagree and the divergence would show up as a script that branches wrong.
+ */
+export function cliCommandSuccessExitCode(
+  definition: CliCommandDefinition,
+  data: unknown,
+): number {
+  const successExitCode = definition.exitCode?.(data) ?? 0;
+  if (!Number.isSafeInteger(successExitCode) || successExitCode < 0 || successExitCode > 255) {
+    throw new Error('CLI success exit code must be an integer from 0 to 255');
+  }
+  return successExitCode;
+}
+
 /** Apply native-only presentation policy after canonical output validation. */
 export function prepareCliCommandEmission(
   definition: CliCommandDefinition,
@@ -80,14 +113,7 @@ export function prepareCliCommandEmission(
     return { result, successExitCode: 0 };
   }
   try {
-    const successExitCode = definition.exitCode?.(result.data) ?? 0;
-    if (
-      !Number.isSafeInteger(successExitCode) ||
-      successExitCode < 0 ||
-      successExitCode > 255
-    ) {
-      throw new Error('CLI success exit code must be an integer from 0 to 255');
-    }
+    const successExitCode = cliCommandSuccessExitCode(definition, result.data);
     const presentation = definition.present?.({ result: result.data, options });
     if (presentation !== undefined && typeof presentation !== 'string') {
       throw new Error('CLI result presenter must return a string');

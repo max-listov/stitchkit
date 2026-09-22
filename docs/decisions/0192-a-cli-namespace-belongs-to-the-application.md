@@ -48,6 +48,13 @@ result to return. A consequence worth stating: a stream cannot invoke the stream
 command, so the consumer's own ban on nesting is not replaced by ours, it simply
 has nothing left to forbid.
 
+> **Amended by [0194](0194-printing-is-the-exclusion-not-being-native.md).** The
+> paragraph above is true of a native command that declares no `output`, and was
+> wrongly applied to every native command. A command that declares `output`
+> returns a value and is admitted. The sentence about the stream command stands:
+> a stream command prints.
+
+
 The equality of the two paths is structural, not a matter of discipline: one
 surface walk, one exit table, and the application's global options parsed by the
 schema that declared them in both. Skipping that parse — an empty object stands

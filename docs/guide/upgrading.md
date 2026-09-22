@@ -1,5 +1,37 @@
 # Upgrading stitchkit
 
+## Released migration: 0.93.0
+
+1. **Regenerate every committed surface snapshot, once.** `manifestVersion` is
+   `3` and each operation row gained `mcp` — the rounds it declares before it
+   runs. Most rows get `null`, so the first diff is large and mechanical.
+   **Who must act:** anyone with a committed snapshot. A snapshot on the older
+   version is refused by name rather than failing a schema literal:
+
+   ```text
+   Surface snapshot is manifestVersion 2; this build writes 3. Regenerate it
+   and review the diff — the format changed, so the first regeneration is
+   expected to be large.
+   ```
+
+   ```ts
+   // before — a declared round left no trace, so declaring or removing one
+   // passed review invisibly
+   manifest.operations[0]
+   // after
+   manifest.operations[0].mcp
+   // null | { inputRequired: [{ key, message, schema }] }
+   //      | { inputRequired: 'resolved-per-call' }
+   ```
+
+   A project that kept its own test for "declared `inputRequired` implies a
+   configured state key" can drop it: the snapshot holds that link now.
+
+2. **Nothing else to do.** Native commands that declare `output` became
+   invokable in process; a name that answered `NOT_FOUND` from
+   `createCliInvoker` in 0.92.0 may now resolve. If an application relied on
+   native commands being unreachable there, stop passing them to the invoker.
+
 ## Released migration: 0.92.0
 
 1. **`RequestEvent.method`, `path` and `statusCode` are optional.** Work that did

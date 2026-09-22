@@ -17,12 +17,28 @@
  * `createCli` is built on this same function, so the stream and the command
  * line cannot answer differently: one surface, one runner, one exit table.
  *
- * Native commands (`config.commands`) are deliberately outside it. They write
- * to stdout and stderr by construction — that is what they are — and an
- * operation that prints is not an operation whose result can be returned.
+ * Native commands (`config.commands`) are in it when, and only when, they
+ * declare `output`. The two halves of a native definition are not the same kind
+ * of thing: one returns a validated value the frame prints, the other prints
+ * itself and returns `void`. Only the second cannot be run where there is no
+ * stdout, and excluding both because of it cost a consumer a working `describe`
+ * line for no reason the type could not already tell apart.
+ *
+ * `present` is not called on this path: it is stdout formatting, and there is
+ * no stdout. `exitCode` is, through the same function the command line uses, so
+ * a script branching on the code cannot see the two paths disagree. Anything
+ * the handler does write is captured and returned on the result rather than
+ * leaking into a caller's stream of answers.
  */
 import type { ZodObject, z } from 'zod';
 import type { ServiceDef, StitchLogger } from '../server/types';
+import type { CliRunOptions } from './cli-args';
+import {
+  type CliCommandDefinition,
+  cliCommandReturnsResult,
+  cliCommandSuccessExitCode,
+  executeCliCommand,
+} from './cli-command';
 import { cliExitCode, type ExitCodeMap } from './cli-format';
 import {
   applyCliPresentationPolicy,
@@ -62,6 +78,8 @@ export interface CliInvokerConfig<
   services?: CliSurfaceSource<TAuth, ServiceDef>;
   /** Pathless managed operations. CLI exposure always requires `transports: ['CLI']`. */
   runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolDefinition>;
+  /** CLI-only executable commands, dispatched before the managed surface. */
+  commands?: readonly CliCommandDefinition[];
   auth?: TAuth | Promise<TAuth>;
   resolveAuth?: (globals: z.output<TGlobals>) => TAuth | Promise<TAuth>;
   globalOptions?: TGlobals;
@@ -106,6 +124,16 @@ export interface CliInvocationResult {
     hint?: string;
     retryable?: boolean;
   };
+  /**
+   * What a native handler wrote, when it wrote anything.
+   *
+   * A command that declares `output` is not supposed to write — the frame
+   * prints for it — but it holds the writers and may log. In process there is
+   * nowhere for that text to go: printing it would interleave with a caller's
+   * own output and corrupt a stream of JSON lines, and dropping it would lose a
+   * diagnostic silently. So it comes back here, and the caller decides.
+   */
+  written?: { stdout?: string; stderr?: string };
 }
 
 /** One resolved managed command. */
@@ -177,6 +205,20 @@ export async function createCliInvoker<
   // divergence this whole seam exists to prevent.
   const typedGlobals = parseCliGlobals(config.globalOptions, globals);
   const auth = await (config.resolveAuth ? config.resolveAuth(typedGlobals) : config.auth);
+  // Only the half that returns a value. A printing command stays unreachable
+  // here and answers NOT_FOUND, which is the honest answer: it has no result to
+  // give and running it would write into a caller that never asked for output.
+  const natives = new Map<string, CliCommandDefinition>(
+    (config.commands ?? [])
+      .filter(cliCommandReturnsResult)
+      .map((definition) => [definition.name, definition]),
+  );
+  const nativeHelp = new Map(
+    [...natives].map(([name, definition]) => [
+      name,
+      { description: definition.description, argumentSchema: {}, presentationSchema: {} },
+    ]),
+  );
   const { tools, help } = buildCliSurface(config, auth, new Map(), new Set());
   const runTool = createToolRunner({
     source: 'cli',
@@ -187,11 +229,13 @@ export async function createCliInvoker<
     coerceJsonArgs: config.coerceJsonArgs,
   });
   return {
-    commands: [...help].map(([name, presentation]) => ({
+    commands: [...nativeHelp, ...help].map(([name, presentation]) => ({
       name,
       description: presentation.description,
     })),
     invoke: async (command, args) => {
+      const native = natives.get(command);
+      if (native) return runNativeCommand(native, args, config, typedGlobals);
       const tool = tools.get(command);
       if (!tool) {
         return cliInvocationResult(
@@ -212,6 +256,68 @@ export async function createCliInvoker<
       }
       return cliInvocationResult(result, command, config);
     },
+  };
+}
+
+/**
+ * The run options a native command sees in process.
+ *
+ * Every terminal-shaped switch is off, because none of them has a meaning
+ * without a terminal: `--json` chooses a printing format, `--wait` and
+ * `--output-dir` are already refused for native commands on the command line,
+ * and `--help` and `--dry-run` print instead of executing. A handler reading
+ * these gets the same answer it would get from a bare invocation.
+ */
+const IN_PROCESS_RUN_OPTIONS: Readonly<CliRunOptions> = Object.freeze({
+  json: false,
+  wait: false,
+  quiet: true,
+  dryRun: false,
+  help: false,
+});
+
+async function runNativeCommand<
+  TAuth,
+  TContext extends Record<string, unknown>,
+  TGlobals extends ZodObject,
+>(
+  definition: CliCommandDefinition,
+  args: Record<string, unknown>,
+  config: CliInvokerConfig<TAuth, TContext, TGlobals>,
+  globals: Readonly<Record<string, unknown>>,
+): Promise<CliInvocationResult> {
+  let out = '';
+  let err = '';
+  const result = await executeCliCommand(
+    definition,
+    args,
+    IN_PROCESS_RUN_OPTIONS,
+    {
+      stdout: (text) => {
+        out += text;
+      },
+      stderr: (text) => {
+        err += text;
+      },
+    },
+    config.coerceJsonArgs ?? true,
+    globals,
+  );
+  let invocation = cliInvocationResult(result, definition.name, config);
+  if (invocation.ok) {
+    try {
+      invocation = {
+        ...invocation,
+        exitCode: cliCommandSuccessExitCode(definition, result.ok ? result.data : undefined),
+      };
+    } catch (error) {
+      invocation = cliInvocationResult(toolResultFromError(error), definition.name, config);
+    }
+  }
+  if (out === '' && err === '') return invocation;
+  return {
+    ...invocation,
+    written: { ...(out !== '' && { stdout: out }), ...(err !== '' && { stderr: err }) },
   };
 }
 

@@ -695,6 +695,39 @@ already holding, plus a process start measured at 0.15 s — thirty seconds for 
 two-hundred-line manifest before any work begins. The ban on nesting one stream
 inside another was a consequence of that child process, not a rule anyone wanted.
 
+### Native commands in the stream
+
+A native command is in the invoker's surface when — and only when — it declares
+`output`:
+
+```ts
+const describe = defineCliCommand({
+  name: 'describe', description: 'Describe the catalogue',
+  input: z.object({ model: z.string() }),
+  output: z.object({ model: z.string(), ratios: z.array(z.string()) }),
+  handler: ({ input }) => ({ model: input.model, ratios: ['1:1', '16:9'] }),
+})
+
+await createCliInvoker({ name: 'myapp', services, commands: [describe] })
+// invoke('describe', { model: 'flux' }) → { ok: true, exitCode: 0, data: { … } }
+```
+
+A command that declares `output?: never` prints itself and returns nothing, so
+there is no result to hand back; it answers `NOT_FOUND` and stays on the command
+line, where stdout exists. Your stream command is one of these, which is why a
+stream still cannot invoke itself.
+
+On this path `present` is not called — it is stdout formatting, and there is no
+stdout — while `exitCode` is applied through the same function the command line
+uses, so a script branching on the code sees one answer from both. Anything the
+handler writes comes back as `written` rather than interleaving with your own
+output:
+
+```ts
+const outcome = await invoker.invoke('describe', { model: 'flux' })
+outcome.written // { stderr: 'warming the cache\n' } — absent when nothing was written
+```
+
 ### Mounting the loop
 
 ```ts

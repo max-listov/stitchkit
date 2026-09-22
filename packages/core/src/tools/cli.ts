@@ -85,8 +85,6 @@ export interface CliConfig<
 > extends CliInvokerConfig<TAuth, TContext, TGlobals> {
   /** Program version — printed by `--version`. */
   version: string;
-  /** CLI-only executable commands, dispatched before auth and managed surface factories. */
-  commands?: readonly CliCommandDefinition[];
   /**
    * Identity for the single CLI invocation — resolved ONCE at startup (from an
    * env var / token file), like a stdio MCP server, not per call. A value or a

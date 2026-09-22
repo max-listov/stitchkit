@@ -219,6 +219,8 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0191](0191-a-unit-of-work-is-not-a-request.md) | A unit of work is not a request, and must not have to pretend | Accepted — `kind`/`name`, optional `method`/`path`/`statusCode`, `runUnitOfWork`; dropping one fabricated transport field while keeping another is the same defect |
 | [0192](0192-a-cli-namespace-belongs-to-the-application.md) | Running a parsed call, without owning the application's namespace | Accepted — `createCliInvoker`, stream and batch as factories rather than reserved names, and a checkpoint that records successes only |
 | [0193](0193-an-unchecked-signature-must-be-visible.md) | An unchecked signature must be visible | Accepted — Ed25519 over everything that acts before the digest, five verdicts including `unenforced`, and the channel deliberately left out of the framework |
+| [0194](0194-printing-is-the-exclusion-not-being-native.md) | Printing is the exclusion, not being native | Accepted — the invoker admits a native command iff it declares `output`; amends the criterion 0192 stated in its Consequences |
+| [0195](0195-a-declaration-the-host-can-see-belongs-in-the-snapshot.md) | A declaration the host can see belongs in the snapshot | Accepted — an operation row carries its declared rounds or the `resolved-per-call` marker; `manifestVersion` is 3 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
