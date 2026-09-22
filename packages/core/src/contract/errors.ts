@@ -50,6 +50,17 @@ export class AppError<
      * logs/observability — deliberately NOT part of `toJSON()`'s envelope.
      */
     public readonly traceId?: string,
+    /**
+     * Whether repeating this call could succeed, when the error declares it.
+     *
+     * Metadata, like `traceId`, and for the same reason: it is not part of
+     * `toJSON()`'s HTTP envelope. It exists for the MODEL-facing tool envelope,
+     * where the next move — wait and retry, fix the input, or stop — is the
+     * whole decision a refusal has to support. Left `undefined`, the class is
+     * derived from `status`; declared, it wins, for the domain failure whose
+     * status says one thing and whose truth is the other.
+     */
+    public readonly retryable?: boolean,
   ) {
     super(message ?? code);
     this.name = 'AppError';
@@ -140,6 +151,12 @@ export const STITCH_ERROR_STATUS = {
   // answered `false` for them, so both `codeMap` and the `unmappedCode`
   // resolver skipped them and the code travelled to the wire in stitchkit's
   // spelling. "Map every framework code to my vocabulary" silently missed four.
+  // A contract endpoint mounted without its handler by the dev-only
+  // `onMissingHandler: 'stub'` policy. Registered rather than thrown ad hoc:
+  // the framework must not emit a code its own registry does not know, or the
+  // code travels in stitchkit's spelling past every consumer `codeMap` — the
+  // failure the four managed-runtime codes above already paid for.
+  NOT_IMPLEMENTED: 501,
   WAIT_TIMEOUT: 408,
   WAIT_FAILED: 409,
   DOWNLOAD_NOT_FOUND: 404,
@@ -162,6 +179,22 @@ export const STITCH_ERROR_STATUS = {
   SPILL_REFERENCE_UNKNOWN: 404,
   INTERNAL_SERVER_ERROR: 500,
 } satisfies Record<string, number>;
+
+/**
+ * Whether a status class means "the same call could work later".
+ *
+ * Deliberately not "any 5xx". `REALTIME_CONTRACT_VIOLATION`,
+ * `STREAM_ITEM_INVALID` and `FRAME_TOO_LARGE` are all 500 and all deterministic
+ * — the same call fails the same way every time, and telling a model to retry
+ * them buys nothing but billed turns. 408 and 504 are timeouts, 429 is a rate
+ * limit, 502 and 503 are an upstream that may return; those are the ones where
+ * waiting is a strategy rather than a hope.
+ */
+export function isRetryableStatus(status: number): boolean {
+  return (
+    status === 408 || status === 429 || status === 502 || status === 503 || status === 504
+  );
+}
 
 /** A code stitchkit itself emits — derived from `STITCH_ERROR_STATUS` (no dup). */
 export type StitchErrorCode = keyof typeof STITCH_ERROR_STATUS;

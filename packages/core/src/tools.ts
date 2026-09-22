@@ -1,4 +1,23 @@
 export type { McpServer } from '@modelcontextprotocol/server';
+// The durability ENGINE, not only the port. It is self-contained — its runtime
+// closure is itself and zod, the ledger it needs is two methods, and it holds
+// no agent store, no run protocol and no model — so it meets every condition
+// ADR 0142 sets for a primitive that leaves `agent-runtime`. An application
+// that mounts tools and drives its own loop supplies the two methods over the
+// database it already has and gets replay, absolute deadlines, park/deliver
+// and decode refusal, instead of writing them beside its tools. → ADR 0187.
+export {
+  createLocalStepDurability,
+  type LocalStepDurability,
+  type LocalStepDurabilityOptions,
+  type StepDurabilityLedger,
+} from './agent-runtime/durability';
+export type {
+  AgentStoreEventEnvelope,
+  AgentStoreEventPage,
+  AppendAgentStoreEvent,
+  ReadAgentStoreEvents,
+} from './agent-runtime/store-events';
 export type {
   ManagedFileBoundary,
   ManagedFileReadOptions,
@@ -7,6 +26,7 @@ export type {
 } from './files/boundary';
 export type { OperationIdentity } from './server/types';
 export { type AgentContext, type AgentMountConfig, mountAgent } from './tools/agent';
+export { AgentToolError, isAgentToolError } from './tools/agent-tool-error';
 export {
   type AdaptedContractAsyncOperationConfig,
   type AdaptedContractAsyncOperationFollowKey,
@@ -63,6 +83,11 @@ export {
   defineWaitTool,
   type ManagedWaitRender,
 } from './tools/define-wait-tool';
+export type {
+  DurableJsonValue,
+  ToolDurability,
+  ToolDurabilityFactory,
+} from './tools/durability-port';
 export type {
   AfterToolCallOptions,
   BeforeToolCallOptions,

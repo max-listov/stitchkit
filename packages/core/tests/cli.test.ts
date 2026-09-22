@@ -364,6 +364,8 @@ describe('createCli — --wait polling', () => {
     expect(out).toBe('');
     expect(JSON.parse(err)).toEqual({
       error: 'WAIT_FAILED',
+      // A job that reached a terminal FAILED state will reach it again.
+      retryable: false,
       details: {
         message: '"get_job" reached a terminal failed state',
         result: { id: 'j1', status: 'FAILED' },

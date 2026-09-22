@@ -1,9 +1,10 @@
 import type { ZodType } from 'zod';
-import type {
-  ContractDef,
-  EndpointDef,
-  MultipartDescriptor,
-  RuntimeContext,
+import {
+  AppError,
+  type ContractDef,
+  type EndpointDef,
+  type MultipartDescriptor,
+  type RuntimeContext,
 } from '../contract';
 import { mergeMeta } from '../contract/define';
 import { resolveRouteParamsSchema } from '../internal/route-pattern';
@@ -185,7 +186,54 @@ const HTTP_ONLY = Object.freeze(['HTTP'] as const);
  * Pass `TCtx` for a typed handler context — or use `createImplement` to fix it
  * once.
  */
-function bindContract(contract: ContractDef, handlers: Record<string, unknown>): ServiceDef {
+/**
+ * What to do when a contract endpoint has no handler.
+ *
+ * `'throw'` — the default, and the right answer in production: a contract
+ * without its handler is a lie about the surface, and a client sees an endpoint
+ * that is not there.
+ *
+ * `'stub'` — mount a refusal instead and keep the application up. This exists
+ * for one measured situation: a dev stand under a file watcher. Adding an
+ * endpoint is two edits by construction — the contract and the handler — and an
+ * editor saves one file at a time, so the watcher restarts on the first one.
+ * Between the two saves the whole stand is down, for everyone using it. A rule
+ * ("make both edits at once") cannot outrun the filesystem; this can.
+ */
+export type MissingHandlerPolicy = 'throw' | 'stub';
+
+/** How a registry or contract binding treats an unimplemented endpoint. */
+export interface ImplementOptions {
+  /** Default `'throw'`. `'stub'` refuses the call instead of refusing to start. */
+  onMissingHandler?: MissingHandlerPolicy;
+}
+
+/**
+ * The refusal a stubbed endpoint answers with.
+ *
+ * `501` is the honest status, and `NOT_IMPLEMENTED` is registered in
+ * `STITCH_ERROR_STATUS` — a breaking addition by this repository's own precedent
+ * (an `exhaustive` error vocabulary must name it), chosen deliberately over the
+ * quieter option: the framework must not throw a code its own registry does not
+ * know, or the code travels in stitchkit's spelling past every consumer
+ * `codeMap`. A gate holds that invariant and refused the unregistered code.
+ * Registered, it survives a process hop as 501 too.
+ */
+function stubHandler(label: string): () => never {
+  return () => {
+    throw new AppError(
+      'NOT_IMPLEMENTED',
+      `[stitchkit] ${label} is declared by its contract and has no handler`,
+      501,
+    );
+  };
+}
+
+function bindContract(
+  contract: ContractDef,
+  handlers: Record<string, unknown>,
+  options?: ImplementOptions,
+): ServiceDef {
   const methods: Record<string, MethodDef<unknown, unknown, unknown>> = {};
 
   // Effective scope of the whole contract — endpoints inherit it unless they
@@ -194,12 +242,21 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
   const groupScope = contract.meta.scope ?? 'public';
 
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
-    const typedHandler = handlers[String(key)];
+    const label = `${contract.meta.prefix}.${String(key)}`;
+    let typedHandler = handlers[String(key)];
     const isStreaming = endpoint.multipart?.delivery === 'stream';
     if (!isStreaming && typeof typedHandler !== 'function') {
-      throw new Error(
-        `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
+      // A streaming endpoint is deliberately never stubbed: it needs
+      // `defineMultipartStream()` receivers, and a stub that answers with a
+      // refusal instead of a stream would be a different shape wearing the same
+      // name. The stand still stops on one, and that is stated in the guide.
+      if (options?.onMissingHandler !== 'stub') {
+        throw new Error(`[stitchkit] implement: missing handler for "${label}"`);
+      }
+      console.warn(
+        `[stitchkit] implement: "${label}" has no handler and is mounted as a 501 stub`,
       );
+      typedHandler = stubHandler(label);
     }
     if (isStreaming && !isStreamingImplementation(typedHandler)) {
       throw new Error(
@@ -283,8 +340,12 @@ function bindContract(contract: ContractDef, handlers: Record<string, unknown>):
 export function implement<
   T extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = RuntimeContext,
->(contract: ContractDef<T, string>, handlers: Handlers<T, TCtx>): ServiceDef {
-  return bindContract(contract, handlers);
+>(
+  contract: ContractDef<T, string>,
+  handlers: Handlers<T, TCtx>,
+  options?: ImplementOptions,
+): ServiceDef {
+  return bindContract(contract, handlers, options);
 }
 
 /**
@@ -296,7 +357,8 @@ export function createImplement<TCtx extends RuntimeContext>() {
   return <T extends Record<string, EndpointDef>>(
     contract: ContractDef<T, string>,
     handlers: Handlers<T, TCtx>,
-  ): ServiceDef => implement(contract, handlers);
+    options?: ImplementOptions,
+  ): ServiceDef => implement(contract, handlers, options);
 }
 
 /**
@@ -330,7 +392,8 @@ export function createScopedImplement<TScopes extends ScopeContexts>() {
   >(
     contract: ContractDef<T, TContractScope>,
     handlers: ScopedHandlers<T, TContractScope, TScopes>,
-  ): ServiceDef => bindContract(contract, handlers);
+    options?: ImplementOptions,
+  ): ServiceDef => bindContract(contract, handlers, options);
 
   /**
    * A streaming multipart implementation typed to one scope's context.
@@ -454,9 +517,10 @@ export function createScopedImplementRegistry<TScopes extends ScopeContexts>() {
   >(
     contracts: TContracts,
     handlers: ExactScopedRegistryHandlers<TContracts, THandlers, TScopes>,
+    options?: ImplementOptions,
   ): KeyedServices<TContracts> =>
     // Same boundary as `implementRegistry` — see the comment there.
-    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
+    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers, options));
 }
 
 type ImplementationContract = ContractDef<Record<string, EndpointDef>, string>;
@@ -514,14 +578,24 @@ export type KeyedServices<TContracts extends ImplementationRegistry> = ServiceDe
 function bindRegistry(
   contracts: ImplementationRegistry,
   handlers: Record<string, unknown>,
+  options?: ImplementOptions,
 ): ServiceDef[] & { byKey: Record<string, ServiceDef> } {
   const contractKeys = Object.keys(contracts);
   const handlerKeys = Object.keys(handlers);
   const missing = contractKeys.filter((key) => !Object.hasOwn(handlers, key));
   const extra = handlerKeys.filter((key) => !Object.hasOwn(contracts, key));
   if (missing.length > 0 || extra.length > 0) {
-    throw new Error(
-      `[stitchkit] implementRegistry: registry mismatch (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`,
+    // The watcher case is symmetric and the fix has to be too. Saving the
+    // contract first leaves a contract with no handlers (`missing`); saving the
+    // handlers first leaves handlers with no contract (`extra`). A policy that
+    // only understood the first would take the stand down on every other edit.
+    if (options?.onMissingHandler !== 'stub') {
+      throw new Error(
+        `[stitchkit] implementRegistry: registry mismatch (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`,
+      );
+    }
+    console.warn(
+      `[stitchkit] implementRegistry: registry mismatch (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'}) — missing contracts are mounted as 501 stubs and extra handlers are ignored`,
     );
   }
 
@@ -551,7 +625,10 @@ function bindRegistry(
       );
     }
     prefixes.set(identity, key);
-    const entryHandlers = handlers[key];
+    // A contract with no handlers object at all: every one of its endpoints
+    // becomes a stub below, rather than the whole application refusing to start.
+    const entryHandlers =
+      handlers[key] === undefined && options?.onMissingHandler === 'stub' ? {} : handlers[key];
     if (!isRecord(entryHandlers)) {
       throw new TypeError(
         `[stitchkit] implementRegistry: handlers for "${key}" must be an object`,
@@ -566,11 +643,15 @@ function bindRegistry(
       (endpointKey) => !Object.hasOwn(contract.endpoints, endpointKey),
     );
     if (missingEndpoints.length > 0 || extraEndpoints.length > 0) {
-      throw new Error(
-        `[stitchkit] implementRegistry: handlers for "${key}" mismatch (missing: ${missingEndpoints.join(', ') || 'none'}; extra: ${extraEndpoints.join(', ') || 'none'})`,
+      const detail = `handlers for "${key}" mismatch (missing: ${missingEndpoints.join(', ') || 'none'}; extra: ${extraEndpoints.join(', ') || 'none'})`;
+      if (options?.onMissingHandler !== 'stub') {
+        throw new Error(`[stitchkit] implementRegistry: ${detail}`);
+      }
+      console.warn(
+        `[stitchkit] implementRegistry: ${detail} — missing endpoints are mounted as 501 stubs and extra handlers are ignored`,
       );
     }
-    const service = bindContract(contract, entryHandlers);
+    const service = bindContract(contract, entryHandlers, options);
     services.push(service);
     byKey[key] = service;
   }
@@ -593,11 +674,14 @@ export function implementRegistry<
 >(
   contracts: TContracts,
   handlers: ExactRegistryHandlers<TContracts, THandlers, RuntimeContext>,
+  options?: ImplementOptions,
 ): KeyedServices<TContracts> {
   // Loose→typed boundary (→ ADR 0003): `bindRegistry` builds `byKey` from the
   // runtime keys of `contracts`, which are exactly `keyof TContracts` — the
   // generic mapped type just cannot see that through an index signature.
-  return transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
+  return transportResult<KeyedServices<TContracts>>(
+    bindRegistry(contracts, handlers, options),
+  );
 }
 
 /** Fix one handler context type for every entry in an implementation registry. */
@@ -608,7 +692,8 @@ export function createImplementRegistry<TCtx extends RuntimeContext>() {
   >(
     contracts: TContracts,
     handlers: ExactRegistryHandlers<TContracts, THandlers, TCtx>,
+    options?: ImplementOptions,
   ): KeyedServices<TContracts> =>
     // Same boundary as `implementRegistry` — see the comment there.
-    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers));
+    transportResult<KeyedServices<TContracts>>(bindRegistry(contracts, handlers, options));
 }

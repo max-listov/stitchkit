@@ -156,6 +156,11 @@ describe('one executable input parser per tool call', () => {
         params: { id: 'ABC' },
         input: { operation: { kind: 'write', payload: { value: 'x!' } } },
         source: 'agent',
+        signal: undefined,
+        // The provider's id for this call travels as ordinary call context, so
+        // an outcome observed through `afterToolCall` can be correlated with
+        // the call the model actually made.
+        toolCallId: 'call',
       },
     ]);
   });

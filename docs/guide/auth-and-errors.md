@@ -511,7 +511,8 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `CONFLICT`, `RATE_LIMITED`, `VALIDATION_ERROR`, `FILE_INVALID_PATH`,
 `FILE_OUTSIDE_ROOT`, `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
 `FILE_INSPECTION_REJECTED`, `FILE_TOO_LARGE`, `FILE_EXISTS`,
-`REALTIME_CONTRACT_VIOLATION`, `APPLICATION_NOT_ACCEPTING`, `WAIT_TIMEOUT`,
+`REALTIME_CONTRACT_VIOLATION`, `APPLICATION_NOT_ACCEPTING`, `NOT_IMPLEMENTED`,
+`WAIT_TIMEOUT`,
 `WAIT_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
 `OPERATION_NOT_SUCCEEDED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
 `STREAM_TERMINAL_MISSING`, `STREAM_LIFETIME_EXCEEDED`,
@@ -639,7 +640,7 @@ whether the code declares `details`:
 | code **with** a `details` schema | the declared message | no text at all — only `details` and `hint` |
 | code **without** one | the declared message | the same text, delivered as `details.message` |
 
-The model-facing envelope is `{ error, details?, _hint? }`; for a code with no
+The model-facing envelope is `{ error, retryable, details?, _hint? }`; for a code with no
 details schema the framework fills `details` with `{ message }`, so declaring a
 message changes what the model reads there — it used to be the code itself. Put
 anything the model must reliably read in `details` or `hint`, not in `message`.

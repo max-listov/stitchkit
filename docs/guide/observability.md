@@ -745,3 +745,21 @@ sanitizer as request audit: sensitive keys, configured paths, URL fragments and
 applied. Active trace, span, user and dimensions are reserved framework fields;
 caller data cannot overwrite them. A throwing getter, cyclic value or failing
 sink never escapes into application code.
+
+One string bound for the whole record cuts an error's stack from the bottom —
+which is exactly where your own frames are. Raise the ceiling for that key alone,
+wherever it sits (`stack` at the top of one record and under `errorDetail` in the
+next is the same field), without touching the bound for everything else:
+
+```ts
+createBoundedLogger({
+  sink,
+  bounds: { stringLength: 4_000, stringLengthByKey: { stack: 32_000 } },
+})
+// or directly: redact(value, { maxStringLength: 4_000, maxStringLengthByKey: { stack: 32_000 } })
+```
+
+Keyed by name, not by path — the question is "what is this field", not "where is
+it". The entry ceiling (`entryBytes`) keeps the last word: a record that does not
+fit still collapses, but the decision is made for the record, not by cutting one
+field short in advance.

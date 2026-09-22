@@ -129,6 +129,8 @@ describe('mounted Agent tool error outcomes', () => {
     }).result;
     const expected = {
       error: 'CONFLICT',
+      // 409 is not a retry class: the same call conflicts the same way again.
+      retryable: false,
       details: { revision: 7 },
     };
     expect(result.message.parts).toContainEqual(

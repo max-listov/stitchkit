@@ -314,7 +314,13 @@ describe('onToolError — it observes, it does not interfere', () => {
       hooks,
     );
 
-    expect(result).toEqual({ ok: false, code: 'NOT_FOUND', details: { message: 'gone' } });
+    expect(result).toEqual({
+      ok: false,
+      code: 'NOT_FOUND',
+      details: { message: 'gone' },
+      // Resolved on the failure itself so it survives a process hop; 404 is not a retry class.
+      retryable: false,
+    });
   });
 
   test('a throwing hook does not replace the failure it was called to observe', async () => {

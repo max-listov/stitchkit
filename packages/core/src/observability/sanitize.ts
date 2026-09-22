@@ -35,6 +35,21 @@ export interface SanitizeOptions {
   maxDepth?: number;
   /** Maximum UTF-16 string length before an explicit truncation marker. */
   maxStringLength?: number;
+  /**
+   * A string bound for particular KEYS, wherever they sit, without changing the
+   * bound for everything else.
+   *
+   * Keyed by name rather than by path on purpose: an error's `stack` is at the
+   * top of one record and under `errorDetail` in the next, and its ceiling is
+   * the same in both places — the question is "what is this field", not "where
+   * is it". One bound for the whole record cuts a stack from the bottom, which
+   * is exactly where the consumer's own frames are; a cheap fix is to raise the
+   * ceiling for `stack` alone. The byte ceiling (`maxBytes` in `sanitizePayload`,
+   * `entryBytes` in the bounded logger) remains the last word: a record that
+   * does not fit still collapses, but the decision is made for the record, not
+   * pre-empted by cutting one field short.
+   */
+  maxStringLengthByKey?: Readonly<Record<string, number>>;
   /** Maximum members retained from an array, map, set, or object. */
   maxCollectionLength?: number;
   /**
@@ -171,7 +186,12 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
   };
   const isSensitivePath = (path: readonly string[]): boolean =>
     pathMatchers.some((matcher) => matchesPath(matcher, path));
-  const safeString = (input: string): string => {
+  const stringBoundFor = (key: string | undefined): number => {
+    const byKey = key === undefined ? undefined : options.maxStringLengthByKey?.[key];
+    return byKey ?? maxStringLength;
+  };
+  const safeString = (input: string, key?: string): string => {
+    const bound = stringBoundFor(key);
     let output = input;
     for (const pattern of options.sensitiveUrlPatterns ?? []) {
       try {
@@ -183,8 +203,8 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
         // A consumer regexp must not turn diagnostics into application failure.
       }
     }
-    if (output.length <= maxStringLength) return output;
-    return `${output.slice(0, Math.max(0, maxStringLength))}…[truncated]`;
+    if (output.length <= bound) return output;
+    return `${output.slice(0, Math.max(0, bound))}…[truncated]`;
   };
 
   // Track the ANCESTOR chain of the current node — not every visited object —
@@ -200,7 +220,7 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
     if (visited > maxNodes) return '[node budget]';
     if (input === null || input === undefined) return null;
 
-    if (typeof input === 'string') return safeString(input);
+    if (typeof input === 'string') return safeString(input, path[path.length - 1]);
     if (typeof input === 'number' || typeof input === 'boolean') {
       return input;
     }
@@ -271,9 +291,9 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
       const cause = property('cause');
       return {
         _type: 'error',
-        name: safeString(String(property('name'))),
-        message: safeString(String(property('message'))),
-        ...(stack !== undefined && { stack: safeString(String(stack)) }),
+        name: safeString(String(property('name')), 'name'),
+        message: safeString(String(property('message')), 'message'),
+        ...(stack !== undefined && { stack: safeString(String(stack), 'stack') }),
         ...(cause !== undefined && { cause: walk(cause, depth + 1, [...path, 'cause']) }),
       };
     }

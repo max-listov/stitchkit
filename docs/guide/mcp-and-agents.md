@@ -290,6 +290,102 @@ schema and annotations, and nothing else — it moves when the contract moves an
 not when a handler does. Raw SDK registrations stay consumer-owned and are
 outside it.
 
+### Shaping arguments before validation — `beforeToolCall`
+
+`beforeToolCall` sees the arguments as they arrived and may **replace** them:
+
+```ts
+hooks: {
+  beforeToolCall: async ({ args }) =>
+    typeof args.id === 'string' && args.id.startsWith('@')
+      ? { ...args, id: await resolveReference(args.id) }
+      : undefined,       // undefined / null / nothing → unchanged
+}
+```
+
+The replacement is validated by the contract schema like any other input, so this
+shapes a call and never bypasses the schema — a hook returning something the
+contract refuses produces an ordinary `VALIDATION_ERROR`. It runs before the
+params/input split, before argument coercion and before both schemas, which is
+why a field declared `z.string()` can receive a reference and still be a string by
+the time it is checked. `lifecycle.beforeHandle` is too late for this: the schemas
+have already answered.
+
+The audit trail is unaffected. `afterToolCall` reports what the caller sent as
+`args` and the replacement separately as `effectiveArgs`, so a rewrite is visible
+as a rewrite rather than by overwriting the evidence.
+
+### Knowing the outcome of a call — `afterToolCall` and `toolCallId`
+
+`afterToolCall` receives the whole `ToolResult` — `{ok: true, data}` or
+`{ok: false, code, …}` — on every exit, including a validation failure that never
+reached the handler, and on all three transports. It is the answer to "did this
+call fail"; deriving that from the serialized error text instead is the mistake
+this section exists to prevent, and it is a mistake that does not announce itself:
+one consumer had five places asking the question and getting five answers.
+
+To correlate an outcome with the call the model made, read `context.toolCallId`:
+
+```ts
+hooks: {
+  afterToolCall: ({ context, result }) => {
+    loop.record(context.toolCallId, result.ok ? 'ok' : result.code);
+  },
+}
+```
+
+Two exits are deliberately **not** reported: a runtime tool presenter that throws
+on the agent surface (the AI SDK calls it after `execute` has already returned)
+and `ToolExecutionControlError`, which is a run being stopped rather than a tool
+failing — check it with `isToolExecutionControlError`.
+
+### Restartable tool bodies — `durability`
+
+A tool that starts slow work and must report exactly once, including after a host
+restart, can keep that bookkeeping **inside** the tool:
+
+```ts
+mountAgent(services, {
+  durability: (toolCallId, signal) => myLedgerFor(toolCallId, signal),
+});
+
+// in the handler
+const asset = await ctx.step('render', () => renderAsset(ctx.input));
+await ctx.waitFor({ event: 'render-done', id: assetId });
+```
+
+`ToolDurability` is the port a tool body sees — `step`, `sleep`, `waitFor`. You
+do not have to implement it: the engine ships from `stitchkit/tools`, and it needs
+a ledger of two methods over storage you already have:
+
+```ts
+import { createLocalStepDurability, type StepDurabilityLedger } from 'stitchkit/tools';
+
+const ledger: StepDurabilityLedger = {
+  appendEvent: (event) => db.durabilityEvents.insert(event),   // returns the row with `seq`
+  readEvents: ({ conversationId, fromSeq, toSeq }) => db.durabilityEvents.page(…),
+};
+
+mountAgent(services, {
+  durability: (toolCallId, signal) =>
+    createLocalStepDurability({ store: ledger, conversationId, runId: toolCallId, signal }),
+});
+```
+
+That gives replay, absolute deadlines and decode refusal without writing them.
+The port is there for an application that already has its own ledger engine.
+
+One thing the port deliberately leaves out: **delivery**. `waitFor` parks until
+`{ event, id }` arrives, and a tool body has no business delivering to itself —
+so `deliver` lives on the engine object you constructed, not in the handler
+context. Whatever produces the event (a webhook, a queue consumer, a cron) calls
+`engine.deliver({ event, id, payload })` against the same ledger; the parked
+`waitFor` resolves, and a `waitFor` that starts after the delivery returns at
+once. Taking `agent-runtime` is not required and nothing of the runtime proper
+enters the `stitchkit/tools` graph. An application that *does* run on
+`agent-runtime` gets durability through the run context and needs no option;
+where both exist the runtime's wins, because the run is recorded in its ledger.
+
 ### Typed MCP call metadata
 
 Contract handlers, runtime-tool handlers/factories, lifecycle and tool hooks all

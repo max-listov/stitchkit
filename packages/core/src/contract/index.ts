@@ -48,6 +48,7 @@ export {
   conflict,
   type ErrorEnvelope,
   forbidden,
+  isRetryableStatus,
   isStitchErrorCode,
   notFound,
   rateLimited,

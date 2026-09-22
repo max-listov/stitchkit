@@ -223,6 +223,7 @@ from the root `stitchkit`.
 | `STITCH_ERROR_STATUS` | const | `code → HTTP status` map for stitchkit's own error codes — [guide](../guide/auth-and-errors.md#stitch-codes-vs-your-codes) |
 | `StitchErrorCode` | _type_ | a code stitchkit itself emits (`keyof STITCH_ERROR_STATUS`) |
 | `isStitchErrorCode` | function | type guard — is a code one of stitchkit's own? |
+| `isRetryableStatus` | function | whether a status class means "the same call could work later" — `408`, `429`, `502`, `503`, `504`, and deliberately not every `5xx` |
 
 ### Pagination
 
@@ -334,6 +335,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `implementRegistry` | function | bind one exact contract registry to one exact backend handler registry |
 | `createImplementRegistry` | function | context-typed factory for `implementRegistry` |
 | `ImplementationRegistry` | _type_ | flat literal registry of concrete contracts accepted by `implementRegistry` |
+| `ImplementOptions` | _type_ | `{ onMissingHandler }` — how a binding treats a contract endpoint with no handler |
+| `MissingHandlerPolicy` | _type_ | `'throw'` (default) or `'stub'`, the dev-stand policy that mounts a `501` instead of refusing to start |
 | `KeyedServices` | _type_ | registry result: the mount-ordered `ServiceDef[]` carrying the same services under `.byKey` |
 | `RegistryHandlers` | _type_ | exact backend handler registry inferred from a contract registry |
 | `ExactRegistryHandlers` | _type_ | fail-first handler shape that rejects extra registry and endpoint keys |
@@ -1287,7 +1290,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `DimensionCollision` / `SetRequestDimensionsOptions` | _type_ | explicit overwrite, preserve or error policy for dimension keys |
 | `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |
 | `DEFAULT_REDACT_PATHS` | constant | baseline credential/token paths added to the sanitizer's sensitive-key policy |
-| `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings plus sink/redaction configuration |
+| `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings (`stringLengthByKey` raises the string bound for named keys such as `stack`) plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
 | `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(bound?): Promise<boolean>, close(bound?) }` with bounded sink lifecycle |
@@ -1341,7 +1344,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `truncatePreview` | function | cap a value by serialised size |
 | `measureSize` | function | item count + byte size of a result |
 | `JsonValue` | _type_ | a JSON-serialisable value |
-| `SanitizeOptions` | _type_ | tuning for `redact` / `sanitizePayload` |
+| `SanitizeOptions` | _type_ | tuning for `redact` / `sanitizePayload` — `maxStringLengthByKey` bounds a named key wherever it sits without changing the record-wide bound |
 | `SizeMeasure` | _type_ | the result of `measureSize` |
 
 ---
@@ -1564,6 +1567,29 @@ A native remote-connector auth surface for MCP — [guide](../guide/mcp-and-agen
 | `ClientMetadata` | _type_ | dynamic-client-registration metadata |
 | `RefreshData` | _type_ | a stored refresh-token record |
 | `RegisteredClient` | _type_ | a registered OAuth client |
+
+### Durable tool bodies
+
+A mounted tool body can be made restartable without adopting `agent-runtime`: declare a
+factory and `step` / `sleep` / `waitFor` appear in the handler context, backed by whatever
+ledger the application already has.
+
+```ts
+mountAgent(services, { durability: (toolCallId) => myLedgerFor(toolCallId) });
+```
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `ToolDurability` | _type_ | the port a tool body needs: `step`, `sleep`, `waitFor` |
+| `ToolDurabilityFactory` | _type_ | `(toolCallId, signal) => ToolDurability`, called once per call |
+| `DurableJsonValue` | _type_ | what a durable step result may hold — a record is read back in another process, so it must be JSON |
+| `createLocalStepDurability` | function | the durability engine — replay, absolute deadlines, park/deliver — over a two-method ledger the application owns |
+| `StepDurabilityLedger` | _type_ | the two methods an engine needs: `appendEvent`, `readEvents` |
+| `LocalStepDurability` | _type_ | what the engine returns; satisfies `ToolDurability` and adds `deliver` and record introspection for the ledger's owner |
+| `LocalStepDurabilityOptions` | _type_ | `{ store, conversationId, runId, signal?, subscribe?, clock? }` |
+| `AppendAgentStoreEvent` / `ReadAgentStoreEvents` / `AgentStoreEventEnvelope` / `AgentStoreEventPage` | _type_ | the ledger's row shapes, re-exported so a ledger is typed from the entrypoint that consumes it |
+| `AgentToolError` | class | the model-safe envelope a failed agent tool throws |
+| `isAgentToolError` | function | brand check for it — a consumer running its own loop no longer parses the message |
 
 ### Catalog stamp
 

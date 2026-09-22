@@ -4,6 +4,7 @@ import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
 import { AgentToolError } from './agent-tool-error';
 import { resolveToolDurability } from './durability-context';
+import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
 import {
   type ErrorHintFn,
   isToolExecutionControlError,
@@ -47,6 +48,17 @@ export interface AgentMountConfig {
    * declaration of the runtime surface, not two lists to reconcile.
    */
   registry?: AgentToolRegistry;
+  /**
+   * Make tool bodies restartable: `step` / `sleep` / `waitFor` appear in the
+   * handler context, backed by whatever ledger the application already has.
+   *
+   * Without it a tool that starts slow work and must report exactly once —
+   * including after a host restart — has to keep that bookkeeping beside the
+   * tool instead of inside it. `agent-runtime` supplies its own durability
+   * through the call context and does not need this option; an application
+   * running its own loop does, and had no way to reach it.
+   */
+  durability?: ToolDurabilityFactory;
 }
 
 export function mountAgent(
@@ -85,20 +97,29 @@ export function mountAgent(
     });
     const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
       const args = isRecord(rawArgs) ? rawArgs : {};
-      const durability = resolveToolDurability(
-        options.context,
-        options.toolCallId,
-        options.abortSignal,
-      );
+      // The runtime's own durability travels in the SDK call context; an
+      // application that runs its own loop declares a factory instead. The
+      // context wins where both exist: it is the runtime driving the call, and
+      // its ledger is the one the run is recorded in.
+      const durability: ToolDurability | undefined =
+        resolveToolDurability(options.context, options.toolCallId, options.abortSignal) ??
+        config.durability?.(options.toolCallId, options.abortSignal);
+      // The provider's call id travels as ordinary call context, so it reaches
+      // `beforeToolCall` / `afterToolCall` / `onToolError` on the existing hook
+      // seam instead of through a second observation channel of its own.
+      const callContext = { signal: options.abortSignal, toolCallId: options.toolCallId };
       const executeTool = durability
         ? createToolRunner({
             source: 'agent',
             extend: config.extend,
             context: {
               ...config.context,
-              step: durability.step,
-              sleep: durability.sleep,
-              waitFor: durability.waitFor,
+              // Bound, because the port is public and an application may
+              // satisfy it with a class: a method taken as a bare value
+              // loses `this` and fails on its first call.
+              step: durability.step.bind(durability),
+              sleep: durability.sleep.bind(durability),
+              waitFor: durability.waitFor.bind(durability),
             },
             hooks: config.hooks,
             lifecycle: config.lifecycle,
@@ -107,9 +128,7 @@ export function mountAgent(
             onOutputStrip: config.onOutputStrip,
           })
         : runTool;
-      const result = await executeTool(mountable, args, {
-        signal: options.abortSignal,
-      }).catch((err: unknown) => {
+      const result = await executeTool(mountable, args, callContext).catch((err: unknown) => {
         if (isToolExecutionControlError(err)) throw err;
         throw new AgentToolError(
           formatToolError(toolResultFromError(err), mountable.name, config.errorHint),

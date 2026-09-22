@@ -169,6 +169,43 @@ scope** — the same prefix under two different group scopes is legal (their URL
 are separated by `scopePrefixes`, and a genuine path clash is the router's own
 construction error).
 
+#### A dev stand that survives half a feature — `onMissingHandler`
+
+Adding an endpoint is two edits by construction: the contract, then the handler.
+An editor saves one file at a time and a watcher restarts on the first save, so
+between the two the application refuses to start — and on a shared dev stand that
+is everyone's stand, not just yours. A project rule ("make both edits at once")
+cannot outrun the filesystem.
+
+```ts
+implementRegistry(apiContractRegistry, handlers, {
+  onMissingHandler: process.env.NODE_ENV === 'production' ? 'throw' : 'stub',
+})
+```
+
+With `'stub'` the application starts, the unimplemented endpoint answers `501` and
+names itself in the log at every mount, so it cannot be forgotten. Both save
+orders are covered: a contract ahead of its handler, and a handler ahead of its
+contract. The option is accepted by `implement`, `implementRegistry`,
+`createImplement`, `createScopedImplement`, `createImplementRegistry` and
+`createScopedImplementRegistry`.
+
+Three things it deliberately does not do. It stays `'throw'` by default, and
+`'throw'` is the only right answer in production: a release is atomic, so there is
+no window to protect, and a surface with a hole must not ship. It does not relax
+the **compile-time** exactness check — that lives in the generic constraint, your
+editor still shows the missing handler, and a watcher that only transpiles is
+precisely why the runtime refusal was the one that bit. And it does not stub a
+streaming multipart endpoint, which needs `defineMultipartStream()` receivers; the
+stand still stops on one of those.
+
+The stub answers `NOT_IMPLEMENTED` with status `501` everywhere — over HTTP and on
+a tool call that crosses a process boundary alike, because the code is registered
+in `STITCH_ERROR_STATUS`. One consequence follows from that and is worth knowing:
+a stubbed endpoint keeps its `expose`, so on a dev stand it is advertised to a
+model as a real tool that always refuses. The refusal is not retryable, so a model
+stops rather than loops; it still costs one turn to find out.
+
 The registry is intentionally flat: every key must point to one concrete
 `defineContract()` result. Composed namespace arrays are mounted explicitly with
 `implement()` because they do not have a one-key-to-one-handler-map boundary.

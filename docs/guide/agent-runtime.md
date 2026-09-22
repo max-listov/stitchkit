@@ -1037,7 +1037,7 @@ or it keeps the failed attempt's partial text on screen.
   usage, files and sources do not count;
 - `tool-status` is transient lifecycle presentation with JSON-safe input on
   start and output on completion. A mounted typed failure carries the same safe
-  `{ error, details?, _hint? }` envelope as the durable result; an unknown
+  `{ error, retryable, details?, _hint? }` envelope as the durable result; an unknown
   internal cause remains generic and stays in local observability only;
 - `terminal` follows the winning terminal CAS.
 

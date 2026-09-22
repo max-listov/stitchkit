@@ -7,7 +7,7 @@
  * returns); `--json` switches success and error records to one compact line.
  *
  * stdout is reserved for that result; an error goes to stderr as the same
- * model-facing `{ error, details, _hint }` object the MCP / agent transports
+ * model-facing `{ error, retryable, details, _hint }` object the MCP / agent transports
  * return (`formatToolError`), so a script can keep `2>/dev/null` clean while
  * still parsing a success.
  */

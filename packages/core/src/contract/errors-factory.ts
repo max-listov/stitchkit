@@ -41,10 +41,26 @@ export type ErrorDetailsSchema = z.ZodObject | z.ZodOptional<z.ZodObject>;
  * sentence. A per-call `message` still wins.
  */
 export type ErrorDefinition =
-  | { readonly status: number; readonly message?: string; readonly details?: never }
   | {
       readonly status: number;
       readonly message?: string;
+      readonly retryable?: boolean;
+      readonly details?: never;
+    }
+  | {
+      readonly status: number;
+      readonly message?: string;
+      /**
+       * Whether repeating the call could succeed, when the status class gets it
+       * wrong. Omitted, it is derived from `status`.
+       *
+       * This is where ADR 0077 refused to put `hint`, and the reason does not
+       * apply: a hint DECLARED here would concatenate with the surface-wide
+       * `ErrorHintFn` and repeat itself on every instance of the code. A
+       * boolean has nothing to concatenate with — it is one fact about the
+       * code, stated once, in the same place its status is stated.
+       */
+      readonly retryable?: boolean;
       readonly details: ErrorDetailsSchema;
     };
 
@@ -225,10 +241,26 @@ export function defineErrors<
         if ('details' in options) {
           throw new Error(`[stitchkit] Error "${name}" does not declare details`);
         }
-        return new AppError(name, message, definition.status, undefined, options.hint);
+        return new AppError(
+          name,
+          message,
+          definition.status,
+          undefined,
+          options.hint,
+          undefined,
+          definition.retryable,
+        );
       }
       const details = definition.details.parse(options.details);
-      return new AppError(name, message, definition.status, details, options.hint);
+      return new AppError(
+        name,
+        message,
+        definition.status,
+        details,
+        options.hint,
+        undefined,
+        definition.retryable,
+      );
     };
   });
   Object.freeze(errors);

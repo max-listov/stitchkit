@@ -1,6 +1,7 @@
 import type { ZodType, z } from 'zod';
 import {
   AppError,
+  isRetryableStatus,
   isStitchErrorCode,
   type McpCallContext,
   type RuntimeContext,
@@ -17,7 +18,23 @@ import { objectShapeKeys } from './schema';
 
 export type ToolResult =
   | { ok: true; data: unknown }
-  | { ok: false; code: string; details?: unknown; hint?: string };
+  | {
+      ok: false;
+      code: string;
+      details?: unknown;
+      hint?: string;
+      /**
+       * A declared retry class, carried so it survives a process hop.
+       *
+       * The normalized `AppError` lives in a `WeakMap` keyed by the result
+       * object, which a serialized failure crossing MCP or the CLI cannot take
+       * with it — `toolErrorFromResult` rebuilds from `{code, details, hint}`
+       * and resolves the status from the code. A declaration that contradicts
+       * its status class would be lost exactly there, which is the failure
+       * already recorded for coding-tool refusals.
+       */
+      retryable?: boolean;
+    };
 
 type ToolFailure = Extract<ToolResult, { ok: false }>;
 
@@ -32,6 +49,17 @@ export class ToolExecutionControlError extends Error {
     this.name = 'ToolExecutionControlError';
     this.reason = reason;
   }
+}
+
+/**
+ * A record with no prototype but `Object.prototype` or `null` — the shape an
+ * object literal or `Object.fromEntries` produces, and nothing a class
+ * instance, a `Map` or a `Promise` produces.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 export function isToolExecutionControlError(
@@ -55,6 +83,17 @@ export interface ToolCallContext {
   source: TransportSource;
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
+  /**
+   * The provider's id for this tool call, on a surface that has one — today
+   * `mountAgent`, where it is the AI SDK's `toolCallId`.
+   *
+   * Without it a consumer running its own agent loop could see the outcome of a
+   * call through `afterToolCall` and had no way to say WHICH call it belonged
+   * to, so it reconstructed the answer from the serialised error text instead.
+   * That reconstruction is the defect: it is written once per consumer and
+   * disagrees silently.
+   */
+  toolCallId?: string;
   [key: string]: unknown;
 }
 
@@ -70,6 +109,13 @@ export interface AfterToolCallOptions extends BeforeToolCallOptions {
   durationMs: number;
   /** The value as thrown; absent for failures that did not throw. */
   error?: unknown;
+  /**
+   * The arguments the call actually ran on, when `beforeToolCall` replaced
+   * them. Absent when nothing rewrote them — so `args` alone stays the honest
+   * record of what the caller sent, and a rewrite is visible as a rewrite
+   * rather than by overwriting the evidence.
+   */
+  effectiveArgs?: Record<string, unknown>;
 }
 
 export interface ToolErrorOptions {
@@ -80,7 +126,36 @@ export interface ToolErrorOptions {
 }
 
 export interface ToolCallHooks {
-  beforeToolCall?: (options: BeforeToolCallOptions) => void | Promise<void>;
+  /**
+   * Before the arguments are validated — and the one place they can still be
+   * changed.
+   *
+   * Returning a record replaces the arguments for this call; returning
+   * `undefined`, `null` or nothing leaves them exactly as they arrived. The
+   * replacement is validated by the contract schema like any other input, so
+   * this is a way to shape a call, never a way around the schema: a hook that
+   * returns something the schema refuses produces an ordinary
+   * `VALIDATION_ERROR`.
+   *
+   * This exists because the pipeline was asymmetric. `lifecycle.afterHandle`
+   * could already transform the OUTPUT, while the only way to affect the input
+   * was to throw — so a caller wanting to expand a reference into a value
+   * before validation had nowhere to stand: this hook sees the raw arguments
+   * and could not change them, and `lifecycle.beforeHandle` runs after the
+   * schemas have already refused.
+   *
+   * The audit trail is unaffected: `afterToolCall` still reports `args` as they
+   * arrived from the caller, and reports the replacement separately as
+   * `effectiveArgs`.
+   *
+   * Typed `unknown` for the same reason `lifecycle.afterHandle` is — the twin
+   * this mirrors. Every hook written against the old `void` signature still
+   * assigns, which is the whole compatibility claim, and a narrower union here
+   * would break exactly the hooks that exist today. What the value must BE is
+   * enforced where it is used, not where it is declared: anything that is not a
+   * record, `null` or `undefined` is refused by name at the call.
+   */
+  beforeToolCall?: (options: BeforeToolCallOptions) => unknown | Promise<unknown>;
   /**
    * Every finished call, success and failure alike — the record of the call.
    *
@@ -179,6 +254,14 @@ export function toolResultFromError(err: unknown): ToolFailure {
     code: appErr.code,
     details: appErr.details ?? { message: appErr.message },
     ...(appErr.hint && { hint: appErr.hint }),
+    // Resolved HERE, declared or derived, and carried on the failure — because
+    // the only other place the status is known is the WeakMap this object
+    // keys, and a failure that crosses a process boundary does not take it
+    // along. Rebuilt from `{code, details, hint}` on the far side, an
+    // application's `status: 429` would resolve to 500 and read as
+    // unrecoverable. The failure is the one thing that crosses; the answer
+    // rides on it.
+    retryable: appErr.retryable ?? isRetryableStatus(appErr.status),
   };
   normalizedToolErrors.set(result, { normalized: appErr, cause: err });
   return result;
@@ -192,7 +275,15 @@ export function toolErrorFromResult(result: ToolFailure): AppError {
   const details = isRecord(result.details) ? result.details : undefined;
   const message = typeof details?.message === 'string' ? details.message : result.code;
   const status = isStitchErrorCode(result.code) ? STITCH_ERROR_STATUS[result.code] : 500;
-  return new AppError(result.code, message, status, details, result.hint);
+  return new AppError(
+    result.code,
+    message,
+    status,
+    details,
+    result.hint,
+    undefined,
+    result.retryable,
+  );
 }
 
 /** Original in-process failure; never part of the serialized tool envelope. */
@@ -314,6 +405,8 @@ async function runToolMethod(
         context: hookContext,
         endpoint: method,
         ...(thrown !== undefined && { error: thrown }),
+        ...(rewrittenArgsApplied &&
+          rewrittenArgs !== undefined && { effectiveArgs: rewrittenArgs }),
       });
     } catch (hookError) {
       try {
@@ -326,25 +419,63 @@ async function runToolMethod(
   };
 
   let beforeRan = false;
-  const runBefore = async (): Promise<ToolResult | null> => {
+  /**
+   * The arguments `beforeToolCall` put in place of the caller's, if it did.
+   * Read by `finish` for the audit record, so it is declared before either.
+   */
+  let rewrittenArgs: Record<string, unknown> | undefined;
+  /**
+   * Set only on the main path, at the point the replacement becomes the
+   * arguments the call runs on. `runBefore` may also run on a path that has
+   * already failed — there the replacement is recorded but never applied, and
+   * reporting it as "what the call ran on" would be a fabricated audit row.
+   */
+  let rewrittenArgsApplied = false;
+
+  /**
+   * A refusal, a replacement set of arguments, or neither — discriminated on
+   * purpose.
+   *
+   * Two of the three call sites below run on a path that has already failed and
+   * deliberately ignore anything but a refusal. With a bare union they would
+   * return a plain record where a `ToolResult` is expected, and the type system
+   * would not notice — the failure would be a tool answering with the caller's
+   * own arguments.
+   */
+  const runBefore = async (): Promise<
+    { kind: 'failure'; result: ToolResult } | { kind: 'args' } | null
+  > => {
     if (beforeRan || !hooks?.beforeToolCall) return null;
     beforeRan = true;
+    let returned: unknown;
     try {
-      await hooks.beforeToolCall({
+      returned = await hooks.beforeToolCall({
         toolName,
         args: rawArgs,
         context: hookContext,
         endpoint: method,
       });
-      return null;
     } catch (err) {
-      return finish(toolResultFromError(err));
+      return { kind: 'failure', result: await finish(toolResultFromError(err)) };
     }
+    // Only a PLAIN object is a replacement. Everything else — `undefined`,
+    // `null`, a `Map` from a one-line `audit.set(...)`, the number a `push`
+    // returns — is what existing hooks already return today, and today it is
+    // ignored. Reading any of those as arguments would turn a hook that has
+    // worked for months into one that erases every call's input, silently,
+    // because `Object.entries(new Map())` is `[]`. The compatibility claim is
+    // "returning nothing changes nothing", and it has to hold for the values
+    // real hooks actually return, not only for the two literal ones.
+    if (!isPlainObject(returned)) return null;
+    rewrittenArgs = returned;
+    return { kind: 'args' };
   };
 
   const finishThrown = async (err: unknown): Promise<ToolResult> => {
-    const beforeFailure = await runBefore();
-    if (beforeFailure) return beforeFailure;
+    // The call has already failed, so replacement arguments have nowhere left
+    // to be applied; only a refusal from the hook still changes the answer.
+    const before = await runBefore();
+    if (before?.kind === 'failure') return before.result;
     if (hooks?.onToolError) {
       try {
         await hooks.onToolError({
@@ -366,10 +497,12 @@ async function runToolMethod(
 
   let callArgs = rawArgs;
   let callContext = context;
+  let extensionKeys: Set<string> | undefined;
   if (extension) {
-    const extensionKeys = new Set(Object.keys(extension.schema.shape));
+    const keys = new Set(Object.keys(extension.schema.shape));
+    extensionKeys = keys;
     const extensionArgs = Object.fromEntries(
-      Object.entries(rawArgs).filter(([key]) => extensionKeys.has(key)),
+      Object.entries(rawArgs).filter(([key]) => keys.has(key)),
     );
     let parsed: ReturnType<typeof extension.schema.safeParse>;
     try {
@@ -378,8 +511,10 @@ async function runToolMethod(
       return finishThrown(err);
     }
     if (!parsed.success) {
-      const beforeFailure = await runBefore();
-      if (beforeFailure) return beforeFailure;
+      // Same reason as `finishThrown`: the extension arguments never parsed, so
+      // there is no call left for a replacement to shape.
+      const before = await runBefore();
+      if (before?.kind === 'failure') return before.result;
       return finish({
         ok: false,
         code: 'VALIDATION_ERROR',
@@ -392,21 +527,39 @@ async function runToolMethod(
         ...context,
         ...resolved,
         // Transport-owned call identity always wins over a model-resolved
-        // extension, just like source/params/input below.
+        // extension, just like source/params/input below. `toolCallId` is in
+        // that set: an extension that resolved a key of that name would hand
+        // every hook the wrong call to correlate — the exact defect the field
+        // exists to close, reintroduced at the one seam that added it.
         source: context.source,
         ...(context.mcp !== undefined && { mcp: context.mcp }),
+        ...(context.toolCallId !== undefined && { toolCallId: context.toolCallId }),
       };
       hookContext = callContext;
-      callArgs = Object.fromEntries(
-        Object.entries(rawArgs).filter(([key]) => !extensionKeys.has(key)),
-      );
+      callArgs = Object.fromEntries(Object.entries(rawArgs).filter(([key]) => !keys.has(key)));
     } catch (err) {
       return finishThrown(err);
     }
   }
 
-  const beforeFailure = await runBefore();
-  if (beforeFailure) return beforeFailure;
+  const before = await runBefore();
+  if (before?.kind === 'failure') return before.result;
+  if (before?.kind === 'args' && rewrittenArgs) {
+    // The hook is handed the RAW arguments, which still carry the extension's
+    // own keys; `callArgs` has had them removed. A hook that takes what it was
+    // given, changes one field and returns it would therefore put the extension
+    // keys back — and they are in neither schema, so a `.strict()` input schema
+    // would refuse every rewritten call. Filter them out again rather than make
+    // every hook know about the split. `extension.resolve` is deliberately NOT
+    // replayed: the identity it resolved is the caller's, and a hook must not
+    // be able to re-resolve who is calling.
+    callArgs = extensionKeys
+      ? Object.fromEntries(
+          Object.entries(rewrittenArgs).filter(([key]) => !extensionKeys.has(key)),
+        )
+      : rewrittenArgs;
+    rewrittenArgsApplied = true;
+  }
 
   // Slice the flat tool args the way the HTTP transport slices a request: path
   // params and body/query are disjoint sets of keys. Parsing each schema over

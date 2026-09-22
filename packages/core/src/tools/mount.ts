@@ -4,7 +4,7 @@
  * extend handling and the call execution are identical and live here.
  */
 import { z } from 'zod';
-import type { Transport, TransportSource } from '../contract';
+import { isRetryableStatus, type Transport, type TransportSource } from '../contract';
 import type { ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
@@ -14,6 +14,7 @@ import {
   type ToolLifecycle,
   type ToolOperation,
   type ToolResult,
+  toolErrorFromResult,
 } from './execute';
 import type { ToolPresentationSchema } from './flatten';
 import {
@@ -187,7 +188,7 @@ export function createToolRunner(
 }
 
 /**
- * Shape a failed `ToolResult` into the `{ error, details?, _hint? }` object
+ * Shape a failed `ToolResult` into the `{ error, retryable, details?, _hint? }` object
  * both transports return on error. When a global `errorHint` is provided, it
  * is appended after the per-error `AppError.hint` (if any).
  */
@@ -196,7 +197,17 @@ export function formatToolError(
   toolName?: string,
   errorHint?: ErrorHintFn,
 ): Record<string, unknown> {
-  const err: Record<string, unknown> = { error: result.code };
+  // The one bit that decides the model's next move — wait and retry, fix the
+  // input, or stop. Until now it read that off the CODE NAME, which is guessing
+  // by spelling: a consumer's circuit breaker counted four identical
+  // unrecoverable refusals before cutting the loop, and every one of those
+  // turns was paid for. Declared on the error wins; otherwise the status class
+  // answers, and the status here is the normalized one, so an application code
+  // declaring `status: 429` is retryable exactly like the framework's own.
+  const err: Record<string, unknown> = {
+    error: result.code,
+    retryable: result.retryable ?? isRetryableStatus(toolErrorFromResult(result).status),
+  };
   if (result.details) err.details = result.details;
 
   const hints: string[] = [];

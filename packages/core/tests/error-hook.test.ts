@@ -29,6 +29,7 @@ const onError = createErrorHook({
     FILE_EXISTS: 'conflict',
     REALTIME_CONTRACT_VIOLATION: 'internal',
     APPLICATION_NOT_ACCEPTING: 'unavailable',
+    NOT_IMPLEMENTED: 'not_implemented',
     WAIT_TIMEOUT: 'timeout',
     WAIT_FAILED: 'conflict',
     DOWNLOAD_NOT_FOUND: 'not_found',

@@ -18,6 +18,8 @@ export const DEFAULT_REDACT_PATHS = Object.freeze([
 
 export interface BoundedLoggerBounds {
   readonly stringLength?: number;
+  /** A string bound for particular keys, wherever they sit — see `SanitizeOptions.maxStringLengthByKey`. */
+  readonly stringLengthByKey?: Readonly<Record<string, number>>;
   readonly collectionLength?: number;
   readonly depth?: number;
   readonly entryBytes?: number;
@@ -114,6 +116,9 @@ export function createBoundedLogger(options: BoundedLoggerOptions): StitchLogger
           ],
           sensitiveUrlPatterns: options.sensitiveUrlPatterns,
           maxStringLength: options.bounds?.stringLength ?? 4_000,
+          ...(options.bounds?.stringLengthByKey !== undefined && {
+            maxStringLengthByKey: options.bounds.stringLengthByKey,
+          }),
           maxCollectionLength: options.bounds?.collectionLength ?? 100,
           maxDepth: options.bounds?.depth ?? 6,
           maxBytes: entryBytes,
