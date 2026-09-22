@@ -851,8 +851,13 @@ export interface RuntimeContext {
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
   /**
-   * Report progress on the call in flight. Present on MCP tool calls; a no-op
-   * when the host asked for none, so a handler calls it unconditionally.
+   * Report progress on the call in flight.
+   *
+   * Present on every TOOL call — MCP, agent and CLI — and a no-op wherever
+   * nobody is listening, so a handler never branches on transport to say what
+   * it is doing. Absent on the HTTP transport, which has no channel for it;
+   * that is why the field is optional and a handler that also serves HTTP
+   * writes `ctx.reportProgress?.(…)`.
    */
   reportProgress?: McpReportProgress;
   [key: string]: unknown;

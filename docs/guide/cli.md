@@ -621,8 +621,12 @@ Rolling back is a property of updating, not of the application:
 
 ```ts
 const applied = await applyCliUpdate({ asset, targetPath, backupPath })
-// …the new build turns out to be wrong:
-rollbackCliUpdate({ targetPath, backupPath, expectedSha256: applied.backupSha256 })
+// …the new build turns out to be wrong. `backupSha256` is absent when there was
+// nothing to keep — a first install — and that is the case with nothing to roll
+// back to:
+if (applied.backupSha256) {
+  rollbackCliUpdate({ targetPath, backupPath, expectedSha256: applied.backupSha256 })
+}
 ```
 
 The copy is taken between "the new bytes verified" and the replacement — earlier
@@ -650,6 +654,13 @@ with the track being published and sees no conflict, and the person who
 installed the beta is told they are current forever. Nothing on their machine
 looks wrong.
 
+**The channel itself is not an argument of the framework, and will not become
+one.** The framework has no model of how your URLs are built and should not: an
+asset's address comes from the manifest, and the manifest's address belongs to
+your server. A channel is two documents at two addresses — which of them a build
+consults is your decision, and `assertCliPublishable` is told about all of them
+rather than taught the shape of any.
+
 ## One operation per line — `createCliInvoker`
 
 The most common way an agent drives a CLI is not one command: it is a stream —
@@ -668,8 +679,11 @@ const outcome = await invoker.invoke('create_item', { title: 'hello', tags: ['a'
 ```
 
 `invoke` runs the same pipeline a typed command runs — the same validation, the
-same `lifecycle` gate, the same hooks — and returns the typed result with **the
-exit code the printed path would give**, from the same table. That table used to
+same `lifecycle` gate, the same hooks — and returns the handler's validated
+output with **the exit code the printed path would give**, from the same table.
+`data` is typed `unknown`: the surface is resolved at run time from services and
+runtime tools, so there is no compile-time name to key a result type on. Narrow
+it with the contract's own output schema. That table used to
 live inside the function that prints, so the only way to learn a code was to
 print it.
 

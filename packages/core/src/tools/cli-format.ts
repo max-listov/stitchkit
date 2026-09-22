@@ -63,8 +63,16 @@ export interface EmitOptions {
  */
 export function cliExitCode(result: ToolResult, exitCodes?: ExitCodeMap): number {
   if (result.ok) return 0;
-  const codes = exitCodes ?? DEFAULT_EXIT_CODES;
-  return codes[result.code] ?? 1;
+  // Merged, not replaced: an application declaring one extra code must not
+  // silently lose the defaults for every other one — and `createCli` has always
+  // merged at its call sites, so an unmerged map here is the two paths
+  // disagreeing about the same failure.
+  const codes = { ...DEFAULT_EXIT_CODES, ...exitCodes };
+  // `hasOwn`, because a code is a free string that can arrive from a remote
+  // service. `constructor` or `toString` would otherwise read a function off
+  // the prototype and return it as the exit code — which `JSON.stringify` then
+  // drops from a stream answer, and `process.exit` receives instead of a number.
+  return Object.hasOwn(codes, result.code) ? (codes[result.code] ?? 1) : 1;
 }
 
 export function emitResult(

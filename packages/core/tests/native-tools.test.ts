@@ -73,6 +73,89 @@ describe('mountWait', () => {
     await client.close();
   });
 
+  test('reports each poll to a host that asked for progress', async () => {
+    // This tool IS the silence the progress channel was added for: the work
+    // outlives the call and a text host sees nothing until it ends. The loop
+    // already polls and already knows what it last saw, so relaying that is
+    // reporting a fact rather than guessing a stage.
+    //
+    // Asserted on the wire rather than through the client's progress plumbing:
+    // this client only registers a progress handler for a token it minted
+    // itself, and what matters here is what the SERVER sends for the token a
+    // host actually put in `_meta`.
+    let polls = 0;
+    const server = new McpServer({ name: 't', version: '1' });
+    mountWait(server, {
+      description: 'wait',
+      inputSchema: { id: z.string() },
+      poll: async () => {
+        polls += 1;
+        return polls < 3
+          ? { phase: 'running', progress: polls * 10 }
+          : { phase: 'succeeded', progress: 100 };
+      },
+      done: (st) => isRecord(st) && st.phase === 'succeeded',
+      backoff: [0],
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const sent: Array<Record<string, unknown>> = [];
+    const send = st.send.bind(st);
+    st.send = async (message, options) => {
+      const frame: unknown = message;
+      if (isRecord(frame) && frame.method === 'notifications/progress') {
+        sent.push(isRecord(frame.params) ? frame.params : {});
+      }
+      return send(message, options);
+    };
+    const client = new Client({ name: 'c', version: '1' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    await client.callTool({
+      name: 'wait',
+      arguments: { id: 'x' },
+      _meta: { progressToken: 'tok-1' },
+    });
+
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[0]?.progressToken).toBe('tok-1');
+    // The snapshot's own number when it has one — a measured value beats the
+    // ordinal of a poll — and the phase it declared.
+    expect(sent[0]?.progress).toBe(10);
+    expect(String(sent[0]?.message)).toContain('running');
+    await client.close();
+  });
+
+  test('a host that asked for no progress is not sent any', async () => {
+    let polls = 0;
+    const server = new McpServer({ name: 't', version: '1' });
+    mountWait(server, {
+      description: 'wait',
+      inputSchema: { id: z.string() },
+      poll: async () => {
+        polls += 1;
+        return polls < 2 ? { phase: 'running' } : { phase: 'succeeded' };
+      },
+      done: (st) => isRecord(st) && st.phase === 'succeeded',
+      backoff: [0],
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const sent: unknown[] = [];
+    const send = st.send.bind(st);
+    st.send = async (message, options) => {
+      const frame: unknown = message;
+      if (isRecord(frame) && frame.method === 'notifications/progress') sent.push(frame);
+      return send(message, options);
+    };
+    const client = new Client({ name: 'c', version: '1' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const result = await client.callTool({ name: 'wait', arguments: { id: 'x' } });
+    expect(isErr(result)).toBe(false);
+    // It polled more than once, so there was something to report — and nothing
+    // was sent, because nobody asked.
+    expect(polls).toBeGreaterThan(1);
+    expect(sent).toEqual([]);
+    await client.close();
+  });
+
   test('a rejecting poll is framed "Wait failed:", not a raw throw', async () => {
     const client = await connectWith((s) =>
       mountWait(s, {

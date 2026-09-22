@@ -11,7 +11,15 @@ import {
 } from '../observability/context';
 import { resolvePropagationContext } from '../observability/trace';
 
-/** Run one SDK-dispatched MCP request inside an isolated propagation context. */
+/**
+ * Run one SDK-dispatched MCP request inside an isolated propagation context.
+ *
+ * `method: 'MCP'` and `path: '/mcp/<tool>'` are written here deliberately, and
+ * they are NOT the fabricated transport fields that `kind: 'job'` exists to
+ * replace. An MCP tool call arrives as a request, over a transport, naming an
+ * operation — it has a verb-shaped thing to say and a path-shaped thing to say.
+ * Background work has neither, which is why it now records their absence.
+ */
 export function runInMcpRequestContext<T>(
   context: ServerContext,
   toolName: string,

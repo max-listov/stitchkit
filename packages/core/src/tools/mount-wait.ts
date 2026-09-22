@@ -63,13 +63,21 @@ export function mountWait(server: McpServer, config: WaitToolConfig): void {
           backoff: config.backoff,
           timeoutSec: config.timeoutFromArgs?.(args) ?? config.defaultTimeout,
           onTick: (attempt, elapsedSec) => {
-            // `phase` when the polled value declares one (the async-operation
-            // snapshot does); otherwise the tick alone, which still answers the
-            // question the silence raised: is anything happening.
-            const phase =
-              isRecord(last) && typeof last.phase === 'string' ? last.phase : undefined;
+            // What the loop actually knows. `phase` when the polled value
+            // declares one — the async-operation snapshot does — and that
+            // snapshot's own numeric `progress` when it has one, because a
+            // measured number beats the ordinal of a poll. `progress` there is
+            // an application-declared shape, so it is used only when it really
+            // is a number; otherwise the tick stands for itself and answers the
+            // question the silence raised: is anything happening at all.
+            const snapshot = isRecord(last) ? last : undefined;
+            const phase = typeof snapshot?.phase === 'string' ? snapshot.phase : undefined;
+            const measured =
+              typeof snapshot?.progress === 'number' && Number.isFinite(snapshot.progress)
+                ? snapshot.progress
+                : undefined;
             void report({
-              progress: attempt,
+              progress: measured ?? attempt,
               message: phase
                 ? `${phase} — poll ${attempt}, ${Math.round(elapsedSec)}s elapsed`
                 : `poll ${attempt}, ${Math.round(elapsedSec)}s elapsed`,

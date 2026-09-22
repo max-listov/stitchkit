@@ -76,6 +76,21 @@ export interface CliInvokerConfig<
   passthrough?: Record<string, string>;
 }
 
+/**
+ * The application's global options, validated by the schema that declared them.
+ *
+ * `{}` is not a safe stand-in for "none given": a schema with `.default()`
+ * fields turns an empty object into a populated one, and those values are what
+ * `resolveAuth` and `context` read.
+ */
+function parseCliGlobals<TGlobals extends ZodObject>(
+  schema: TGlobals | undefined,
+  globals: Record<string, unknown> | undefined,
+): z.output<TGlobals> {
+  if (!schema) return (globals ?? {}) as z.output<TGlobals>;
+  return schema.parse(globals ?? {});
+}
+
 /** What one parsed invocation produced — never printed, never exited on. */
 export interface CliInvocationResult {
   ok: boolean;
@@ -109,13 +124,6 @@ export interface CliInvoker {
    * line that was wrong and keep reading the ones that follow.
    */
   invoke(command: string, args: Record<string, unknown>): Promise<CliInvocationResult>;
-}
-
-/** The internal shape `createCli` needs back — the surface plus its runner. */
-export interface ResolvedCliSurface {
-  tools: Map<string, MountableTool>;
-  help: Map<string, CliCommandPresentation>;
-  auth: unknown;
 }
 
 /**
@@ -159,13 +167,20 @@ export async function createCliInvoker<
   TGlobals extends ZodObject = ZodObject,
 >(
   config: CliInvokerConfig<TAuth, TContext, TGlobals>,
-  globals: z.output<TGlobals> = {} as z.output<TGlobals>,
+  globals?: Record<string, unknown>,
 ): Promise<CliInvoker> {
-  const auth = await (config.resolveAuth ? config.resolveAuth(globals) : config.auth);
+  // Parsed through the application's own schema, exactly as `createCli` parses
+  // what it lifts out of argv. Handing the raw object through would skip every
+  // declared default, and those defaults reach `resolveAuth` and `context` —
+  // so a line of a stream would run as a different identity, or against a
+  // different base URL, than the same call typed at a prompt. That is the one
+  // divergence this whole seam exists to prevent.
+  const typedGlobals = parseCliGlobals(config.globalOptions, globals);
+  const auth = await (config.resolveAuth ? config.resolveAuth(typedGlobals) : config.auth);
   const { tools, help } = buildCliSurface(config, auth, new Map(), new Set());
   const runTool = createToolRunner({
     source: 'cli',
-    context: { ...config.context?.(auth, globals), signal: config.signal },
+    context: { ...config.context?.(auth, typedGlobals), signal: config.signal },
     hooks: config.hooks,
     lifecycle: config.lifecycle,
     errorHint: config.errorHint,

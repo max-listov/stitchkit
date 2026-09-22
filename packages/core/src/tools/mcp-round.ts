@@ -15,14 +15,13 @@ import {
   type EndpointMcpInputRequired,
   type EndpointMcpPolicy,
   type McpCallContext,
-  type McpInputRequiredCall,
   type McpInputRequiredResolver,
   type McpReportProgress,
   type McpRoundOutcome,
 } from '../contract';
 import { argumentsDigest } from '../internal/stable-digest';
 import { isRecord } from '../internal/typed';
-import type { ToolResult } from './execute';
+import { parseToolCallArguments, type ToolResult } from './execute';
 import { createMcpProgressReporter, mcpProgressToken } from './mcp-progress';
 import {
   staticInputRounds,
@@ -240,41 +239,36 @@ async function resolveRequests(
     runtime?: McpRoundRuntime;
     runTool: ToolRunner;
     formatFailure: (result: ToolResult) => CallToolResult;
+    coerceJsonArgs?: boolean;
   },
   policy: EndpointMcpPolicy,
-  round: number,
 ): Promise<
-  { requests: readonly EndpointMcpInputRequired[] } | { failure: McpRoundResolution }
+  | { requests: readonly EndpointMcpInputRequired[]; guarded: boolean }
+  | { failure: McpRoundResolution }
 > {
   const declared = staticInputRounds(policy);
-  if (declared) return { requests: declared };
-  const { runTool } = options;
+  if (declared) return { requests: declared, guarded: false };
 
-  let call: McpInputRequiredCall | undefined;
-  const guarded = await runTool(
-    {
-      ...options.tool,
-      method: {
-        ...options.tool.method,
-        outputSchema: undefined,
-        handler: (context: { params: unknown; input: unknown }) => {
-          call = { params: context.params, input: context.input };
-          return undefined;
-        },
-      },
-    },
+  // The parsed value, without running the call again. Parsing is pure and is
+  // the same function the call parses with, so the resolver cannot see a
+  // different value than the handler will — and asking what the arguments mean
+  // costs nothing a gate would charge for.
+  const parsed = parseToolCallArguments(
+    options.tool.method,
     options.rawArgs,
-    transportContext(options.context, options.tool.name, 'input_required', round),
+    // Matches the mount default; a mount that turns coercion off turns it off
+    // here too, because the resolver must see what the handler will see.
+    options.coerceJsonArgs ?? true,
   );
-  if (!guarded.ok) {
-    return { failure: { kind: 'response', response: options.formatFailure(guarded) } };
+  if (!parsed.ok) {
+    // A call whose arguments do not validate has no questions to ask; the
+    // ordinary pipeline below reports the failure in its own words.
+    return { requests: [], guarded: false };
   }
-  if (!call) throw new Error('[stitchkit] MRTR resolver never saw the parsed call');
-
   const resolver = policy.inputRequired as McpInputRequiredResolver;
-  const resolved = await resolver(call);
+  const resolved = await resolver({ params: parsed.params, input: parsed.input });
   validateResolvedInputRounds(options.tool, resolved, options.runtime?.maxRounds ?? 1);
-  return { requests: resolved };
+  return { requests: resolved, guarded: false };
 }
 
 /** Resolve an ordered opt-in MRTR sequence before the canonical handler executes. */
@@ -286,6 +280,8 @@ export async function resolveMcpRound(options: {
   runtime?: McpRoundRuntime;
   runTool: ToolRunner;
   formatFailure: (result: ToolResult) => CallToolResult;
+  /** The mount's JSON-coercion setting, so the resolver parses as the call does. */
+  coerceJsonArgs?: boolean;
 }): Promise<McpRoundResolution> {
   const { policy } = options;
   if (!policy) {
@@ -335,9 +331,32 @@ export async function resolveMcpRound(options: {
     }
   }
 
-  const resolution = await resolveRequests(options, policy, state?.round ?? 0);
+  // The guard runs BEFORE the resolver, and that ordering is the reason a
+  // dynamic policy costs one pipeline pass a static one does not. The resolver
+  // is consumer code that may reach a network — a model catalog, a feature
+  // flag — and running it for a caller the gate would refuse turns elicitation
+  // into an unauthenticated trigger. So authorisation first, questions second.
+  // The pass is reused by the round below rather than repeated.
+  const dynamic = staticInputRounds(policy) === undefined;
+  if (dynamic) {
+    const guarded = await runRoundSuccess(
+      options.tool,
+      options.rawArgs,
+      options.runTool,
+      transportContext(
+        options.context,
+        options.tool.name,
+        'input_required',
+        state?.round ?? 0,
+      ),
+    );
+    if (!guarded.ok) return { kind: 'response', response: options.formatFailure(guarded) };
+  }
+
+  const resolution = await resolveRequests(options, policy);
   if ('failure' in resolution) return resolution.failure;
   const requests = resolution.requests;
+  const alreadyGuarded = dynamic;
   const planDigest = roundPlanDigest(requests);
 
   // An empty plan is a legitimate answer from a resolver: this call needs
@@ -359,14 +378,16 @@ export async function resolveMcpRound(options: {
         message: 'Input responses require a valid continuation state',
       });
     }
-    const guarded = await runRoundSuccess(
-      options.tool,
-      options.rawArgs,
-      options.runTool,
-      transportContext(options.context, options.tool.name, 'input_required', 0),
-    );
-    if (!guarded.ok) {
-      return { kind: 'response', response: options.formatFailure(guarded) };
+    if (!alreadyGuarded) {
+      const guarded = await runRoundSuccess(
+        options.tool,
+        options.rawArgs,
+        options.runTool,
+        transportContext(options.context, options.tool.name, 'input_required', 0),
+      );
+      if (!guarded.ok) {
+        return { kind: 'response', response: options.formatFailure(guarded) };
+      }
     }
     const request = requests[0];
     if (!request) throw new Error('[stitchkit] validated MRTR policy has no first round');
@@ -450,14 +471,16 @@ export async function resolveMcpRound(options: {
   const nextRound = state.round + 1;
   const nextRequest = requests[nextRound];
   if (nextRequest) {
-    const guarded = await runRoundSuccess(
-      options.tool,
-      options.rawArgs,
-      options.runTool,
-      transportContext(options.context, options.tool.name, 'input_required', nextRound),
-    );
-    if (!guarded.ok) {
-      return { kind: 'response', response: options.formatFailure(guarded) };
+    if (!alreadyGuarded) {
+      const guarded = await runRoundSuccess(
+        options.tool,
+        options.rawArgs,
+        options.runTool,
+        transportContext(options.context, options.tool.name, 'input_required', nextRound),
+      );
+      if (!guarded.ok) {
+        return { kind: 'response', response: options.formatFailure(guarded) };
+      }
     }
     const requestState = await options.runtime.codec.mint(
       {

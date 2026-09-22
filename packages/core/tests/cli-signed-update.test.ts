@@ -227,6 +227,45 @@ describe('a signature survives the schema and decides before the download', () =
     expect(verifyCliManifest(tampered, signature, trust)).toBe('invalid');
   });
 
+  test('flipping `compression` invalidates the signature', async () => {
+    // It decides how the transferred bytes are expanded, and expansion happens
+    // before any digest can disagree. Unsigned, one byte of the document turns
+    // a small download into a large allocation with the proof still valid.
+    const manifest = manifestFor('https://example.invalid/a');
+    const signature = signCliManifest(manifest, {
+      keyId: 'release-2026',
+      privateKey: keys.privateKey,
+    });
+    const first = manifest.assets[0];
+    if (!first) throw new Error('expected an asset');
+    const flipped: CliBuildManifest = {
+      ...manifest,
+      assets: [{ ...first, compression: 'none' }],
+    };
+    expect(verifyCliManifest(flipped, signature, trust)).toBe('invalid');
+  });
+
+  test('an archive that expands past its declared size is refused', async () => {
+    // The declared size is signed, so this ceiling is the publisher's own
+    // number rather than a guess — and it is checked while expanding, not after.
+    const big = Buffer.alloc(2 * 1024 * 1024, 0x41);
+    const server = Bun.serve({ port: 0, fetch: () => new Response(gzipSync(big)) });
+    servers.push(server);
+    await expect(
+      applyCliUpdate({
+        asset: {
+          ...currentCliBuildTarget(),
+          url: `http://127.0.0.1:${server.port}/asset.gz`,
+          compression: 'gzip',
+          size: 64,
+          sha256: createHash('sha256').update(big).digest('hex'),
+        },
+        targetPath: join(scratch(), 'app'),
+        allowPrivateHosts: true,
+      }),
+    ).rejects.toThrow();
+  });
+
   test('moving an asset to a new URL does not invalidate it', async () => {
     // Where a file is served from is the publisher's business; what it contains
     // is what was proven.
@@ -347,15 +386,20 @@ describe('the build being replaced is kept, and can be put back', () => {
   test('the previous bytes are kept, runnable, and their digest is reported', async () => {
     const directory = scratch();
     const target = join(directory, 'app');
-    writeFileSync(target, OLD_BINARY, { mode: 0o755 });
-    chmodSync(target, 0o755);
+    writeFileSync(target, OLD_BINARY, { mode: 0o700 });
+    // `0o700` rather than the `0o755` the update writes: with `0o755` the
+    // assertion passes whether the mode is carried over or hard-coded, which
+    // is how the first version of this test stayed green against a mutation
+    // that ignored the target's mode entirely.
+    chmodSync(target, 0o700);
 
     const applied = await install(directory, join(directory, 'app.previous'));
     expect(readFileSync(target)).toEqual(BINARY);
     expect(applied.backupSha256).toBe(OLD_DIGEST);
     expect(readFileSync(join(directory, 'app.previous'))).toEqual(OLD_BINARY);
-    // A backup that cannot be executed is not a way back.
-    expect(statSync(join(directory, 'app.previous')).mode & 0o111).not.toBe(0);
+    // A backup that cannot be executed is not a way back — and it is the
+    // TARGET's mode, not a convenient default.
+    expect(statSync(join(directory, 'app.previous')).mode & 0o777).toBe(0o700);
   });
 
   test('a first install has nothing to keep, and that is not a failure', async () => {

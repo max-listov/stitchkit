@@ -163,6 +163,26 @@ describe('a request row is unchanged, and now says so explicitly', () => {
     });
   });
 
+  test('a tool-call row is marked a request too', async () => {
+    // Tool rows go to a different sink and were the easy half to forget: a
+    // filter reading `kind` must not find it missing on a third of the table.
+    const events: RequestEvent[] = [];
+    const observability = createObservability({
+      tools: { write: (event) => void events.push(event) },
+    });
+    await observability.toolCall.afterToolCall?.({
+      toolName: 'render_media',
+      args: {},
+      result: { ok: true, data: { id: 'x' } },
+      durationMs: 3,
+      context: { source: 'mcp' },
+      endpoint: { serviceName: 'media', key: 'render', method: 'POST' },
+    } as never);
+    await observability.flush();
+    expect(events[0]?.kind).toBe('request');
+    expect(events[0]?.method).toBe('TOOL');
+  });
+
   test('a context written before `kind` existed still reads as a request', async () => {
     // Nothing in a consuming application has to start declaring it.
     const { events, observability } = collector();

@@ -1,5 +1,51 @@
 # Upgrading stitchkit
 
+## Unreleased migration: 0.92.0
+
+1. **`RequestEvent.method`, `path` and `statusCode` are optional.** Work that did
+   not arrive over a transport now records their **absence** instead of inventing
+   values — a background loop used to write `method: 'AGENT'`, which is not a
+   verb. **Who must act:** anyone whose `RequestEventSinkConfig.write` puts these
+   into NOT NULL columns, or whose filter reads `event.method`.
+
+   ```ts
+   // before
+   write: (event) => db.audit.create({ data: { method: event.method, path: event.path, status: event.statusCode } })
+   // after — a job has none of the three; `kind` says which kind of row it is
+   write: (event) => db.audit.create({ data: {
+     kind: event.kind,
+     name: event.name ?? null,
+     method: event.method ?? null,
+     path: event.path ?? null,
+     status: event.statusCode ?? null,
+   } })
+   ```
+
+   A filter written as `event.method !== 'GET'` keeps jobs (`undefined !== 'GET'`),
+   which is usually what you want. To exclude them deliberately:
+   `event.kind === 'request' && event.method !== 'GET'`.
+
+2. **`applyCliUpdate` needs the manifest when given a trust root.** The signature
+   covers the manifest and every asset digest together, so an asset alone cannot
+   be verified. **Who must act:** only callers adopting signature verification;
+   the unsigned call is unchanged.
+
+   ```ts
+   // before
+   await applyCliUpdate({ asset })
+   // after
+   await applyCliUpdate({ asset, manifest: check.manifest, trust })
+   ```
+
+3. **An MCP continuation minted before this release is refused once.** The signed
+   round state now carries a fingerprint of the question plan, checked on every
+   round, so a plan that moved between rounds is a refusal rather than a
+   different question asked under the previous one's key. A conversation already
+   in flight at deploy time has no fingerprint and gets
+   `INVALID_REQUEST_STATE`; the host re-asks and the second attempt succeeds.
+   **Who must act:** nobody — but expect a small number of these in the minutes
+   after a deploy, and do not read them as tampering.
+
 ## Released migration: 0.91.0
 
 1. `STITCH_ERROR_STATUS` gained `NOT_IMPLEMENTED` (501). An **exhaustive** error

@@ -51,14 +51,22 @@ export function createMcpProgressReporter(context: ServerContext): McpReportProg
   const token = mcpProgressToken(context);
   if (token === undefined) return async () => undefined;
   let sent = 0;
+  let highWater = 0;
   return async (update: McpProgressUpdate): Promise<void> => {
     sent += 1;
+    // The protocol requires progress to advance. A handler that reports
+    // `{progress: 50, total: 100}` and then names a stage without a number
+    // would otherwise send 50 and then 2, and a host is entitled to treat that
+    // as an error or drop it. The ordinal never walks back past a number the
+    // handler already gave.
+    const value = update.progress ?? Math.max(sent, highWater + 1);
+    highWater = Math.max(highWater, value);
     try {
       await context.mcpReq.notify({
         method: 'notifications/progress',
         params: {
           progressToken: token,
-          progress: update.progress ?? sent,
+          progress: value,
           ...(update.total !== undefined && { total: update.total }),
           ...(update.message !== undefined && { message: update.message }),
         },

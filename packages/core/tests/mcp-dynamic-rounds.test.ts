@@ -18,6 +18,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import {
+  AppError,
   defineContract,
   type McpInputRequiredResolver,
   type RuntimeContext,
@@ -86,7 +87,11 @@ function asked(result: Record<string, unknown>): { key: string; message: string 
   return { key, message: request.params.message };
 }
 
-function handlerFor(resolve: McpInputRequiredResolver, maxRounds?: number) {
+function handlerFor(
+  resolve: McpInputRequiredResolver,
+  maxRounds?: number,
+  hooks?: { beforeHandle?: () => void; afterToolCall?: () => void },
+) {
   const contract = defineContract(
     { prefix: 'render' },
     {
@@ -111,6 +116,8 @@ function handlerFor(resolve: McpInputRequiredResolver, maxRounds?: number) {
     serverInfo: { name: 'dyn', version: '1' },
     auth: () => ({ identity: 'alpha' }),
     services: [service],
+    ...(hooks?.afterToolCall && { hooks: { afterToolCall: hooks.afterToolCall } }),
+    ...(hooks?.beforeHandle && { lifecycle: { beforeHandle: hooks.beforeHandle } }),
     multiRound: {
       state: { key: KEY, principal: () => 'alpha' },
       ...(maxRounds !== undefined && { serving: { maxRounds } }),
@@ -259,5 +266,97 @@ describe('elicitation rounds can be chosen from the arguments', () => {
     );
     expect(wire).toContain('INTERNAL_SERVER_ERROR');
     expect(logged).toContain('duplicate input key');
+  });
+});
+
+/*
+ * What a dynamic declaration costs, held to one pass.
+ *
+ * Resolving needs the parsed arguments, and the only thing that produces them
+ * is the contract pipeline — which the round already runs, as the guard that
+ * puts authorisation before a user is asked anything. The first version ran it
+ * twice: once to resolve and once to guard. Nothing failed, which is the
+ * problem — `lifecycle.beforeHandle` is where rate limits and quotas are
+ * charged, and every elicitation round was charging them twice and writing two
+ * `input-round` audit rows for one question asked.
+ */
+describe('what a dynamic declaration costs, exactly', () => {
+  function counted(resolve: McpInputRequiredResolver) {
+    const gates: number[] = [];
+    const rows: number[] = [];
+    const handler = handlerFor(resolve, undefined, {
+      beforeHandle: () => void gates.push(1),
+      afterToolCall: () => void rows.push(1),
+    });
+    return { handler, gates, rows };
+  }
+
+  test('a dynamic round charges the gate once, like a static one', async () => {
+    const { handler, gates, rows } = counted(perModel);
+    await handler.fetch(call({ model: 'image' }));
+    expect(gates).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+  });
+
+  test('a call that needs no rounds pays the guard once and then runs — two, and that is the price', async () => {
+    const { handler, gates } = counted(perModel);
+    await handler.fetch(call({ model: 'text' }));
+    // One guard, then the operation itself. The guard cannot be skipped: the
+    // resolver is consumer code that may reach a network, and running it for a
+    // caller the gate would refuse would make elicitation an unauthenticated
+    // trigger. A static declaration pays one, because it needs no resolver.
+    expect(gates).toHaveLength(2);
+  });
+
+  test('a static declaration on the same call still pays one', async () => {
+    // The comparison that makes the number above a price rather than a bug.
+    const gates: number[] = [];
+    const staticContract = defineContract(
+      { prefix: 'render' },
+      {
+        create: {
+          method: 'POST',
+          path: '/',
+          desc: 'Render with a model',
+          expose: ['MCP'],
+          input: z.object({ model: z.string() }),
+          output: z.object({ model: z.string() }),
+        },
+      },
+    );
+    const handler = createMcpHandler({
+      serverInfo: { name: 'dyn', version: '1' },
+      auth: () => ({ identity: 'alpha' }),
+      services: [
+        createImplement<RuntimeContext>()(staticContract, {
+          create: (context) => ({ model: context.input.model }),
+        }),
+      ],
+      lifecycle: { beforeHandle: () => void gates.push(1) },
+      multiRound: { state: { key: KEY, principal: () => 'alpha' } },
+    });
+    await handler.fetch(call({ model: 'text' }));
+    expect(gates).toHaveLength(1);
+  });
+
+  test('a refusing gate still refuses, and the resolver never runs behind it', async () => {
+    let resolved = 0;
+    const handler = handlerFor(
+      (input) => {
+        resolved += 1;
+        return perModel(input);
+      },
+      undefined,
+      {
+        beforeHandle: () => {
+          throw new AppError('FORBIDDEN', 'no', 403);
+        },
+      },
+    );
+    const result = await body(await handler.fetch(call({ model: 'image' })));
+    expect(JSON.stringify(result)).toContain('FORBIDDEN');
+    // The guard runs inside the same pass that would have produced the parsed
+    // value, so a refusal happens before the resolver is reached.
+    expect(resolved).toBe(0);
   });
 });

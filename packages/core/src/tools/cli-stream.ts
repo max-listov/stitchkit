@@ -40,6 +40,42 @@ export interface CliStreamCommandConfig {
   description?: string;
   /** The compiled surface to run against. */
   invoker: CliInvoker | (() => Promise<CliInvoker>);
+  /**
+   * Where the lines come from. Default: `process.stdin`, **as they arrive**.
+   *
+   * This is the difference between a pipe and a conversation. The framework's
+   * ordinary stdin routing accumulates the whole stream and hands the command a
+   * string, which is right for `--prompt "$(cat file)"` and fatally wrong here:
+   * an agent that writes one line and waits for its answer would wait for its
+   * own EOF, which never comes. So the stream owns its input and answers each
+   * line as it is read.
+   */
+  readLines?: () => AsyncIterable<string>;
+}
+
+/**
+ * Lines from a byte stream, delivered as they arrive.
+ *
+ * Split on `\n` with a trailing `\r` dropped, so a producer on Windows is not a
+ * silent parse failure on every line. A final line with no newline is delivered
+ * at end of stream rather than discarded.
+ */
+export async function* readStdinLines(
+  source: AsyncIterable<Uint8Array | string> = process.stdin,
+): AsyncIterable<string> {
+  const decoder = new TextDecoder();
+  let pending = '';
+  for await (const chunk of source) {
+    pending += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+    let newline = pending.indexOf('\n');
+    while (newline !== -1) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      yield line.endsWith('\r') ? line.slice(0, -1) : line;
+      newline = pending.indexOf('\n');
+    }
+  }
+  if (pending !== '') yield pending.endsWith('\r') ? pending.slice(0, -1) : pending;
 }
 
 function parseLine(
@@ -77,22 +113,51 @@ function malformed(message: string): CliStreamAnswer {
   };
 }
 
-/** Run every line of `input`, answering each one. */
+/**
+ * Run each line as it arrives, answering before reading the next.
+ *
+ * Sequential on purpose: the answers carry ids, so a consumer could correlate
+ * out-of-order ones — but a stream that runs ahead of its answers removes the
+ * one form of backpressure an agent has, which is not answering yet.
+ */
 export async function runCliStream(
   invoker: CliInvoker,
-  input: string,
+  lines: AsyncIterable<string>,
   onAnswer: (answer: CliStreamAnswer) => void,
+  hooks: CliStreamHooks = {},
 ): Promise<void> {
-  for (const line of input.split('\n')) {
+  for await (const line of lines) {
     if (line.trim() === '') continue;
     const parsed = parseLine(line);
     if (!parsed.ok) {
       onAnswer(parsed.answer);
       continue;
     }
-    const outcome = await invoker.invoke(parsed.value.command, parsed.value.args);
-    onAnswer({ id: parsed.value.id, ...outcome });
+    const { id, command, args } = parsed.value;
+    const answered = hooks.before?.(id, { command, args });
+    if (answered) {
+      onAnswer(answered);
+      continue;
+    }
+    const outcome = await invoker.invoke(command, args);
+    hooks.after?.(id, { command, args }, outcome);
+    onAnswer({ id, ...outcome });
   }
+}
+
+/** What a caller decides per line, without owning the loop that reads them. */
+export interface CliStreamHooks {
+  /** Answer this line without running it — a replay, or a refusal. */
+  before?: (
+    id: string,
+    line: { command: string; args: Record<string, unknown> },
+  ) => CliStreamAnswer | undefined;
+  /** Observe what running it produced, before the answer is written. */
+  after?: (
+    id: string,
+    line: { command: string; args: Record<string, unknown> },
+    outcome: CliInvocationResult,
+  ) => void;
 }
 
 /**
@@ -106,15 +171,11 @@ export function defineCliStreamCommand(config: CliStreamCommandConfig) {
     name: config.name ?? 'stream',
     description:
       config.description ?? 'Run one operation per JSON line of stdin, answering each',
-    // A required string field, so the framework's own stdin routing fills it:
-    // a piped stream lands here exactly as `--lines "$(cat)"` would, and no
-    // second way of reading stdin is invented for this command.
-    input: z.object({ lines: z.string() }),
+    input: z.object({}),
     handler: async (context) => {
       const invoker =
         typeof config.invoker === 'function' ? await config.invoker() : config.invoker;
-      const input = context.input.lines;
-      await runCliStream(invoker, input, (answer) => {
+      await runCliStream(invoker, (config.readLines ?? readStdinLines)(), (answer) => {
         context.stdout(`${JSON.stringify(answer)}\n`);
       });
     },
@@ -141,7 +202,6 @@ export function defineCliBatchCommand(config: CliBatchCommandConfig) {
       config.description ??
       'Run one operation per JSON line of stdin, resuming from a checkpoint',
     input: z.object({
-      lines: z.string(),
       checkpoint: z.string().optional(),
     }),
     handler: async (context) => {
@@ -150,45 +210,52 @@ export function defineCliBatchCommand(config: CliBatchCommandConfig) {
       const path =
         context.input.checkpoint ?? config.checkpointPath ?? '.stitchkit-batch.json';
       const checkpoint = readCliCheckpoint(path);
-      const input = context.input.lines;
 
-      for (const line of input.split('\n')) {
-        if (line.trim() === '') continue;
-        const parsed = parseLine(line);
-        if (!parsed.ok) {
-          context.stdout(`${JSON.stringify(parsed.answer)}\n`);
-          continue;
-        }
-        const { id, command, args } = parsed.value;
-        const digest = checkpoint.digestOf({ command, args });
-        const recorded = checkpoint.entries[id];
-        if (recorded) {
-          if (recorded.digest !== digest) {
-            const conflict: CliStreamAnswer = {
-              id,
-              ok: false,
-              exitCode: 2,
-              error: {
-                code: 'CONFLICT',
-                message:
-                  'this id was already run with different content — change the id or start a new checkpoint',
-              },
-            };
-            context.stdout(`${JSON.stringify(conflict)}\n`);
-            continue;
-          }
-          const replay = isRecord(recorded.answer) ? recorded.answer : {};
-          context.stdout(`${JSON.stringify({ ...replay, id, replayed: true })}\n`);
-          continue;
-        }
-        const outcome = await invoker.invoke(command, args);
-        const answer: CliStreamAnswer = { id, ...outcome };
-        checkpoint.record(id, digest, outcome);
-        // Written per line, not at the end: a checkpoint that only survives a
-        // clean finish protects against exactly the case that does not happen.
-        writeCliCheckpoint(path, checkpoint);
-        context.stdout(`${JSON.stringify(answer)}\n`);
-      }
+      await runCliStream(
+        invoker,
+        (config.readLines ?? readStdinLines)(),
+        (answer) => {
+          context.stdout(`${JSON.stringify(answer)}\n`);
+        },
+        {
+          // The batch differs from the stream in one decision per line — has
+          // this already run — so it supplies that decision rather than
+          // repeating the loop that reads, parses and answers.
+          before: (id, line) => {
+            const digest = checkpoint.digestOf(line);
+            const recorded = checkpoint.entries[id];
+            if (!recorded) return undefined;
+            if (recorded.digest !== digest) {
+              return {
+                id,
+                ok: false,
+                exitCode: 2,
+                error: {
+                  code: 'CONFLICT',
+                  message:
+                    'this id was already run with different content — change the id or start a new checkpoint',
+                },
+              };
+            }
+            const replay = isRecord(recorded.answer) ? recorded.answer : {};
+            return { ...replay, id, replayed: true } as CliStreamAnswer;
+          },
+          after: (id, line, outcome) => {
+            // Only a SUCCESS is recorded. The reason to record at all is that
+            // re-running an operation that already happened repeats its effect;
+            // a failure had no effect, and remembering it would make the batch
+            // unfinishable — one rate limit and that line replays its own
+            // failure forever, with the only escape being to delete the
+            // checkpoint and lose the lines that did succeed.
+            if (!outcome.ok) return;
+            checkpoint.record(id, checkpoint.digestOf(line), outcome);
+            // Written per line, not at the end: a checkpoint that only survives
+            // a clean finish protects against exactly the case that does not
+            // happen.
+            writeCliCheckpoint(path, checkpoint);
+          },
+        },
+      );
     },
   });
 }

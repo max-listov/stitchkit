@@ -161,6 +161,9 @@ describe('one executable input parser per tool call', () => {
         // an outcome observed through `afterToolCall` can be correlated with
         // the call the model actually made.
         toolCallId: 'call',
+        // Present on every tool call, listening or not, so a handler reports
+        // what it is doing without first asking which transport it is on.
+        reportProgress: expect.any(Function),
       },
     ]);
   });

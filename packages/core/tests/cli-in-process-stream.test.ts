@@ -22,7 +22,12 @@ import { AppError, defineContract } from '../src/contract';
 import { createImplement } from '../src/server/implement';
 import { createCli } from '../src/tools/cli';
 import { createCliInvoker } from '../src/tools/cli-invoke';
-import { defineCliBatchCommand, defineCliStreamCommand } from '../src/tools/cli-stream';
+import {
+  defineCliBatchCommand,
+  defineCliStreamCommand,
+  readStdinLines,
+  runCliStream,
+} from '../src/tools/cli-stream';
 
 const contract = defineContract(
   { prefix: 'items' },
@@ -63,17 +68,25 @@ async function invoker() {
   return createCliInvoker(base);
 }
 
+/** Feed lines the way a live producer does: one at a time, never closing early. */
+function feed(lines: string): () => AsyncIterable<string> {
+  return async function* () {
+    for (const line of lines.split('\n')) yield line;
+  };
+}
+
 async function runCli(argv: string[], stdin?: string) {
   let out = '';
   let err = '';
   let code = -1;
   const surface = await invoker();
+  const readLines = feed(stdin ?? '');
   await createCli({
     ...base,
     version: '1.0.0',
     commands: [
-      defineCliStreamCommand({ name: 'jsonl', invoker: surface }),
-      defineCliBatchCommand({ name: 'batch', invoker: surface }),
+      defineCliStreamCommand({ name: 'jsonl', invoker: surface, readLines }),
+      defineCliBatchCommand({ name: 'batch', invoker: surface, readLines }),
     ],
     argv,
     stdout: (text) => {
@@ -273,6 +286,26 @@ describe('a batch resumes instead of repeating', () => {
     ]);
   });
 
+  test('a failed line is retried on the next run, not replayed as a failure forever', async () => {
+    // The first version recorded every outcome. One rate limit or dropped
+    // connection and the line replayed its own failure on every future run,
+    // with the only escape being to delete the checkpoint — which also throws
+    // away the lines that did succeed. Recording exists because re-running a
+    // SUCCESS repeats its effect; a failure had no effect to repeat.
+    const checkpoint = join(scratch(), 'batch.json');
+    const line = JSON.stringify({ id: 'a', command: 'fail_item', args: {} });
+    const first = await runCli(['batch', '--checkpoint', checkpoint], line);
+    expect(answers(first.out)[0]?.ok).toBe(false);
+
+    const retry = await runCli(
+      ['batch', '--checkpoint', checkpoint],
+      JSON.stringify({ id: 'a', command: 'create_item', args: { title: 'recovered' } }),
+    );
+    // Not a CONFLICT either: nothing was recorded under that id, so the line is
+    // free to be corrected and run.
+    expect(answers(retry.out)[0]?.ok).toBe(true);
+  });
+
   test('an unreadable checkpoint starts a new one rather than refusing to run', async () => {
     const checkpoint = join(scratch(), 'batch.json');
     writeFileSync(checkpoint, 'not json');
@@ -281,6 +314,162 @@ describe('a batch resumes instead of repeating', () => {
       JSON.stringify({ id: 'a', command: 'create_item', args: { title: 'fresh' } }),
     );
     expect(answers(out)[0]?.ok).toBe(true);
+  });
+});
+
+/*
+ * The half that makes it a conversation rather than a pipe.
+ *
+ * The framework's ordinary stdin routing accumulates the whole stream and hands
+ * a command one string. For `--prompt "$(cat file)"` that is right; here it is
+ * fatal — an agent that writes one line and waits for the answer would be
+ * waiting for its own EOF, which never comes. The first version of this command
+ * did exactly that, and every test passed, because a test feeds a closed pipe.
+ */
+describe('a line is answered before the next one is read', () => {
+  test('the first answer arrives while the producer is still open', async () => {
+    const surface = await invoker();
+    let released!: () => void;
+    const secondLine = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    const answered: string[] = [];
+
+    async function* producer(): AsyncIterable<string> {
+      yield JSON.stringify({ id: 'a', command: 'create_item', args: { title: 'one' } });
+      // Nothing more is produced until the first answer has been seen. If the
+      // reader waited for EOF this would deadlock rather than fail.
+      await secondLine;
+      yield JSON.stringify({ id: 'b', command: 'create_item', args: { title: 'two' } });
+    }
+
+    const finished = runCliStream(surface, producer(), (answer) => {
+      answered.push(answer.id);
+      if (answer.id === 'a') released();
+    });
+    await Promise.race([
+      finished,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('stream waited for EOF')), 2_000),
+      ),
+    ]);
+    expect(answered).toEqual(['a', 'b']);
+  });
+
+  test('a producer that never closes still gets its answers', async () => {
+    const surface = await invoker();
+    const answered: string[] = [];
+    let stop!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      stop = resolve;
+    });
+
+    async function* endless(): AsyncIterable<string> {
+      let n = 0;
+      while (n < 3) {
+        n += 1;
+        yield JSON.stringify({
+          id: `n${n}`,
+          command: 'create_item',
+          args: { title: `t${n}` },
+        });
+      }
+      // Hold the stream open the way a live agent's stdin is held open.
+      await closed;
+    }
+
+    const finished = runCliStream(surface, endless(), (answer) => {
+      answered.push(answer.id);
+      if (answered.length === 3) stop();
+    });
+    await finished;
+    expect(answered).toEqual(['n1', 'n2', 'n3']);
+  });
+});
+
+describe('lines are split the way producers actually write them', () => {
+  async function linesOf(chunks: string[]): Promise<string[]> {
+    const out: string[] = [];
+    async function* source(): AsyncIterable<string> {
+      for (const chunk of chunks) yield chunk;
+    }
+    for await (const line of readStdinLines(source())) out.push(line);
+    return out;
+  }
+
+  test('a line split across two chunks is one line', async () => {
+    expect(await linesOf(['{"id":"a","comm', 'and":"x","args":{}}\n'])).toEqual([
+      '{"id":"a","command":"x","args":{}}',
+    ]);
+  });
+
+  test('CRLF does not become a parse failure on every line', async () => {
+    expect(await linesOf(['one\r\ntwo\r\n'])).toEqual(['one', 'two']);
+  });
+
+  test('a final line with no newline is delivered, not dropped', async () => {
+    expect(await linesOf(['one\ntwo'])).toEqual(['one', 'two']);
+  });
+
+  test('several lines in one chunk are all delivered', async () => {
+    expect(await linesOf(['a\nb\nc\n'])).toEqual(['a', 'b', 'c']);
+  });
+});
+
+/*
+ * The two paths cannot disagree — not by discipline, by construction.
+ *
+ * "One surface, one runner, one exit table" is easy to say and easy to lose:
+ * the invoker started with an unparsed `{}` for the application's globals and
+ * an unmerged exit-code map, so a line of a stream could run as a different
+ * identity and report a different code than the same call typed at a prompt.
+ */
+describe('a stream and a prompt resolve the same way', () => {
+  const globalOptions = z.object({ caller: z.string().default('default-key') });
+
+  test('a declared global default reaches the invoker, not an empty object', async () => {
+    let seen: unknown;
+    await createCliInvoker({
+      ...base,
+      globalOptions,
+      resolveAuth: (globals) => {
+        seen = globals.caller;
+        return { identity: globals.caller };
+      },
+    });
+    // Skipped, this is `undefined`, and `resolveAuth` selects a different
+    // identity than the command line would for the same invocation.
+    expect(seen).toBe('default-key');
+  });
+
+  test('an application code map does not erase the framework defaults', async () => {
+    const surface = await createCliInvoker({ ...base, exitCodes: { MY_OWN: 9 } });
+    const outcome = await surface.invoke('fail_item', {});
+    // `CONFLICT` still maps the way the printed path maps it; before the merge
+    // a partial map made every other code fall through to 1.
+    const printed = await runCli(['fail_item', '--json']);
+    expect(outcome.exitCode).toBe(printed.code);
+  });
+
+  test('a code that names an Object property is not an exit code', async () => {
+    // A tool error code is a free string and can arrive from a remote service.
+    // Read off the prototype, `constructor` returns a function, which
+    // `JSON.stringify` drops from the answer and `process.exit` cannot use.
+    const surface = await createCliInvoker(base);
+    const outcome = await surface.invoke('constructor', {});
+    expect(typeof outcome.exitCode).toBe('number');
+  });
+
+  test('both paths list the same commands', async () => {
+    const surface = await createCliInvoker(base);
+    const { out } = await runCli(['--help']);
+    for (const command of surface.commands) {
+      expect(out).toContain(command.name);
+    }
+    expect(surface.commands.map((command) => command.name).sort()).toEqual([
+      'create_item',
+      'fail_item',
+    ]);
   });
 });
 

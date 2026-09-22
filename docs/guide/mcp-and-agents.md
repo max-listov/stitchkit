@@ -420,15 +420,17 @@ progress notifications to it — and a handler reaches it through
 
 ```ts
 render: async (ctx) => {
-  await ctx.reportProgress({ message: 'queued' })
+  await ctx.reportProgress?.({ message: 'queued' })
   const job = await jobs.start(ctx.input)
-  await ctx.reportProgress({ message: 'rendering', progress: 1, total: 3 })
+  await ctx.reportProgress?.({ message: 'rendering', progress: 1, total: 3 })
   return await jobs.finish(job)
 }
 ```
 
-`reportProgress` is always present, so a handler never branches on transport.
-When the host asked for no progress it does nothing. It never throws and never
+`reportProgress` is present on every **tool** call — MCP, agent and CLI — so a
+handler never branches on transport, and it does nothing wherever nobody is
+listening. It is absent on the HTTP transport, which has no channel for it, so a
+handler that also serves HTTP writes `ctx.reportProgress?.(…)`. It never throws and never
 rejects: a message about work must not be able to kill the work it describes, so
 a refused notification leaves the host exactly where a host that never asked for
 progress already is.
@@ -538,9 +540,20 @@ list is fingerprinted into the signed state and re-checked every round; a plan
 that moved is refused, not asked. A resolver that reads only its arguments never
 sees this.
 
-A dynamic declaration costs one extra pass through the contract pipeline per
-round, because the parsed value is what the resolver needs and that pass is what
-produces it. A fixed list does not: its path is unchanged.
+**What a dynamic declaration costs.** One extra pass through the contract
+pipeline per round — `lifecycle.beforeHandle` runs once more and one more
+`toolPhase: 'input-round'` audit row is written. That is the price of ordering:
+the resolver is your code and may reach a network, so it runs **after**
+authorisation, never before, and the only thing that can authorise is a pipeline
+pass. Resolving itself is free — the arguments are parsed by the same pure
+function the call parses with, not by a second run of anything. A fixed list
+pays none of this; its call sequence is unchanged.
+
+One thing does change for a fixed list: the signed round state now carries a
+fingerprint of the question plan, and it is checked on every round. A
+conversation already in flight when you deploy this has no fingerprint in its
+state and is refused once with `INVALID_REQUEST_STATE`; the host re-asks and the
+retry succeeds.
 
 ### Guarding tools — `lifecycle`
 

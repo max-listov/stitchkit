@@ -247,6 +247,81 @@ export interface ToolArgumentExtension {
  * `AppError` becomes a tool error. Shared by `executeToolMethod` and both
  * transport mounts so every tool error has one shape.
  */
+
+/** What one tool call's arguments parse to — or why they did not. */
+export type ParsedToolCallArguments =
+  | { ok: true; params: unknown; input: unknown }
+  | { ok: false; message: string; thrown?: unknown };
+
+/**
+ * Split and validate a flat tool-argument object exactly as a call does.
+ *
+ * Exported so the ONE thing that needs the parsed value without running the
+ * call — an elicitation resolver choosing this call's questions — gets the same
+ * value the handler will get, rather than a second parse written beside this
+ * one that drifts on the next coercion change. It is pure: no lifecycle, no
+ * hooks, no audit row, so asking what the arguments mean costs nothing that a
+ * gate would charge for.
+ */
+export function parseToolCallArguments(
+  method: ToolOperation,
+  callArgs: Record<string, unknown>,
+  coerceJson: boolean,
+): ParsedToolCallArguments {
+  // Slice the flat tool args the way the HTTP transport slices a request: path
+  // params and body/query are disjoint sets of keys. Parsing each schema over
+  // only its own slice keeps a `.strict()` schema working as a tool, exactly
+  // as it works on HTTP — a single flat blob parsed against both would reject
+  // every call once either schema is strict.
+  const paramKeys = new Set(objectShapeKeys(method.paramsSchema));
+  let paramArgs: Record<string, unknown> = {};
+  let inputArgs: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(callArgs)) {
+    // A tool arg named `__proto__` would pollute the prototype chain.
+    if (isUnsafeKey(key)) continue;
+    if (paramKeys.has(key)) paramArgs[key] = value;
+    else inputArgs[key] = value;
+  }
+
+  // Coerce JSON-stringified array/object args (LLM double-serialization).
+  if (coerceJson) {
+    paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
+    inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
+  }
+
+  let params: unknown;
+  if (method.paramsSchema) {
+    let result: ReturnType<typeof method.paramsSchema.safeParse>;
+    try {
+      result = method.paramsSchema.safeParse(paramArgs);
+    } catch (err) {
+      return { ok: false, message: 'Invalid params', thrown: err };
+    }
+    if (!result.success) {
+      return { ok: false, message: `Invalid params: ${formatZodError(result.error)}` };
+    }
+    params = result.data;
+  }
+
+  let input: unknown;
+  if (method.inputSchema) {
+    let result: ReturnType<typeof method.inputSchema.safeParse>;
+    try {
+      result = method.inputSchema.safeParse(inputArgs);
+    } catch (err) {
+      return { ok: false, message: 'Invalid input', thrown: err };
+    }
+    if (!result.success) {
+      return { ok: false, message: `Invalid input: ${formatZodError(result.error)}` };
+    }
+    input = result.data;
+  }
+  return { ok: true, params, input };
+}
+
+/** Nobody is listening — the shape of that, so a handler need not check. */
+const noProgress = async (): Promise<void> => undefined;
+
 export function toolResultFromError(err: unknown): ToolFailure {
   const appErr = normalizeError(err);
   const result: ToolFailure = {
@@ -561,68 +636,25 @@ async function runToolMethod(
     rewrittenArgsApplied = true;
   }
 
-  // Slice the flat tool args the way the HTTP transport slices a request: path
-  // params and body/query are disjoint sets of keys. Parsing each schema over
-  // only its own slice keeps a `.strict()` schema working as a tool, exactly
-  // as it works on HTTP — a single flat blob parsed against both would reject
-  // every call once either schema is strict.
-  const paramKeys = new Set(objectShapeKeys(method.paramsSchema));
-  let paramArgs: Record<string, unknown> = {};
-  let inputArgs: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(callArgs)) {
-    // A tool arg named `__proto__` would pollute the prototype chain.
-    if (isUnsafeKey(key)) continue;
-    if (paramKeys.has(key)) paramArgs[key] = value;
-    else inputArgs[key] = value;
+  const parsed = parseToolCallArguments(method, callArgs, coerceJson);
+  if (!parsed.ok) {
+    return parsed.thrown !== undefined
+      ? finishThrown(parsed.thrown)
+      : finish({ ok: false, code: 'VALIDATION_ERROR', details: { message: parsed.message } });
   }
-
-  // Coerce JSON-stringified array/object args (LLM double-serialization).
-  if (coerceJson) {
-    paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
-    inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
-  }
-
-  let params: unknown;
-  if (method.paramsSchema) {
-    let result: ReturnType<typeof method.paramsSchema.safeParse>;
-    try {
-      result = method.paramsSchema.safeParse(paramArgs);
-    } catch (err) {
-      return finishThrown(err);
-    }
-    if (!result.success) {
-      return finish({
-        ok: false,
-        code: 'VALIDATION_ERROR',
-        details: { message: `Invalid params: ${formatZodError(result.error)}` },
-      });
-    }
-    params = result.data;
-  }
-
-  let input: unknown;
-  if (method.inputSchema) {
-    let result: ReturnType<typeof method.inputSchema.safeParse>;
-    try {
-      result = method.inputSchema.safeParse(inputArgs);
-    } catch (err) {
-      return finishThrown(err);
-    }
-    if (!result.success) {
-      return finish({
-        ok: false,
-        code: 'VALIDATION_ERROR',
-        details: { message: `Invalid input: ${formatZodError(result.error)}` },
-      });
-    }
-    input = result.data;
-  }
+  const { params, input } = parsed;
 
   try {
     // Framework-owned fields are written last so neither the static context
     // nor a `ToolExtend.resolve` result can shadow `params` / `input` /
     // `source` — the same guard the HTTP context builder applies.
     const ctx = {
+      // A no-op reporter under the call context, so `ctx.reportProgress` is
+      // present on EVERY tool call and a handler never branches on transport to
+      // say what it is doing. The MCP path overwrites it with one that can
+      // actually reach a listening host; on the others there is nobody to tell,
+      // which is the same state as an MCP host that asked for no progress.
+      reportProgress: noProgress,
       ...callContext,
       params,
       input,

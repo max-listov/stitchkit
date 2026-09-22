@@ -250,7 +250,14 @@ export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<Appl
   const transferred = await readCapped(response, config.maxBytes ?? DEFAULT_MAX_ASSET_BYTES);
   if (!transferred) throw new Error('[stitchkit] update download exceeded the size ceiling');
 
-  const bytes = config.asset.compression === 'gzip' ? gunzipSync(transferred) : transferred;
+  // Bounded by the size the manifest declares — which, with a trust root, is a
+  // signed number. Unbounded, a 0.3 MB archive expands to 300 MB before any
+  // digest can disagree with it, and the ceiling on the TRANSFER (256 MB)
+  // permits roughly a thousand times that on the output.
+  const bytes =
+    config.asset.compression === 'gzip'
+      ? gunzipSync(transferred, { maxOutputLength: config.asset.size })
+      : transferred;
   if (bytes.length !== config.asset.size) {
     throw new Error(
       `[stitchkit] update is ${bytes.length} bytes, manifest says ${config.asset.size} — refusing to install it`,

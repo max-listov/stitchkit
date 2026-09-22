@@ -1297,7 +1297,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings (`stringLengthByKey` raises the string bound for named keys such as `stack`) plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `runUnitOfWork` / `RunUnitOfWorkOptions` | function / _type_ | run work that did not arrive over a transport — an agent loop, a scheduled broadcast — inside one context, with the same completion record a request gets |
-| `RequestContextKind` | _type_ | `'request' | 'job'` — what the row describes, written on every event so a filter never has to read it off an absent `method` |
+| `RequestContextKind` | _type_ | `'request'` \| `'job'` — what the row describes, written on every event so a filter never has to read it off an absent `method` |
 | `ObservabilityConfig` | _type_ | independent request and tool sink configuration |
 | `Observability` | _type_ | `{ request?, toolCall, getStatus(), flush(bound?): Promise<boolean>, close(bound?) }` with bounded sink lifecycle |
 | `ObservabilityDrainBound` | _type_ | `timeoutMs` and/or `signal` limiting how long `flush`/`close` wait; the wait ends, outstanding writes do not |

@@ -61,9 +61,11 @@ export interface CliTrustRoot {
  *
  * Canonical JSON, so two producers that agree on the content agree on the
  * bytes — key order and whitespace are not allowed to decide whether a
- * signature verifies. Every asset contributes its target and its digest; `url`
- * does not, because where a file is served from is the publisher's business and
- * moving it must not invalidate the proof of what it contains.
+ * signature verifies. Every asset contributes its target, its compression, its
+ * size and its digest; `url` does not, because where a file is served from is
+ * the publisher's business and moving it must not invalidate the proof of what
+ * it contains. Everything that decides what happens to the bytes BEFORE the
+ * digest can be checked is signed; only the address is free.
  */
 export function cliManifestSigningPayload(manifest: CliBuildManifest): string {
   return serializeCanonicalJson({
@@ -74,6 +76,11 @@ export function cliManifestSigningPayload(manifest: CliBuildManifest): string {
     assets: manifest.assets.map((asset) => ({
       platform: asset.platform,
       arch: asset.arch,
+      // `compression` is signed because it decides how the transferred bytes
+      // are expanded, and expansion happens BEFORE the digest can be checked.
+      // Left unsigned, one byte of the document turns a 300 KB download into a
+      // 300 MB allocation with the signature still valid.
+      compression: asset.compression,
       size: asset.size,
       sha256: asset.sha256,
     })),

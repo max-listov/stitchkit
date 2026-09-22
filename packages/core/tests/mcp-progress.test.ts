@@ -17,6 +17,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract, type RuntimeContext } from '../src/contract';
 import { createImplement } from '../src/server/implement';
+import { mountAgent } from '../src/tools/agent';
 import { createMcpHandler } from '../src/tools/mcp-handler';
 import { createMcpProgressReporter } from '../src/tools/mcp-progress';
 
@@ -241,5 +242,51 @@ describe('a refused notification cannot fail the call', () => {
     await report({ message: 'one' });
     await report({ message: 'two' });
     expect(sent).toEqual([{ progressToken: 'tok', progress: 2, message: 'two' }]);
+  });
+});
+
+/*
+ * Present wherever a tool runs, so a handler never asks which transport it is on.
+ *
+ * The guide said "always present" while only the MCP path wrote it, which made
+ * the sentence false on three transports out of four and the recommended call a
+ * TypeError. The no-op now comes from the shared runner, and these hold the
+ * sentence to the code.
+ */
+describe('every tool call carries a reporter, listening or not', () => {
+  const service = {
+    name: 'jobs',
+    prefix: 'jobs',
+    scope: 'public',
+    methods: {
+      render: {
+        method: 'POST' as const,
+        path: '/',
+        serviceName: 'jobs',
+        key: 'render',
+        desc: 'Render',
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ done: z.boolean(), reported: z.boolean() }),
+        handler: async (context: { reportProgress?: (u: unknown) => Promise<void> }) => {
+          const present = typeof context.reportProgress === 'function';
+          // Called unconditionally, which is the whole claim: a handler that has
+          // to ask whether anyone is listening is a handler that branches on
+          // transport.
+          await context.reportProgress?.({ message: 'working' });
+          return { done: true, reported: present };
+        },
+      },
+    },
+  };
+
+  test('an agent-mounted tool has one, and calling it is a no-op rather than a crash', async () => {
+    const tools = mountAgent(service as never);
+    const execute = tools.render_job?.execute;
+    if (!execute) throw new Error('expected a mounted tool');
+    const result = await execute(
+      { id: 'a' },
+      { toolCallId: 'c', messages: [], context: undefined },
+    );
+    expect(result).toEqual({ done: true, reported: true });
   });
 });
