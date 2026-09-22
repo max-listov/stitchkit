@@ -53,7 +53,7 @@ export const observability = createObservability({
     write,
     includePayload: false, // default: no Request.clone(), payload is null
     includeCancelled: false, // default: keep client closes in access logs only
-    filter: (event) => event.method !== 'GET',
+    filter: (event) => event.method !== 'GET', // see the note on jobs below
   },
   tools: {
     write,
@@ -239,20 +239,55 @@ queryable across all three:
 
 | Field | Notes |
 |-------|-------|
-| `source` | `http` \| `mcp` \| `agent` |
-| `method` / `path` | the verb + path, or `TOOL` + `/{source}/{tool}` |
+| `source` | `http` \| `mcp` \| `agent` \| `job` |
+| `kind` | `request` \| `job` — written on **every** row, so a filter never has to read it off an absent `method` |
+| `name` | what the work is, on a job (`agent-loop`, `broadcast-send`); absent on a request, which its method and path name |
+| `method` / `path` | the verb + path, or `TOOL` + `/{source}/{tool}` — **absent** on a job, which arrived over no transport |
 | `serviceName` / `action` | stable contract identity of the operation (→ ADR 0022) — from the contract, not parsed from `path`; set on every surface, present even on a pre-handler 400 |
 | `toolName` | tool calls only |
 | `httpMethod` | the contract verb on **tool** events (their `method` is `TOOL`) — filter reads vs writes across both surfaces with `(event.httpMethod ?? event.method) !== 'GET'` |
 | `dimensions` | app-defined domain dimensions (tenant / project / entity id) — see [request context](#request-context) |
 | `traceId` / `spanId` / `parentSpanId` | [W3C trace context](#trace-context) |
 | `outcome` | optional `'cancelled'` on explicitly enabled HTTP client-close rows; ordinary rows omit it |
-| `ok` / `statusCode` | legacy success bit plus real HTTP status, or `200`/`400` for a tool; an opted-in cancellation is `false` / `499` |
+| `ok` / `statusCode` | legacy success bit plus real HTTP status, or `200`/`400` for a tool; an opted-in cancellation is `false` / `499`. `statusCode` is **absent** on a job — it had no transport to have a status on, and inventing one would be the same defect as the `method: 'AGENT'` this replaced. A job's outcome is `ok`, plus `errorCode` when it failed |
 | `durationMs` / `startedAt` | timing |
 | `errorCode` / `errorMessage` / `errorDetail` | failures only — `errorDetail` carries the structure the message flattens (e.g. Zod issues) |
 | `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled |
 | `resultSize` / `responseBytes` | result item count + serialised size |
 | `userId` / `ipAddress` / `userAgent` | identity |
+
+### Work that is not a request — `runUnitOfWork`
+
+An agent loop launched fire-and-forget, a scheduled broadcast, a scenario engine
+tick: each has a start, a duration and an outcome, and none of them arrived over
+a transport. Run one inside a context and it is audited like everything else:
+
+```ts
+await runUnitOfWork({ name: 'broadcast-send', observability }, async () => {
+  setRequestDimensions({ projectId })
+  await send()
+})
+```
+
+The row carries `kind: 'job'`, the `name`, the duration and the outcome, and
+carries **no** `method`, `path` or `statusCode`, because the work had none. That
+absence is the point. The alternative is what consuming code had to do before —
+write `method: 'AGENT'` into the field for verbs — and a row that names a verb
+nobody used is worse than a row that names none, because a filter reading
+`method !== 'GET'` counts it as a write and nothing looks wrong.
+
+Which is why **a filter on `method` needs a decision about jobs.** `auditChanges`
+makes it explicitly: a row with no verb is kept, because whether it changed
+anything cannot be answered from the row, and an audit that drops what it did not
+examine reports zero and looks exactly like a system in which nothing happened.
+A hand-written `event.method !== 'GET'` keeps jobs too (`undefined !== 'GET'`);
+`event.kind === 'request' && event.method !== 'GET'` is how you exclude them on
+purpose.
+
+Without an `observability` the work still runs inside a context, so trace ids,
+`setRequestDimensions` and the bounded logger behave — recording is a separate
+decision from having a context. `traceparent` continues the trace of whatever
+scheduled the work, instead of starting an unrelated one.
 
 ### Write the calls that changed something
 

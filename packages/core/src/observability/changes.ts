@@ -74,7 +74,12 @@ const SECURITY_STATUSES = new Set([401, 403]);
  * ```
  */
 export function auditChanges(event: RequestEvent): boolean {
-  if (SECURITY_STATUSES.has(event.statusCode)) return true;
+  if (event.statusCode !== undefined && SECURITY_STATUSES.has(event.statusCode)) return true;
   const verb = event.httpMethod ?? event.method;
+  // A unit of work with no transport has no verb to read, and the honest answer
+  // to "did this change anything" is that we cannot tell from the row. Keeping
+  // it is the safe half of that: an audit filter that drops what it did not
+  // examine reports zero and looks identical to nothing having happened.
+  if (verb === undefined) return true;
   return !READ_METHODS.has(verb.toUpperCase());
 }

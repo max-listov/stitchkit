@@ -494,7 +494,7 @@ describe('the log path cannot break the request', () => {
 
 describe('composition seam', () => {
   test('createServer emits request observability without an outer wrapper', async () => {
-    const events: Array<{ userAgent?: string; path: string }> = [];
+    const events: Array<{ userAgent?: string; path?: string }> = [];
     const observability = createObservability({
       request: {
         write: (event) => void events.push({ userAgent: event.userAgent, path: event.path }),

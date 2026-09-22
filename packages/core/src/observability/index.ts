@@ -36,6 +36,7 @@ export {
   getTraceId,
   getUserId,
   type RequestContext,
+  type RequestContextKind,
   runWithRequestContext,
   type SetRequestDimensionsOptions,
   setRequestDimensions,
@@ -78,3 +79,4 @@ export {
   resolveTraceContext,
   type TraceContext,
 } from './trace';
+export { type RunUnitOfWorkOptions, runUnitOfWork } from './work';

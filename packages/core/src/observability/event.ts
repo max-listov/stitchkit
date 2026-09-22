@@ -1,4 +1,5 @@
 import type { HttpMethod, McpCallContext, TransportSource } from '../contract';
+import type { RequestContextKind } from './context';
 import type { JsonValue } from './sanitize';
 
 /**
@@ -10,8 +11,24 @@ import type { JsonValue } from './sanitize';
 export interface RequestEvent {
   /** Surface the call arrived on. */
   source: TransportSource;
-  /** HTTP verb, or `TOOL` for a tool call. */
-  method: string;
+  /**
+   * A call that arrived, or work that ran on its own. Always written, including
+   * on requests: a filter that has to read "the absence of `method` means a
+   * job" is carrying the same implicit knowledge this field exists to remove.
+   */
+  kind: RequestContextKind;
+  /**
+   * What the work is, for work no route names — `agent-loop`, `broadcast-send`.
+   * Absent on requests, which are named by method and path.
+   */
+  name?: string;
+  /**
+   * HTTP verb, `TOOL` for a tool call, and **absent** for work that did not
+   * arrive over a transport. It was required, so a background loop had to write
+   * something, and what it wrote was `AGENT` — not a verb, but the absence of
+   * one recorded in the field for verbs.
+   */
+  method?: string;
   /**
    * The operation's contract verb (`GET` / `POST` / …). Set on **tool** events
    * (whose `method` is `TOOL`) so a single filter can tell a read from a write
@@ -19,8 +36,11 @@ export interface RequestEvent {
    * Omitted on HTTP events, where `method` already is the verb. → ADR 0030.
    */
   httpMethod?: HttpMethod;
-  /** Request path — `/api/...` for HTTP, `/{source}/{tool}` for a tool call. */
-  path: string;
+  /**
+   * Request path — `/api/...` for HTTP, `/{source}/{tool}` for a tool call, and
+   * absent for work with no transport to have a path on.
+   */
+  path?: string;
   /**
    * Stable owning-contract identity of the matched operation — the "service"
    * (contract prefix) and "action" (endpoint key) halves. Set on every surface
@@ -54,8 +74,16 @@ export interface RequestEvent {
    * into; ordinary success/failure rows retain their released shape.
    */
   outcome?: 'cancelled';
-  /** HTTP status — the real status for HTTP, `200` / `400` for a tool call. */
-  statusCode: number;
+  /**
+   * HTTP status — the real status for HTTP, `200` / `400` for a tool call, and
+   * absent for work that has no transport to have a status on.
+   *
+   * This one is the trap the rest of this change would otherwise have walked
+   * into. Dropping `method: 'AGENT'` while still demanding a status would have
+   * replaced one fabricated transport field with another, in the same row, for
+   * the same reason. A job's outcome is `ok`, and `errorCode` when it failed.
+   */
+  statusCode?: number;
   /** Wall-clock duration. */
   durationMs: number;
   /** Error code — failures only. */

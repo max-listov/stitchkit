@@ -79,7 +79,7 @@ describe('managed observability sink lifecycle', () => {
     const observability = createObservability({
       request: {
         write: async (event) => {
-          starts.push(event.path);
+          starts.push(event.path ?? '');
           await (event.path === '/first' ? first.promise : second.promise);
         },
       },
@@ -116,11 +116,11 @@ describe('managed observability sink lifecycle', () => {
       request: {
         maxPending: 1,
         write: async (event) => {
-          writes.push(event.path);
+          writes.push(event.path ?? '');
           await held.promise;
         },
         onDrop: ({ reason, event, pending }) => {
-          drops.push({ reason, path: event.path, pending });
+          drops.push({ reason, path: event.path ?? '', pending });
         },
       },
     });
@@ -157,7 +157,7 @@ describe('managed observability sink lifecycle', () => {
         maxPending: 1,
         filter: (event) => event.path !== '/filtered',
         write: async (event) => {
-          writes.push(event.path);
+          writes.push(event.path ?? '');
           await held.promise;
         },
       },

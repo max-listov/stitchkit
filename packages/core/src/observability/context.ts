@@ -14,16 +14,38 @@ import { isUnsafeKey } from '../internal/safe-json';
 import { getClientInfo, resolveSocketIp } from '../server/request';
 import { resolveTraceContext, type TraceContext } from './trace';
 
-/** Everything known about the request in flight. */
+/** What a unit of work is: a call that arrived, or work that runs on its own. */
+export type RequestContextKind = 'request' | 'job';
+
+/** Everything known about the unit of work in flight. */
 export interface RequestContext {
-  /** W3C trace ids for this request. */
+  /** W3C trace ids for this unit of work. */
   trace: TraceContext;
   /** Which surface the request arrived on. */
   source: TransportSource;
-  /** HTTP verb. */
-  method: string;
-  /** Request path. */
-  path: string;
+  /**
+   * What this is. Absent means `request`, so every context written before this
+   * existed still reads correctly and no caller has to start declaring it.
+   */
+  kind?: RequestContextKind;
+  /**
+   * What the work is, for work that has no route to name it — `agent-loop`,
+   * `broadcast-send`. A request is named by its method and path; a job is named
+   * by what it does.
+   */
+  name?: string;
+  /**
+   * HTTP verb — absent for work that did not arrive over a transport.
+   *
+   * It was required, and work without a transport therefore had to invent one:
+   * a background loop wrote `method: 'AGENT'`, which is not a verb, it is the
+   * absence of one recorded in the field for verbs. An absent field says the
+   * same thing and says it truthfully, which is the difference between a filter
+   * that can exclude jobs and a filter that silently counts them as writes.
+   */
+  method?: string;
+  /** Request path — absent for work that did not arrive over a transport. */
+  path?: string;
   /** Monotonic start, for duration — `process.hrtime.bigint()`. */
   startedAt: bigint;
   /** Client IP, when resolvable. */
@@ -200,6 +222,7 @@ export function wrapInRequestContext<S>(
     const ctx: RequestContext = {
       trace: resolveTraceContext(req),
       source: 'http',
+      kind: 'request',
       method: req.method,
       // `req.url` may be a bare pathname on a Node adapter — the base avoids
       // a `TypeError: Invalid URL`.

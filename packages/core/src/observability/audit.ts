@@ -80,7 +80,11 @@ export interface ObservabilityConfig {
 /** The one HTTP completion snapshot produced by the handler. */
 export interface HttpRequestCompletion {
   context: RequestContext;
-  statusCode: number;
+  /**
+   * The transport's status, when there is a transport. Absent for a unit of
+   * work that never had one — `ok` and `errorCode` carry its outcome instead.
+   */
+  statusCode?: number;
   durationMs: number;
   payload?: Promise<unknown>;
   /** Framework-owned neutral cancellation; currently paired with HTTP 499. */
@@ -279,8 +283,10 @@ export function createObservability(config: ObservabilityConfig): Observability 
             }
             return {
               source: context.source,
-              method: context.method,
-              path: context.path,
+              kind: context.kind ?? 'request',
+              ...(context.name !== undefined && { name: context.name }),
+              ...(context.method !== undefined && { method: context.method }),
+              ...(context.path !== undefined && { path: context.path }),
               ...(context.serviceName !== undefined && {
                 serviceName: context.serviceName,
               }),
@@ -291,9 +297,14 @@ export function createObservability(config: ObservabilityConfig): Observability 
               traceId: context.trace.traceId,
               spanId: context.trace.spanId,
               parentSpanId: context.trace.parentSpanId,
-              ok: !cancelled && statusCode < 400,
+              // A unit of work with no transport reports no status, so `ok`
+              // is decided by whether anything recorded a failure. For a
+              // request the status still decides, exactly as before.
+              ok:
+                !cancelled &&
+                (statusCode !== undefined ? statusCode < 400 : context.error === undefined),
               ...(cancelled && { outcome: 'cancelled' }),
-              statusCode,
+              ...(statusCode !== undefined && { statusCode }),
               durationMs,
               ...(!cancelled && {
                 errorCode: context.error?.code,
@@ -334,6 +345,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
             const toolPhase = mcp?.outcome === 'input_required' ? 'input-round' : 'operation';
             toolManager?.submit(() => ({
               source: context.source,
+              kind: 'request' as const,
               method: 'TOOL',
               httpMethod: endpoint.method,
               path: `/${context.source}/${toolName}`,
