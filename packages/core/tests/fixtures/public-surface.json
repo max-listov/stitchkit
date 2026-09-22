@@ -592,6 +592,7 @@
     "CliSignatureVerdict",
     "CliStreamAnswer",
     "CliStreamCommandConfig",
+    "CliStreamHooks",
     "CliSurfaceSource",
     "CliTrustRoot",
     "CliUpdateApplyConfig",

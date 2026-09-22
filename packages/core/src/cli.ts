@@ -100,6 +100,7 @@ export {
   type CliBatchCommandConfig,
   type CliStreamAnswer,
   type CliStreamCommandConfig,
+  type CliStreamHooks,
   defineCliBatchCommand,
   defineCliStreamCommand,
   runCliStream,

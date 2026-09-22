@@ -2064,7 +2064,7 @@ SDK nor the `ai` peer.
 | `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `cliExitCode` | function | the exit code a result earns, from the same table, without writing anything — so an in-process run and the printed path cannot disagree |
 | `createCliInvoker` / `CliInvoker` / `CliInvokerConfig` / `CliInvocationResult` / `CliInvokerCommand` / `cliInvocationResult` | function / _types_ | compile the managed surface once and run parsed calls against it in process — no argv round-trip, no child process, no writing |
-| `defineCliStreamCommand` / `CliStreamCommandConfig` / `CliStreamAnswer` / `runCliStream` | function / _types_ | one operation per JSON line of stdin, answered with the same `id`; a bad line answers and the stream continues |
+| `defineCliStreamCommand` / `CliStreamCommandConfig` / `CliStreamAnswer` / `CliStreamHooks` / `runCliStream` | function / _types_ | one operation per JSON line of stdin, answered with the same `id`; a bad line answers and the stream continues |
 | `defineCliBatchCommand` / `CliBatchCommandConfig` | function / _type_ | the same loop, resumable: a recorded line replays, a line whose content changed under the same id is refused |
 | `readCliCheckpoint` / `writeCliCheckpoint` / `CliCheckpoint` / `CliCheckpointEntry` | function / _types_ | the batch's record — id plus a digest of the line, written by atomic rename after every line |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
