@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: 0.92.0
+## Released migration: 0.92.0
 
 1. **`RequestEvent.method`, `path` and `statusCode` are optional.** Work that did
    not arrive over a transport now records their **absence** instead of inventing

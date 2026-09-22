@@ -15,6 +15,86 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.92.0] — 2026-09-22
+
+### ⚠️ Breaking changes
+
+- **`RequestEvent.method`, `path` and `statusCode` are optional, and every event
+  carries `kind`.** Work that never arrived over a transport — an agent loop
+  started fire-and-forget, a scheduled broadcast — had to invent them, and what
+  it invented was `method: 'AGENT'`: not a verb, but the absence of one written
+  into the field for verbs. Their absence is now the record. `statusCode` went
+  with them deliberately: dropping the fabricated verb while still demanding an
+  HTTP status would have left a second invented transport field in the same row
+  for the same reason.
+
+**Who must act:** anyone whose `RequestEventSinkConfig.write` writes
+`method` / `path` / `statusCode` into NOT NULL columns, or whose sink filter
+reads `event.method`; anyone adopting signature verification, who now passes the
+manifest to `applyCliUpdate`; and nobody for the continuation refusal, which
+resolves itself on the host's retry.
+
+  `// before: { method: event.method, path: event.path, status: event.statusCode }` →
+  `// after:  { kind: event.kind, method: event.method ?? null, path: event.path ?? null, status: event.statusCode ?? null }`
+  → ADR 0191
+
+- **`applyCliUpdate` requires the manifest when given a trust root.** The
+  signature covers the manifest's identity and every asset digest together, so
+  an asset on its own carries nothing to verify.
+  `// before: applyCliUpdate({ asset })` →
+  `// after:  applyCliUpdate({ asset, manifest: check.manifest, trust })`
+  → ADR 0193
+
+- **An MCP continuation minted before this release is refused once.** The signed
+  round state now carries a fingerprint of the question plan, checked every
+  round. A conversation in flight at deploy time has no fingerprint and gets
+  `INVALID_REQUEST_STATE`; the host re-asks and the retry succeeds. → ADR 0190
+
+### Added
+
+- **`ctx.reportProgress` — a tool call can tell the host what it is doing.**
+  The protocol's channel existed and the framework read neither end, so ten
+  minutes of work and a hang looked identical, including to the model deciding
+  whether to call again. Present on every tool call and a no-op where nobody is
+  listening; never throws. An omitted `progress` sends the ordinal of the update
+  rather than a synthesised percentage. The framework still sends nothing on its
+  own — except `mountWait`, which already polls and relays the phase and the
+  snapshot's own measured number. → ADR 0189
+- **`mcp.inputRequired` may be a function of the parsed call.** A tool whose
+  questions depend on its arguments — one model takes `aspect_ratio`, another
+  `duration` — could previously declare none, and taught the model to work
+  around the gap in its own description. Returning an empty list runs the call
+  as usual. → ADR 0190
+- **`runUnitOfWork`** — work with no transport gets one context and the same
+  completion record a request gets, with `kind: 'job'`, a `name`, its duration
+  and its outcome, and none of the transport fields it does not have.
+  `setRequestDimensions` inside it is no longer a silent no-op. → ADR 0191
+- **`createCliInvoker`, `cliExitCode`, `defineCliStreamCommand`,
+  `defineCliBatchCommand`** — run an already-parsed call in process and get the
+  typed output with the exit code the printed path would give, from the same
+  table. The stream answers each line as it arrives rather than after EOF, and
+  the batch resumes from a checkpoint written by atomic rename after every
+  successful line. Both are factories: the framework does not take `jsonl` or
+  `batch` out of the application's own namespace. → ADR 0192
+- **Signed build manifests.** `signature` is part of the schema (it used to be
+  stripped, so a signed install fetched the document twice), Ed25519 over
+  everything that acts before the digest can disagree — including
+  `compression`, whose expansion is now bounded by the signed `size`. Five
+  verdicts, `unenforced` among them so an unpinned build keeps updating while
+  the absence of a check stays visible. `applyCliUpdate({ backupPath })` keeps
+  the replaced binary with its own file mode and `rollbackCliUpdate` puts it
+  back against its digest. `assertCliPublishable` takes every manifest already
+  published, because one version published to two channels from two commits is
+  invisible to a check that sees one. → ADR 0193
+
+### Fixed
+
+- **`writeFileAtomic` stages under a random name and creates exclusively.** The
+  previous scheme built the staging name from pid and clock, and an ordinary
+  write follows a symlink — anyone able to write to the target's directory could
+  redirect a binary replacement, a backup or a checkpoint through a planted
+  link.
+
 ## [0.91.2] — 2026-09-22
 
 ### Fixed
