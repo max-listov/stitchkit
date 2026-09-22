@@ -323,3 +323,105 @@ describe('discovered tools on the CLI surface', () => {
     expect(lines.some((line) => String(line).includes('unhandled error'))).toBe(false);
   });
 });
+
+/*
+ * A relayed refusal answers the one question it exists to answer.
+ *
+ * `retryable` was introduced so a model stops paying for repeats that cannot
+ * work. Through a discovered MCP tool it did the opposite: the relay rebuilt the
+ * remote's refusal with a constant 502, and 502 is a retryable class, so every
+ * relayed failure arrived as "try again" — `NOT_FOUND` included. The remote is
+ * the only side that knows, it already said so in the envelope, and now that
+ * answer is carried instead of re-derived from a constant.
+ */
+describe('a relayed refusal carries the remote answer, not one derived from 502', () => {
+  const refusal = (body: Record<string, unknown>) => () => ({
+    isError: true,
+    content: [{ type: 'text', text: JSON.stringify(body) }],
+  });
+
+  async function failureThroughCli(
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const url = startMcp([ECHO], refusal(body));
+    const discovered = await mountConnections([
+      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+    ]);
+    const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
+    expect(code).not.toBe(0);
+    const parsed: unknown = JSON.parse(err);
+    if (!isRecord(parsed)) throw new Error(`expected an object failure, got ${err}`);
+    return parsed;
+  }
+
+  test('a declared `false` survives the hop — the case the constant 502 inverted', async () => {
+    const failure = await failureThroughCli({
+      error: 'ITEM_NOT_FOUND',
+      retryable: false,
+      details: { message: 'no item with that id' },
+    });
+    expect(failure.error).toBe('ITEM_NOT_FOUND');
+    // Before the relay read the field this was `true`, and a model calling a
+    // missing item again is exactly what the field was added to stop.
+    expect(failure.retryable).toBe(false);
+  });
+
+  test('a declared `true` survives it too, so the test cannot pass by always saying no', async () => {
+    const failure = await failureThroughCli({
+      error: 'UPSTREAM_BUSY',
+      retryable: true,
+      details: { message: 'try again shortly' },
+    });
+    expect(failure.retryable).toBe(true);
+  });
+
+  test("the remote's `_hint` is carried — the refusal keeps its next move", async () => {
+    const failure = await failureThroughCli({
+      error: 'ITEM_NOT_FOUND',
+      retryable: false,
+      _hint: 'List items first and use an id from that list.',
+      details: { message: 'no item with that id' },
+    });
+    expect(failure._hint).toBe('List items first and use an id from that list.');
+  });
+
+  test('a remote that declares nothing is unchanged: the upstream status still answers', async () => {
+    // An older server sends no `retryable` at all. Inventing one from the code
+    // name would be guessing; 502 stays the answer, exactly as before.
+    const failure = await failureThroughCli({
+      error: 'ITEM_NOT_FOUND',
+      details: { message: 'no item with that id' },
+    });
+    expect(failure.retryable).toBe(true);
+  });
+
+  test('a non-boolean `retryable` is not a declaration and does not become one', async () => {
+    const failure = await failureThroughCli({
+      error: 'ITEM_NOT_FOUND',
+      retryable: 0,
+      details: { message: 'no item with that id' },
+    });
+    // `0` rather than `'false'` deliberately: a string spelling of a boolean
+    // coerces to `true`, which is also the 502 fallback, so that version of this
+    // test passed whether the value was read or coerced. `0` coerces to `false`
+    // and the fallback is `true`, so the two answers differ and the test can
+    // fail. A JSON envelope is free to carry 0/1; neither is a declaration.
+    expect(failure.retryable).toBe(true);
+  });
+
+  test('an unstructured refusal keeps the framework default', async () => {
+    const url = startMcp([ECHO], () => ({
+      isError: true,
+      content: [{ type: 'text', text: 'the tool said no' }],
+    }));
+    const discovered = await mountConnections([
+      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+    ]);
+    const { err } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
+    const failure: unknown = JSON.parse(err);
+    expect(isRecord(failure) ? failure.error : undefined).toBe('UPSTREAM_TOOL_ERROR');
+    // Nothing was parsed, so nothing was declared: upstream failed and we cannot
+    // say more than that.
+    expect(isRecord(failure) ? failure.retryable : undefined).toBe(true);
+  });
+});

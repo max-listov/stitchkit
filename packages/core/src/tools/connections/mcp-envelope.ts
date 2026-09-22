@@ -53,18 +53,39 @@ export const UPSTREAM_TOOL_ERROR = 'UPSTREAM_TOOL_ERROR';
  * it printed a code frame of the framework bundle before the JSON failure and
  * was then scrubbed to a bare `INTERNAL_SERVER_ERROR`.
  *
- * A structured `{ error, details }` body is the remote contract's own refusal
- * and is relayed as one. Anything else keeps the framework's sentence and
- * carries what the server did send — reporting less than we have is not caution.
+ * A structured `{ error, retryable, details, _hint }` body is the remote
+ * contract's own refusal and is relayed as one — every field of it. Anything
+ * else keeps the framework's sentence and carries what the server did send —
+ * reporting less than we have is not caution.
+ *
  * The status is 502 either way: whatever the code says, the failure happened
- * upstream, and a consumer re-serving it over HTTP should say so.
+ * upstream, and a consumer re-serving it over HTTP should say so. That constant
+ * is exactly why `retryable` has to be carried rather than re-derived. 502 is a
+ * retryable class, so a status-derived answer says `true` for every relayed
+ * refusal there has ever been — `NOT_FOUND` included, and a model reading it
+ * calls the missing thing again. The remote already decided, declared or
+ * derived from its own status, and its answer is the one that means something:
+ * it is the only side that knows whether repeating the call could work. `_hint`
+ * rides along for the same reason — it is the remote's instruction for what to
+ * do instead, and dropping it leaves the model with a refusal and no next move.
  */
 export function mcpToolFailure(toolName: string, result: unknown): AppError {
   const payload = unwrapMcpResult(result);
   if (isRecord(payload) && typeof payload.error === 'string') {
     const details = isRecord(payload.details) ? payload.details : undefined;
     const message = typeof details?.message === 'string' ? details.message : payload.error;
-    return new AppError(payload.error, message, 502, details);
+    // `_hint` is the key the model-facing tool envelope emits (`formatToolError`),
+    // so it is the key read back here. A remote that declares neither field
+    // leaves both `undefined`, and the status decides as it did before.
+    return new AppError(
+      payload.error,
+      message,
+      502,
+      details,
+      typeof payload._hint === 'string' ? payload._hint : undefined,
+      undefined,
+      typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+    );
   }
   return new AppError(
     UPSTREAM_TOOL_ERROR,
