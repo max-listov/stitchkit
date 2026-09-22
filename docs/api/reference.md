@@ -2039,7 +2039,11 @@ SDK nor the `ai` peer.
 | `renderCliInstaller` | function | generate the one-line installer from a build manifest, with the URL and digest substituted — [guide](../guide/cli.md#distribution-and-self-update) |
 | `checkCliUpdate` | function | bounded, interval-limited, never-throwing check for a newer published build |
 | `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename |
-| `assertCliPublishable` | function | refuse republishing one version from a different commit |
+| `assertCliPublishable` | function | refuse republishing one version from a different commit — takes one manifest or every manifest already published, because the promise a version makes does not stop at a channel boundary |
+| `rollbackCliUpdate` / `CliRollbackConfig` / `RolledBackCliUpdate` | function / _types_ | put the kept previous build back, digest-checked first and written by the same atomic rename the update uses |
+| `signCliManifest` / `verifyCliManifest` / `cliManifestSigningPayload` | function | Ed25519 over `{name, version, commit, builtAt, assets[]}` — every asset's digest included, so the chain closes on the file that executes |
+| `cliSignatureAccepted` / `CliSignatureVerdict` | function / _type_ | `valid` \| `unenforced` \| `missing` \| `unknown-key` \| `invalid`; `unenforced` keeps an unpinned build updating while making the absence of a check visible |
+| `CliTrustRoot` / `CliBuildSignature` / `CliBuildSignatureSchema` | _types_ / schema | the keys a build trusts, by id, and the detached signature a manifest carries |
 | `selectCliBuildAsset` | function | the asset for one target, or `undefined` |
 | `currentCliBuildTarget` | function | `{ platform, arch }` of the running process |
 | `formatCliBuildStamp` | function | one line saying what the running build is |

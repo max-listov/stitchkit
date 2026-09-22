@@ -575,6 +575,81 @@ Carry the build stamp inside the binary (`CliBuildStampSchema`,
 `formatCliBuildStamp`) so the tool can say what it is rather than leaving the
 reader to infer it from behaviour.
 
+### Proving who built it — signing the manifest
+
+The asset digest proves the bytes that arrived are the bytes the manifest named.
+It proves nothing about who named them: the manifest and the assets come from
+one origin, so whoever can replace one can replace the other. Authorship needs a
+key the build carries and the server never holds.
+
+```ts
+// Publishing — the only side that holds a private key.
+const signature = signCliManifest(manifest, { keyId: 'release-2026', privateKey })
+publish({ ...manifest, signature })
+
+// Installing — the trust root is compiled into the binary. One fetched at run
+// time from the same origin as the manifest would prove nothing.
+const trust = { keys: { 'release-2026': PUBLISHED_KEY } }
+const check = await checkCliUpdate({ manifestUrl, currentVersion, trust })
+if (check.status === 'outdated' && check.asset) {
+  await applyCliUpdate({ asset: check.asset, manifest: check.manifest, trust, backupPath })
+}
+```
+
+The signature covers `{name, version, commit, builtAt, assets[]}` with **every
+asset's digest**, so the chain closes on the file that will execute rather than
+on the document describing it; moving an asset to a new URL does not invalidate
+it, changing what an asset contains does.
+
+Five verdicts, and `unenforced` is the one that earns its keep: a build with no
+pinned key keeps updating, and the fact that nothing was checked is *visible*
+rather than assumed. `missing`, `unknown-key` and `invalid` are distinguished
+because they need different answers — a key you forgot to pin is not a forged
+signature.
+
+A bad verdict does not produce a fifth status. `outdated` is an instruction to
+install, and a manifest that failed its signature has not established that there
+is a newer build worth installing — only that a document claims one. The check
+answers `unknown` with the verdict in its reason, so it is never mistaken for a
+network failure. `applyCliUpdate` checks again and refuses **before** the
+download: a signature verified after the bytes are on the machine produces a
+cleanup problem rather than a refusal.
+
+### A way back — `backupPath` and `rollbackCliUpdate`
+
+Rolling back is a property of updating, not of the application:
+
+```ts
+const applied = await applyCliUpdate({ asset, targetPath, backupPath })
+// …the new build turns out to be wrong:
+rollbackCliUpdate({ targetPath, backupPath, expectedSha256: applied.backupSha256 })
+```
+
+The copy is taken between "the new bytes verified" and the replacement — earlier
+would preserve a binary about to be replaced by a download that then failed its
+digest, later has nothing left to copy — and it carries the target's file mode,
+because a backup that cannot be executed is not a way back. A first install has
+nothing to keep, which is not a failure.
+
+`expectedSha256` is required, not optional. A rollback that installs whatever
+happens to be at the backup path is a second install of an unverified binary,
+and the day it is used is the day nobody is in a position to check.
+
+### Two release tracks
+
+`assertCliPublishable` takes one manifest **or every manifest already
+published**:
+
+```ts
+assertCliPublishable([stableManifest, betaManifest], next)
+```
+
+With a single argument and two tracks the check is silently useless: `1.2.3`
+goes to beta from one commit and to stable from another, the function is called
+with the track being published and sees no conflict, and the person who
+installed the beta is told they are current forever. Nothing on their machine
+looks wrong.
+
 ## Commands discovered from a running server
 
 A CLI compiled from contracts carries the surface of the build it was compiled

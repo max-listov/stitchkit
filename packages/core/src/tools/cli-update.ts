@@ -9,9 +9,9 @@
  * an explicit command.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, renameSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
+import { writeFileAtomic } from '../internal/atomic-file';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import {
   type CliBuildAsset,
@@ -21,6 +21,12 @@ import {
   currentCliBuildTarget,
   selectCliBuildAsset,
 } from './cli-manifest';
+import {
+  type CliSignatureVerdict,
+  type CliTrustRoot,
+  cliSignatureAccepted,
+  verifyCliManifest,
+} from './cli-signature';
 
 const DEFAULT_CHECK_TIMEOUT_MS = 2_000;
 const DEFAULT_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
@@ -41,6 +47,11 @@ export interface CliUpdateCheckConfig {
   timeoutMs?: number;
   target?: CliBuildTarget;
   allowPrivateHosts?: boolean;
+  /**
+   * Keys this build trusts. With none, nothing is enforced and the verdict says
+   * so out loud (`unenforced`) rather than leaving "checked" to be assumed.
+   */
+  trust?: CliTrustRoot;
 }
 
 /**
@@ -49,8 +60,15 @@ export interface CliUpdateCheckConfig {
  */
 export type CliUpdateCheck =
   | { status: 'skipped'; nextCheckAt: number }
-  | { status: 'current'; version: string }
-  | { status: 'outdated'; version: string; manifest: CliBuildManifest; asset?: CliBuildAsset }
+  | { status: 'current'; version: string; signature?: CliSignatureVerdict }
+  | {
+      status: 'outdated';
+      version: string;
+      manifest: CliBuildManifest;
+      asset?: CliBuildAsset;
+      /** What the signature check concluded — always present once it ran. */
+      signature?: CliSignatureVerdict;
+    }
   | { status: 'unknown'; reason: string };
 
 interface ParsedVersion {
@@ -116,13 +134,24 @@ export async function checkCliUpdate(config: CliUpdateCheckConfig): Promise<CliU
         reason: `cannot compare ${config.currentVersion} with ${manifest.version}`,
       };
     }
-    if (order >= 0) return { status: 'current', version: manifest.version };
+    const verdict = verifyCliManifest(manifest, manifest.signature, config.trust);
+    if (order >= 0)
+      return { status: 'current', version: manifest.version, signature: verdict };
+    if (!cliSignatureAccepted(verdict)) {
+      // Not a fifth status. `outdated` is an instruction to install, and we have
+      // not established that there is a newer build worth installing — only that
+      // a document claims one. "Could not ask" is the honest class for that, and
+      // the reason names which check refused, so it is never mistaken for a
+      // network failure.
+      return { status: 'unknown', reason: `manifest signature: ${verdict}` };
+    }
     const asset = selectCliBuildAsset(manifest, config.target ?? currentCliBuildTarget());
     return {
       status: 'outdated',
       version: manifest.version,
       manifest,
       ...(asset && { asset }),
+      signature: verdict,
     };
   } catch (error) {
     return {
@@ -139,12 +168,37 @@ export interface CliUpdateApplyConfig {
   timeoutMs?: number;
   maxBytes?: number;
   allowPrivateHosts?: boolean;
+  /**
+   * The document the asset came from, so authorship can be checked here too.
+   *
+   * `CliBuildAsset` cannot carry the proof: the signature covers the manifest's
+   * identity and every asset's digest together, which is what closes the chain
+   * on the file that executes. Passing both is what lets this refuse **before**
+   * it downloads anything.
+   */
+  manifest?: CliBuildManifest;
+  /** Keys this build trusts. With `manifest`, the pair is checked before the fetch. */
+  trust?: CliTrustRoot;
+  /**
+   * Keep the bytes being replaced, here, so there is something to go back to.
+   *
+   * Written after the new bytes are verified and before the target is replaced:
+   * a backup taken earlier could preserve a binary that was about to be
+   * replaced by a download that then failed its digest, and a backup taken
+   * later has nothing left to copy. The target's own mode is carried over — the
+   * point of a backup is to be runnable.
+   */
+  backupPath?: string;
 }
 
 export interface AppliedCliUpdate {
   path: string;
   bytes: number;
   sha256: string;
+  /** Where the replaced bytes were kept, when a backup was asked for and there was one. */
+  backupPath?: string;
+  /** Digest of the replaced bytes — what `rollbackCliUpdate` expects to find. */
+  backupSha256?: string;
 }
 
 /**
@@ -157,6 +211,31 @@ export interface AppliedCliUpdate {
  */
 export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<AppliedCliUpdate> {
   const target = config.targetPath ?? process.execPath;
+  if (config.trust) {
+    // Before the fetch, deliberately. A signature checked after the download is
+    // a signature checked after the bytes were already on the machine, and the
+    // refusal it produces is a cleanup problem rather than a refusal.
+    if (!config.manifest) {
+      throw new Error(
+        '[stitchkit] update: a trust root needs the manifest the asset came from',
+      );
+    }
+    const verdict = verifyCliManifest(
+      config.manifest,
+      config.manifest.signature,
+      config.trust,
+    );
+    if (!cliSignatureAccepted(verdict)) {
+      throw new Error(
+        `[stitchkit] update: refusing to install — manifest signature ${verdict}`,
+      );
+    }
+    if (!config.manifest.assets.some((asset) => asset.sha256 === config.asset.sha256)) {
+      // The signature covers the manifest's assets. An asset that is not one of
+      // them is outside everything that was proven, however well-formed it looks.
+      throw new Error('[stitchkit] update: the asset is not one the signed manifest names');
+    }
+  }
   const response = await fetchGuarded(
     new URL(config.asset.url),
     config.allowPrivateHosts ?? false,
@@ -184,10 +263,73 @@ export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<Appl
     );
   }
 
-  // Beside the target, so the rename stays on one filesystem and is atomic.
-  const staged = join(dirname(target), `.${basename(target)}.${process.pid}.${Date.now()}`);
-  writeFileSync(staged, bytes, { mode: 0o755 });
-  chmodSync(staged, 0o755);
-  renameSync(staged, target);
+  const backup = config.backupPath ? keepReplacedBinary(target, config.backupPath) : undefined;
+  writeFileAtomic(target, bytes, 0o755);
+  return {
+    path: target,
+    bytes: bytes.length,
+    sha256,
+    ...(backup && { backupPath: backup.path, backupSha256: backup.sha256 }),
+  };
+}
+
+/**
+ * Copy the bytes about to be replaced, atomically and runnably.
+ *
+ * Nothing to copy is not a failure: on a first install there is no previous
+ * build, and there is correspondingly nothing to roll back to.
+ */
+function keepReplacedBinary(
+  target: string,
+  backupPath: string,
+): { path: string; sha256: string } | undefined {
+  if (!existsSync(target)) return undefined;
+  const previous = readFileSync(target);
+  writeFileAtomic(backupPath, previous, statSync(target).mode & 0o777);
+  return { path: backupPath, sha256: createHash('sha256').update(previous).digest('hex') };
+}
+
+export interface CliRollbackConfig {
+  /** The file to restore onto; defaults to the running executable. */
+  targetPath?: string;
+  /** The copy kept by a previous `applyCliUpdate({ backupPath })`. */
+  backupPath: string;
+  /**
+   * The digest the backup must have — `backupSha256` from that update.
+   *
+   * Required, not optional. A rollback that installs whatever happens to be at
+   * the backup path is a second install of an unverified binary, and the moment
+   * it is used is the moment nobody is in a position to check.
+   */
+  expectedSha256: string;
+}
+
+export interface RolledBackCliUpdate {
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
+/**
+ * Put the previous build back.
+ *
+ * Rolling back is a property of updating, not of the application: the same
+ * attention to atomicity and file mode the replacement gets, applied in the
+ * other direction. The digest is checked first, so a corrupted or swapped
+ * backup is a refusal rather than an unbootable tool.
+ */
+export function rollbackCliUpdate(config: CliRollbackConfig): RolledBackCliUpdate {
+  const target = config.targetPath ?? process.execPath;
+  if (!existsSync(config.backupPath)) {
+    throw new Error(`[stitchkit] rollback: no backup at ${config.backupPath}`);
+  }
+  const bytes = readFileSync(config.backupPath);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== config.expectedSha256) {
+    throw new Error(
+      `[stitchkit] rollback: backup digest ${sha256} does not match the expected ${config.expectedSha256} — refusing to restore it`,
+    );
+  }
+  writeFileAtomic(target, bytes, statSync(config.backupPath).mode & 0o777);
   return { path: target, bytes: bytes.length, sha256 };
 }

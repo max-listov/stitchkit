@@ -70,13 +70,26 @@ export {
   type ResolvedCliProfile,
 } from './tools/cli-profile';
 export {
+  type CliBuildSignature,
+  CliBuildSignatureSchema,
+  type CliSignatureVerdict,
+  type CliTrustRoot,
+  cliManifestSigningPayload,
+  cliSignatureAccepted,
+  signCliManifest,
+  verifyCliManifest,
+} from './tools/cli-signature';
+export {
   type AppliedCliUpdate,
   applyCliUpdate,
+  type CliRollbackConfig,
   type CliUpdateApplyConfig,
   type CliUpdateCheck,
   type CliUpdateCheckConfig,
   checkCliUpdate,
   compareCliVersions,
+  type RolledBackCliUpdate,
+  rollbackCliUpdate,
 } from './tools/cli-update';
 export { type CliViewOutput, renderCliView } from './tools/cli-view';
 export { type CliWaitConfig, type PollParams, pollUntilDone } from './tools/cli-wait';

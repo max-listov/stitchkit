@@ -7,6 +7,7 @@
  * `cli-installer.ts`, and both read these shapes.
  */
 import { z } from 'zod';
+import { CliBuildSignatureSchema } from './cli-signature';
 
 /** What a build runs on. The values are Node's own, so a CLI can name its own. */
 export const CliBuildTargetSchema = z.object({
@@ -46,6 +47,15 @@ export const CliBuildManifestSchema = z.object({
   commit: z.string().min(1),
   builtAt: z.iso.datetime(),
   assets: z.array(CliBuildAssetSchema),
+  /**
+   * Detached proof of who built this, when the publisher signs.
+   *
+   * It has to be declared here rather than read beside the schema, because an
+   * ordinary `z.object` strips what it does not know: a signature published in
+   * this very document reached nobody, and a signed install had to fetch the
+   * manifest a second time and parse it twice to see its own signature.
+   */
+  signature: CliBuildSignatureSchema.optional(),
 });
 
 export type CliBuildManifest = z.infer<typeof CliBuildManifestSchema>;
@@ -88,15 +98,31 @@ export function selectCliBuildAsset(
  * never receives the fix — and nothing about their machine looks wrong. The
  * check is one comparison and belongs in the publisher, before the upload.
  */
+function isManifestList(
+  value: CliBuildManifest | readonly CliBuildManifest[],
+): value is readonly CliBuildManifest[] {
+  return Array.isArray(value);
+}
+
 export function assertCliPublishable(
-  previous: CliBuildManifest | undefined,
+  previous: CliBuildManifest | readonly CliBuildManifest[] | undefined,
   next: CliBuildManifest,
 ): void {
-  if (!previous) return;
-  if (previous.version !== next.version) return;
-  if (previous.commit === next.commit) return;
-  throw new Error(
-    `[stitchkit] ${next.name} ${next.version} was already published from commit ${previous.commit}; ` +
-      `refusing to republish it from ${next.commit} — bump the version instead`,
-  );
+  // A list, not one document, because the promise a version makes does not stop
+  // at a channel boundary. With two release tracks a publisher calls this with
+  // the manifest of the track being published and gets silence: `1.2.3` went to
+  // beta from one commit and goes to stable from another, and the only thing
+  // that notices is the person who installed the beta, is told they are
+  // current, and never receives the stable build. Nothing on their machine
+  // looks wrong.
+  const published: readonly CliBuildManifest[] =
+    previous === undefined ? [] : isManifestList(previous) ? previous : [previous];
+  for (const candidate of published) {
+    if (candidate.version !== next.version) continue;
+    if (candidate.commit === next.commit) continue;
+    throw new Error(
+      `[stitchkit] ${next.name} ${next.version} was already published from commit ${candidate.commit}; ` +
+        `refusing to republish it from ${next.commit} — bump the version instead`,
+    );
+  }
 }
