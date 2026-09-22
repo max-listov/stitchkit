@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.91.2] — 2026-09-22
+
+### Fixed
+
+- **A refused union now presents the field it already collected.** 0.90.8 made
+  the real path available — and then `formatZodError` printed the first five
+  entries of a tree walk, which for a union over primitives (`z.json()`, or any
+  recursive schema) are the branches that failed on the type of the whole value:
+  all at the union's own path, all saying the same thing. A consuming session
+  read `(root)` five times and `...and 14 more issues` while the line naming
+  `nodes.0.streams` sat eighteenth of nineteen, and spent an hour on it. Three
+  changes, each measured on that payload: a branch is described by the **deepest
+  named field it reached** rather than by its first issue (which for a nested
+  union is that nested `invalid_union` at the parent's own path, saying nothing
+  new); a truncated summary keeps the branches that got **furthest** rather than
+  the first few; and the text projection prints one line per path, since the
+  union's own line already quotes the repeats and each one spends a slot. The
+  depth limit now bounds how many *issues* a nested union contributes and no
+  longer silences its own line, which used to read `nodes.0.streams: Invalid
+  input` on exactly the line that mattered. `zodIssues` and `details.issues` are
+  unchanged in shape and still carry every branch, repeats included — a machine
+  addresses them by branch number. An error with no unions prints exactly what
+  it printed before. → ADR 0188
+
 ## [0.91.1] — 2026-09-22
 
 ### Fixed
