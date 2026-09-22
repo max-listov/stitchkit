@@ -84,6 +84,15 @@ const signals = bindProcessSignals(app, {
 await app.start()
 ```
 
+**Bind before you start, and the order is load-bearing.** Reading it the other way
+round — start serving, then arrange for shutdown — leaves a window between the
+first accepted request and the first listener, and a supervisor that sends
+`SIGTERM` inside that window kills the process outright: exit 143, no shutdown
+chain, no `onComplete`, nothing drained. The window is small and opens exactly
+when the machine is busiest, which is when a supervisor is most likely to be
+restarting something. `bindProcessSignals` does not start anything, so there is
+no cost to binding first.
+
 The exact resource callbacks are typed by their public configuration. The
 important ownership rule is stable: the application decides what the
 database/server/provider objects are and how they are configured; Stitchkit
