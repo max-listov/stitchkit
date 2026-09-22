@@ -174,14 +174,30 @@ function startSseMcp(
       const url = new URL(request.url);
       if (request.method === 'GET' && url.pathname === '/mcp') {
         sseOpens += 1;
+        // `closed` is tracked, not inferred. This used to read
+        // `controller.desiredSize !== null` as "still open", which is a proxy
+        // for backpressure rather than a statement about the stream — it held
+        // by luck until a runtime upgrade made `desiredSize` non-null on a
+        // cancelled controller, and then every enqueue after a client
+        // disconnect threw `Controller is already closed` out of a fake server.
+        let closed = false;
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             const send = (chunk: string) => {
-              if (controller.desiredSize !== null)
+              if (closed) return;
+              try {
                 controller.enqueue(new TextEncoder().encode(chunk));
+              } catch {
+                // The reader went away between the check and the enqueue. A
+                // test server has nobody to tell.
+                closed = true;
+              }
             };
             senders.push(send);
             send(frame(['event: endpoint', `data: ${options.endpoint ?? '/messages'}`]));
+          },
+          cancel() {
+            closed = true;
           },
         });
         return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
@@ -318,11 +334,20 @@ function startFlakySseMcp() {
     fetch: async (request) => {
       const url = new URL(request.url);
       if (request.method === 'GET' && url.pathname === '/mcp') {
+        // Tracked, not inferred — see the note on the other fake server above.
+        let closed = false;
         const stream = new ReadableStream<Uint8Array>({
+          cancel() {
+            closed = true;
+          },
           start(controller) {
             const send = (frame: string) => {
-              if (controller.desiredSize !== null)
+              if (closed) return;
+              try {
                 controller.enqueue(new TextEncoder().encode(frame));
+              } catch {
+                closed = true;
+              }
             };
             senders.push(send);
             send('event: endpoint\ndata: /messages\n\n');

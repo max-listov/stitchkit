@@ -520,10 +520,16 @@ test.skipIf(!hasProcfs)(
       await writeFile(
         probe,
         [
-          "import { open } from 'node:fs/promises';",
-          `const handle = await open(${JSON.stringify(target)}, 'r');`,
-          "console.log('holding');",
-          'setInterval(() => void handle, 1000);',
+          // `openSync` and the raw descriptor number, deliberately. A
+          // `FileHandle` from `node:fs/promises` is an object the runtime may
+          // close when it decides nothing needs it any more, and one runtime
+          // upgrade later this probe stopped holding anything — so the sweep
+          // correctly reported an unused tree and the test read that as the
+          // sweep being broken. A number cannot be finalised.
+          "import { openSync } from 'node:fs';",
+          `const fd = openSync(${JSON.stringify(target)}, 'r');`,
+          "console.log('holding', fd);",
+          'setInterval(() => undefined, 1000);',
         ].join('\n'),
       );
       // Started OUTSIDE the tree, exactly like the process that was found.
