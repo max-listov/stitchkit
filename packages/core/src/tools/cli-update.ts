@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { writeFileAtomic } from '../internal/atomic-file';
-import { fetchGuarded, readCapped } from '../internal/secure-fetch';
+import { fetchGuarded, PrivateAddressRefusal, readCapped } from '../internal/secure-fetch';
 import {
   type CliBuildAsset,
   type CliBuildManifest,
@@ -154,6 +154,19 @@ export async function checkCliUpdate(config: CliUpdateCheckConfig): Promise<CliU
       signature: verdict,
     };
   } catch (error) {
+    // The boundary refusing an address and the network failing are both
+    // "could not ask", and only one of them has a switch. Relaying the guard's
+    // own sentence made a self-hosted endpoint look like a timeout, so the
+    // remedy is named here, where the field that holds it is declared.
+    if (error instanceof PrivateAddressRefusal) {
+      return {
+        status: 'unknown',
+        reason:
+          `${error.message} — the manifest endpoint is not public. Set ` +
+          '`allowPrivateHosts` if it is your own deployment; the download keeps ' +
+          'its own setting, because an asset URL comes from the document.',
+      };
+    }
     return {
       status: 'unknown',
       reason: error instanceof Error ? error.message : String(error),

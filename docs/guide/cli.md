@@ -575,6 +575,30 @@ Carry the build stamp inside the binary (`CliBuildStampSchema`,
 `formatCliBuildStamp`) so the tool can say what it is rather than leaving the
 reader to infer it from behaviour.
 
+#### A manifest inside your own network
+
+The check goes through the same SSRF boundary every outbound fetch does, so a
+manifest served from `10.x`, `localhost` or a `.internal` name is refused and
+the answer is `unknown`. For a self-hosted deployment that is a wrong answer
+dressed as a careful one, and the refusal says so — it names the field that
+lifts it rather than reading like a timeout:
+
+```text
+refusing to fetch an internal host — the manifest endpoint is not public.
+Set `allowPrivateHosts` if it is your own deployment; the download keeps its
+own setting, because an asset URL comes from the document.
+```
+
+```ts
+const check = await checkCliUpdate({ manifestUrl, currentVersion, allowPrivateHosts: true })
+```
+
+Set it from whether **your** endpoint is private, not as a blanket switch, and
+leave `applyCliUpdate` at its default. The two are not the same decision: the
+manifest URL is configuration you wrote, while an asset URL arrives inside a
+document the endpoint served, and a document is exactly what an SSRF boundary
+exists to distrust.
+
 ### Proving who built it — signing the manifest
 
 The asset digest proves the bytes that arrived are the bytes the manifest named.

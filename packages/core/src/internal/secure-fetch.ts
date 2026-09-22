@@ -266,6 +266,19 @@ export interface PinnedDocumentResponse {
   url: URL;
 }
 
+/**
+ * The network boundary refused this address — as opposed to the network failing.
+ *
+ * A caller that offers a way through the boundary has to be able to tell the two
+ * apart, and matching on a message is not telling them apart: the wording is
+ * ours to change and a match on it breaks silently the moment it does. The class
+ * is the distinction, so a caller can name its own remedy instead of relaying a
+ * sentence that reads like a timeout.
+ */
+export class PrivateAddressRefusal extends Error {
+  readonly name = 'PrivateAddressRefusal';
+}
+
 async function resolvePublicAddress(
   url: URL,
   signal?: AbortSignal,
@@ -275,26 +288,33 @@ async function resolvePublicAddress(
   // host checks (an empty DNS lookup resolves to nothing, not a private IP).
   assertHttpUrl(url);
   const host = url.hostname.replace(/^\[|\]$/g, '');
+  // Not a `PrivateAddressRefusal`: a URL with no host is malformed, and
+  // `allowPrivateHosts` would not make it fetchable. Unreachable through an
+  // http(s) URL — `new URL` always yields a hostname or throws — so no test
+  // pins it; the class is chosen by what the remedy would be, not by coverage.
   if (!host) throw new Error('refusing to fetch a URL with no host');
   const ipFamily = isIP(host);
   if (ipFamily) {
-    if (isPrivateIp(host)) throw new Error('refusing to fetch a private address');
+    if (isPrivateIp(host))
+      throw new PrivateAddressRefusal('refusing to fetch a private address');
     return { address: host, family: ipFamily === 6 ? 6 : 4 };
   }
   // A digits-only / `0x…` host is a numeric IP in a non-canonical form
   // (`http://2130706433/` is `127.0.0.1`); `isIP` rejects it but `fetch`
   // would still resolve it. A real hostname always carries a non-numeric char.
   if (NUMERIC_HOST.test(host)) {
-    throw new Error('refusing to fetch a non-canonical numeric host');
+    throw new PrivateAddressRefusal('refusing to fetch a non-canonical numeric host');
   }
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
-    throw new Error('refusing to fetch an internal host');
+    throw new PrivateAddressRefusal('refusing to fetch an internal host');
   }
   const pending = lookup(host, { all: true });
   const records = signal ? await raceWithAbort(pending, signal) : await pending;
   for (const record of records) {
     if (isPrivateIp(record.address)) {
-      throw new Error('refusing to fetch a host that resolves to a private address');
+      throw new PrivateAddressRefusal(
+        'refusing to fetch a host that resolves to a private address',
+      );
     }
   }
   const record = records[0];
