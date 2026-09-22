@@ -16,6 +16,7 @@ import {
   type SurfaceToolExtension,
 } from '../tools/internal/surface-projector';
 import { toJsonSchema } from '../tools/json-schema';
+import { staticInputRounds } from '../tools/mcp-round-policy';
 
 const HttpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
 const ToolTransportSchema = z.enum(['MCP', 'AGENT', 'CLI']);
@@ -237,13 +238,20 @@ function operationFrom(
 }
 
 function operationFingerprint(source: OperationSource): string {
+  // A policy whose rounds are chosen per call has no list to fingerprint, and
+  // pretending it has an empty one would make a dynamic tool indistinguishable
+  // from a tool that asks nothing. The marker says which kind it is, which is
+  // the part of it that is actually fixed at declaration time.
+  const declaredRounds = source.mcp ? staticInputRounds(source.mcp) : undefined;
   const mcp = source.mcp
     ? {
-        inputRequired: source.mcp.inputRequired.map((request) => ({
-          key: request.key,
-          message: request.message,
-          schema: schemaDigest(request.schema, 'input'),
-        })),
+        inputRequired: declaredRounds
+          ? declaredRounds.map((request) => ({
+              key: request.key,
+              message: request.message,
+              schema: schemaDigest(request.schema, 'input'),
+            }))
+          : 'resolved-per-call',
       }
     : null;
   return serializeSurfaceValue({

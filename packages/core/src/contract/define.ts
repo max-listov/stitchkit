@@ -213,12 +213,48 @@ export interface EndpointMcpInputRequired<
   schema: TSchema;
 }
 
+/**
+ * What the tool call looks like when the questions are chosen — the same
+ * `params` / `input` the handler would receive, parsed by the contract's own
+ * schemas.
+ */
+export interface McpInputRequiredCall {
+  params: unknown;
+  input: unknown;
+}
+
+/**
+ * Choose this call's elicitation rounds from its arguments.
+ *
+ * The static list is declared before any call exists, which is enough when the
+ * questions are a property of the operation. It is not enough when they are a
+ * property of the ARGUMENTS — one model takes `aspect_ratio`, another takes
+ * `duration`, a third needs an input image — and there the declared list can
+ * only be empty, so the tool description ends up teaching the model to work
+ * around a mechanism the protocol already has.
+ *
+ * Returning an empty list is a legitimate answer: this call needs nothing, run
+ * it. Everything else about the mechanism is unchanged — the state is still
+ * signed, still bound to the principal, the operation and the argument digest,
+ * and still counted against `maxRounds`.
+ *
+ * The resolved list is fingerprinted into the signed state and re-checked on
+ * every round, so a resolver that answers differently mid-conversation is
+ * refused rather than silently asking round 2's question under round 1's key.
+ */
+export type McpInputRequiredResolver<
+  TRequests extends readonly EndpointMcpInputRequired[] = readonly EndpointMcpInputRequired[],
+> = (call: McpInputRequiredCall) => TRequests | Promise<TRequests>;
+
 /** MCP-only execution policy attached to a contract or runtime tool. */
 export interface EndpointMcpPolicy<
   TRequests extends readonly EndpointMcpInputRequired[] = readonly EndpointMcpInputRequired[],
 > {
-  /** Ordered elicitation rounds. Every key must be unique. */
-  inputRequired: TRequests;
+  /**
+   * Ordered elicitation rounds — a fixed list, or a function of the parsed
+   * arguments. Every key must be unique, in either form.
+   */
+  inputRequired: TRequests | McpInputRequiredResolver<TRequests>;
 }
 
 interface HttpOnlyEndpointDef extends EndpointDefBase {
@@ -746,7 +782,47 @@ export interface McpCallContext {
   clientInfo?: McpClientInfo;
   outcome?: McpRoundOutcome;
   round?: number;
+  /**
+   * The host's progress token for this call, when it asked for progress.
+   *
+   * Declarative, like everything else on this type: it says the host is
+   * listening. Reporting is `ctx.reportProgress`, which is a function and
+   * therefore deliberately NOT here — this type is also the type of
+   * `RequestEvent.mcp`, and an audit row's shape must not claim to carry
+   * behaviour.
+   */
+  progressToken?: string | number;
 }
+
+/**
+ * One progress update a tool handler sends to the host mid-call.
+ *
+ * `progress` is a number the protocol requires. It is optional here because a
+ * handler often has a stage to name and no scale to name it on — "uploading",
+ * "rendering frame 12" — and the honest answer to "how far along" is then the
+ * ordinal of the update itself, which is what gets sent. That is a fact about
+ * what happened, not a percentage nobody measured; `total` stays absent, so a
+ * host renders it as an unbounded counter rather than a bar at 3%.
+ */
+export interface McpProgressUpdate {
+  /** Human-facing stage, shown by the host while the call is still running. */
+  message?: string;
+  /** How far along, on whatever scale `total` implies. */
+  progress?: number;
+  /** The scale, when the operation knows it. */
+  total?: number;
+}
+
+/**
+ * Send one progress update for the call in flight.
+ *
+ * Present on every tool call and a no-op unless the host asked for progress by
+ * sending a token, so a handler never branches on transport. It never throws
+ * and never rejects: a message about work must not be able to kill the work it
+ * describes. Fire-and-forget — the returned promise settles when the
+ * notification has been handed to the transport, and ignoring it is correct.
+ */
+export type McpReportProgress = (update: McpProgressUpdate) => Promise<void>;
 
 export interface RuntimeContext {
   params: unknown;
@@ -774,6 +850,11 @@ export interface RuntimeContext {
   signal?: AbortSignal;
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
+  /**
+   * Report progress on the call in flight. Present on MCP tool calls; a no-op
+   * when the host asked for none, so a handler calls it unconditionally.
+   */
+  reportProgress?: McpReportProgress;
   [key: string]: unknown;
 }
 
@@ -797,6 +878,8 @@ export interface HandlerContext<TParams = undefined, TInput = undefined> {
   userAgent?: string;
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
+  /** Report progress on the call in flight — a no-op when none was asked for. */
+  reportProgress?: McpReportProgress;
   [key: string]: unknown;
 }
 

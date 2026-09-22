@@ -17,6 +17,7 @@ export const RUNTIME_CONTEXT_RESERVED_KEYS = new Set([
   'userAgent',
   'signal',
   'mcp',
+  'reportProgress',
 ]);
 
 function contributionError(scope: string, reason: string): TypeError {

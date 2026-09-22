@@ -7,6 +7,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { isRecord } from '../internal/typed';
+import { createMcpProgressReporter } from './mcp-progress';
 import { assertToolName } from './names';
 import { textResult } from './native-result';
 import { runWaitOperation } from './wait-core';
@@ -43,15 +44,37 @@ export function mountWait(server: McpServer, config: WaitToolConfig): void {
   server.registerTool(
     name,
     { description: config.description, inputSchema: z.object(config.inputSchema) },
-    async (rawArgs) => {
+    async (rawArgs, mcpContext) => {
       const args: Record<string, unknown> = isRecord(rawArgs) ? rawArgs : {};
+      // The whole reason this tool exists is that the work outlives the call,
+      // and in a text host that reads as silence. The poll loop already knows
+      // it is alive and what it last saw; reporting that is relaying a fact,
+      // not guessing a stage. A host that asked for no progress gets a no-op.
+      const report = createMcpProgressReporter(mcpContext);
+      let last: unknown;
       try {
         const { state, timedOut } = await runWaitOperation({
           input: args,
-          poll: (input) => config.poll(input),
+          poll: async (input) => {
+            last = await config.poll(input);
+            return last;
+          },
           done: config.done,
           backoff: config.backoff,
           timeoutSec: config.timeoutFromArgs?.(args) ?? config.defaultTimeout,
+          onTick: (attempt, elapsedSec) => {
+            // `phase` when the polled value declares one (the async-operation
+            // snapshot does); otherwise the tick alone, which still answers the
+            // question the silence raised: is anything happening.
+            const phase =
+              isRecord(last) && typeof last.phase === 'string' ? last.phase : undefined;
+            void report({
+              progress: attempt,
+              message: phase
+                ? `${phase} — poll ${attempt}, ${Math.round(elapsedSec)}s elapsed`
+                : `poll ${attempt}, ${Math.round(elapsedSec)}s elapsed`,
+            });
+          },
         });
         const rendered = config.render
           ? config.render(state, timedOut)

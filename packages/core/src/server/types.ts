@@ -32,17 +32,33 @@ type InferParams<E> =
       : undefined;
 type InferInput<E> = Prop<E, 'input'> extends ZodType<infer I> ? I : undefined;
 type InferOutput<E> = Prop<E, 'output'> extends ZodType<infer O> ? O : never;
+type McpInputOf<R> = R extends readonly { key: string; schema: ZodType }[]
+  ? {
+      mcpInput?: {
+        [Request in R[number] as Request['key']]: Request['schema'] extends ZodType<infer I>
+          ? I
+          : never;
+      };
+    }
+  : unknown;
+
+/**
+ * `ctx.mcpInput`, from either form of the declaration.
+ *
+ * A resolver is a function, so the first branch cannot see through it — and a
+ * dynamic tool losing its typed `mcpInput` would be a real cost, not a detail.
+ * The second branch reads the resolver's own return type instead, so a resolver
+ * declared to return a precise tuple types the handler exactly as a static list
+ * does. One that returns the wide `EndpointMcpInputRequired[]` types it as the
+ * wide record, which is the truth about what it promised.
+ */
 type InferMcpInput<E> =
-  Prop<E, 'mcp'> extends {
-    inputRequired: infer R extends readonly { key: string; schema: ZodType }[];
-  }
-    ? {
-        mcpInput?: {
-          [Request in R[number] as Request['key']]: Request['schema'] extends ZodType<infer I>
-            ? I
-            : never;
-        };
-      }
+  Prop<E, 'mcp'> extends { inputRequired: infer R }
+    ? R extends readonly { key: string; schema: ZodType }[]
+      ? McpInputOf<R>
+      : R extends (call: never) => infer P
+        ? McpInputOf<Awaited<P>>
+        : unknown
     : unknown;
 
 /**

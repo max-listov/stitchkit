@@ -175,6 +175,10 @@ from the root `stitchkit`.
 | `HandlerContext` | _type_ | the typed context seen by a handler, including optional typed `mcp` metadata |
 | `McpCallContext` | _type_ | validated metadata for the active managed MCP call (`era`, method, tool, client and multi-round fields) |
 | `McpClientInfo` | _type_ | self-reported MCP host name/version; attribution only, never application identity |
+| `McpInputRequiredCall` | _type_ | the parsed `params` / `input` an elicitation resolver chooses its questions from |
+| `McpInputRequiredResolver` | _type_ | `mcp.inputRequired` as a function of the parsed arguments — returns the rounds for this call, or none |
+| `McpProgressUpdate` | _type_ | one mid-call progress update — `message`, and `progress`/`total` when the operation knows a scale |
+| `McpReportProgress` | _type_ | `ctx.reportProgress` — sends one update to the host that asked for progress; a no-op when none did, and never throws |
 | `McpRoundOutcome` | _type_ | managed multi-round attempt outcome |
 | `EndpointHandlerContext` | _type_ | one endpoint handler's fully inferred params, input, files and runtime context |
 | `EndpointFn` | _type_ | the call signature of one client method |

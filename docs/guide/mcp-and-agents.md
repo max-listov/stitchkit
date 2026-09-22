@@ -410,6 +410,46 @@ never for authentication, RBAC, tenant selection or rate limiting. Verified
 identity still comes from `auth`; the `context(auth)` callback remains the
 application-context factory and receives no protocol metadata.
 
+### Telling the host what a long call is doing — `ctx.reportProgress`
+
+A tool that takes ten minutes tells a text host nothing: the call is made, and
+the next thing the host shows is the answer. The protocol has a channel for
+this — the host sends a `progressToken` with the call, the server relates
+progress notifications to it — and a handler reaches it through
+`ctx.reportProgress`:
+
+```ts
+render: async (ctx) => {
+  await ctx.reportProgress({ message: 'queued' })
+  const job = await jobs.start(ctx.input)
+  await ctx.reportProgress({ message: 'rendering', progress: 1, total: 3 })
+  return await jobs.finish(job)
+}
+```
+
+`reportProgress` is always present, so a handler never branches on transport.
+When the host asked for no progress it does nothing. It never throws and never
+rejects: a message about work must not be able to kill the work it describes, so
+a refused notification leaves the host exactly where a host that never asked for
+progress already is.
+
+`progress` is a number the protocol requires and a handler often does not have —
+there is a stage to name and no scale to name it on. Omit it and the ordinal of
+the update is sent, with no `total`, so the host shows a counter rather than a
+bar stuck at 3%. That is a fact about what happened; a synthesised percentage
+would be a claim nobody measured.
+
+The framework sends nothing on its own. Progress is meaningful only where an
+operation has observable stages, and manufacturing one per call would be
+inventing a second transport beside the one the protocol already provides. The
+one exception is the managed wait tool (`mountWait`), which already polls and
+therefore already knows: when the host asked for progress it reports each poll
+and the phase it last saw, which is the tool whose silence raised the question
+in the first place.
+
+The token itself is on `ctx.mcp.progressToken` when a caller wants to know
+whether anyone is listening.
+
 ### Multi-round tool input (`input_required`)
 
 An MCP-only operation can require typed user input before its final side effect:
@@ -460,6 +500,47 @@ remain single-round and unchanged. Hosts without the capability receive an
 ordinary unsupported result rather than a falsely advertised round. Signed
 state is tamper-resistant, not an exactly-once replay store; destructive
 handlers must still be idempotent where retries matter.
+
+#### Questions chosen from the arguments
+
+The list above is fixed when the contract is written, which is right when the
+questions belong to the operation. It is not enough when they belong to the
+**arguments** — one model takes `aspect_ratio`, another `duration`, a third an
+input image — and there a declared list can only be empty. `inputRequired` also
+accepts a function of the parsed call:
+
+```ts
+mcp: {
+  inputRequired: async ({ input }) => {
+    const model = await catalog.get(input.model)
+    return model.needsRatio
+      ? [{ key: 'ratio', schema: RatioSchema, message: 'Which aspect ratio?' }]
+      : []
+  },
+}
+```
+
+It receives the same `params` / `input` the handler receives — parsed, so
+defaults and coercions are already applied. Returning an empty array means this
+call needs nothing and runs straight through. Everything else is unchanged: the
+state is still signed and bound to principal, operation and argument digest, the
+rounds are still counted against `maxRounds`, and a resolved list with duplicate
+keys or more rounds than allowed is refused.
+
+**The plan is fingerprinted, and that matters more than it looks.** Between two
+rounds there is a full round trip to the host, and a resolver that reads
+anything outside its arguments — a model catalog, a feature flag — can answer
+differently the second time. Every other check would still pass: same principal,
+same operation, same arguments, round still in range. Round 2's question would
+be asked under round 1's key, and if the schemas happened to be compatible the
+user's answer would be accepted for a question nobody asked. So the resolved
+list is fingerprinted into the signed state and re-checked every round; a plan
+that moved is refused, not asked. A resolver that reads only its arguments never
+sees this.
+
+A dynamic declaration costs one extra pass through the contract pipeline per
+round, because the parsed value is what the resolver needs and that pass is what
+produces it. A fixed list does not: its path is unchanged.
 
 ### Guarding tools — `lifecycle`
 
