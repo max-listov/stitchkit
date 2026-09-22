@@ -15,8 +15,13 @@
  * Ed25519 over `node:crypto`; no dependency is added for this.
  */
 
-import type { KeyObject } from 'node:crypto';
-import { createPublicKey, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
+import {
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+  type KeyObject,
+} from 'node:crypto';
 import { z } from 'zod';
 import { serializeCanonicalJson } from '../internal/canonical-json';
 import type { CliBuildManifest } from './cli-manifest';
@@ -101,15 +106,31 @@ function publicKeyOf(material: string): KeyObject {
   return createPublicKey({ key: spki, format: 'der', type: 'spki' });
 }
 
+/**
+ * A private key as it comes out of a file or a secret store: PEM text, or DER
+ * bytes.
+ *
+ * Deliberately not `KeyObject`. That type belongs to `node:crypto`, and naming
+ * it in a published signature puts `import("node:crypto")` into the declaration
+ * files of a package whose browser-safe entries a consumer resolves without
+ * Node types at all — the whole surface stops typechecking for them over a
+ * function they never call.
+ */
+export type CliSigningKey = string | Uint8Array;
+
 /** Sign a manifest — for the publisher, which is the only side that holds a key. */
 export function signCliManifest(
   manifest: CliBuildManifest,
-  options: { keyId: string; privateKey: KeyObject | string },
+  options: { keyId: string; privateKey: CliSigningKey },
 ): CliBuildSignature {
   const signature = cryptoSign(
     null,
     Buffer.from(cliManifestSigningPayload(manifest), 'utf8'),
-    options.privateKey,
+    createPrivateKey(
+      typeof options.privateKey === 'string'
+        ? options.privateKey
+        : { key: Buffer.from(options.privateKey), format: 'der', type: 'pkcs8' },
+    ),
   );
   return {
     algorithm: 'ed25519',

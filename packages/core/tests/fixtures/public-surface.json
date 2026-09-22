@@ -590,6 +590,7 @@
     "CliRollbackConfig",
     "CliRunOptions",
     "CliSignatureVerdict",
+    "CliSigningKey",
     "CliStreamAnswer",
     "CliStreamCommandConfig",
     "CliStreamHooks",

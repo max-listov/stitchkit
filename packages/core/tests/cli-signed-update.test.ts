@@ -60,6 +60,11 @@ function scratch(): string {
 const keys = generateKeyPairSync('ed25519');
 const other = generateKeyPairSync('ed25519');
 
+/** PEM text, which is how a publisher's key actually arrives — file or secret. */
+function privatePem(key: typeof keys.privateKey): string {
+  return key.export({ format: 'pem', type: 'pkcs8' }).toString();
+}
+
 function publicKeyBase64(key: typeof keys.publicKey): string {
   return key.export({ format: 'der', type: 'spki' }).subarray(12).toString('base64');
 }
@@ -124,7 +129,7 @@ describe('a signature survives the schema and decides before the download', () =
         ...manifest,
         signature: signCliManifest(manifest, {
           keyId: 'release-2026',
-          privateKey: keys.privateKey,
+          privateKey: privatePem(keys.privateKey),
         }),
       };
     });
@@ -175,7 +180,7 @@ describe('a signature survives the schema and decides before the download', () =
         ...manifest,
         signature: signCliManifest(manifest, {
           keyId: 'release-2026',
-          privateKey: other.privateKey,
+          privateKey: privatePem(other.privateKey),
         }),
       };
     });
@@ -195,7 +200,7 @@ describe('a signature survives the schema and decides before the download', () =
         ...manifest,
         signature: signCliManifest(manifest, {
           keyId: 'unknown-2020',
-          privateKey: keys.privateKey,
+          privateKey: privatePem(keys.privateKey),
         }),
       };
     });
@@ -212,7 +217,7 @@ describe('a signature survives the schema and decides before the download', () =
     const manifest = manifestFor('https://example.invalid/a');
     const signature = signCliManifest(manifest, {
       keyId: 'release-2026',
-      privateKey: keys.privateKey,
+      privateKey: privatePem(keys.privateKey),
     });
     const tampered: CliBuildManifest = {
       ...manifest,
@@ -234,7 +239,7 @@ describe('a signature survives the schema and decides before the download', () =
     const manifest = manifestFor('https://example.invalid/a');
     const signature = signCliManifest(manifest, {
       keyId: 'release-2026',
-      privateKey: keys.privateKey,
+      privateKey: privatePem(keys.privateKey),
     });
     const first = manifest.assets[0];
     if (!first) throw new Error('expected an asset');
@@ -272,7 +277,7 @@ describe('a signature survives the schema and decides before the download', () =
     const manifest = manifestFor('https://example.invalid/a');
     const signature = signCliManifest(manifest, {
       keyId: 'release-2026',
-      privateKey: keys.privateKey,
+      privateKey: privatePem(keys.privateKey),
     });
     const moved: CliBuildManifest = {
       ...manifest,
@@ -293,7 +298,7 @@ describe('a signature survives the schema and decides before the download', () =
         ...manifest,
         signature: signCliManifest(manifest, {
           keyId: 'release-2026',
-          privateKey: keys.privateKey,
+          privateKey: privatePem(keys.privateKey),
         }),
       };
     });
@@ -325,7 +330,7 @@ describe('a signature survives the schema and decides before the download', () =
         ...manifest,
         signature: signCliManifest(manifest, {
           keyId: 'release-2026',
-          privateKey: keys.privateKey,
+          privateKey: privatePem(keys.privateKey),
         }),
       };
     });

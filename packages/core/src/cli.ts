@@ -90,6 +90,7 @@ export {
   type CliBuildSignature,
   CliBuildSignatureSchema,
   type CliSignatureVerdict,
+  type CliSigningKey,
   type CliTrustRoot,
   cliManifestSigningPayload,
   cliSignatureAccepted,
