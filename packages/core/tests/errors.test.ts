@@ -404,3 +404,89 @@ describe('a refused union names its branches', () => {
     );
   });
 });
+
+/*
+ * The answer was collected and then truncated away.
+ *
+ * The descent above ships the real path — but as one entry in a tree walk, and
+ * the text projection prints the first five entries of that walk. For a union
+ * over primitives (`z.json()`, or any recursive schema) the first entries are
+ * the branches that failed on the type of the WHOLE value, all at the union's
+ * own path, all saying the same thing. So a reader got `(root)` five times and
+ * `...and 14 more issues`, while the line naming the field sat eighteenth. A
+ * consuming session spent an hour on exactly that, one release after the path
+ * became available — collecting the truth is not the same as presenting it.
+ */
+describe('the refusal presents the field it collected, not the first five lines of a tree walk', () => {
+  function refusal() {
+    // The reported shape: an optional field left `undefined` inside a value
+    // checked by `z.json()`. Over HTTP it disappears in serialization, so the
+    // same payload validates — which is why it was hunted in the wrong place.
+    const result = z.json().safeParse({ nodes: [{ id: 'a', streams: undefined }] });
+    if (result.success) throw new Error('Expected failure');
+    return result.error;
+  }
+
+  test('the first line names the deepest field, not the path of the union', () => {
+    const first = formatZodError(refusal()).split('\n')[0] ?? '';
+    expect(first).toContain('nodes.0.streams');
+    // The branch that got there is named too, so the reader can follow it back
+    // into the schema rather than guessing which alternative was meant.
+    expect(first).toMatch(/branch \d+ at nodes\.0\.streams/);
+  });
+
+  test('the branch that descended is described before the ones that failed on the whole value', () => {
+    const first = formatZodError(refusal()).split('\n')[0] ?? '';
+    const deep = first.indexOf('nodes.0.streams');
+    const shallow = first.indexOf('received object');
+    // Both present, then ordered. Asserting only the order let `-1` pass for a
+    // line that did not name the field at all — the absent case reads as
+    // "earliest", which is the opposite of what this test is for.
+    expect(deep).toBeGreaterThanOrEqual(0);
+    expect(shallow).toBeGreaterThanOrEqual(0);
+    // Ranked by how far each branch got: the five identical "expected
+    // <primitive>, received object" lines are what crowded it out before.
+    expect(deep).toBeLessThan(shallow);
+  });
+
+  test('no printed line repeats a path already printed', () => {
+    const paths = formatZodError(refusal())
+      .split('\n')
+      .filter((line) => !line.startsWith('...and'))
+      .map((line) => line.replace(/ \(branch \d+\)/, '').split(':')[0]);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  test('every printed line carries a reason, including the deepest one', () => {
+    // The line naming the field used to read `nodes.0.streams: Invalid input`:
+    // the expansion limit had stopped the descent, and the bare sentence landed
+    // on the one slot that mattered. The limit bounds the issue LIST; it does
+    // not license a line that says nothing.
+    for (const line of formatZodError(refusal()).split('\n')) {
+      if (line.startsWith('...and')) continue;
+      expect(line).not.toMatch(/: Invalid input$/);
+    }
+  });
+
+  test('the structured projection still carries every branch, repeats included', () => {
+    // The text drops repeated paths because a person gains nothing from them.
+    // A machine addresses them by branch number, so `zodIssues` keeps all of
+    // them — and the envelope carries what `zodIssues` returned.
+    const all = zodIssues(refusal());
+    const atUnionPath = all.filter((issue) => issue.path === '(root)');
+    expect(atUnionPath.length).toBeGreaterThan(1);
+    const wire = (normalizeError(refusal()).details as { issues: ZodIssueSummary[] }).issues;
+    expect(wire).toHaveLength(all.length);
+  });
+
+  test('an error with no unions prints exactly what it printed before', () => {
+    const result = z.object({ a: z.string(), b: z.number() }).safeParse({ a: 1, b: 'x' });
+    if (result.success) throw new Error('Expected failure');
+    expect(formatZodError(result.error)).toBe(
+      [
+        'a: Invalid input: expected string, received number',
+        'b: Invalid input: expected number, received string',
+      ].join('\n'),
+    );
+  });
+});

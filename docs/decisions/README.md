@@ -213,6 +213,7 @@ A bug fix or a small addition earns a changelog line, not an ADR.
 | [0185](0185-a-served-schema-speaks-the-dialect-it-is-stamped-with.md) | A served schema speaks the dialect it is stamped with | Accepted — MCP metadata moves to `$defs`, definitions hoist to the document root, the client refuses to believe a contradicted stamp, and one unconvertible tool no longer takes the connection down |
 | [0186](0186-the-cli-owns-its-own-distribution.md) | The CLI surface owns aggregates, profiles and its own distribution | Accepted — `--count-by`/`--sum`/`--top`/`--table`, never-substituted named profiles, a manifest-generated installer with a decompressed-bytes digest, and `transports` opt-in for discovered tools |
 | [0187](0187-the-framework-hands-over-what-it-already-knows.md) | The framework hands over what it already knows | Accepted — `beforeToolCall` may rewrite arguments, the refusal carries `retryable`, `toolCallId` travels as call context, the tools layer owns a durability port, and an unimplemented endpoint can be a `501` stub on a dev stand |
+| [0188](0188-collecting-the-truth-is-not-presenting-it.md) | Collecting the truth is not presenting it | Accepted — a union branch is described by the deepest field it reached, the summary keeps the branches that got furthest, the text projection drops repeated paths, and the expansion limit no longer silences the wording |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
