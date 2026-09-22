@@ -62,6 +62,16 @@ drop it.
 - **`CliConfig.commands` moved to `CliInvokerConfig`.** One declaration for both
   surfaces; `createCli` keeps the field it always had.
 
+- **An update check refused by the SSRF boundary names the field that lifts it.**
+  A self-hosted deployment serves its manifest from its own network, the check
+  has `allowPrivateHosts` for exactly that, and the refusal relayed the guard's
+  own sentence — which reads like a timeout, so the deployment goes quietly
+  stale. The reason now says the endpoint is not public, names the field, and
+  says why `applyCliUpdate` keeps its own setting: a manifest URL is
+  configuration you wrote, an asset URL arrives inside a document. Only
+  address-privacy refusals get this; a refusal the field cannot lift keeps its
+  own reason.
+
 ## [0.92.0] — 2026-09-22
 
 ### ⚠️ Breaking changes
