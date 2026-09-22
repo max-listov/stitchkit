@@ -15,6 +15,81 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.91.0] — 2026-09-22
+
+### ⚠️ Breaking changes
+
+- **`STITCH_ERROR_STATUS` gained `NOT_IMPLEMENTED` (501).** An exhaustive error
+  vocabulary must name it; without the row `defineErrors({ mapping: { exhaustive:
+  true } })` stops compiling and then throws at startup. The code is thrown only
+  by the new dev-only `onMissingHandler: 'stub'` policy, and it is registered
+  rather than thrown ad hoc on purpose: the framework must not emit a code its
+  own registry does not know, or the code travels in stitchkit's spelling past
+  every consumer `codeMap`.
+  `// before: map: { …, WAIT_TIMEOUT: 'timeout' }` →
+  `// after:  map: { …, NOT_IMPLEMENTED: 'not_implemented', WAIT_TIMEOUT: 'timeout' }`
+
+**Who must act:** any consumer declaring an exhaustive error vocabulary. Nobody
+else: every other change in this release is additive.
+
+### Added
+
+- **`beforeToolCall` may return replacement arguments.** The pipeline was
+  asymmetric: `lifecycle.afterHandle` could already transform the output, while
+  the only way to affect the input was to throw — so expanding a reference into a
+  value *before* validation had nowhere to stand. A returned record replaces the
+  arguments and is validated by the contract schema like any other input. Only a
+  plain object is read as a replacement: `undefined`, `null`, a `Map` from a
+  one-line `audit.set(...)`, the number a `push` returns — everything an existing
+  hook already returns — keeps today's behaviour byte for byte. `afterToolCall` reports
+  the caller's arguments as `args` and the replacement as `effectiveArgs`, so a
+  rewrite is visible as a rewrite rather than by overwriting the evidence.
+- **The model-facing tool refusal carries `retryable`.** One bit decides the
+  model's next move — wait and retry, fix the input, or stop — and until now it
+  was read off the code NAME. It is resolved on the failure itself, declared or
+  derived from the status of the normalized error, so an application's own
+  `status: 429` is retryable exactly like the framework's and the answer survives
+  a process hop; `ErrorDefinition` may declare `retryable` where the status class
+  is wrong in either direction. The rule is deliberately not "any `5xx`":
+  `REALTIME_CONTRACT_VIOLATION` and `STREAM_ITEM_INVALID` are 500 and
+  deterministic. `isRetryableStatus` is exported. The field is on **every**
+  failed tool envelope — the CLI's JSON error and the MCP error text block gained
+  a key; the HTTP envelope did not.
+- **`toolCallId` travels as ordinary tool-call context.** A consumer running its
+  own agent loop already received the outcome of every call through
+  `afterToolCall` — with no way to say which call it belonged to, so it
+  reconstructed the answer from serialized text instead. One consumer measured
+  five places asking "did this call fail" and getting five different answers.
+  `AgentToolError` and `isAgentToolError` are now exported too, so the failure can
+  be brand-checked instead of parsed.
+- **`mountAgent({ durability })` — restartable tool bodies without
+  `agent-runtime`, engine included.** `step` / `sleep` / `waitFor` appear in the
+  handler context. The `ToolDurability` port is what a body sees; the engine,
+  `createLocalStepDurability`, now ships from `stitchkit/tools` beside it, with
+  `StepDurabilityLedger` and the ledger's row types — an application supplies two
+  methods over storage it already has and gets replay, absolute deadlines,
+  park/deliver and decode refusal instead of writing them. The engine is
+  self-contained, and a build check over the real chunk graph holds that the
+  runtime proper never follows it into `stitchkit/tools`.
+- **`onMissingHandler: 'stub'` for every binding form.** A contract endpoint with
+  no handler is mounted as a `501` refusal instead of taking the whole application
+  down. For one measured situation: a dev stand under a file watcher, where adding
+  an endpoint is two edits by construction and the editor saves one file at a
+  time, so the stand is down between them for everyone using it. Both save orders
+  are covered — a contract ahead of its handler and a handler ahead of its
+  contract. `'throw'` remains the default and the only production answer, and the
+  compile-time exactness check is untouched.
+
+- **A string bound for one key, wherever it sits.** `redact` / `sanitizePayload`
+  take `maxStringLengthByKey` and `createBoundedLogger` takes
+  `bounds.stringLengthByKey`. One bound for the whole record cut an error's
+  stack from the bottom — where the consumer's own frames are; now the ceiling
+  for `stack` alone can be raised. Keyed by name, not path, because the same
+  field sits at the top of one record and under `errorDetail` in the next. The
+  byte ceiling keeps the last word.
+
+→ ADR 0187.
+
 ## [0.90.8] — 2026-09-21
 
 ### Added

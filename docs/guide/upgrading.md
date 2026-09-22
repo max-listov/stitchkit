@@ -1,5 +1,22 @@
 # Upgrading stitchkit
 
+## Released migration: 0.91.0
+
+1. `STITCH_ERROR_STATUS` gained `NOT_IMPLEMENTED` (501). An **exhaustive** error
+   vocabulary must name it — without the row `defineErrors({ mapping: { exhaustive:
+   true } })` stops compiling and then throws at startup. Nothing else in this
+   release requires action.
+
+   ```ts
+   // before
+   map: { …, WAIT_TIMEOUT: 'timeout' }
+   // after
+   map: { …, NOT_IMPLEMENTED: 'not_implemented', WAIT_TIMEOUT: 'timeout' }
+   ```
+
+   The code is thrown only by the new dev-only `onMissingHandler: 'stub'` policy;
+   a vocabulary that is not exhaustive is unaffected.
+
 ## Released migration: 0.90.0
 
 1. `stitchkit.watch.value` is a discriminated union on `kind` — `full`, `delta`,
