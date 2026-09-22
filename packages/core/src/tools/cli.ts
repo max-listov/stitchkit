@@ -26,7 +26,6 @@ import { safeJsonParse } from '../internal/safe-json';
 import { fetchGuarded, readCapped } from '../internal/secure-fetch';
 import { isRecord } from '../internal/typed';
 import { writeDownload } from '../internal/write-download';
-import type { ServiceDef, StitchLogger } from '../server/types';
 import {
   CliArgumentError,
   describeSchemaFields,
@@ -44,11 +43,16 @@ import {
 } from './cli-command';
 import { DEFAULT_EXIT_CODES, type ExitCodeMap, emitResult } from './cli-format';
 import {
-  applyCliPresentationPolicy,
-  assertCliPoliciesResolved,
-  type CliCommandPresentation,
-  type CliPresentationPolicyConfig,
-} from './cli-policy';
+  buildCliSurface,
+  type CliInvocationResult,
+  type CliInvoker,
+  type CliInvokerCommand,
+  type CliInvokerConfig,
+  type CliSurfaceSource,
+  cliInvocationResult,
+  createCliInvoker,
+} from './cli-invoke';
+import { applyCliPresentationPolicy, type CliCommandPresentation } from './cli-policy';
 import { renderCliView } from './cli-view';
 import { type CliWaitConfig, pollUntilDone } from './cli-wait';
 import {
@@ -63,27 +67,24 @@ import { type JsonSchemaField, jsonSchemaFields } from './json-schema';
 import { createToolRunner, type MountableTool } from './mount';
 import { assertUniqueToolName } from './names';
 import { buildToolPresentationSchema } from './presentation';
-import type { RuntimeToolDefinition } from './runtime-tool';
 import { objectShapeKeys } from './schema';
-import { collectToolSurface } from './surface';
 
-export type CliSurfaceSource<TAuth, TValue> =
-  | readonly TValue[]
-  | ((auth: Awaited<TAuth> | undefined) => readonly TValue[]);
+export type {
+  CliInvocationResult,
+  CliInvoker,
+  CliInvokerCommand,
+  CliInvokerConfig,
+  CliSurfaceSource,
+};
+export { cliInvocationResult, createCliInvoker };
 
 export interface CliConfig<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
   TGlobals extends ZodObject = ZodObject,
-> extends CliPresentationPolicyConfig {
-  /** Program name — shown in help and unknown-command messages. */
-  name: string;
+> extends CliInvokerConfig<TAuth, TContext, TGlobals> {
   /** Program version — printed by `--version`. */
   version: string;
-  /** Contract services exposed as commands — may depend on the resolved identity. */
-  services?: CliSurfaceSource<TAuth, ServiceDef>;
-  /** Pathless managed operations. CLI exposure always requires `transports: ['CLI']`. */
-  runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolDefinition>;
   /** CLI-only executable commands, dispatched before auth and managed surface factories. */
   commands?: readonly CliCommandDefinition[];
   /**
@@ -124,8 +125,6 @@ export interface CliConfig<
    * a scoped command bypasses the gate.
    */
   lifecycle?: ToolLifecycle;
-  /** Logger for diagnostics — defaults to stderr-safe `console.error`. */
-  logger?: StitchLogger;
   /** Coerce JSON-stringified arrays/objects in arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /** Global error hint appended to every failed command's error. */
@@ -421,16 +420,6 @@ function renderCommandHelp(
   const applicationLines = applicationOptionLines(applicationOptions);
   if (applicationLines.length > 0) lines.push(...applicationLines.slice(1), '');
   return `${lines.join('\n')}\n`;
-}
-
-function managedDescriptor(
-  tool: MountableTool,
-): Omit<CliCommandPresentation, 'aliases' | 'positionals'> {
-  return {
-    description: tool.method.desc,
-    argumentSchema: tool.argumentSchema,
-    presentationSchema: tool.presentationSchema,
-  };
 }
 
 function nativeDescriptor(
@@ -845,34 +834,16 @@ export async function createCli<
         };
       }
     }
-    const services =
-      typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
-    const runtimeTools =
-      typeof config.runtimeTools === 'function'
-        ? config.runtimeTools(auth)
-        : (config.runtimeTools ?? []);
-    const tools = new Map<string, MountableTool>();
-    const help = new Map(nativeHelp);
-    for (const { mountable } of collectToolSurface({
-      surface: { services, runtimeTools },
-      transport: 'CLI',
-    })) {
-      const descriptor = applyCliPresentationPolicy(
-        mountable.name,
-        managedDescriptor(mountable),
-        config,
-      );
-      assertCommandShape(
-        mountable.name,
-        descriptor,
-        help.has(mountable.name),
-        config.passthrough?.[mountable.name],
-        applicationGlobalNames,
-      );
-      tools.set(mountable.name, mountable);
-      help.set(mountable.name, descriptor);
-    }
-    assertCliPoliciesResolved(help, config);
+    // The same walk the in-process invoker does, from the same function: if the
+    // two ever built the surface separately, a line of a stream and the same
+    // call typed at a prompt could resolve to different tools.
+    const { tools, help } = buildCliSurface(
+      config,
+      auth,
+      nativeHelp,
+      applicationGlobalNames,
+      assertCommandShape,
+    );
     return { resolved: true, auth, help, tools };
   };
 

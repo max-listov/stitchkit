@@ -52,6 +52,21 @@ export interface EmitOptions {
  * on stdout (pretty by default, compact with `--json`), exit `0`. Failure → the
  * error JSON on stderr, exit per the code map (unknown code → `1`).
  */
+/**
+ * The exit code a result earns, without writing anything.
+ *
+ * Extracted so a caller that runs an operation in process — a stdin loop, a
+ * resumable batch — gets the SAME code the printed path gives, from the same
+ * table, rather than re-deriving one from the error code and drifting. It was
+ * computed inside `emitResult`, which meant the only way to learn it was to
+ * print.
+ */
+export function cliExitCode(result: ToolResult, exitCodes?: ExitCodeMap): number {
+  if (result.ok) return 0;
+  const codes = exitCodes ?? DEFAULT_EXIT_CODES;
+  return codes[result.code] ?? 1;
+}
+
 export function emitResult(
   result: ToolResult,
   writers: CliWriters,
@@ -70,6 +85,5 @@ export function emitResult(
   const error = formatToolError(result, opts.toolName, opts.errorHint);
   const text = opts.json ? JSON.stringify(error) : JSON.stringify(error, null, 2);
   writers.stderr(`${text}\n`);
-  const codes = opts.exitCodes ?? DEFAULT_EXIT_CODES;
-  return codes[result.code] ?? 1;
+  return cliExitCode(result, opts.exitCodes);
 }

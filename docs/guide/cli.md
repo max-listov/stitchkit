@@ -650,6 +650,77 @@ with the track being published and sees no conflict, and the person who
 installed the beta is told they are current forever. Nothing on their machine
 looks wrong.
 
+## One operation per line — `createCliInvoker`
+
+The most common way an agent drives a CLI is not one command: it is a stream —
+a JSON line per operation, an answer per line — and a resumable batch of the
+same. The mechanics contain nothing product-specific, and until now the
+framework left the one piece that cannot be written outside it: running an
+already-parsed call.
+
+```ts
+import { createCliInvoker, defineCliStreamCommand, defineCliBatchCommand } from 'stitchkit/cli'
+
+const invoker = await createCliInvoker({ name: 'myapp', services })
+
+const outcome = await invoker.invoke('create_item', { title: 'hello', tags: ['a'] })
+// { ok: true, exitCode: 0, data: { … } }   — nothing written, nothing exited
+```
+
+`invoke` runs the same pipeline a typed command runs — the same validation, the
+same `lifecycle` gate, the same hooks — and returns the typed result with **the
+exit code the printed path would give**, from the same table. That table used to
+live inside the function that prints, so the only way to learn a code was to
+print it.
+
+Without this, a stream loop had to re-spawn the binary per line: arguments
+serialised back into `--flag value` strings, nested objects pushed through
+`JSON.stringify` into one argv slot and parsed again on the other side, the
+result read back out of stdout text. Three conversions of data the framework was
+already holding, plus a process start measured at 0.15 s — thirty seconds for a
+two-hundred-line manifest before any work begins. The ban on nesting one stream
+inside another was a consequence of that child process, not a rule anyone wanted.
+
+### Mounting the loop
+
+```ts
+await createCli({
+  name: 'myapp', version, services,
+  commands: [
+    defineCliStreamCommand({ name: 'jsonl', invoker }),
+    defineCliBatchCommand({ name: 'batch', invoker, checkpointPath: '.myapp-batch.json' }),
+  ],
+})
+```
+
+They are factories, not framework-owned names. Reserving `jsonl` and `batch`
+would take two names out of a namespace that belongs to the application — one
+that already has a `batch` command would either fail at startup or find its own
+command silently shadowed — so you mount them under whatever you call them, like
+any other command of yours.
+
+Each line is `{ id, command, args }`; each answer is the invocation result plus
+that `id`. A line that is not JSON, or has no `id`, is **answered** and the
+stream continues: a stream that goes quiet on one line leaves its consumer
+unable to tell which request it lost. Answers go to stdout, one object per line,
+and nothing else does.
+
+### Resuming a batch
+
+The checkpoint records, per id, a digest of the line that produced the recorded
+answer, and is written after **every** line by atomic rename — a checkpoint that
+only survives a clean finish protects against exactly the case that does not
+happen.
+
+A re-run replays what already ran. A line whose content changed under the same
+id is **refused**: replaying it would report success for an operation nobody
+ran, and re-running it would repeat a paid call. Both answer a question nobody
+asked.
+
+What stays yours: what makes a repeat safe (an idempotency key derived from the
+line id), which operations a batch may contain, and how much of it runs at once.
+That is product knowledge, and the framework has no business guessing it.
+
 ## Commands discovered from a running server
 
 A CLI compiled from contracts carries the surface of the build it was compiled

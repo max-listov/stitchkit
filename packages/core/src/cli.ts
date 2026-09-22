@@ -16,7 +16,17 @@
  *
  * and point your app's `package.json` `bin` at it.
  */
-export { type CliConfig, type CliSurfaceSource, createCli } from './tools/cli';
+export {
+  type CliConfig,
+  type CliInvocationResult,
+  type CliInvoker,
+  type CliInvokerCommand,
+  type CliInvokerConfig,
+  type CliSurfaceSource,
+  cliInvocationResult,
+  createCli,
+  createCliInvoker,
+} from './tools/cli';
 export {
   CliArgumentError,
   type CliArgvRoute,
@@ -29,6 +39,12 @@ export {
   routeCliArgv,
 } from './tools/cli-args';
 export {
+  type CliCheckpoint,
+  type CliCheckpointEntry,
+  readCliCheckpoint,
+  writeCliCheckpoint,
+} from './tools/cli-checkpoint';
+export {
   type CliCommandContext,
   type CliCommandDefinition,
   type CliCommandDefinitionBase,
@@ -38,6 +54,7 @@ export {
 } from './tools/cli-command';
 export {
   type CliWriters,
+  cliExitCode,
   DEFAULT_EXIT_CODES,
   type EmitOptions,
   type ExitCodeMap,
@@ -79,6 +96,14 @@ export {
   signCliManifest,
   verifyCliManifest,
 } from './tools/cli-signature';
+export {
+  type CliBatchCommandConfig,
+  type CliStreamAnswer,
+  type CliStreamCommandConfig,
+  defineCliBatchCommand,
+  defineCliStreamCommand,
+  runCliStream,
+} from './tools/cli-stream';
 export {
   type AppliedCliUpdate,
   applyCliUpdate,
