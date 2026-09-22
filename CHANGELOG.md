@@ -15,6 +15,24 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.91.1] — 2026-09-22
+
+### Fixed
+
+- **A refusal relayed from a discovered MCP tool no longer says "retryable" for
+  everything.** `mcpToolFailure` rebuilt the remote's refusal with a constant
+  502 and read neither `retryable` nor `_hint` off the envelope it had just
+  parsed. 502 is a retryable class, so the status-derived answer was `true` for
+  every relayed failure there has ever been — `NOT_FOUND` included, and a model
+  reading it calls the missing thing again. That is the exact opposite of what
+  the field was added for in 0.91.0. Both fields are now carried as the remote
+  sent them: `retryable` only when it is a boolean, `_hint` only when it is a
+  string, so `0` or `'false'` stays undeclared rather than being coerced into a
+  decision. The status stays 502 in both branches — the failure did happen
+  upstream, and a declared `retryable` wins over it anyway. A remote that
+  declares nothing is unchanged, and the unstructured branch
+  (`UPSTREAM_TOOL_ERROR`) has nothing to declare and keeps the 502 default.
+
 ## [0.91.0] — 2026-09-22
 
 ### ⚠️ Breaking changes
