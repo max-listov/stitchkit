@@ -1,7 +1,7 @@
 import { type LanguageModel, wrapLanguageModel } from 'ai';
 import type { AgentRuntimeEvent } from './event-schema';
 import { agentDurableEventId } from './event-schema';
-import { isOwnInputRefusal, markProviderOrigin } from './provider-origin';
+import { isOwnInputRefusal, markProviderOrigin, markProviderStream } from './provider-origin';
 import type { RunMutationQueue } from './run-mutation-queue';
 import { findRun } from './runtime-internals';
 import {
@@ -110,7 +110,8 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
             // invoked when durable lifecycle storage rejects the transition.
             await startModelRequest(callId, step);
             try {
-              return await doStream();
+              const result = await doStream();
+              return { ...result, stream: markProviderStream(result.stream) };
             } catch (error) {
               // The one place the provider's own failure is known as such —
               // except for the checks the SDK runs on *our* inputs inside the

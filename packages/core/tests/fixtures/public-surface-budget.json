@@ -11,7 +11,7 @@
     "stitchkit/agent-runtime/sqlite/bun": 10,
     "stitchkit/agent-runtime/sqlite/node": 10,
     "stitchkit/agent-runtime/testing": 15,
-    "stitchkit/application": 266,
+    "stitchkit/application": 268,
     "stitchkit/application/diagnostic-journal": 1,
     "stitchkit/application/grammy": 7,
     "stitchkit/application/opentelemetry": 5,

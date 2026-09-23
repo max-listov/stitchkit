@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createProcessLifecycleLedger,
-  type LifecycleState,
   lifecycleLedgerResource,
+} from '../src/application/process-lifecycle';
+import {
+  type LifecycleState,
   transitionProcessReady,
   transitionProcessShutdown,
   transitionProcessStart,
-} from '../src/application/process-lifecycle';
+} from '../src/application/process-lifecycle-transitions';
 import type { StateStore } from '../src/application/state-store';
 
 function memoryStore<TState>(initial: TState | null = null): StateStore<TState> {
@@ -35,6 +37,11 @@ function memoryStore<TState>(initial: TState | null = null): StateStore<TState> 
 const at = (second: number): string =>
   `2026-09-06T04:00:${String(second).padStart(2, '0')}.000Z`;
 
+/** The run answered: without readiness a stop reads as a failed startup. */
+function ready(state: LifecycleState, runId: string, pid: number, second: number) {
+  return transitionProcessReady(state, { runId, pid, now: at(second) }).state;
+}
+
 describe('process lifecycle transitions', () => {
   test('classifies first boot, hot reload, clean, handoff, abnormal and unknown version', () => {
     const first = transitionProcessStart(null, {
@@ -45,7 +52,7 @@ describe('process lifecycle transitions', () => {
     });
     expect(first.fact.previousExit).toBe('first-boot');
 
-    const hot = transitionProcessStart(first.state, {
+    const hot = transitionProcessStart(ready(first.state, 'a', 10, 0), {
       runId: 'b',
       pid: 10,
       version: '1',
@@ -54,7 +61,7 @@ describe('process lifecycle transitions', () => {
     expect(hot.fact.previousExit).toBe('hot-reload');
     expect(hot.state.runs.find((run) => run.runId === 'a')?.termination).toBe('hot-reload');
 
-    const stopped = transitionProcessShutdown(hot.state, {
+    const stopped = transitionProcessShutdown(ready(hot.state, 'b', 10, 1), {
       runId: 'b',
       pid: 10,
       now: at(2),
@@ -67,7 +74,7 @@ describe('process lifecycle transitions', () => {
     });
     expect(clean.fact).toMatchObject({
       previousExit: 'clean',
-      downtimeMs: 2_000,
+      processGapMs: 2_000,
       versionChanged: true,
     });
 
@@ -78,7 +85,7 @@ describe('process lifecycle transitions', () => {
       now: at(5),
     });
     expect(handoff.fact.previousExit).toBe('handoff');
-    const abnormal = transitionProcessStart(handoff.state, {
+    const abnormal = transitionProcessStart(ready(handoff.state, 'd', 12, 5), {
       runId: 'e',
       pid: 13,
       version: '3',
@@ -105,7 +112,8 @@ describe('process lifecycle transitions', () => {
           pid: 2,
           version: '2',
           startedAt: at(3),
-          readyAt: null,
+          readyAt: at(4),
+          unavailableAt: null,
           stoppedAt: null,
           termination: 'active',
         },
@@ -115,6 +123,7 @@ describe('process lifecycle transitions', () => {
           version: '1',
           startedAt: at(5),
           readyAt: null,
+          unavailableAt: null,
           stoppedAt: at(6),
           termination: 'forced',
         },
@@ -166,6 +175,7 @@ describe('process lifecycle transitions', () => {
       version: '3',
       now: at(3),
       retain: 2,
+      sameVersionOverlap: 'handoff',
     });
     // Over the bound by one: the finished run-2 goes, not the live run-1 at the tail.
     expect(third.state.runs.map((run) => `${run.runId}:${run.termination}`)).toEqual([
@@ -184,6 +194,7 @@ describe('process lifecycle transitions', () => {
           version: '1',
           startedAt: at(0),
           readyAt: null,
+          unavailableAt: null,
           stoppedAt: at(1),
           termination: 'hot-reload',
         },
@@ -275,6 +286,7 @@ describe('process lifecycle transitions', () => {
     });
     expect((await ledger.recordStart({ version: '1' })).runId).toBe('run-1');
     now = new Date(at(1));
+    await ledger.recordReady();
     await ledger.recordShutdown();
     now = new Date(at(2));
     const restarted = await ledger.recordStart({ version: '1' });
@@ -303,6 +315,7 @@ describe('process lifecycle transitions', () => {
     });
     const resource = lifecycleLedgerResource(ledger, { version: '1' });
     await resource.start();
+    await resource.activate?.({} as never);
     rejectNext = true;
     await expect(resource.close?.({} as never)).rejects.toThrow('disk unavailable');
     await expect(resource.close?.({} as never)).resolves.toBeUndefined();
@@ -318,7 +331,7 @@ describe('process lifecycle transitions', () => {
     // A dev build that cannot name its version starts while the released run
     // is still marked active under another pid: nothing says a new build
     // arrived, so the predecessor did not hand over — it stopped answering.
-    const unknown = transitionProcessStart(first.state, {
+    const unknown = transitionProcessStart(ready(first.state, 'released', 10, 0), {
       runId: 'dev',
       pid: 11,
       version: 'unknown',
@@ -334,7 +347,7 @@ describe('process lifecycle transitions', () => {
       stoppedAt: at(1),
     });
     // And the other direction: a released build after an unknown one.
-    const released = transitionProcessStart(unknown.state, {
+    const released = transitionProcessStart(ready(unknown.state, 'dev', 11, 1), {
       runId: 'released-again',
       pid: 12,
       version: '1.0.0',
@@ -353,6 +366,7 @@ describe('process lifecycle transitions', () => {
           version: '1',
           startedAt: at(0),
           readyAt: at(1),
+          unavailableAt: null,
           stoppedAt: at(5),
           termination: 'abnormal',
         },
@@ -364,7 +378,12 @@ describe('process lifecycle transitions', () => {
       version: '1',
       now: at(9),
     });
-    expect(next.fact).toMatchObject({ previousExit: 'abnormal', downtimeMs: 4_000 });
+    expect(next.fact).toMatchObject({ previousExit: 'abnormal', processGapMs: 4_000 });
+    // Nobody timed the crash, so how long nobody answered is unknown.
+    expect(
+      transitionProcessReady(next.state, { runId: 'after-crash', pid: 2, now: at(10) }).fact
+        .downtimeMs,
+    ).toBeNull();
   });
 
   test('same-version overlap is a crash by default and a handoff by declaration', () => {
@@ -374,7 +393,8 @@ describe('process lifecycle transitions', () => {
       version: '2.0.0',
       now: at(0),
     });
-    const crash = transitionProcessStart(first.state, {
+    const serving = ready(first.state, 'worker-1', 10, 0);
+    const crash = transitionProcessStart(serving, {
       runId: 'worker-2',
       pid: 11,
       version: '2.0.0',
@@ -382,7 +402,7 @@ describe('process lifecycle transitions', () => {
     });
     expect(crash.fact.previousExit).toBe('abnormal');
 
-    const overlap = transitionProcessStart(first.state, {
+    const overlap = transitionProcessStart(serving, {
       runId: 'worker-2',
       pid: 11,
       version: '2.0.0',
@@ -435,15 +455,18 @@ describe('process lifecycle transitions', () => {
       facts.push(`${fact.type}:${fact.runId}`);
     });
     const resource = lifecycleLedgerResource(ledger, { version: '1' });
-    await resource.start();
-    await resource.close?.({} as never);
-    await resource.start();
-    await resource.close?.({} as never);
+    for (let round = 0; round < 2; round += 1) {
+      await resource.start();
+      await resource.activate?.({} as never);
+      await resource.close?.({} as never);
+    }
     await Promise.resolve();
     expect(facts).toEqual([
       'started:run-1',
+      'ready:run-1',
       'stopped:run-1',
       'started:run-2',
+      'ready:run-2',
       'stopped:run-2',
     ]);
     expect((await ledger.runs()).map((run) => run.termination)).toEqual(['clean', 'clean']);

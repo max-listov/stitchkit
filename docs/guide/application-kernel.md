@@ -801,39 +801,74 @@ application-owned.
 ## Durable process facts and owner notifications
 
 `createProcessLifecycleLedger` records a bounded versioned list of process runs.
-Start, readiness and shutdown target both `runId` and `pid`, so hot reload and
-PID reuse cannot close the wrong generation. A start classifies what happened to
-the newest run before it, and the classification is decided by three facts —
-whether that run recorded its own exit, whether the pid is the same, and whether
-the version changed:
+Start, readiness, draining and shutdown target both `runId` and `pid`, so hot
+reload and PID reuse cannot close the wrong generation. `lifecycleLedgerResource`
+drives it from the kernel's phases: `start` records the start, `activate` the
+readiness, `stopAdmission` the drain — the run's `unavailableAt`, the moment it
+stops answering new work — and `close` / `force` the stop. A run that stops
+without ever becoming ready (a failed startup rolls back with `close` only)
+ends as `startup-failed`, not `clean`.
+
+A start classifies what happened to the newest run before it, and the
+classification is decided by four facts — whether that run recorded its own
+exit, whether the pid is the same, whether the version changed and whether it
+ever became ready:
 
 | newest run | same pid | version | `previousExit` | predecessor's `termination` |
 |---|---|---|---|---|
 | none | — | — | `first-boot` | — |
-| recorded `stoppedAt` | — | — | `clean` / `forced` / `abnormal` as recorded | unchanged |
-| still `active` | yes | — | `hot-reload` | `hot-reload`, closed at the new start |
-| still `active` | no | changed | `handoff` | stays `active`; it records its own stop later |
-| still `active` | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
+| recorded `stoppedAt` | — | — | `clean` / `forced` / `startup-failed` / `abnormal` as recorded | unchanged |
+| still open | yes | — | `hot-reload` | `hot-reload`, closed at the new start |
+| still open | no | changed | `handoff` | stays open; it records its own stop later |
+| still open, was ready | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
+| still open, never ready | no | same | `startup-failed` (default) | `startup-failed`, closed at the new start |
+
+Every other open run the start finds was abandoned too and is closed the same
+way — two crashes in a row leave two open runs, and both are closed, not only
+the newest. Open means `active` or `draining`.
 
 A version of `unknown` on either side is never a version change, so a dev build
 after a crashed release reads `abnormal`, not `handoff`. `forced` means the
 process itself acknowledged a kill; `abnormal` means a successor found it dead.
 
-The last row is a choice, and the default is the single-process deployment:
+### Downtime is the window nobody answered in
+
+`ReadyFact.downtimeMs` is `readyAt` of the new run minus `unavailableAt` of the
+last run that served — the predecessor's drain plus the successor's boot. A
+110 s forced drain followed by a 4 s boot is 114 s of downtime; the gap between
+the two processes alone would read 4 s before and after that defect was fixed.
+Runs that never became ready answered nobody, so the count passes them: after a
+failed start it still opens where the last serving run stopped answering. It is
+`0` when that run still answers (a handoff whose predecessor has not drained
+yet) and `null` on first boot and when the end was never timed — a crash or a
+hot reload records no `unavailableAt`. `unavailableSince` names the moment it is
+counted from. The gap between two processes is still there, under its own
+name: `StartFact.processGapMs` is the start minus the predecessor's recorded
+stop.
+
+The ledger records what the process says while it can say it. stitchkit never
+calls `process.exit` (ADR 0074), so a stop is recorded on the kernel's `close`
+or `force` path, both awaited. An application that exits the process on its
+own before its shutdown settles loses that last write; the successor then
+finds the run open and closes it as `abnormal`, keeping the `unavailableAt`
+already recorded — which is why the drain moment is written first, at
+`stopAdmission`, and the downtime survives a stop that was never recorded.
+
+The `abnormal` default is a choice, and it is the single-process deployment:
 one process per build, a new pid of the same build means the old one stopped
-answering. Where two processes of **one** build overlap on purpose — a
-cluster, a zero-downtime reload of the same build — pass
-`sameVersionOverlap: 'handoff'` to the ledger, and the predecessor stays
-`active` until it records its own shutdown. The cost of that setting is
-symmetric: a real crash under it is reported as a handoff and the dead run
-stays `active` in the ledger until retention drops it. The list is kept in the
-order the transitions wrote it — every write goes through one atomic update,
-so that order is the causal one, and a successor whose clock lags its
-predecessor still finds it at the head; `startedAt` is data, not the sort key.
-Retention (`retain`, default 20) drops finished runs first and an active one —
-a live handoff predecessor — only when nothing finished is left. Facts are
-published through the ledger's own subscription and resource value;
-`ApplicationEventSink` remains the strict application-state stream.
+answering. Where processes of **one** build overlap on purpose — a cluster, a
+zero-downtime reload of the same build — pass `sameVersionOverlap: 'handoff'`
+to the ledger, and every open run stays open until it records its own
+shutdown. The cost of that setting is symmetric: a real crash under it is
+reported as a handoff and the dead run stays open in the ledger until
+retention drops it. The list is kept in the order the transitions wrote it —
+every write goes through one atomic update, so that order is the causal one,
+and a successor whose clock lags its predecessor still finds it at the head;
+`startedAt` is data, not the sort key. Retention (`retain`, default 20) drops
+finished runs first and an open one — a live handoff predecessor — only when
+nothing finished is left. Facts are published through the ledger's own
+subscription and resource value; `ApplicationEventSink` remains the strict
+application-state stream.
 
 `createNotificationOutbox` is the transport-neutral durable delivery side. It
 persists before send, claims an item with an expiring lease, carries one stable

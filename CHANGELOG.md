@@ -15,6 +15,46 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.95.0] — 2026-09-23
+
+### ⚠️ Breaking changes
+
+**Who must act:** a project that reads `downtimeMs` from a lifecycle start fact,
+switches exhaustively over `LifecycleTermination`, `PreviousExit` or
+`ProcessLifecycleFact`, imports `TransitionReadyInput`, or drives
+`createProcessLifecycleLedger` by hand without `recordReady`. A project that uses `lifecycleLedgerResource` and only
+stores the ledger raises its version range; a ledger file written by an earlier
+version loads unchanged.
+
+- `stitchkit/application` — **the lifecycle ledger measures the window nobody
+  answered in.** `downtimeMs` was `startedAt` of the new process minus
+  `stoppedAt` of the old one, so a 110 s forced drain read as the same ~4 s
+  before and after it was fixed. A run now records `unavailableAt` when its
+  admission stops (`lifecycleLedgerResource` does it at `stopAdmission`; by
+  hand, `ledger.recordDraining()`) and passes an open `draining` phase.
+  `ReadyFact.downtimeMs` is `readyAt` of the new run minus `unavailableAt` of
+  the last run that served, with `unavailableSince` naming that moment; the old
+  number stays on `StartFact` as `processGapMs`. A run that stops before it was
+  ever ready ends `startup-failed` — recorded by itself on a rolled-back
+  startup, or by the successor that finds it open — and `PreviousExit` gains
+  the same value. A start closes every abandoned open run it finds, not only
+  the newest. New names: `DrainingFact`, `transitionProcessDraining`.
+  `TransitionReadyInput` is `TransitionRunInput`: one shape — which run, and
+  when — taken by readiness and draining alike, and extended by
+  `TransitionShutdownInput`; a second name for it would be an alias.
+  `// before: ledger.subscribe((fact) => fact.type === 'started' && report(fact.downtimeMs))` →
+  `// after:  ledger.subscribe((fact) => fact.type === 'ready' && report(fact.downtimeMs))`
+
+### Fixed
+
+- `stitchkit/agent-runtime` — **a provider stream cut mid-answer is a
+  `provider_failure` on Bun 1.4 too.** Only a throw out of `doStream()` was
+  marked as the provider's; Bun 1.4 delivers a cut connection as a rejected
+  read of the stream `doStream()` already returned (`AI_APICallError: Failed to
+  process successful response`), and that unmarked error ended the run as
+  `runtime_failure`. Every failed read of the provider's stream is now marked;
+  the runtime's own failures while consuming it keep their classes.
+
 ## [0.94.1] — 2026-09-23
 
 ### Added

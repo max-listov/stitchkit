@@ -1,5 +1,47 @@
 # Upgrading stitchkit
 
+## Released migration: 0.95.0
+
+One breaking change in `stitchkit/application`: the process lifecycle ledger
+counts downtime as the window nobody answered in, and gains the `draining`
+phase and the `startup-failed` outcome. A ledger file written by an earlier
+version loads unchanged — the new `unavailableAt` reads as `null`.
+
+1. **Read downtime from the ready fact.** **Who must act:** a project that
+   reads `downtimeMs` from a `started` fact. It is gone from `StartFact`; the
+   number it carried is `processGapMs`. The downtime now arrives with the new
+   run's readiness:
+
+   ```ts
+   // before
+   ledger.subscribe((fact) => {
+     if (fact.type === 'started') report(fact.previousExit, fact.downtimeMs);
+   });
+   // after
+   ledger.subscribe((fact) => {
+     if (fact.type === 'started') previousExit = fact.previousExit;
+     if (fact.type === 'ready') report(previousExit, fact.downtimeMs);
+   });
+   ```
+
+2. **Handle the new values.** **Who must act:** a project that switches
+   exhaustively over `LifecycleTermination` (new: `draining`,
+   `startup-failed`), `PreviousExit` (new: `startup-failed`) or
+   `ProcessLifecycleFact` (new: `DrainingFact`, `type: 'draining'`). The type
+   checker names each switch. An open run is `active` or `draining`; a check
+   written as `termination === 'active'` to mean "still running" becomes
+   `termination === 'active' || termination === 'draining'`.
+   `TransitionReadyInput` is renamed `TransitionRunInput` — the same fields,
+   now also taken by `transitionProcessDraining`; rename the import.
+
+3. **Record the drain and the readiness when driving the ledger by hand.**
+   **Who must act:** only a project that calls `createProcessLifecycleLedger`
+   methods itself instead of mounting `lifecycleLedgerResource`. Call
+   `recordDraining()` where the application stops admitting work, before it
+   drains; without it downtime is counted from the recorded stop. Call
+   `recordReady()` when the run serves; a run stopped without it now ends
+   `startup-failed`, not `clean`.
+
 ## Released migration: 0.94.0
 
 One breaking minor that consolidates: tool options move into one group, and
