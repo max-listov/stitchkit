@@ -191,6 +191,15 @@ fields in declaration order, so `myapp generate "a fox"` is
 `--prompt "a fox"`. A piped value fills the first required unset field:
 `echo "a fox" | myapp generate`.
 
+A token is an option only when it is a long form (`--name`, `--name=value`,
+`--`) or `-` followed by a letter. Anything else that starts with `-` is data:
+`myapp note a "- item"` fills a positional, and after an option that expects a
+value the next token is that value — `--grep -foo`, `--count -5`. The next
+token is refused as a value only when it is itself an option, so `--grep --json`
+still reports that `--grep` requires a value. A value that cannot be read as
+its field's type is refused naming the flag and what was typed:
+`--tail expects a whole number, got "abc"`.
+
 For a stable shell grammar, declare the default command, short aliases and the
 exact positional fields on `createCli`:
 
@@ -662,6 +671,37 @@ nothing to keep, which is not a failure.
 `expectedSha256` is required, not optional. A rollback that installs whatever
 happens to be at the backup path is a second install of an unverified binary,
 and the day it is used is the day nobody is in a position to check.
+
+### Run it before it replaces anything — `verify`
+
+A digest proves the bytes are the ones published, not that they load. A tool
+that updates itself unattended — a daemon — and installs a build that does not
+start takes its own updater down with it, and every machine is then repaired by
+hand. `verify` is the step between "digest matched" and "target replaced":
+
+```ts
+await applyCliUpdate({
+  asset, targetPath, backupPath,
+  verify: async (candidate, signal) => {
+    const child = Bun.spawn(['bun', candidate, 'version'], { signal, stdout: 'pipe' })
+    const printed = (await new Response(child.stdout).text()).trim()
+    if ((await child.exited) !== 0 || printed !== check.version) {
+      throw new Error(`printed ${printed}, expected ${check.version}`)
+    }
+  },
+  verifyTimeoutMs: 15_000,   // default 30 000
+})
+```
+
+The verified bytes are written beside the target as an executable candidate
+with the target's extension, and `verify` gets its path — a path rather than a
+command, because a JavaScript bundle is started through its runtime. It runs
+before the backup and the replacement. If it throws or outlives
+`verifyTimeoutMs` (its `signal` aborts at the deadline), the candidate is
+removed, the target and any earlier backup are untouched, and the update is
+refused with the reason as its cause. The target is written from the checked
+bytes in memory, never from the candidate file, so nothing the candidate did
+while it ran can change what is installed.
 
 ### Two release tracks
 

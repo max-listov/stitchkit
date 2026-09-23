@@ -41,15 +41,10 @@
  */
 
 import type { HttpMethod } from '../contract/define';
-import { normalizeError } from '../contract/normalize';
-import {
-  isStreamCancellation,
-  ownHttpStream,
-  settleStreamCleanup,
-} from './http-stream-lifetime';
-import type { RawRoute, RawRouteContext } from './types';
-
+import { ownHttpStream, settleStreamCleanup } from './http-stream-lifetime';
 /** How a value becomes bytes on the wire. The only thing the two formats differ in. */
+import { pumpFrames } from './streaming-pump';
+import type { RawRoute, RawRouteContext } from './types';
 export type StreamingFormat = 'ndjson' | 'sse';
 
 /**
@@ -133,7 +128,7 @@ export interface StreamingSourceContext<TServer = unknown> extends RawRouteConte
   signal: AbortSignal;
 }
 
-interface Framing {
+export interface Framing {
   contentType: string;
   /** What is sent at open and while idle. */
   keepAlive: string;
@@ -202,7 +197,7 @@ function unrefTimer(timer: unknown): void {
  * purpose: a subscription is a live feed, and a backlog of stale frames is
  * worth less than the memory it costs.
  */
-const MAX_BUFFERED_FRAMES = 16;
+export const MAX_BUFFERED_FRAMES = 16;
 
 /**
  * The framing headers win, case-insensitively.
@@ -234,9 +229,13 @@ function responseHeaders(
  * @see ndjsonRoute
  * @see sseRoute
  */
-export function streamingRoute<TServer = unknown>(
-  options: StreamingRouteOptions<TServer>,
-): RawRoute<TServer> {
+/** The heartbeat and idle budgets, refused at definition rather than at the first request. */
+function streamingTimings(
+  options: Pick<StreamingRouteOptions, 'heartbeatMs' | 'idleTimeoutSeconds'>,
+): {
+  heartbeatMs: number;
+  idleTimeoutSeconds: number;
+} {
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_STREAM_HEARTBEAT_MS;
   if (!Number.isFinite(heartbeatMs) || heartbeatMs <= 0) {
     throw new TypeError('heartbeatMs must be a finite positive number of milliseconds');
@@ -245,6 +244,13 @@ export function streamingRoute<TServer = unknown>(
   if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 0) {
     throw new TypeError('idleTimeoutSeconds must be a non-negative integer');
   }
+  return { heartbeatMs, idleTimeoutSeconds };
+}
+
+export function streamingRoute<TServer = unknown>(
+  options: StreamingRouteOptions<TServer>,
+): RawRoute<TServer> {
+  const { heartbeatMs, idleTimeoutSeconds } = streamingTimings(options);
   const framing = FRAMINGS[options.format ?? 'ndjson'];
 
   return {
@@ -408,53 +414,19 @@ export function streamingRoute<TServer = unknown>(
             // otherwise keep `start` pending forever, so a consumer's disconnect
             // could not reach the iterator at all. That is not a hypothetical:
             // it is exactly the silent-subscription case this primitive is for.
-            // Frames sent since the loop last yielded to the runtime.
-            let sinceYield = 0;
-
-            void (async () => {
-              try {
-                for (;;) {
-                  await awaitDemand();
-                  if (closed) return;
-                  const next = await iterator.next();
-                  if (closed) return;
-                  if (next.done) break;
-                  if (!send(framing.frame(next.value))) return;
-                  sinceYield += 1;
-                  if (sinceYield >= MAX_BUFFERED_FRAMES) {
-                    sinceYield = 0;
-                    // A source that is ALWAYS ready starves the runtime, and
-                    // the consequence is not slowness — it is that the response
-                    // never leaves. `await iterator.next()` on a generator that
-                    // is never waiting resolves as a microtask, so the loop can
-                    // spin for millions of frames without the event loop ever
-                    // getting a turn to flush the headers or fire a timer. That
-                    // was measured: 19.5 million frames and a `fetch` on the
-                    // other end that never returned. A macrotask hand-back
-                    // every full queue costs nothing on a source that waits —
-                    // the ordinary case — and makes the pathological one
-                    // behave.
-                    await new Promise<void>((resolve) => {
-                      setTimeout(resolve, 0);
-                    });
-                    if (closed) return;
-                  }
-                }
-                if (framing.done) send(framing.done);
-              } catch (error) {
-                // The headers left long ago, so there is no status left to
-                // send. The envelope is the same one `errorResponse` would have
-                // produced, normalised so an internal failure never reaches the
-                // wire raw.
-                if (closed) {
-                  if (!isStreamCancellation(error, departed.signal)) pumped.reject(error);
-                } else send(framing.frame(normalizeError(error).toJSON()));
-              } finally {
-                pumped.resolve();
+            void pumpFrames({
+              iterator,
+              framing,
+              send,
+              awaitDemand,
+              isClosed: () => closed,
+              departed: departed.signal,
+              pumped,
+              end: () => {
                 release();
                 finish();
-              }
-            })();
+              },
+            });
           },
 
           pull() {

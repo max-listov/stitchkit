@@ -1,4 +1,5 @@
-import type { EndpointToolAnnotations, ToolTransport } from '../contract/define';
+import type { ToolTransport } from '../contract/define';
+import type { EndpointToolAnnotations } from '../contract/tool-options';
 import type { RuntimeToolIdentity } from './runtime-tool';
 
 /** Pathless operation identity fields whose semantic method is owned by the factory. */

@@ -44,6 +44,46 @@ function waitBudget(options: DiagnosticJournalWaitOptions): number | undefined {
   return options.timeoutMs;
 }
 
+const NO_REFUSALS: Readonly<Record<DiagnosticJournalRefusalReason, number>> = {
+  closed: 0,
+  failed: 0,
+  invalid: 0,
+  oversized: 0,
+  'item-capacity': 0,
+  'byte-capacity': 0,
+};
+
+/** Resolve once `predicate` holds after some progress, or on the budget or the signal. */
+function waitForProgress(
+  progressWaiters: Set<() => void>,
+  predicate: () => boolean,
+  options: DiagnosticJournalWaitOptions,
+): Promise<WaitOutcome> {
+  const timeoutMs = waitBudget(options);
+  if (predicate()) return Promise.resolve('settled');
+  if (options.signal?.aborted) return Promise.resolve('cancelled');
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (outcome: WaitOutcome): void => {
+      if (settled) return;
+      settled = true;
+      progressWaiters.delete(onProgress);
+      options.signal?.removeEventListener('abort', onAbort);
+      if (timer) clearTimeout(timer);
+      resolve(outcome);
+    };
+    const onProgress = (): void => {
+      if (predicate()) finish('settled');
+    };
+    const onAbort = (): void => finish('cancelled');
+    progressWaiters.add(onProgress);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (timeoutMs !== undefined) timer = setTimeout(() => finish('timed-out'), timeoutMs);
+    onProgress();
+  });
+}
+
 export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
   config: DiagnosticJournalManagerConfig<SCHEMA>,
   storage: DiagnosticJournalStorage,
@@ -57,12 +97,7 @@ export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
     sizeOf: (frame) => frame.bytes.byteLength,
   });
   const refusals: Record<DiagnosticJournalRefusalReason, number> = {
-    closed: 0,
-    failed: 0,
-    invalid: 0,
-    oversized: 0,
-    'item-capacity': 0,
-    'byte-capacity': 0,
+    ...NO_REFUSALS,
   };
   const progressWaiters = new Set<() => void>();
   let state: DiagnosticJournalState = 'open';
@@ -151,34 +186,8 @@ export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
     return DiagnosticJournalSubmitResultSchema.parse({ outcome: 'refused', reason });
   };
 
-  const waitUntil = (
-    predicate: () => boolean,
-    options: DiagnosticJournalWaitOptions,
-  ): Promise<WaitOutcome> => {
-    const timeoutMs = waitBudget(options);
-    if (predicate()) return Promise.resolve('settled');
-    if (options.signal?.aborted) return Promise.resolve('cancelled');
-    return new Promise((resolve) => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (outcome: WaitOutcome): void => {
-        if (settled) return;
-        settled = true;
-        progressWaiters.delete(onProgress);
-        options.signal?.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-        resolve(outcome);
-      };
-      const onProgress = (): void => {
-        if (predicate()) finish('settled');
-      };
-      const onAbort = (): void => finish('cancelled');
-      progressWaiters.add(onProgress);
-      options.signal?.addEventListener('abort', onAbort, { once: true });
-      if (timeoutMs !== undefined) timer = setTimeout(() => finish('timed-out'), timeoutMs);
-      onProgress();
-    });
-  };
+  const waitUntil = (predicate: () => boolean, options: DiagnosticJournalWaitOptions) =>
+    waitForProgress(progressWaiters, predicate, options);
 
   const getStatus = () => {
     const file = storage.snapshot();

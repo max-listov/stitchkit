@@ -34,6 +34,7 @@ export const AgentStoreEventKindSchema = z.enum([
   'durability/step',
   'durability/park',
   'durability/event',
+  'durability/effect',
 ]);
 
 export type AgentStoreEventKind = z.infer<typeof AgentStoreEventKindSchema>;

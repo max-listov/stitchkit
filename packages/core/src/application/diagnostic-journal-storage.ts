@@ -101,7 +101,7 @@ export async function createRotatingDiagnosticJournalStorage(
   const journalPath = resolve(parent, basename(config.path));
 
   const lockPath = `${journalPath}.lock`;
-  const { handle: lock, reclaimedStale } = await acquireDiagnosticJournalLock(
+  const { lock, reclaimedStale } = await acquireDiagnosticJournalLock(
     lockPath,
     config.mode,
     config.lock,
@@ -186,8 +186,7 @@ export async function createRotatingDiagnosticJournalStorage(
     }
   } catch (error) {
     await handle?.close().catch(() => undefined);
-    await lock.close().catch(() => undefined);
-    await unlink(lockPath).catch(() => undefined);
+    await lock.release().catch(() => undefined);
     throw error;
   }
 
@@ -233,8 +232,7 @@ export async function createRotatingDiagnosticJournalStorage(
         failure = error;
       }
       try {
-        await lock.close();
-        await unlink(lockPath);
+        await lock.release();
       } catch (error) {
         failure ??= error;
       }

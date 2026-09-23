@@ -2,7 +2,8 @@ import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
 import { jsonSchemaFields } from '../../json-schema/json-schema';
 import { objectShapeKeys } from '../schema/schema';
-import { CliArgumentError, parseCliArgs } from './args';
+import { parseCliArgs } from './args';
+import { CliArgumentError } from './argument-error';
 import type { CliConfig } from './config';
 import type { CliCommandPresentation } from './policy';
 

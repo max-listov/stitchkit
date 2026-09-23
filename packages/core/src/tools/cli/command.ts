@@ -1,7 +1,7 @@
 import type { ZodObject, ZodType, z } from 'zod';
 import { validateDeclaredOutput } from '../../contract/normalize';
 import { formatZodError } from '../../internal/zod-issues';
-import { type ToolResult, toolResultFromError } from '../execute';
+import { type ToolResult, toolResultFromError } from '../execute-result';
 import { coerceJsonArgs } from '../schema/coerce';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import type { CliRunOptions } from './args';

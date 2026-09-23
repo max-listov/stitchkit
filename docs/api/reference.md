@@ -163,12 +163,12 @@ from the root `stitchkit`.
 | `PathParams` | _type_ | infer named `:segments` and a terminal `*wildcard` from a path literal as string params |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
-| `withToolView` | function | declare an endpoint's answer on the tool surface (MCP, AGENT, CLI): input `defaults`, a view `output` and an optional `project`, typed against the endpoint's own schemas; HTTP keeps the full answer — [guide](../guide/mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
+| `withToolView` | function | declare an endpoint's call and answer on the tool surface (MCP, AGENT, CLI): input `defaults`, and optionally a view `output` and a `project`, typed against the endpoint's own schemas; HTTP keeps the full answer — [guide](../guide/mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
 | `EndpointToolOptions` | _type_ | an endpoint's `tool` group — `name`, `view`, `ui`, `annotations`, `mcp`: what the tool surfaces read that HTTP does not |
 | `EndpointToolView` | _type_ | the stored shape of a tool view (`MethodDef.toolView`) |
 | `DeclaredToolView` | _type_ | a tool view as `withToolView` produces it — the only form `tool.view` accepts |
 | `WithToolView` | _type_ | the endpoint `withToolView` returns: its own tool options plus the declared view in `tool.view` — name it when a helper returns such an endpoint |
-| `ProjectedToolView` / `ReshapedToolView` / `SlicedToolView` | _type_ | the three forms `withToolView` accepts: own schema + `project`, `project` inside the full schema, a slice by `output` |
+| `DefaultsOnlyToolView` / `ProjectedToolView` / `ReshapedToolView` / `SlicedToolView` | _type_ | the four forms `withToolView` accepts: input `defaults` alone with the full answer, own schema + `project`, `project` inside the full schema, a slice by `output` |
 | `ToolViewCall` | _type_ | what `project` is told besides the full result: the parsed `input` and the `source` |
 | `ToolViewSliceMismatch` | _type_ | the compile-time refusal of a slice whose schema does not accept the full output |
 | `ToolViewNeedsToolTransport` | _type_ | the compile-time refusal of a view on an `expose: ['HTTP']` endpoint |
@@ -1587,7 +1587,9 @@ mountAgent(services, { durability: (toolCallId) => myLedgerFor(toolCallId) });
 | `DurableJsonValue` | _type_ | what a durable step result may hold — a record is read back in another process, so it must be JSON |
 | `createLocalStepDurability` | function | the durability engine — replay, absolute deadlines, park/deliver — over a two-method ledger the application owns |
 | `StepDurabilityLedger` | _type_ | the two methods an engine needs: `appendEvent`, `readEvents` |
-| `LocalStepDurability` | _type_ | what the engine returns; satisfies `ToolDurability` and adds `deliver` and record introspection for the ledger's owner |
+| `LocalStepDurability` | _type_ | what the engine returns; satisfies `ToolDurability` and adds `deliver`, `effect` and record introspection for the ledger's owner |
+| `EffectHandlers` / `EffectOutcome` / `EffectRunOptions` | _type_ | `effect(name, { run, reconcile }, { signal, reconcileTimeoutMs })`: the intent is recorded before `run`, an intent without an outcome is settled by `reconcile` and never run again; `accepted` with the proof or a recorded, final `uncertain` → ADR 0200 |
+| `EffectUnresolvedError` | class | an effect whose outcome this call could not settle — `run` or `reconcile` threw, `reconcile` overran, the proof was not recordable; the intent stands and the next call reconciles |
 | `LocalStepDurabilityOptions` | _type_ | `{ store, conversationId, runId, signal?, subscribe?, clock? }` |
 | `AppendAgentStoreEvent` / `ReadAgentStoreEvents` / `AgentStoreEventEnvelope` / `AgentStoreEventPage` | _type_ | the ledger's row shapes, re-exported so a ledger is typed from the entrypoint that consumes it |
 | `AgentToolError` | class | the model-safe envelope a failed agent tool throws |
@@ -1766,6 +1768,9 @@ available from `stitchkit/contract`.
 | `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable boundary failures; registered `FILE_*` mistakes are caller-safe while `FILE_IO_ERROR` remains internal |
 | `ManagedFileInspector` | _type_ | bounded-prefix read/write inspection callback with a finite cancellation signal that cannot own path or size |
 | `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
+| `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running |
+| `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; an ownerless lock only after `ownerlessGraceMs` |
+| `ExclusiveLockError` | class | `LOCK_TIMEOUT` naming the resource and its holder, or `LOCK_ABORTED` with the signal's reason |
 
 ---
 
@@ -2046,7 +2051,7 @@ SDK nor the `ai` peer.
 | `CliBuildStampSchema` / `CliBuildStamp` | schema / _type_ | the version/commit/build time carried inside a binary |
 | `CliInstallerConfig` | _type_ | manifest, binary name, default install directory, and an optional `asset` — omit it for one script that selects the target by `uname` |
 | `CliUpdateCheckConfig` / `CliUpdateCheck` | _type_ | check inputs, and its four answers — `skipped`, `current`, `outdated`, `unknown` |
-| `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs and the replaced path, byte count and digest |
+| `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs — including `verify`, run on an executable candidate beside the target before the backup and the replacement, within `verifyTimeoutMs` — and the replaced path, byte count and digest |
 | `CliProfileStore` / `CliProfileStoreConfig` / `ResolvedCliProfile` | _type_ | the profile store, its directory/schema/hint config, and one resolution |
 | `CliResultView` | _type_ | the requested view — `count`, `sum`, or `records` (ordered and/or table-rendered) |
 | `CliViewOutput` | _type_ | a JSON value, or the one human-facing text shape |

@@ -16,7 +16,7 @@ export const RealtimeRequestPhaseEventSchema = z
     requestId: z.string().min(1),
     event: z.string().min(1),
     phase: RealtimeRequestPhaseSchema,
-    elapsedMs: z.number().finite().nonnegative(),
+    elapsedMs: z.number().nonnegative(),
   })
   .strict();
 

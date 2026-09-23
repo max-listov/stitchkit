@@ -2,7 +2,8 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { z } from 'zod';
 import { redact } from '../../observability/sanitize';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import type { ErrorHintFn, ToolResult } from '../execute';
+import type { ErrorHintFn } from '../execute-hooks';
+import type { ToolResult } from '../execute-result';
 import {
   type McpProjectionPreparationConfig,
   type McpSchemaValidationConfig,

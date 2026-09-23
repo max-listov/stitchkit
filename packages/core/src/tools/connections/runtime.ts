@@ -1,5 +1,5 @@
 import { type ZodObject, z } from 'zod';
-import type { RuntimeContext } from '../../contract/define';
+import type { RuntimeContext } from '../../contract/runtime-context';
 import { declaresDraft07, withDefsDialect } from '../../json-schema/dialect';
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import { ConnectionAuthorizationRequiredError } from './errors';

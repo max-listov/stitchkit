@@ -32,6 +32,9 @@ export const DURABILITY_PARK_EVENT_KIND = 'durability/park';
 /** Event kind recording an external event delivered to a parked wait. */
 export const DURABILITY_EVENT_EVENT_KIND = 'durability/event';
 
+/** Event kind recording one phase of an at-most-once effect: intent, accepted or uncertain. */
+export const DURABILITY_EFFECT_EVENT_KIND = 'durability/effect';
+
 export const StepEventPayloadSchema = z.object({
   runId: z.string().min(1),
   stepName: z.string().min(1),
@@ -67,6 +70,22 @@ export const DeliveredEventPayloadSchema = z.object({
   encoded: z.string(),
 });
 
+const EffectIdentity = { runId: z.string().min(1), effectName: z.string().min(1) };
+
+export const EffectEventPayloadSchema = z.discriminatedUnion('phase', [
+  z.object({ ...EffectIdentity, phase: z.literal('intent') }),
+  z.object({
+    ...EffectIdentity,
+    phase: z.literal('accepted'),
+    /** `JSON.stringify` of the proof. A separate field so a corrupt value is decodable apart. */
+    encoded: z.string(),
+    /** Whether the proof came back from `run` or was found by `reconcile`. */
+    via: z.enum(['run', 'reconcile']),
+  }),
+  z.object({ ...EffectIdentity, phase: z.literal('uncertain') }),
+]);
+
+export type EffectEventPayload = z.infer<typeof EffectEventPayloadSchema>;
 export type ParkEventPayload = z.infer<typeof ParkEventPayloadSchema>;
 export type StepEventPayload = z.infer<typeof StepEventPayloadSchema>;
 
@@ -104,6 +123,37 @@ export interface LocalStepDurabilityOptions {
 export interface StepRunOptions {
   /** Aborting refuses to *start* a body and releases a park; it never removes a record already written. */
   signal?: AbortSignal;
+}
+
+/**
+ * What an effect ended as. `uncertain` is a third answer, not a failure to
+ * produce one: the effect may have happened, the recipient has no record of it,
+ * and nothing here will try it again.
+ */
+export type EffectOutcome<P> =
+  | { readonly outcome: 'accepted'; readonly proof: P }
+  | { readonly outcome: 'uncertain' };
+
+/** The two halves of an effect in another system. */
+export interface EffectHandlers<P> {
+  /**
+   * Perform the effect, once, and return what the recipient named it — a
+   * message id, a turn id. Called at most once per name, across every process
+   * that shares the ledger.
+   */
+  run(): P | Promise<P>;
+  /**
+   * Find the effect at the recipient by the caller's own identity for it, and
+   * return the same proof — or `null` when the recipient has no record. Called
+   * only when an intent was recorded and no outcome was: the process that ran
+   * the effect stopped before it could say how it ended.
+   */
+  reconcile(signal: AbortSignal): P | null | Promise<P | null>;
+}
+
+export interface EffectRunOptions extends StepRunOptions {
+  /** How long `reconcile` may take, in milliseconds; its `signal` aborts at the deadline. Default 30 000. */
+  reconcileTimeoutMs?: number;
 }
 
 export interface LocalStepDurability {
@@ -151,6 +201,26 @@ export interface LocalStepDurability {
    * and a `waitFor` for the same key resolves without a second delivery.
    */
   deliver(input: { event: string; id: string; payload?: unknown }): Promise<void>;
+  /**
+   * Perform an effect in another system at most once.
+   *
+   * `step` records its result AFTER the body, so a body cut short by a crash
+   * runs again — right for a computation, wrong for sending a message, where a
+   * repeat is worse than a loss. Here the intent is recorded BEFORE `run`, and
+   * its outcome after. A later call that finds the intent without an outcome
+   * calls `reconcile`, never `run`: found is `accepted` with the proof, not
+   * found is `uncertain`, and both are recorded, so neither is asked again.
+   *
+   * A `run` that throws leaves the intent standing — whether the effect
+   * happened is exactly what is not known — and the call rejects with
+   * `EffectUnresolvedError`; the next call reconciles. The proof is JSON of at
+   * most 64 KiB: an identity, not a payload.
+   */
+  effect<P extends z.infer<ReturnType<typeof z.json>>>(
+    name: string,
+    handlers: EffectHandlers<P>,
+    options?: EffectRunOptions,
+  ): Promise<EffectOutcome<P>>;
 }
 
 /**
@@ -182,6 +252,29 @@ export class StepAbortedError extends Error {
   constructor(stepName: string) {
     super(`Step "${stepName}" was aborted before it started`);
     this.name = 'StepAbortedError';
+  }
+}
+
+/**
+ * An effect whose outcome could not be settled by this call.
+ *
+ * Its intent is recorded and stays recorded, so `run` is never called for this
+ * name again; the next call reconciles instead. `reason` says which step did
+ * not finish: `run` threw, `reconcile` threw or overran its deadline, or the
+ * proof could not be recorded.
+ */
+export class EffectUnresolvedError extends Error {
+  constructor(
+    readonly effectName: string,
+    readonly reason:
+      | 'run-failed'
+      | 'reconcile-failed'
+      | 'reconcile-timeout'
+      | 'proof-rejected',
+    options?: { cause?: unknown },
+  ) {
+    super(`Effect "${effectName}" is unresolved (${reason}); its intent stands`, options);
+    this.name = 'EffectUnresolvedError';
   }
 }
 

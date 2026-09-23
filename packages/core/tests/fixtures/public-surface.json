@@ -28,6 +28,7 @@
     "ContractStreamFraming",
     "DEFAULT_CONTRACT_STREAM_FRAME_BYTES",
     "DeclaredToolView",
+    "DefaultsOnlyToolView",
     "DefinedAppError",
     "DefinedErrors",
     "EndpointDef",
@@ -346,6 +347,10 @@
     "DownloadToolConfig",
     "DurableJsonValue",
     "EXT_APPS_BUNDLE_PLACEHOLDER",
+    "EffectHandlers",
+    "EffectOutcome",
+    "EffectRunOptions",
+    "EffectUnresolvedError",
     "ErrorHintFn",
     "FiniteMcpSurfaceConfig",
     "IncompatibleSchemaPolicy",
@@ -653,6 +658,7 @@
     "ContractStreamFraming",
     "DEFAULT_CONTRACT_STREAM_FRAME_BYTES",
     "DeclaredToolView",
+    "DefaultsOnlyToolView",
     "DefinedAppError",
     "DefinedErrors",
     "EndpointDef",
@@ -2012,6 +2018,10 @@
     "serializeSurfaceValue"
   ],
   "stitchkit/files": [
+    "ExclusiveLock",
+    "ExclusiveLockError",
+    "ExclusiveLockOptions",
+    "ExclusiveLockOwner",
     "ManagedFileBoundary",
     "ManagedFileBoundaryConfig",
     "ManagedFileError",
@@ -2026,7 +2036,11 @@
     "ManagedFileRefSchema",
     "ManagedFileSource",
     "ManagedFileWriteOptions",
-    "createManagedFileBoundary"
+    "WriteFileAtomicOptions",
+    "createManagedFileBoundary",
+    "withExclusiveLock",
+    "writeFileAtomic",
+    "writeFileAtomicSync"
   ],
   "stitchkit/telegram": [
     "TelegramInitData",

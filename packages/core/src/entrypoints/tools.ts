@@ -8,6 +8,10 @@ export type { McpServer } from '@modelcontextprotocol/server';
 // and decode refusal, instead of writing them beside its tools. → ADR 0187.
 export {
   createLocalStepDurability,
+  type EffectHandlers,
+  type EffectOutcome,
+  type EffectRunOptions,
+  EffectUnresolvedError,
   type LocalStepDurability,
   type LocalStepDurabilityOptions,
   type StepDurabilityLedger,
@@ -25,6 +29,15 @@ export type {
   ManagedFileWriteOptions,
 } from '../files/boundary';
 export {
+  type CimdCacheEvent,
+  type CimdCachePolicy,
+  type CimdClientMetadata,
+  type CimdClientMetadataFetcher,
+  type CimdFetchPolicy,
+  type CimdFetchResponse,
+  createSecureClientMetadataFetcher,
+} from '../server/oauth/cimd';
+export {
   oauthProtectedResourceRoute,
   PROTECTED_RESOURCE_PATH,
   type ProtectedResourceConfig,
@@ -35,14 +48,7 @@ export {
   type ApplicationType,
   type AuthCodeData,
   type AuthRequest,
-  type CimdCacheEvent,
-  type CimdCachePolicy,
-  type CimdClientMetadata,
-  type CimdClientMetadataFetcher,
-  type CimdFetchPolicy,
-  type CimdFetchResponse,
   type ClientMetadata,
-  createSecureClientMetadataFetcher,
   mountOAuthProvider,
   type OAuthClientRegistrationConfig,
   type OAuthProviderConfig,
@@ -57,6 +63,8 @@ export type {
   ToolDurability,
   ToolDurabilityFactory,
 } from '../tools/durability-port';
+export type { ToolExecutionControlReason, ToolOperation } from '../tools/execute';
+export { isToolExecutionControlError, ToolExecutionControlError } from '../tools/execute';
 export type {
   AfterToolCallOptions,
   BeforeToolCallOptions,
@@ -64,12 +72,9 @@ export type {
   ToolCallContext,
   ToolCallHooks,
   ToolErrorOptions,
-  ToolExecutionControlReason,
   ToolLifecycle,
-  ToolOperation,
-  ToolResult,
-} from '../tools/execute';
-export { isToolExecutionControlError, ToolExecutionControlError } from '../tools/execute';
+} from '../tools/execute-hooks';
+export type { ToolResult } from '../tools/execute-result';
 export {
   createToolInvoker,
   type ToolInvocationOptions,

@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import {
+  claimSchedule,
+  insertSchedule,
+  newSchedule,
+  recordDispatchFailure,
+  type ScheduleRequest,
+  settleFiring,
+} from './schedule-records';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 
 export const AgentScheduleSchema = z
@@ -67,11 +75,11 @@ const ScheduleRowSchema = z.object({
  * cancelled. Each reads its row first and writes unconditionally, inside the
  * store's `BEGIN IMMEDIATE` transaction.
  */
-const ClaimRowSchema = z.object({
+export const ClaimRowSchema = z.object({
   state: z.enum(['scheduled', 'cancelled', 'completed']),
   claim_until: z.string().nullable(),
 });
-const FinalizeRowSchema = z.object({
+export const FinalizeRowSchema = z.object({
   state: z.enum(['scheduled', 'cancelled', 'completed']),
   claim_owner: z.string().nullable(),
 });
@@ -180,25 +188,7 @@ export function createAgentScheduleService(input: {
    * mid-dispatch does not park the schedule forever.
    */
   const claim = (id: string, until: string, at: string): Promise<boolean> =>
-    input.sqlite.transaction(async (scope) => {
-      const raw = scope.database
-        .prepare(`
-          SELECT state, claim_until FROM stitchkit_agent_runtime_schedules WHERE id = ?
-        `)
-        .get(id);
-      if (raw === null || raw === undefined) return false;
-      const row = ClaimRowSchema.parse(raw);
-      if (row.state !== 'scheduled') return false;
-      if (row.claim_until !== null && row.claim_until >= at) return false;
-      scope.database
-        .prepare(`
-          UPDATE stitchkit_agent_runtime_schedules
-          SET claim_owner = ?, claim_until = ?, updated_at = ?
-          WHERE id = ?
-        `)
-        .run(owner, until, at, id);
-      return true;
-    });
+    claimSchedule(input.sqlite, owner, id, until, at);
 
   const runTick = async () => {
     if (closed) return;
@@ -233,85 +223,15 @@ export function createAgentScheduleService(input: {
           schedule: { id: schedule.id, occurrence, lateByMs },
         });
       } catch (error) {
-        // The row stays due and unclaimed; the failure is a durable fact of
-        // the conversation, not a silent skip and not a dead timer.
-        await input.sqlite.transaction(async (scope) => {
-          scope.database
-            .prepare(`
-              UPDATE stitchkit_agent_runtime_schedules
-              SET claim_owner = NULL, claim_until = NULL, updated_at = ?
-              WHERE id = ? AND claim_owner = ?
-            `)
-            .run(at, schedule.id, owner);
-          await scope.appendEvent({
-            conversationId: schedule.conversationId,
-            kind: 'schedule/failed',
-            occurredAt: at,
-            payload: {
-              id: schedule.id,
-              occurrence,
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        });
+        await recordDispatchFailure(input.sqlite, { schedule, occurrence, at, owner }, error);
         continue;
       }
-      // `every` after an idle stretch fires once and lands on the next slot
-      // that is still ahead — not once per interval it slept through.
-      let nextAt = schedule.nextAt;
-      if (schedule.kind === 'every' && schedule.intervalMs) {
-        let next = new Date(schedule.nextAt).getTime() + schedule.intervalMs;
-        while (next <= observedAt.getTime()) next += schedule.intervalMs;
-        nextAt = new Date(next).toISOString();
-      }
-      const state = schedule.kind === 'every' ? 'scheduled' : 'completed';
-      await input.sqlite.transaction(async (scope) => {
-        // Only the row this process still holds, and only while it is still
-        // scheduled: a `cancelSchedule` that landed during `dispatch` stays a
-        // cancellation, it is not written back to `scheduled`.
-        const held = scope.database
-          .prepare(`
-            SELECT state, claim_owner FROM stitchkit_agent_runtime_schedules WHERE id = ?
-          `)
-          .get(schedule.id);
-        const settled =
-          held !== null &&
-          held !== undefined &&
-          (() => {
-            const row = FinalizeRowSchema.parse(held);
-            return row.state === 'scheduled' && row.claim_owner === owner;
-          })();
-        if (settled) {
-          scope.database
-            .prepare(`
-              UPDATE stitchkit_agent_runtime_schedules
-              SET state = ?, occurrence = ?, next_at = ?, updated_at = ?,
-                claim_owner = NULL, claim_until = NULL
-              WHERE id = ?
-            `)
-            .run(state, occurrence, nextAt, at, schedule.id);
-        }
-        if (lateByMs > 0) {
-          await scope.appendEvent({
-            conversationId: schedule.conversationId,
-            kind: 'schedule/late',
-            occurredAt: at,
-            payload: { id: schedule.id, occurrence, lateByMs },
-          });
-        }
-        await scope.appendEvent({
-          conversationId: schedule.conversationId,
-          kind: 'schedule/fired',
-          occurredAt: at,
-          payload: {
-            id: schedule.id,
-            occurrence,
-            lateByMs,
-            nextAt,
-            state: settled ? state : 'cancelled',
-          },
-        });
-      });
+      await settleFiring(
+        input.sqlite,
+        { schedule, occurrence, at, owner },
+        observedAt,
+        lateByMs,
+      );
     }
   };
 
@@ -327,81 +247,9 @@ export function createAgentScheduleService(input: {
     return ticking;
   };
 
-  const scheduleInput = async (request: {
-    conversationId: string;
-    input: z.infer<typeof z.json>;
-    at?: string;
-    afterMs?: number;
-    everyMs?: number;
-    timeZone?: string;
-  }): Promise<AgentSchedule> => {
-    const modes = [
-      request.at !== undefined,
-      request.afterMs !== undefined,
-      request.everyMs !== undefined,
-    ];
-    if (modes.filter(Boolean).length !== 1)
-      throw new TypeError('Declare exactly one schedule mode');
-    if (request.everyMs !== undefined && !request.timeZone) {
-      throw new TypeError('Repeating schedules require an explicit timeZone');
-    }
-    if (request.timeZone) {
-      try {
-        new Intl.DateTimeFormat('en', { timeZone: request.timeZone }).format(new Date(0));
-      } catch {
-        throw new TypeError(`Unknown schedule timeZone: ${request.timeZone}`);
-      }
-    }
-    const observedAt = now();
-    const kind =
-      request.at !== undefined ? 'at' : request.afterMs !== undefined ? 'after' : 'every';
-    const intervalMs = request.everyMs;
-    const delay = request.afterMs ?? request.everyMs;
-    if (delay !== undefined && (!Number.isSafeInteger(delay) || delay < 1)) {
-      throw new TypeError('Schedule delay must be a positive safe integer');
-    }
-    const nextAt = request.at
-      ? new Date(z.iso.datetime({ offset: true }).parse(request.at)).toISOString()
-      : new Date(observedAt.getTime() + (delay ?? 0)).toISOString();
-    const schedule = AgentScheduleSchema.parse({
-      id: randomUUID(),
-      conversationId: request.conversationId,
-      kind,
-      nextAt,
-      ...(intervalMs !== undefined && { intervalMs }),
-      ...(request.timeZone && { timeZone: request.timeZone }),
-      input: z.json().parse(request.input),
-      state: 'scheduled',
-      occurrence: 0,
-      createdAt: observedAt.toISOString(),
-      updatedAt: observedAt.toISOString(),
-    });
-    await input.sqlite.transaction(async (scope) => {
-      scope.database
-        .prepare(`
-          INSERT INTO stitchkit_agent_runtime_schedules (
-            id, conversation_id, kind, next_at, interval_ms, time_zone,
-            input_payload, state, occurrence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?)
-        `)
-        .run(
-          schedule.id,
-          schedule.conversationId,
-          schedule.kind,
-          schedule.nextAt,
-          schedule.intervalMs ?? null,
-          schedule.timeZone ?? null,
-          JSON.stringify(schedule.input),
-          schedule.createdAt,
-          schedule.updatedAt,
-        );
-      await scope.appendEvent({
-        conversationId: schedule.conversationId,
-        kind: 'schedule/set',
-        occurredAt: schedule.createdAt,
-        payload: { id: schedule.id, kind: schedule.kind, nextAt: schedule.nextAt },
-      });
-    });
+  const scheduleInput = async (request: ScheduleRequest): Promise<AgentSchedule> => {
+    const schedule = newSchedule(request, now());
+    await insertSchedule(input.sqlite, schedule);
     arm();
     return schedule;
   };

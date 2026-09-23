@@ -48,6 +48,12 @@ export {
   LiveStateStopReasonSchema,
   type LiveStateSubscriberError,
 } from '../browser/live-state';
+export type {
+  BindRealtimeClientOptions,
+  BoundRealtimeClient,
+  RealtimeClientTransport,
+} from '../browser/realtime-client';
+export { bindRealtimeClient } from '../browser/realtime-client';
 export {
   type ResumableAttempt,
   type ResumableIteratorConfig,
@@ -55,21 +61,14 @@ export {
 } from '../browser/resumable';
 export { createRetainedTopics, type RetainedTopics } from '../browser/retained';
 export type {
-  BindRealtimeClientOptions,
-  BoundRealtimeClient,
   RealtimeClient,
   RealtimeClientOptions,
-  RealtimeClientTransport,
   SocketEventMap,
   SocketIOClient,
   SocketIOClientConfig,
   SocketIOClientPeerLoaders,
 } from '../browser/socket-io';
-export {
-  bindRealtimeClient,
-  createRealtimeClient,
-  createSocketIOClient,
-} from '../browser/socket-io';
+export { createRealtimeClient, createSocketIOClient } from '../browser/socket-io';
 export {
   type ParseNDJSONOptions,
   type ParseSSEOptions,

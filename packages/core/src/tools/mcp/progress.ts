@@ -13,7 +13,7 @@
  * (`mount-wait.ts`, which reports its own poll ticks).
  */
 import type { ServerContext } from '@modelcontextprotocol/server';
-import type { McpProgressUpdate, McpReportProgress } from '../../contract/define';
+import type { McpProgressUpdate, McpReportProgress } from '../../contract/runtime-context';
 
 /**
  * The host's progress token, or `undefined` when it asked for none.

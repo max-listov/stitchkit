@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { defineErrors } from '../src/contract/errors-factory';
 import { AppError, isRetryableStatus, STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
 import type { MethodDef } from '../src/server/types';
-import { toolResultFromError } from '../src/tools/execute';
+import { toolResultFromError } from '../src/tools/execute-result';
 import { formatToolError } from '../src/tools/mount';
 
 /*

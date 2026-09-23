@@ -69,25 +69,27 @@ export {
 } from '../server/file';
 export {
   createImplement,
-  createImplementRegistry,
   createMultipartStream,
   createScopedImplement,
-  createScopedImplementRegistry,
   defineMultipartStream,
+  type ImplementOptions,
+  implement,
+  type MissingHandlerPolicy,
+  type MultipartStreamConfig,
+  type StreamScope,
+} from '../server/implement';
+export {
+  createImplementRegistry,
+  createScopedImplementRegistry,
   type ExactRegistryHandlers,
   type ExactScopedRegistryHandlers,
   type ImplementationRegistry,
-  type ImplementOptions,
-  implement,
   implementRegistry,
   type KeyedServices,
-  type MissingHandlerPolicy,
-  type MultipartStreamConfig,
   type RegistryHandlers,
   type ScopedImplementationRegistry,
   type ScopedRegistryHandlers,
-  type StreamScope,
-} from '../server/implement';
+} from '../server/implement-registry';
 export { composeLifecycleHooks } from '../server/lifecycle';
 export type { LogFormat } from '../server/logger';
 export {
@@ -104,14 +106,9 @@ export {
   createAuthHook,
   createBearerResolver,
   extractToken,
-  type JwtPayload,
   type RuleScopes,
   type ScopedAuthHook,
   type ScopedAuthRule,
-  type SignJwtOptions,
-  signJwt,
-  type VerifyJwtOptions,
-  verifyJwt,
 } from '../server/middleware/auth';
 export {
   type CookieDef,
@@ -129,6 +126,13 @@ export {
   DEFAULT_CORS_ALLOW_HEADERS,
   DEFAULT_CORS_EXPOSE_HEADERS,
 } from '../server/middleware/cors';
+export {
+  type JwtPayload,
+  type SignJwtOptions,
+  signJwt,
+  type VerifyJwtOptions,
+  verifyJwt,
+} from '../server/middleware/jwt';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from '../server/middleware/pkce';
 export {
   createTrustFence,

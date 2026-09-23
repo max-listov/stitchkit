@@ -57,6 +57,9 @@ const COVERED: Record<string, string> = {
   ApiErrorRetryConfig: 'entrypoints/react.ts',
   QueryClientFactoryConfig: 'entrypoints/react.ts',
   EndpointToolView: 'entrypoints/contract.ts',
+  ExclusiveLockOptions: 'entrypoints/files.ts',
+  WriteFileAtomicOptions: 'entrypoints/files.ts',
+  EffectRunOptions: 'entrypoints/tools.ts',
 };
 
 const EntrySchema = z.union([

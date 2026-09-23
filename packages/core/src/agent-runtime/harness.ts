@@ -49,6 +49,105 @@ function activeRunId(snapshot: AgentSnapshot): string {
  * The caller still owns supervision, model/provider policy, permissions and
  * idempotency of effects outside the runtime store.
  */
+/** Every approval request in the conversation that no response has answered yet. */
+function listPendingApprovals(
+  snapshot: AgentSnapshot,
+  conversationId: string,
+): readonly AgentHarnessPendingApproval[] {
+  const responded = new Set(
+    snapshot.messages.flatMap((message) =>
+      message.parts
+        .filter((part) => part.type === 'tool-approval-response')
+        .map((part) => part.approvalId),
+    ),
+  );
+  const pendingApprovals: AgentHarnessPendingApproval[] = [];
+  for (const message of snapshot.messages) {
+    const calls = new Map(
+      message.parts
+        .filter((part) => part.type === 'tool-call')
+        .map((part) => [part.callId, part]),
+    );
+    for (const request of message.parts.filter(
+      (part) => part.type === 'tool-approval-request',
+    )) {
+      if (responded.has(request.approvalId)) continue;
+      const call = calls.get(request.callId);
+      if (!call || !message.runId) continue;
+      pendingApprovals.push({
+        conversationId,
+        runId: message.runId,
+        messageId: message.id,
+        approvalId: request.approvalId,
+        callId: request.callId,
+        toolName: call.toolName,
+        input: call.input,
+        ...(request.signature && { signature: request.signature }),
+      });
+    }
+  }
+  return pendingApprovals;
+}
+
+/** The profile a run was given: model, resources with provenance, diagnostics, tools. */
+function profileEventOf(
+  runId: string,
+  prompt: NonNullable<HarnessPendingProfile['prompt']>,
+  toolNames: readonly string[],
+) {
+  return AgentHarnessProfileEventSchema.parse({
+    schemaVersion: 1,
+    type: 'profile-applied',
+    conversationId: prompt.conversationId,
+    runId,
+    model: prompt.model.descriptor,
+    resources: prompt.resources.map(({ kind, name, provenance }) => ({
+      kind,
+      name,
+      provenance,
+    })),
+    diagnostics: prompt.diagnostics,
+    toolNames,
+  });
+}
+
+/**
+ * Ask the response-time policy about this responder. A refusal is recorded and
+ * thrown, and the request stays pending for a responder the policy accepts.
+ */
+async function authorizeApprovalResponder<CONTEXT, TOOLS extends ToolSet>(
+  config: HeadlessAgentHarnessConfig<CONTEXT, TOOLS>,
+  input: Parameters<HeadlessAgentHarness<CONTEXT>['respondToApproval']>[0],
+  request: AgentHarnessPendingApproval,
+): Promise<void> {
+  if (!config.authorizeApprovalResponse) return;
+  const authorization = await config.authorizeApprovalResponse({
+    responder: input.context,
+    conversationId: input.conversationId,
+    request: {
+      approvalId: request.approvalId,
+      callId: request.callId,
+      toolName: request.toolName,
+      input: request.input,
+    },
+    approved: input.approved,
+  });
+  if (authorization.status !== 'rejected') return;
+  // The policy judged the responder, not the approval: record the refusal
+  // and leave the request pending so a valid responder can still answer.
+  await config.store.appendEvent({
+    conversationId: input.conversationId,
+    kind: 'approval/response-rejected',
+    payload: {
+      approvalId: request.approvalId,
+      callId: request.callId,
+      toolName: request.toolName,
+      reason: authorization.reason,
+    },
+  });
+  throw new AgentHarnessApprovalRejectedError(authorization.reason);
+}
+
 export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
   config: HeadlessAgentHarnessConfig<CONTEXT, TOOLS>,
 ): HeadlessAgentHarness<CONTEXT> {
@@ -72,20 +171,7 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
   const emitProfile = async (runId: string): Promise<void> => {
     const entry = pending.get(runId);
     if (!entry?.prompt || !entry.toolNames || entry.emitting) return entry?.emitting;
-    const event = AgentHarnessProfileEventSchema.parse({
-      schemaVersion: 1,
-      type: 'profile-applied',
-      conversationId: entry.prompt.conversationId,
-      runId,
-      model: entry.prompt.model.descriptor,
-      resources: entry.prompt.resources.map(({ kind, name, provenance }) => ({
-        kind,
-        name,
-        provenance,
-      })),
-      diagnostics: entry.prompt.diagnostics,
-      toolNames: entry.toolNames,
-    });
+    const event = profileEventOf(runId, entry.prompt, entry.toolNames);
     const emitting = (async () => {
       try {
         await onProfile?.(event);
@@ -184,42 +270,8 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
 
   const pendingApprovals = async (
     conversationId: string,
-  ): Promise<readonly AgentHarnessPendingApproval[]> => {
-    const snapshot = await config.store.loadSnapshot(conversationId);
-    const responded = new Set(
-      snapshot.messages.flatMap((message) =>
-        message.parts
-          .filter((part) => part.type === 'tool-approval-response')
-          .map((part) => part.approvalId),
-      ),
-    );
-    const pendingApprovals: AgentHarnessPendingApproval[] = [];
-    for (const message of snapshot.messages) {
-      const calls = new Map(
-        message.parts
-          .filter((part) => part.type === 'tool-call')
-          .map((part) => [part.callId, part]),
-      );
-      for (const request of message.parts.filter(
-        (part) => part.type === 'tool-approval-request',
-      )) {
-        if (responded.has(request.approvalId)) continue;
-        const call = calls.get(request.callId);
-        if (!call || !message.runId) continue;
-        pendingApprovals.push({
-          conversationId,
-          runId: message.runId,
-          messageId: message.id,
-          approvalId: request.approvalId,
-          callId: request.callId,
-          toolName: call.toolName,
-          input: call.input,
-          ...(request.signature && { signature: request.signature }),
-        });
-      }
-    }
-    return pendingApprovals;
-  };
+  ): Promise<readonly AgentHarnessPendingApproval[]> =>
+    listPendingApprovals(await config.store.loadSnapshot(conversationId), conversationId);
 
   return {
     ...runtime,
@@ -243,34 +295,7 @@ export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
       if (!request) {
         throw new Error('Approval request is missing, stale or already answered');
       }
-      const authorization = config.authorizeApprovalResponse
-        ? await config.authorizeApprovalResponse({
-            responder: input.context,
-            conversationId: input.conversationId,
-            request: {
-              approvalId: request.approvalId,
-              callId: request.callId,
-              toolName: request.toolName,
-              input: request.input,
-            },
-            approved: input.approved,
-          })
-        : ({ status: 'allowed' } as const);
-      if (authorization.status === 'rejected') {
-        // The policy judged the responder, not the approval: record the refusal
-        // and leave the request pending so a valid responder can still answer.
-        await runtimeConfig.store.appendEvent({
-          conversationId: input.conversationId,
-          kind: 'approval/response-rejected',
-          payload: {
-            approvalId: request.approvalId,
-            callId: request.callId,
-            toolName: request.toolName,
-            reason: authorization.reason,
-          },
-        });
-        throw new AgentHarnessApprovalRejectedError(authorization.reason);
-      }
+      await authorizeApprovalResponder(config, input, request);
       const ticket = runtime.submit({
         conversationId: input.conversationId,
         idempotencyKey: `tool-approval:${input.approvalId}`,

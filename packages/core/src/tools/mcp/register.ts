@@ -4,10 +4,11 @@ import {
   type McpServer,
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import type { EndpointToolAnnotations, EndpointUiMeta } from '../../contract/define';
 import { AppError } from '../../contract/errors';
+import type { EndpointToolAnnotations, EndpointUiMeta } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
-import { type ToolExecutionOptions, type ToolResult, toolResultFromError } from '../execute';
+import type { ToolExecutionOptions } from '../execute';
+import { type ToolResult, toolResultFromError } from '../execute-result';
 import type { MountableTool } from '../mount';
 import { presentationMetadata } from '../schema/presentation';
 import { type McpCatalogStamp, stampToolRegistration, stampToolResult } from './catalog';

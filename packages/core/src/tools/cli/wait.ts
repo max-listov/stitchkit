@@ -6,7 +6,7 @@
  * poll target from the first result (`poll`), which tool to re-call (`tool`)
  * and when it is done (`done`).
  */
-import type { ToolResult } from '../execute';
+import type { ToolResult } from '../execute-result';
 import { pollUntil } from '../operations/wait-core';
 
 export interface CliWaitConfig {

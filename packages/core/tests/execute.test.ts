@@ -2,14 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError } from '../src/entrypoints/contract';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
-import {
-  type AfterToolCallOptions,
-  type BeforeToolCallOptions,
-  executeToolMethod,
-  type ToolCallHooks,
-  type ToolErrorOptions,
-  type ToolResult,
-} from '../src/tools/execute';
+import { executeToolMethod } from '../src/tools/execute';
+import type {
+  AfterToolCallOptions,
+  BeforeToolCallOptions,
+  ToolCallHooks,
+  ToolErrorOptions,
+} from '../src/tools/execute-hooks';
+import type { ToolResult } from '../src/tools/execute-result';
 
 function makeMethod(
   overrides: Partial<MethodDef<unknown, unknown, unknown>> = {},

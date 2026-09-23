@@ -392,6 +392,30 @@ enters the `stitchkit/tools` graph. An application that *does* run on
 `agent-runtime` gets durability through the run context and needs no option;
 where both exist the runtime's wins, because the run is recorded in its ledger.
 
+#### An effect in another system — `effect`, at most once
+
+`step` records its result **after** the body, so a body cut short by a crash
+runs again. For sending a message or starting a turn at a provider, a repeat is
+worse than a loss. The engine's `effect` records the intent **before** it runs:
+
+```ts
+const sent = await engine.effect('reply', {
+  run: () => chat.send({ clientId, text }),                 // → { messageId }
+  reconcile: (signal) => chat.findByClientId(clientId, { signal }), // → { messageId } | null
+})
+if (sent.outcome === 'uncertain') reportPossiblyLost(clientId)
+```
+
+A later call — the same process or a restarted one — that finds the intent with
+no outcome calls `reconcile`, never `run`. Found is `accepted` with the proof;
+not found is `uncertain`. Both are recorded and final: `run` is never called for
+that name again, and `uncertain` is not asked again — it is the honest third
+answer, and retrying it is the caller's decision under a new name. A `run` that
+throws, or a `reconcile` that throws or overruns `reconcileTimeoutMs` (default
+30 s), rejects with `EffectUnresolvedError` and leaves the intent for the next
+call. The proof is JSON of at most 64 KiB — the identity the recipient assigned,
+not a payload. → [ADR 0200](../decisions/0200-an-effect-is-recorded-before-it-runs.md)
+
 ### Typed MCP call metadata
 
 Contract handlers, runtime-tool handlers/factories, lifecycle and tool hooks all
@@ -935,7 +959,26 @@ path (one `expose: ['HTTP']`, one for the tools) duplicate the description, the
 schemas and the handler; branching on `ctx.source` teaches every handler about
 transports and still advertises the full output schema.
 
-A **tool view** declares the difference on the endpoint instead:
+A **tool view** declares the difference on the endpoint instead. Most often the
+difference is only the call — a model needs a lighter one, and the answer keeps
+its one shape:
+
+```ts
+import { defineContract, withToolView } from 'stitchkit';
+
+export const items = defineContract({ prefix: 'items' }, {
+  list: withToolView(
+    {
+      method: 'GET', path: '/:slug/items', desc: 'List items', tool: { name: 'db_items' },
+      input: ItemsQuery,        // include: z.array(...).default(['relations'])
+      output: ItemsResponse,    // one answer on HTTP and on the tools
+    },
+    { defaults: { include: [] } },   // what a tool call gets when it passes nothing
+  ),
+});
+```
+
+When the answer itself differs, the view carries its own schema too:
 
 ```ts
 import { defineContract, withToolView } from 'stitchkit';
@@ -971,17 +1014,19 @@ export const users = defineContract({ prefix: 'users' }, {
   catalog stamp and the surface snapshot follow it. HTTP, OpenAPI, the typed
   client and the in-process [`createToolInvoker`](#in-process-calls--createtoolinvoker)
   keep the full answer — code, not a model, is calling there.
-- **Three forms, one helper.** With `output` and `project` the answer has its
-  own schema. With `project` alone it reshapes values inside the full schema.
-  With `output` alone it is a slice, and the full result must fit that schema —
-  `withToolView` refuses the endpoint at compile time when it does not.
+- **Four forms, one helper.** With `defaults` alone the call changes and the
+  answer is the full `output`, validated by it and advertised as it. With
+  `output` and `project` the answer has its own schema. With `project` alone it
+  reshapes values inside the full schema. With `output` alone it is a slice, and
+  the full result must fit that schema — `withToolView` refuses the endpoint at
+  compile time when it does not.
 - **Exposure.** A view needs a tool transport. With `createContractFactory({
   toolExposure: 'explicit' })` an endpoint without `expose` is HTTP-only, so an
   endpoint with a view names its tool transports in `expose`.
 - **What it refuses.** `defineContract` rejects a view on an endpoint with no
   tool transport or no full `output`, on a raw, `rawBody`, multipart,
-  `responseMeta` or streaming endpoint, a view that declares neither `output`
-  nor `project`, and a default for a key the input does not have, for a path
+  `responseMeta` or streaming endpoint, a view that declares no `defaults`,
+  `output` or `project` — it would change nothing — and a default for a key the input does not have, for a path
   param, or with a value the input would reject.
 
 A projection adds nothing the full result does not carry: a field the tool

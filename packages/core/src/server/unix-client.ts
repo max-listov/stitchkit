@@ -122,14 +122,17 @@ function redirectedRequest(
   });
 }
 
-/**
- * A Fetch-compatible Unix transport shared by Bun and Node. Socket selection is
- * structural: every request, including redirects, is dispatched through the
- * configured path and can never fall back to TCP.
- */
-export function createUnixClientTransport(
-  config: UnixClientTransportConfig,
-): UnixClientTransport {
+interface UnixClientLimits {
+  maxRequestBytes: number;
+  maxResponseBytes: number | undefined;
+  headersTimeoutMs: number;
+  maxConnections: number;
+  maxHeaderBytes: number;
+  maxRedirects: number;
+}
+
+/** Validate the socket path and resolve every bound, before anything is opened. */
+function resolveUnixClientLimits(config: UnixClientTransportConfig): UnixClientLimits {
   if (!config.socketPath.startsWith('/') || config.socketPath.includes('\0')) {
     throw new TypeError('socketPath must be an absolute Unix socket path');
   }
@@ -165,6 +168,158 @@ export function createUnixClientTransport(
     DEFAULT_MAX_REDIRECTS,
     'maxRedirects',
   );
+  return {
+    maxRequestBytes,
+    maxResponseBytes,
+    headersTimeoutMs,
+    maxConnections,
+    maxHeaderBytes,
+    maxRedirects,
+  };
+}
+
+/**
+ * Whether a redirect response is followed, returned as is, or refused. The two
+ * runtime paths share this step; each only releases its own response first.
+ */
+function redirectStep(
+  request: Request,
+  status: number,
+  location: string | null,
+  redirectCount: number,
+  maxRedirects: number,
+): 'return' | 'follow' {
+  if (!location || !isRedirect(status)) return 'return';
+  if (request.redirect === 'error' || redirectCount >= maxRedirects) {
+    throw new UnixClientTransportError(
+      'UNIX_REDIRECT_REFUSED',
+      redirectCount >= maxRedirects
+        ? `Unix redirect limit ${maxRedirects} exceeded`
+        : 'Unix request redirect mode is error',
+      'response-received',
+    );
+  }
+  return request.redirect === 'follow' ? 'follow' : 'return';
+}
+
+interface NodeUnixRequestInput {
+  socketPath: string;
+  url: URL;
+  request: Request;
+  headers: Record<string, string>;
+  body: Uint8Array | undefined;
+  agent: Agent;
+  maxHeaderBytes: number;
+  headersTimeoutMs: number;
+  activeRequests: Set<ClientRequest>;
+}
+
+/**
+ * One `node:http` request over the socket, resolved at the response head. The
+ * failure is classified by whether this request could have reached the server.
+ */
+function nodeUnixRequest(input: NodeUnixRequestInput): Promise<IncomingMessage> {
+  const { request, url, headersTimeoutMs, maxHeaderBytes, activeRequests } = input;
+  return new Promise<IncomingMessage>((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = (response: IncomingMessage): void => {
+      if (settled) return;
+      settled = true;
+      resolve(response);
+    };
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const outgoing = httpRequest(
+      {
+        socketPath: input.socketPath,
+        path: `${url.pathname}${url.search}`,
+        method: request.method,
+        headers: input.headers,
+        agent: input.agent,
+        signal: request.signal,
+        // Node's parser enforces this before exposing an IncomingMessage.
+        // The limit counts the complete HTTP response head in wire bytes.
+        maxHeaderSize: maxHeaderBytes,
+      },
+      resolveOnce,
+    );
+    let connected = false;
+    let requestStartBytes = 0;
+    outgoing.once('socket', (socket) => {
+      requestStartBytes = socket.bytesWritten;
+      if (!socket.connecting && !socket.destroyed) connected = true;
+      else {
+        socket.once('connect', () => {
+          connected = true;
+        });
+      }
+    });
+    activeRequests.add(outgoing);
+    const timer = setTimeout(() => {
+      const error = new UnixClientTransportError(
+        'UNIX_HEADERS_TIMEOUT',
+        `Unix response headers did not arrive within ${headersTimeoutMs}ms`,
+      );
+      rejectOnce(error);
+      outgoing.destroy(error);
+    }, headersTimeoutMs);
+    timer.unref();
+    outgoing.once('response', () => clearTimeout(timer));
+    outgoing.once('error', (error) => {
+      if (isNodeHeaderOverflow(error)) {
+        rejectOnce(
+          new UnixClientTransportError(
+            'UNIX_HEADERS_TOO_LARGE',
+            `Unix response headers exceed the ${maxHeaderBytes} byte limit`,
+            'response-received',
+            { cause: error },
+          ),
+        );
+        return;
+      }
+      // `bytesWritten` includes data buffered before a failed connect on
+      // Node, and is cumulative on a pooled socket. Delivery is ambiguous
+      // only after this socket really connected and this request advanced it.
+      const dispatched =
+        connected && (outgoing.socket?.bytesWritten ?? requestStartBytes) > requestStartBytes;
+      rejectOnce(
+        new UnixClientTransportError(
+          dispatched ? 'UNIX_DELIVERY_UNCERTAIN' : 'UNIX_CONNECT_FAILED',
+          dispatched
+            ? 'Unix request transport failed after dispatch may have begun'
+            : 'Unix socket connection failed before request dispatch',
+          dispatched ? 'possibly-dispatched' : 'not-dispatched',
+          { cause: error },
+        ),
+      );
+    });
+    outgoing.once('close', () => {
+      clearTimeout(timer);
+      activeRequests.delete(outgoing);
+    });
+    outgoing.end(input.body);
+  });
+}
+
+/**
+ * A Fetch-compatible Unix transport shared by Bun and Node. Socket selection is
+ * structural: every request, including redirects, is dispatched through the
+ * configured path and can never fall back to TCP.
+ */
+export function createUnixClientTransport(
+  config: UnixClientTransportConfig,
+): UnixClientTransport {
+  const {
+    maxRequestBytes,
+    maxResponseBytes,
+    headersTimeoutMs,
+    maxConnections,
+    maxHeaderBytes,
+    maxRedirects,
+  } = resolveUnixClientLimits(config);
   const agent = new Agent({ keepAlive: true, maxSockets: maxConnections });
   const activeRequests = new Set<ClientRequest>();
   const activeResponses = new Set<IncomingMessage>();
@@ -206,24 +361,19 @@ export function createUnixClientTransport(
         },
       });
       const location = response.headers.get('location');
-      if (location && isRedirect(response.status)) {
-        if (request.redirect === 'error' || redirectCount >= maxRedirects) {
-          await response.body?.cancel();
-          throw new UnixClientTransportError(
-            'UNIX_REDIRECT_REFUSED',
-            redirectCount >= maxRedirects
-              ? `Unix redirect limit ${maxRedirects} exceeded`
-              : 'Unix request redirect mode is error',
-            'response-received',
-          );
-        }
-        if (request.redirect === 'follow') {
-          await response.body?.cancel();
-          return dispatch(
-            redirectedRequest(request, location, response.status, body),
-            redirectCount + 1,
-          );
-        }
+      let step: 'return' | 'follow';
+      try {
+        step = redirectStep(request, response.status, location, redirectCount, maxRedirects);
+      } catch (error) {
+        await response.body?.cancel();
+        throw error;
+      }
+      if (step === 'follow' && location) {
+        await response.body?.cancel();
+        return dispatch(
+          redirectedRequest(request, location, response.status, body),
+          redirectCount + 1,
+        );
       }
       return response;
     }
@@ -232,88 +382,16 @@ export function createUnixClientTransport(
       headers.host = url.host;
     }
 
-    const incoming = await new Promise<IncomingMessage>((resolve, reject) => {
-      let settled = false;
-      const resolveOnce = (response: IncomingMessage): void => {
-        if (settled) return;
-        settled = true;
-        resolve(response);
-      };
-      const rejectOnce = (error: unknown): void => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      };
-      const outgoing = httpRequest(
-        {
-          socketPath: config.socketPath,
-          path: `${url.pathname}${url.search}`,
-          method: request.method,
-          headers,
-          agent,
-          signal: request.signal,
-          // Node's parser enforces this before exposing an IncomingMessage.
-          // The limit counts the complete HTTP response head in wire bytes.
-          maxHeaderSize: maxHeaderBytes,
-        },
-        resolveOnce,
-      );
-      let connected = false;
-      let requestStartBytes = 0;
-      outgoing.once('socket', (socket) => {
-        requestStartBytes = socket.bytesWritten;
-        if (!socket.connecting && !socket.destroyed) connected = true;
-        else {
-          socket.once('connect', () => {
-            connected = true;
-          });
-        }
-      });
-      activeRequests.add(outgoing);
-      const timer = setTimeout(() => {
-        const error = new UnixClientTransportError(
-          'UNIX_HEADERS_TIMEOUT',
-          `Unix response headers did not arrive within ${headersTimeoutMs}ms`,
-        );
-        rejectOnce(error);
-        outgoing.destroy(error);
-      }, headersTimeoutMs);
-      timer.unref();
-      outgoing.once('response', () => clearTimeout(timer));
-      outgoing.once('error', (error) => {
-        if (isNodeHeaderOverflow(error)) {
-          rejectOnce(
-            new UnixClientTransportError(
-              'UNIX_HEADERS_TOO_LARGE',
-              `Unix response headers exceed the ${maxHeaderBytes} byte limit`,
-              'response-received',
-              { cause: error },
-            ),
-          );
-          return;
-        }
-        // `bytesWritten` includes data buffered before a failed connect on
-        // Node, and is cumulative on a pooled socket. Delivery is ambiguous
-        // only after this socket really connected and this request advanced it.
-        const dispatched =
-          connected &&
-          (outgoing.socket?.bytesWritten ?? requestStartBytes) > requestStartBytes;
-        rejectOnce(
-          new UnixClientTransportError(
-            dispatched ? 'UNIX_DELIVERY_UNCERTAIN' : 'UNIX_CONNECT_FAILED',
-            dispatched
-              ? 'Unix request transport failed after dispatch may have begun'
-              : 'Unix socket connection failed before request dispatch',
-            dispatched ? 'possibly-dispatched' : 'not-dispatched',
-            { cause: error },
-          ),
-        );
-      });
-      outgoing.once('close', () => {
-        clearTimeout(timer);
-        activeRequests.delete(outgoing);
-      });
-      outgoing.end(body);
+    const incoming = await nodeUnixRequest({
+      socketPath: config.socketPath,
+      url,
+      request,
+      headers,
+      body,
+      agent,
+      maxHeaderBytes,
+      headersTimeoutMs,
+      activeRequests,
     });
     activeResponses.add(incoming);
     const releaseResponse = (): void => void activeResponses.delete(incoming);
@@ -336,23 +414,18 @@ export function createUnixClientTransport(
     }
     const location = responseHeadersValue.get('location');
 
-    if (location && isRedirect(status)) {
-      if (request.redirect === 'error' || redirectCount >= maxRedirects) {
-        incoming.destroy();
-        releaseResponse();
-        throw new UnixClientTransportError(
-          'UNIX_REDIRECT_REFUSED',
-          redirectCount >= maxRedirects
-            ? `Unix redirect limit ${maxRedirects} exceeded`
-            : 'Unix request redirect mode is error',
-          'response-received',
-        );
-      }
-      if (request.redirect === 'follow') {
-        incoming.destroy();
-        releaseResponse();
-        return dispatch(redirectedRequest(request, location, status, body), redirectCount + 1);
-      }
+    let step: 'return' | 'follow';
+    try {
+      step = redirectStep(request, status, location, redirectCount, maxRedirects);
+    } catch (error) {
+      incoming.destroy();
+      releaseResponse();
+      throw error;
+    }
+    if (step === 'follow' && location) {
+      incoming.destroy();
+      releaseResponse();
+      return dispatch(redirectedRequest(request, location, status, body), redirectCount + 1);
     }
 
     const bodyless =

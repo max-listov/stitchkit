@@ -21,132 +21,35 @@
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
 
-import type { StitchLogger } from '../internal/logger';
-import { isModuleNotFound } from '../internal/optional-peer';
-import { randomHex } from '../internal/random-hex';
-import type {
-  RealtimeAcknowledgedEvent,
-  RealtimeAcknowledgement,
-  RealtimeContract,
-  RealtimeEventRegistry,
-  RealtimeRejectedEventHook,
-  RealtimeRequestArguments,
-} from '../realtime/contract';
+import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 import {
   RealtimeRequestDisconnectedError,
   type RealtimeRequestOptions,
-  type RealtimeRequestPhase,
-  type RealtimeRequestPhaseEvent,
   type RealtimeRequestPhaseHook,
-  RealtimeRequestTimeoutError,
 } from '../realtime/request';
 import {
-  createValidatedRealtimeSocket,
-  parseRealtimeRequestAcknowledgement,
-  parseRealtimeRequestArguments,
-  type ValidatedRealtimeSocket,
-} from '../realtime/socket';
-import { createRetainedTopics } from './retained';
+  type BindRealtimeClientOptions,
+  type BoundRealtimeClient,
+  bindRealtimeClient,
+} from './realtime-client';
+import {
+  awaitAcknowledgement,
+  connectErrorReport,
+  createRecycle,
+  createStickyEvents,
+  ioOptions,
+  reportPeerFailure,
+} from './socket-io-connection';
+import { createIoResolver, type IoFn } from './socket-io-peer';
+import { createRequestTracer, realtimeRequestTraces } from './socket-io-trace';
 
 // `socket.io-client` is loaded lazily (see `loadIo`) so it stays OUT of the
 // root `stitchkit` entry's eager graph — importing `defineContract` must not
 // drag the Socket.IO client into a bundle that never opens a socket. The type
 // is pulled via a type-only `import(...)` query, which is fully erased.
-type IoFn = typeof import('socket.io-client')['io'];
 
 /** The concrete Socket.IO client socket type (loose, default event typing). */
 type ClientSocket = ReturnType<IoFn>;
-
-interface RealtimeRequestTrace {
-  readonly requestId: string;
-  readonly event: string;
-  readonly startedAt: number;
-  readonly observeClient?: RealtimeRequestPhaseHook;
-  readonly observeRequest?: RealtimeRequestPhaseHook;
-  nativeKey?: string;
-  closed: boolean;
-}
-
-const realtimeRequestTraces = new WeakMap<Promise<unknown>, RealtimeRequestTrace>();
-
-function observeRealtimeRequestPhase(
-  trace: RealtimeRequestTrace,
-  phase: RealtimeRequestPhase,
-): void {
-  const observation: RealtimeRequestPhaseEvent = {
-    requestId: trace.requestId,
-    event: trace.event,
-    phase,
-    elapsedMs: performance.now() - trace.startedAt,
-  };
-  const observers =
-    trace.observeRequest && trace.observeRequest !== trace.observeClient
-      ? [trace.observeClient, trace.observeRequest]
-      : [trace.observeClient ?? trace.observeRequest];
-  for (const observer of observers) {
-    if (!observer) continue;
-    try {
-      const result = observer(observation);
-      if (result) void Promise.resolve(result).catch(() => undefined);
-    } catch {
-      // Observability is isolated: a broken observer cannot change request truth.
-    }
-  }
-}
-
-interface SocketIoPacketIdentity {
-  readonly namespace: string;
-  readonly id: string;
-}
-
-/** Read only the Socket.IO packet envelope prefix; payload JSON is never parsed. */
-function socketIoPacketIdentity(
-  data: unknown,
-  expected: 'event' | 'ack',
-): SocketIoPacketIdentity | null {
-  if (typeof data !== 'string') return null;
-  const type = data.charAt(0);
-  const binary = type === (expected === 'event' ? '5' : '6');
-  if (type !== (expected === 'event' ? '2' : '3') && !binary) return null;
-
-  let offset = 1;
-  if (binary) {
-    const separator = data.indexOf('-', offset);
-    if (separator < 0) return null;
-    for (let index = offset; index < separator; index += 1) {
-      const code = data.charCodeAt(index);
-      if (code < 48 || code > 57) return null;
-    }
-    offset = separator + 1;
-  }
-
-  let namespace = '/';
-  if (data.charAt(offset) === '/') {
-    const separator = data.indexOf(',', offset);
-    if (separator < 0) return null;
-    namespace = data.slice(offset, separator);
-    offset = separator + 1;
-  }
-
-  const start = offset;
-  while (offset < data.length) {
-    const code = data.charCodeAt(offset);
-    if (code < 48 || code > 57) break;
-    offset += 1;
-  }
-  if (offset === start) return null;
-  return { namespace, id: data.slice(start, offset) };
-}
-
-function packetIdentityKey(identity: SocketIoPacketIdentity): string {
-  return `${identity.namespace}:${identity.id}`;
-}
-
-// Held in a variable, not a string literal, on purpose: under `--target node`
-// the bundler rewrites a *literal* external dynamic import into a `createRequire`
-// shim, which drags `node:module` into the browser graph (caught by
-// `check-browser-clean`). A non-literal specifier stays a native `import()`.
-const SOCKET_IO_CLIENT = 'socket.io-client';
 
 /**
  * How this project loads the optional Socket.IO **client** peer.
@@ -187,112 +90,6 @@ export interface SocketIOClientPeerLoaders {
    * and a loader that returns the wrong module is refused by name at runtime.
    */
   client?: () => Promise<unknown>;
-}
-
-// The peer module, loaded once and shared by every client that does NOT inject
-// a loader. Failure clears the cache so a later `connect()` can retry, and
-// reports the missing peer clearly (the same courtesy `stitchkit/server` gives
-// for its Socket.IO server peer).
-let ioLoader: Promise<IoFn> | null = null;
-function loadIo(): Promise<IoFn> {
-  if (!ioLoader) {
-    // Webpack must leave this runtime-selected optional peer alone. Without
-    // the magic comment it reports an expression dependency even when a
-    // consumer supplies the literal `peers.client` loader below.
-    ioLoader = import(/* webpackIgnore: true */ SOCKET_IO_CLIENT).then(
-      (mod: typeof import('socket.io-client')) => mod.io,
-      (cause) => {
-        ioLoader = null;
-        throw new Error(
-          'stitchkit: createSocketIOClient needs the "socket.io-client" peer — install it (e.g. `bun add socket.io-client`). Shipping one self-contained artifact instead? Pass `peers: { client: () => import(\'socket.io-client\') }` so your bundler puts it inside.',
-          { cause },
-        );
-      },
-    );
-  }
-  return ioLoader;
-}
-
-/**
- * The one boundary where the injected module regains its type.
- *
- * `io` is a callable with properties, so the check is "callable" — anything
- * stricter would refuse a legitimate module and anything looser would let a
- * namespace object through to fail later as `io is not a function`.
- */
-function isIoModule(module: unknown): module is { io: IoFn } {
-  if (typeof module !== 'object' || module === null) return false;
-  return typeof Reflect.get(module, 'io') === 'function';
-}
-
-/**
- * One client's way of getting to `io`, memoised.
- *
- * An injected loader is never put in the module-level cache: two clients in one
- * process may legitimately be built by different bundles, and one of them
- * winning a shared slot would decide which module the other uses.
- */
-function createIoResolver(injected: SocketIOClientPeerLoaders['client']): () => Promise<IoFn> {
-  if (!injected) return loadIo;
-  let pending: Promise<IoFn> | null = null;
-  return () => {
-    if (!pending) {
-      pending = injected().then(
-        (module: unknown) => {
-          // Refused by name rather than failing later as `io is not a function`
-          // — the loader is consumer-written and the likely slip is returning
-          // the default export or a namespace that has no `io`. This is also
-          // the boundary where the module regains its type, since the loader
-          // is declared `() => Promise<unknown>` to keep `socket.io-client`
-          // out of the browser entry's declarations.
-          const io = isIoModule(module) ? module.io : null;
-          if (!io) {
-            pending = null;
-            throw new Error(
-              'stitchkit: the loader passed in `peers.client` did not return the "socket.io-client" module — it must resolve to the module itself, as `() => import(\'socket.io-client\')`.',
-            );
-          }
-          return io;
-        },
-        (cause: unknown) => {
-          pending = null;
-          // Only a MISSING MODULE is re-explained. A loader that throws for its
-          // own reasons is not a packaging problem, and reporting it as one
-          // sends the reader after the wrong thing.
-          if (!isModuleNotFound(cause)) throw cause;
-          // A different fix from the default path: an injected loader failing
-          // means the BUNDLE does not contain the package, and installing
-          // something on the machine is the wrong answer for an artifact meant
-          // to be self-contained.
-          throw new Error(
-            'stitchkit: createSocketIOClient could not load "socket.io-client" through the loader passed in `peers` — the artifact does not contain it. Check that the loader is a literal `import(\'socket.io-client\')` your bundler can follow, and that "socket.io-client" is a dependency of the package being bundled.',
-            { cause },
-          );
-        },
-      );
-    }
-    return pending;
-  };
-}
-
-/**
- * Adapt our friendly `auth` form to what `io()` expects. socket.io's function
- * form is callback-based (`(cb) => cb(payload)`) and called on every (re)connect;
- * we accept a plain sync/async producer and bridge it to that callback. If the
- * producer fails, send an empty auth object rather than leaving the handshake
- * waiting forever; a normal server-side auth gate will reject it. Object /
- * `undefined` pass straight through. No casts: socket.io types `auth` as
- * `{ [k]: any } | ((cb: (data: object) => void) => void)`.
- */
-function toIoAuth(
-  auth: SocketIOClientConfig['auth'],
-): Record<string, unknown> | ((cb: (data: object) => void) => void) | undefined {
-  if (typeof auth !== 'function') return auth;
-  return (cb) => {
-    void Promise.resolve()
-      .then(auth)
-      .then(cb, () => cb({}));
-  };
 }
 
 /**
@@ -451,37 +248,12 @@ export interface SocketIOClient<
 }
 
 /** Minimal Stitchkit client transport required by a validated realtime binding. */
-export type RealtimeClientTransport = Pick<
-  SocketIOClient<SocketEventMap, SocketEventMap>,
-  'connected' | 'on' | 'emit' | 'emitWithAck' | 'onConnectionChange'
->;
-
-export interface BoundRealtimeClient<
-  TServerToClient extends RealtimeEventRegistry,
-  TClientToServer extends RealtimeEventRegistry,
-> extends ValidatedRealtimeSocket<TServerToClient, TClientToServer> {
-  readonly connected: boolean;
-  request<TEvent extends RealtimeAcknowledgedEvent<TClientToServer>>(
-    event: TEvent,
-    ...args: [
-      ...RealtimeRequestArguments<TClientToServer[TEvent]>,
-      options: RealtimeRequestOptions,
-    ]
-  ): Promise<RealtimeAcknowledgement<TClientToServer[TEvent]>>;
-  onConnectionChange(listener: (connected: boolean, reason?: string) => void): () => void;
-}
-
 export interface RealtimeClient<
   TServerToClient extends RealtimeEventRegistry,
   TClientToServer extends RealtimeEventRegistry,
 > extends BoundRealtimeClient<TServerToClient, TClientToServer> {
   connect(): void;
   disconnect(): void;
-}
-
-export interface BindRealtimeClientOptions {
-  onRejected?: RealtimeRejectedEventHook;
-  logger?: StitchLogger;
 }
 
 export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegistry>
@@ -495,113 +267,6 @@ export interface RealtimeClientOptions<TServerToClient extends RealtimeEventRegi
    * Observer failures are isolated from request lifecycle.
    */
   onRequestPhase?: RealtimeRequestPhaseHook;
-}
-
-function assertRealtimeClientTransport(transport: RealtimeClientTransport): void {
-  for (const capability of ['on', 'emit', 'emitWithAck', 'onConnectionChange']) {
-    if (typeof Reflect.get(transport, capability) !== 'function') {
-      throw new TypeError(`Realtime client transport does not implement ${capability}()`);
-    }
-  }
-  if (typeof transport.connected !== 'boolean') {
-    throw new TypeError('Realtime client transport does not expose boolean connected');
-  }
-}
-
-/** Add contract validation and typed acknowledgements without owning the transport lifecycle. */
-export function bindRealtimeClient<
-  const TServerToClient extends RealtimeEventRegistry,
-  const TClientToServer extends RealtimeEventRegistry,
->(
-  contract: RealtimeContract<TServerToClient, TClientToServer>,
-  transport: RealtimeClientTransport,
-  { onRejected, logger }: BindRealtimeClientOptions = {},
-): BoundRealtimeClient<TServerToClient, TClientToServer> {
-  assertRealtimeClientTransport(transport);
-  const events = createValidatedRealtimeSocket({
-    target: transport,
-    inbound: contract.serverToClient,
-    outbound: contract.clientToServer,
-    inboundDirection: 'client-inbound',
-    outboundDirection: 'client-outbound',
-    onRejected,
-    logger,
-    subscribe: (event, handler) => {
-      const subscribe = Reflect.get(transport, 'on');
-      if (typeof subscribe !== 'function') {
-        throw new Error('Socket.IO client does not implement on()');
-      }
-      const unsubscribe = Reflect.apply(subscribe, transport, [event, handler]);
-      if (typeof unsubscribe !== 'function') {
-        throw new Error('Socket.IO client on() did not return an unsubscribe function');
-      }
-      return () => {
-        Reflect.apply(unsubscribe, undefined, []);
-      };
-    },
-  });
-
-  async function request<TEvent extends RealtimeAcknowledgedEvent<TClientToServer>>(
-    event: TEvent,
-    ...args: [
-      ...RealtimeRequestArguments<TClientToServer[TEvent]>,
-      options: RealtimeRequestOptions,
-    ]
-  ): Promise<RealtimeAcknowledgement<TClientToServer[TEvent]>> {
-    const options = args.at(-1);
-    if (!options || typeof options !== 'object' || !('timeoutMs' in options)) {
-      throw new TypeError(`Realtime request "${event}" requires { timeoutMs }`);
-    }
-    const timeoutMs = options.timeoutMs;
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new RangeError(`Realtime request "${event}" timeoutMs must be finite and > 0`);
-    }
-    const values = args.slice(0, -1);
-    const parsedArgs = parseRealtimeRequestArguments(
-      contract.clientToServer,
-      event,
-      'client-outbound',
-      values,
-    );
-    const definition = contract.clientToServer[event];
-    if (!definition?.ack) {
-      throw new Error(`Realtime request "${event}" has no acknowledgement schema`);
-    }
-    const pending = transport.emitWithAck(event, parsedArgs, options);
-    const trace = realtimeRequestTraces.get(pending);
-    if (trace) realtimeRequestTraces.delete(pending);
-    const value = await pending;
-    let acknowledgement: unknown;
-    try {
-      acknowledgement = parseRealtimeRequestAcknowledgement(
-        definition.ack,
-        event,
-        'client-inbound',
-        value,
-        onRejected,
-        logger,
-      );
-    } finally {
-      if (trace && !trace.closed) {
-        trace.closed = true;
-        observeRealtimeRequestPhase(trace, 'settled');
-      }
-    }
-    // Boundary cast: Socket.IO's emitter returns `unknown`; the selected
-    // contract key and successful Zod ack parse above prove the conditional
-    // acknowledgement output that TypeScript cannot retain through registry
-    // indexing.
-    return acknowledgement as RealtimeAcknowledgement<TClientToServer[TEvent]>;
-  }
-
-  return {
-    ...events,
-    get connected() {
-      return transport.connected;
-    },
-    request,
-    onConnectionChange: (listener) => transport.onConnectionChange(listener),
-  };
 }
 
 export function createRealtimeClient<
@@ -658,58 +323,17 @@ function createSocketIOClientInternal<
   // threw twice. The success side was already idempotent (`openSocket` re-checks
   // intent); this is its missing counterpart.
   let loadingPeer = false;
-  // Pending server-disconnect recycle timer (see `reconnectOnServerDisconnect`).
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Pending server-disconnect recycle (see `reconnectOnServerDisconnect`).
+  const recycle = createRecycle(config.reconnectOnServerDisconnect ?? 1000);
   const pendingRequestDisconnects = new Set<() => void>();
-  const requestTracesByNativeKey = new Map<string, RealtimeRequestTrace>();
-  const observedRequestEngines = new WeakSet<object>();
-  let startingRequestTrace: RealtimeRequestTrace | null = null;
-  const serverDisconnectDelay = config.reconnectOnServerDisconnect ?? 1000;
+  const tracer = createRequestTracer(onRequestPhase);
   const connectionListeners = new Set<(connected: boolean, reason?: string) => void>();
   // Durable event subscriptions — each re-attaches itself onto a fresh socket.
   const subscriptions = new Set<(socket: ClientSocket) => void>();
-  // Sticky events — retained last value per topic. The store lives outside the
-  // socket, so a retained value survives a disconnect()/connect() cycle; each
-  // value is the event's first emitted argument.
-  const retainNames = config.retain ? config.retain.map(String) : [];
-  const retainSet = new Set(retainNames);
-  const retained =
-    retainNames.length > 0 ? createRetainedTopics<Record<string, unknown>>() : null;
+  const sticky = createStickyEvents(config.retain);
 
   function notifyConnection(connected: boolean, reason?: string): void {
     for (const listener of connectionListeners) listener(connected, reason);
-  }
-
-  function clearReconnectTimer(): void {
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  }
-
-  function attachRequestPhaseEngineListeners(target: ClientSocket): void {
-    const engine = target.io.engine;
-    if (!engine || observedRequestEngines.has(engine)) return;
-    observedRequestEngines.add(engine);
-    engine.on('packetCreate', (packet) => {
-      if (!startingRequestTrace || packet.type !== 'message') return;
-      const identity = socketIoPacketIdentity(packet.data, 'event');
-      if (!identity) return;
-      const key = packetIdentityKey(identity);
-      startingRequestTrace.nativeKey = key;
-      requestTracesByNativeKey.set(key, startingRequestTrace);
-      observeRealtimeRequestPhase(startingRequestTrace, 'engine-handoff');
-    });
-    engine.on('packet', (packet) => {
-      if (packet.type !== 'message') return;
-      const identity = socketIoPacketIdentity(packet.data, 'ack');
-      if (!identity) return;
-      const key = packetIdentityKey(identity);
-      const trace = requestTracesByNativeKey.get(key);
-      if (!trace || trace.closed) return;
-      observeRealtimeRequestPhase(trace, 'engine-ack-received');
-      requestTracesByNativeKey.delete(key);
-    });
   }
 
   // Build the underlying socket once the peer `io` factory has loaded. A
@@ -719,26 +343,9 @@ function createSocketIOClientInternal<
   function openSocket(io: IoFn): void {
     if (!desiredConnected || socket) return;
 
-    socket = io(config.url, {
-      path: config.path ?? '/socket.io/',
-      withCredentials: config.withCredentials ?? true,
-      auth: toIoAuth(config.auth),
-      ...(config.query && { query: config.query }),
-      ...(config.extraHeaders && { extraHeaders: config.extraHeaders }),
-      transports: config.transports ?? ['websocket', 'polling'],
-      autoConnect: false,
-      reconnection: true,
-      reconnectionAttempts: config.reconnectionAttempts ?? Infinity,
-      reconnectionDelay: config.reconnectionDelay ?? 1000,
-      reconnectionDelayMax: config.reconnectionDelayMax ?? 5000,
-      timeout: config.timeout ?? 20_000,
-    });
+    socket = io(config.url, ioOptions(config));
 
-    if (onRequestPhase) {
-      socket.io.on('open', () => {
-        if (socket) attachRequestPhaseEngineListeners(socket);
-      });
-    }
+    tracer.observeEachOpen(socket, () => socket);
 
     socket.on('connect', () => notifyConnection(true));
     socket.on('disconnect', (reason) => {
@@ -747,74 +354,27 @@ function createSocketIOClientInternal<
       // Recycle manually so the client recovers (re-reading `auth`). Capture
       // the current socket so a later disconnect()/connect() can't be recycled
       // onto a stale instance.
-      if (reason === 'io server disconnect' && serverDisconnectDelay !== false) {
+      if (reason === 'io server disconnect') {
         const current = socket;
-        clearReconnectTimer();
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
+        recycle.schedule(() => {
           if (socket === current && current && !current.connected) current.connect();
-        }, serverDisconnectDelay);
+        });
       }
     });
     socket.io.on('reconnect_failed', () => {
       desiredConnected = false;
     });
     socket.on('connect_error', (error: Error) => {
-      // `active === false` → socket.io has destroyed its own retry path (a
-      // namespace middleware rejection is terminal); reset the connection
-      // intent so a later `connect()` is not swallowed by the idempotence
-      // guard and re-reads a function-form `auth`.
-      const terminal = socket !== null && !socket.active;
-      if (terminal) desiredConnected = false;
-      config.onConnectError?.({
-        message: error.message,
-        data: Reflect.get(error, 'data'),
-        terminal,
-      });
+      const report = connectErrorReport(error, socket);
+      if (report.terminal) desiredConnected = false;
+      config.onConnectError?.(report);
     });
-    // Record retained events' latest payload, independent of any user handler,
-    // so the value is available to a subscriber that connects later. Attached
-    // before connect so a handshake-time emission is captured too.
-    if (retained) {
-      for (const name of retainNames) {
-        socket.on(name, (payload: unknown) => retained.record(name, payload));
-      }
-    }
+    sticky.record(socket);
     // Re-attach every registered handler BEFORE connecting — nothing emitted
     // during the handshake (e.g. an `authenticated` reply) can be missed.
     for (const attach of subscriptions) attach(socket);
 
     socket.connect();
-  }
-
-  /**
-   * A peer that will not load is a TERMINAL connection failure, and it is
-   * reported as one.
-   *
-   * It used to be an unhandled rejection: `connect()` fired the load and
-   * nothing was listening on the failure path, so a missing `socket.io-client`
-   * took the process down at the first connect. The message was already the
-   * right one — the loader has wrapped the cause in an explanatory error for a
-   * long time — but an unhandled rejection is not something a caller can act
-   * on, retry, or report: the only outcome available was the process dying.
-   * For the self-contained-artifact consumer this adapter's `peers` option
-   * exists for, that is the worst possible moment to have no choices.
-   *
-   * With no `onConnectError` the failure is still re-thrown, so a project that
-   * asked for nothing keeps today's loud behaviour instead of a silent
-   * never-connecting client.
-   */
-  function reportPeerFailure(error: unknown): void {
-    // Cleared first: the attempt is over either way, and a later `connect()`
-    // must be able to start a fresh one (the same reset a terminal
-    // `connect_error` performs).
-    desiredConnected = false;
-    if (!config.onConnectError) throw error;
-    config.onConnectError({
-      message: error instanceof Error ? error.message : String(error),
-      data: error,
-      terminal: true,
-    });
   }
 
   return {
@@ -844,7 +404,10 @@ function createSocketIOClientInternal<
         },
         (error: unknown) => {
           loadingPeer = false;
-          reportPeerFailure(error);
+          // Cleared first: the attempt is over either way, and a later
+          // `connect()` must be able to start a fresh one.
+          desiredConnected = false;
+          reportPeerFailure(config, error);
         },
       );
     },
@@ -854,7 +417,7 @@ function createSocketIOClientInternal<
       // any pending server-disconnect recycle; an explicit disconnect is a
       // deliberate teardown that a queued reconnect must not undo.
       desiredConnected = false;
-      clearReconnectTimer();
+      recycle.clear();
       for (const reject of [...pendingRequestDisconnects]) reject();
       if (!socket) return;
       const wasConnected = socket.connected;
@@ -882,10 +445,8 @@ function createSocketIOClientInternal<
       // Sticky replay — a late subscriber to a retained topic gets the last
       // value immediately. `fn` widens the (any-typed) listener to a loose call
       // signature by plain assignment, no cast (as with `name` above).
-      if (retained && retainSet.has(name)) {
-        const fn: (...args: unknown[]) => void = handler;
-        retained.replay(name, (payload) => fn(payload));
-      }
+      const fn: (...args: unknown[]) => void = handler;
+      sticky.replay(name, fn);
 
       return () => {
         subscriptions.delete(attach);
@@ -904,23 +465,8 @@ function createSocketIOClientInternal<
     },
 
     emitWithAck(event, args, options) {
-      const trace: RealtimeRequestTrace | undefined =
-        onRequestPhase || options.onPhase
-          ? {
-              requestId: randomHex(16),
-              event,
-              startedAt: performance.now(),
-              observeClient: onRequestPhase,
-              observeRequest: options.onPhase,
-              closed: false,
-            }
-          : undefined;
-      const closeTrace = (phase: 'timeout' | 'disconnected'): void => {
-        if (!trace || trace.closed) return;
-        trace.closed = true;
-        if (trace.nativeKey) requestTracesByNativeKey.delete(trace.nativeKey);
-        observeRealtimeRequestPhase(trace, phase);
-      };
+      const trace = tracer.start(event, options.onPhase);
+      const closeTrace = (phase: 'timeout' | 'disconnected') => tracer.close(trace, phase);
       const active = socket;
       if (!active?.connected) {
         const pending = Promise.reject(new RealtimeRequestDisconnectedError(event));
@@ -928,45 +474,18 @@ function createSocketIOClientInternal<
         if (trace) realtimeRequestTraces.set(pending, trace);
         return pending;
       }
-      if (trace) attachRequestPhaseEngineListeners(active);
-      const pending = new Promise<unknown>((resolve, reject) => {
-        let settled = false;
-        const finish = (result: () => void): void => {
-          if (settled) return;
-          settled = true;
-          pendingRequestDisconnects.delete(onDisconnect);
-          active.off('disconnect', onDisconnect);
-          result();
-        };
-        const onDisconnect = (): void => {
-          finish(() => {
-            closeTrace('disconnected');
-            reject(new RealtimeRequestDisconnectedError(event));
-          });
-        };
-        pendingRequestDisconnects.add(onDisconnect);
-        active.on('disconnect', onDisconnect);
-        let acknowledgement: Promise<unknown>;
-        startingRequestTrace = trace ?? null;
-        try {
-          acknowledgement = active.timeout(options.timeoutMs).emitWithAck(event, ...args);
-        } finally {
-          startingRequestTrace = null;
-        }
-        void acknowledgement.then(
-          (value) => finish(() => resolve(value)),
-          () => {
-            finish(() => {
-              const connected = active.connected;
-              closeTrace(connected ? 'timeout' : 'disconnected');
-              reject(
-                connected
-                  ? new RealtimeRequestTimeoutError(event, options.timeoutMs)
-                  : new RealtimeRequestDisconnectedError(event),
-              );
-            });
-          },
-        );
+      if (trace) tracer.observe(active);
+      const pending = awaitAcknowledgement({
+        active,
+        event,
+        args,
+        timeoutMs: options.timeoutMs,
+        pendingRequestDisconnects,
+        closeTrace,
+        emit: () =>
+          tracer.starting(trace, () =>
+            active.timeout(options.timeoutMs).emitWithAck(event, ...args),
+          ),
       });
       if (trace) realtimeRequestTraces.set(pending, trace);
       return pending;

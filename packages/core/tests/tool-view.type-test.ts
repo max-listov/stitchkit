@@ -86,6 +86,13 @@ withToolView(endpoint, { defaults: { nope: 1 }, output: Card, project: () => ({ 
 // @ts-expect-error
 withToolView(endpoint, { defaults: { q: 42 }, output: Card, project: () => ({ rows: [] }) });
 
+// Defaults alone change the call and keep the full answer…
+withToolView(endpoint, { defaults: { include: [] } });
+
+// …and still name only keys of the endpoint's input.
+// @ts-expect-error
+withToolView(endpoint, { defaults: { unknownKey: 1 } });
+
 // Reshaping inside the full schema needs no second one.
 withToolView(endpoint, { project: (full) => ({ rows: full.rows.slice(0, 1) }) });
 

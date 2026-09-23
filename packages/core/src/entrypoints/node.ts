@@ -8,22 +8,24 @@
 export { createHandler } from '../server/create';
 export {
   createImplement,
-  createImplementRegistry,
   createMultipartStream,
   createScopedImplement,
+  implement,
+  type MultipartStreamConfig,
+  type StreamScope,
+} from '../server/implement';
+export {
+  createImplementRegistry,
   createScopedImplementRegistry,
   type ExactRegistryHandlers,
   type ExactScopedRegistryHandlers,
   type ImplementationRegistry,
-  implement,
   implementRegistry,
   type KeyedServices,
-  type MultipartStreamConfig,
   type RegistryHandlers,
   type ScopedImplementationRegistry,
   type ScopedRegistryHandlers,
-  type StreamScope,
-} from '../server/implement';
+} from '../server/implement-registry';
 export type { LogFormat } from '../server/logger';
 export {
   type NodeRuntimeServer,

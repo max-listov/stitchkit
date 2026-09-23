@@ -3,9 +3,11 @@ import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { z } from 'zod';
 import {
   bindRealtimeClient,
+  type RealtimeClientTransport,
+} from '../src/browser/realtime-client';
+import {
   createRealtimeClient,
   createSocketIOClient,
-  type RealtimeClientTransport,
   type SocketIOClientConfig,
 } from '../src/browser/socket-io';
 import {

@@ -16,6 +16,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -457,6 +458,96 @@ describe('the build being replaced is kept, and can be put back', () => {
         expectedSha256: 'a'.repeat(64),
       }),
     ).toThrow('no backup at');
+  });
+});
+
+describe('the new build is run before it replaces anything', () => {
+  async function installVerified(
+    directory: string,
+    extra: Pick<Parameters<typeof applyCliUpdate>[0], 'verify' | 'verifyTimeoutMs'>,
+  ) {
+    const { manifestUrl } = startDistribution((url) => manifestFor(url));
+    const check = await checkCliUpdate({
+      manifestUrl,
+      currentVersion: '1.0.0',
+      allowPrivateHosts: true,
+    });
+    if (check.status !== 'outdated' || !check.asset) throw new Error('expected an asset');
+    return applyCliUpdate({
+      asset: check.asset,
+      targetPath: join(directory, 'app.js'),
+      backupPath: join(directory, 'app.previous'),
+      allowPrivateHosts: true,
+      ...extra,
+    });
+  }
+
+  function seeded(): { directory: string; target: string } {
+    const directory = scratch();
+    const target = join(directory, 'app.js');
+    writeFileSync(target, OLD_BINARY, { mode: 0o755 });
+    return { directory, target };
+  }
+
+  test('a candidate that fails leaves the target, makes no backup, and is removed', async () => {
+    const { directory, target } = seeded();
+    let seen: { path: string; bytes: Buffer; mode: number } | undefined;
+    await expect(
+      installVerified(directory, {
+        verify: (candidate) => {
+          seen = {
+            path: candidate,
+            bytes: readFileSync(candidate),
+            mode: statSync(candidate).mode & 0o777,
+          };
+          throw new Error('printed 1.1.0, expected 1.2.0');
+        },
+      }),
+    ).rejects.toThrow('failed verification — printed 1.1.0, expected 1.2.0');
+    // What was run is the digest-checked build, executable, beside the target
+    // and with its extension, since a runtime picks its loader by it.
+    expect(seen?.bytes).toEqual(BINARY);
+    expect(seen?.mode).toBe(0o755);
+    expect(seen?.path.endsWith('.js')).toBe(true);
+    expect(seen?.path.startsWith(`${directory}/`)).toBe(true);
+    expect(readFileSync(target)).toEqual(OLD_BINARY);
+    expect(existsSync(join(directory, 'app.previous'))).toBe(false);
+    expect(readdirSync(directory)).toEqual(['app.js']);
+  });
+
+  test('a candidate that passes is installed with its backup', async () => {
+    const { directory, target } = seeded();
+    let verified = 0;
+    const applied = await installVerified(directory, {
+      verify: async () => {
+        verified += 1;
+      },
+    });
+    expect(verified).toBe(1);
+    expect(readFileSync(target)).toEqual(BINARY);
+    expect(applied.backupSha256).toBe(OLD_DIGEST);
+    expect(readdirSync(directory).sort()).toEqual(['app.js', 'app.previous']);
+  });
+
+  test('a candidate that hangs is refused at the deadline, and told so', async () => {
+    const { directory, target } = seeded();
+    let aborted = false;
+    const started = performance.now();
+    await expect(
+      installVerified(directory, {
+        verifyTimeoutMs: 50,
+        verify: (_candidate, signal) =>
+          new Promise<void>(() => {
+            signal.addEventListener('abort', () => {
+              aborted = true;
+            });
+          }),
+      }),
+    ).rejects.toThrow('did not finish within 50 ms');
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(aborted).toBe(true);
+    expect(readFileSync(target)).toEqual(OLD_BINARY);
+    expect(readdirSync(directory)).toEqual(['app.js']);
   });
 });
 

@@ -13,11 +13,12 @@ import { z } from 'zod';
 import { AppError, defineContract, notFound } from '../src/entrypoints/contract';
 import { implement } from '../src/entrypoints/server';
 import { isRecord } from '../src/internal/typed';
-import { CliArgumentError, parseCliArgs } from '../src/tools/cli/args';
+import { parseCliArgs } from '../src/tools/cli/args';
+import { CliArgumentError } from '../src/tools/cli/argument-error';
 import { defineCliCommand } from '../src/tools/cli/command';
 import { type CliConfig, createCli } from '../src/tools/cli/create-cli';
 import { pollUntilDone } from '../src/tools/cli/wait';
-import type { ToolResult } from '../src/tools/execute';
+import type { ToolResult } from '../src/tools/execute-result';
 import { listToolNames } from '../src/tools/list-names';
 import { collectTools } from '../src/tools/mount';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
@@ -1335,6 +1336,92 @@ describe('parseCliArgs — unit', () => {
   test('a negative number is accepted as a space-form value', () => {
     const { toolArgs } = parseCliArgs(['--count', '-5'], schema);
     expect(toolArgs.count).toBe(-5);
+  });
+
+  describe('a leading dash is a value unless it is an option', () => {
+    // A consumer's real inputs: a search for `-foo`, a message body that
+    // starts with "- item". Both were refused, and the only escape was `--`.
+    const transcript = z.object({
+      target: z.string(),
+      body: z.string().optional(),
+      grep: z.string().optional(),
+      tail: z.number().int().min(1).max(1000).optional(),
+      follow: z.boolean().optional(),
+    });
+    const policy = {
+      positionals: ['target', 'body'],
+      optionAliases: new Map([['f', 'follow']]),
+    };
+
+    test('the token after an option that expects a value is that value', () => {
+      expect(parseCliArgs(['a', '--grep', '-foo'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        grep: '-foo',
+      });
+    });
+
+    test('a dash that is not followed by a letter is positional', () => {
+      expect(parseCliArgs(['a', '- item'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        body: '- item',
+      });
+    });
+
+    test('an option is still not a value, and an unknown short is still refused', () => {
+      // The control: the widening must not turn a missing value or a typo into data.
+      expect(() => parseCliArgs(['a', '--grep', '--follow'], transcript, policy)).toThrow(
+        '--grep requires a value',
+      );
+      expect(() => parseCliArgs(['a', '--grep', '-f'], transcript, policy)).toThrow(
+        '--grep requires a value',
+      );
+      expect(() => parseCliArgs(['a', '--grep', '--'], transcript, policy)).toThrow(
+        '--grep requires a value',
+      );
+      expect(() => parseCliArgs(['a', '--grep'], transcript, policy)).toThrow(
+        '--grep requires a value',
+      );
+      expect(() => parseCliArgs(['a', '-x'], transcript, policy)).toThrow(
+        'Unknown option "-x"',
+      );
+      expect(() => parseCliArgs(['a', '-n100'], transcript, policy)).toThrow(
+        'Unknown option "-n100"',
+      );
+    });
+
+    test('`--`, `--no-x`, aliases and an inline value behave as before', () => {
+      expect(parseCliArgs(['a', '-f'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        follow: true,
+      });
+      expect(parseCliArgs(['a', '--no-follow'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        follow: false,
+      });
+      expect(parseCliArgs(['a', '--', '--grep'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        body: '--grep',
+      });
+      expect(parseCliArgs(['a', '--grep=--x'], transcript, policy).toolArgs).toEqual({
+        target: 'a',
+        grep: '--x',
+      });
+    });
+
+    test('a value that cannot be read names the flag and what was typed', () => {
+      expect(() => parseCliArgs(['a', '--tail', 'abc'], transcript, policy)).toThrow(
+        '--tail expects a whole number, got "abc"',
+      );
+      expect(() => parseCliArgs(['a', '--tail', '2.5'], transcript, policy)).toThrow(
+        '--tail expects a whole number, got "2.5"',
+      );
+      expect(() => parseCliArgs(['--count', 'many'], schema)).toThrow(
+        '--count expects a number, got "many"',
+      );
+      expect(() =>
+        parseCliArgs(['x', 'many'], schema, { positionals: ['name', 'count'] }),
+      ).toThrow('<count> expects a number, got "many"');
+    });
   });
 
   test('an unrecognisable boolean field value is left raw for Zod, not coerced to true', () => {

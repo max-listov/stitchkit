@@ -1,26 +1,15 @@
-import {
-  close as closeDescriptor,
-  constants,
-  existsSync,
-  fchmod,
-  fstat,
-  read as readDescriptor,
-  type Stats,
-  write as writeDescriptor,
-} from 'node:fs';
-import {
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  realpath,
-  rename,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { constants, type Stats } from 'node:fs';
+import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
+import {
+  FILE_TYPE_DIRECTORY,
+  FILE_TYPE_REGULAR,
+  FILE_TYPE_SYMLINK,
+  loadDarwinBinding,
+  modeIs,
+  NumericFileHandle,
+} from './contained-darwin';
 
 export interface ContainedFile {
   absolute: string;
@@ -72,105 +61,7 @@ export interface ContainedFileHandle {
   stat(): Promise<Stats>;
 }
 
-interface DarwinEntry {
-  name: string;
-  mode: number;
-  size: number;
-}
-
-interface DarwinBinding {
-  openDirectoryAt(directory: number, name: string): number;
-  openFileAt(directory: number, name: string): number;
-  createFileAt(directory: number, name: string, mode: number): number;
-  createDirectoryAt(directory: number, name: string, mode: number): boolean;
-  statAt(directory: number, name: string): Omit<DarwinEntry, 'name'> | null;
-  listAt(directory: number): readonly DarwinEntry[];
-  renameAt(directory: number, source: string, target: string): void;
-  unlinkAt(directory: number, name: string): void;
-}
-
-const FILE_TYPE_MASK = 0o170000;
-const FILE_TYPE_DIRECTORY = 0o040000;
-const FILE_TYPE_REGULAR = 0o100000;
-const FILE_TYPE_SYMLINK = 0o120000;
-
-function modeIs(mode: number, type: number): boolean {
-  return (mode & FILE_TYPE_MASK) === type;
-}
-
-function hasFunctions(value: unknown, names: readonly string[]): boolean {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    names.every((name) => typeof Reflect.get(value, name) === 'function')
-  );
-}
-
-let darwinBinding: DarwinBinding | undefined;
-
-function loadDarwinBinding(): DarwinBinding {
-  if (darwinBinding) return darwinBinding;
-  const directory = path.dirname(fileURLToPath(import.meta.url));
-  const binary = `darwin-${process.arch}.node`;
-  const candidates = [
-    path.resolve(directory, '../native', binary),
-    path.resolve(directory, '../../native', binary),
-  ];
-  const selected = candidates.find((candidate) => existsSync(candidate));
-  if (!selected) {
-    throw new Error(
-      `Contained filesystem operations need the packaged Darwin ${process.arch} backend`,
-    );
-  }
-  const loaded: unknown = createRequire(import.meta.url)(selected);
-  const methods = [
-    'openDirectoryAt',
-    'openFileAt',
-    'createFileAt',
-    'createDirectoryAt',
-    'statAt',
-    'listAt',
-    'renameAt',
-    'unlinkAt',
-  ];
-  if (!hasFunctions(loaded, methods)) {
-    throw new Error('The packaged Darwin contained-files backend has an invalid surface');
-  }
-  // Native Node-API is an untyped external boundary; every callable was checked above.
-  darwinBinding = loaded as DarwinBinding;
-  return darwinBinding;
-}
-
-class NumericFileHandle implements ContainedFileHandle {
-  constructor(readonly fd: number) {}
-
-  close(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      closeDescriptor(this.fd, (error) => (error ? reject(error) : resolve()));
-    });
-  }
-
-  read(
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesRead: number }> {
-    return new Promise((resolve, reject) => {
-      readDescriptor(this.fd, buffer, offset, length, position, (error, bytesRead) =>
-        error ? reject(error) : resolve({ bytesRead }),
-      );
-    });
-  }
-
-  stat(): Promise<Stats> {
-    return new Promise((resolve, reject) => {
-      fstat(this.fd, (error, metadata) => (error ? reject(error) : resolve(metadata)));
-    });
-  }
-}
-
-function descriptorPath(handle: ContainedFileHandle): string {
+export function descriptorPath(handle: ContainedFileHandle): string {
   if (process.platform === 'linux') return `/proc/self/fd/${handle.fd}`;
   throw new Error('Descriptor paths are available only in the Linux contained-files backend');
 }
@@ -179,7 +70,7 @@ function sameIdentity(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-async function openPinnedDirectory(absolute: string): Promise<ContainedFileHandle> {
+export async function openPinnedDirectory(absolute: string): Promise<ContainedFileHandle> {
   if (process.platform !== 'linux' && process.platform !== 'darwin') {
     throw new Error('Contained filesystem operations support Linux and macOS only');
   }
@@ -212,7 +103,7 @@ function safeSegments(relative: string): string[] {
   return segments;
 }
 
-async function openDirectoryAt(
+export async function openDirectoryAt(
   directory: ContainedFileHandle,
   name: string,
 ): Promise<ContainedFileHandle> {
@@ -225,7 +116,7 @@ async function openDirectoryAt(
   );
 }
 
-async function openFileAt(
+export async function openFileAt(
   directory: ContainedFileHandle,
   name: string,
 ): Promise<ContainedFileHandle> {
@@ -280,7 +171,7 @@ async function statAt(
   );
 }
 
-async function listAt(
+export async function listAt(
   directory: ContainedFileHandle,
 ): Promise<readonly ContainedDirectoryEntry[]> {
   if (process.platform === 'darwin') {
@@ -515,104 +406,6 @@ export async function assertContainedParentCurrent(
   }
 }
 
-async function writeDescriptorFully(descriptor: number, content: string): Promise<void> {
-  const bytes = Buffer.from(content);
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const written = await new Promise<number>((resolve, reject) => {
-      writeDescriptor(
-        descriptor,
-        bytes,
-        offset,
-        bytes.byteLength - offset,
-        null,
-        (error, bytesWritten) => (error ? reject(error) : resolve(bytesWritten)),
-      );
-    });
-    if (written === 0) throw new Error('Contained file write made no progress');
-    offset += written;
-  }
-}
-
-async function chmodDescriptor(descriptor: number, mode: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    fchmod(descriptor, mode & 0o7777, (error) => (error ? reject(error) : resolve()));
-  });
-}
-
-async function createDarwinFile(
-  parent: ContainedFileHandle,
-  name: string,
-  content: string,
-  mode: number,
-): Promise<void> {
-  const binding = loadDarwinBinding();
-  const descriptor = binding.createFileAt(parent.fd, name, mode & 0o7777);
-  let failed: unknown;
-  try {
-    await writeDescriptorFully(descriptor, content);
-    await chmodDescriptor(descriptor, mode);
-  } catch (error) {
-    failed = error;
-  } finally {
-    try {
-      await new NumericFileHandle(descriptor).close();
-    } catch (error) {
-      failed ??= error;
-    }
-  }
-  if (failed) {
-    binding.unlinkAt(parent.fd, name);
-    throw failed;
-  }
-}
-
-/** Create or atomically replace one direct child through the pinned parent descriptor. */
-export async function writeContainedFile(input: {
-  parent: ContainedParent;
-  content: string;
-  replace: boolean;
-  mode?: number;
-}): Promise<void> {
-  const mode = input.mode ?? 0o666;
-  if (!input.replace) {
-    if (process.platform === 'darwin') {
-      await createDarwinFile(input.parent.handle, input.parent.basename, input.content, mode);
-      return;
-    }
-    await writeFile(
-      path.join(descriptorPath(input.parent.handle), input.parent.basename),
-      input.content,
-      { flag: 'wx', mode },
-    );
-    return;
-  }
-
-  const temporary = `.${input.parent.basename}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  if (process.platform === 'darwin') {
-    const binding = loadDarwinBinding();
-    let created = false;
-    try {
-      await createDarwinFile(input.parent.handle, temporary, input.content, mode);
-      created = true;
-      binding.renameAt(input.parent.handle.fd, temporary, input.parent.basename);
-    } catch (error) {
-      if (created) binding.unlinkAt(input.parent.handle.fd, temporary);
-      throw error;
-    }
-    return;
-  }
-  const directory = descriptorPath(input.parent.handle);
-  const temporaryPath = path.join(directory, temporary);
-  try {
-    await writeFile(temporaryPath, input.content, { flag: 'wx', mode });
-    await rename(temporaryPath, path.join(directory, input.parent.basename));
-  } catch (error) {
-    await unlink(temporaryPath).catch(() => undefined);
-    throw error;
-  }
-}
-
 export async function containedEntryMetadata(
   parent: ContainedParent,
 ): Promise<ContainedEntryMetadata | null> {
@@ -669,126 +462,4 @@ export async function readContainedUtf8File(
   } finally {
     await handle.close();
   }
-}
-
-/** One deterministic descriptor-anchored walker for harness resources and workspace search. */
-export async function walkContainedFiles(input: {
-  root: string;
-  maxDepth: number;
-  maxFiles: number;
-  readMaxBytes?: number;
-}): Promise<readonly ContainedFile[]> {
-  const scan = await scanContainedFiles({ ...input, symlinks: 'refuse' });
-  if (scan.truncated) throw new Error('Contained file traversal exceeded its bounds');
-  return scan.files;
-}
-
-/** Bounded workspace scan whose recursion stays attached to opened directory identities. */
-export async function scanContainedFiles(input: {
-  root: string;
-  maxDepth: number;
-  maxFiles: number;
-  symlinks: 'refuse' | 'skip';
-  readMaxBytes?: number;
-  skipUnreadable?: boolean;
-  excludeDirectory?: (relative: string) => boolean;
-  includeFile?: (relative: string) => boolean;
-  authorizePath?: (
-    relative: string,
-    kind: 'file' | 'directory' | 'symlink' | 'other',
-  ) => boolean | Promise<boolean>;
-}): Promise<ContainedFileScan> {
-  const files: ContainedFile[] = [];
-  let truncated = false;
-  let skippedDirectories = 0;
-  let skippedSymlinks = 0;
-  const denied: { relative: string; kind: ContainedEntryKind }[] = [];
-  let deniedTruncated = false;
-  const root = await openPinnedDirectory(input.root);
-  const visit = async (
-    directory: ContainedFileHandle,
-    relativeDirectory: string,
-    depth: number,
-  ): Promise<void> => {
-    if (truncated) return;
-    if (depth > input.maxDepth) {
-      truncated = true;
-      return;
-    }
-    const entries = [...(await listAt(directory))];
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const relative = relativeDirectory
-        ? path.join(relativeDirectory, entry.name)
-        : entry.name;
-      const kind = entry.isDirectory()
-        ? 'directory'
-        : entry.isSymbolicLink()
-          ? 'symlink'
-          : entry.isFile()
-            ? 'file'
-            : 'other';
-      if (kind === 'file' && input.includeFile && !input.includeFile(relative)) continue;
-      if (input.authorizePath && !(await input.authorizePath(relative, kind))) {
-        if (denied.length < input.maxFiles) denied.push({ relative, kind });
-        else deniedTruncated = true;
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        if (input.symlinks === 'refuse') {
-          throw new Error(`Contained file traversal refuses symlink: ${relative}`);
-        }
-        skippedSymlinks += 1;
-        continue;
-      }
-      if (entry.isDirectory()) {
-        if (input.excludeDirectory?.(relative)) {
-          skippedDirectories += 1;
-          continue;
-        }
-        let child: ContainedFileHandle;
-        try {
-          child = await openDirectoryAt(directory, entry.name);
-        } catch (error) {
-          if (input.symlinks === 'skip') {
-            skippedSymlinks += 1;
-            continue;
-          }
-          throw error;
-        }
-        try {
-          await visit(child, relative, depth + 1);
-        } finally {
-          await child.close();
-        }
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (files.length >= input.maxFiles) {
-        truncated = true;
-        return;
-      }
-      let content: ContainedFile['content'];
-      if (input.readMaxBytes !== undefined) {
-        try {
-          const handle = await openFileAt(directory, entry.name);
-          try {
-            content = await readContainedUtf8Handle(handle, input.readMaxBytes);
-          } finally {
-            await handle.close();
-          }
-        } catch (error) {
-          if (input.skipUnreadable) continue;
-          throw error;
-        }
-      }
-      files.push({ absolute: relative, relative, ...(content && { content }) });
-    }
-  };
-  try {
-    await visit(root, '', 0);
-  } finally {
-    await root.close();
-  }
-  return { files, truncated, skippedDirectories, skippedSymlinks, denied, deniedTruncated };
 }

@@ -1,11 +1,10 @@
 import { type ZodObject, type ZodType, z } from 'zod';
+import type { HttpMethod, ToolTransport } from '../../contract/define';
 import type {
   EndpointMcpPolicy,
   EndpointToolAnnotations,
   EndpointUiMeta,
-  HttpMethod,
-  ToolTransport,
-} from '../../contract/define';
+} from '../../contract/tool-options';
 import { toJsonSchema } from '../../json-schema/json-schema';
 import type { MethodDef, ServiceDef, StitchLogger } from '../../server/types';
 import { validateMcpRoundPolicy } from '../mcp/round-policy';

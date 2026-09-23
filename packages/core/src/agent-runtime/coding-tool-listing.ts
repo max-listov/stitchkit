@@ -19,7 +19,8 @@ import {
   codingRefusal,
   refuseMissingCodingPath,
 } from './coding-tool-refusals';
-import { listContainedDirectory, scanContainedFiles } from './contained-files';
+import { listContainedDirectory } from './contained-files';
+import { scanContainedFiles } from './contained-scan';
 
 /** The same set `search_files` skips, so one workspace has one idea of noise. */
 export const DEFAULT_EXCLUDED_DIRECTORIES = [

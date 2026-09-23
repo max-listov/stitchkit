@@ -1,16 +1,7 @@
-import { createHash } from 'node:crypto';
-import { type ZodType, z } from 'zod';
-import {
-  type EndpointMcpPolicy,
-  type HttpMethod,
-  TOOL_TRANSPORTS,
-  type ToolTransport,
-} from '../contract/define';
-import type { EndpointToolView } from '../contract/tool-view';
+import { z } from 'zod';
+import { TOOL_TRANSPORTS, type ToolTransport } from '../contract/define';
 import { compareCodeUnits, serializeCanonicalJson } from '../internal/canonical-json';
 import { joinRoutePath } from '../internal/route-pattern';
-import { isRecord } from '../internal/typed';
-import { toJsonSchema } from '../json-schema/json-schema';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 import type { RouteGroup, ServiceDef } from '../server/types';
 import type { CliCommandDefinition } from '../tools/cli/command';
@@ -22,7 +13,17 @@ import {
   type SurfaceRuntimeToolDefinition,
   type SurfaceToolExtension,
 } from '../tools/internal/surface-projector';
-import { staticInputRounds } from '../tools/mcp/round-policy';
+import {
+  digestValue,
+  type OperationSource,
+  operationFingerprint,
+  operationFrom,
+  operationKey,
+  presentationDigest,
+  runtimeOperationSource,
+  schemaDigest,
+  sortTools,
+} from './surface-manifest-digest';
 
 /** The snapshot format's own version — bumped whenever an operation gains a field. */
 export const SURFACE_MANIFEST_VERSION = 3;
@@ -204,186 +205,43 @@ export interface SurfaceManifestConfig {
  */
 export const serializeSurfaceValue: (value: unknown) => string = serializeCanonicalJson;
 
-function digestValue(value: unknown): string {
-  return createHash('sha256').update(serializeSurfaceValue(value)).digest('hex').slice(0, 16);
-}
-
-function canonicalSchemaValue(value: unknown, parentKey?: string): unknown {
-  if (Array.isArray(value)) {
-    const entries = value.map((entry) => canonicalSchemaValue(entry));
-    return parentKey === 'required' && entries.every((entry) => typeof entry === 'string')
-      ? entries.sort((left, right) => compareCodeUnits(String(left), String(right)))
-      : entries;
+/** Every realtime event of every contract, in contract, direction and event order. */
+function realtimeEvents(
+  config: SurfaceManifestConfig,
+  realtimeContracts: readonly string[],
+): SurfaceManifestRealtimeEvent[] {
+  const realtime: SurfaceManifestRealtimeEvent[] = [];
+  for (const contractName of realtimeContracts) {
+    const contract = config.realtime?.[contractName];
+    if (!contract) continue;
+    for (const direction of ['serverToClient', 'clientToServer'] satisfies Array<
+      'serverToClient' | 'clientToServer'
+    >) {
+      const registry = contract[direction];
+      for (const event of Object.keys(registry).sort(compareCodeUnits)) {
+        const definition = registry[event];
+        if (!definition) continue;
+        const argsInput = schemaDigest(definition.args, 'input');
+        const argsOutput = schemaDigest(definition.args, 'output');
+        if (!argsInput || !argsOutput) throw new Error('Realtime args schema digest missing');
+        let acknowledgement: { input: string; output: string } | null = null;
+        if (definition.ack) {
+          const input = schemaDigest(definition.ack, 'input');
+          const output = schemaDigest(definition.ack, 'output');
+          if (!input || !output) throw new Error('Realtime ack schema digest missing');
+          acknowledgement = { input, output };
+        }
+        realtime.push({
+          contract: contractName,
+          direction,
+          event,
+          args: { input: argsInput, output: argsOutput },
+          acknowledgement,
+        });
+      }
+    }
   }
-  if (!isRecord(value)) return value;
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort(compareCodeUnits)) {
-    result[key] = canonicalSchemaValue(value[key], key);
-  }
-  return result;
-}
-
-function schemaDigest(schema: ZodType | undefined, io: 'input' | 'output'): string | null {
-  if (!schema) return null;
-  return digestValue(canonicalSchemaValue(toJsonSchema(schema, io, 'any')));
-}
-
-function presentationDigest(schema: Record<string, unknown>): string {
-  return digestValue(canonicalSchemaValue(schema));
-}
-
-function multipartDigest(value: unknown): string | null {
-  return value === undefined ? null : digestValue(value);
-}
-
-function operationKey(kind: 'contract' | 'runtime', service: string, action: string): string {
-  return `${kind}\u0000${service}\u0000${action}`;
-}
-
-interface OperationSource {
-  /** Original immutable definition; mount prefixes may differ, definitions may not. */
-  definitionToken?: object;
-  method: HttpMethod;
-  serviceName: string;
-  key: string;
-  desc: string;
-  scope?: string;
-  paramsSchema?: ZodType;
-  inputSchema?: ZodType;
-  outputSchema?: ZodType;
-  multipart?: unknown;
-  path?: string;
-  expose?: readonly string[];
-  toolName?: string;
-  annotations?: unknown;
-  ui?: unknown;
-  mcp?: EndpointMcpPolicy;
-  toolView?: EndpointToolView;
-  rawBody?: true;
-  safelistedBody?: true;
-  rawResponse?: true;
-  responseMeta?: unknown;
-  maxJsonBodyBytes?: number;
-  idempotent?: boolean;
-  contentType?: string;
-  meta?: Record<string, unknown>;
-}
-
-function operationFrom(
-  kind: 'contract' | 'runtime',
-  source: OperationSource,
-): SurfaceManifestOperation {
-  return {
-    kind,
-    service: source.serviceName,
-    action: source.key,
-    method: source.method,
-    scope: source.scope ?? null,
-    description: source.desc,
-    schemas: {
-      params: schemaDigest(source.paramsSchema, 'input'),
-      input: schemaDigest(source.inputSchema, 'input'),
-      output: schemaDigest(source.outputSchema, 'output'),
-      multipart: multipartDigest(source.multipart),
-    },
-    mcp: mcpRoundsOf(source),
-    ...toolViewEntry(source),
-    http: [],
-  };
-}
-
-/**
- * The declared tool view, in the one shape both the snapshot and the
- * fingerprint read — the same reason `mcpRoundsOf` is one function.
- */
-function toolViewOf(source: OperationSource): SurfaceManifestOperationToolView | null {
-  const view = source.toolView;
-  if (!view) return null;
-  return {
-    defaults:
-      view.defaults === undefined || Object.keys(view.defaults).length === 0
-        ? null
-        : digestValue(view.defaults),
-    output: schemaDigest(view.output, 'output'),
-    project: view.project !== undefined,
-  };
-}
-
-function toolViewEntry(source: OperationSource): {
-  toolView?: SurfaceManifestOperationToolView;
-} {
-  const toolView = toolViewOf(source);
-  return toolView ? { toolView } : {};
-}
-
-/**
- * What a tool's multi-round declaration looks like from outside.
- *
- * A policy whose rounds are chosen per call has no list to write down, and
- * pretending it has an empty one would make a dynamic tool indistinguishable
- * from a tool that asks nothing. The marker says which kind it is, which is the
- * part of it that is actually fixed at declaration time.
- *
- * One function, because the snapshot and the fingerprint must not be able to
- * disagree about what was declared: the fingerprint decides whether two
- * declarations of one operation conflict, the snapshot decides whether a change
- * is visible to review, and a shape that drifts between them would let a
- * contract change pass one and fail the other.
- */
-function mcpRoundsOf(source: OperationSource): SurfaceManifestOperationMcp {
-  if (!source.mcp) return null;
-  const declared = staticInputRounds(source.mcp);
-  return {
-    inputRequired: declared
-      ? declared.map((request) => ({
-          key: request.key,
-          message: request.message,
-          schema: schemaDigest(request.schema, 'input'),
-        }))
-      : 'resolved-per-call',
-  };
-}
-
-function operationFingerprint(source: OperationSource): string {
-  const mcp = mcpRoundsOf(source);
-  return serializeSurfaceValue({
-    method: source.method,
-    serviceName: source.serviceName,
-    key: source.key,
-    desc: source.desc,
-    scope: source.scope ?? null,
-    path: source.path ?? null,
-    expose: source.expose ? [...source.expose].sort(compareCodeUnits) : null,
-    toolName: source.toolName ?? null,
-    annotations: source.annotations ?? null,
-    ui: source.ui ?? null,
-    mcp,
-    toolView: toolViewOf(source),
-    rawBody: source.rawBody ?? false,
-    safelistedBody: source.safelistedBody ?? false,
-    rawResponse: source.rawResponse ?? false,
-    responseMeta: source.responseMeta ?? null,
-    maxJsonBodyBytes: source.maxJsonBodyBytes ?? null,
-    idempotent: source.idempotent ?? false,
-    contentType: source.contentType ?? null,
-    meta: source.meta ?? null,
-    schemas: {
-      params: schemaDigest(source.paramsSchema, 'input'),
-      input: schemaDigest(source.inputSchema, 'input'),
-      output: schemaDigest(source.outputSchema, 'output'),
-      multipart: multipartDigest(source.multipart),
-    },
-  });
-}
-
-function sortTools(tools: SurfaceManifestTool[]): SurfaceManifestTool[] {
-  return tools.sort(
-    (left, right) =>
-      compareCodeUnits(left.name, right.name) ||
-      compareCodeUnits(left.service, right.service) ||
-      compareCodeUnits(left.action, right.action) ||
-      compareCodeUnits(left.kind, right.kind),
-  );
+  return realtime;
 }
 
 /** Build one versioned snapshot of the declared transport-specific surface. */
@@ -468,32 +326,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
     const tools: SurfaceManifestTool[] = [];
     for (const entry of collected) {
       const source: OperationSource =
-        entry.kind === 'contract'
-          ? entry.source
-          : {
-              definitionToken: entry.source,
-              method: entry.source.identity.method,
-              serviceName: entry.source.identity.serviceName,
-              key: entry.source.identity.action,
-              desc: entry.source.description,
-              ...(entry.source.identity.scope !== undefined && {
-                scope: entry.source.identity.scope,
-              }),
-              inputSchema: entry.source.input,
-              ...(entry.source.output !== undefined && {
-                outputSchema: entry.source.output,
-              }),
-              toolName: entry.source.name,
-              expose: entry.source.transports,
-              ...(entry.source.annotations !== undefined && {
-                annotations: entry.source.annotations,
-              }),
-              ...(entry.source.ui !== undefined && { ui: entry.source.ui }),
-              ...(entry.source.identity.meta !== undefined && {
-                meta: entry.source.identity.meta,
-              }),
-              ...(entry.source.mcp !== undefined && { mcp: entry.source.mcp }),
-            };
+        entry.kind === 'contract' ? entry.source : runtimeOperationSource(entry.source);
       const operation = addOperation(entry.kind, source);
       tools.push({
         kind: entry.kind,
@@ -529,38 +362,8 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
   addToolProjection('AGENT', null, agent ?? shared, agent ?? {});
   addToolProjection('CLI', null, config.toolSurfaces?.CLI ?? shared);
 
-  const realtime: SurfaceManifestRealtimeEvent[] = [];
   const realtimeContracts = Object.keys(config.realtime ?? {}).sort(compareCodeUnits);
-  for (const contractName of realtimeContracts) {
-    const contract = config.realtime?.[contractName];
-    if (!contract) continue;
-    for (const direction of ['serverToClient', 'clientToServer'] satisfies Array<
-      'serverToClient' | 'clientToServer'
-    >) {
-      const registry = contract[direction];
-      for (const event of Object.keys(registry).sort(compareCodeUnits)) {
-        const definition = registry[event];
-        if (!definition) continue;
-        const argsInput = schemaDigest(definition.args, 'input');
-        const argsOutput = schemaDigest(definition.args, 'output');
-        if (!argsInput || !argsOutput) throw new Error('Realtime args schema digest missing');
-        let acknowledgement: { input: string; output: string } | null = null;
-        if (definition.ack) {
-          const input = schemaDigest(definition.ack, 'input');
-          const output = schemaDigest(definition.ack, 'output');
-          if (!input || !output) throw new Error('Realtime ack schema digest missing');
-          acknowledgement = { input, output };
-        }
-        realtime.push({
-          contract: contractName,
-          direction,
-          event,
-          args: { input: argsInput, output: argsOutput },
-          acknowledgement,
-        });
-      }
-    }
-  }
+  const realtime = realtimeEvents(config, realtimeContracts);
 
   const cliOnly = (config.cliCommands ?? [])
     .map((command) => ({

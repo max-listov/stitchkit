@@ -1,42 +1,38 @@
 import {
   acceptedContent,
   type CallToolResult,
-  CLIENT_INFO_META_KEY,
   type InputRequiredResult,
   inputRequired,
   inputResponse,
-  PROTOCOL_VERSION_META_KEY,
   type RequestStateCodec,
   type ServerContext,
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import type { McpRoundOutcome } from '../../contract/runtime-context';
 import type {
   EndpointMcpInputRequired,
   EndpointMcpPolicy,
-  McpCallContext,
   McpInputRequiredResolver,
-  McpReportProgress,
-  McpRoundOutcome,
-} from '../../contract/define';
-import { AppError } from '../../contract/errors';
+} from '../../contract/tool-options';
 import { argumentsDigest } from '../../internal/stable-digest';
 import { isRecord } from '../../internal/typed';
-import { parseToolCallArguments, type ToolResult } from '../execute';
+import { parseToolCallArguments } from '../execute-args';
+import type { ToolResult } from '../execute-result';
 import type { MountableTool } from '../mount';
-import { createMcpProgressReporter, mcpProgressToken } from './progress';
+import {
+  failedResolution,
+  operationIdentity,
+  type RoundOperationIdentity,
+  runRoundSuccess,
+  sameIdentity,
+  type ToolRunner,
+  transportContext,
+} from './round-context';
 import {
   staticInputRounds,
   validateMcpRoundPolicy,
   validateResolvedInputRounds,
 } from './round-policy';
-
-interface RoundOperationIdentity {
-  toolName: string;
-  serviceName: string;
-  action: string;
-  method: string;
-  scope?: string;
-}
 
 /** Signed continuation payload. It is authenticated, not encrypted. */
 export interface McpRoundState {
@@ -68,136 +64,9 @@ export interface McpRoundRuntime {
   maxRounds: number;
 }
 
-type ToolRunner = (
-  tool: MountableTool,
-  rawArgs: Record<string, unknown>,
-  context?: Record<string, unknown>,
-) => Promise<ToolResult>;
-
 export type McpRoundResolution =
   | { kind: 'continue'; context?: Record<string, unknown> }
   | { kind: 'response'; response: CallToolResult | InputRequiredResult };
-
-function transportContext(
-  context: ServerContext,
-  toolName: string,
-  outcome?: McpRoundOutcome,
-  round?: number,
-): { signal: AbortSignal; mcp: McpCallContext; reportProgress: McpReportProgress } {
-  const protocolVersionValue = isRecord(context.mcpReq.envelope)
-    ? Reflect.get(context.mcpReq.envelope, PROTOCOL_VERSION_META_KEY)
-    : undefined;
-  const protocolVersion =
-    typeof protocolVersionValue === 'string' ? protocolVersionValue : undefined;
-  const clientInfoValue = isRecord(context.mcpReq.envelope)
-    ? Reflect.get(context.mcpReq.envelope, CLIENT_INFO_META_KEY)
-    : undefined;
-  const clientInfo =
-    isRecord(clientInfoValue) &&
-    typeof clientInfoValue.name === 'string' &&
-    typeof clientInfoValue.version === 'string'
-      ? { name: clientInfoValue.name, version: clientInfoValue.version }
-      : undefined;
-  const token = mcpProgressToken(context);
-  return {
-    signal: context.mcpReq.signal,
-    mcp: {
-      era: context.mcpReq.envelope ? 'modern' : 'legacy',
-      method: context.mcpReq.method,
-      toolName,
-      ...(protocolVersion !== undefined && { protocolVersion }),
-      ...(clientInfo !== undefined && { clientInfo }),
-      ...(outcome !== undefined && { outcome }),
-      ...(round !== undefined && { round }),
-      ...(token !== undefined && { progressToken: token }),
-    },
-    reportProgress: createMcpProgressReporter(context),
-  };
-}
-
-function operationIdentity(tool: MountableTool): RoundOperationIdentity {
-  return {
-    toolName: tool.name,
-    serviceName: tool.method.serviceName,
-    action: tool.method.key,
-    method: tool.method.method,
-    ...(tool.method.scope !== undefined && { scope: tool.method.scope }),
-  };
-}
-
-function sameIdentity(left: RoundOperationIdentity, right: RoundOperationIdentity): boolean {
-  return (
-    left.toolName === right.toolName &&
-    left.serviceName === right.serviceName &&
-    left.action === right.action &&
-    left.method === right.method &&
-    left.scope === right.scope
-  );
-}
-
-async function runRoundSuccess(
-  tool: MountableTool,
-  rawArgs: Record<string, unknown>,
-  runTool: ToolRunner,
-  context: Record<string, unknown>,
-): Promise<ToolResult> {
-  return runTool(
-    {
-      ...tool,
-      method: {
-        ...tool.method,
-        outputSchema: undefined,
-        handler: () => undefined,
-      },
-    },
-    rawArgs,
-    context,
-  );
-}
-
-async function runRoundFailure(
-  tool: MountableTool,
-  rawArgs: Record<string, unknown>,
-  runTool: ToolRunner,
-  context: Record<string, unknown>,
-  code: string,
-  message: string,
-): Promise<ToolResult> {
-  return runTool(
-    {
-      ...tool,
-      method: {
-        ...tool.method,
-        outputSchema: undefined,
-        handler: () => {
-          throw new AppError(code, message, 400);
-        },
-      },
-    },
-    rawArgs,
-    context,
-  );
-}
-
-async function failedResolution(options: {
-  tool: MountableTool;
-  rawArgs: Record<string, unknown>;
-  runTool: ToolRunner;
-  context: Record<string, unknown>;
-  code: string;
-  message: string;
-  formatFailure: (result: ToolResult) => CallToolResult;
-}): Promise<McpRoundResolution> {
-  const result = await runRoundFailure(
-    options.tool,
-    options.rawArgs,
-    options.runTool,
-    options.context,
-    options.code,
-    options.message,
-  );
-  return { kind: 'response', response: options.formatFailure(result) };
-}
 
 /**
  * Fingerprint of a resolved question plan — what was asked, in what order.
@@ -270,6 +139,68 @@ async function resolveRequests(
   const resolved = await resolver({ params: parsed.params, input: parsed.input });
   validateResolvedInputRounds(options.tool, resolved, options.runtime?.maxRounds ?? 1);
   return { requests: resolved, guarded: false };
+}
+
+/** Mint the continuation for one round and ask that round's question. */
+async function askRound(
+  runtime: McpRoundRuntime,
+  context: ServerContext,
+  request: EndpointMcpInputRequired,
+  state: McpRoundState,
+): Promise<McpRoundResolution> {
+  const requestState = await runtime.codec.mint(state, context);
+  return {
+    kind: 'response',
+    response: inputRequired({
+      inputRequests: {
+        [request.key]: inputRequired.elicit({
+          message: request.message,
+          requestedSchema: request.schema,
+        }),
+      },
+      requestState,
+    }),
+  };
+}
+
+/** The accepted answer to this round's question, or why there is none. */
+function readRoundAnswer(
+  context: ServerContext,
+  request: EndpointMcpInputRequired,
+):
+  | { content: Record<string, unknown> }
+  | { refusal: { outcome: McpRoundOutcome; code: string; message: string } } {
+  const view = inputResponse(context.mcpReq.inputResponses, request.key);
+  if (view.kind !== 'elicit') {
+    return {
+      refusal: {
+        outcome: 'invalid',
+        code: 'INVALID_INPUT_RESPONSE',
+        message: 'Expected an elicitation response for the current round',
+      },
+    };
+  }
+  if (view.action !== 'accept') {
+    const declined = view.action === 'decline';
+    return {
+      refusal: {
+        outcome: declined ? 'declined' : 'cancelled',
+        code: declined ? 'INPUT_DECLINED' : 'INPUT_CANCELLED',
+        message: declined ? 'Required input was declined' : 'Required input was cancelled',
+      },
+    };
+  }
+  const content = acceptedContent(context.mcpReq.inputResponses, request.key, request.schema);
+  if (!content) {
+    return {
+      refusal: {
+        outcome: 'invalid',
+        code: 'INVALID_INPUT_RESPONSE',
+        message: 'Accepted input failed its declared schema',
+      },
+    };
+  }
+  return { content };
 }
 
 /** Resolve an ordered opt-in MRTR sequence before the canonical handler executes. */
@@ -392,28 +323,13 @@ export async function resolveMcpRound(options: {
     }
     const request = requests[0];
     if (!request) throw new Error('[stitchkit] validated MRTR policy has no first round');
-    const requestState = await options.runtime.codec.mint(
-      {
-        identity: operationIdentity(options.tool),
-        argumentsDigest: digest,
-        round: 0,
-        accepted: {},
-        planDigest,
-      },
-      options.context,
-    );
-    return {
-      kind: 'response',
-      response: inputRequired({
-        inputRequests: {
-          [request.key]: inputRequired.elicit({
-            message: request.message,
-            requestedSchema: request.schema,
-          }),
-        },
-        requestState,
-      }),
-    };
+    return askRound(options.runtime, options.context, request, {
+      identity: operationIdentity(options.tool),
+      argumentsDigest: digest,
+      round: 0,
+      accepted: {},
+      planDigest,
+    });
   }
 
   // Identity and arguments were checked above; what is left needs the resolved
@@ -432,41 +348,21 @@ export async function resolveMcpRound(options: {
 
   const request = requests[state.round];
   if (!request) throw new Error('[stitchkit] validated MRTR state points outside its policy');
-  const view = inputResponse(options.context.mcpReq.inputResponses, request.key);
-  if (view.kind !== 'elicit') {
+  const answer = readRoundAnswer(options.context, request);
+  if ('refusal' in answer) {
     return failedResolution({
       ...options,
-      context: transportContext(options.context, options.tool.name, 'invalid', state.round),
-      code: 'INVALID_INPUT_RESPONSE',
-      message: 'Expected an elicitation response for the current round',
+      context: transportContext(
+        options.context,
+        options.tool.name,
+        answer.refusal.outcome,
+        state.round,
+      ),
+      code: answer.refusal.code,
+      message: answer.refusal.message,
     });
   }
-  if (view.action !== 'accept') {
-    const outcome = view.action === 'decline' ? 'declined' : 'cancelled';
-    return failedResolution({
-      ...options,
-      context: transportContext(options.context, options.tool.name, outcome, state.round),
-      code: view.action === 'decline' ? 'INPUT_DECLINED' : 'INPUT_CANCELLED',
-      message:
-        view.action === 'decline'
-          ? 'Required input was declined'
-          : 'Required input was cancelled',
-    });
-  }
-
-  const content = acceptedContent(
-    options.context.mcpReq.inputResponses,
-    request.key,
-    request.schema,
-  );
-  if (!content) {
-    return failedResolution({
-      ...options,
-      context: transportContext(options.context, options.tool.name, 'invalid', state.round),
-      code: 'INVALID_INPUT_RESPONSE',
-      message: 'Accepted input failed its declared schema',
-    });
-  }
+  const { content } = answer;
 
   const accepted = { ...state.accepted, [request.key]: content };
   const nextRound = state.round + 1;
@@ -483,28 +379,13 @@ export async function resolveMcpRound(options: {
         return { kind: 'response', response: options.formatFailure(guarded) };
       }
     }
-    const requestState = await options.runtime.codec.mint(
-      {
-        identity: state.identity,
-        argumentsDigest: state.argumentsDigest,
-        round: nextRound,
-        accepted,
-        planDigest,
-      },
-      options.context,
-    );
-    return {
-      kind: 'response',
-      response: inputRequired({
-        inputRequests: {
-          [nextRequest.key]: inputRequired.elicit({
-            message: nextRequest.message,
-            requestedSchema: nextRequest.schema,
-          }),
-        },
-        requestState,
-      }),
-    };
+    return askRound(options.runtime, options.context, nextRequest, {
+      identity: state.identity,
+      argumentsDigest: state.argumentsDigest,
+      round: nextRound,
+      accepted,
+      planDigest,
+    });
   }
 
   return {

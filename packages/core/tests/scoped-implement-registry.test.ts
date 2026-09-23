@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
+import { createScopedImplement } from '../src/server/implement';
 import {
-  createScopedImplement,
   createScopedImplementRegistry,
   implementRegistry,
-} from '../src/server/implement';
+} from '../src/server/implement-registry';
 
 const output = z.object({ ok: z.boolean() });
 

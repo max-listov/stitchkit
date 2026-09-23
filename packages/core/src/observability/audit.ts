@@ -4,11 +4,12 @@
  * Both are normalised into `RequestEvent` without nested fetch wrappers.
  */
 
-import type { RuntimeContext } from '../contract/define';
 import { recordedErrorMessage } from '../contract/normalize';
+import type { RuntimeContext } from '../contract/runtime-context';
 import { isRecord } from '../internal/typed';
 import type { MethodDef } from '../server/types';
-import type { ToolCallHooks, ToolResult } from '../tools/execute';
+import type { ToolCallHooks } from '../tools/execute-hooks';
+import type { ToolResult } from '../tools/execute-result';
 import {
   assertDrainBound,
   type BoundedSinkManager,

@@ -8,16 +8,13 @@ import type { Transport, TransportSource } from '../contract/define';
 import { isRetryableStatus } from '../contract/errors';
 import type { ServiceDef } from '../server/types';
 import {
-  type ErrorHintFn,
   executeToolMethod,
   type ToolArgumentExtension,
-  type ToolCallHooks,
   type ToolExecutionOptions,
-  type ToolLifecycle,
   type ToolOperation,
-  type ToolResult,
-  toolErrorFromResult,
 } from './execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from './execute-hooks';
+import { type ToolResult, toolErrorFromResult } from './execute-result';
 import {
   assertToolExtensionCompatible,
   type ProjectedContractTool,

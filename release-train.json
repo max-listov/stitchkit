@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "releases": [
     {
-      "target": "tui",
-      "version": "0.1.4"
+      "target": "core",
+      "version": "0.94.1"
     }
   ]
 }

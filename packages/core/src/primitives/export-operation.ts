@@ -1,6 +1,6 @@
 import { type ZodType, z } from 'zod';
-import type { EndpointToolOptions } from '../contract/define';
 import { ManagedFileRefSchema } from '../contract/file-ref';
+import type { EndpointToolOptions } from '../contract/tool-options';
 
 export function createExportResultSchema<TOperationId extends ZodType>(
   operationId: TOperationId,

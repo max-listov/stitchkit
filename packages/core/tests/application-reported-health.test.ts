@@ -200,6 +200,76 @@ describe('a resource that reports its own health is believed', () => {
   });
 });
 
+describe('a repeated health report is not a new revision', () => {
+  test('the same value again publishes nothing; a change publishes once', async () => {
+    // A resource that confirms its health every second with the same value
+    // produced a snapshot per confirmation, identical except for `revision`,
+    // and a subscriber that logs snapshots wrote ~1.7 GB a day of them.
+    let report: ((health: 'healthy' | 'degraded' | 'unhealthy') => void) | undefined;
+    const app = createApplication({
+      id: 'confirming',
+      resources: [
+        defineManagedResource({
+          id: 'source',
+          start: ({ reportHealth }) => {
+            report = reportHealth;
+            reportHealth('healthy');
+          },
+        }),
+      ],
+    });
+    await app.start();
+    const revisions: number[] = [];
+    const unsubscribe = app.subscribe((snapshot) => revisions.push(snapshot.revision));
+    try {
+      const before = app.getSnapshot();
+      for (let index = 0; index < 5; index += 1) report?.('healthy');
+      expect(revisions).toEqual([before.revision]);
+      expect(app.getSnapshot().changedAt).toBe(before.changedAt);
+
+      report?.('degraded');
+      report?.('degraded');
+      expect(revisions).toEqual([before.revision, before.revision + 1]);
+      expect(app.getSnapshot().resources.find((entry) => entry.id === 'source')?.health).toBe(
+        'degraded',
+      );
+
+      report?.('healthy');
+      expect(revisions).toEqual([before.revision, before.revision + 1, before.revision + 2]);
+    } finally {
+      unsubscribe();
+      await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+    }
+  });
+
+  test('the first report after the kernel assumed healthy is still published', async () => {
+    // `healthy` assigned at readiness is the kernel's assumption, not the
+    // resource's word; the first report confirming it is new information.
+    let report: ((health: 'healthy') => void) | undefined;
+    const app = createApplication({
+      id: 'silent-then-confirming',
+      resources: [
+        defineManagedResource({
+          id: 'source',
+          start: ({ reportHealth }) => {
+            report = reportHealth;
+          },
+        }),
+      ],
+    });
+    const started = await app.start();
+    try {
+      expect(started.health).toBe('healthy');
+      report?.('healthy');
+      expect(app.getSnapshot().revision).toBe(started.revision + 1);
+      report?.('healthy');
+      expect(app.getSnapshot().revision).toBe(started.revision + 1);
+    } finally {
+      await app.shutdown({ gracePeriodMs: 50, forceTimeoutMs: 50 });
+    }
+  });
+});
+
 describe('the server adapter hands the server a budget it can accept', () => {
   test('shutting down through managedServerResource is clean, not forced', async () => {
     // `context.now()` is `performance.now()` — fractional — and every budget the

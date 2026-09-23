@@ -126,6 +126,69 @@ function freezeRoom(name: string): AuthorizedSocketRoom {
  * realtime server. Validation and transport emission stay owned by the
  * connection supplied by `bindRealtimeServer`.
  */
+async function leaveQuietly<TOutbound extends RealtimeEventRegistry, TIdentity>(
+  member: Member<TOutbound, TIdentity>,
+  room: string,
+): Promise<void> {
+  // The socket is going away; an adapter that cannot leave a room for it
+  // has nothing left to protect, and must not take the process down.
+  try {
+    await member.connection.raw.leave(room);
+  } catch {
+    // ignored on purpose
+  }
+}
+
+/**
+ * Deliver a member's snapshot and then the frames buffered while it was taken.
+ * A snapshot that raced a revision, or whose buffer overflowed, is retried; one
+ * that never settles asks the application to resync the socket itself.
+ */
+async function replayMember<TOutbound extends RealtimeEventRegistry, TIdentity>(
+  member: Member<TOutbound, TIdentity>,
+  options: SocketRegistryOptions<TOutbound, TIdentity>,
+  token: (name: string) => AuthorizedSocketRoom,
+  isClosed: () => boolean,
+): Promise<boolean> {
+  if (!options.replay || member.disconnected || isClosed())
+    return !member.disconnected && !isClosed();
+  const attempts = Math.max(1, options.replayAttempts ?? 3);
+  for (
+    let attempt = 0;
+    attempt < attempts && !member.disconnected && !isClosed();
+    attempt += 1
+  ) {
+    // A retry snapshot supersedes frames captured for the rejected snapshot.
+    // The surrounding revision guarantees that the next stable snapshot
+    // already contains them.
+    member.buffer = [];
+    member.overflow = false;
+    const before = await options.revision?.();
+    if (member.disconnected || isClosed()) break;
+    const frames = await options.replay({
+      identity: member.identity,
+      rooms: Object.freeze([...member.joined].map(token)),
+      revision: before,
+    });
+    const after = await options.revision?.();
+    if (member.disconnected || isClosed()) break;
+    if (options.revision && !Object.is(before, after)) continue;
+    // Frames dropped past the buffer bound would leave a hole between the
+    // snapshot and live traffic — retry instead of delivering that history.
+    if (member.overflow) continue;
+    for (const frame of frames) member.connection.events.emit(frame.event, ...frame.args);
+    const buffered = member.buffer;
+    member.buffer = null;
+    for (const deferred of buffered ?? []) deferred();
+    return !member.disconnected && !isClosed();
+  }
+  member.buffer = null;
+  member.overflow = false;
+  if (!member.disconnected)
+    await options.onResyncRequired?.(member.connection.raw.id, member.identity);
+  return false;
+}
+
 export function bindSocketRegistry<
   TOutbound extends RealtimeEventRegistry,
   TInbound extends RealtimeEventRegistry,
@@ -161,18 +224,6 @@ export function bindSocketRegistry<TOutbound extends RealtimeEventRegistry, TIde
     if (!minted.has(room)) throw new Error('Room was not authorized by this registry');
     return room.name;
   };
-  const leaveQuietly = async (
-    member: Member<TOutbound, TIdentity>,
-    room: string,
-  ): Promise<void> => {
-    // The socket is going away; an adapter that cannot leave a room for it
-    // has nothing left to protect, and must not take the process down.
-    try {
-      await member.connection.raw.leave(room);
-    } catch {
-      // ignored on purpose
-    }
-  };
   const remove = async (member: Member<TOutbound, TIdentity>): Promise<void> => {
     if (member.disconnected) return;
     member.disconnected = true;
@@ -183,48 +234,9 @@ export function bindSocketRegistry<TOutbound extends RealtimeEventRegistry, TIde
     member.buffer = null;
     revision += 1;
   };
-  const replayMember = async (member: Member<TOutbound, TIdentity>): Promise<boolean> => {
-    if (!options.replay || member.disconnected || closed)
-      return !member.disconnected && !closed;
-    const attempts = Math.max(1, options.replayAttempts ?? 3);
-    for (
-      let attempt = 0;
-      attempt < attempts && !member.disconnected && !closed;
-      attempt += 1
-    ) {
-      // A retry snapshot supersedes frames captured for the rejected snapshot.
-      // The surrounding revision guarantees that the next stable snapshot
-      // already contains them.
-      member.buffer = [];
-      member.overflow = false;
-      const before = await options.revision?.();
-      if (member.disconnected || closed) break;
-      const frames = await options.replay({
-        identity: member.identity,
-        rooms: Object.freeze([...member.joined].map(token)),
-        revision: before,
-      });
-      const after = await options.revision?.();
-      if (member.disconnected || closed) break;
-      if (options.revision && !Object.is(before, after)) continue;
-      // Frames dropped past the buffer bound would leave a hole between the
-      // snapshot and live traffic — retry instead of delivering that history.
-      if (member.overflow) continue;
-      for (const frame of frames) member.connection.events.emit(frame.event, ...frame.args);
-      const buffered = member.buffer;
-      member.buffer = null;
-      for (const deferred of buffered ?? []) deferred();
-      return !member.disconnected && !closed;
-    }
-    member.buffer = null;
-    member.overflow = false;
-    if (!member.disconnected)
-      await options.onResyncRequired?.(member.connection.raw.id, member.identity);
-    return false;
-  };
   const resyncMember = (member: Member<TOutbound, TIdentity>): Promise<boolean> => {
     if (member.replayPromise) return member.replayPromise;
-    const active = replayMember(member).finally(() => {
+    const active = replayMember(member, options, token, () => closed).finally(() => {
       if (member.replayPromise === active) member.replayPromise = undefined;
     });
     member.replayPromise = active;

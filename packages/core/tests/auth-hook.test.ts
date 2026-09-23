@@ -340,7 +340,10 @@ describe('createAuthHook — scoped rule edges', () => {
   });
 
   test('reserved context keys exactly match the declared RuntimeContext fields', () => {
-    const source = readFileSync(`${import.meta.dir}/../src/contract/define.ts`, 'utf8');
+    const source = readFileSync(
+      `${import.meta.dir}/../src/contract/runtime-context.ts`,
+      'utf8',
+    );
     const body = source.match(/export interface RuntimeContext \{([\s\S]*?)\n\}/)?.[1];
     if (!body) throw new Error('RuntimeContext declaration not found');
     const declared = [...body.matchAll(/^\s{2}([A-Za-z][A-Za-z0-9]*)\??:/gm)]

@@ -1,13 +1,8 @@
 import type { ToolTransport, TransportSource } from '../contract/define';
 import { AppError } from '../contract/errors';
 import type { ServiceDef } from '../server/types';
-import {
-  type ToolCallContext,
-  type ToolCallHooks,
-  type ToolLifecycle,
-  type ToolResult,
-  toolErrorFromResult,
-} from './execute';
+import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from './execute-hooks';
+import { type ToolResult, toolErrorFromResult } from './execute-result';
 import { collectTools, createToolRunner, type MountableTool, type ToolExtend } from './mount';
 import { assertUniqueToolName } from './names';
 

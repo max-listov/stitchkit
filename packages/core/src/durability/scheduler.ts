@@ -20,6 +20,7 @@ export const systemClock: DurabilityClock = {
  */
 export interface InFlightDurability {
   steps: Map<string, Promise<unknown>>;
+  effects: Map<string, Promise<unknown>>;
   parks: Map<string, Promise<unknown>>;
   waiters: Map<string, Set<() => void>>;
 }

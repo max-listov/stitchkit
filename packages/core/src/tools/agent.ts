@@ -5,14 +5,9 @@ import type { ServiceDef } from '../server/types';
 import { AgentToolError } from './agent-tool-error';
 import { resolveToolDurability } from './durability-context';
 import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
-import {
-  type ErrorHintFn,
-  isToolExecutionControlError,
-  type ToolCallHooks,
-  type ToolLifecycle,
-  toolCauseFromResult,
-  toolResultFromError,
-} from './execute';
+import { isToolExecutionControlError } from './execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from './execute-hooks';
+import { toolCauseFromResult, toolResultFromError } from './execute-result';
 import { createToolRunner, formatToolError, type ToolExtend } from './mount';
 import type { AgentToolRegistry } from './registry';
 import type { RuntimeToolDefinition } from './runtime-tool';

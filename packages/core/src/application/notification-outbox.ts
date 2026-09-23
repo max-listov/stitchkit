@@ -123,12 +123,8 @@ const sizeOf = (value: unknown): number => measureSize(value).responseBytes;
 /** One second doubling to a minute, no jitter — a single durable queue, not a fleet. */
 const DEFAULT_OUTBOX_BACKOFF = { minDelayMs: 1_000, maxDelayMs: 60_000, jitter: 0 } as const;
 
-export function createNotificationOutbox<TPayload>(
-  config: NotificationOutboxConfig<TPayload>,
-): NotificationOutbox<TPayload> {
-  const schema = notificationOutboxStateSchema(config.payloadSchema);
-  const clock = config.clock ?? (() => new Date());
-  const ownerId = config.ownerId ?? crypto.randomUUID();
+/** Every bound of the outbox, validated once at construction. */
+function resolveOutboxLimits<TPayload>(config: NotificationOutboxConfig<TPayload>) {
   const pollIntervalMs = z
     .number()
     .int()
@@ -165,6 +161,102 @@ export function createNotificationOutbox<TPayload>(
     .min(0)
     .max(100_000)
     .parse(config.retainReceipts ?? 1_000);
+  return { pollIntervalMs, leaseMs, maxAttempts, maxQueue, maxStateBytes, retainReceipts };
+}
+
+/**
+ * The state a transition may write: the queue within its limit, and receipts
+ * dropped oldest-first until the whole state fits its byte budget.
+ */
+function boundedOutboxState<TPayload>(
+  parsed: NotificationOutboxState<TPayload>,
+  maxQueue: number,
+  retainReceipts: number,
+  maxStateBytes: number,
+): NotificationOutboxState<TPayload> {
+  if (parsed.queue.length > maxQueue) {
+    throw new Error(`[stitchkit] notification outbox queue limit (${maxQueue}) exceeded`);
+  }
+  let receipts = parsed.receipts.slice(0, retainReceipts);
+  let next: NotificationOutboxState<TPayload> = { ...parsed, receipts };
+  while (sizeOf(next) > maxStateBytes && receipts.length > 0) {
+    receipts = receipts.slice(0, -1);
+    next = { ...parsed, receipts };
+  }
+  if (sizeOf(next) > maxStateBytes) {
+    throw new Error(
+      `[stitchkit] notification outbox state limit (${maxStateBytes} bytes) exceeded`,
+    );
+  }
+  return next;
+}
+
+/** Why a failed send is dropped rather than retried, or `null` to retry it. */
+function dropReason(
+  classification: NotificationFailureClassification,
+  attempts: number,
+  maxAttempts: number,
+): DroppedNotification<unknown>['reason'] | null {
+  if (classification.recipientUnreachable === true) return 'recipient-unreachable';
+  if (!classification.retryable) return 'terminal';
+  return attempts >= maxAttempts ? 'attempt-limit' : null;
+}
+
+/** A backoff delay, bounded at a day: a retry later than that is a lost notification. */
+const RetryDelaySchema = z
+  .number()
+  .nonnegative()
+  .max(24 * 60 * 60 * 1_000);
+
+const NO_LEASE = { leaseOwner: null, leaseId: null, leaseUntil: null } as const;
+
+/**
+ * The oldest item that is due and not leased by a live owner, leased now to
+ * `ownerId` — or `null` when nothing is ready.
+ */
+function claimDue<TPayload>(
+  queue: readonly NotificationOutboxItem<TPayload>[],
+  now: Date,
+  ownerId: string,
+  leaseMs: number,
+): NotificationOutboxItem<TPayload> | null {
+  const candidate = [...queue]
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+    .find(
+      (item) =>
+        Date.parse(item.nextAttemptAt) <= now.getTime() &&
+        (item.leaseUntil === null || Date.parse(item.leaseUntil) <= now.getTime()),
+    );
+  if (!candidate) return null;
+  return {
+    ...candidate,
+    attempts: candidate.attempts + 1,
+    leaseOwner: ownerId,
+    leaseId: crypto.randomUUID(),
+    leaseUntil: new Date(now.getTime() + leaseMs).toISOString(),
+  };
+}
+
+/** A reporting failure must not stop the durable delivery loop. */
+async function reportOutboxError<TPayload>(
+  config: NotificationOutboxConfig<TPayload>,
+  error: unknown,
+): Promise<void> {
+  try {
+    await config.onError?.(error);
+  } catch {
+    // Swallowed on purpose: the loop outlives its observer.
+  }
+}
+
+export function createNotificationOutbox<TPayload>(
+  config: NotificationOutboxConfig<TPayload>,
+): NotificationOutbox<TPayload> {
+  const schema = notificationOutboxStateSchema(config.payloadSchema);
+  const clock = config.clock ?? (() => new Date());
+  const ownerId = config.ownerId ?? crypto.randomUUID();
+  const { pollIntervalMs, leaseMs, maxAttempts, maxQueue, maxStateBytes, retainReceipts } =
+    resolveOutboxLimits(config);
   const backoffMs =
     config.backoffMs ?? ((attempt: number) => backoffDelay(DEFAULT_OUTBOX_BACKOFF, attempt));
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -175,26 +267,8 @@ export function createNotificationOutbox<TPayload>(
   let interrupted = false;
   let flushTail: Promise<unknown> = Promise.resolve();
 
-  const bounded = (
-    input: NotificationOutboxState<TPayload>,
-  ): NotificationOutboxState<TPayload> => {
-    const parsed = schema.parse(input);
-    if (parsed.queue.length > maxQueue) {
-      throw new Error(`[stitchkit] notification outbox queue limit (${maxQueue}) exceeded`);
-    }
-    let receipts = parsed.receipts.slice(0, retainReceipts);
-    let next: NotificationOutboxState<TPayload> = { ...parsed, receipts };
-    while (sizeOf(next) > maxStateBytes && receipts.length > 0) {
-      receipts = receipts.slice(0, -1);
-      next = { ...parsed, receipts };
-    }
-    if (sizeOf(next) > maxStateBytes) {
-      throw new Error(
-        `[stitchkit] notification outbox state limit (${maxStateBytes} bytes) exceeded`,
-      );
-    }
-    return next;
-  };
+  const bounded = (input: NotificationOutboxState<TPayload>) =>
+    boundedOutboxState(schema.parse(input), maxQueue, retainReceipts, maxStateBytes);
 
   const parse = (state: NotificationOutboxState<TPayload> | null) =>
     schema.parse(state ?? emptyOutboxState<TPayload>());
@@ -212,18 +286,10 @@ export function createNotificationOutbox<TPayload>(
         return { state, result: false };
       }
       const now = clock().toISOString();
+      const fresh = { key, payload, createdAt: now, attempts: 0, nextAttemptAt: now };
       const queue = [
         ...state.queue.filter((item) => !supersedes.has(item.key)),
-        {
-          key,
-          payload,
-          createdAt: now,
-          attempts: 0,
-          nextAttemptAt: now,
-          leaseOwner: null,
-          leaseId: null,
-          leaseUntil: null,
-        },
+        { ...fresh, ...NO_LEASE },
       ];
       const next = bounded({ ...state, queue });
       return { state: next, result: true };
@@ -234,26 +300,12 @@ export function createNotificationOutbox<TPayload>(
     const now = clock();
     return config.store.update((current) => {
       const state = parse(current);
-      const candidate = [...state.queue]
-        .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
-        .find(
-          (item) =>
-            Date.parse(item.nextAttemptAt) <= now.getTime() &&
-            (item.leaseUntil === null || Date.parse(item.leaseUntil) <= now.getTime()),
-        );
-      if (!candidate) return { state, result: null };
-      const leaseId = crypto.randomUUID();
-      const claimed: NotificationOutboxItem<TPayload> = {
-        ...candidate,
-        attempts: candidate.attempts + 1,
-        leaseOwner: ownerId,
-        leaseId,
-        leaseUntil: new Date(now.getTime() + leaseMs).toISOString(),
-      };
+      const claimed = claimDue(state.queue, now, ownerId, leaseMs);
+      if (!claimed) return { state, result: null };
       return {
         state: bounded({
           ...state,
-          queue: state.queue.map((item) => (item.key === candidate.key ? claimed : item)),
+          queue: state.queue.map((item) => (item.key === claimed.key ? claimed : item)),
         }),
         result: claimed,
       };
@@ -294,14 +346,7 @@ export function createNotificationOutbox<TPayload>(
       );
       if (!live) return { state, result: null };
       const attempts = live.attempts;
-      const reason: DroppedNotification<TPayload>['reason'] | null =
-        classification.recipientUnreachable === true
-          ? 'recipient-unreachable'
-          : !classification.retryable
-            ? 'terminal'
-            : attempts >= maxAttempts
-              ? 'attempt-limit'
-              : null;
+      const reason = dropReason(classification, attempts, maxAttempts);
       if (reason) {
         return {
           state: bounded({
@@ -311,20 +356,11 @@ export function createNotificationOutbox<TPayload>(
           result: { item: { ...live, attempts }, error, reason },
         };
       }
-      const rawDelay = backoffMs(attempts);
-      const wait = z
-        .number()
-        .finite()
-        .nonnegative()
-        .max(24 * 60 * 60 * 1_000)
-        .parse(rawDelay);
+      const wait = RetryDelaySchema.parse(backoffMs(attempts));
       const retry: NotificationOutboxItem<TPayload> = {
         ...live,
-        attempts,
         nextAttemptAt: new Date(clock().getTime() + wait).toISOString(),
-        leaseOwner: null,
-        leaseId: null,
-        leaseUntil: null,
+        ...NO_LEASE,
       };
       return {
         state: bounded({
@@ -370,11 +406,7 @@ export function createNotificationOutbox<TPayload>(
     try {
       await flush();
     } catch (error) {
-      try {
-        await config.onError?.(error);
-      } catch {
-        // A reporting failure must not stop the durable delivery loop.
-      }
+      await reportOutboxError(config, error);
     } finally {
       schedule();
     }

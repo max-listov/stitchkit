@@ -17,28 +17,24 @@
  * so a CLI call validates against the exact same contract schema an HTTP or MCP
  * call does (ADR 0014 parity).
  */
-import { z } from 'zod';
+import type { z } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
-import { isRecord } from '../../internal/typed';
 import { coerceJsonArgs } from '../schema/coerce';
-
-/**
- * A requested aggregate view over the result.
- *
- * `--by` always names the grouping field, in every form it appears in, so the
- * grammar has one meaning rather than two: `--top 5 --by status` is the five
- * largest groups of `status`, exactly as `--count-by status --top 5` is.
- */
-export type CliResultView =
-  | { kind: 'count'; field: string; top?: number }
-  | { kind: 'sum'; field: string; by?: string; top?: number }
-  | {
-      kind: 'records';
-      sort?: string;
-      ascending?: boolean;
-      top?: number;
-      table?: readonly string[];
-    };
+import {
+  coerceField,
+  describeSchemaFields,
+  looseCoerce,
+  parseReservedBool,
+  setNested,
+} from './args-fields';
+import {
+  classifyLongOptionToken,
+  isOptionToken,
+  looksLikeOption,
+  VIEW_OPTIONS,
+} from './args-route';
+import { type CliResultView, resolveCliView } from './args-view';
+import { CliArgumentError } from './argument-error';
 
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
@@ -67,388 +63,6 @@ export interface ParsedCliArgs {
   options: CliRunOptions;
 }
 
-export interface CliArgvRoute {
-  command?: string;
-  commandArgv: string[];
-  topLevelHelp: boolean;
-  version: boolean;
-  /** `--help <substring>` — narrow the command list instead of printing it whole. */
-  helpFilter?: string;
-  error?: string;
-}
-
-type FieldKind =
-  | 'boolean'
-  | 'number'
-  | 'bigint'
-  | 'date'
-  | 'string'
-  | 'enum'
-  | 'array'
-  | 'object'
-  | 'other';
-
-interface FieldInfo {
-  kind: FieldKind;
-  /** Element kind for an `array` field — drives per-element coercion. */
-  elementKind?: FieldKind;
-}
-
-/** A `-`-leading token that still reads as a value: a negative number. */
-const NUMERIC_VALUE = /^-(\d+\.?\d*|\.\d+)$/;
-
-const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help', 'ascending']);
-const VIEW_OPTIONS = new Set(['count-by', 'sum', 'by', 'top', 'table', 'sort']);
-const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir', ...VIEW_OPTIONS]);
-export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);
-
-interface CliLongOptionToken {
-  name: string;
-  value?: string;
-  inline: boolean;
-  globalKind?: 'boolean' | 'value';
-}
-
-/** One source of truth for long-option token shape and framework-global ownership. */
-function classifyLongOptionToken(token: string): CliLongOptionToken | undefined {
-  if (!token.startsWith('--') || token === '--') return undefined;
-  const equals = token.indexOf('=');
-  const name = equals >= 0 ? token.slice(2, equals) : token.slice(2);
-  return {
-    name,
-    value: equals >= 0 ? token.slice(equals + 1) : undefined,
-    inline: equals >= 0,
-    globalKind: BOOL_OPTIONS.has(name)
-      ? 'boolean'
-      : VALUE_OPTIONS.has(name)
-        ? 'value'
-        : undefined,
-  };
-}
-
-/**
- * Select a command without duplicating the framework-global option grammar.
- * With no default configured this returns the historical first-token routing
- * byte-for-byte. With a default, recognised leading globals may precede an
- * explicit command; a remaining option token belongs to the default command.
- */
-const HELP_TOKENS = new Set(['--help', '-h', 'help']);
-
-/**
- * The substring after a help token, in any of the forms a person types it.
- *
- * `--help=false` is NOT one of them: `--help` is a reserved boolean and the
- * inline form has always been its negation, so a boolean word keeps the meaning
- * it had. Only a value that is not one narrows the listing.
- */
-function helpFilterFrom(
-  token: string | undefined,
-  rest: readonly string[],
-): string | undefined {
-  if (token?.startsWith('--help=')) {
-    const value = token.slice('--help='.length).trim();
-    if (value.length === 0 || isReservedBoolWord(value)) return undefined;
-    return value;
-  }
-  if (token === undefined || !HELP_TOKENS.has(token)) return undefined;
-  const next = rest[0];
-  return next !== undefined && !next.startsWith('-') ? next : undefined;
-}
-
-export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRoute {
-  if (defaultCommand === undefined) {
-    const [command, ...commandArgv] = argv;
-    const helpFilter = helpFilterFrom(command, commandArgv);
-    return {
-      command,
-      commandArgv,
-      topLevelHelp: false,
-      version: false,
-      ...(helpFilter !== undefined && { helpFilter }),
-    };
-  }
-
-  const globals: string[] = [];
-  let index = 0;
-  while (index < argv.length) {
-    const token = argv[index];
-    if (token === undefined) break;
-    if (token === '--') {
-      return {
-        commandArgv: [],
-        topLevelHelp: false,
-        version: false,
-        error: 'A command is required before "--"',
-      };
-    }
-    // `--help=false` is the reserved boolean's negation and keeps that meaning;
-    // only a non-boolean inline value asks the narrower question.
-    const inlineHelpFilter =
-      token.startsWith('--help=') && !isReservedBoolWord(token.slice('--help='.length));
-    if (token === '--help' || token === '-h' || inlineHelpFilter) {
-      const helpFilter = helpFilterFrom(token, argv.slice(index + 1));
-      return {
-        commandArgv: [],
-        topLevelHelp: true,
-        version: false,
-        ...(helpFilter !== undefined && { helpFilter }),
-      };
-    }
-    if (token === '--version' || token === 'version') {
-      return { commandArgv: [], topLevelHelp: false, version: true };
-    }
-    if (!token.startsWith('-') || token === '-') {
-      return {
-        command: token,
-        commandArgv: [...globals, ...argv.slice(index + 1)],
-        topLevelHelp: false,
-        version: false,
-      };
-    }
-    if (!token.startsWith('--')) {
-      return {
-        command: defaultCommand,
-        commandArgv: [...globals, ...argv.slice(index)],
-        topLevelHelp: false,
-        version: false,
-      };
-    }
-
-    const option = classifyLongOptionToken(token);
-    if (!option) {
-      return {
-        command: defaultCommand,
-        commandArgv: [...globals, ...argv.slice(index)],
-        topLevelHelp: false,
-        version: false,
-      };
-    }
-    if (option.globalKind === 'boolean') {
-      globals.push(token);
-      index += 1;
-      continue;
-    }
-    if (option.globalKind === 'value') {
-      globals.push(token);
-      if (!option.inline) {
-        const value = argv[index + 1];
-        if (value === '--help' || value === '-h') {
-          const helpFilter = helpFilterFrom(value, argv.slice(index + 2));
-          return {
-            commandArgv: [],
-            topLevelHelp: true,
-            version: false,
-            ...(helpFilter !== undefined && { helpFilter }),
-          };
-        }
-        if (value === '--version' || value === 'version') {
-          return { commandArgv: [], topLevelHelp: false, version: true };
-        }
-        if (value !== undefined) globals.push(value);
-        index += value === undefined ? 1 : 2;
-      } else {
-        index += 1;
-      }
-      continue;
-    }
-    return {
-      command: defaultCommand,
-      commandArgv: [...globals, ...argv.slice(index)],
-      topLevelHelp: false,
-      version: false,
-    };
-  }
-  return {
-    command: defaultCommand,
-    commandArgv: globals,
-    topLevelHelp: false,
-    version: false,
-  };
-}
-
-export class CliArgumentError extends Error {
-  override name = 'CliArgumentError';
-}
-
-/** Strip `.optional()` / `.nullable()` / `.default()` wrappers to the base type. */
-function unwrap(field: z.core.$ZodType): z.core.$ZodType {
-  if (
-    field instanceof z.ZodOptional ||
-    field instanceof z.ZodNullable ||
-    field instanceof z.ZodDefault
-  ) {
-    return unwrap(field.unwrap());
-  }
-  return field;
-}
-
-function classify(field: z.core.$ZodType): FieldKind {
-  if (field instanceof z.ZodBoolean) return 'boolean';
-  if (field instanceof z.ZodNumber) return 'number';
-  if (field instanceof z.ZodBigInt) return 'bigint';
-  if (field instanceof z.ZodDate) return 'date';
-  if (field instanceof z.ZodEnum) return 'enum';
-  if (field instanceof z.ZodArray) return 'array';
-  if (field instanceof z.ZodObject) return 'object';
-  if (field instanceof z.ZodString || field instanceof z.ZodLiteral) return 'string';
-  return 'other';
-}
-
-/**
- * Merge one field into the map. On a kind conflict between members, presence
- * semantics win: a field that is boolean in ANY member must stay usable as a
- * bare `--flag`; any other mismatch degrades to `other` (raw string, the
- * schema validates it).
- */
-function mergeField(fields: Map<string, FieldInfo>, name: string, info: FieldInfo): void {
-  const existing = fields.get(name);
-  if (!existing) {
-    fields.set(name, info);
-    return;
-  }
-  if (existing.kind === info.kind) return;
-  if (existing.kind === 'boolean' || info.kind === 'boolean') {
-    fields.set(name, { kind: 'boolean' });
-    return;
-  }
-  fields.set(name, { kind: 'other' });
-}
-
-function collectSchemaFields(schema: z.core.$ZodType, fields: Map<string, FieldInfo>): void {
-  const base = unwrap(schema);
-  if (base instanceof z.ZodObject) {
-    for (const [name, raw] of Object.entries(base.shape)) {
-      const fieldBase = unwrap(raw);
-      const kind = classify(fieldBase);
-      if (kind === 'array' && fieldBase instanceof z.ZodArray) {
-        mergeField(fields, name, { kind, elementKind: classify(unwrap(fieldBase.element)) });
-      } else {
-        mergeField(fields, name, { kind });
-      }
-    }
-    return;
-  }
-  if (base instanceof z.ZodUnion) {
-    for (const option of base.def.options) collectSchemaFields(option, fields);
-    return;
-  }
-  if (base instanceof z.ZodIntersection) {
-    collectSchemaFields(base.def.left, fields);
-    collectSchemaFields(base.def.right, fields);
-    return;
-  }
-}
-
-/**
- * Map a merged tool schema to per-field kind info — what each `--flag` should
- * coerce to. Object members of unions and intersections contribute their
- * fields too, so a boolean member of a union stays reachable as a bare flag; a
- * scalar schema yields an empty map and every value is left as a string.
- */
-export function describeSchemaFields(schema: z.ZodType | undefined): Map<string, FieldInfo> {
-  const fields = new Map<string, FieldInfo>();
-  if (schema) collectSchemaFields(schema, fields);
-  return fields;
-}
-
-const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
-const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
-
-/** Strict boolean for a RESERVED option — an unrecognised value is a usage error, never a silent `true`. */
-/** True for a value the reserved-boolean grammar already claims. */
-export function isReservedBoolWord(value: string): boolean {
-  const word = value.toLowerCase();
-  return TRUE_WORDS.has(word) || FALSE_WORDS.has(word);
-}
-
-function parseReservedBool(name: string, value: string): boolean {
-  const v = value.toLowerCase();
-  if (TRUE_WORDS.has(v)) return true;
-  if (FALSE_WORDS.has(v)) return false;
-  throw new CliArgumentError(`--${name} expects a boolean (true/false), got "${value}"`);
-}
-
-/** Coerce one string to a scalar field kind — never throws; an un-coercible value is left raw for Zod to reject with a clear message. */
-function coerceScalar(kind: FieldKind, value: string): unknown {
-  switch (kind) {
-    case 'boolean': {
-      const v = value.toLowerCase();
-      if (TRUE_WORDS.has(v)) return true;
-      if (FALSE_WORDS.has(v)) return false;
-      return value; // not a recognisable boolean — Zod rejects it loudly.
-    }
-    case 'number': {
-      const n = Number(value);
-      return value.trim() !== '' && !Number.isNaN(n) ? n : value;
-    }
-    case 'bigint':
-      try {
-        return BigInt(value);
-      } catch {
-        return value;
-      }
-    case 'date': {
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? value : d;
-    }
-    default:
-      return value;
-  }
-}
-
-/** Best-effort coercion for a dotted-path leaf, where the schema type is unknown. */
-function looseCoerce(value: string): unknown {
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  const n = Number(value);
-  return value.trim() !== '' && !Number.isNaN(n) ? n : value;
-}
-
-function looksLikeJson(value: string): boolean {
-  const t = value.trim();
-  return t.startsWith('[') || t.startsWith('{');
-}
-
-/** Coerce the collected raw string value(s) for one field to its typed form. */
-function coerceField(info: FieldInfo | undefined, values: string[]): unknown {
-  const last = values[values.length - 1] ?? '';
-  if (!info) return values.length > 1 ? values : last;
-
-  if (info.kind === 'array') {
-    // A single JSON-array string is left for `coerceJson`; repeated flags
-    // (`--tag a --tag b`) become a coerced element array.
-    if (values.length === 1 && looksLikeJson(last)) return last;
-    return values.map((v) => coerceScalar(info.elementKind ?? 'string', v));
-  }
-  // An object field arrives as a JSON string — `coerceJson` parses it.
-  if (info.kind === 'object') return last;
-  return coerceScalar(info.kind, last);
-}
-
-function setNested(target: Record<string, unknown>, path: string[], value: unknown): void {
-  // A dotted flag is client input — reject `--a.__proto__.x` LOUDLY before any
-  // write walks the chain; a silently dropped argument reads as data loss.
-  const unsafe = path.find(isUnsafeKey);
-  if (unsafe !== undefined) {
-    throw new CliArgumentError(`Unsafe option path segment "${unsafe}"`);
-  }
-  let node = target;
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i];
-    if (key === undefined) return;
-    const next = node[key];
-    if (isRecord(next)) {
-      node = next;
-    } else {
-      const created: Record<string, unknown> = {};
-      node[key] = created;
-      node = created;
-    }
-  }
-  const leaf = path[path.length - 1];
-  if (leaf !== undefined) node[leaf] = value;
-}
-
 /**
  * Parse a command's argv slice (everything after the command name) against its
  * merged tool schema.
@@ -459,16 +73,29 @@ function setNested(target: Record<string, unknown>, path: string[], value: unkno
  *  - `--a.b=c` dotted path → nested object (loose-coerced leaf)
  *  - positional args fill non-boolean fields in schema-declaration order
  */
-export function parseCliArgs(
-  argv: string[],
-  schema: z.ZodType | undefined,
-  config: {
-    allowUnknown?: boolean;
-    knownFields?: readonly string[];
-    optionAliases?: ReadonlyMap<string, string>;
-    positionals?: readonly string[];
-  } = {},
-): ParsedCliArgs {
+type CliConfigForParse = NonNullable<Parameters<typeof parseCliArgs>[2]>;
+
+/** One invocation's argv, sorted into what each token is for. */
+interface CliTokens {
+  options: CliRunOptions;
+  /** Raw values per flag, in order; only an array field may have several. */
+  flags: Map<string, string[]>;
+  boolFlags: Map<string, boolean>;
+  viewFlags: Map<string, string>;
+  ascending: boolean;
+  positionals: string[];
+}
+
+/**
+ * Phase one: tokenise. Every refusal about the SHAPE of the command line —
+ * an unknown option, a missing value, a prototype-polluting name, a repeated
+ * view flag — happens here, before any value is coerced.
+ */
+function readCliTokens(
+  argv: readonly string[],
+  fields: ReturnType<typeof describeSchemaFields>,
+  config: CliConfigForParse,
+): CliTokens {
   const options: CliRunOptions = {
     json: false,
     wait: false,
@@ -477,10 +104,6 @@ export function parseCliArgs(
     help: false,
   };
 
-  const fields = describeSchemaFields(schema);
-  for (const name of config.knownFields ?? []) {
-    if (!fields.has(name)) fields.set(name, { kind: 'other' });
-  }
   const flags = new Map<string, string[]>();
   const boolFlags = new Map<string, boolean>();
   const viewFlags = new Map<string, string>();
@@ -501,7 +124,7 @@ export function parseCliArgs(
       optionsEnded = true;
       continue;
     }
-    if (optionsEnded || !tok.startsWith('-') || tok === '-') {
+    if (optionsEnded || !looksLikeOption(tok)) {
       positionals.push(tok);
       continue;
     }
@@ -523,7 +146,7 @@ export function parseCliArgs(
       let value = inline;
       if (value === undefined) {
         const next = argv[i + 1];
-        if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
+        if (next !== undefined && !isOptionToken(next)) {
           value = next;
           i++;
         } else {
@@ -552,7 +175,7 @@ export function parseCliArgs(
     if (option.globalKind === 'value') {
       const next = argv[i + 1];
       value = value ?? next;
-      if (value === undefined || (value.startsWith('-') && !NUMERIC_VALUE.test(value))) {
+      if (value === undefined || (!option.inline && isOptionToken(value))) {
         throw new CliArgumentError(`--${name} requires a value`);
       }
       if (!option.inline) i++;
@@ -596,10 +219,10 @@ export function parseCliArgs(
         boolFlags.set(name, true);
         continue;
       }
-      // A next token starting with `-` is a value only when it reads as a
-      // number (`--count -5`); anything else is a misplaced option.
+      // The next token is the value unless it is itself an option: `--grep
+      // -foo` and `--count -5` are values, `--grep --json` is a missing one.
       const next = argv[i + 1];
-      if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
+      if (next !== undefined && !isOptionToken(next)) {
         value = next;
         i++;
       } else {
@@ -608,21 +231,30 @@ export function parseCliArgs(
     }
     pushFlag(name, value);
   }
+  return { options, flags, boolFlags, viewFlags, ascending, positionals };
+}
 
-  const view = resolveCliView(viewFlags, ascending);
-  if (view) options.view = view;
-
+/**
+ * Phase two: build the argument object from the sorted tokens — positionals
+ * into their fields, flags coerced to their field kinds, dotted paths nested.
+ */
+function buildToolArgs(
+  tokens: CliTokens,
+  fields: ReturnType<typeof describeSchemaFields>,
+  declaredPositionals: readonly string[] | undefined,
+): Record<string, unknown> {
+  const { flags, boolFlags, positionals } = tokens;
   // ── Build the tool-argument object ──
   const toolArgs: Record<string, unknown> = {};
 
   // Positionals fill non-boolean fields in declaration order, skipping any the
   // caller already set with a flag.
   const fillable =
-    config.positionals === undefined
+    declaredPositionals === undefined
       ? [...fields.entries()]
           .filter(([, info]) => info.kind !== 'boolean')
           .map(([name]) => name)
-      : [...config.positionals];
+      : [...declaredPositionals];
   // A trailing ARRAY field swallows every remaining token — `handoff proj a.md
   // b.md` instead of `--files '["a.md","b.md"]'`. Only an EXPLICIT positional
   // policy opts into this: under the automatic schema order an array field is
@@ -630,7 +262,7 @@ export function parseCliArgs(
   // caller's extra token from a loud `Unexpected positional argument` into a
   // silent element of some unrelated array.
   const variadicTail =
-    config.positionals !== undefined &&
+    declaredPositionals !== undefined &&
     fields.get(fillable[fillable.length - 1] ?? '')?.kind === 'array'
       ? fillable[fillable.length - 1]
       : undefined;
@@ -645,13 +277,15 @@ export function parseCliArgs(
           `--${key} conflicts with the positional values for "${key}" — pass one form, not both`,
         );
       }
-      toolArgs[key] = coerceField(fields.get(key), positionals.slice(pi));
+      toolArgs[key] = coerceField(fields.get(key), positionals.slice(pi), `<${key}>`);
       pi = positionals.length;
       break;
     }
     if (flags.has(key)) continue;
     const value = positionals[pi++];
-    if (value !== undefined) toolArgs[key] = coerceField(fields.get(key), [value]);
+    if (value !== undefined) {
+      toolArgs[key] = coerceField(fields.get(key), [value], `<${key}>`);
+    }
   }
   if (pi < positionals.length) {
     throw new CliArgumentError(`Unexpected positional argument "${positionals[pi]}"`);
@@ -696,10 +330,30 @@ export function parseCliArgs(
     ) {
       throw new CliArgumentError(`--${key} was passed ${values.length} times`);
     }
-    toolArgs[key] = coerceField(info, values);
+    toolArgs[key] = coerceField(info, values, `--${key}`);
   }
+  return toolArgs;
+}
 
-  return { toolArgs, options };
+export function parseCliArgs(
+  argv: string[],
+  schema: z.ZodType | undefined,
+  config: {
+    allowUnknown?: boolean;
+    knownFields?: readonly string[];
+    optionAliases?: ReadonlyMap<string, string>;
+    positionals?: readonly string[];
+  } = {},
+): ParsedCliArgs {
+  const fields = describeSchemaFields(schema);
+  for (const name of config.knownFields ?? []) {
+    if (!fields.has(name)) fields.set(name, { kind: 'other' });
+  }
+  const tokens = readCliTokens(argv, fields, config);
+  const { options } = tokens;
+  const view = resolveCliView(tokens.viewFlags, tokens.ascending);
+  if (view) options.view = view;
+  return { toolArgs: buildToolArgs(tokens, fields, config.positionals), options };
 }
 
 /** The application's own global options, lifted out of one invocation's argv. */
@@ -756,7 +410,7 @@ export function extractCliGlobalOptions(
       value = 'true';
     } else if (value === undefined) {
       const next = argv[i + 1];
-      if (next !== undefined && (!next.startsWith('-') || NUMERIC_VALUE.test(next))) {
+      if (next !== undefined && !isOptionToken(next)) {
         value = next;
         i++;
       } else {
@@ -769,7 +423,9 @@ export function extractCliGlobalOptions(
   }
 
   const args: Record<string, unknown> = {};
-  for (const [name, values] of raw) args[name] = coerceField(fields.get(name), values);
+  for (const [name, values] of raw) {
+    args[name] = coerceField(fields.get(name), values, `--${name}`);
+  }
   const parsed = schema.safeParse(coerceJsonArgs(args, schema));
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -778,115 +434,4 @@ export function extractCliGlobalOptions(
     throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
   }
   return { argv: rest, globals: parsed.data };
-}
-
-/**
- * Turn the raw view flags into one view, or refuse the combination.
- *
- * Refusing here rather than at emission time is the point: a caller who asked
- * for two aggregates at once, or for `--by` with nothing to group, gets the
- * message before the command runs, not a shape they did not ask for after it.
- */
-function resolveCliView(
-  flags: ReadonlyMap<string, string>,
-  ascending: boolean,
-): CliResultView | undefined {
-  if (flags.size === 0) {
-    if (ascending) {
-      throw new CliArgumentError('--ascending orders a record view; pass --sort with it');
-    }
-    return undefined;
-  }
-  const countBy = flags.get('count-by');
-  const sum = flags.get('sum');
-  const table = flags.get('table');
-  const by = flags.get('by');
-  const rawTop = flags.get('top');
-
-  const named = [
-    ['--count-by', countBy],
-    ['--sum', sum],
-  ].filter(([, value]) => value !== undefined);
-  if (named.length > 1) {
-    throw new CliArgumentError(
-      `${named.map(([flag]) => flag).join(' and ')} ask for different shapes — pass one`,
-    );
-  }
-
-  let top: number | undefined;
-  if (rawTop !== undefined) {
-    top = Number(rawTop);
-    if (!Number.isInteger(top) || top <= 0) {
-      throw new CliArgumentError('--top must be a positive whole number');
-    }
-  }
-
-  const sort = flags.get('sort');
-
-  // `--table` and `--sort` describe the same view — the records themselves — so
-  // they compose. `--top` keeps the single meaning it has everywhere: the n
-  // leading entries of whatever view was asked for, groups or records.
-  if (table !== undefined || sort !== undefined) {
-    if (countBy !== undefined || sum !== undefined) {
-      throw new CliArgumentError(
-        `${table !== undefined ? '--table' : '--sort'} lists records; --count-by and --sum aggregate them — pass one`,
-      );
-    }
-    if (by !== undefined) {
-      throw new CliArgumentError('--by groups a view; a record view orders with --sort');
-    }
-    if (top !== undefined && sort === undefined) {
-      throw new CliArgumentError(
-        '--top needs --sort here: unordered records have no n largest',
-      );
-    }
-    let fields: string[] | undefined;
-    if (table !== undefined) {
-      fields = table
-        .split(',')
-        .map((field) => field.trim())
-        .filter(Boolean);
-      if (fields.length === 0) throw new CliArgumentError('--table needs at least one field');
-    }
-    return {
-      kind: 'records',
-      ...(sort !== undefined && { sort }),
-      ...(ascending && { ascending }),
-      ...(top !== undefined && { top }),
-      ...(fields && { table: fields }),
-    };
-  }
-
-  if (ascending) {
-    throw new CliArgumentError('--ascending orders a record view; pass --sort with it');
-  }
-
-  if (sum !== undefined) {
-    if (top !== undefined && by === undefined) {
-      throw new CliArgumentError('--top needs --by: a single sum has nothing to rank');
-    }
-    return {
-      kind: 'sum',
-      field: sum,
-      ...(by !== undefined && { by }),
-      ...(top !== undefined && { top }),
-    };
-  }
-
-  if (countBy !== undefined) {
-    if (by !== undefined) {
-      throw new CliArgumentError('--count-by already names the grouping field; drop --by');
-    }
-    return { kind: 'count', field: countBy, ...(top !== undefined && { top }) };
-  }
-
-  if (by !== undefined) {
-    if (top === undefined) {
-      throw new CliArgumentError(
-        '--by groups a view; pass --count-by, --sum or --top with it',
-      );
-    }
-    return { kind: 'count', field: by, top };
-  }
-  throw new CliArgumentError('--top needs --sort, --by, --count-by or --sum to rank');
 }

@@ -18,16 +18,15 @@
  */
 
 export {
-  CliArgumentError,
-  type CliArgvRoute,
   type CliGlobalOptionsParse,
-  type CliResultView,
   type CliRunOptions,
   extractCliGlobalOptions,
   type ParsedCliArgs,
   parseCliArgs,
-  routeCliArgv,
 } from '../tools/cli/args';
+export { type CliArgvRoute, routeCliArgv } from '../tools/cli/args-route';
+export type { CliResultView } from '../tools/cli/args-view';
+export { CliArgumentError } from '../tools/cli/argument-error';
 export {
   type CliCheckpoint,
   type CliCheckpointEntry,

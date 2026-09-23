@@ -13,7 +13,7 @@ import {
   isZombieProcess,
   parsePlatformUuid,
   readDarwinPlatformUuid,
-} from '../src/application/diagnostic-journal-lock';
+} from '../src/internal/process-identity';
 
 const EventSchema = z.object({ message: z.string() }).strict();
 const limits: DiagnosticJournalLimits = {

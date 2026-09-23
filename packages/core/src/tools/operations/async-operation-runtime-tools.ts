@@ -5,12 +5,9 @@
  * capability does with the result.
  */
 import type { ZodObject, ZodType, z } from 'zod';
-import type {
-  EndpointToolAnnotations,
-  HttpMethod,
-  ToolTransport,
-} from '../../contract/define';
+import type { HttpMethod, ToolTransport } from '../../contract/define';
 import { AppError } from '../../contract/errors';
+import type { EndpointToolAnnotations } from '../../contract/tool-options';
 import {
   defineRuntimeTool,
   type RuntimeToolDefinition,

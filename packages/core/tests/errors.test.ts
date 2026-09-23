@@ -17,7 +17,7 @@ import {
 } from '../src/entrypoints/contract';
 import { createServer, implement } from '../src/entrypoints/server';
 import { formatZodError, zodIssues } from '../src/internal/zod-issues';
-import { toolErrorFromResult } from '../src/tools/execute';
+import { toolErrorFromResult } from '../src/tools/execute-result';
 
 describe('stitch error registry', () => {
   test('STITCH_ERROR_STATUS maps codes → status (incl. METHOD_NOT_ALLOWED 405)', () => {

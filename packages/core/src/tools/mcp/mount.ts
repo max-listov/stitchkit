@@ -6,7 +6,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { isRecord } from '../../internal/typed';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { createToolRunner, type ToolExtend } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';

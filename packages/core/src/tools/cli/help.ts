@@ -1,5 +1,5 @@
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
-import { describeSchemaFields } from './args';
+import { describeSchemaFields } from './args-fields';
 import type { CliCommandPresentation } from './policy';
 
 const GLOBAL_OPTIONS = [

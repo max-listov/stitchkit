@@ -13,7 +13,8 @@
  */
 import { isUnsafeKey } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
-import { CliArgumentError, type CliResultView } from './args';
+import type { CliResultView } from './args-view';
+import { CliArgumentError } from './argument-error';
 
 /** What a view produces: a JSON value, or the one human-facing shape. */
 export type CliViewOutput = { kind: 'json'; data: unknown } | { kind: 'text'; text: string };

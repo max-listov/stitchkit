@@ -1,15 +1,13 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
+import type { HttpMethod, ToolTransport } from '../contract/define';
+import type { McpCallContext, RuntimeContext } from '../contract/runtime-context';
 import type {
   EndpointMcpPolicy,
   EndpointToolAnnotations,
   EndpointUiMeta,
-  HttpMethod,
-  McpCallContext,
-  RuntimeContext,
-  ToolTransport,
-} from '../contract/define';
+} from '../contract/tool-options';
 import type { LocalStepDurability } from '../durability/contract';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';

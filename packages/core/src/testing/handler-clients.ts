@@ -7,7 +7,8 @@ import {
   createClients,
   type ScopedKeys,
 } from '../browser/client';
-import type { ContractDef, EndpointDef, ScopedHttpClient } from '../contract/define';
+import type { ScopedHttpClient } from '../contract/client-types';
+import type { ContractDef, EndpointDef } from '../contract/define';
 import type { FetchHandler } from '../server/types';
 
 export type HandlerTestClientDefaults = Omit<ClientConfig, 'baseUrl' | 'fetch'>;

@@ -199,7 +199,7 @@ endpoint that can never be a tool (a raw response, a stream, `responseMeta`,
 | `tool.` | Purpose |
 |---------|---------|
 | `name` | explicit tool name (default: a verb-aware derivation, below) |
-| `view` | a different answer on MCP / agent / CLI — input defaults and a projected, separately validated output; declared only with `withToolView` — see [MCP & agents](./mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
+| `view` | a different call or answer on MCP / agent / CLI — input defaults alone, or with a projected, separately validated output; declared only with `withToolView` — see [MCP & agents](./mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
 | `ui` | MCP Apps widget for the tool's results — see [MCP & agents](./mcp-and-agents.md) |
 | `annotations` | MCP behavioural hints (`readOnlyHint`, `destructiveHint`, `title`, …) |
 | `mcp` | elicitation rounds asked before the handler runs (`inputRequired`) |

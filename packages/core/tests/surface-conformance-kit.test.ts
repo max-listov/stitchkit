@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { bindRealtimeClient, type RealtimeClientTransport } from '../src/browser/socket-io';
+import {
+  bindRealtimeClient,
+  type RealtimeClientTransport,
+} from '../src/browser/realtime-client';
 import type { ToolTransport } from '../src/entrypoints/contract';
 import { AppError, defineContract } from '../src/entrypoints/contract';
 import {

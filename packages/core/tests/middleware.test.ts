@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { extractToken, verifyJwt } from '../src/server/middleware/auth';
+import { extractToken } from '../src/server/middleware/auth';
 import {
   defineCookie,
   parseCookieHeader,
@@ -7,6 +7,7 @@ import {
   serializeCookie,
 } from '../src/server/middleware/cookies';
 import { corsHeaders, DEFAULT_CORS_ALLOW_HEADERS } from '../src/server/middleware/cors';
+import { verifyJwt } from '../src/server/middleware/jwt';
 
 describe('cookies', () => {
   test('parseCookies — basic', () => {

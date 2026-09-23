@@ -1,5 +1,5 @@
 import type { ZodObject, z } from 'zod';
-import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute';
+import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
 import type { MountableTool } from '../mount';
 import { buildCliSurface } from './invoke';
 import type { CliCommandPresentation } from './policy';

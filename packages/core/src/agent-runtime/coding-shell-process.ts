@@ -4,6 +4,43 @@ import { type AgentCodingToolConfig, ShellOutputSchema } from './coding-tool-con
 import { utf8AlignedEnd, utf8AlignedStart } from './coding-tool-utf8';
 import type { AgentProcessSandbox } from './sandbox';
 
+/** Head and tail of `data` within `budget` bytes, each cut on a character boundary. */
+function preview(data: Buffer, budget: number) {
+  if (data.byteLength <= budget) {
+    return { data, headBytes: data.byteLength, tailBytes: 0, omittedBytes: 0 };
+  }
+  // The head is cut by bytes and then pulled back to a character boundary;
+  // the tail is pulled forward. Without this a byte budget regularly split a
+  // multi-byte character and the preview carried a replacement glyph, so the
+  // model read a character that is not on the disk.
+  const headEnd = utf8AlignedEnd(data, 0, Math.ceil(budget / 2));
+  const tailStart = Math.max(
+    headEnd,
+    utf8AlignedStart(data, data.byteLength - Math.floor(budget / 2), data.byteLength),
+  );
+  const tailBytes = data.byteLength - tailStart;
+  return {
+    data: Buffer.concat([data.subarray(0, headEnd), data.subarray(tailStart)]),
+    headBytes: headEnd,
+    tailBytes,
+    omittedBytes: data.byteLength - headEnd - tailBytes,
+  };
+}
+
+// Without an artifact the preview is the retained prefix itself, and its own
+// end is where the retention budget cut it. Align that cut too, or a byte
+// budget landing inside a multi-byte character still produces a replacement
+// glyph. The bytes pulled back are counted as omitted rather than lost.
+function retainedPreview(data: Buffer) {
+  const end = utf8AlignedEnd(data, 0, data.byteLength);
+  return {
+    data: data.subarray(0, end),
+    headBytes: end,
+    tailBytes: 0,
+    omittedBytes: data.byteLength - end,
+  };
+}
+
 export async function runCodingShell(input: {
   executableName: string;
   executable: string;
@@ -19,40 +56,6 @@ export async function runCodingShell(input: {
   authorization?: Parameters<NonNullable<AgentCodingToolConfig['authorize']>>[0];
   spawn?: () => ReturnType<NonNullable<AgentProcessSandbox['spawn']>>;
 }) {
-  const preview = (data: Buffer, budget: number) => {
-    if (data.byteLength <= budget) {
-      return { data, headBytes: data.byteLength, tailBytes: 0, omittedBytes: 0 };
-    }
-    // The head is cut by bytes and then pulled back to a character boundary;
-    // the tail is pulled forward. Without this a byte budget regularly split a
-    // multi-byte character and the preview carried a replacement glyph, so the
-    // model read a character that is not on the disk.
-    const headEnd = utf8AlignedEnd(data, 0, Math.ceil(budget / 2));
-    const tailStart = Math.max(
-      headEnd,
-      utf8AlignedStart(data, data.byteLength - Math.floor(budget / 2), data.byteLength),
-    );
-    const tailBytes = data.byteLength - tailStart;
-    return {
-      data: Buffer.concat([data.subarray(0, headEnd), data.subarray(tailStart)]),
-      headBytes: headEnd,
-      tailBytes,
-      omittedBytes: data.byteLength - headEnd - tailBytes,
-    };
-  };
-  // Without an artifact the preview is the retained prefix itself, and its own
-  // end is where the retention budget cut it. Align that cut too, or a byte
-  // budget landing inside a multi-byte character still produces a replacement
-  // glyph. The bytes pulled back are counted as omitted rather than lost.
-  const retainedPreview = (data: Buffer) => {
-    const end = utf8AlignedEnd(data, 0, data.byteLength);
-    return {
-      data: data.subarray(0, end),
-      headBytes: end,
-      tailBytes: 0,
-      omittedBytes: data.byteLength - end,
-    };
-  };
   const stdoutHeader = Buffer.from('--- stdout ---\n');
   const stderrHeader = Buffer.from('\n--- stderr ---\n');
   const artifactPayloadLimit =

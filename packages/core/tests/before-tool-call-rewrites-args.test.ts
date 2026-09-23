@@ -1,11 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import type { MethodDef } from '../src/server/types';
-import {
-  type AfterToolCallOptions,
-  executeToolMethod,
-  type ToolArgumentExtension,
-} from '../src/tools/execute';
+import { executeToolMethod, type ToolArgumentExtension } from '../src/tools/execute';
+import type { AfterToolCallOptions } from '../src/tools/execute-hooks';
 
 /*
  * The pipeline was asymmetric, and the asymmetry had a cost.

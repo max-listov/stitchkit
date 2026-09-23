@@ -53,10 +53,17 @@ export function contextFor(
     },
     reportHealth(health) {
       if (record.state === 'stopped') return;
+      const repeated = record.healthReported && record.health === health;
       record.health = health;
       record.healthReported = true;
       if (health === 'healthy') record.everHealthy = true;
-      state.accepting = state.activationComplete && !state.shutdownRequested && isReady(state);
+      const accepting = state.activationComplete && !state.shutdownRequested && isReady(state);
+      // A resource that confirms its health on a timer repeats the same value;
+      // publishing it would call every subscriber with a snapshot that differs
+      // only in `revision` and say "changed" about nothing. A consumer's
+      // one-second confirmation turned into ~1.7 GB of identical log lines a day.
+      if (repeated && accepting === state.accepting) return;
+      state.accepting = accepting;
       publish(state);
     },
   };

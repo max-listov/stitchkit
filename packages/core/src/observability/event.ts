@@ -1,4 +1,5 @@
-import type { HttpMethod, McpCallContext, TransportSource } from '../contract/define';
+import type { HttpMethod, TransportSource } from '../contract/define';
+import type { McpCallContext } from '../contract/runtime-context';
 import type { RequestContextKind } from './context';
 import type { JsonValue } from './sanitize';
 

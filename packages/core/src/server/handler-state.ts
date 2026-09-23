@@ -5,7 +5,7 @@
  * phase names what it depends on instead of closing over one long function.
  */
 
-import type { RuntimeContext } from '../contract/define';
+import type { RuntimeContext } from '../contract/runtime-context';
 import { type ClientIpOptions, resolveTraceId } from '../internal/request';
 import { resolveLoggingConfig } from './logging';
 import { assertCorsConfig } from './middleware/cors';

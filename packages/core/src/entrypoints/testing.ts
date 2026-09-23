@@ -23,17 +23,19 @@ export {
   runManagedResourceConformance,
 } from '../testing/managed-resource-conformance';
 export {
-  assertSurfaceDiscovery,
-  type ConformanceTransport,
   type CreateRealtimeProbeDriverConfig,
   createRealtimeProbeDriver,
   type DefineRealtimeProbeConfig,
   defineRealtimeProbe,
-  type RealtimeDisconnectObservation,
-  RealtimeDisconnectObservationSchema,
   type RealtimeProbeAdapter,
   type RealtimeProbeFixture,
   type RealtimeProbeScenario,
+} from '../testing/realtime-probe';
+export {
+  assertSurfaceDiscovery,
+  type ConformanceTransport,
+  type RealtimeDisconnectObservation,
+  RealtimeDisconnectObservationSchema,
   type RealtimeRejectionObservation,
   RealtimeRejectionObservationSchema,
   type RunSurfaceProbesConfig,

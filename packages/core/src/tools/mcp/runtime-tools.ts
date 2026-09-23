@@ -1,5 +1,6 @@
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
-import type { ToolCallHooks, ToolLifecycle, ToolResult } from '../execute';
+import type { ToolCallHooks, ToolLifecycle } from '../execute-hooks';
+import type { ToolResult } from '../execute-result';
 import { createToolRunner } from '../mount';
 import type { McpCatalogStamp } from './catalog';
 import type { PreparedRuntimeMcpTool } from './prepare';

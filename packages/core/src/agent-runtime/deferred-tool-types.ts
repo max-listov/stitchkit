@@ -1,13 +1,9 @@
 import type { ToolSet } from 'ai';
 import { type ZodObject, type ZodType, z } from 'zod';
-import type {
-  EndpointToolAnnotations,
-  EndpointUiMeta,
-  HttpMethod,
-  ToolTransport,
-} from '../contract/define';
+import type { HttpMethod, ToolTransport } from '../contract/define';
+import type { EndpointToolAnnotations, EndpointUiMeta } from '../contract/tool-options';
 import type { ServiceDef } from '../server/types';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../tools/execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../tools/execute-hooks';
 import type { ToolExtend } from '../tools/mount';
 import type { AgentRuntimePrepareStep, AgentRuntimeRunContext } from './runtime';
 

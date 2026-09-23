@@ -1,19 +1,19 @@
 import type { ZodType } from 'zod';
+import type { MultipartBufferedFiles, MultipartDescriptor } from '../contract/client-types';
 import type {
   EndpointDef,
-  EndpointMcpPolicy,
   EndpointResponseMeta,
   EndpointStreamDescriptor,
-  EndpointToolAnnotations,
-  EndpointUiMeta,
-  HandlerContext,
   HttpMethod,
-  MultipartBufferedFiles,
-  MultipartDescriptor,
   ResponseMetadata,
-  RuntimeContext,
   Transport,
 } from '../contract/define';
+import type { HandlerContext, RuntimeContext } from '../contract/runtime-context';
+import type {
+  EndpointMcpPolicy,
+  EndpointToolAnnotations,
+  EndpointUiMeta,
+} from '../contract/tool-options';
 import type { EndpointToolView } from '../contract/tool-view';
 import type { StitchLogger } from '../internal/logger';
 import type { PathParams } from '../internal/route-pattern';

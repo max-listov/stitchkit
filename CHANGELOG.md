@@ -15,6 +15,70 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.94.1] — 2026-09-23
+
+### Added
+
+- `stitchkit/files` — **`writeFileAtomic` and `writeFileAtomicSync`**, the
+  framework's own atomic replace made public, in an asynchronous form that keeps
+  the event loop running (a synchronous rename was measured holding a daemon's
+  main thread for ~15 s). A random staging name created exclusively, the mode
+  set on the descriptor before the file is visible (default `0o600`, not masked
+  by the umask), `fsync`, rename. A consuming project kept its own copy for want
+  of it.
+- `stitchkit/files` — **`withExclusiveLock(path, run, options)`**, the
+  diagnostic journal's owner-recording lock as one public primitive: waits up to
+  `timeoutMs` (default 10 s) and stops the moment `signal` aborts; a refusal
+  (`ExclusiveLockError`, `LOCK_TIMEOUT` / `LOCK_ABORTED`) names the resource and
+  its holder. A dead owner on this machine is taken over; a live, slow or
+  foreign one never is, by age or otherwise; a lock with no owner at all only
+  after `ownerlessGraceMs`. The journal's lock now sits on it.
+- `stitchkit/tools` — **`durability.effect(name, { run, reconcile })`**: an
+  effect in another system at most once. The intent is recorded before `run`;
+  an intent found without an outcome is settled by `reconcile` and never run
+  again — `accepted` with the recipient's proof, or a recorded, final
+  `uncertain`. `EffectUnresolvedError` when this call could not settle it;
+  `reconcile` is bounded by `reconcileTimeoutMs`, a proof by 64 KiB. New ledger
+  event kind `durability/effect`. → ADR 0200
+- `stitchkit`, `stitchkit/contract` — **a tool view may declare only
+  `defaults`.** `withToolView(endpoint, { defaults: { include: [] } })` changes
+  what a tool call is given and keeps the full `output` as the tool answer, its
+  validation and its advertised schema — the most common view, which had to
+  repeat the endpoint's own `output` to be accepted. A view with no `defaults`,
+  `output` or `project` is still refused; defaults are still checked against
+  the input.
+- `stitchkit/cli` — **`applyCliUpdate({ verify, verifyTimeoutMs })`** runs the
+  new build before it replaces anything: the digest-checked bytes are written
+  beside the target as an executable candidate, and a `verify` that throws or
+  overruns leaves the target and any backup untouched and removes the candidate.
+
+### Changed
+
+- `stitchkit/cli` — **a leading dash is data unless it is an option.** A token
+  is an option only as a long form or `-` plus a letter, so `note a "- item"`
+  fills a positional instead of failing as an unknown option, and the token
+  after an option that expects a value is that value — `--grep -foo` — unless it
+  is itself an option (`--grep --json` still requires a value). A value that
+  cannot be read as its field's type is refused as a usage error naming the flag
+  and the text typed, `--tail expects a whole number, got "abc"`, where it was a
+  validation error saying only "expected number, received string".
+- `stitchkit/application` — **a repeated health report is not a new revision.**
+  `reportHealth` with the value a resource already reported publishes nothing:
+  no revision, no `changedAt`, no subscriber call. A resource confirming its
+  health every second produced a snapshot per confirmation, and a subscriber
+  that logs snapshots wrote ~1.7 GB a day of identical lines.
+
+### Fixed
+
+- `stitchkit/files` — the atomic write the CLI updater and checkpoint use wrote
+  its bytes with one `writeSync`, which may write fewer bytes than asked, and
+  left its staging file beside the target when the write or the rename failed.
+- `stitchkit/application` — the diagnostic journal's `reclaim-stale` lock could
+  be reclaimed twice at once: two processes that saw the same dead owner both
+  unlinked, and the second removed the lock the first had just created.
+  Reclaiming is now serialised, and releasing never removes a lock that is no
+  longer this holder's.
+
 ## [0.94.0] — 2026-09-23
 
 ### ⚠️ Breaking changes

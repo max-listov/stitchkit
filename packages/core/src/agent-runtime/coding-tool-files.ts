@@ -25,8 +25,8 @@ import {
   missingContainedDirectories,
   openContainedFile,
   openContainedParent,
-  writeContainedFile,
 } from './contained-files';
+import { writeContainedFile } from './contained-write';
 
 async function digestFile(handle: ContainedFileHandle, size: number): Promise<string> {
   const hash = createHash('sha256');

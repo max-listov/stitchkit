@@ -1,6 +1,6 @@
 import { isUnsafeKey } from '../../internal/safe-json';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
-import { describeSchemaFields } from './args';
+import { describeSchemaFields } from './args-fields';
 
 export interface CliPresentationPolicyConfig {
   /** Command selected when argv contains no explicit command. */

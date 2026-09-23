@@ -194,6 +194,12 @@ answered the question, and the answer stands. (It used to be overwritten — and
 the example above hides that, because `healthy` is the same value that
 overwrote it.)
 
+**Reporting the same health again is not a change.** A resource may confirm its
+health on a timer; a report with the value it already reported publishes
+nothing — no new revision, no `changedAt`, no subscriber call. A change of value
+publishes once, as does the first report that confirms the `healthy` the kernel
+assumed at readiness.
+
 **A resource is required unless you write `required: false`.** That default is
 what makes the next sentence bite.
 

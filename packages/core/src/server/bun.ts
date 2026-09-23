@@ -118,6 +118,43 @@ function reclaimStaleUnixSocket(path: string): void {
 }
 
 /** Start the contract router through `Bun.serve`. */
+/** A unix listener is refused with every option that would silently turn it into TCP. */
+function assertUnixListenConfig(config: BunServerConfig, unixPath: string): void {
+  // Bun silently starts a TCP server on the default port for `unix: ''` —
+  // the exact inversion of what a socket-as-credential daemon intends.
+  if (unixPath.length === 0) {
+    throw new Error('[stitchkit] createServer: `unix` must be a non-empty socket path');
+  }
+  // Checked on the raw config: `port` has a default further down, and Bun
+  // itself silently ignores `port` next to `unix` instead of erroring.
+  if (config.port !== undefined || config.hostname !== undefined) {
+    throw new Error(
+      '[stitchkit] createServer: `unix` is mutually exclusive with `port`/`hostname`',
+    );
+  }
+  if (config.socket) {
+    throw new Error(
+      '[stitchkit] createServer: the Socket.IO lifecycle cannot listen on a unix socket — socket.io clients dial TCP only',
+    );
+  }
+}
+
+/**
+ * Wait until Bun reports no request in flight.
+ *
+ * Reporting that is exactly what `stop(false)` is for, and after an upgraded connection its
+ * Promise never settles — the same behaviour `forceStop` already records for `stop(true)`. A
+ * socket close callback gives `waitForSocketDrain` a real edge to wait on; requests have no
+ * such callback here, so the count is polled. The wait is bounded from outside: the shutdown
+ * orchestrator races `stopGracefully` against the caller's grace deadline, so work that never
+ * finishes ends as a force with a truthful reason rather than as a hang.
+ */
+async function waitForRequestDrain(server: BunServer): Promise<void> {
+  while (server.pendingRequests > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 export function createServer(config: BunServerConfig): BunServerHandle {
   const {
     websocket: configuredWebSocket,
@@ -129,25 +166,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   } = config;
   const unixPath = typeof config.unix === 'string' ? config.unix : config.unix?.path;
   const unixMode = typeof config.unix === 'string' ? undefined : config.unix?.mode;
-  if (unixPath !== undefined) {
-    // Bun silently starts a TCP server on the default port for `unix: ''` —
-    // the exact inversion of what a socket-as-credential daemon intends.
-    if (unixPath.length === 0) {
-      throw new Error('[stitchkit] createServer: `unix` must be a non-empty socket path');
-    }
-    // Checked on the raw config: `port` has a default further down, and Bun
-    // itself silently ignores `port` next to `unix` instead of erroring.
-    if (config.port !== undefined || config.hostname !== undefined) {
-      throw new Error(
-        '[stitchkit] createServer: `unix` is mutually exclusive with `port`/`hostname`',
-      );
-    }
-    if (socket) {
-      throw new Error(
-        '[stitchkit] createServer: the Socket.IO lifecycle cannot listen on a unix socket — socket.io clients dial TCP only',
-      );
-    }
-  }
+  if (unixPath !== undefined) assertUnixListenConfig(config, unixPath);
   const socketRoutePrefix = socket?.route.path.replace(/\*socketPath$/, '');
   // Boundary cast: Bun's handler data is opaque to the lifecycle wrapper. The
   // wrapper preserves the same socket object and only observes open/close;
@@ -166,21 +185,6 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   const waitForSocketDrain = () => {
     if (openSockets.size === 0) return Promise.resolve();
     return new Promise<void>((resolve) => socketDrainWaiters.add(resolve));
-  };
-  /**
-   * Wait until Bun reports no request in flight.
-   *
-   * Reporting that is exactly what `stop(false)` is for, and after an upgraded connection its
-   * Promise never settles — the same behaviour `forceStop` already records for `stop(true)`. A
-   * socket close callback gives `waitForSocketDrain` a real edge to wait on; requests have no
-   * such callback here, so the count is polled. The wait is bounded from outside: the shutdown
-   * orchestrator races `stopGracefully` against the caller's grace deadline, so work that never
-   * finishes ends as a force with a truthful reason rather than as a hang.
-   */
-  const waitForRequestDrain = async (server: BunServer): Promise<void> => {
-    while (server.pendingRequests > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
   };
   const trackedWebSocket: typeof websocket = websocket
     ? {

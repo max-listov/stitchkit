@@ -16,7 +16,7 @@
  * machinery (ADR 0008). Pass `onRecord` to feed a metrics backend the raw parts.
  */
 import { getTraceId } from '../observability/context';
-import type { ToolCallHooks } from './execute';
+import type { ToolCallHooks } from './execute-hooks';
 
 /** The structured record behind each logged line — for metrics via `onRecord`. */
 export interface ToolCallRecord {

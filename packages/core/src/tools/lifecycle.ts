@@ -1,4 +1,4 @@
-import type { ToolLifecycle } from './execute';
+import type { ToolLifecycle } from './execute-hooks';
 
 /** Compose tool lifecycle hooks without inventing HTTP-only phases. */
 export function composeToolLifecycle(

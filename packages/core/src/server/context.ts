@@ -3,8 +3,8 @@
  * endpoint schemas and gathers request metadata (trace id, client info).
  */
 
-import type { RuntimeContext } from '../contract/define';
 import { badRequest, forbidden } from '../contract/errors';
+import type { RuntimeContext } from '../contract/runtime-context';
 import { mediaTypeEssence } from '../internal/media-type';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from '../internal/request';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';

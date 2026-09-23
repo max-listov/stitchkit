@@ -1,4 +1,4 @@
-import type { EndpointMcpInputRequired, EndpointMcpPolicy } from '../../contract/define';
+import type { EndpointMcpInputRequired, EndpointMcpPolicy } from '../../contract/tool-options';
 
 /**
  * The declared rounds, when the declaration is a fixed list.

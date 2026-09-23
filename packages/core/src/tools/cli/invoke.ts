@@ -32,14 +32,8 @@
  */
 import type { ZodObject, z } from 'zod';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import {
-  type ErrorHintFn,
-  type ToolCallHooks,
-  type ToolLifecycle,
-  type ToolResult,
-  toolErrorFromResult,
-  toolResultFromError,
-} from '../execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
+import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
 import { createToolRunner, type MountableTool } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import { collectToolSurface } from '../surface';

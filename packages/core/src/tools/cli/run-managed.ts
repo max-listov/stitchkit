@@ -1,7 +1,9 @@
 import type { ZodObject } from 'zod';
-import { type ToolResult, toolResultFromError } from '../execute';
+import { type ToolResult, toolResultFromError } from '../execute-result';
 import { createToolRunner, type MountableTool } from '../mount';
-import { CliArgumentError, isReservedBoolWord, type parseCliArgs } from './args';
+import type { parseCliArgs } from './args';
+import { isReservedBoolWord } from './args-fields';
+import { CliArgumentError } from './argument-error';
 import { DEFAULT_DOWNLOAD_MAX_BYTES, downloadResults } from './download';
 import { DEFAULT_EXIT_CODES, emitResult } from './format';
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';

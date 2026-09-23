@@ -189,6 +189,133 @@ export type TypedWatchClient<T extends Record<string, EndpointDef>> = {
   [K in keyof T]: (args?: Record<string, unknown>) => WatchHandle<unknown>;
 };
 
+function publishState(entry: Entry, state: WatchStateFrame): void {
+  entry.state = state;
+  for (const listener of [...entry.listeners]) listener.state?.(state);
+}
+
+/**
+ * Tell the server about a key, and turn every way that can fail into a state.
+ *
+ * Nothing here rejects. It runs from a subscribe and from a reconnect, neither
+ * of which has anywhere to put a rejected promise — and a disconnected socket
+ * rejects the request, which is exactly the moment this runs. An unhandled
+ * rejection in a console is also the one outcome that tells the subscriber
+ * nothing at all.
+ */
+async function openWatch(
+  config: WatchClientConfig,
+  openTimeoutMs: number,
+  entry: Entry,
+): Promise<void> {
+  if (entry.opened) return;
+  entry.opened = true;
+  try {
+    // What this client already holds travels with the open, so a reconnection
+    // costs a difference — or nothing at all — instead of the value again.
+    const have: WatchHave | undefined =
+      entry.hasValue && entry.fingerprint !== undefined
+        ? { revision: entry.revision, fingerprint: entry.fingerprint }
+        : undefined;
+    const acknowledgement = await config.transport.request(
+      WATCH_OPEN,
+      { key: entry.key, args: entry.args, ...(have !== undefined && { have }) },
+      { timeoutMs: openTimeoutMs },
+    );
+    if (!acknowledgement.accepted) {
+      const reason = acknowledgement.reason ?? 'the server refused this watch';
+      config.onRefused?.(entry.key, reason);
+      publishState(entry, {
+        key: entry.key,
+        phase: 'unavailable',
+        reason: 'source-unavailable',
+        message: reason,
+      });
+    }
+  } catch (error) {
+    // The next connection must be able to try again, so forget it was sent.
+    entry.opened = false;
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(Reflect.get(error, 'code'))
+        : undefined;
+    publishState(entry, {
+      key: entry.key,
+      phase: 'unavailable',
+      reason: 'source-unavailable',
+      ...(code !== undefined && { code }),
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * What one value frame does to an entry: a new value, a confirmation of the
+ * held one, a late answer to drop, or a reason the key has to start over.
+ * The entry's revision, value and fingerprint move here and nowhere else.
+ */
+function applyWatchFrame(
+  entry: Entry,
+  frame: WatchValueFrame,
+):
+  | { kind: 'value'; value: unknown }
+  | { kind: 'confirmed' | 'stale' }
+  | { kind: 'resync'; message: string } {
+  if (frame.kind === 'unchanged') {
+    // The value held is still current. Adopt the revision it was confirmed at
+    // so the next difference is taken against the right base.
+    if (!entry.hasValue) {
+      return {
+        kind: 'resync',
+        message: 'the server confirmed a value this client does not hold',
+      };
+    }
+    entry.revision = frame.revision;
+    entry.fingerprint = frame.fingerprint;
+    return { kind: 'confirmed' };
+  }
+  // A frame no newer than what is held is a late answer to an older question.
+  // The hub reads one at a time so this should not happen; dropping it anyway
+  // costs one comparison and means the rule is stated where a reader can see it.
+  if (entry.hasValue && frame.revision <= entry.revision) return { kind: 'stale' };
+  let value: unknown;
+  if (frame.kind === 'full') {
+    value = frame.value;
+  } else {
+    if (!entry.hasValue || entry.revision !== frame.base) {
+      return {
+        kind: 'resync',
+        message: `a difference against revision ${frame.base} arrived while holding ${
+          entry.hasValue ? String(entry.revision) : 'nothing'
+        }`,
+      };
+    }
+    try {
+      value = apply(entry.value, frame.delta);
+    } catch (error) {
+      return {
+        kind: 'resync',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    // The rebuilt value is checked against the server's identity for it, every
+    // time. Reassembly is the one step on this path that can be wrong while
+    // looking right, and an unchecked difference would hand a component a
+    // plausible answer that nobody holds.
+    if (argumentsDigest({ value }) !== frame.fingerprint) {
+      return {
+        kind: 'resync',
+        message: 'the rebuilt value did not match the fingerprint the server sent',
+      };
+    }
+  }
+  entry.revision = frame.revision;
+  entry.value = value;
+  entry.fingerprint = frame.fingerprint;
+  entry.hasValue = true;
+  return { kind: 'value', value };
+}
+
 export function createWatchClient<T extends Record<string, EndpointDef>>(
   contract: ContractDef<T, string>,
   config: WatchClientConfig,
@@ -197,11 +324,6 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
   const holdMs = config.holdMs ?? 0;
   const openTimeoutMs = config.openTimeoutMs ?? 10_000;
   const service = contract.meta.prefix;
-
-  function publishState(entry: Entry, state: WatchStateFrame): void {
-    entry.state = state;
-    for (const listener of [...entry.listeners]) listener.state?.(state);
-  }
 
   /**
    * Start this one key over.
@@ -224,63 +346,19 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     entry.opened = false;
     publishState(entry, { key: entry.key, phase: 'resync-required', message });
     config.transport.emit(WATCH_CLOSE, { key: entry.key });
-    void open(entry);
+    void openWatch(config, openTimeoutMs, entry);
   }
 
   config.transport.on(WATCH_VALUE, (frame) => {
     const entry = entries.get(watchKeyString(frame.key));
     if (!entry) return;
-    if (frame.kind === 'unchanged') {
-      // The value held is still current. Adopt the revision it was confirmed at
-      // so the next difference is taken against the right base.
-      if (!entry.hasValue) {
-        resynchronise(entry, 'the server confirmed a value this client does not hold');
-        return;
-      }
-      entry.revision = frame.revision;
-      entry.fingerprint = frame.fingerprint;
+    const outcome = applyWatchFrame(entry, frame);
+    if (outcome.kind === 'resync') {
+      resynchronise(entry, outcome.message);
       return;
     }
-    // A frame no newer than what is held is a late answer to an older question.
-    // The hub reads one at a time so this should not happen; dropping it anyway
-    // costs one comparison and means the rule is stated where a reader can see it.
-    if (entry.hasValue && frame.revision <= entry.revision) return;
-    let value: unknown;
-    if (frame.kind === 'full') {
-      value = frame.value;
-    } else {
-      if (!entry.hasValue || entry.revision !== frame.base) {
-        resynchronise(
-          entry,
-          `a difference against revision ${frame.base} arrived while holding ${
-            entry.hasValue ? String(entry.revision) : 'nothing'
-          }`,
-        );
-        return;
-      }
-      try {
-        value = apply(entry.value, frame.delta);
-      } catch (error) {
-        resynchronise(entry, error instanceof Error ? error.message : String(error));
-        return;
-      }
-      // The rebuilt value is checked against the server's identity for it, every
-      // time. Reassembly is the one step on this path that can be wrong while
-      // looking right, and an unchecked difference would hand a component a
-      // plausible answer that nobody holds.
-      if (argumentsDigest({ value }) !== frame.fingerprint) {
-        resynchronise(
-          entry,
-          'the rebuilt value did not match the fingerprint the server sent',
-        );
-        return;
-      }
-    }
-    entry.revision = frame.revision;
-    entry.value = value;
-    entry.fingerprint = frame.fingerprint;
-    entry.hasValue = true;
-    for (const listener of [...entry.listeners]) listener.value(value);
+    if (outcome.kind !== 'value') return;
+    for (const listener of [...entry.listeners]) listener.value(outcome.value);
   });
 
   config.transport.on(WATCH_STATE, (frame) => {
@@ -308,7 +386,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     for (const entry of entries.values()) {
       if (entry.listeners.size === 0) continue;
       publishState(entry, { key: entry.key, phase: 'opening' });
-      void open(entry);
+      void openWatch(config, openTimeoutMs, entry);
     }
   });
 
@@ -331,57 +409,6 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
     };
     entries.set(id, entry);
     return entry;
-  }
-
-  /**
-   * Tell the server about a key, and turn every way that can fail into a state.
-   *
-   * Nothing here rejects. It runs from a subscribe and from a reconnect, neither
-   * of which has anywhere to put a rejected promise — and a disconnected socket
-   * rejects the request, which is exactly the moment this runs. An unhandled
-   * rejection in a console is also the one outcome that tells the subscriber
-   * nothing at all.
-   */
-  async function open(entry: Entry): Promise<void> {
-    if (entry.opened) return;
-    entry.opened = true;
-    try {
-      // What this client already holds travels with the open, so a reconnection
-      // costs a difference — or nothing at all — instead of the value again.
-      const have: WatchHave | undefined =
-        entry.hasValue && entry.fingerprint !== undefined
-          ? { revision: entry.revision, fingerprint: entry.fingerprint }
-          : undefined;
-      const acknowledgement = await config.transport.request(
-        WATCH_OPEN,
-        { key: entry.key, args: entry.args, ...(have !== undefined && { have }) },
-        { timeoutMs: openTimeoutMs },
-      );
-      if (!acknowledgement.accepted) {
-        const reason = acknowledgement.reason ?? 'the server refused this watch';
-        config.onRefused?.(entry.key, reason);
-        publishState(entry, {
-          key: entry.key,
-          phase: 'unavailable',
-          reason: 'source-unavailable',
-          message: reason,
-        });
-      }
-    } catch (error) {
-      // The next connection must be able to try again, so forget it was sent.
-      entry.opened = false;
-      const code =
-        typeof error === 'object' && error !== null && 'code' in error
-          ? String(Reflect.get(error, 'code'))
-          : undefined;
-      publishState(entry, {
-        key: entry.key,
-        phase: 'unavailable',
-        reason: 'source-unavailable',
-        ...(code !== undefined && { code }),
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   function releaseEntry(entry: Entry): void {
@@ -418,7 +445,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
         // turn.
         if (entry.hasValue) registered.value(entry.value);
         registered.state?.(entry.state);
-        void open(entry);
+        void openWatch(config, openTimeoutMs, entry);
         return () => {
           mine.delete(registered);
           entry.listeners.delete(registered);

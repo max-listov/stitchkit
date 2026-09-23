@@ -2,14 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
 import { createHandler } from '../src/server/create';
+import { createImplement, createScopedImplement, implement } from '../src/server/implement';
 import {
-  createImplement,
   createImplementRegistry,
-  createScopedImplement,
   createScopedImplementRegistry,
-  implement,
   implementRegistry,
-} from '../src/server/implement';
+} from '../src/server/implement-registry';
 
 /*
  * The invariant is right: a contract without its handler is a lie about the surface, and a

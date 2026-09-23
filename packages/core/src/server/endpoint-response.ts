@@ -4,9 +4,10 @@
  * Every throw here belongs to the endpoint's error path, which the caller owns.
  */
 
-import type { ResponseMetadata, RuntimeContext } from '../contract/define';
+import type { ResponseMetadata } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { validateDeclaredOutput } from '../contract/normalize';
+import type { RuntimeContext } from '../contract/runtime-context';
 import { contractStreamResponse } from './contract-stream';
 import type { HandlerState, RequestState } from './handler-state';
 import { applyCors, requestCorsHeaders } from './middleware/cors';

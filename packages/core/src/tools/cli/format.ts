@@ -11,7 +11,9 @@
  * return (`formatToolError`), so a script can keep `2>/dev/null` clean while
  * still parsing a success.
  */
-import type { ErrorHintFn, ToolResult } from '../execute';
+
+import type { ErrorHintFn } from '../execute-hooks';
+import type { ToolResult } from '../execute-result';
 import { formatToolError } from '../mount';
 
 /** Map a `ToolResult.code` to a process exit code. */

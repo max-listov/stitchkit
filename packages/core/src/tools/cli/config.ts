@@ -1,5 +1,5 @@
 import type { ZodObject, z } from 'zod';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute';
+import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import type { ExitCodeMap } from './format';
 import type { CliInvokerConfig } from './invoke';
 import type { CliWaitConfig } from './wait';

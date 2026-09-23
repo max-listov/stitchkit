@@ -1,6 +1,5 @@
 import { UnixClientTransportError } from './unix-client-error';
-
-const MAX_BODY_CHUNK_BYTES = 64 * 1024;
+import { BodyDecoder, readResponseHead, requestBytes, WireBuffer } from './unix-client-http1';
 
 interface BunUnixSocket {
   write(data: Uint8Array, byteOffset?: number, byteLength?: number): number;
@@ -49,48 +48,99 @@ export interface BunUnixRequestOptions {
   registerAbort(abort: () => void): () => void;
 }
 
-function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
-  if (left.byteLength === 0) return right.slice();
-  const combined = new Uint8Array(left.byteLength + right.byteLength);
-  combined.set(left);
-  combined.set(right, left.byteLength);
-  return combined;
-}
-
-function indexOfSequence(bytes: Uint8Array, sequence: readonly number[]): number {
-  outer: for (let index = 0; index <= bytes.byteLength - sequence.length; index += 1) {
-    for (let offset = 0; offset < sequence.length; offset += 1) {
-      if (bytes[index + offset] !== sequence[offset]) continue outer;
-    }
-    return index;
+/**
+ * What a failure means for the request. After the head arrived it is an
+ * aborted response; before, it is uncertain delivery once any request byte was
+ * written, and a clean connection failure otherwise.
+ */
+function classifyTransportFailure(
+  error: unknown,
+  headersReceived: boolean,
+  dispatched: boolean,
+): UnixClientTransportError {
+  if (error instanceof UnixClientTransportError) return error;
+  if (headersReceived) {
+    return new UnixClientTransportError(
+      'UNIX_RESPONSE_ABORTED',
+      'Unix response failed before completion',
+      'response-received',
+      { cause: error },
+    );
   }
-  return -1;
+  return new UnixClientTransportError(
+    dispatched ? 'UNIX_DELIVERY_UNCERTAIN' : 'UNIX_CONNECT_FAILED',
+    dispatched
+      ? 'Unix request transport failed after dispatch may have begun'
+      : 'Unix socket connection failed before request dispatch',
+    dispatched ? 'possibly-dispatched' : 'not-dispatched',
+    { cause: error },
+  );
 }
 
-function requestBytes(request: Request, body: Uint8Array | undefined): Uint8Array {
-  const url = new URL(request.url);
-  const headers = new Headers(request.headers);
-  headers.set('host', url.host);
-  headers.set('connection', 'close');
-  headers.set('accept-encoding', 'identity');
-  headers.delete('transfer-encoding');
-  headers.delete('content-length');
-  if (body !== undefined) headers.set('content-length', String(body.byteLength));
-  const lines = [`${request.method} ${url.pathname}${url.search} HTTP/1.1`];
-  for (const [name, value] of headers) lines.push(`${name}: ${value}`);
-  const head = new TextEncoder().encode(`${lines.join('\r\n')}\r\n\r\n`);
-  return body === undefined ? head : concatBytes(head, body);
+function limitError(
+  limit: 'headers' | 'body',
+  what: string,
+  bytes: number,
+): UnixClientTransportError {
+  return limit === 'body'
+    ? new UnixClientTransportError(
+        'UNIX_RESPONSE_TOO_LARGE',
+        `Unix response body exceeds the ${bytes} byte limit`,
+        'response-received',
+      )
+    : new UnixClientTransportError(
+        'UNIX_HEADERS_TOO_LARGE',
+        `Unix response ${what} exceed the ${bytes} byte limit`,
+        'response-received',
+      );
 }
 
-function parseContentLength(headers: Headers): number | undefined {
-  const raw = headers.get('content-length');
-  if (raw === null) return undefined;
-  if (!/^\d+$/.test(raw)) throw new Error('Unix response has an invalid Content-Length');
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value)) {
-    throw new Error('Unix response Content-Length is not a safe integer');
+interface SocketEvents {
+  open(active: BunUnixSocket): void;
+  flush(active: BunUnixSocket): void;
+  /** Called with the socket already paused: the next read is the stream's to ask for. */
+  data(data: Uint8Array): void;
+  /** The peer ended or closed the connection, with the error when it was one. */
+  ended(error: Error | undefined, how: 'ended' | 'closed'): void;
+  failed(error: Error): void;
+}
+
+function socketHandlers(events: SocketEvents) {
+  return {
+    binaryType: 'uint8array' as const,
+    open: events.open,
+    drain: events.flush,
+    data(active: BunUnixSocket, data: Uint8Array) {
+      active.pause();
+      events.data(data);
+    },
+    end: () => events.ended(undefined, 'ended'),
+    close: (_active: BunUnixSocket, error?: Error) => events.ended(error, 'closed'),
+    error: (_active: BunUnixSocket, error: Error) => events.failed(error),
+    connectError: (_active: BunUnixSocket, error: Error) => events.failed(error),
+  };
+}
+
+/**
+ * Write as much of the request as the socket takes now; the new offset, or
+ * `closed`. The complete HTTP message is delimited by Content-Length (or by the
+ * empty body after CRLFCRLF). `Socket.end()` closes Bun's whole socket, not
+ * merely the write half, so it is left open for the response; `Connection:
+ * close` makes the peer own normal termination.
+ */
+function writeAvailable(
+  active: BunUnixSocket,
+  bytes: Uint8Array,
+  offset: number,
+): number | 'closed' {
+  let written = offset;
+  while (written < bytes.byteLength) {
+    const count = active.write(bytes, written, bytes.byteLength - written);
+    if (count < 0) return 'closed';
+    if (count === 0) break;
+    written += count;
   }
-  return value;
+  return written;
 }
 
 /** Bun's raw socket lane: pausing the socket makes unread body memory physically bounded. */
@@ -100,17 +150,13 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   if (!bun) throw new Error('Bun Unix runtime is unavailable');
   let socket: BunUnixSocket | undefined;
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-  let wire: Uint8Array = new Uint8Array();
+  const wire = new WireBuffer();
+  let decoder: BodyDecoder | undefined;
   let responseResolved = false;
   let headersReceived = false;
   let settled = false;
   let bodyComplete = false;
   let peerEnded = false;
-  let chunked = false;
-  let chunkRemaining: number | undefined;
-  let expectChunkCrlf = false;
-  let trailers = false;
-  let remainingLength: number | undefined;
   let received = 0;
   let writeOffset = 0;
   let resolveResponse: (response: Response) => void = () => undefined;
@@ -120,26 +166,8 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
     rejectResponse = reject;
   });
 
-  const transportFailure = (error: unknown): UnixClientTransportError => {
-    if (error instanceof UnixClientTransportError) return error;
-    if (headersReceived) {
-      return new UnixClientTransportError(
-        'UNIX_RESPONSE_ABORTED',
-        'Unix response failed before completion',
-        'response-received',
-        { cause: error },
-      );
-    }
-    const dispatched = writeOffset > 0;
-    return new UnixClientTransportError(
-      dispatched ? 'UNIX_DELIVERY_UNCERTAIN' : 'UNIX_CONNECT_FAILED',
-      dispatched
-        ? 'Unix request transport failed after dispatch may have begun'
-        : 'Unix socket connection failed before request dispatch',
-      dispatched ? 'possibly-dispatched' : 'not-dispatched',
-      { cause: error },
-    );
-  };
+  const transportFailure = (error: unknown): UnixClientTransportError =>
+    classifyTransportFailure(error, headersReceived, writeOffset > 0);
 
   const clearRegistration = options.registerAbort(() => {
     fail(
@@ -180,22 +208,10 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
     fail(options.request.signal.reason ?? new DOMException('Request aborted', 'AbortError'));
   }
 
-  const takeWire = (bytes: number): Uint8Array => {
-    const value = wire.slice(0, bytes);
-    wire = wire.slice(bytes);
-    return value;
-  };
-
   const enqueue = (value: Uint8Array): void => {
     if (options.maxResponseBytes !== undefined) received += value.byteLength;
     if (options.maxResponseBytes !== undefined && received > options.maxResponseBytes) {
-      fail(
-        new UnixClientTransportError(
-          'UNIX_RESPONSE_TOO_LARGE',
-          `Unix response body exceeds the ${options.maxResponseBytes} byte limit`,
-          'response-received',
-        ),
-      );
+      fail(limitError('body', 'body', options.maxResponseBytes));
       return;
     }
     controller?.enqueue(value);
@@ -213,223 +229,49 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
     socket?.resume();
   };
 
-  const pumpChunked = (): void => {
-    if (!controller || settled || bodyComplete) return;
-    for (;;) {
-      if ((controller.desiredSize ?? 1) <= 0) return;
-      if (trailers) {
-        if (wire.byteLength >= 2 && wire[0] === 13 && wire[1] === 10) {
-          takeWire(2);
-          completeBody();
-          return;
-        }
-        const trailerEnd = indexOfSequence(wire, [13, 10, 13, 10]);
-        if (trailerEnd < 0) {
-          if (wire.byteLength > options.maxHeaderBytes) {
-            fail(
-              new UnixClientTransportError(
-                'UNIX_HEADERS_TOO_LARGE',
-                `Unix response trailers exceed the ${options.maxHeaderBytes} byte limit`,
-                'response-received',
-              ),
-            );
-          } else if (peerEnded) {
-            fail(transportFailure(new Error('Unix chunked response ended inside trailers')));
-          } else {
-            resumeForData();
-          }
-          return;
-        }
-        takeWire(trailerEnd + 4);
-        completeBody();
-        return;
-      }
-      if (expectChunkCrlf) {
-        if (wire.byteLength < 2) {
-          if (peerEnded) {
-            fail(
-              transportFailure(
-                new Error('Unix chunked response ended before chunk delimiter'),
-              ),
-            );
-          } else resumeForData();
-          return;
-        }
-        if (wire[0] !== 13 || wire[1] !== 10) {
-          fail(
-            transportFailure(
-              new Error('Unix chunked response has an invalid chunk delimiter'),
-            ),
-          );
-          return;
-        }
-        takeWire(2);
-        expectChunkCrlf = false;
-      }
-      if (chunkRemaining === undefined) {
-        const lineEnd = indexOfSequence(wire, [13, 10]);
-        if (lineEnd < 0) {
-          if (wire.byteLength > 1_024) {
-            fail(transportFailure(new Error('Unix chunk header is too large')));
-          } else if (peerEnded) {
-            fail(
-              transportFailure(new Error('Unix chunked response ended inside chunk header')),
-            );
-          } else resumeForData();
-          return;
-        }
-        const line = new TextDecoder('ascii', { fatal: true }).decode(takeWire(lineEnd));
-        takeWire(2);
-        const sizeText = line.split(';', 1)[0]?.trim() ?? '';
-        if (!/^[0-9a-f]+$/i.test(sizeText)) {
-          fail(transportFailure(new Error('Unix chunked response has an invalid chunk size')));
-          return;
-        }
-        chunkRemaining = Number.parseInt(sizeText, 16);
-        if (!Number.isSafeInteger(chunkRemaining)) {
-          fail(transportFailure(new Error('Unix chunk size is not a safe integer')));
-          return;
-        }
-        if (chunkRemaining === 0) {
-          chunkRemaining = undefined;
-          trailers = true;
-          continue;
-        }
-      }
-      if (wire.byteLength === 0) {
-        if (peerEnded) {
-          fail(transportFailure(new Error('Unix chunked response ended inside a chunk')));
-        } else resumeForData();
-        return;
-      }
-      const bytes = Math.min(chunkRemaining, wire.byteLength, MAX_BODY_CHUNK_BYTES);
-      const value = takeWire(bytes);
-      chunkRemaining -= bytes;
-      if (chunkRemaining === 0) {
-        chunkRemaining = undefined;
-        expectChunkCrlf = true;
-      }
-      // `ReadableStreamDefaultController.enqueue()` may synchronously request
-      // another pull. Commit the framing transition first so a re-entrant pump
-      // cannot consume the CRLF delimiter as body bytes.
-      enqueue(value);
-      return;
-    }
-  };
-
-  const pumpPlain = (): void => {
-    if (!controller || settled || bodyComplete) return;
-    if ((controller.desiredSize ?? 1) <= 0) return;
-    if (wire.byteLength > 0) {
-      const permitted = remainingLength ?? wire.byteLength;
-      const bytes = Math.min(permitted, wire.byteLength, MAX_BODY_CHUNK_BYTES);
-      enqueue(takeWire(bytes));
-      if (settled) return;
-      if (remainingLength !== undefined) {
-        remainingLength -= bytes;
-        if (remainingLength === 0) {
-          completeBody();
-          return;
-        }
-      }
-      return;
-    }
-    if (peerEnded) {
-      if (remainingLength !== undefined && remainingLength > 0) {
-        fail(
-          transportFailure(
-            new Error('Unix response ended before Content-Length bytes arrived'),
-          ),
-        );
-      } else {
-        completeBody();
-      }
-      return;
-    }
-    resumeForData();
-  };
+  const headersTooLarge = (what: string) =>
+    limitError('headers', what, options.maxHeaderBytes);
 
   const pump = (): void => {
-    if (chunked) pumpChunked();
-    else pumpPlain();
+    while (controller && decoder && !settled && !bodyComplete) {
+      if ((controller.desiredSize ?? 1) <= 0) return;
+      const step = decoder.next(wire, peerEnded);
+      if (step.kind === 'data') {
+        enqueue(step.value);
+        if (!settled && decoder.plainComplete) completeBody();
+      } else if (step.kind === 'more') resumeForData();
+      else if (step.kind === 'complete') completeBody();
+      else if (step.kind === 'malformed') fail(transportFailure(step.error));
+      else fail(headersTooLarge('trailers'));
+      return;
+    }
   };
 
   const parseHeaders = (): void => {
-    const headerEnd = indexOfSequence(wire, [13, 10, 13, 10]);
-    if (headerEnd < 0) {
-      if (wire.byteLength > options.maxHeaderBytes) {
-        fail(
-          new UnixClientTransportError(
-            'UNIX_HEADERS_TOO_LARGE',
-            `Unix response headers exceed the ${options.maxHeaderBytes} byte limit`,
-            'response-received',
-          ),
-        );
-      } else {
-        socket?.resume();
-      }
-      return;
-    }
-    if (headerEnd + 4 > options.maxHeaderBytes) {
-      fail(
-        new UnixClientTransportError(
-          'UNIX_HEADERS_TOO_LARGE',
-          `Unix response headers exceed the ${options.maxHeaderBytes} byte limit`,
-          'response-received',
-        ),
-      );
+    const head = readResponseHead(wire, options.maxHeaderBytes);
+    if (head.kind !== 'head') {
+      if (head.kind === 'malformed') headersReceived = true;
+      if (head.kind === 'more') socket?.resume();
+      else if (head.kind === 'too-large') fail(headersTooLarge('headers'));
+      else fail(transportFailure(head.error));
       return;
     }
     headersReceived = true;
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(takeWire(headerEnd));
-    } catch (error) {
-      fail(transportFailure(error));
-      return;
-    }
-    takeWire(4);
-    const lines = text.split('\r\n');
-    const statusLine = lines.shift() ?? '';
-    const matched = /^HTTP\/1\.[01] (\d{3})(?: (.*))?$/.exec(statusLine);
-    if (!matched) {
-      fail(transportFailure(new Error('Unix response has an invalid HTTP status line')));
-      return;
-    }
-    const status = Number(matched[1]);
-    const statusText = matched[2] ?? '';
-    const headers = new Headers();
-    try {
-      for (const line of lines) {
-        const separator = line.indexOf(':');
-        if (separator <= 0) throw new Error('Unix response has an invalid header line');
-        headers.append(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
-      }
-      remainingLength = parseContentLength(headers);
-    } catch (error) {
-      fail(transportFailure(error));
-      return;
-    }
+    const { status, statusText, headers, contentLength } = head;
     if (
       options.maxResponseBytes !== undefined &&
-      remainingLength !== undefined &&
-      remainingLength > options.maxResponseBytes
+      contentLength !== undefined &&
+      contentLength > options.maxResponseBytes
     ) {
-      fail(
-        new UnixClientTransportError(
-          'UNIX_RESPONSE_TOO_LARGE',
-          `Unix response body exceeds the ${options.maxResponseBytes} byte limit`,
-          'response-received',
-        ),
-      );
+      fail(limitError('body', 'body', options.maxResponseBytes));
       return;
     }
-    chunked = headers.get('transfer-encoding')?.toLowerCase().includes('chunked') ?? false;
+    decoder = new BodyDecoder(head.chunked, contentLength, options.maxHeaderBytes);
     const bodyless =
       options.request.method === 'HEAD' || status === 204 || status === 205 || status === 304;
     clearTimeout(timer);
     responseResolved = true;
-    if (bodyless || remainingLength === 0) {
+    if (bodyless || contentLength === 0) {
       resolveResponse(new Response(null, { status, statusText, headers }));
       finish();
       return;
@@ -453,19 +295,10 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   };
 
   const flushRequest = (active: BunUnixSocket): void => {
-    while (writeOffset < outgoing.byteLength) {
-      const written = active.write(outgoing, writeOffset, outgoing.byteLength - writeOffset);
-      if (written < 0) {
-        fail(transportFailure(new Error('Unix request socket closed while writing')));
-        return;
-      }
-      if (written === 0) return;
-      writeOffset += written;
-    }
-    // The complete HTTP message is delimited by Content-Length (or by the
-    // empty body after CRLFCRLF). `Socket.end()` closes Bun's whole socket, not
-    // merely the write half, so leave it open for the response; Connection:
-    // close makes the peer own normal termination.
+    const next = writeAvailable(active, outgoing, writeOffset);
+    if (next === 'closed') {
+      fail(transportFailure(new Error('Unix request socket closed while writing')));
+    } else writeOffset = next;
   };
 
   if (options.request.signal.aborted) {
@@ -477,48 +310,30 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   void bun
     .connect({
       unix: options.socketPath,
-      socket: {
-        binaryType: 'uint8array',
+      socket: socketHandlers({
         open(active) {
           socket = active;
-          if (settled) {
-            active.terminate();
-            return;
-          }
-          flushRequest(active);
+          if (settled) active.terminate();
+          else flushRequest(active);
         },
-        drain(active) {
-          flushRequest(active);
-        },
-        data(active, data) {
-          active.pause();
-          wire = concatBytes(wire, data);
+        flush: flushRequest,
+        data(data) {
+          wire.append(data);
           if (!responseResolved) parseHeaders();
           else pump();
         },
-        end() {
-          peerEnded = true;
-          if (!responseResolved) {
-            fail(transportFailure(new Error('Unix connection ended before response headers')));
-          } else pump();
-        },
-        close(_active, error) {
+        ended(error, how) {
           peerEnded = true;
           if (settled) return;
           if (error) fail(transportFailure(error));
           else if (!responseResolved) {
             fail(
-              transportFailure(new Error('Unix connection closed before response headers')),
+              transportFailure(new Error(`Unix connection ${how} before response headers`)),
             );
           } else pump();
         },
-        error(_active, error) {
-          fail(transportFailure(error));
-        },
-        connectError(_active, error) {
-          fail(transportFailure(error));
-        },
-      },
+        failed: (error) => fail(transportFailure(error)),
+      }),
     })
     .catch((error: unknown) => fail(transportFailure(error)));
 

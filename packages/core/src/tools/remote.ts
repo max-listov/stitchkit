@@ -1,7 +1,8 @@
 import { createClient } from '../browser/client';
 import { ApiError, type HttpClient } from '../browser/http';
-import type { ContractDef, EndpointDef, RuntimeContext } from '../contract/define';
+import type { ContractDef, EndpointDef } from '../contract/define';
 import { AppError } from '../contract/errors';
+import type { RuntimeContext } from '../contract/runtime-context';
 import { isRecord } from '../internal/typed';
 import { contractMethodFields } from '../server/contract-method';
 import type { MethodDef, ServiceDef } from '../server/types';

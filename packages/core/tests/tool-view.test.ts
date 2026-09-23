@@ -837,6 +837,88 @@ describe('the surface snapshot records a view only where one is declared', () =>
   });
 });
 
+describe('a view of defaults alone changes the call, not the answer', () => {
+  // The most common view: a model needs a lighter call, and the answer keeps
+  // its one shape. It used to need the endpoint's own output repeated beside
+  // the defaults, which read as "a different answer here" where there is none.
+  const lighter = defineContract(
+    { prefix: 'people', scope: 'public' },
+    {
+      list: withToolView(
+        {
+          method: 'GET',
+          path: '/',
+          desc: 'List people',
+          expose: EVERY_SURFACE,
+          input: ListQuery,
+          output: PersonList,
+          tool: { name: 'people_list' },
+        },
+        { defaults: { include: [] } },
+      ),
+    },
+  );
+  const FULL = { items: [ADA] };
+
+  function lighterService() {
+    const seen: Seen[] = [];
+    const service = implement(lighter, {
+      list: (ctx) => {
+        seen.push({ source: ctx.source, include: [...ctx.input.include] });
+        const loadStats = ctx.input.include.includes('stats');
+        return { items: [{ ...ADA, ...(loadStats && { stats: { orders: 3 } }) }] };
+      },
+    });
+    return { service, seen };
+  }
+
+  test('a tool call gets the default and the full answer; HTTP keeps the schema default', async () => {
+    const people = lighterService();
+    const tools = mountAgent([people.service]);
+    const execute = tools.people_list?.execute;
+    if (!execute) throw new Error('people_list is not mounted');
+    const result = await Reflect.apply(execute, undefined, [
+      {},
+      { toolCallId: 'call-1', messages: [], context: undefined },
+    ]);
+    expect(PersonList.parse(result)).toEqual(FULL);
+    expect(result).toEqual(FULL);
+    const viaHttp = await http(people.service, '/');
+    expect(viaHttp.status).toBe(200);
+    expect(PersonList.parse(JSON.parse(viaHttp.body))).toEqual({
+      items: [{ ...ADA, stats: { orders: 3 } }],
+    });
+    expect(people.seen).toEqual([
+      { source: 'agent', include: [] },
+      { source: 'http', include: ['stats'] },
+    ]);
+  });
+
+  test('the advertised output is the full one, and the input states the default', async () => {
+    const client = await connect(
+      buildMcpServer({
+        serverInfo: { name: 'people', version: '1' },
+        services: [lighterService().service],
+      }),
+    );
+    const { tools } = await client.listTools();
+    const tool = tools.find((entry) => entry.name === 'people_list');
+    expect(JSON.stringify(tool?.inputSchema)).toContain('"default":[]');
+    expect(tool?.outputSchema).toEqual(
+      expect.objectContaining({ required: ['items'], type: 'object' }),
+    );
+  });
+
+  test('the snapshot records the defaults and no separate answer schema', () => {
+    const manifest = buildSurfaceManifest({ services: [lighterService().service] });
+    expect(manifest.operations[0]?.toolView).toEqual({
+      defaults: expect.any(String),
+      output: null,
+      project: false,
+    });
+  });
+});
+
 describe('a view is refused where it cannot mean anything', () => {
   const output = z.object({ ok: z.boolean() });
   const cases: Array<[string, Record<string, unknown>, RegExp]> = [
@@ -853,7 +935,12 @@ describe('a view is refused where it cannot mean anything', () => {
     [
       'a view that changes nothing',
       { output, tool: { view: declared({}) } },
-      /neither output nor project/,
+      /declares no defaults, output or project/,
+    ],
+    [
+      'a view whose defaults are empty',
+      { output, tool: { view: declared({ defaults: {} }) } },
+      /declares no defaults, output or project/,
     ],
     [
       'a default for a key the input does not have',

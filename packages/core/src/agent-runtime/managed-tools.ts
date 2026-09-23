@@ -1,10 +1,7 @@
-import type { RuntimeContext } from '../contract/define';
+import type { RuntimeContext } from '../contract/runtime-context';
 import type { OperationIdentity } from '../server/types';
-import {
-  ToolExecutionControlError,
-  type ToolExecutionControlReason,
-  type ToolLifecycle,
-} from '../tools/execute';
+import { ToolExecutionControlError, type ToolExecutionControlReason } from '../tools/execute';
+import type { ToolLifecycle } from '../tools/execute-hooks';
 
 export interface AgentToolFenceContext {
   runId: string;

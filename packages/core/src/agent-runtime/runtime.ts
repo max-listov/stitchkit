@@ -8,7 +8,7 @@ import type {
 } from 'ai';
 import type { z } from 'zod';
 import type { LocalStepDurability } from '../durability/engine';
-import type { ToolLifecycle } from '../tools/execute';
+import type { ToolLifecycle } from '../tools/execute-hooks';
 import type { AgentChildManager } from './children';
 import type { AgentCompactionResult } from './compaction';
 import type {

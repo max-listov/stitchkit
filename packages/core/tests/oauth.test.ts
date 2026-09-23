@@ -4,8 +4,9 @@
  * paths. Mirrors what an MCP client (Claude) drives against a remote server.
  */
 import { describe, expect, test } from 'bun:test';
-import { signJwt, verifyJwt } from '../src/server/middleware/auth';
+import { signJwt, verifyJwt } from '../src/server/middleware/jwt';
 import { deriveCodeChallenge, verifyPkce } from '../src/server/middleware/pkce';
+import type { CimdClientMetadataFetcher } from '../src/server/oauth/cimd';
 import {
   oauthProtectedResourceRoute,
   protectedResourceMetadataUrl,
@@ -13,7 +14,6 @@ import {
 } from '../src/server/oauth/metadata';
 import {
   type AuthCodeData,
-  type CimdClientMetadataFetcher,
   mountOAuthProvider,
   type OAuthProviderConfig,
   type RefreshData,
@@ -853,7 +853,7 @@ describe('Client ID Metadata Documents', () => {
   });
 
   test('Age list arithmetic: the FIRST proxy value counts, not zero and not the sum', async () => {
-    const { responseFreshness } = await import('../src/server/oauth/provider');
+    const { responseFreshness } = await import('../src/server/oauth/cimd');
     const base = { 'content-type': 'application/json', 'cache-control': 'max-age=1800' };
     const plain = responseFreshness(new Headers(base), {}, 0);
     const single = responseFreshness(new Headers({ ...base, age: '600' }), {}, 0);

@@ -6,9 +6,16 @@ import ky, {
   type Options,
 } from 'ky';
 import type { ErrorEnvelope } from '../contract/errors';
-import { isRecord, transportResult } from '../internal/typed';
+import { isRecord } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
+import {
+  createRetryAwareFetch,
+  type ParamArrayValue,
+  type ParamValue,
+  readResponse,
+  searchParamsOf,
+} from './http-fetch';
 import { responseTraceId } from './request-id';
 import type { ClientFetch } from './transport';
 
@@ -202,63 +209,6 @@ export interface HttpClientConfig {
   unix?: string;
 }
 
-type ParamValue = string | number | boolean | undefined;
-type ParamArrayValue = Array<string | number>;
-
-/**
- * Keep Next.js request memoization for the first attempt, then make each Ky
- * retry observable as a new transport attempt. Next only treats a signal that
- * survives in the second fetch argument at its dedupe boundary as an opt-out.
- * Its patched fetch merges `init` into Request inputs first, so retries use a
- * URL plus a materialized init while the untouched first attempt keeps the
- * exact Ky Request.
- */
-function createRetryAwareFetch(
-  transportFetch: ClientFetch,
-  unix?: string,
-): NonNullable<Options['fetch']> {
-  const runtimeFetch = transportFetch;
-  let attempt = 0;
-
-  return (input, init) => {
-    attempt += 1;
-    // The socket option must ride in materialized `fetch(url, init)` form —
-    // `fetch(Request, { unix })` is undocumented in Bun — so a unix client
-    // skips the pass-through even on the first attempt. (That pass-through
-    // guards Next.js request memoization, which never applies to a local
-    // daemon dial.) Without `unix` the behavior is bit-for-bit unchanged.
-    if (unix === undefined && attempt === 1) {
-      return runtimeFetch(input, init);
-    }
-    if (!(input instanceof Request)) {
-      if (unix === undefined) return runtimeFetch(input, init);
-      const unixInit: RequestInit & { unix: string } = { ...init, unix };
-      return runtimeFetch(input, unixInit);
-    }
-    // Undici requires `duplex: 'half'` when a Request body stream is moved into
-    // URL + RequestInit form. Keep it in a spread because `duplex` is a runtime
-    // Fetch field that is not yet present in every TypeScript DOM lib.
-    const streamedBody = input.body ? { body: input.body, duplex: 'half' } : {};
-    const materialized: RequestInit & { unix?: string } = {
-      ...init,
-      ...(unix !== undefined && { unix }),
-      method: input.method,
-      headers: input.headers,
-      ...streamedBody,
-      cache: input.cache,
-      credentials: input.credentials,
-      integrity: input.integrity,
-      keepalive: input.keepalive,
-      mode: input.mode,
-      redirect: input.redirect,
-      referrer: input.referrer,
-      referrerPolicy: input.referrerPolicy,
-      signal: input.signal,
-    };
-    return runtimeFetch(input.url, materialized);
-  };
-}
-
 export interface RequestOptions {
   params?: Record<string, ParamValue | ParamArrayValue>;
   timeout?: number;
@@ -293,12 +243,8 @@ export interface ConfiguredHttpClient extends HttpClient {
   readonly baseUrl: string;
 }
 
-/**
- * Create a Ky-based `HttpClient` — the transport `createClient` builds on.
- * Handles cookie auth, SSR cookie forwarding, error parsing into `ApiError`, a
- * `401 → unauthorized` event stream, and safe transport retry.
- */
-export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient {
+/** `fetch` and `unix` are two transports; a unix socket needs Bun's own fetch. */
+function assertTransportChoice(config: HttpClientConfig): void {
   if (config.fetch && config.unix) {
     throw new TypeError('HttpClientConfig.fetch and unix are mutually exclusive');
   }
@@ -312,6 +258,51 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       );
     }
   }
+}
+
+/**
+ * The `ApiError` a failed request becomes. A cancellation is the caller's own
+ * and emits nothing; anything else that is not already an `ApiError` is a
+ * transport failure and emits `network_error`.
+ */
+function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiError {
+  if (error instanceof RequestCancellationError) {
+    return new ApiError(
+      error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
+      0,
+      undefined,
+      error.message,
+    );
+  }
+  if (ApiError.is(error)) return error;
+  emit({ type: 'network_error' });
+  const response = isHTTPError(error) ? error.response : undefined;
+  const status = response?.status ?? 0;
+  const msg = error instanceof Error ? error.message : undefined;
+  // The message and the `cause` go to the same places the bare-fetch path
+  // sends them (`createFetchExecutor`). This path used to pass `undefined`
+  // for both and file the real text under `details.message` alone, so the
+  // ky adapter answered `API Error: UNKNOWN_ERROR` where the bare-fetch
+  // path answered "Unable to connect" — same failure, same client, two
+  // different stories.
+  return new ApiError(
+    'UNKNOWN_ERROR',
+    status,
+    msg ? { message: msg } : undefined,
+    msg,
+    undefined,
+    responseTraceId(response),
+    { cause: error },
+  );
+}
+
+/**
+ * Create a Ky-based `HttpClient` — the transport `createClient` builds on.
+ * Handles cookie auth, SSR cookie forwarding, error parsing into `ApiError`, a
+ * `401 → unauthorized` event stream, and safe transport retry.
+ */
+export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient {
+  assertTransportChoice(config);
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
@@ -423,20 +414,8 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       signal: cancellation.signal,
     };
 
-    if (options.params) {
-      const searchParams = new URLSearchParams();
-      for (const [key, value] of Object.entries(options.params)) {
-        if (value === undefined) continue;
-        if (Array.isArray(value)) {
-          for (const item of value) searchParams.append(key, String(item));
-        } else {
-          searchParams.set(key, String(value));
-        }
-      }
-      if (searchParams.size > 0) {
-        kyOptions.searchParams = searchParams;
-      }
-    }
+    const searchParams = options.params ? searchParamsOf(options.params) : undefined;
+    if (searchParams) kyOptions.searchParams = searchParams;
 
     if (data instanceof FormData) {
       kyOptions.body = data;
@@ -445,59 +424,11 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     }
 
     try {
-      return await cancellation.run(async () => {
-        if (options.responseType === 'blob') {
-          return transportResult<T>(await client[method](url, kyOptions).blob());
-        }
-        if (options.responseType === 'response') {
-          // No parsing, no 204 special-case — the caller owns the body.
-          return transportResult<T>(await client[method](url, kyOptions));
-        }
-        const response = await client[method](url, kyOptions);
-        if (options.responseType === 'void') {
-          const text = await response.text();
-          if (text.length > 0) {
-            throw new Error('Server returned data for an endpoint with no output contract');
-          }
-        }
-        if (
-          options.responseType === 'void' ||
-          response.status === 204 ||
-          response.headers.get('content-length') === '0'
-        ) {
-          return transportResult<T>(undefined);
-        }
-        return await response.json<T>();
-      });
-    } catch (error) {
-      if (error instanceof RequestCancellationError) {
-        throw new ApiError(
-          error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
-          0,
-          undefined,
-          error.message,
-        );
-      }
-      if (ApiError.is(error)) throw error;
-      emit({ type: 'network_error' });
-      const response = isHTTPError(error) ? error.response : undefined;
-      const status = response?.status ?? 0;
-      const msg = error instanceof Error ? error.message : undefined;
-      // The message and the `cause` go to the same places the bare-fetch path
-      // sends them (`createFetchExecutor`). This path used to pass `undefined`
-      // for both and file the real text under `details.message` alone, so the
-      // ky adapter answered `API Error: UNKNOWN_ERROR` where the bare-fetch
-      // path answered "Unable to connect" — same failure, same client, two
-      // different stories.
-      throw new ApiError(
-        'UNKNOWN_ERROR',
-        status,
-        msg ? { message: msg } : undefined,
-        msg,
-        undefined,
-        responseTraceId(response),
-        { cause: error },
+      return await cancellation.run(() =>
+        readResponse<T>(client[method](url, kyOptions), options.responseType),
       );
+    } catch (error) {
+      throw requestFailure(error, emit);
     }
   }
 

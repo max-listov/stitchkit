@@ -1,5 +1,5 @@
 import type { ContractDef, EndpointDef } from '../contract/define';
-import { mergeMeta } from '../contract/define';
+import { mergeMeta } from '../contract/runtime-context';
 import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import type { MethodDef } from './types';
 

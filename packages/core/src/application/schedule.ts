@@ -114,6 +114,143 @@ export interface ManagedSchedule extends ManagedResource {
 const DEFAULT_OVERLAP: ManagedScheduleOverlap = { mode: 'skip' };
 
 /** Create one fixed-rate, process-local periodic application resource. */
+interface ScheduleCounts {
+  runsStarted: number;
+  runsCompleted: number;
+  runsFailed: number;
+  ticksSkipped: number;
+  lastScheduledAt: string | null;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+}
+
+function scheduleState(
+  activated: boolean,
+  stopped: boolean,
+  accepting: boolean,
+  active: number,
+): ManagedScheduleStatus['state'] {
+  if (!activated) return stopped ? 'stopped' : 'inactive';
+  if (!accepting) return active > 0 ? 'draining' : 'stopped';
+  return active > 0 ? 'running' : 'scheduled';
+}
+
+/** A monotonic instant on the wall clock, through one captured anchor. */
+function wallAt(
+  monotonicAt: number | null,
+  anchor: { readonly monotonicNow: number; readonly wallNow: number },
+): string | null {
+  if (monotonicAt === null) return null;
+  return new Date(anchor.wallNow + monotonicAt - anchor.monotonicNow).toISOString();
+}
+
+/** What a due tick does under the overlap policy, given how many runs are active. */
+function overlapDecision(
+  overlap: ManagedScheduleOverlap,
+  active: number,
+): 'start' | 'queue' | 'skip' {
+  if (overlap.mode === 'skip') return active > 0 ? 'skip' : 'start';
+  if (overlap.mode === 'queue-one') return active > 0 ? 'queue' : 'start';
+  return active >= overlap.maxConcurrent ? 'skip' : 'start';
+}
+
+function reportScheduleError(
+  config: ManagedScheduleConfig,
+  error: unknown,
+  context: ManagedScheduleRunContext,
+): void {
+  if (!config.onError) return;
+  void Promise.resolve()
+    .then(() => config.onError?.(error, context))
+    .catch(() => {
+      // Error diagnostics cannot fail the schedule or create an unhandled rejection.
+    });
+}
+
+/** Wait for the active runs to settle, or for the signal or the deadline first. */
+async function waitForSettled(
+  active: ReadonlySet<Promise<void>>,
+  clock: ManagedScheduleClock,
+  context: ManagedResourceContext,
+  deadlineAt: number | undefined,
+): Promise<void> {
+  if (active.size === 0 || context.signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let deadlineTimer: ManagedScheduleTimer | null = null;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      deadlineTimer?.cancel();
+      context.signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    context.signal.addEventListener('abort', finish, { once: true });
+    if (deadlineAt !== undefined) {
+      deadlineTimer = clock.schedule(finish, Math.max(0, deadlineAt - context.now()));
+    }
+    void Promise.allSettled([...active]).then(finish);
+  });
+}
+
+interface RunDeps {
+  readonly config: ManagedScheduleConfig;
+  readonly descriptor: ManagedScheduleDescriptor;
+  readonly clock: ManagedScheduleClock;
+  readonly counts: ScheduleCounts;
+  readonly resourceContext: ManagedResourceContext;
+  changed(): void;
+  stopAdmission(): void;
+  isAccepting(): boolean;
+}
+
+/**
+ * One execution of the schedule's `run`, counted and timestamped, with its
+ * outcome turned into health under the error policy. Never rejects.
+ */
+async function executeRun(deps: RunDeps, scheduledAt: number): Promise<void> {
+  const { config, descriptor, clock, counts, resourceContext } = deps;
+  const startedAt = clock.now();
+  const wallStartedAt = clock.wallNow().getTime();
+  const runContext: ManagedScheduleRunContext = {
+    applicationId: resourceContext.applicationId,
+    signal: resourceContext.signal,
+    scheduledAt,
+    startedAt,
+    now: () => clock.now(),
+  };
+  counts.runsStarted += 1;
+  counts.lastScheduledAt = new Date(wallStartedAt + scheduledAt - startedAt).toISOString();
+  counts.lastStartedAt = new Date(wallStartedAt).toISOString();
+  deps.changed();
+  try {
+    // A microtask first, as before: `run` never starts inside the tick that armed it.
+    await Promise.resolve();
+    await config.run(runContext);
+  } catch (error) {
+    counts.runsFailed += 1;
+    counts.lastFinishedAt = clock.wallNow().toISOString();
+    reportScheduleError(config, error, runContext);
+    if (descriptor.errorPolicy === 'stop-schedule') {
+      resourceContext.reportHealth('unhealthy');
+      deps.stopAdmission();
+    } else {
+      resourceContext.reportHealth('degraded');
+    }
+    return;
+  }
+  counts.runsCompleted += 1;
+  counts.lastFinishedAt = clock.wallNow().toISOString();
+  if (descriptor.errorPolicy === 'continue' && deps.isAccepting()) {
+    resourceContext.reportHealth('healthy');
+  }
+}
+
+/** How many whole intervals a late timer spans: at least one, the tick it fired for. */
+function elapsedIntervals(scheduledAt: number, observedAt: number, everyMs: number): number {
+  return Math.max(1, Math.floor((observedAt - scheduledAt) / everyMs) + 1);
+}
+
 export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSchedule {
   const descriptor = ManagedScheduleDescriptorSchema.parse({
     id: config.id,
@@ -133,13 +270,15 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
   let activationContext: ManagedResourceContext | null = null;
   let nextRunAt: number | null = null;
   let queuedAt: number | null = null;
-  let runsStarted = 0;
-  let runsCompleted = 0;
-  let runsFailed = 0;
-  let ticksSkipped = 0;
-  let lastScheduledAt: string | null = null;
-  let lastStartedAt: string | null = null;
-  let lastFinishedAt: string | null = null;
+  const counts: ScheduleCounts = {
+    runsStarted: 0,
+    runsCompleted: 0,
+    runsFailed: 0,
+    ticksSkipped: 0,
+    lastScheduledAt: null,
+    lastStartedAt: null,
+    lastFinishedAt: null,
+  };
   let changedAt = clock.wallNow().toISOString();
   const active = new Set<Promise<void>>();
 
@@ -163,49 +302,20 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
     changed();
   };
 
-  const reportError = (error: unknown, context: ManagedScheduleRunContext): void => {
-    if (!config.onError) return;
-    void Promise.resolve()
-      .then(() => config.onError?.(error, context))
-      .catch(() => {
-        // Error diagnostics cannot fail the schedule or create an unhandled rejection.
-      });
-  };
-
-  const state = (): ManagedScheduleStatus['state'] => {
-    if (!activated) return stopped ? 'stopped' : 'inactive';
-    if (!accepting) return active.size > 0 ? 'draining' : 'stopped';
-    return active.size > 0 ? 'running' : 'scheduled';
-  };
-
-  const wallAt = (
-    monotonicAt: number | null,
-    anchor: { readonly monotonicNow: number; readonly wallNow: number },
-  ): string | null => {
-    if (monotonicAt === null) return null;
-    return new Date(anchor.wallNow + monotonicAt - anchor.monotonicNow).toISOString();
-  };
-
   const status = (): ManagedScheduleStatus => {
     const captured = clock.wallNow();
     const anchor = { monotonicNow: clock.now(), wallNow: captured.getTime() };
     return ManagedScheduleStatusSchema.parse({
       descriptor,
-      state: state(),
+      state: scheduleState(activated, stopped, accepting, active.size),
       revision,
       capturedAt: captured.toISOString(),
       changedAt,
       accepting,
       active: active.size,
       queued: queuedAt !== null,
-      runsStarted,
-      runsCompleted,
-      runsFailed,
-      ticksSkipped,
+      ...counts,
       nextRunAt: wallAt(nextRunAt, anchor),
-      lastScheduledAt,
-      lastStartedAt,
-      lastFinishedAt,
     });
   };
 
@@ -222,77 +332,36 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
   startExecution = (scheduledAt): void => {
     const resourceContext = activationContext;
     if (!accepting || !resourceContext) return;
-    const startedAt = clock.now();
-    const wallStartedAt = clock.wallNow().getTime();
-    const runContext: ManagedScheduleRunContext = {
-      applicationId: resourceContext.applicationId,
-      signal: resourceContext.signal,
+    const tracked = executeRun(
+      {
+        config,
+        descriptor,
+        clock,
+        counts,
+        resourceContext,
+        changed,
+        stopAdmission,
+        isAccepting: () => accepting,
+      },
       scheduledAt,
-      startedAt,
-      now: () => clock.now(),
-    };
-    runsStarted += 1;
-    lastScheduledAt = new Date(wallStartedAt + scheduledAt - startedAt).toISOString();
-    lastStartedAt = new Date(wallStartedAt).toISOString();
-    changed();
-
-    let tracked: Promise<void>;
-    tracked = Promise.resolve()
-      .then(() => config.run(runContext))
-      .then(
-        () => {
-          runsCompleted += 1;
-          lastFinishedAt = clock.wallNow().toISOString();
-          if (descriptor.errorPolicy === 'continue' && accepting) {
-            resourceContext.reportHealth('healthy');
-          }
-        },
-        (error: unknown) => {
-          runsFailed += 1;
-          lastFinishedAt = clock.wallNow().toISOString();
-          reportError(error, runContext);
-          if (descriptor.errorPolicy === 'stop-schedule') {
-            resourceContext.reportHealth('unhealthy');
-            stopAdmission();
-          } else {
-            resourceContext.reportHealth('degraded');
-          }
-        },
-      )
-      .finally(() => {
-        active.delete(tracked);
-        changed();
-        settleExecution();
-      });
+    ).finally(() => {
+      active.delete(tracked);
+      changed();
+      settleExecution();
+    });
     active.add(tracked);
   };
 
   const dispatchTick = (scheduledAt: number): void => {
     if (!accepting) return;
-    if (descriptor.overlap.mode === 'skip') {
-      if (active.size > 0) {
-        ticksSkipped += 1;
-        changed();
-        return;
-      }
+    const decision = overlapDecision(descriptor.overlap, active.size);
+    if (decision === 'start') {
       startExecution(scheduledAt);
       return;
     }
-    if (descriptor.overlap.mode === 'queue-one') {
-      if (active.size > 0) {
-        queuedAt = scheduledAt;
-        changed();
-        return;
-      }
-      startExecution(scheduledAt);
-      return;
-    }
-    if (active.size >= descriptor.overlap.maxConcurrent) {
-      ticksSkipped += 1;
-      changed();
-      return;
-    }
-    startExecution(scheduledAt);
+    if (decision === 'queue') queuedAt = scheduledAt;
+    else counts.ticksSkipped += 1;
+    changed();
   };
 
   const arm = (): void => {
@@ -302,43 +371,19 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
       timer = null;
       if (!accepting || nextRunAt === null) return;
       const scheduledAt = nextRunAt;
-      const observedAt = clock.now();
-      const elapsedIntervals = Math.max(
-        1,
-        Math.floor((observedAt - scheduledAt) / descriptor.everyMs) + 1,
-      );
-      if (elapsedIntervals > 1) {
-        ticksSkipped += elapsedIntervals - 1;
+      const elapsed = elapsedIntervals(scheduledAt, clock.now(), descriptor.everyMs);
+      if (elapsed > 1) {
+        counts.ticksSkipped += elapsed - 1;
         changed();
       }
-      nextRunAt = scheduledAt + elapsedIntervals * descriptor.everyMs;
+      nextRunAt = scheduledAt + elapsed * descriptor.everyMs;
       arm();
       dispatchTick(scheduledAt);
     }, delayMs);
   };
 
-  const waitForActive = async (
-    context: ManagedResourceContext,
-    deadlineAt: number | undefined,
-  ): Promise<void> => {
-    if (active.size === 0 || context.signal.aborted) return;
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      let deadlineTimer: ManagedScheduleTimer | null = null;
-      const finish = (): void => {
-        if (settled) return;
-        settled = true;
-        deadlineTimer?.cancel();
-        context.signal.removeEventListener('abort', finish);
-        resolve();
-      };
-      context.signal.addEventListener('abort', finish, { once: true });
-      if (deadlineAt !== undefined) {
-        deadlineTimer = clock.schedule(finish, Math.max(0, deadlineAt - context.now()));
-      }
-      void Promise.allSettled([...active]).then(finish);
-    });
-  };
+  const waitForActive = (context: ManagedResourceContext, deadlineAt: number | undefined) =>
+    waitForSettled(active, clock, context, deadlineAt);
 
   const drain = async (context: ManagedResourceContext): Promise<void> => {
     stopAdmission();

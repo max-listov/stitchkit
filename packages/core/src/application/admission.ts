@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import {
+  type KeyRecord,
+  pruneExpired,
+  type RateSample,
+  removeSample,
+  retryAfter,
+} from './admission-rate';
+import { runAdmitted } from './admission-run';
 import type { ApplicationAdmission, ApplicationOperationLease } from './kernel-contract';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
@@ -217,15 +225,50 @@ export class BoundedOperationWaitError extends Error {
   }
 }
 
-interface RateSample {
-  readonly at: number;
-}
+const NO_REFUSALS: Readonly<Record<BoundedAdmissionRefusalReason, number>> = {
+  'not-accepting': 0,
+  'global-concurrency': 0,
+  'key-required': 0,
+  'key-capacity': 0,
+  'key-concurrency': 0,
+  'global-rate': 0,
+  'key-rate': 0,
+  upstream: 0,
+};
 
-interface KeyRecord {
-  active: number;
-  readonly rate: RateSample[];
-  /** Resolved once when this record was created; dropped with it on eviction. */
-  readonly limits: BoundedAdmissionPerKeyLimits | undefined;
+/** Wait until the last lease is released, or until the timeout or the signal. */
+async function waitForDrain(
+  drainWaiters: Set<() => void>,
+  options: BoundedAdmissionDrainOptions,
+): Promise<void> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abort = (): void => controller.abort();
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.timeoutMs !== undefined) {
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0) {
+      throw new TypeError('drain timeoutMs must be a non-negative safe integer');
+    }
+    timer = setTimeout(abort, options.timeoutMs);
+  }
+  let resolveDrained: (() => void) | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        resolveDrained = resolve;
+        drainWaiters.add(resolve);
+      }),
+      new Promise<void>((resolve) => {
+        if (controller.signal.aborted) resolve();
+        else controller.signal.addEventListener('abort', () => resolve(), { once: true });
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
+    if (resolveDrained) drainWaiters.delete(resolveDrained);
+  }
 }
 
 /** Process-local, no-queue admission with explicit finite concurrency/rate budgets. */
@@ -235,16 +278,7 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   const keys = new Map<string, KeyRecord>();
   const globalRate: RateSample[] = [];
   const drainWaiters = new Set<() => void>();
-  const refusals: Record<BoundedAdmissionRefusalReason, number> = {
-    'not-accepting': 0,
-    'global-concurrency': 0,
-    'key-required': 0,
-    'key-capacity': 0,
-    'key-concurrency': 0,
-    'global-rate': 0,
-    'key-rate': 0,
-    upstream: 0,
-  };
+  const refusals: Record<BoundedAdmissionRefusalReason, number> = { ...NO_REFUSALS };
   let state: BoundedAdmissionState = 'accepting';
   let active = 0;
   let accepted = 0;
@@ -279,26 +313,7 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
     });
   };
 
-  const pruneRate = (samples: RateSample[], intervalMs: number, at: number): void => {
-    let expired = 0;
-    while (expired < samples.length && at - (samples[expired]?.at ?? at) >= intervalMs) {
-      expired += 1;
-    }
-    if (expired > 0) samples.splice(0, expired);
-  };
-
-  const prune = (at: number): void => {
-    if (policy.global.rate) pruneRate(globalRate, policy.global.rate.intervalMs, at);
-    for (const [key, record] of keys) {
-      if (record.limits?.rate) {
-        pruneRate(record.rate, record.limits.rate.intervalMs, at);
-      }
-      if (record.active === 0 && record.rate.length === 0) keys.delete(key);
-    }
-  };
-
-  const retryAfter = (samples: RateSample[], budget: BoundedRateBudget, at: number): number =>
-    Math.max(1, Math.ceil(budget.intervalMs - (at - (samples[0]?.at ?? at))));
+  const prune = (at: number): void => pruneExpired(policy, globalRate, keys, at);
 
   const refuse = (
     reason: BoundedAdmissionRefusalReason,
@@ -328,14 +343,8 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   ): void => {
     active -= 1;
     if (keyRecord) keyRecord.active -= 1;
-    if (globalSample) {
-      const index = globalRate.indexOf(globalSample);
-      if (index >= 0) globalRate.splice(index, 1);
-    }
-    if (keySample && keyRecord) {
-      const index = keyRecord.rate.indexOf(keySample);
-      if (index >= 0) keyRecord.rate.splice(index, 1);
-    }
+    removeSample(globalRate, globalSample);
+    if (keyRecord) removeSample(keyRecord.rate, keySample);
     if (key !== undefined && keyRecord?.active === 0 && keyRecord.rate.length === 0) {
       keys.delete(key);
     }
@@ -435,90 +444,15 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   ): Promise<BoundedAdmissionDrainResult> => {
     stopAdmission();
     if (active === 0) return { drained: true, remaining: 0 };
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const abort = (): void => controller.abort();
-    if (options.signal?.aborted) abort();
-    else options.signal?.addEventListener('abort', abort, { once: true });
-    if (options.timeoutMs !== undefined) {
-      if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0) {
-        throw new TypeError('drain timeoutMs must be a non-negative safe integer');
-      }
-      timer = setTimeout(abort, options.timeoutMs);
-    }
-    let resolveDrained: (() => void) | undefined;
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          resolveDrained = resolve;
-          drainWaiters.add(resolve);
-        }),
-        new Promise<void>((resolve) => {
-          if (controller.signal.aborted) resolve();
-          else controller.signal.addEventListener('abort', () => resolve(), { once: true });
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abort);
-      if (resolveDrained) drainWaiters.delete(resolveDrained);
-    }
+    await waitForDrain(drainWaiters, options);
     return { drained: active === 0, remaining: active };
   };
 
-  const run = async <T>(
+  const run = <T>(
     key: string | undefined,
     work: (context: BoundedOperationRunContext) => T | Promise<T>,
     options: BoundedOperationRunOptions = {},
-  ): Promise<T> => {
-    if (options.timeoutMs !== undefined) {
-      if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0) {
-        throw new TypeError('run timeoutMs must be a non-negative safe integer');
-      }
-    }
-    if (options.signal?.aborted) throw new BoundedOperationWaitError('cancelled');
-    const admission = acquire(key);
-    if (admission.outcome === 'refused') {
-      throw new BoundedAdmissionRefusalError(admission.reason, admission.retryAfterMs);
-    }
-
-    const workAbort = new AbortController();
-    const abortWork = (): void => workAbort.abort(options.signal?.reason);
-    options.signal?.addEventListener('abort', abortWork, { once: true });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-    if (options.timeoutMs !== undefined) {
-      timer = setTimeout(() => {
-        timedOut = true;
-        workAbort.abort(new DOMException('Operation wait timed out', 'TimeoutError'));
-      }, options.timeoutMs);
-    }
-
-    const outcome = Promise.resolve()
-      .then(() => work({ signal: workAbort.signal }))
-      .then(
-        (value) => ({ kind: 'value' as const, value }),
-        (error: unknown) => ({ kind: 'error' as const, error }),
-      )
-      .finally(() => admission.lease.release());
-    const callerDone = new Promise<{ kind: 'caller' }>((resolve) => {
-      const settle = (): void => resolve({ kind: 'caller' });
-      if (workAbort.signal.aborted) settle();
-      else workAbort.signal.addEventListener('abort', settle, { once: true });
-    });
-
-    try {
-      const settled = await Promise.race([outcome, callerDone]);
-      if (settled.kind === 'caller') {
-        throw new BoundedOperationWaitError(timedOut ? 'timed-out' : 'cancelled');
-      }
-      if (settled.kind === 'error') throw settled.error;
-      return settled.value;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      options.signal?.removeEventListener('abort', abortWork);
-    }
-  };
+  ): Promise<T> => runAdmitted(acquire, key, work, options);
 
   return {
     acquire,

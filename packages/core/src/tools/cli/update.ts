@@ -8,10 +8,11 @@
  * most once per interval, and silent on every failure; replacing the binary is
  * an explicit command.
  */
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { writeFileAtomic } from '../../internal/atomic-file';
+import { writeFileAtomicSync } from '../../internal/atomic-file';
 import { fetchGuarded, PrivateAddressRefusal, readCapped } from '../../internal/secure-fetch';
 import {
   type CliBuildAsset,
@@ -31,6 +32,7 @@ import {
 const DEFAULT_CHECK_TIMEOUT_MS = 2_000;
 const DEFAULT_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const DEFAULT_VERIFY_TIMEOUT_MS = 30_000;
 const MANIFEST_MAX_BYTES = 256 * 1_024;
 /** A compiled single-platform CLI is tens of megabytes; this is the ceiling. */
 const DEFAULT_MAX_ASSET_BYTES = 256 * 1_024 * 1_024;
@@ -202,6 +204,25 @@ export interface CliUpdateApplyConfig {
    * point of a backup is to be runnable.
    */
   backupPath?: string;
+  /**
+   * Prove the new build starts before it replaces anything.
+   *
+   * The verified bytes are written beside the target as an executable
+   * candidate, and this runs with its path — a path rather than a command,
+   * because a JavaScript bundle is started through its runtime
+   * (`bun <candidate> version`). It runs before the backup and the replacement:
+   * if it throws, or outlives `verifyTimeoutMs`, the candidate is removed, the
+   * target and any earlier backup are untouched, and the update is refused with
+   * the reason as its cause.
+   *
+   * Without it the digest proves the bytes are the ones published, not that
+   * they load. A build that does not load, installed by a daemon that updates
+   * itself, takes the updater down with it, and every machine is then repaired
+   * by hand.
+   */
+  verify?: (candidatePath: string, signal: AbortSignal) => void | Promise<void>;
+  /** How long `verify` may take, in milliseconds; its `signal` aborts at the deadline. Default 30 000. */
+  verifyTimeoutMs?: number;
 }
 
 export interface AppliedCliUpdate {
@@ -283,14 +304,66 @@ export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<Appl
     );
   }
 
+  if (config.verify)
+    await verifyCandidate(target, bytes, config.verify, config.verifyTimeoutMs);
   const backup = config.backupPath ? keepReplacedBinary(target, config.backupPath) : undefined;
-  writeFileAtomic(target, bytes, 0o755);
+  writeFileAtomicSync(target, bytes, { mode: 0o755 });
   return {
     path: target,
     bytes: bytes.length,
     sha256,
     ...(backup && { backupPath: backup.path, backupSha256: backup.sha256 }),
   };
+}
+
+/**
+ * Write the candidate beside the target, run `verify` on it within its deadline,
+ * and remove it whatever the answer. The target is then written from the
+ * digest-checked bytes in memory, not from the candidate file, so nothing the
+ * candidate did while it ran can change what is installed.
+ */
+async function verifyCandidate(
+  target: string,
+  bytes: Uint8Array,
+  verify: NonNullable<CliUpdateApplyConfig['verify']>,
+  timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
+): Promise<void> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError('[stitchkit] update: verifyTimeoutMs must be a positive number');
+  }
+  // The extension is kept: a runtime picks its loader by it.
+  const candidate = join(
+    dirname(target),
+    `.${basename(target)}.candidate-${randomBytes(8).toString('hex')}${extname(target)}`,
+  );
+  writeFileAtomicSync(candidate, bytes, { mode: 0o755 });
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`verification did not finish within ${timeoutMs} ms`);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => verify(candidate, controller.signal)),
+      deadline,
+    ]);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`[stitchkit] update: the new build failed verification — ${reason}`, {
+      cause: error,
+    });
+  } finally {
+    clearTimeout(timer);
+    try {
+      unlinkSync(candidate);
+    } catch {
+      // Already removed by the verifier; there is nothing left beside the target.
+    }
+  }
 }
 
 /**
@@ -305,7 +378,7 @@ function keepReplacedBinary(
 ): { path: string; sha256: string } | undefined {
   if (!existsSync(target)) return undefined;
   const previous = readFileSync(target);
-  writeFileAtomic(backupPath, previous, statSync(target).mode & 0o777);
+  writeFileAtomicSync(backupPath, previous, { mode: statSync(target).mode & 0o777 });
   return { path: backupPath, sha256: createHash('sha256').update(previous).digest('hex') };
 }
 
@@ -350,6 +423,6 @@ export function rollbackCliUpdate(config: CliRollbackConfig): RolledBackCliUpdat
       `[stitchkit] rollback: backup digest ${sha256} does not match the expected ${config.expectedSha256} — refusing to restore it`,
     );
   }
-  writeFileAtomic(target, bytes, statSync(config.backupPath).mode & 0o777);
+  writeFileAtomicSync(target, bytes, { mode: statSync(config.backupPath).mode & 0o777 });
   return { path: target, bytes: bytes.length, sha256 };
 }

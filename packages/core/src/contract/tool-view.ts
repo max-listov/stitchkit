@@ -91,6 +91,17 @@ export interface SlicedToolView<E, V extends ZodType> {
   project?: undefined;
 }
 
+/**
+ * A tool view that changes only what a tool call is given: the answer is the
+ * endpoint's full `output`, exactly as HTTP answers. The most common view — a
+ * model needs a lighter call, not a different answer.
+ */
+export interface DefaultsOnlyToolView<E> {
+  defaults: EndpointInputDefaults<E>;
+  output?: undefined;
+  project?: undefined;
+}
+
 /** The type error a slice produces when the full result does not fit its schema. */
 export interface ToolViewSliceMismatch {
   'toolView.output must accept the full output — add a project, or narrow the schema': never;
@@ -133,9 +144,15 @@ export type WithToolView<E> = Omit<E, 'tool'> & {
  * ```
  *
  * A view without `project` slices the full result by `output`; the full
- * result must then fit that schema, which the return type checks. The view
- * lands in `tool.view`, beside the endpoint's other tool options.
+ * result must then fit that schema, which the return type checks. A view of
+ * `defaults` alone changes only the tool call's input — the answer is the full
+ * `output`, as on HTTP. The view lands in `tool.view`, beside the endpoint's
+ * other tool options.
  */
+export function withToolView<const E extends ToolViewEndpoint>(
+  endpoint: E & ToolTransportEndpoint<E>,
+  view: DefaultsOnlyToolView<E>,
+): WithToolView<E>;
 export function withToolView<const E extends ToolViewEndpoint, V extends ZodType>(
   endpoint: E & ToolTransportEndpoint<E>,
   view: ProjectedToolView<E, V>,
@@ -192,14 +209,18 @@ export function assertToolView(prefix: string, key: string, ep: EndpointDef): vo
   if (project !== undefined && typeof project !== 'function') {
     throw new Error(`${where}.project must be a function`);
   }
-  if (output === undefined && project === undefined) {
-    throw new Error(`${where} declares neither output nor project — it would change nothing`);
-  }
-
   const defaults: unknown = view.defaults;
-  if (defaults === undefined) return;
-  if (!isRecord(defaults)) throw new Error(`${where}.defaults must be an object`);
-  const entries = Object.entries(defaults);
+  if (defaults !== undefined && !isRecord(defaults)) {
+    throw new Error(`${where}.defaults must be an object`);
+  }
+  const entries = defaults === undefined ? [] : Object.entries(defaults);
+  // A view of defaults alone changes the tool call's input and keeps the full
+  // answer; one with none of the three changes nothing, and is a mistake.
+  if (output === undefined && project === undefined && entries.length === 0) {
+    throw new Error(
+      `${where} declares no defaults, output or project — it would change nothing`,
+    );
+  }
   if (entries.length === 0) return;
   if (!(ep.input instanceof z.ZodObject)) {
     throw new Error(`${where}.defaults needs an object input schema to name keys of`);

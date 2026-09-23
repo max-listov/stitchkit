@@ -1,6 +1,6 @@
-import type { RuntimeContext } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { errorCode, normalizeError, recordedErrorMessage } from '../contract/normalize';
+import type { RuntimeContext } from '../contract/runtime-context';
 import type { ClientIpOptions } from '../internal/request';
 import { isRecord } from '../internal/typed';
 import { getRequestContext, setRequestError } from '../observability/context';

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { normalizeError } from '../src/contract/normalize';
 import { AppError, badRequest } from '../src/entrypoints/contract';
-import { toolResultFromError } from '../src/tools/execute';
+import { toolResultFromError } from '../src/tools/execute-result';
 
 const BRAND = Symbol.for('stitchkit.AppError');
 

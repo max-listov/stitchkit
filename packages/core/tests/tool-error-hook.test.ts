@@ -12,7 +12,9 @@ import { z } from 'zod';
 import { AppError } from '../src/entrypoints/contract';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
 import { mountAgent } from '../src/tools/agent';
-import { executeToolMethod, type ToolCallHooks, type ToolResult } from '../src/tools/execute';
+import { executeToolMethod } from '../src/tools/execute';
+import type { ToolCallHooks } from '../src/tools/execute-hooks';
+import type { ToolResult } from '../src/tools/execute-result';
 
 function makeMethod(
   overrides: Partial<MethodDef<unknown, unknown, unknown>> = {},

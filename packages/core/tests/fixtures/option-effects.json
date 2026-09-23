@@ -365,5 +365,38 @@
     "project": {
       "test": "a call gets the projected card, and the handler was asked to load nothing"
     }
+  },
+  "ExclusiveLockOptions": {
+    "label": {
+      "test": "a timeout names the resource and whoever holds it"
+    },
+    "timeoutMs": {
+      "test": "a timeout names the resource and whoever holds it"
+    },
+    "signal": {
+      "test": "an abort stops the wait at once, not at the deadline"
+    },
+    "mode": {
+      "test": "the lock file carries the mode asked for"
+    },
+    "machineIdentity": {
+      "test": "a dead pid recorded by another machine is not ours to judge"
+    },
+    "ownerlessGraceMs": {
+      "test": "an ownerless lock is taken once it is older than the grace period set"
+    }
+  },
+  "WriteFileAtomicOptions": {
+    "mode": {
+      "test": "the mode is the one asked for, not what the umask leaves of it"
+    }
+  },
+  "EffectRunOptions": {
+    "signal": {
+      "test": "an abort before the start records nothing, and the effect can still run"
+    },
+    "reconcileTimeoutMs": {
+      "test": "a reconcile that overruns leaves the intent to be asked again"
+    }
   }
 }

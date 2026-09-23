@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import type { AgentCodingToolDefinition } from './coding-tool-contract';
-import { walkContainedFiles } from './contained-files';
+import { walkContainedFiles } from './contained-scan';
 import type { AgentHarnessResource, AgentHarnessResourceResult } from './harness-contract';
 
 export const AgentHarnessFileRootSchema = z

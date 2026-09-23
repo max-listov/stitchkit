@@ -229,6 +229,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0197](0197-the-agent-runtime-is-a-product-behind-a-one-way-boundary.md) | The agent runtime is a product behind a one-way boundary | Accepted — stays in the package; the core never imports `agent-runtime/` (gated); durability moved to a neutral part; physical split has a named trigger | I15 |
 | [0198](0198-stable-is-earned-and-kept-on-a-budget.md) | Stable is earned, and kept on a budget | Accepted — amends 0103 ("the level changes no versioning policy"): promotion needs two independent consumers, a stable entrypoint breaks in at most one minor per 7 days with an ADR, every breaking entry leads with its entrypoints; from 0.94.0 | I14 |
 | [0199](0199-one-owner-per-name-and-one-way-per-job.md) | One owner per name, one way per job: the 0.94 consolidation | Accepted — duplicate public names moved to their owners, one canonical JSON, one MCP registration, one tool transport type, a public-surface budget, a declared import graph | I8 |
+| [0200](0200-an-effect-is-recorded-before-it-runs.md) | An effect is recorded before it runs, and settled only by its recipient | Accepted — `durability.effect`: intent before `run`, outcome after; an intent without an outcome is reconciled, never run again; `uncertain` is a recorded, final answer; amends 0182's "make effects idempotent" for effects that cannot be | I8 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

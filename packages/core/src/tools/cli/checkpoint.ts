@@ -12,7 +12,7 @@
  * it was there to prevent.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { writeFileAtomic } from '../../internal/atomic-file';
+import { writeFileAtomicSync } from '../../internal/atomic-file';
 import { safeJsonParse } from '../../internal/safe-json';
 import { argumentsDigest } from '../../internal/stable-digest';
 import { isRecord } from '../../internal/typed';
@@ -66,9 +66,7 @@ export function readCliCheckpoint(path: string): CliCheckpoint {
 
 /** Persist the checkpoint atomically. */
 export function writeCliCheckpoint(path: string, checkpoint: CliCheckpoint): void {
-  writeFileAtomic(
-    path,
-    Buffer.from(`${JSON.stringify({ entries: checkpoint.entries }, null, 2)}\n`, 'utf8'),
-    0o600,
-  );
+  writeFileAtomicSync(path, `${JSON.stringify({ entries: checkpoint.entries }, null, 2)}\n`, {
+    mode: 0o600,
+  });
 }

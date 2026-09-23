@@ -6,13 +6,9 @@ import type { ZodObject, z } from 'zod';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
 import { assertUniqueToolName } from '../names';
 import { buildToolPresentationSchema } from '../schema/presentation';
-import {
-  CliArgumentError,
-  type CliArgvRoute,
-  extractCliGlobalOptions,
-  RESERVED_CLI_OPTIONS,
-  routeCliArgv,
-} from './args';
+import { extractCliGlobalOptions } from './args';
+import { type CliArgvRoute, RESERVED_CLI_OPTIONS, routeCliArgv } from './args-route';
+import { CliArgumentError } from './argument-error';
 import { type CliCommandDefinition, cliCommandPresentationSchema } from './command';
 import type { CliConfig } from './config';
 import { DEFAULT_EXIT_CODES, type EmitOptions } from './format';

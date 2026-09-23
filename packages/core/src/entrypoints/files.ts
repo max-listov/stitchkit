@@ -17,3 +17,15 @@ export {
   type ManagedFileSource,
   type ManagedFileWriteOptions,
 } from '../files/boundary';
+export {
+  type WriteFileAtomicOptions,
+  writeFileAtomic,
+  writeFileAtomicSync,
+} from '../internal/atomic-file';
+export {
+  type ExclusiveLock,
+  ExclusiveLockError,
+  type ExclusiveLockOptions,
+  type ExclusiveLockOwner,
+  withExclusiveLock,
+} from '../internal/with-exclusive-lock';

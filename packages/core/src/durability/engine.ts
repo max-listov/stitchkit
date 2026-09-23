@@ -1,18 +1,20 @@
 import type { z } from 'zod';
 import {
   DURABILITY_EVENT_EVENT_KIND,
-  DURABILITY_PARK_EVENT_KIND,
   DURABILITY_STEP_EVENT_KIND,
   type DurabilityClock,
+  type EffectHandlers,
+  type EffectOutcome,
+  type EffectRunOptions,
   type LocalStepDurability,
   type LocalStepDurabilityOptions,
-  ParkAbortedError,
-  ParkRecordDecodeError,
   StepAbortedError,
   type StepRunOptions,
 } from './contract';
+import { executeEffect } from './effect';
 import {
   type DurabilityLedgerView,
+  effectKey,
   encodeDeliveredPayload,
   encodeStepResult,
   readDurabilityLedger,
@@ -20,15 +22,13 @@ import {
   stepKey,
   waitParkKey,
 } from './ledger';
-import {
-  createParkWaiter,
-  notifyWaiters,
-  stores,
-  systemClock,
-  waitForDeadline,
-} from './scheduler';
+import { executeSleep, executeWait, type ParkContext } from './parks';
+import { notifyWaiters, stores, systemClock } from './scheduler';
 
 export type {
+  EffectHandlers,
+  EffectOutcome,
+  EffectRunOptions,
   LocalStepDurability,
   LocalStepDurabilityOptions,
   StepDurabilityLedger,
@@ -36,6 +36,7 @@ export type {
 } from './contract';
 export {
   DURABILITY_STEP_EVENT_KIND,
+  EffectUnresolvedError,
   ParkAbortedError,
   ParkRecordDecodeError,
   StepAbortedError,
@@ -75,14 +76,21 @@ export function createLocalStepDurability(
   const { store, conversationId, runId } = options;
   const inFlight = stores.get(store) ?? {
     steps: new Map(),
+    effects: new Map(),
     parks: new Map(),
     waiters: new Map(),
   };
   stores.set(store, inFlight);
-  const { steps: inFlightSteps, parks: inFlightParks, waiters: parkWaiters } = inFlight;
+  const {
+    steps: inFlightSteps,
+    effects: inFlightEffects,
+    parks: inFlightParks,
+    waiters: parkWaiters,
+  } = inFlight;
   const clock: DurabilityClock = options.clock ?? systemClock;
   const view: DurabilityLedgerView = {
     steps: new Map(),
+    effects: new Map(),
     parks: new Map(),
     deliveries: new Map(),
     nextSeq: 1,
@@ -93,6 +101,17 @@ export function createLocalStepDurability(
       .catch(() => view)
       .then(() => readDurabilityLedger(store, conversationId, view));
     return reading;
+  };
+
+  const park: ParkContext = {
+    store,
+    conversationId,
+    runId,
+    signal: options.signal,
+    subscribe: options.subscribe,
+    clock,
+    waiters: parkWaiters,
+    readLedger,
   };
 
   const readRecordedStep = async (name: string): Promise<unknown | undefined> => {
@@ -144,36 +163,27 @@ export function createLocalStepDurability(
     return detachedResult<T>(pending);
   };
 
-  const executeSleep = async (
+  const effect = <P extends z.infer<ReturnType<typeof z.json>>>(
     name: string,
-    seconds: number,
-    runOptions: StepRunOptions | undefined,
-  ): Promise<void> => {
-    const key = sleepParkKey(conversationId, runId, name);
-    const signal =
-      options.signal && runOptions?.signal
-        ? AbortSignal.any([options.signal, runOptions.signal])
-        : (runOptions?.signal ?? options.signal);
-    const ledger = await readLedger();
-    const existing = ledger.parks.get(key);
-    let deadline: number;
+    handlers: EffectHandlers<P>,
+    runOptions?: EffectRunOptions,
+  ): Promise<EffectOutcome<P>> => {
+    const key = effectKey(conversationId, runId, name);
+    const existing = inFlightEffects.get(key);
     if (existing) {
-      if (existing.kind !== 'sleep') {
-        throw new ParkRecordDecodeError(`Recorded park "${name}" is not a sleep record`);
-      }
-      deadline = existing.deadline;
-    } else {
-      deadline = clock.now() + seconds * 1000;
-      if (!Number.isSafeInteger(Math.ceil(deadline)))
-        throw new TypeError('Sleep deadline exceeds the supported clock range');
-      await store.appendEvent({
-        conversationId,
-        kind: DURABILITY_PARK_EVENT_KIND,
-        payload: { runId, kind: 'sleep', name, deadline },
-      });
+      // Same boundary as `step`: the registry is keyed by the durable key, so
+      // a second caller in this process shares the first one's single `run`.
+      return detachedResult<EffectOutcome<P>>(existing);
     }
-    if (signal?.aborted) throw new ParkAbortedError(name);
-    await waitForDeadline(clock, deadline, name, signal);
+    const pending = executeEffect<P>(
+      { store, conversationId, runId, signal: options.signal, readLedger },
+      name,
+      handlers,
+      runOptions,
+    );
+    inFlightEffects.set(key, pending);
+    releaseSettled(inFlightEffects, key, pending);
+    return detachedResult<EffectOutcome<P>>(pending);
   };
 
   const sleep = (
@@ -194,51 +204,10 @@ export function createLocalStepDurability(
       // the promise settles this exact park.
       return existing as Promise<void>;
     }
-    const pending = executeSleep(name, seconds, runOptions);
+    const pending = executeSleep(park, name, seconds, runOptions);
     inFlightParks.set(key, pending);
     releaseSettled(inFlightParks, key, pending);
     return pending;
-  };
-
-  const executeWait = async <T>(
-    eventName: string,
-    id: string,
-    runOptions: StepRunOptions | undefined,
-  ): Promise<T> => {
-    const key = waitParkKey(conversationId, runId, eventName, id);
-    const park = `${eventName}#${id}`;
-    const signal =
-      options.signal && runOptions?.signal
-        ? AbortSignal.any([options.signal, runOptions.signal])
-        : (runOptions?.signal ?? options.signal);
-    for (;;) {
-      if (signal?.aborted) throw new ParkAbortedError(park);
-      // Register before reading so a delivery landing during the read still
-      // wakes this waiter; a resolved promise is not lost by being awaited late.
-      const waiter = createParkWaiter(parkWaiters, key, signal);
-      let unsubscribe: (() => void) | undefined;
-      try {
-        unsubscribe = options.subscribe?.(() => notifyWaiters(parkWaiters, key));
-        const ledger = await readLedger();
-        if (ledger.deliveries.has(key)) {
-          // The ledger type-erases the payload by key; the wait's own generic is
-          // the only type available for a value already proven present.
-          return JSON.parse(JSON.stringify(ledger.deliveries.get(key))) as T;
-        }
-        if (!ledger.parks.has(key)) {
-          await store.appendEvent({
-            conversationId,
-            kind: DURABILITY_PARK_EVENT_KIND,
-            payload: { runId, kind: 'wait', event: eventName, id },
-          });
-        }
-        const outcome = await waiter.outcome;
-        if (outcome === 'aborted') throw new ParkAbortedError(park);
-      } finally {
-        waiter.cancel();
-        unsubscribe?.();
-      }
-    }
   };
 
   const waitFor = <T = unknown>(
@@ -252,7 +221,7 @@ export function createLocalStepDurability(
       // the promise settles this exact wait.
       return detachedResult<T>(existing);
     }
-    const pending = executeWait<T>(input.event, input.id, runOptions);
+    const pending = executeWait<T>(park, input.event, input.id, runOptions);
     inFlightParks.set(key, pending);
     releaseSettled(inFlightParks, key, pending);
     return detachedResult<T>(pending);
@@ -283,5 +252,6 @@ export function createLocalStepDurability(
     sleep,
     waitFor,
     deliver,
+    effect,
   };
 }

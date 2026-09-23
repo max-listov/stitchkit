@@ -1,5 +1,6 @@
 import type { ZodObject, ZodType, z } from 'zod';
-import type { EndpointToolAnnotations, ToolTransport } from '../../contract/define';
+import type { ToolTransport } from '../../contract/define';
+import type { EndpointToolAnnotations } from '../../contract/tool-options';
 import type {
   RuntimeToolDefinition,
   RuntimeToolDefinitionWithOutput,

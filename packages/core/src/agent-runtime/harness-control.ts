@@ -31,6 +31,65 @@ export interface AgentHarnessControlServerConfig {
 }
 
 /** Transport-neutral correlated control with observer attachments and exclusive mutation leases. */
+/**
+ * The operations that need the controller lease — interrupt, answer an
+ * approval, submit — once the lease is proven. Each answers with the snapshot
+ * the operation left behind.
+ */
+async function runControlledOperation<CONTEXT>(
+  harness: HeadlessAgentHarness<CONTEXT>,
+  request: Extract<
+    AgentControlRequest,
+    { operation: 'interrupt' | 'respond-approval' | 'submit' }
+  >,
+): Promise<AgentControlResponse> {
+  if (request.operation === 'interrupt') {
+    await harness.interrupt({
+      conversationId: request.conversationId,
+      runId: request.runId,
+    });
+    return AgentControlResponseSchema.parse({
+      schemaVersion: 1,
+      requestId: request.requestId,
+      outcome: 'ok',
+      snapshot: await harness.snapshot(request.conversationId),
+    });
+  }
+  if (request.operation === 'respond-approval') {
+    const ticket = await harness.respondToApproval({
+      conversationId: request.conversationId,
+      approvalId: request.approvalId,
+      approved: request.approved,
+      ...(request.reason && { reason: request.reason }),
+      context: request.context,
+      ...(request.metadata !== undefined && { metadata: request.metadata }),
+    });
+    const admission = await ticket.admission;
+    return AgentControlResponseSchema.parse({
+      schemaVersion: 1,
+      requestId: request.requestId,
+      outcome: 'ok',
+      runId: admission.runId,
+      snapshot: await harness.snapshot(request.conversationId),
+    });
+  }
+  const ticket = harness.submit({
+    conversationId: request.conversationId,
+    idempotencyKey: request.idempotencyKey,
+    context: request.context,
+    parts: request.parts,
+    ...(request.metadata !== undefined && { metadata: request.metadata }),
+  });
+  const admission = await ticket.admission;
+  return AgentControlResponseSchema.parse({
+    schemaVersion: 1,
+    requestId: request.requestId,
+    outcome: 'ok',
+    runId: admission.runId,
+    snapshot: await harness.snapshot(request.conversationId),
+  });
+}
+
 export function createAgentHarnessControlServer<CONTEXT>(
   harness: HeadlessAgentHarness<CONTEXT>,
   config: AgentHarnessControlServerConfig = {},
@@ -213,51 +272,7 @@ export function createAgentHarnessControlServer<CONTEXT>(
             ) {
               return fail('LEASE_REQUIRED', 'An active controller lease is required');
             }
-            if (request.operation === 'interrupt') {
-              await harness.interrupt({
-                conversationId: request.conversationId,
-                runId: request.runId,
-              });
-              return AgentControlResponseSchema.parse({
-                schemaVersion: 1,
-                requestId: request.requestId,
-                outcome: 'ok',
-                snapshot: await harness.snapshot(request.conversationId),
-              });
-            }
-            if (request.operation === 'respond-approval') {
-              const ticket = await harness.respondToApproval({
-                conversationId: request.conversationId,
-                approvalId: request.approvalId,
-                approved: request.approved,
-                ...(request.reason && { reason: request.reason }),
-                context: request.context,
-                ...(request.metadata !== undefined && { metadata: request.metadata }),
-              });
-              const admission = await ticket.admission;
-              return AgentControlResponseSchema.parse({
-                schemaVersion: 1,
-                requestId: request.requestId,
-                outcome: 'ok',
-                runId: admission.runId,
-                snapshot: await harness.snapshot(request.conversationId),
-              });
-            }
-            const ticket = harness.submit({
-              conversationId: request.conversationId,
-              idempotencyKey: request.idempotencyKey,
-              context: request.context,
-              parts: request.parts,
-              ...(request.metadata !== undefined && { metadata: request.metadata }),
-            });
-            const admission = await ticket.admission;
-            return AgentControlResponseSchema.parse({
-              schemaVersion: 1,
-              requestId: request.requestId,
-              outcome: 'ok',
-              runId: admission.runId,
-              snapshot: await harness.snapshot(request.conversationId),
-            });
+            return await runControlledOperation(harness, request);
           } catch {
             return fail('REQUEST_REJECTED', 'Control request was rejected');
           }
