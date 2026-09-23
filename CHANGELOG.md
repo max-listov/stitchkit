@@ -15,6 +15,23 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.95.1] — 2026-09-23
+
+### Added
+
+- `stitchkit/application/directory-inbox` (new, server, evolving) —
+  **`createDirectoryInbox({ id, directory, schema, handle })`**, with its
+  contract (`DirectoryInboxConfig`, `DirectoryInboxStateSchema`, …) in
+  `stitchkit/application`: a managed resource that delivers each `<name>.json` entry
+  another program drops into a directory to the application at least once,
+  after readiness. Taken and done are separate durable records — a claim with a
+  lease before `handle`, a receipt after it and only then the file removed — so
+  a restart neither loses an entry nor repeats a finished one. A throwing
+  handler is retried with a backoff; an entry that fails its schema, is too
+  large or used up `maxAttempts` is moved to `rejected/` with its reason and
+  the queue keeps flowing. `stopAdmission` stops taking entries, `force` aborts
+  the delivery in flight. A consuming project wrote this receiver by hand.
+
 ## [0.95.0] — 2026-09-23
 
 ### ⚠️ Breaking changes

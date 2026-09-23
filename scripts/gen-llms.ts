@@ -211,6 +211,7 @@ export const GUIDE_SLICES: GuideMap = {
       './application/grammy',
       './application/opentelemetry',
       './application/diagnostic-journal',
+      './application/directory-inbox',
       './application/schemas',
     ],
   },

@@ -1776,6 +1776,15 @@
     "DiagnosticJournalWaitOptions",
     "DiagnosticJournalWaitResult",
     "DiagnosticJournalWaitResultSchema",
+    "DirectoryInbox",
+    "DirectoryInboxConfig",
+    "DirectoryInboxDelivery",
+    "DirectoryInboxRejection",
+    "DirectoryInboxRejectionReason",
+    "DirectoryInboxRejectionReasonSchema",
+    "DirectoryInboxResource",
+    "DirectoryInboxState",
+    "DirectoryInboxStateSchema",
     "DrainingFact",
     "DroppedNotification",
     "EnqueueNotification",
@@ -1920,6 +1929,7 @@
     "createApplicationOpenTelemetry"
   ],
   "stitchkit/application/diagnostic-journal": ["createDiagnosticJournal"],
+  "stitchkit/application/directory-inbox": ["createDirectoryInbox"],
   "stitchkit/application/schemas": [
     "ApplicationAdmissionSnapshot",
     "ApplicationAdmissionSnapshotSchema",

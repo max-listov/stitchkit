@@ -398,5 +398,49 @@
     "reconcileTimeoutMs": {
       "test": "a reconcile that overruns leaves the intent to be asked again"
     }
+  },
+  "DirectoryInboxConfig": {
+    "id": {
+      "exempt": "the resource identity in the application graph, required and consumed by the kernel like every resource id"
+    },
+    "directory": {
+      "test": "a restart after the first entry delivers the second and never repeats the first"
+    },
+    "schema": {
+      "test": "an entry that fails its schema is set aside and the next is delivered"
+    },
+    "handle": {
+      "test": "a handler that throws leaves the entry, reports it and takes it again after a backoff"
+    },
+    "dependsOn": {
+      "test": "delivers only after activation, polls at pollIntervalMs and stops at stopAdmission"
+    },
+    "store": {
+      "test": "a supplied store holds the state instead of the directory file"
+    },
+    "clock": {
+      "test": "an entry taken by a process that died is taken again once its lease runs out"
+    },
+    "pollIntervalMs": {
+      "test": "delivers only after activation, polls at pollIntervalMs and stops at stopAdmission"
+    },
+    "leaseMs": {
+      "test": "an entry taken by a process that died is taken again once its lease runs out"
+    },
+    "maxAttempts": {
+      "test": "maxAttempts sets an entry aside instead of retrying it forever"
+    },
+    "maxEntryBytes": {
+      "test": "an entry over maxEntryBytes is set aside unread"
+    },
+    "retain": {
+      "test": "retain bounds the receipts kept"
+    },
+    "onRejected": {
+      "test": "an entry that fails its schema is set aside and the next is delivered"
+    },
+    "onError": {
+      "test": "a handler that throws leaves the entry, reports it and takes it again after a backoff"
+    }
   }
 }

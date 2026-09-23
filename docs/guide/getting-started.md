@@ -75,6 +75,7 @@ own, recorded as an ADR.
 | `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
 | `stitchkit/application/schemas` | browser + server | evolving | the application's snapshot, health and shutdown schemas alone, without the kernel |
 | `stitchkit/application/diagnostic-journal` | server | evolving | the local diagnostic journal — the one part of the kernel that spawns, locks and writes files |
+| `stitchkit/application/directory-inbox` | server | evolving | the directory inbox — entries another program drops into a directory, delivered to the application at least once |
 
 Rule of thumb: browser code imports `stitchkit` and `stitchkit/react`; server
 code adds `stitchkit/server` (or `stitchkit/node` on Node) and opts into

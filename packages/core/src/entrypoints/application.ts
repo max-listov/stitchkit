@@ -88,6 +88,17 @@ export {
   readDiagnosticJournalLockDiagnosis,
 } from '../application/diagnostic-journal-contract';
 export {
+  type DirectoryInbox,
+  type DirectoryInboxConfig,
+  type DirectoryInboxDelivery,
+  type DirectoryInboxRejection,
+  type DirectoryInboxRejectionReason,
+  DirectoryInboxRejectionReasonSchema,
+  type DirectoryInboxResource,
+  type DirectoryInboxState,
+  DirectoryInboxStateSchema,
+} from '../application/directory-inbox-contract';
+export {
   type ApplicationEventSink,
   type ApplicationEventSinkConfig,
   type ApplicationLifecycleEvent,

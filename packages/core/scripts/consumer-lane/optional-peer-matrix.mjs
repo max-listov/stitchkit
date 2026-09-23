@@ -488,6 +488,19 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'application-directory-inbox',
+    subpath: './application/directory-inbox',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    // Node, deliberately: it reads and moves files, which is why it is not in
+    // the browser-safe './application' barrel.
+    target: 'node',
+    source: featureSource('stitchkit/application/directory-inbox', 'createDirectoryInbox'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'application-schemas',
     subpath: './application/schemas',
     fixture: 'minimal',

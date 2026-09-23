@@ -50,6 +50,7 @@ const COVERED: Record<string, string> = {
   KeyspaceResourceConfig: 'entrypoints/application.ts',
   SqliteKeyspaceBackendConfig: 'entrypoints/application.ts',
   WatchHubConfig: 'entrypoints/application.ts',
+  DirectoryInboxConfig: 'entrypoints/application.ts',
   ResumableIteratorConfig: 'entrypoints/index.ts',
   EventTopicDeclaration: 'entrypoints/live.ts',
   WatchClientConfig: 'entrypoints/live.ts',

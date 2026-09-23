@@ -86,6 +86,11 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   {
+    subpath: './application/directory-inbox',
+    source: 'src/entrypoints/application/directory-inbox.ts',
+    browser: false,
+  },
+  {
     subpath: './application/diagnostic-journal',
     source: 'src/entrypoints/application/diagnostic-journal.ts',
     browser: false,

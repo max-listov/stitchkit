@@ -891,7 +891,36 @@ deadline holds `stop()` — and so the resource's `force()` — for that one cal
 so give the transport a timeout. Superseding a key that is being sent right now
 does not recall it: the send completes, and only its receipt is not written.
 
-Both primitives depend on the structural `StateStore`. On a server,
+`createDirectoryInbox` is the receiving side for another program on the same
+host: it drops entries — a release transition, say — into a directory, and
+the application takes each one at least once. It is a managed resource of its
+own (`createDirectoryInbox({ id, directory, schema, handle })`, imported from
+`stitchkit/application/directory-inbox` because it touches files; its types
+and schemas are in `stitchkit/application`) and publishes a handle with
+`flush()` and `state()`. The producer writes each entry
+atomically as `<name>.json` — a temporary name, then a rename; names that start
+with a dot are never read. Entries are delivered in name order, and only after
+`activate`: none reaches the application before it is ready. `stopAdmission`
+stops taking new ones, `drain` waits for the one in flight, and `force` aborts
+the `signal` its handler was given.
+
+Taken and done are separate durable records. Before `handle` runs, the entry
+is claimed with a lease (`leaseMs`, default five minutes); after it returns,
+a receipt replaces the claim and only then is the file removed. A process that
+died mid-delivery leaves a claim, and the entry is taken again once the lease
+runs out — at least once, not exactly once, so a handler that sends somewhere
+should carry the entry's `key` as its idempotency key. A process that died
+after the receipt leaves only the file, which the next pass removes without
+delivering it again. A handler that throws is retried after a backoff from one
+second doubling to five minutes; an entry that fails `schema`, is over
+`maxEntryBytes` or was taken `maxAttempts` times (default 20 — the count
+survives restarts, so an entry whose handling kills the process is not taken
+forever) is moved to `rejected/` with its reason and reported to `onRejected`,
+and the entries after it keep flowing. The state lives in
+`<directory>/.inbox-state.json` under `createFileStateStore`'s inter-process
+lock unless a `store` is supplied.
+
+These primitives depend on the structural `StateStore`. On a server,
 `createFileStateStore` supplies the shared Zod-validated JSON adapter with an
 inter-process lock, unique temporary file, fsync and atomic rename. The lock
 is a file with a heartbeat: the holder refreshes its mtime every third of

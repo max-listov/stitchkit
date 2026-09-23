@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.95.0",
+  "version": "0.95.1",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -145,6 +145,10 @@
     "./application/opentelemetry": {
       "types": "./dist/entrypoints/application/opentelemetry.d.ts",
       "import": "./dist/entrypoints/application/opentelemetry.js"
+    },
+    "./application/directory-inbox": {
+      "types": "./dist/entrypoints/application/directory-inbox.d.ts",
+      "import": "./dist/entrypoints/application/directory-inbox.js"
     },
     "./application/diagnostic-journal": {
       "types": "./dist/entrypoints/application/diagnostic-journal.d.ts",
