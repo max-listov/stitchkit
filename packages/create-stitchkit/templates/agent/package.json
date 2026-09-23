@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "ai": "^7.0.107",
+    "ai": "^7.0.111",
     "stitchkit": "file:../../../core",
     "stitchkit-tui": "file:../../../tui",
     "zod": "4.6.5"

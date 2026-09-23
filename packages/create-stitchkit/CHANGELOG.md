@@ -12,8 +12,18 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-09-23
+
 ### Changed
 
+- **A scaffold starts on stitchkit 0.94.0.** The template's one framework range
+  moves from `^0.90.7` to `^0.94.0`, over a lockfile resolving 0.94.0; the
+  template itself needed no change for 0.91–0.94 beyond the example below.
+- Updated the template's dependencies to their current compatible releases: AI
+  SDK 7.0.111, Next.js 16.3.6, next-intl 4.14.6, TanStack Query 5.103.2,
+  Tabler icons 3.48.0, framer-motion 13.4.1, dotenv 18.0.3, oxc-parser 0.151.0.
+  `@wrksz/themes` stays on 1.x (2.0 is a breaking major) and Prisma on 7.x (8 is
+  a release candidate).
 - **The repository example names its tools in the `tool` group.** Stitchkit
   0.94.0 moved an endpoint's tool options into `tool: { name, … }` and refuses
   the old top-level `toolName` at startup, so the example's contract now writes

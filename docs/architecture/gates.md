@@ -31,6 +31,13 @@ commit whose red run cannot be repaired in place (see
 [Order inside a release](./release-process.md#order-inside-a-release)) — and
 `scripts/gate-parity.test.ts` now holds the equivalence mechanically rather than by review.
 
+Lanes run side by side, and several read `packages/core/dist` while another rebuilds it — packing
+the core runs `prepack`, which starts with `rm -rf dist`. Everything that writes or reads that
+`dist` therefore runs under `scripts/package-build-lock.ts`, keyed on `packages/core`: the build,
+`bun pm pack`, and `agent-template-lane`, which typechecks the agent template against it. The 0.94
+starter-and-terminal train found the reader without the lock — its typecheck saw the declarations
+vanish mid-rebuild and failed on `TS7016` for every `stitchkit/*` import.
+
 ## What runs where
 
 CI plans evidence from changed paths or `release-train.json`. Portable core, TUI, starter,

@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.90.7"
+    "stitchkit": "^0.94.0"
   },
   "overrides": {
     "@playwright/test": "1.63.0",
@@ -43,7 +43,7 @@
     "gen:declaration": "bun scripts/declaration.ts"
   },
   "dependencies": {
-    "dotenv": "^18.0.1"
+    "dotenv": "^18.0.3"
   },
   "devDependencies": {
     "@app/config": "workspace:*",
@@ -54,7 +54,7 @@
     "@playwright/test": "^1.63.0",
     "@types/bun": "^1.4.2",
     "@types/node": "^26.6.2",
-    "oxc-parser": "^0.150.0",
+    "oxc-parser": "^0.151.0",
     "socket.io-client": "^4.8.3",
     "stitchkit": "catalog:",
     "typescript": "^7.0.2",

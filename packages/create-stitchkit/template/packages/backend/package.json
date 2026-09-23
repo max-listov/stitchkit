@@ -19,7 +19,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@socket.io/bun-engine": "^0.1.2",
-    "ai": "^7.0.107",
+    "ai": "^7.0.111",
     "socket.io": "^4.8.3",
     "stitchkit": "catalog:",
     "zod": "^4.6.5"

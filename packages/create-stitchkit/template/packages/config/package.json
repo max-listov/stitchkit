@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.11",
-    "dotenv": "^18.0.1",
+    "dotenv": "^18.0.3",
     "stitchkit": "catalog:",
     "zod": "^4.6.5"
   },

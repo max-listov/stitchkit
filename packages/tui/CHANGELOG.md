@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-09-23
+
+### Changed
+
+- Targets stitchkit 0.94.0: the published dependency range moves from `^0.90.5` to
+  `^0.94.0`, so a project on the current framework no longer installs a second,
+  older copy beside it. No source change was needed — the terminal imports none
+  of the names 0.94.0 moved.
+- Updated OpenTUI to 0.5.12 and the AI SDK to 7.0.111.
+
 ## [0.1.2] — 2026-09-20
 
 ### Changed
