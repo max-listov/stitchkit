@@ -2218,6 +2218,14 @@
     "createAuthorizationCodeClient",
     "safeInternalReturnPath"
   ],
+  "stitchkit/voice": [
+    "LIVE_VOICE_PHASES",
+    "LiveVoicePhase",
+    "SentenceCutter",
+    "SpeechQueue",
+    "SpeechQueueOptions",
+    "speakableText"
+  ],
   "stitchkit/google": [
     "ExchangeGoogleAuthorizationCodeInput",
     "GoogleOidcClaims",

@@ -53,6 +53,7 @@ own, recorded as an ADR.
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
 | `stitchkit/tracking/server` | server (Bun or Node) | evolving | the decisions a tracking backend makes — dispositions, visit lease over an application-owned store, active intervals, presence; no database |
 | `stitchkit/release` | browser **and** server | evolving | a page follows the release it was built for — `createReleaseMarker` on the server, `createReleaseWatcher` in the browser, the `X-Build-Id` header and a socket event between them |
+| `stitchkit/voice` | browser **and** server | evolving | the mechanics of a live voice reply — `SentenceCutter`, `speakableText`, a `SpeechQueue` that synthesises ahead and stops on interruption, the conversation phases |
 | `stitchkit/geo` | server (Bun or Node) | evolving | managed GeoIP reader generations, last-known-good reload and the optional MaxMind adapter |
 | `stitchkit/oauth` | browser **and** server | evolving | provider-neutral Authorization Code + PKCE request and one-shot callback transaction mechanics |
 | `stitchkit/google` | server (Bun or Node) | evolving | optional Google code exchange and verified OIDC identity adapter |

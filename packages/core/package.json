@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.95.1",
+  "version": "0.95.2",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -189,6 +189,10 @@
     "./geo": {
       "types": "./dist/entrypoints/geo.d.ts",
       "import": "./dist/entrypoints/geo.js"
+    },
+    "./voice": {
+      "types": "./dist/entrypoints/voice.d.ts",
+      "import": "./dist/entrypoints/voice.js"
     },
     "./oauth": {
       "types": "./dist/entrypoints/oauth.d.ts",

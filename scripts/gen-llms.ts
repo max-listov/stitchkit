@@ -143,6 +143,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'request-local SSR clients, a browser singleton and ApiError retry rules',
   ],
   [
+    'voice.md',
+    'Voice',
+    'stitchkit/voice — sentences cut while a reply streams, the text a voice reads, a speech queue that synthesises ahead and stops on interruption',
+  ],
+  [
     'geo.md',
     'GeoIP',
     'stitchkit/geo — a server-only managed reader, three observable states and last-known-good generation reloads',
@@ -229,6 +234,7 @@ export const GUIDE_SLICES: GuideMap = {
   'frontend-integrations.md': { primary: './react' },
   'react.md': { primary: './react' },
   'geo.md': { primary: './geo' },
+  'voice.md': { primary: './voice' },
   'upgrading.md': UPGRADING,
   'declaration.md': { primary: './declaration' },
 };

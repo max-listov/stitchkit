@@ -26,6 +26,7 @@
     "stitchkit/live": 42,
     "stitchkit/node": 75,
     "stitchkit/oauth": 12,
+    "stitchkit/voice": 6,
     "stitchkit/observability": 61,
     "stitchkit/primitives": 71,
     "stitchkit/react": 29,

@@ -112,6 +112,7 @@ export const ENTRYPOINTS = [
   },
   { subpath: './geo', source: 'src/entrypoints/geo.ts', browser: false },
   { subpath: './oauth', source: 'src/entrypoints/oauth.ts', browser: true },
+  { subpath: './voice', source: 'src/entrypoints/voice.ts', browser: true },
   { subpath: './google', source: 'src/entrypoints/google.ts', browser: false },
   { subpath: './declaration', source: 'src/entrypoints/declaration.ts', browser: true },
   { subpath: './node', source: 'src/entrypoints/node.ts', browser: false },

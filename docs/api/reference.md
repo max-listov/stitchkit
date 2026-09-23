@@ -1872,6 +1872,21 @@ signal stay with the application. → ADR 0167 — [guide](../guide/release.md)
 
 ---
 
+## `stitchkit/voice`
+
+Isomorphic, dependency-free mechanics of a live voice conversation. Recognition, synthesis
+providers, the microphone and the player remain application-owned. See the
+[voice guide](../guide/voice.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `SentenceCutter` | class | `next(text, final)` returns the sentences finished since the previous call of the reply streamed so far — never inside a fenced code block, never at `3.5` or `т. е.`; `reset()` starts a new turn |
+| `speakableText` | function | the visible text of Markdown without delimiters, link and image addresses, bare addresses, fenced code blocks or tables |
+| `SpeechQueue` / `SpeechQueueOptions` | class / _type_ | speak sentences in order with `lookahead` (default 1) synthesised while one plays; `close()` finishes the queue, `cancel()` aborts the playing sentence and every synthesis; a failed sentence is reported to `onError` and skipped |
+| `LIVE_VOICE_PHASES` / `LiveVoicePhase` | constant / _type_ | `opening`, `idle`, `hearing`, `thinking`, `speaking` |
+
+---
+
 ## `stitchkit/geo`
 
 Server-only managed GeoIP generations. Applications own database acquisition,

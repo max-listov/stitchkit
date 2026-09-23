@@ -15,6 +15,32 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.95.2] — 2026-09-23
+
+### Added
+
+- `stitchkit/voice` (new, browser **and** server, evolving, no dependencies) — the
+  mechanics of a live voice conversation with an agent that applications were each
+  carrying a copy of:
+  - **`SentenceCutter`** — `next(text, final)` cuts a reply into finished sentences
+    while it streams, so a voice starts on the first one; not at `3.5`, `т. е.` or an
+    ellipsis before lowercase, never inside a fenced code block; `reset()` starts a
+    new turn.
+  - **`speakableText(markdown)`** — what a reader sees, without Markdown delimiters,
+    link and image addresses, bare addresses, fenced code blocks or tables.
+  - **`SpeechQueue<Prepared>({ prepare, play, lookahead, onError, discard })`** —
+    speaks sentences in order and synthesises up to `lookahead` (default 1) while one
+    plays, so a synthesiser that returns whole clips leaves no gap between sentences;
+    `close()` finishes what is queued, `cancel()` aborts the playing sentence and every
+    synthesis in flight and settles `done` at once; a failed sentence is reported and
+    skipped.
+  - **`LIVE_VOICE_PHASES` / `LiveVoicePhase`** — `opening`, `idle`, `hearing`,
+    `thinking`, `speaking`.
+
+  Migration for an application with its own copy: import these four from
+  `stitchkit/voice` and delete the copy. A sequential queue over a streaming
+  synthesiser is `lookahead: 0`.
+
 ## [0.95.1] — 2026-09-23
 
 ### Added
