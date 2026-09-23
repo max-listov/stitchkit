@@ -1,12 +1,11 @@
 import type { ZodType } from 'zod';
+import type { EndpointStreamDescriptor } from '../contract/define';
 import {
   ContractStreamFrameSchema,
   DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
-  type EndpointStreamDescriptor,
-} from '../contract';
-import { parseSSE } from '../server/stream';
+} from '../contract/stream';
 import { ApiError } from './http';
-import { parseNDJSON } from './stream';
+import { parseNDJSON, parseSSE } from './stream';
 
 function sourceFor(
   response: Response,

@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { ApiError } from '../src/browser/http';
-import { defineContract, notFound, unauthorized } from '../src/contract';
+import { defineContract, notFound, unauthorized } from '../src/entrypoints/contract';
+import { createHandlerTestClient, createHandlerTestClients } from '../src/entrypoints/testing';
 import { createHandler } from '../src/server/create';
 import { implement } from '../src/server/implement';
-import { createHandlerTestClient, createHandlerTestClients } from '../src/testing';
 
 const EchoInputSchema = z.object({ value: z.string() });
 const EchoOutputSchema = z.object({ value: z.string() });

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import type { EndpointMcpPolicy } from '../src/contract';
-import { defineContract } from '../src/contract';
+import type { EndpointMcpPolicy } from '../src/entrypoints/contract';
+import { defineContract } from '../src/entrypoints/contract';
+import { buildSurfaceManifest } from '../src/entrypoints/testing';
 import { implement } from '../src/server/implement';
-import { buildSurfaceManifest } from '../src/testing';
 
 const Output = z.object({ value: z.string() });
 
@@ -22,7 +22,7 @@ function manifestFor(mcp?: EndpointMcpPolicy) {
         input: z.object({ prompt: z.string() }),
         output: Output,
         expose: ['HTTP', 'MCP'],
-        ...(mcp === undefined ? {} : { mcp }),
+        ...(mcp === undefined ? {} : { tool: { mcp } }),
       },
     },
   );

@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createObservability,
   type RequestEvent,
   setRequestDimensions,
-} from '../src/observability';
-import { createHandler, implement } from '../src/server';
+} from '../src/entrypoints/observability';
+import { createHandler, implement } from '../src/entrypoints/server';
 
 const items = defineContract(
   { prefix: 'items' },

@@ -1,4 +1,4 @@
-import type { RuntimeContext } from '../contract';
+import type { RuntimeContext } from '../contract/define';
 import type { OperationIdentity } from '../server/types';
 import {
   ToolExecutionControlError,

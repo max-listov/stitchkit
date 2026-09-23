@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test';
-import { createMemoryAgentRuntimeStore } from '../src/agent-runtime';
 import {
   createLocalStepDurability,
   StepResultNotSerializableError,
-} from '../src/agent-runtime/durability';
-import { encodeStepResult } from '../src/agent-runtime/durability-ledger';
+} from '../src/durability/engine';
+import { encodeStepResult } from '../src/durability/ledger';
+import { createMemoryAgentRuntimeStore } from '../src/entrypoints/agent-runtime';
 
 test('durable results refuse lossy JSON without executing accessors or toJSON', () => {
   let accessed = false;

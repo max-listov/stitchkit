@@ -1,10 +1,8 @@
-import type { Transport } from '../contract';
+import type { ToolTransport } from '../contract/define';
 import type { ServiceDef } from '../server/types';
 import { type ProjectedTool, projectToolSurface } from './internal/surface-projector';
 import { type CollectToolsConfig, contractToolMountable, type MountableTool } from './mount';
 import { type RuntimeToolDefinition, runtimeToolMountable } from './runtime-tool';
-
-export type ToolSurfaceTransport = Exclude<Transport, 'HTTP'>;
 
 /** Contract and pathless runtime operations that form one tool surface. */
 export interface ToolSurfaceDefinition {
@@ -33,7 +31,7 @@ export type CollectedToolSurfaceEntry = CollectedContractTool | CollectedRuntime
 
 export interface CollectToolSurfaceConfig extends CollectToolsConfig {
   surface: ToolSurfaceDefinition;
-  transport: ToolSurfaceTransport;
+  transport: ToolTransport;
   /** Diagnostics disable this so they can report a broken surface. Default: true. */
   assertUniqueNames?: boolean;
 }

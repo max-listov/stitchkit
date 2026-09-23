@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { createRealtimeClient, createSocketIOClient } from '../src/browser/socket-io';
 import { AppError } from '../src/contract/errors';
 import {
+  createRealtimeProbeDriver,
+  defineRealtimeProbe,
+  runSurfaceProbes,
+} from '../src/entrypoints/testing';
+import {
   defineRealtimeContract,
   type RealtimeRejectedEventHook,
   RealtimeRequestRejectedError,
@@ -16,11 +21,6 @@ import { parseRealtimeRequestArguments } from '../src/realtime/socket';
 import { createServer } from '../src/server/bun';
 import { bindRealtimeServer } from '../src/server/realtime';
 import { createSocketIOServer } from '../src/server/socket-io';
-import {
-  createRealtimeProbeDriver,
-  defineRealtimeProbe,
-  runSurfaceProbes,
-} from '../src/testing';
 
 /**
  * Two peers that disagree about the contract — the shape a protocol generation

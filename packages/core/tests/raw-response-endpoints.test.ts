@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
 import { createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createAuthHook,
   createServer,
@@ -22,7 +22,7 @@ import {
   isWithinDir,
   notFound,
   serveFile,
-} from '../src/server';
+} from '../src/entrypoints/server';
 import { generateOpenApiDocument } from '../src/server/openapi';
 import { listToolNames } from '../src/tools/list-names';
 import { collectTools } from '../src/tools/mount';
@@ -256,9 +256,9 @@ describe('never a tool, on any surface', () => {
 describe('the contract refuses a nonsensical raw endpoint', () => {
   const cases: Array<[string, Record<string, unknown>, string]> = [
     ['an output schema', { output: z.object({ a: z.string() }) }, 'output schema'],
-    ['a toolName', { toolName: 'grab' }, 'toolName'],
-    ['MCP ui metadata', { ui: { resourceUri: 'ui://x' } }, 'ui metadata'],
-    ['MCP annotations', { annotations: { title: 'X' } }, 'annotations'],
+    ['a tool name', { tool: { name: 'grab' } }, 'tool options'],
+    ['MCP ui metadata', { tool: { ui: { resourceUri: 'ui://x' } } }, 'tool options'],
+    ['MCP annotations', { tool: { annotations: { title: 'X' } } }, 'tool options'],
     ['a non-HTTP transport', { expose: ['HTTP', 'MCP'] }, 'HTTP-only'],
   ];
   for (const [what, extra, expected] of cases) {

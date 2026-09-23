@@ -1,19 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
 import { ManagedFileRefSchema } from '../src/contract/file-ref';
+import { AppError, defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/server/implement';
+import { listToolNames } from '../src/tools/list-names';
+import { bindContractAsyncOperation } from '../src/tools/operations/async-operation-binding';
+import { defineAsyncOperationContract } from '../src/tools/operations/async-operation-canonical';
 import {
   type AsyncOperationCancelResult,
   AsyncOperationCancelResultSchema,
   type AsyncOperationCapability,
-  type AsyncOperationIdentity,
-  bindContractAsyncOperation,
   createAsyncOperationSnapshotSchema,
-  defineAsyncOperation,
-  defineAsyncOperationContract,
-} from '../src/tools/async-operation';
-import { listToolNames } from '../src/tools/list-names';
+} from '../src/tools/operations/async-operation-contract';
+import { defineAsyncOperation } from '../src/tools/operations/async-operation-runtime';
+import type { AsyncOperationIdentity } from '../src/tools/operations/async-operation-runtime-types';
 import type { RuntimeToolHandlerContext } from '../src/tools/runtime-tool';
 
 const IdSchema = z.object({ id: z.string() });

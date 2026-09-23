@@ -6,8 +6,8 @@ import {
   defineContract,
   type MultipartDescriptor,
   type MultipartFilePolicy,
-} from '../src/contract';
-import { createServer, implement } from '../src/server';
+} from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 import { parseMultipart } from '../src/server/multipart';
 
 describe('multipart parsing', () => {

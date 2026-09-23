@@ -41,7 +41,7 @@
  */
 
 import type { HttpMethod } from '../contract/define';
-import { normalizeError } from '../internal/errors';
+import { normalizeError } from '../contract/normalize';
 import {
   isStreamCancellation,
   ownHttpStream,

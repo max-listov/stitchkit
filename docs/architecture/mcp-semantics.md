@@ -29,6 +29,15 @@ introspection. Their direct `mount*` forms remain explicit raw MCP presentation
 adapters over the same mechanics. View-file batches additionally share one
 total byte budget and retain structured per-item failures beside valid media.
 
+A contract endpoint may declare a tool view (`withToolView`, ADR 0196). The MCP,
+agent and CLI runners are built as the tool surface: they merge the view's input
+`defaults` into the arguments before the contract's one parse, and after the full
+output is validated they project or slice the answer and validate it against the
+view's schema. Every advertised schema — MCP `outputSchema`, the input
+`default`, the catalog stamp and the surface snapshot — is read through
+`toolSurfaceOutputSchema`, the one function that knows the view. HTTP, OpenAPI,
+the typed client and `createToolInvoker` never apply it.
+
 ## Catalog stamp
 
 A consumer holds its own copy of the catalog, and from inside that copy a change

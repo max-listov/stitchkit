@@ -33,13 +33,13 @@ Pin the full list with `listToolNames` in a snapshot test.
 `desc` is the tool description the model reads — write it for the model, not
 just for a human. The tool name defaults
 to a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
-`get_widget`); set `toolName` for an explicit one. Derivation normalises **per half**
+`get_widget`); set `tool.name` for an explicit one. Derivation normalises **per half**
 (→ ADR 0035): the service half turns everything outside `[a-zA-Z0-9_]` into `_`,
 hyphen included (`bot-status` ⇒ `get_bot_status`), while the method half keeps
 its hyphen (`get-user` ⇒ `get-user_notes`) because such a name has always been
 legal and may already be pinned in a client config. A name is *accepted* if it
 matches `[a-zA-Z0-9_-]`. A name that
-still cannot be delivered (illegal explicit `toolName`, over 64 characters, or a
+still cannot be delivered (illegal explicit `tool.name`, over 64 characters, or a
 prefix with no usable character) throws at mount rather than at the first model
 call —
 → [ADR 0035](../decisions/0035-tool-name-derivation-and-validation.md). See
@@ -123,6 +123,12 @@ model-safe envelope. Unexpected throws remain scrubbed. An unknown name throws
 `AppError('NOT_FOUND')` before the runner because there is no operation identity
 against which hooks could run. Duplicate and provider-invalid names fail when
 the invoker is created.
+
+The invoker's caller is code, so it gets an endpoint's full answer even where a
+[tool view](#a-different-answer-for-tools--withtoolview) is declared. When the
+invoker backs a transport a model reads, pass `toolSurface: true`: calls then
+get the view's defaults and projected answer, which is what `collectTools` and
+`buildToolManifest` advertise.
 
 ## MCP — `createMcpHandler`
 
@@ -465,19 +471,21 @@ deleteProject: {
   expose: ['MCP'],
   input: DeleteProjectSchema,
   output: DeleteProjectResultSchema,
-  mcp: {
-    inputRequired: [
-      {
-        key: 'confirmation',
-        schema: DeleteConfirmationSchema,
-        message: 'Confirm permanent deletion',
-      },
-      {
-        key: 'reason',
-        schema: z.object({ value: z.string().min(3) }),
-        message: 'Record the reason',
-      },
-    ],
+  tool: {
+    mcp: {
+      inputRequired: [
+        {
+          key: 'confirmation',
+          schema: DeleteConfirmationSchema,
+          message: 'Confirm permanent deletion',
+        },
+        {
+          key: 'reason',
+          schema: z.object({ value: z.string().min(3) }),
+          message: 'Record the reason',
+        },
+      ],
+    },
   },
 }
 ```
@@ -512,12 +520,14 @@ input image — and there a declared list can only be empty. `inputRequired` als
 accepts a function of the parsed call:
 
 ```ts
-mcp: {
-  inputRequired: async ({ input }) => {
-    const model = await catalog.get(input.model)
-    return model.needsRatio
-      ? [{ key: 'ratio', schema: RatioSchema, message: 'Which aspect ratio?' }]
-      : []
+tool: {
+  mcp: {
+    inputRequired: async ({ input }) => {
+      const model = await catalog.get(input.model)
+      return model.needsRatio
+        ? [{ key: 'ratio', schema: RatioSchema, message: 'Which aspect ratio?' }]
+        : []
+    },
   },
 }
 ```
@@ -916,6 +926,69 @@ A tool without an output contract advertises no `outputSchema` and returns no
 invented structured value. Its successful MCP result has an empty `content`
 list.
 
+## A different answer for tools — `withToolView`
+
+An admin page wants the full record; a model wants a card. Every byte of a
+tool result enters the model's context and stays in its history, and personal
+fields a task does not need are better never shown to it. Two endpoints on one
+path (one `expose: ['HTTP']`, one for the tools) duplicate the description, the
+schemas and the handler; branching on `ctx.source` teaches every handler about
+transports and still advertises the full output schema.
+
+A **tool view** declares the difference on the endpoint instead:
+
+```ts
+import { defineContract, withToolView } from 'stitchkit';
+
+export const users = defineContract({ prefix: 'users' }, {
+  list: withToolView(
+    {
+      method: 'GET', path: '/', desc: 'List users', tool: { name: 'user_list' },
+      input: UserListQuery,        // include: z.array(...).default(['profile', 'stats'])
+      output: UserListResponse,    // HTTP, OpenAPI and the typed client — unchanged
+    },
+    {
+      defaults: { include: [] },                          // what a tool call gets when it passes nothing
+      output: UserCardList,                               // the tool answer and its schema
+      project: (full, { input }) => ({ items: full.items.map(toCard) }),  // optional: without it, `output` slices
+    },
+  ),
+});
+```
+
+- **One handler, one parser.** `defaults` joins the tool call's arguments
+  *before* the endpoint's own `input` parses them, so the handler receives an
+  ordinary `input` — `include: []` from a tool, the HTTP default from HTTP — and
+  loads only what was asked for. An explicit argument wins over the default.
+- **The answer is derived, then checked.** The handler's result is validated
+  against the full `output` first, as always; then `project` (a pure,
+  synchronous function of the full result and the parsed input) or a slice by
+  the view's `output`, then validation against the view's schema. A projection
+  that throws, returns a Promise or breaks its schema is `INTERNAL_SERVER_ERROR`
+  — a server fault, like any output mismatch.
+- **Where it applies.** The MCP, agent and CLI mounts answer with the view;
+  `outputSchema`, `structuredContent`, the advertised input `default`, the
+  catalog stamp and the surface snapshot follow it. HTTP, OpenAPI, the typed
+  client and the in-process [`createToolInvoker`](#in-process-calls--createtoolinvoker)
+  keep the full answer — code, not a model, is calling there.
+- **Three forms, one helper.** With `output` and `project` the answer has its
+  own schema. With `project` alone it reshapes values inside the full schema.
+  With `output` alone it is a slice, and the full result must fit that schema —
+  `withToolView` refuses the endpoint at compile time when it does not.
+- **Exposure.** A view needs a tool transport. With `createContractFactory({
+  toolExposure: 'explicit' })` an endpoint without `expose` is HTTP-only, so an
+  endpoint with a view names its tool transports in `expose`.
+- **What it refuses.** `defineContract` rejects a view on an endpoint with no
+  tool transport or no full `output`, on a raw, `rawBody`, multipart,
+  `responseMeta` or streaming endpoint, a view that declares neither `output`
+  nor `project`, and a default for a key the input does not have, for a path
+  param, or with a value the input would reject.
+
+A projection adds nothing the full result does not carry: a field the tool
+answer needs belongs in the full answer, loaded by the handler. Keys a
+projection returns beyond its schema are reported by `onOutputStrip`; a slice
+removes keys on purpose and is not reported. → [ADR 0196](../decisions/0196-a-tool-answer-is-a-declared-view.md)
+
 ## AI agents — `mountAgent`
 
 `mountAgent` remains the low-level path when the application owns its own model
@@ -1239,7 +1312,7 @@ const runtimeTools = exportOperation.runtimeTools
 #### Durable application-owned execution
 
 The executable reference
-[`durable-async-operation-harness.ts`](../../packages/core/examples/durable-async-operation-harness.ts)
+[`durable-async-operation-harness.ts`](../../packages/core/examples/tools/durable-async-operation-harness.ts)
 shows the complete boundary behind that surface. It composes
 `defineAsyncOperationContract`, `defineAsyncOperation`, `createApplication`,
 `createBoundedAdmission`, managed shutdown and `createAgentToolFenceLifecycle`

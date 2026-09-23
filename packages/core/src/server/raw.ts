@@ -7,7 +7,7 @@
  * no auth, no schema gate beyond `parseBody`.
  */
 import type { ZodType } from 'zod';
-import { normalizeError } from '../internal/errors';
+import { normalizeError } from '../contract/normalize';
 import { getTraceId } from '../observability/context';
 
 /** A JSON response for `data`; `204 No Content` when `data` is null/undefined. */

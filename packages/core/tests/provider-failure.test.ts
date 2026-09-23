@@ -12,7 +12,7 @@ import {
   type AgentProviderFailureReason,
   classifyProviderFailure,
   isToolResultFailure,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 /** A provider error as the SDK hands it over: a status behind a `cause`. */
 function apiError(status: number, message = 'request failed'): Error {

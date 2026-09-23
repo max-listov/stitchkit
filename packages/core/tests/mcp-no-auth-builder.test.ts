@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { buildMcpServer, type McpServerBuildConfig } from '../src/tools';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { buildMcpServer, type McpServerBuildConfig } from '../src/entrypoints/tools';
 
 const StatusOutputSchema = z.object({ ok: z.boolean() });
 const contract = defineContract(

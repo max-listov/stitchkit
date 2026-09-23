@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isDirectInvocation, runUpgradeCli } from '../src/upgrade-cli';
+import { isDirectInvocation, runUpgradeCli } from '../src/entrypoints/bin/upgrade-cli';
 
 const created: string[] = [];
 
@@ -159,7 +159,7 @@ describe('the package installs the binary and ships what it reads', () => {
   );
 
   test('bin installs `stitchkit` from the built entry', () => {
-    expect(manifest.bin?.stitchkit).toBe('./dist/upgrade-cli.js');
+    expect(manifest.bin?.stitchkit).toBe('./dist/entrypoints/bin/upgrade-cli.js');
   });
 
   test('the changelog the binary reads is inside the published file list', () => {

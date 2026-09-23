@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { io as ioClient } from 'socket.io-client';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   type BunServerConfig,
   createServer,
   createSocketIOServer,
   implement,
-} from '../src/server';
+} from '../src/entrypoints/server';
 
 const contract = defineContract(
   { prefix: 'lifecycle' },

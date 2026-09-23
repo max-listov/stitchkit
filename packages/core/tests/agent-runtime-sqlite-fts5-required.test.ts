@@ -4,7 +4,7 @@ import {
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
   type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
 
 /** A connection whose SQLite was built without FTS5. */
 function withoutFts5(): SqliteDatabase {

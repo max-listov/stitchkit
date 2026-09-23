@@ -15,11 +15,11 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, type RuntimeContext } from '../src/contract';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
 import { mountAgent } from '../src/tools/agent';
-import { createMcpHandler } from '../src/tools/mcp-handler';
-import { createMcpProgressReporter } from '../src/tools/mcp-progress';
+import { createMcpHandler } from '../src/tools/mcp/handler';
+import { createMcpProgressReporter } from '../src/tools/mcp/progress';
 
 const MODERN = '2026-07-28';
 

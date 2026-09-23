@@ -1,4 +1,4 @@
-import type { ResponseMetadata } from '../contract';
+import type { ResponseMetadata } from '../contract/define';
 
 const RESERVED_HEADERS = new Set(['content-type', 'content-length', 'x-request-id']);
 

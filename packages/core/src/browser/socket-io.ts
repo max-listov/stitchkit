@@ -20,9 +20,10 @@
  * The returned client satisfies `CacheBridgeSocket` (`on()` returns an
  * unsubscribe), so it plugs straight into `createCacheBridge`.
  */
+
+import type { StitchLogger } from '../internal/logger';
 import { isModuleNotFound } from '../internal/optional-peer';
 import { randomHex } from '../internal/random-hex';
-import type { StitchLogger } from '../logger';
 import type {
   RealtimeAcknowledgedEvent,
   RealtimeAcknowledgement,
@@ -45,7 +46,7 @@ import {
   parseRealtimeRequestArguments,
   type ValidatedRealtimeSocket,
 } from '../realtime/socket';
-import { createRetainedTopics } from '../retained';
+import { createRetainedTopics } from './retained';
 
 // `socket.io-client` is loaded lazily (see `loadIo`) so it stays OUT of the
 // root `stitchkit` entry's eager graph — importing `defineContract` must not

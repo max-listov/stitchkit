@@ -8,7 +8,7 @@
  * false if the fence were deleted entirely.
  */
 import { describe, expect, test } from 'bun:test';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { createHandler } from '../src/server/create';
 import { implement } from '../src/server/implement';
 import { composeLifecycleHooks } from '../src/server/lifecycle';

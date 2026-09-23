@@ -6,7 +6,12 @@
  * direct coverage is a place a regression hides silently.
  */
 import { describe, expect, test } from 'bun:test';
-import { measureSize, redact, sanitizePayload, truncatePreview } from '../src/observability';
+import {
+  measureSize,
+  redact,
+  sanitizePayload,
+  truncatePreview,
+} from '../src/entrypoints/observability';
 
 describe('redact — secret masking', () => {
   test('masks the default sensitive key names', () => {

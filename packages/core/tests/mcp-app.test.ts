@@ -7,14 +7,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { buildMcpServer } from '../src/tools/mcp';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import {
   EXT_APPS_BUNDLE_PLACEHOLDER,
   inlineMcpAppBundle,
   RESOURCE_MIME_TYPE,
-} from '../src/tools/mcp-app';
+} from '../src/tools/mcp/app';
+import { buildMcpServer } from '../src/tools/mcp/mount';
 
 const RESOURCE_URI = 'ui://test/view.html';
 
@@ -24,11 +24,10 @@ const contract = defineContract(
     show: {
       method: 'GET',
       path: '/:id',
-      toolName: 'show',
       desc: 'Show a generation with a widget',
       params: z.object({ id: z.string() }),
       output: z.object({ url: z.string() }),
-      ui: { resourceUri: RESOURCE_URI },
+      tool: { name: 'show', ui: { resourceUri: RESOURCE_URI } },
     },
   },
 );

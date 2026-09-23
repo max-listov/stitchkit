@@ -1,6 +1,5 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { createSqliteAgentChildManager } from '../src/agent-runtime';
 import type {
   AgentChildBlockingDecision,
   AgentChildBlockingSource,
@@ -9,7 +8,8 @@ import {
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
   type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
+import { createSqliteAgentChildManager } from '../src/entrypoints/agent-runtime';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');

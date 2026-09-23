@@ -9,10 +9,13 @@
  * hundred is lost to one schema.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { SkippedConnectionTool } from '../src/entrypoints/tools/connections';
+import {
+  defineMcpClientConnection,
+  mountConnections,
+} from '../src/entrypoints/tools/connections';
 import { isRecord } from '../src/internal/typed';
-import { createCli } from '../src/tools/cli';
-import type { SkippedConnectionTool } from '../src/tools/connections';
-import { defineMcpClientConnection, mountConnections } from '../src/tools/connections';
+import { createCli } from '../src/tools/cli/create-cli';
 
 interface JsonRpcBody {
   jsonrpc: '2.0';

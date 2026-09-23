@@ -1,5 +1,7 @@
+import { serializeCanonicalJson } from './canonical-json';
+
 /**
- * A stable identity for a call's arguments — one implementation, two callers.
+ * A stable identity for a call's arguments — one digest, two callers.
  *
  * Two callers need the same thing for different reasons. The MCP round keys a
  * tool invocation by `(operation, arguments)` so a retry is recognised as the
@@ -33,23 +35,6 @@
  * first subscription of a question asynchronous, which meant a component could
  * not be handed a retained value in the same turn it subscribed.
  */
-
-/**
- * The value with every object's keys sorted, recursively — arrays keep their
- * order, because in an array order *is* the value.
- *
- * `Object.keys` returns own enumerable keys only, so nothing from a prototype
- * reaches the digest.
- */
-export function stableValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value === null || typeof value !== 'object') return value;
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) {
-    result[key] = stableValue(Reflect.get(value, key));
-  }
-  return result;
-}
 
 /**
  * 128 bits over a string, as four mixed 32-bit lanes.
@@ -104,6 +89,6 @@ function mix128(input: string): [number, number, number, number] {
  * construction; a caller digesting something else has to say what it means.
  */
 export function argumentsDigest(args: Record<string, unknown>): string {
-  const lanes = mix128(JSON.stringify(stableValue(args)) ?? 'undefined');
+  const lanes = mix128(serializeCanonicalJson(args));
   return lanes.map((lane) => lane.toString(16).padStart(8, '0')).join('');
 }

@@ -7,9 +7,9 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { setRequestUser, wrapInRequestContext } from '../src/observability';
-import { createHandler, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { setRequestUser, wrapInRequestContext } from '../src/entrypoints/observability';
+import { createHandler, implement } from '../src/entrypoints/server';
 import { resolveLogFormat } from '../src/server/logger';
 
 const ITEM = z.object({ id: z.string() });

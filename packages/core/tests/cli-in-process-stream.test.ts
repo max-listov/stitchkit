@@ -18,16 +18,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
+import { AppError, defineContract } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
-import { createCli } from '../src/tools/cli';
-import { createCliInvoker } from '../src/tools/cli-invoke';
+import { createCli } from '../src/tools/cli/create-cli';
+import { createCliInvoker } from '../src/tools/cli/invoke';
 import {
   defineCliBatchCommand,
   defineCliStreamCommand,
   readStdinLines,
   runCliStream,
-} from '../src/tools/cli-stream';
+} from '../src/tools/cli/stream';
 
 const contract = defineContract(
   { prefix: 'items' },

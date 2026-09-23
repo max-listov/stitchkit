@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream, streamText } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
-import { AgentMessageSchema, projectAgentHistoryDetailed } from '../src/agent-runtime';
+import {
+  AgentMessageSchema,
+  projectAgentHistoryDetailed,
+} from '../src/entrypoints/agent-runtime';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

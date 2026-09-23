@@ -38,10 +38,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
   test('a returned record becomes the arguments the handler runs on', async () => {
     const result = await executeToolMethod(
       method(),
-      'record_journal',
-      { id: '@previous' },
-      { source: 'agent' },
-      { beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }) },
+      {
+        toolName: 'record_journal',
+        rawArgs: { id: '@previous' },
+        context: { source: 'agent' },
+      },
+      { hooks: { beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }) } },
     );
     expect(result).toEqual({ ok: true, data: { seen: 'resolved-42' } });
   });
@@ -52,10 +54,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     // exception escaping the call.
     const result = await executeToolMethod(
       method(),
-      'record_journal',
-      { id: '@previous' },
-      { source: 'agent' },
-      { beforeToolCall: () => ({ id: 42 }) },
+      {
+        toolName: 'record_journal',
+        rawArgs: { id: '@previous' },
+        context: { source: 'agent' },
+      },
+      { hooks: { beforeToolCall: () => ({ id: 42 }) } },
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('VALIDATION_ERROR');
@@ -65,10 +69,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     for (const returned of [undefined, null]) {
       const result = await executeToolMethod(
         method(),
-        'record_journal',
-        { id: 'untouched' },
-        { source: 'agent' },
-        { beforeToolCall: () => returned },
+        {
+          toolName: 'record_journal',
+          rawArgs: { id: 'untouched' },
+          context: { source: 'agent' },
+        },
+        { hooks: { beforeToolCall: () => returned } },
       );
       expect(result).toEqual({ ok: true, data: { seen: 'untouched' } });
     }
@@ -88,10 +94,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     ]) {
       const result = await executeToolMethod(
         method(),
-        'record_journal',
-        { id: 'untouched' },
-        { source: 'agent' },
-        { beforeToolCall: hook },
+        {
+          toolName: 'record_journal',
+          rawArgs: { id: 'untouched' },
+          context: { source: 'agent' },
+        },
+        { hooks: { beforeToolCall: hook } },
       );
       expect(result).toEqual({ ok: true, data: { seen: 'untouched' } });
     }
@@ -108,12 +116,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
           throw new Error('boom');
         },
       }),
-      'record_journal',
-      { id: 'x' },
-      { source: 'agent' },
+      { toolName: 'record_journal', rawArgs: { id: 'x' }, context: { source: 'agent' } },
       {
-        beforeToolCall: () => {
-          runs += 1;
+        hooks: {
+          beforeToolCall: () => {
+            runs += 1;
+          },
         },
       },
     );
@@ -129,18 +137,20 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     let seen: unknown;
     await executeToolMethod(
       method(),
-      'record_journal',
-      { id: 'x', tenant: 'acme' },
-      { source: 'agent', toolCallId: 'call-real' },
       {
-        afterToolCall: ({ context }) => {
-          seen = context.toolCallId;
-        },
+        toolName: 'record_journal',
+        rawArgs: { id: 'x', tenant: 'acme' },
+        context: { source: 'agent', toolCallId: 'call-real' },
       },
-      undefined,
-      true,
-      undefined,
-      extension,
+      {
+        hooks: {
+          afterToolCall: ({ context }) => {
+            seen = context.toolCallId;
+          },
+        },
+        coerceJson: true,
+        extension,
+      },
     );
     expect(seen).toBe('call-real');
   });
@@ -153,20 +163,22 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     let observed: AfterToolCallOptions | undefined;
     await executeToolMethod(
       method(),
-      'record_journal',
-      // The extension refuses (tenant is not a string), so the call never runs.
-      { id: 'x', tenant: 7 },
-      { source: 'agent' },
       {
-        beforeToolCall: ({ args }) => ({ ...args, id: 'rewritten' }),
-        afterToolCall: (options) => {
-          observed = options;
-        },
+        toolName: 'record_journal',
+        rawArgs: // The extension refuses (tenant is not a string), so the call never runs.
+          { id: 'x', tenant: 7 },
+        context: { source: 'agent' },
       },
-      undefined,
-      true,
-      undefined,
-      extension,
+      {
+        hooks: {
+          beforeToolCall: ({ args }) => ({ ...args, id: 'rewritten' }),
+          afterToolCall: (options) => {
+            observed = options;
+          },
+        },
+        coerceJson: true,
+        extension,
+      },
     );
     expect(observed?.result.ok).toBe(false);
     expect(observed?.effectiveArgs).toBeUndefined();
@@ -176,13 +188,17 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     let observed: AfterToolCallOptions | undefined;
     await executeToolMethod(
       method(),
-      'record_journal',
-      { id: '@previous' },
-      { source: 'agent' },
       {
-        beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }),
-        afterToolCall: (options) => {
-          observed = options;
+        toolName: 'record_journal',
+        rawArgs: { id: '@previous' },
+        context: { source: 'agent' },
+      },
+      {
+        hooks: {
+          beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }),
+          afterToolCall: (options) => {
+            observed = options;
+          },
         },
       },
     );
@@ -194,12 +210,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     let observed: AfterToolCallOptions | undefined;
     await executeToolMethod(
       method(),
-      'record_journal',
-      { id: 'plain' },
-      { source: 'agent' },
+      { toolName: 'record_journal', rawArgs: { id: 'plain' }, context: { source: 'agent' } },
       {
-        afterToolCall: (options) => {
-          observed = options;
+        hooks: {
+          afterToolCall: (options) => {
+            observed = options;
+          },
         },
       },
     );
@@ -219,14 +235,16 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
     };
     const result = await executeToolMethod(
       method({ inputSchema: z.strictObject({ id: z.string() }) }),
-      'record_journal',
-      { id: '@previous', tenant: 'acme' },
-      { source: 'agent' },
-      { beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }) },
-      undefined,
-      true,
-      undefined,
-      extension,
+      {
+        toolName: 'record_journal',
+        rawArgs: { id: '@previous', tenant: 'acme' },
+        context: { source: 'agent' },
+      },
+      {
+        hooks: { beforeToolCall: ({ args }) => ({ ...args, id: 'resolved-42' }) },
+        coerceJson: true,
+        extension,
+      },
     );
     expect(result).toEqual({ ok: true, data: { seen: 'resolved-42' } });
   });
@@ -234,12 +252,12 @@ describe('beforeToolCall can replace the arguments it is shown', () => {
   test('a refusal from the hook still refuses, and the arguments are not consulted', async () => {
     const result = await executeToolMethod(
       method(),
-      'record_journal',
-      { id: 'x' },
-      { source: 'agent' },
+      { toolName: 'record_journal', rawArgs: { id: 'x' }, context: { source: 'agent' } },
       {
-        beforeToolCall: () => {
-          throw new Error('denied');
+        hooks: {
+          beforeToolCall: () => {
+            throw new Error('denied');
+          },
         },
       },
     );

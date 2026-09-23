@@ -10,12 +10,12 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { isRecord } from '../src/internal/typed';
-import { implement } from '../src/server';
 import { zodObjectFromJsonSchema } from '../src/tools/connections/runtime';
-import { mountMcp } from '../src/tools/mcp';
-import { buildToolPresentationSchema } from '../src/tools/presentation';
+import { mountMcp } from '../src/tools/mcp/mount';
+import { buildToolPresentationSchema } from '../src/tools/schema/presentation';
 
 /** A recursive field — the shape that makes the emitter reach for `$ref`. */
 const TreeNode: z.ZodType = z.lazy(() =>

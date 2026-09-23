@@ -12,13 +12,15 @@
     "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
-      "stitchkit/agent-runtime": ["./src/agent-runtime.ts"],
-      "stitchkit/agent-runtime/harness": ["./src/agent-runtime-harness.ts"],
-      "stitchkit/agent-runtime/coding-tools": ["./src/agent-runtime-coding-tools.ts"],
-      "stitchkit/agent-runtime/sandbox": ["./src/agent-runtime-sandbox.ts"],
-      "stitchkit/application": ["./src/application.ts"],
-      "stitchkit/application/grammy": ["./src/application-grammy.ts"],
-      "stitchkit/tools": ["./src/tools.ts"]
+      "stitchkit/agent-runtime": ["./src/entrypoints/agent-runtime.ts"],
+      "stitchkit/agent-runtime/harness": ["./src/entrypoints/agent-runtime/harness.ts"],
+      "stitchkit/agent-runtime/coding-tools": [
+        "./src/entrypoints/agent-runtime/coding-tools.ts"
+      ],
+      "stitchkit/agent-runtime/sandbox": ["./src/entrypoints/agent-runtime/sandbox.ts"],
+      "stitchkit/application": ["./src/entrypoints/application.ts"],
+      "stitchkit/application/grammy": ["./src/entrypoints/application/grammy.ts"],
+      "stitchkit/tools": ["./src/entrypoints/tools.ts"]
     }
   },
   "include": ["src", "tests", "examples"],

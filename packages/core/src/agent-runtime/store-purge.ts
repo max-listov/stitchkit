@@ -3,7 +3,7 @@ import {
   AgentConversationPurgeInputSchema,
   type AgentConversationPurgeResult,
 } from './purge';
-import type { AgentRuntimeStoreDriver } from './store-driver';
+import type { AgentRuntimeStoreDriver } from './store-driver-contract';
 
 /**
  * Optional driver capability. Its transactions must serialize with every mutation of this

@@ -1,6 +1,4 @@
-export { type ParseSSEOptions, parseSSE } from '../server/stream';
-
-import type { StreamFinalLinePolicy } from '../contract';
+import type { StreamFinalLinePolicy } from '../contract/define';
 import { DEFAULT_STREAM_LINE_BYTES, readBoundedUtf8Lines } from '../internal/bounded-lines';
 
 export { DEFAULT_STREAM_LINE_BYTES } from '../internal/bounded-lines';
@@ -62,5 +60,46 @@ export async function* parseNDJSON<T>(
     }
   } catch (error) {
     parseFailure('', error, options?.onParseError);
+  }
+}
+
+/** Options for `parseSSE`. */
+export interface ParseSSEOptions {
+  /** Maximum bytes retained for one SSE line. Default 1 MiB. */
+  maxLineBytes?: number;
+  /** Called for invalid UTF-8/JSON; without it parsing fails closed. */
+  onParseError?: (raw: string, error: Error) => void;
+}
+
+/**
+ * Parse a Server-Sent Events `Response` body into an async generator of JSON
+ * values — the client counterpart of `streamSSE`. Stops at the `[DONE]`
+ * sentinel; the stream lock is released on every exit path.
+ */
+export async function* parseSSE<T>(
+  response: Response,
+  options?: ParseSSEOptions,
+): AsyncGenerator<T> {
+  try {
+    for await (const rawLine of readBoundedUtf8Lines(
+      response,
+      options?.maxLineBytes ?? DEFAULT_STREAM_LINE_BYTES,
+    )) {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).replace(/^ /, '');
+      if (data === '[DONE]') return;
+      try {
+        yield JSON.parse(data);
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (!options?.onParseError) throw failure;
+        options.onParseError(data, failure);
+      }
+    }
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (!options?.onParseError) throw failure;
+    options.onParseError('', failure);
   }
 }

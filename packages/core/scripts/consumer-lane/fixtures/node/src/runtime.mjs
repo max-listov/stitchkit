@@ -7,6 +7,10 @@ import {
   createMemoryAgentRuntimeStore,
 } from 'stitchkit/agent-runtime';
 import {
+  createAgentRaceTrace,
+  runAgentStoreConformance,
+} from 'stitchkit/agent-runtime/testing';
+import {
   createBoundedAdmission,
   createBoundedChannel,
   createCreditWindow,
@@ -14,7 +18,6 @@ import {
 import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract } from 'stitchkit/contract';
 import { createHandler, implement } from 'stitchkit/server';
-import { createAgentRaceTrace, runAgentStoreConformance } from 'stitchkit/testing';
 import { createMcpHandler } from 'stitchkit/tools';
 import { z } from 'zod';
 
@@ -67,9 +70,9 @@ const contract = defineContract(
       path: '/echo',
       desc: 'Echo through a packed Node HTTP consumer',
       expose: ['MCP'],
-      toolName: 'echo_node_http',
       input: z.object({ text: z.string() }),
       output: z.object({ text: z.string() }),
+      tool: { name: 'echo_node_http' },
     },
   },
 );

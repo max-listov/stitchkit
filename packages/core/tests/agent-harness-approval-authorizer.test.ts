@@ -5,13 +5,16 @@ import path from 'node:path';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { createMemoryAgentRuntimeStore, defineAgentProtocol } from '../src/agent-runtime';
-import { createAgentCodingTools } from '../src/agent-runtime-coding-tools';
+import {
+  createMemoryAgentRuntimeStore,
+  defineAgentProtocol,
+} from '../src/entrypoints/agent-runtime';
+import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
 import {
   AgentHarnessApprovalRejectedError,
   createHeadlessAgentHarness,
-} from '../src/agent-runtime-harness';
-import { mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime/harness';
+import { mountAgent } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

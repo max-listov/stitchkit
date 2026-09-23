@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createScopedClients } from '../src/browser/client';
 import { createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 
 const OkSchema = z.object({ ok: z.boolean() });
 const publicAuth = defineContract(

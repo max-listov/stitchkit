@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
 import { io } from 'socket.io-client';
-import { createServer, createSocketIOServer, type SocketIOServerConfig } from '../src/server';
+import {
+  createServer,
+  createSocketIOServer,
+  type SocketIOServerConfig,
+} from '../src/entrypoints/server';
 
 test('Bun websocket-only policy rejects a real polling handshake before consumer authorization', async () => {
   let admitted = 0;

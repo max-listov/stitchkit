@@ -4,7 +4,7 @@ import {
   createTraceContext,
   type RequestContext,
   type RequestEvent,
-} from '../src/observability';
+} from '../src/entrypoints/observability';
 
 function context(path: string): RequestContext {
   return {

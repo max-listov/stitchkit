@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { validateMcpSchemas } from '../src/tools/mcp';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { createMcpHandler } from '../src/tools/mcp/handler';
+import { validateMcpSchemas } from '../src/tools/mcp/mount';
 import {
   findNonPortableFormats,
   PORTABLE_JSON_SCHEMA_FORMATS,
-} from '../src/tools/portable-formats';
+} from '../src/tools/schema/portable-formats';
 
 describe('findNonPortableFormats', () => {
   test('the baseline accepts standard JSON Schema formats implemented by ajv-formats', () => {
@@ -73,7 +73,7 @@ const portableContract = (
         input: z.object({ payload: input }),
         output,
         expose: ['MCP'],
-        toolName: 'entity_create',
+        tool: { name: 'entity_create' },
       },
     },
   );

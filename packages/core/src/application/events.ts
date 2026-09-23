@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   createBoundedSinkManager,
   type ObservabilityDrainBound,
-} from '../internal/observability-sink';
+} from '../observability/bounded-sink';
 import type { ObservabilitySinkStatus } from '../observability/status';
 import {
   ApplicationHealthSchema,

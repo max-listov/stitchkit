@@ -5,7 +5,7 @@ import {
   type GoogleOidcClaims,
   GoogleOidcError,
   type GoogleOidcExchangeInput,
-} from '../src/google';
+} from '../src/google/google';
 
 const REDIRECT = 'https://app.example.com/auth/google/callback';
 const VALID_CLAIMS: GoogleOidcClaims = {

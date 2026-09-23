@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
-import type { MethodDef } from '../src/server/types';
 import {
   type AgentStoreEventEnvelope,
   createLocalStepDurability,
   type StepDurabilityLedger,
   type ToolDurability,
-} from '../src/tools';
+} from '../src/entrypoints/tools';
+import type { MethodDef } from '../src/server/types';
 import { mountAgent } from '../src/tools/agent';
 import { createToolDurabilityContext } from '../src/tools/durability-context';
 

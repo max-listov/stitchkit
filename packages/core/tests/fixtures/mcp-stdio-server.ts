@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { defineContract } from '../../src/contract';
-import { getRequestContext } from '../../src/observability';
+import { defineContract } from '../../src/entrypoints/contract';
+import { getRequestContext } from '../../src/entrypoints/observability';
 import { createImplement } from '../../src/server/implement';
-import { createStdioMcpServer } from '../../src/tools/mcp-stdio';
+import { createStdioMcpServer } from '../../src/tools/mcp/stdio';
 
 const contract = defineContract(
   { prefix: 'stdio', scope: 'public' },
@@ -52,14 +52,16 @@ const contract = defineContract(
       expose: ['MCP'],
       input: z.object({ operation: z.string() }),
       output: z.object({ operation: z.string(), confirmed: z.boolean() }),
-      mcp: {
-        inputRequired: [
-          {
-            key: 'confirmation',
-            message: 'Continue?',
-            schema: z.object({ confirmed: z.boolean() }),
-          },
-        ],
+      tool: {
+        mcp: {
+          inputRequired: [
+            {
+              key: 'confirmation',
+              message: 'Continue?',
+              schema: z.object({ confirmed: z.boolean() }),
+            },
+          ],
+        },
       },
     },
   },

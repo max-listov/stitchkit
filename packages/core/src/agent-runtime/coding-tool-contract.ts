@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ToolTransport } from '../contract/define';
 import type { AgentProcessSandbox, AgentSandboxRestriction } from './sandbox';
 
 export const AgentCodingToolLimitsSchema = z
@@ -174,7 +175,7 @@ export interface AgentCodingToolDefinition {
   };
   input: z.ZodObject;
   output: z.ZodType;
-  transports?: readonly ('MCP' | 'AGENT' | 'CLI')[];
+  transports?: readonly ToolTransport[];
   handler(context: {
     params: undefined;
     input: unknown;

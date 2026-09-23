@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import type { RequestEvent } from '../src/observability';
-import { createObservability, setRequestError } from '../src/observability';
-import { createHandler } from '../src/server';
+import type { RequestEvent } from '../src/entrypoints/observability';
+import { createObservability, setRequestError } from '../src/entrypoints/observability';
+import { createHandler } from '../src/entrypoints/server';
 
 describe('audit — structured error detail', () => {
   test('setRequestError({ details }) flows onto RequestEvent.errorDetail', async () => {

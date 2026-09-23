@@ -3,7 +3,7 @@ import {
   AgentMessageSchema,
   projectAgentHistory,
   projectAgentHistoryDetailed,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 describe('agent history projection', () => {
   test('opts failed terminal evidence in with an explicit non-success marker', async () => {

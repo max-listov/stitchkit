@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import {
   createBubblewrapSandboxBackend,
   createSandboxCodingTools,
-} from '../src/agent-runtime-sandbox';
-import { mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime/sandbox';
+import { mountAgent } from '../src/entrypoints/tools';
 
 const probe = spawnSync('/usr/bin/bwrap', [
   '--unshare-all',

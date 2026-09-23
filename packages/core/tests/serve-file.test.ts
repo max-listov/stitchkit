@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer } from '../src/server';
+import { createServer } from '../src/entrypoints/server';
 import { serveFile } from '../src/server/file';
 
 // "abcdefghijklmnopqrstuvwxyz" — index == byte value, so slices are easy to assert.

@@ -1,4 +1,5 @@
-import { type ApplicationHandle, createApplication } from '../application/kernel';
+import { createApplication } from '../application/kernel';
+import type { ApplicationHandle } from '../application/kernel-contract';
 import type { ApplicationSnapshot } from '../application/schemas';
 import {
   type ManagedResourceConformanceScenario,

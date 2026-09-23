@@ -5,9 +5,12 @@ import { z } from 'zod';
 import {
   HeadlessAgentRunnerControlSchema,
   runHeadlessAgentRunner,
-} from '../examples/headless-agent-runner';
-import { createMemoryAgentRuntimeStore, defineAgentProtocol } from '../src/agent-runtime';
-import { createHeadlessAgentHarness } from '../src/agent-runtime-harness';
+} from '../examples/agent-runtime/headless-agent-runner';
+import {
+  createMemoryAgentRuntimeStore,
+  defineAgentProtocol,
+} from '../src/entrypoints/agent-runtime';
+import { createHeadlessAgentHarness } from '../src/entrypoints/agent-runtime/harness';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

@@ -40,7 +40,8 @@
  * reassembles (`live/watch-client`).
  */
 import { z } from 'zod';
-import { stableValue } from '../internal/stable-digest';
+import { serializeCanonicalJson } from '../internal/canonical-json';
+import { isRecord } from '../internal/typed';
 
 /** One step of rebuilding an array from the previous one. */
 export type WatchArrayOp =
@@ -92,10 +93,6 @@ export const WatchArrayOpSchema: z.ZodType<WatchArrayOp> = z.lazy(() =>
   ]),
 ) as z.ZodType<WatchArrayOp>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * The identity of a value as one string — key order normalised.
  *
@@ -104,7 +101,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * produces a larger message, not a wrong one.
  */
 function signature(value: unknown): string {
-  return JSON.stringify(stableValue(value)) ?? 'undefined';
+  return serializeCanonicalJson(value);
 }
 
 /**

@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, type RuntimeContext } from '../src/contract';
-import { createObservability } from '../src/observability';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
+import { createObservability } from '../src/entrypoints/observability';
 import { getTraceId } from '../src/observability/context';
 import { createImplement } from '../src/server/implement';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 import { createRuntimeToolFactory } from '../src/tools/runtime-tool';
 
 const MODERN = '2026-07-28';
@@ -84,14 +84,16 @@ const deleteContract = defineContract(
       expose: ['MCP', 'AGENT', 'CLI'],
       params: z.object({ id: z.string() }),
       output: z.object({ deleted: z.string(), confirmedBy: z.string() }),
-      mcp: {
-        inputRequired: [
-          {
-            key: 'confirmation',
-            message: 'Delete this project?',
-            schema: confirmationSchema,
-          },
-        ],
+      tool: {
+        mcp: {
+          inputRequired: [
+            {
+              key: 'confirmation',
+              message: 'Delete this project?',
+              schema: confirmationSchema,
+            },
+          ],
+        },
       },
     },
   },
@@ -213,11 +215,13 @@ describe('framework-owned MCP multi-round input', () => {
           expose: ['MCP'],
           params: z.object({ id: z.string() }),
           output: z.object({ summary: z.string() }),
-          mcp: {
-            inputRequired: [
-              { key: 'confirmation', message: 'Release?', schema: confirmationSchema },
-              { key: 'reason', message: 'Why?', schema: reasonSchema },
-            ],
+          tool: {
+            mcp: {
+              inputRequired: [
+                { key: 'confirmation', message: 'Release?', schema: confirmationSchema },
+                { key: 'reason', message: 'Why?', schema: reasonSchema },
+              ],
+            },
           },
         },
       },

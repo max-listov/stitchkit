@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { checkCliUpdate } from '../src/tools/cli-update';
+import { checkCliUpdate } from '../src/tools/cli/update';
 
 /**
  * A self-hosted deployment serves its manifest from its own network. The check

@@ -1,5 +1,9 @@
-import { createApplication, managedServerResource } from '../../src/application';
-import { bindProcessSignals, createServer, createSocketIOServer } from '../../src/server';
+import { createApplication, managedServerResource } from '../../src/entrypoints/application';
+import {
+  bindProcessSignals,
+  createServer,
+  createSocketIOServer,
+} from '../../src/entrypoints/server';
 
 const socket = await createSocketIOServer({
   cors: { origin: '*' },

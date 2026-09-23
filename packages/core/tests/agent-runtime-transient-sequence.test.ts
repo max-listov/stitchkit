@@ -7,8 +7,11 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { createAgentControlView, reduceAgentControlEvent } from '../src/agent-runtime-browser';
+} from '../src/entrypoints/agent-runtime';
+import {
+  createAgentControlView,
+  reduceAgentControlEvent,
+} from '../src/entrypoints/agent-runtime/browser';
 
 describe('transient event sequence', () => {
   /**

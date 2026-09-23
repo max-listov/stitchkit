@@ -3,18 +3,19 @@
  * by `createHandler`; tool completion comes from the canonical tool hooks.
  * Both are normalised into `RequestEvent` without nested fetch wrappers.
  */
-import type { RuntimeContext } from '../contract';
-import { recordedErrorMessage } from '../internal/errors';
+
+import type { RuntimeContext } from '../contract/define';
+import { recordedErrorMessage } from '../contract/normalize';
+import { isRecord } from '../internal/typed';
+import type { MethodDef } from '../server/types';
+import type { ToolCallHooks, ToolResult } from '../tools/execute';
 import {
   assertDrainBound,
   type BoundedSinkManager,
   createBoundedSinkManager,
   type ObservabilityDrainBound,
   withinBound,
-} from '../internal/observability-sink';
-import { isRecord } from '../internal/typed';
-import type { MethodDef } from '../server/types';
-import type { ToolCallHooks, ToolResult } from '../tools/execute';
+} from './bounded-sink';
 import {
   type DimensionCollision,
   getRequestContext,

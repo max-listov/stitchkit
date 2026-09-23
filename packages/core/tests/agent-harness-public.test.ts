@@ -5,21 +5,22 @@ import path from 'node:path';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentPromptBudget,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
   projectAgentHistory,
   structuredCompaction,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 import {
   type AgentHarnessProfileEvent,
   createAgentHarnessControlServer,
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
-} from '../src/agent-runtime-harness';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
-import { defineRuntimeTool, mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime/harness';
+import { defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
+import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -643,7 +644,7 @@ describe('published headless Agent harness', () => {
   });
 
   test('reconstructs a pending approval after SQLite reopen without replaying the effect', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-approval-recovery-'));
+    const root = await sqliteScratchDir('stitchkit-approval-recovery-');
     roots.push(root);
     const filename = path.join(root, 'runtime.sqlite');
     let effects = 0;
@@ -963,7 +964,7 @@ describe('published headless Agent harness', () => {
   });
 
   test('store reopen retains completed tool history and recover does not replay it', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-harness-'));
+    const root = await sqliteScratchDir('stitchkit-harness-');
     roots.push(root);
     const filename = path.join(root, 'runtime.sqlite');
     let effects = 0;

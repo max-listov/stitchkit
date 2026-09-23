@@ -11,7 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { bindRealtimeClient } from '../src/browser/socket-io';
-import { defineEvents, type EventPayloads, toRealtimeContract } from '../src/live';
+import { defineEvents, type EventPayloads, toRealtimeContract } from '../src/entrypoints/live';
 import type { RealtimeRejectedEvent } from '../src/realtime';
 import { createEventBus } from '../src/server/event-bus';
 

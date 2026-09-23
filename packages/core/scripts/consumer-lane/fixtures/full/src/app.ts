@@ -24,18 +24,17 @@ import {
   defineStateSlot,
 } from 'stitchkit/agent-runtime';
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
-import { defineCliCommand } from 'stitchkit/cli';
+import { createAgentRaceTrace } from 'stitchkit/agent-runtime/testing';
+import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createManagedFileBoundary } from 'stitchkit/files';
 import { createObservability, type RequestEvent } from 'stitchkit/observability';
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement, ShutdownOptionsSchema } from 'stitchkit/server';
-import { createAgentRaceTrace } from 'stitchkit/testing';
 import {
   bindStdioProcessSignals,
   buildMcpServer,
   buildToolManifest,
-  createCli,
   createMcpHandler,
   createMcpHttpRoute,
   createToolInvoker,
@@ -349,7 +348,7 @@ const widgets = defineContract(
       input: z.object({ name: z.string() }),
       output: z.object({ id: z.string() }),
       expose: ['AGENT', 'CLI'],
-      toolName: 'update_widget',
+      tool: { name: 'update_widget' },
     },
   },
 );
@@ -394,19 +393,21 @@ const packedMultiRound = defineContract(
       desc: 'Approve with ordered typed input',
       expose: ['MCP'],
       output: z.object({ approved: z.boolean(), reason: z.string() }),
-      mcp: {
-        inputRequired: [
-          {
-            key: 'confirmation',
-            message: 'Approve?',
-            schema: z.object({ approved: z.boolean() }),
-          },
-          {
-            key: 'reason',
-            message: 'Reason?',
-            schema: z.object({ value: z.string() }),
-          },
-        ],
+      tool: {
+        mcp: {
+          inputRequired: [
+            {
+              key: 'confirmation',
+              message: 'Approve?',
+              schema: z.object({ approved: z.boolean() }),
+            },
+            {
+              key: 'reason',
+              message: 'Reason?',
+              schema: z.object({ value: z.string() }),
+            },
+          ],
+        },
       },
     },
   },

@@ -515,8 +515,9 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
   project. It reads the version you have from `node_modules` and the changelog
   from inside the package, and prints every breaking change between the two —
   oldest first, each with who must act. Nothing to clone, nobody to ask.
-- **Coding agent?** The package ships **`llms.txt`** (a curated index) and
-  **`llms-full.txt`** (the whole guide inlined) — your agent reads them from
+- **Coding agent?** The package ships **`llms.txt`** (an index) and
+  **`llms/`** — the guide and reference cut into slices of at most 50 KB, one per
+  entrypoint, so your agent loads the one it imports from
   `node_modules/stitchkit/`. For Claude Code, the repo also provides a
   [stitchkit skill](./skills/stitchkit) you can drop into `.claude/skills/`.
 
@@ -525,6 +526,8 @@ The full guide and API reference, in [`docs/`](./docs/README.md):
 - **[AGENTS.md](./AGENTS.md)** — the development guide (setup, rules, hooks,
   local-dev, breaking changes, release flow). One place for human and agent
   contributors; [CONTRIBUTING.md](./CONTRIBUTING.md) points here.
+- **[Principles](./docs/PRINCIPLES.md)** — what stitchkit is, the invariants every
+  change answers to, and what it says no to — one page.
 - **[Architecture decisions](./docs/decisions/)** — the *why* behind the design.
 - **[Roadmap](./ROADMAP.md)** · **[Changelog](./CHANGELOG.md)** ·
   security via **[SECURITY.md](./SECURITY.md)**.

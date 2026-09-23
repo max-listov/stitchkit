@@ -1,5 +1,5 @@
-import type { EndpointToolAnnotations } from '../contract';
-import type { RuntimeToolIdentity, RuntimeToolTransport } from './runtime-tool';
+import type { EndpointToolAnnotations, ToolTransport } from '../contract/define';
+import type { RuntimeToolIdentity } from './runtime-tool';
 
 /** Pathless operation identity fields whose semantic method is owned by the factory. */
 export type NativeToolIdentity = Pick<
@@ -13,7 +13,7 @@ export interface ManagedNativeToolConfig {
   description: string;
   identity: NativeToolIdentity;
   /** Default: MCP and AGENT. CLI is always explicit opt-in. */
-  transports?: readonly RuntimeToolTransport[];
+  transports?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
 }
 

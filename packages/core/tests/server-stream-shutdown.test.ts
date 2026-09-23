@@ -4,9 +4,9 @@ import {
   createApplication,
   defineManagedResource,
   managedServerResource,
-} from '../src/application';
-import { defineContract } from '../src/contract';
-import { createServer, implement, streamingRoute } from '../src/server';
+} from '../src/entrypoints/application';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement, streamingRoute } from '../src/entrypoints/server';
 
 const Item = z.object({ ready: z.boolean() });
 function untilAborted(signal: AbortSignal): Promise<void> {

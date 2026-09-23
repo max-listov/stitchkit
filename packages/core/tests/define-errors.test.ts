@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError, defineContract, defineErrors } from '../src/contract';
-import { createHandler, implement } from '../src/server';
-import { buildMcpServer, createToolInvoker, mountAgent } from '../src/tools';
+import { AppError, defineContract, defineErrors } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
+import { buildMcpServer, createToolInvoker, mountAgent } from '../src/entrypoints/tools';
 
 const { errors, codes, definitions, isCode } = defineErrors({
   SESSION_NOT_FOUND: { status: 404 },
@@ -135,8 +135,8 @@ describe('domain error transport normalization', () => {
         method: 'POST',
         path: '/check',
         desc: 'Check the current quota',
-        toolName: 'quota_check',
         input: z.object({}),
+        tool: { name: 'quota_check' },
       },
     },
   );
@@ -281,8 +281,8 @@ describe('defineErrors — declared message', () => {
           method: 'POST',
           path: '/check',
           desc: 'Check quota',
-          toolName: 'quota_message_check',
           input: z.object({}),
+          tool: { name: 'quota_message_check' },
         },
       },
     );
@@ -314,8 +314,8 @@ describe('defineErrors — declared message', () => {
           method: 'POST',
           path: '/touch',
           desc: 'Touch the session',
-          toolName: 'session_touch',
           input: z.object({}),
+          tool: { name: 'session_touch' },
         },
       },
     );

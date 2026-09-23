@@ -50,7 +50,9 @@ How stitchkit is built and why.
 
 - [`AGENTS.md`](../AGENTS.md) — the development guide: rules, architecture,
   breaking-change and release flow (read by Cursor / Codex / Claude too).
-- [`VISION.md`](./VISION.md) — what stitchkit is, its principles, its direction.
+- [`PRINCIPLES.md`](./PRINCIPLES.md) — what stitchkit is and is not: invariants I1…I15 and
+  the list of what new work does not add.
+- [`VISION.md`](./VISION.md) — where stitchkit is going.
 - [`architecture/`](./architecture/) — current subsystem design and runtime boundaries, including
   the optional [`terminal host`](./architecture/terminal-host.md) layering.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
@@ -64,7 +66,8 @@ docs/
 ├── guide/         the user guide — how to build with stitchkit
 ├── api/           the API reference
 ├── architecture/  current subsystem design — the how
-├── VISION.md      what stitchkit is, its principles, its direction
+├── PRINCIPLES.md  what stitchkit is and is not — the invariants
+├── VISION.md      where it is going
 └── decisions/     architecture decision records — one file per ADR
 ```
 

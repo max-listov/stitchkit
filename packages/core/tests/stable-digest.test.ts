@@ -9,7 +9,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { argumentsDigest, stableValue } from '../src/internal/stable-digest';
+import { compareCodeUnits, serializeCanonicalJson } from '../src/internal/canonical-json';
+import { argumentsDigest } from '../src/internal/stable-digest';
 
 describe('an identity that needs nothing from its surroundings', () => {
   test('a digest is computed where there is no crypto.subtle at all', () => {
@@ -34,10 +35,19 @@ describe('an identity that needs nothing from its surroundings', () => {
     // right on every machine that runs the tests and wrong on the one that
     // matters. Read as text on purpose — a call this test cannot execute is
     // exactly the call it has to see.
-    const source = readFileSync(`${import.meta.dir}/../src/internal/stable-digest.ts`, 'utf8');
-    const body = source.slice(source.indexOf('export function stableValue'));
-    expect(body).not.toContain('crypto');
-    expect(body).not.toContain('await');
+    // The code after the module header, in both files the digest runs through:
+    // the header explains `crypto.subtle` at length and must not count.
+    for (const [file, from] of [
+      ['stable-digest.ts', 'function mix128'],
+      ['canonical-json.ts', 'export function compareCodeUnits'],
+    ] as const) {
+      const source = readFileSync(`${import.meta.dir}/../src/internal/${file}`, 'utf8');
+      const start = source.indexOf(from);
+      expect(start).toBeGreaterThan(0);
+      const body = source.slice(start);
+      expect(body).not.toContain('crypto');
+      expect(body).not.toContain('await');
+    }
   });
 
   test('it is synchronous, so a key is available in the turn it is asked for', () => {
@@ -90,9 +100,9 @@ describe('what the digest has to get right', () => {
   });
 });
 
-describe('stableValue', () => {
+describe('serializeCanonicalJson', () => {
   test('sorts object keys at every depth and leaves arrays alone', () => {
-    expect(JSON.stringify(stableValue({ b: 1, a: { d: 2, c: [3, 1] } }))).toBe(
+    expect(serializeCanonicalJson({ b: 1, a: { d: 2, c: [3, 1] } })).toBe(
       '{"a":{"c":[3,1],"d":2},"b":1}',
     );
   });
@@ -101,6 +111,55 @@ describe('stableValue', () => {
     const parent = { inherited: 'no' };
     const child = Object.create(parent) as Record<string, unknown>;
     child.own = 'yes';
-    expect(JSON.stringify(stableValue(child))).toBe('{"own":"yes"}');
+    expect(serializeCanonicalJson(child)).toBe('{"own":"yes"}');
+  });
+});
+
+describe('one order behind every digest', () => {
+  // Keys outside the Basic Multilingual Plane are where code-unit and code-point
+  // order disagree: U+1F600 is a surrogate pair starting 0xD83D, below U+FF61.
+  // Every stored digest — CLI signatures, agent-store hashes, surface snapshots —
+  // was taken in code-unit order, so this pins it rather than "fixing" it.
+  const value = { '\u{FF61}': 2, '\u{1F600}': 1, a: 0 };
+
+  test('keys are ordered by UTF-16 code unit, not by code point', () => {
+    expect(serializeCanonicalJson(value)).toBe('{"a":0,"\u{1F600}":1,"\u{FF61}":2}');
+    expect(compareCodeUnits('\u{1F600}', '\u{FF61}')).toBe(-1);
+  });
+
+  test('the argument digest and the agent store take the same bytes', async () => {
+    const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
+    const { serializeSurfaceValue } = await import('../src/testing/surface-manifest');
+    const bytes = serializeCanonicalJson(value);
+    expect(canonicalAgentJson(value)).toBe(bytes);
+    expect(serializeSurfaceValue(value)).toBe(bytes);
+    expect(argumentsDigest(value)).toBe(
+      argumentsDigest({ a: 0, '\u{1F600}': 1, '\u{FF61}': 2 }),
+    );
+  });
+
+  test('integer-like keys are sorted like every other key', async () => {
+    // An engine lists integer-like keys first, in numeric order, however they
+    // were inserted — so a sorted copy of an object handed to JSON.stringify
+    // comes back as {"9":…,"10":…}. The agent store's hashes and archives were
+    // always taken in true string order ("10" < "9"); a tool call's arguments
+    // with a numeric map in them must keep hashing to what 0.93 stored.
+    const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
+    const numeric = { a: 3, '9': 2, '10': 1, nested: [{ '2': 'b', '1': 'a' }] };
+    const bytes = '{"10":1,"9":2,"a":3,"nested":[{"1":"a","2":"b"}]}';
+    expect(serializeCanonicalJson(numeric)).toBe(bytes);
+    expect(canonicalAgentJson(numeric)).toBe(bytes);
+  });
+
+  test('what JSON.stringify leaves out is left out, and holes read as null', () => {
+    const holed: unknown[] = [1, undefined, () => 1];
+    holed[4] = { b: undefined, c: null }; // index 3 stays a hole
+    expect(serializeCanonicalJson(holed)).toBe('[1,null,null,null,{"c":null}]');
+  });
+
+  test('the agent store still refuses what is not JSON', async () => {
+    const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
+    expect(() => canonicalAgentJson({ a: undefined })).toThrow();
+    expect(serializeCanonicalJson({ a: undefined })).toBe('{}');
   });
 });

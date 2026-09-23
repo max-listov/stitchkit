@@ -1,6 +1,6 @@
 import { messageOf } from '../internal/error-message';
+import { isPublicIp } from '../internal/request';
 import { isRecord } from '../internal/typed';
-import { isPublicIp } from '../server/request';
 import type {
   GeoAttribution,
   GeoIpReader,

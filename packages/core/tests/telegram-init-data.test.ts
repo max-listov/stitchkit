@@ -10,7 +10,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { verifyTelegramInitData } from '../src/telegram';
+import { verifyTelegramInitData } from '../src/entrypoints/telegram';
 
 const BOT_TOKEN = '123456:AAH-test-token-for-signing-only';
 

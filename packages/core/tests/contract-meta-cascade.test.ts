@@ -11,8 +11,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createHttpClient } from '../src/browser/http';
-import { createContractFactory, defineContract } from '../src/contract';
-import { implement } from '../src/server';
+import { createContractFactory, defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { implementRemote } from '../src/tools/remote';
 
 const OUT = z.object({ ok: z.boolean() });

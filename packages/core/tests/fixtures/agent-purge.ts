@@ -2,7 +2,7 @@ import {
   AgentMessageSchema,
   AgentRunSchema,
   type AgentRuntimeStore,
-} from '../../src/agent-runtime';
+} from '../../src/entrypoints/agent-runtime';
 
 export function purgeAdmission(conversationId = 'target', suffix = '1') {
   const timestamp = '2026-08-31T00:00:00.000Z';

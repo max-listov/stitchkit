@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import type {
+  AgentStoreEventEnvelope,
+  AgentStoreEventPage,
+  AppendAgentStoreEvent,
+  ReadAgentStoreEvents,
+} from '../durability/events';
 import type { AgentConversationPurgeInput, AgentConversationPurgeResult } from './purge';
 import {
   AgentMessageSchema,
@@ -12,12 +18,6 @@ import {
   AgentTerminalReasonSchema,
   AgentUsageSchema,
 } from './schemas';
-import type {
-  AgentStoreEventEnvelope,
-  AgentStoreEventPage,
-  AppendAgentStoreEvent,
-  ReadAgentStoreEvents,
-} from './store-events';
 
 export const AgentStoreConflictSchema = z.object({
   outcome: z.literal('conflict'),

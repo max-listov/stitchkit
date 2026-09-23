@@ -5,7 +5,7 @@ import {
   createRuntimeToolFactory,
   mountAgent,
   type ToolCallHooks,
-} from '../src/tools';
+} from '../src/entrypoints/tools';
 
 function executable(tools: ReturnType<typeof mountAgent>, name: string) {
   const execute = tools[name]?.execute;

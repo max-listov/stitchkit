@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TOOL_TRANSPORTS, type ToolTransport } from '../contract/define';
 import {
   RealtimeRejectDirectionSchema,
   type RealtimeRejectedEvent,
@@ -334,7 +335,7 @@ function openApiOperations(document: Pick<OpenApiDocument, 'paths'>): string[] {
 
 function expectedToolNames(
   manifest: SurfaceManifest,
-  transport: 'MCP' | 'AGENT' | 'CLI',
+  transport: ToolTransport,
   surface: string | null,
 ): string[] {
   const projection = manifest.toolSurfaces.find(
@@ -349,7 +350,7 @@ function expectedToolNames(
 }
 
 export interface SurfaceToolDiscoveryObservation {
-  transport: 'MCP' | 'AGENT' | 'CLI';
+  transport: ToolTransport;
   surface?: string;
   names: readonly string[];
 }
@@ -387,7 +388,7 @@ export function assertSurfaceDiscovery(
       openApiOperations(observed.openApi),
     );
   }
-  for (const transport of ['MCP', 'AGENT', 'CLI'] satisfies Array<'MCP' | 'AGENT' | 'CLI'>) {
+  for (const transport of TOOL_TRANSPORTS) {
     const names = observed[transport];
     if (names) {
       assertSameSet(

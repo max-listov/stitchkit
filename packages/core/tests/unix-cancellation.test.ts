@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
-import { defineContract } from '../src/contract/index';
-import { createServer, implement } from '../src/server/index';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 import { createUnixClientTransport } from '../src/server/unix-client';
 
 /**

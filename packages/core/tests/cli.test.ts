@@ -10,13 +10,13 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { AppError, defineContract, notFound } from '../src/contract';
+import { AppError, defineContract, notFound } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { isRecord } from '../src/internal/typed';
-import { implement } from '../src/server';
-import { type CliConfig, createCli } from '../src/tools/cli';
-import { CliArgumentError, parseCliArgs } from '../src/tools/cli-args';
-import { defineCliCommand } from '../src/tools/cli-command';
-import { pollUntilDone } from '../src/tools/cli-wait';
+import { CliArgumentError, parseCliArgs } from '../src/tools/cli/args';
+import { defineCliCommand } from '../src/tools/cli/command';
+import { type CliConfig, createCli } from '../src/tools/cli/create-cli';
+import { pollUntilDone } from '../src/tools/cli/wait';
 import type { ToolResult } from '../src/tools/execute';
 import { listToolNames } from '../src/tools/list-names';
 import { collectTools } from '../src/tools/mount';
@@ -34,15 +34,14 @@ const contract = defineContract(
       method: 'GET',
       path: '/',
       desc: 'List widgets',
-      toolName: 'list_widgets',
       expose: ['CLI', 'MCP'],
       output: z.object({ items: z.array(z.string()) }),
+      tool: { name: 'list_widgets' },
     },
     create: {
       method: 'POST',
       path: '/',
       desc: 'Create a widget',
-      toolName: 'create_widget',
       expose: ['CLI'],
       input: z.object({
         name: z.string(),
@@ -51,49 +50,50 @@ const contract = defineContract(
         active: z.boolean().optional(),
       }),
       output: z.object({ id: z.string(), name: z.string(), count: z.number() }),
+      tool: { name: 'create_widget' },
     },
     get: {
       method: 'GET',
       path: '/:id',
       desc: 'Get a widget',
-      toolName: 'get_widget',
       expose: ['CLI'],
       params: z.strictObject({ id: z.string() }),
       output: z.object({ id: z.string(), status: z.string() }),
+      tool: { name: 'get_widget' },
     },
     setConfig: {
       method: 'POST',
       path: '/config',
       desc: 'Set config',
-      toolName: 'set_config',
       expose: ['CLI'],
       input: z.object({ opts: z.object({ retries: z.number() }) }),
       output: z.object({ ok: z.boolean() }),
+      tool: { name: 'set_config' },
     },
     boom: {
       method: 'POST',
       path: '/boom',
       desc: 'Always throws',
-      toolName: 'boom_widget',
       expose: ['CLI'],
       output: z.object({ never: z.string() }),
+      tool: { name: 'boom_widget' },
     },
     createJob: {
       method: 'POST',
       path: '/job',
       desc: 'Start a job',
-      toolName: 'create_job',
       expose: ['CLI'],
       output: z.object({ id: z.string(), status: z.string() }),
+      tool: { name: 'create_job' },
     },
     getJob: {
       method: 'GET',
       path: '/job/:id',
       desc: 'Job status',
-      toolName: 'get_job',
       expose: ['CLI'],
       params: z.strictObject({ id: z.string() }),
       output: z.object({ id: z.string(), status: z.string() }),
+      tool: { name: 'get_job' },
     },
     internalOnly: {
       method: 'POST',
@@ -106,8 +106,8 @@ const contract = defineContract(
       method: 'POST',
       path: '/def',
       desc: 'Default expose (MCP+AGENT, not CLI)',
-      toolName: 'do_default',
       input: z.object({ x: z.number() }),
+      tool: { name: 'do_default' },
     },
   },
 );
@@ -1365,10 +1365,10 @@ describe('createCli — reserved names on intersection schemas', () => {
           method: 'POST',
           path: '/:wait',
           desc: 'Schedule a job',
-          toolName: 'schedule_job',
           expose: ['CLI'],
           params: z.strictObject({ wait: z.string() }),
           input: z.string(),
+          tool: { name: 'schedule_job' },
         },
       },
     );
@@ -1386,10 +1386,10 @@ describe('createCli — reserved names on intersection schemas', () => {
           method: 'POST',
           path: '/:slot',
           desc: 'Schedule a job',
-          toolName: 'schedule_job',
           expose: ['CLI'],
           params: z.strictObject({ slot: z.string() }),
           input: z.string(),
+          tool: { name: 'schedule_job' },
         },
       },
     );

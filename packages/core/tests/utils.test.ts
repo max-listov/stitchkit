@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { toToolName } from '../src/tools/names';
-import { mergeSchemas } from '../src/tools/schema';
+import { mergeSchemas } from '../src/tools/schema/schema';
 
 describe('toToolName', () => {
   test('list → list_users', () => {

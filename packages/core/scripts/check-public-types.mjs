@@ -70,6 +70,15 @@ const ACCEPTED = {
   InferParams: 'inference helper — endpoint params are computed from its schema',
   InferInput: 'inference helper — endpoint input is computed from its schema',
   InferMcpInput: 'inference helper — MCP input is computed from endpoint policy',
+  ToolViewEndpoint: 'inference helper — the endpoint withToolView accepts is the tool variant',
+  EndpointRouteBase:
+    'structural base — a consumer writes an endpoint literal or HeadEndpointDef, never the shared route fields',
+  ToolTransportEndpoint:
+    'inference helper — withToolView computes the HTTP-only refusal from the endpoint',
+  ToolViewProject: 'inference helper — project is typed from the endpoint schemas',
+  EndpointInputDefaults: 'inference helper — tool defaults are typed from the endpoint input',
+  EndpointFullOutputInput:
+    'inference helper — a reshaping projection returns the full output input type',
   RequiredRequest: 'inference helper — raw endpoints compute required request access',
   RequiredStreamSignal:
     'inference helper — contract streams compute required cancellation access',

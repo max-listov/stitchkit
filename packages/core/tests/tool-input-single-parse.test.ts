@@ -3,11 +3,11 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { asSchema } from 'ai';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { isRecord } from '../src/internal/typed';
-import { implement } from '../src/server';
 import { mountAgent } from '../src/tools/agent';
-import { buildMcpServer } from '../src/tools/mcp';
+import { buildMcpServer } from '../src/tools/mcp/mount';
 import { collectTools, createToolRunner } from '../src/tools/mount';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 

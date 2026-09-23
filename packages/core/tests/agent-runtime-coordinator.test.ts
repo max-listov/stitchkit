@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createAgentSessionCoordinator } from '../src/agent-runtime';
+import { createAgentSessionCoordinator } from '../src/entrypoints/agent-runtime';
 
 describe('agent session coordinator', () => {
   test('preserves pending input order without overlapping the active lane', async () => {

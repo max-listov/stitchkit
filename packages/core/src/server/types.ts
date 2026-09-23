@@ -13,9 +13,10 @@ import type {
   ResponseMetadata,
   RuntimeContext,
   Transport,
-} from '../contract';
+} from '../contract/define';
+import type { EndpointToolView } from '../contract/tool-view';
+import type { StitchLogger } from '../internal/logger';
 import type { PathParams } from '../internal/route-pattern';
-import type { StitchLogger } from '../logger';
 import type { HttpRequestObserver } from '../observability/audit';
 import type { ReleaseMarker } from '../release/marker';
 import type { LogFormat } from './logger';
@@ -53,7 +54,7 @@ type McpInputOf<R> = R extends readonly { key: string; schema: ZodType }[]
  * wide record, which is the truth about what it promised.
  */
 type InferMcpInput<E> =
-  Prop<E, 'mcp'> extends { inputRequired: infer R }
+  Prop<Prop<E, 'tool'>, 'mcp'> extends { inputRequired: infer R }
     ? R extends readonly { key: string; schema: ZodType }[]
       ? McpInputOf<R>
       : R extends (call: never) => infer P
@@ -248,6 +249,8 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   paramsSchema?: ZodType<TParams>;
   inputSchema?: ZodType<TInput>;
   outputSchema?: ZodType<TOutput>;
+  /** The tool-surface answer declared with `withToolView`; HTTP never reads it. → ADR 0196. */
+  toolView?: EndpointToolView;
   stream?: EndpointStreamDescriptor;
   multipart?: MultipartDescriptor;
   multipartReceivers?: Record<string, MultipartReceiver>;
@@ -391,7 +394,7 @@ export interface RawRoute<TServer = unknown> {
   handler: (req: Request, ctx: RawRouteContext<TServer>) => Response | Promise<Response>;
 }
 
-export type { StitchLogger } from '../logger';
+export type { StitchLogger } from '../internal/logger';
 
 /** How a request finished — what `LoggingConfig.enrich` gets to react to. */
 export interface LogOutcome {

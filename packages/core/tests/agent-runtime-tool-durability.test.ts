@@ -9,8 +9,8 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { defineRuntimeTool, mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime';
+import { defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
 
 test('a separate process resumes the runtime without repeating a recorded effect', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-durable-restart-'));

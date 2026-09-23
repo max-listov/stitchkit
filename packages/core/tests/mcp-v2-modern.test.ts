@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createObservability,
   createTraceContext,
@@ -9,10 +9,10 @@ import {
   getTraceId,
   type RequestEvent,
   runWithRequestContext,
-} from '../src/observability';
+} from '../src/entrypoints/observability';
 import { createImplement } from '../src/server/implement';
-import { RESOURCE_MIME_TYPE } from '../src/tools/mcp-app';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { RESOURCE_MIME_TYPE } from '../src/tools/mcp/app';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 const MODERN = '2026-07-28';
@@ -339,7 +339,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
           desc: 'Show a modern widget',
           expose: ['MCP'],
           output: z.object({ visible: z.boolean() }),
-          ui: { resourceUri },
+          tool: { ui: { resourceUri } },
         },
       },
     );
@@ -437,7 +437,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
           desc: 'Show a legacy widget',
           expose: ['MCP'],
           output: z.object({ visible: z.boolean() }),
-          ui: { resourceUri },
+          tool: { ui: { resourceUri } },
         },
       },
     );

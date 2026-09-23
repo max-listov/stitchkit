@@ -4,26 +4,28 @@
  * extend handling and the call execution are identical and live here.
  */
 import { z } from 'zod';
-import { isRetryableStatus, type Transport, type TransportSource } from '../contract';
+import type { Transport, TransportSource } from '../contract/define';
+import { isRetryableStatus } from '../contract/errors';
 import type { ServiceDef } from '../server/types';
 import {
   type ErrorHintFn,
   executeToolMethod,
   type ToolArgumentExtension,
   type ToolCallHooks,
+  type ToolExecutionOptions,
   type ToolLifecycle,
   type ToolOperation,
   type ToolResult,
   toolErrorFromResult,
 } from './execute';
-import type { ToolPresentationSchema } from './flatten';
 import {
   assertToolExtensionCompatible,
   type ProjectedContractTool,
   projectToolSurface,
   type SurfaceToolExtension,
 } from './internal/surface-projector';
-import { mergeSchemas, rebuildObject } from './schema';
+import type { ToolPresentationSchema } from './schema/flatten';
+import { mergeSchemas, rebuildObject } from './schema/schema';
 
 /**
  * Extra arguments folded into a mounted tool's schema — the host supplies them,
@@ -40,7 +42,7 @@ export type ToolExtend<TContext extends Record<string, unknown> = Record<string,
 export interface MountableTool {
   /** The executable operation identity and schemas behind the tool. */
   method: ToolOperation;
-  /** Tool name — the `toolName` override, else derived from service + method. */
+  /** Tool name — the endpoint's `tool.name`, else derived from service + method. */
   name: string;
   /** Executable source schema used only by the CLI argument adapter. */
   argumentSchema: z.ZodType;
@@ -139,8 +141,6 @@ export interface ToolRunnerConfig {
   hooks?: ToolCallHooks;
   /** Auth / scope gate and result transform — runs for every tool call. */
   lifecycle?: ToolLifecycle;
-  /** Global error hint injected into every failed tool result. */
-  errorHint?: ErrorHintFn;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /**
@@ -149,6 +149,13 @@ export interface ToolRunnerConfig {
    * diff only runs when one is. → ADR 0037.
    */
   onOutputStrip?: (toolName: string, paths: string[]) => void;
+  /**
+   * Answer as the tool surface: apply each endpoint's `toolView` — its input
+   * defaults and its projected, separately validated answer. The MCP, agent and
+   * CLI mounts set it; the in-process invoker does not, because the code calling
+   * it is not a model and gets the full answer, as HTTP does. → ADR 0196.
+   */
+  toolSurface?: boolean;
 }
 
 /**
@@ -161,6 +168,7 @@ export function createToolRunner(
   tool: MountableTool,
   rawArgs: Record<string, unknown>,
   context?: Record<string, unknown>,
+  call?: Pick<ToolExecutionOptions, 'finalizeOutput'>,
 ) => Promise<ToolResult> {
   const extension: ToolArgumentExtension | undefined = config.extend
     ? {
@@ -172,17 +180,26 @@ export function createToolRunner(
     tool: MountableTool,
     rawArgs: Record<string, unknown>,
     context?: Record<string, unknown>,
+    call?: Pick<ToolExecutionOptions, 'finalizeOutput'>,
   ): Promise<ToolResult> {
     return executeToolMethod(
       tool.method,
-      tool.name,
-      rawArgs,
-      { ...config.context, ...context, source: config.source },
-      config.hooks,
-      config.lifecycle,
-      config.coerceJsonArgs ?? true,
-      config.onOutputStrip ? (paths) => config.onOutputStrip?.(tool.name, paths) : undefined,
-      tool.shouldExtend ? extension : undefined,
+      {
+        toolName: tool.name,
+        rawArgs,
+        context: { ...config.context, ...context, source: config.source },
+      },
+      {
+        hooks: config.hooks,
+        lifecycle: config.lifecycle,
+        coerceJson: config.coerceJsonArgs ?? true,
+        onOutputStrip: config.onOutputStrip
+          ? (paths) => config.onOutputStrip?.(tool.name, paths)
+          : undefined,
+        extension: tool.shouldExtend ? extension : undefined,
+        toolSurface: config.toolSurface ?? false,
+        finalizeOutput: call?.finalizeOutput,
+      },
     );
   };
 }

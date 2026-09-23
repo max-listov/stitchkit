@@ -1,6 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { forbidden } from '../contract';
+import { forbidden } from '../contract/errors';
 import {
   type AgentCodingToolAuthorization,
   AgentCodingToolAuthorizationSchema,

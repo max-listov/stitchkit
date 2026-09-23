@@ -1,5 +1,14 @@
-import { expect, test } from 'bun:test';
-import { cadenceSentence, surfaceCadence } from './surface-cadence';
+import { describe, expect, test } from 'bun:test';
+import {
+  assertStableBreakingBudget,
+  breakingEntries,
+  cadenceSentence,
+  maturityTable,
+  STABLE_BUDGET_SINCE,
+  stableBreakingBudget,
+  stableBudgetSentence,
+  surfaceCadence,
+} from './surface-cadence';
 
 const AGENT_RUNTIME_TERMS = [
   'agent-runtime',
@@ -118,14 +127,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 20 of the 38 minors since 0.56.2, most recently 0.89.0');
+  expect(sentence).toBe('redefined in 21 of the 39 minors since 0.56.2, most recently 0.94.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 7 of the 38 minors since 0.56.2, most recently 0.83.0',
+    'redefined in 7 of the 39 minors since 0.56.2, most recently 0.83.0',
   );
   expect(guide).toContain(`_${application}_`);
 
@@ -133,7 +142,190 @@ test('the maturity table carries the figure the changelog supports', async () =>
     surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
   );
   expect(observability).toBe(
-    'redefined in 2 of the 38 minors since 0.56.2, most recently 0.92.0',
+    'redefined in 2 of the 39 minors since 0.56.2, most recently 0.92.0',
   );
   expect(guide).toContain(`_${observability}_`);
+});
+
+describe('the breaking budget for stable entrypoints — ADR 0198', () => {
+  const GUIDE = [
+    '| Import | Use in | Maturity | Holds |',
+    '|--------|--------|----------|-------|',
+    '| `stitchkit/tools` | server | stable | tools |',
+    '| `stitchkit/observability` | server | stable<br>_redefined in 2 of 3 minors_ | events |',
+    '| `stitchkit/live` | browser **and** server | evolving | watched reads |',
+  ].join('\n');
+  const BREAKING = '### \u26a0\ufe0f Breaking changes';
+
+  const release = (version: string, date: string, ...entries: string[]) =>
+    [
+      `## [${version}] — ${date}`,
+      '',
+      ...(entries.length > 0
+        ? [BREAKING, '', ...entries, '', '**Who must act:** someone.', '']
+        : ['### Added', '', '- a thing', '']),
+    ].join('\n');
+  const STABLE = '- `stitchkit/tools` — **a tool moved**, because a reason.\n  → ADR 0198';
+  const EVOLVING = '- `stitchkit/live` — **a watched read moved**.';
+
+  test('reads stable and evolving out of the maturity table, and only from there', () => {
+    const table = maturityTable(GUIDE);
+    expect(table.get('stitchkit/tools')).toBe('stable');
+    expect(table.get('stitchkit/observability')).toBe('stable');
+    expect(table.get('stitchkit/live')).toBe('evolving');
+    expect(table.has('stitchkit/react')).toBe(false);
+  });
+
+  test('the real maturity table classifies every row it lists', async () => {
+    const guide = await Bun.file(`${import.meta.dir}/../docs/guide/getting-started.md`).text();
+    const rows = [...guide.matchAll(/^\| `(stitchkit[\w/-]*)` \|/gm)].map((row) => row[1]);
+    const table = maturityTable(guide);
+    expect(rows.filter((name) => name === undefined || !table.has(name))).toEqual([]);
+    expect(table.get('stitchkit/contract')).toBe('stable');
+    expect(table.get('stitchkit/agent-runtime')).toBe('evolving');
+  });
+
+  test('an entry leads with one or several entrypoints, and a symbol is not one', () => {
+    const table = maturityTable(GUIDE);
+    const entries = breakingEntries(
+      [
+        BREAKING,
+        '- **`stitchkit/tools`, `stitchkit/live` — both moved**',
+        '- `stitchkit/tools` and `stitchkit/observability`: moved',
+        '- **`createMcpHandler` no longer accepts `foo`**',
+        '  - `stitchkit/live` nested, part of the entry above',
+        '```ts',
+        '- `stitchkit/live` inside a fence is an example',
+        '```',
+        '**Who must act:** someone.',
+      ].join('\n'),
+      table,
+    );
+    expect(entries.map((entry) => entry.entrypoints)).toEqual([
+      ['stitchkit/tools', 'stitchkit/live'],
+      ['stitchkit/tools', 'stitchkit/observability'],
+      [],
+    ]);
+  });
+
+  test('one stable-breaking minor in seven days is within the budget', () => {
+    const changelog = [
+      release('9.3.0', '2026-10-20', STABLE),
+      release('9.2.0', '2026-10-13', STABLE),
+      release('9.1.0', '2026-10-12', EVOLVING),
+    ].join('\n');
+    const budget = assertStableBreakingBudget({
+      changelog,
+      guide: GUIDE,
+      version: '9.3.0',
+      since: '9.0.0',
+    });
+    expect(budget.last7).toBe(1);
+    expect(budget.last30).toBe(2);
+    expect(stableBudgetSentence(budget)).toBe(
+      'stable breaking: 2 in 30 days, 1 in 7 days (budget 1)',
+    );
+  });
+
+  test('a second stable-breaking minor within seven days is refused', () => {
+    const changelog = [
+      release('9.3.0', '2026-10-19', STABLE),
+      release('9.2.0', '2026-10-13', STABLE),
+    ].join('\n');
+    expect(() =>
+      assertStableBreakingBudget({
+        changelog,
+        guide: GUIDE,
+        version: '9.3.0',
+        since: '9.0.0',
+      }),
+    ).toThrow(/2 minors did within 7 days of 2026-10-19 \(9\.3, 9\.2\); the budget is 1/);
+  });
+
+  test('evolving entrypoints break freely', () => {
+    const changelog = [
+      release('9.3.0', '2026-10-13', EVOLVING),
+      release('9.2.0', '2026-10-13', STABLE),
+    ].join('\n');
+    const budget = assertStableBreakingBudget({
+      changelog,
+      guide: GUIDE,
+      version: '9.3.0',
+      since: '9.0.0',
+    });
+    expect(budget.breaksStable).toBe(false);
+    expect(budget.last7).toBe(1);
+  });
+
+  test('releases before the effective version are not counted', () => {
+    const changelog = [
+      release('9.3.0', '2026-10-13', STABLE),
+      // Written before the rule: no prefix, and a stable break the same week.
+      release('9.2.0', '2026-10-12', '- **`createMcpHandler` moved** in stitchkit/tools'),
+      release('9.1.0', '2026-10-11', STABLE),
+    ].join('\n');
+    const budget = assertStableBreakingBudget({
+      changelog,
+      guide: GUIDE,
+      version: '9.3.0',
+      since: '9.3.0',
+    });
+    expect(budget.last7).toBe(1);
+    expect(budget.last30).toBe(1);
+    // And a release below the effective version is never refused by it.
+    expect(() =>
+      assertStableBreakingBudget({
+        changelog,
+        guide: GUIDE,
+        version: '9.2.0',
+        since: '9.3.0',
+      }),
+    ).not.toThrow();
+  });
+
+  test('a breaking entry that does not lead with its entrypoint is refused', () => {
+    const changelog = release('9.3.0', '2026-10-13', '- **`createMcpHandler` moved**');
+    expect(() =>
+      assertStableBreakingBudget({
+        changelog,
+        guide: GUIDE,
+        version: '9.3.0',
+        since: '9.0.0',
+      }),
+    ).toThrow(/does not start with the entrypoint it breaks/);
+  });
+
+  test('a stable break without an ADR is refused', () => {
+    const changelog = release('9.3.0', '2026-10-13', '- `stitchkit/tools` — **moved**');
+    expect(() =>
+      assertStableBreakingBudget({
+        changelog,
+        guide: GUIDE,
+        version: '9.3.0',
+        since: '9.0.0',
+      }),
+    ).toThrow(/must cite the ADR/);
+  });
+
+  test('a stable break with an undated heading is refused, not waved through', () => {
+    const changelog = release('9.3.0', 'x', STABLE);
+    expect(() =>
+      assertStableBreakingBudget({
+        changelog,
+        guide: GUIDE,
+        version: '9.3.0',
+        since: '9.0.0',
+      }),
+    ).toThrow(/carries no date/);
+  });
+
+  test('the budget starts at 0.94.0 and the real changelog reports against it', async () => {
+    expect(STABLE_BUDGET_SINCE).toBe('0.94.0');
+    const changelog = await Bun.file(`${import.meta.dir}/../CHANGELOG.md`).text();
+    const guide = await Bun.file(`${import.meta.dir}/../docs/guide/getting-started.md`).text();
+    // 0.93.0 predates the rule, so however much it broke it spends nothing.
+    const budget = stableBreakingBudget({ changelog, guide, version: '0.93.0' });
+    expect(budget.last7).toBe(0);
+    expect(budget.last30).toBe(0);
+  });
 });

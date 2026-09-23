@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 
 const ITERATIONS = 30;
 
@@ -15,7 +15,6 @@ function makeService(index: number) {
           method: 'POST',
           path: '/',
           desc: `Benchmark tool ${index}`,
-          toolName,
           input: z.object({
             id: z.uuid(),
             label: z.string().min(1),
@@ -27,6 +26,7 @@ function makeService(index: number) {
             }),
           }),
           output: z.object({ id: z.uuid(), accepted: z.boolean() }),
+          tool: { name: toolName },
         },
       },
     ),

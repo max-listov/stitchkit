@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { createMemoryAgentRuntimeStore } from '../src/agent-runtime';
 import {
   createLocalStepDurability,
   ParkAbortedError,
   ParkRecordDecodeError,
   StepAbortedError,
   StepResultDecodeError,
-} from '../src/agent-runtime/durability';
+} from '../src/durability/engine';
+import { createMemoryAgentRuntimeStore } from '../src/entrypoints/agent-runtime';
 
 const conversationId = 'conversation-durability';
 const runId = 'run-durability';

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createHandler, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
 import {
   allowedMethods,
   buildRouteMap,

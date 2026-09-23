@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
-import { implement } from '../src/server';
+import { AppError, defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { mountAgent } from '../src/tools/agent';
-import { buildMcpServer, mountMcp, validateMcpSchemas } from '../src/tools/mcp';
+import { buildMcpServer, mountMcp, validateMcpSchemas } from '../src/tools/mcp/mount';
 import { collectTools, createToolRunner } from '../src/tools/mount';
 
 const notesContract = defineContract(

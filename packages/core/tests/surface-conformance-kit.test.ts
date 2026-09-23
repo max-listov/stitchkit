@@ -1,14 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { bindRealtimeClient, type RealtimeClientTransport } from '../src/browser/socket-io';
-import { AppError, defineContract } from '../src/contract';
-import {
-  defineRealtimeContract,
-  RealtimeRequestDisconnectedError,
-  RealtimeRequestTimeoutError,
-} from '../src/realtime';
-import { implement } from '../src/server/implement';
-import { generateOpenApiDocument } from '../src/server/openapi';
+import type { ToolTransport } from '../src/entrypoints/contract';
+import { AppError, defineContract } from '../src/entrypoints/contract';
 import {
   assertSurfaceDiscovery,
   assertSurfaceManifestSnapshot,
@@ -22,8 +16,15 @@ import {
   type SurfaceToolDefinition,
   serializeSurfaceValue,
   TransportObservationSchema,
-} from '../src/testing';
-import { defineCliCommand } from '../src/tools/cli-command';
+} from '../src/entrypoints/testing';
+import {
+  defineRealtimeContract,
+  RealtimeRequestDisconnectedError,
+  RealtimeRequestTimeoutError,
+} from '../src/realtime';
+import { implement } from '../src/server/implement';
+import { generateOpenApiDocument } from '../src/server/openapi';
+import { defineCliCommand } from '../src/tools/cli/command';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 const ParamsSchema = z.object({ id: z.string() });
@@ -131,7 +132,7 @@ describe('transport conformance kit', () => {
       info: { title: 'test', version: '1' },
       groups: [{ pathPrefix: '/api/v1', services: [service] }],
     });
-    const names = (transport: 'MCP' | 'AGENT' | 'CLI') =>
+    const names = (transport: ToolTransport) =>
       manifest.toolSurfaces
         .find(
           (projection) => projection.transport === transport && projection.surface === null,
@@ -254,14 +255,16 @@ describe('transport conformance kit', () => {
           expose: ['MCP'],
           params: z.object({ id: z.string() }),
           output: z.object({ summary: z.string() }),
-          mcp: {
-            inputRequired: [
-              {
-                key: 'confirmation',
-                message: 'Release?',
-                schema: z.object({ confirmed: z.boolean() }),
-              },
-            ],
+          tool: {
+            mcp: {
+              inputRequired: [
+                {
+                  key: 'confirmation',
+                  message: 'Release?',
+                  schema: z.object({ confirmed: z.boolean() }),
+                },
+              ],
+            },
           },
         },
       },
@@ -354,7 +357,7 @@ describe('transport conformance kit', () => {
           input: InputSchema,
           output: OutputSchema,
           expose: ['HTTP', 'MCP'],
-          toolName: 'read_item_by_id',
+          tool: { name: 'read_item_by_id' },
         },
       },
     );

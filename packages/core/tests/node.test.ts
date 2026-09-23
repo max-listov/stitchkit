@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { connect } from 'node:net';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/server/implement';
 import { type NodeSocketLifecycle, serveNode } from '../src/server/node';
 

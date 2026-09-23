@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createHandler, defineMultipartStream, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createHandler, defineMultipartStream, implement } from '../src/entrypoints/server';
 import { parseMultipart } from '../src/server/multipart';
 
 function multipartRequest(

@@ -1,19 +1,18 @@
 import type { ZodType } from 'zod';
-import {
-  AppError,
-  type ContractDef,
-  type EndpointDef,
-  type MultipartDescriptor,
-  type RuntimeContext,
-} from '../contract';
-import { mergeMeta } from '../contract/define';
-import { resolveRouteParamsSchema } from '../internal/route-pattern';
+import type {
+  ContractDef,
+  EndpointDef,
+  MultipartDescriptor,
+  RuntimeContext,
+} from '../contract/define';
+import { AppError } from '../contract/errors';
 import {
   callRuntimeHandler,
   isRecord,
   transportResult,
   typedEntries,
 } from '../internal/typed';
+import { contractMethodFields } from './contract-method';
 import type {
   EndpointHandlerContext,
   Handlers,
@@ -177,9 +176,6 @@ export function contractOnlyService(contract: ContractDef): ServiceDef {
   return bindContract(contract, handlers);
 }
 
-/** Frozen so the same array cannot be mutated through one method and seen by another. */
-const HTTP_ONLY = Object.freeze(['HTTP'] as const);
-
 /**
  * Bind a contract to its typed `handlers`, producing a `ServiceDef` to mount on
  * `createServer`. Every handler is type-checked against its endpoint's schemas.
@@ -270,52 +266,8 @@ function bindContract(
     const regularHandler = typeof typedHandler === 'function' ? typedHandler : undefined;
 
     methods[String(key)] = {
-      method: endpoint.method,
-      path: endpoint.path,
-      desc: endpoint.desc,
-      // Stable (service, action) identity for hooks / audit (→ ADR 0022).
-      serviceName: contract.meta.prefix,
-      key: String(key),
-      toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
-      // A raw endpoint's exposure is forced, not inherited: with `expose`
-      // undefined the framework's own default convention reads "MCP + AGENT on",
-      // so every pre-existing exposure reader — audit scripts, a bring-your-own
-      // transport — would conclude a download is a tool. Making it explicit keeps
-      // them correct without teaching them about `raw`. → ADR 0038.
-      expose:
-        endpoint.rawResponse ||
-        endpoint.rawBody ||
-        endpoint.responseMeta ||
-        ('stream' in endpoint && endpoint.stream)
-          ? HTTP_ONLY
-          : endpoint.expose,
-      // Effective scope: per-endpoint override, else the contract group scope.
-      // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
-      // `endpoint.scope` alone — no consumer ever re-resolves against a service.
-      scope: endpoint.scope ?? groupScope,
-      paramsSchema: resolveRouteParamsSchema(endpoint.path, endpoint.params),
-      inputSchema: endpoint.input,
-      outputSchema: endpoint.output,
-      stream: 'stream' in endpoint ? endpoint.stream : undefined,
-      multipart: endpoint.multipart,
+      ...contractMethodFields(contract, String(key), endpoint),
       multipartReceivers: streamingHandler?.receivers,
-      maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
-      // Transport-neutral retry/replay hint — rides through untouched (→ ADR 0027).
-      idempotent: endpoint.idempotent,
-      ui: 'ui' in endpoint ? endpoint.ui : undefined,
-      annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
-      mcp: 'mcp' in endpoint ? endpoint.mcp : undefined,
-      // Opaque app metadata — the contract-wide default shallow-merged with the
-      // endpoint's, endpoint keys winning. Undefined on both sides stays
-      // undefined: readers test `method.meta?.x`. → ADR 0021 / 0036.
-      meta: mergeMeta(contract.meta.meta, endpoint.meta),
-      // The handler owns the response — skip output validation, serialization
-      // and every tool surface. → ADR 0038.
-      rawResponse: endpoint.rawResponse,
-      rawBody: endpoint.rawBody,
-      safelistedBody: endpoint.safelistedBody,
-      responseMeta: endpoint.responseMeta,
-      contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
       handler: streamingHandler
         ? (ctx: RuntimeContext) => streamingHandler.execute(ctx, ctx.files ?? {})
         : (ctx: RuntimeContext) => {

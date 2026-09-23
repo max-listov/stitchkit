@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineContract } from '../src';
+import { defineContract } from '../src/entrypoints';
 import { createHandler } from '../src/server/create';
 import { implement } from '../src/server/implement';
 

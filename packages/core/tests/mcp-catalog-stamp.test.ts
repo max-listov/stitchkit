@@ -2,15 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
-import { buildMcpServer } from '../src/tools/mcp';
 import {
   MCP_CATALOG_META_KEY,
   mcpCatalogStamp,
   readMcpCatalogStamp,
-} from '../src/tools/mcp-catalog';
-import { prepareMcpServerSurface } from '../src/tools/mcp-prepare';
+} from '../src/tools/mcp/catalog';
+import { buildMcpServer } from '../src/tools/mcp/mount';
+import { prepareMcpServerSurface } from '../src/tools/mcp/prepare';
 
 /*
  * A consumer must be able to learn that its catalog is stale WITHOUT asking.

@@ -14,7 +14,7 @@ export const repositoryContract = defineContract(
       desc: 'Read the server-cached repository snapshot',
       output: RepositorySnapshotSchema,
       expose: ['HTTP', 'MCP', 'AGENT', 'CLI'],
-      toolName: 'repository_read',
+      tool: { name: 'repository_read' },
     },
     refresh: {
       method: 'POST',
@@ -22,7 +22,7 @@ export const repositoryContract = defineContract(
       desc: 'Refresh the repository snapshot from GitHub',
       output: RepositorySnapshotSchema,
       expose: ['HTTP', 'MCP', 'AGENT', 'CLI'],
-      toolName: 'repository_refresh',
+      tool: { name: 'repository_refresh' },
     },
   },
 );

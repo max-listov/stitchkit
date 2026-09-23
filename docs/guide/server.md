@@ -781,8 +781,8 @@ validate exactly as elsewhere, and the endpoint goes through `beforeHandle` — 
 the **auth gate applies without a guard in the handler**. Only the response is
 handed over, so there is no `output` schema, `afterHandle` is skipped (it
 transforms data; there is none) and the endpoint is HTTP-only: never an MCP
-tool, an agent tool or a CLI command. Declaring `output`, `toolName`, `ui`,
-`annotations` or a non-HTTP `expose` alongside `rawResponse` is a type error, and throws
+tool, an agent tool or a CLI command. Declaring `output`, `tool` or a non-HTTP
+`expose` alongside `rawResponse` is a type error, and throws
 at definition time for a contract assembled at runtime.
 
 On the typed client the method resolves to the untouched `Response` — the

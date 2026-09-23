@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import type { StitchLogger } from '../src/logger';
-import { createBoundedLogger, redact, sanitizePayload } from '../src/observability';
+import {
+  createBoundedLogger,
+  redact,
+  sanitizePayload,
+} from '../src/entrypoints/observability';
+import type { StitchLogger } from '../src/internal/logger';
 
 /*
  * One string bound for the whole record cuts an error's stack from the bottom — which is

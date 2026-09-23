@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { createClient } from '../src/browser/client';
 import { ApiError } from '../src/browser/http';
 import { parseNDJSON } from '../src/browser/stream';
-import { defineContract } from '../src/contract';
-import { createHandler, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
 
 const StreamItem = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('line'), text: z.string() }).strict(),

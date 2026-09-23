@@ -6,7 +6,7 @@ import {
 } from '../src/browser/cancellation';
 import { createClient } from '../src/browser/client';
 import { ApiError, createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 
 const contract = defineContract(
   { prefix: 'slow' },

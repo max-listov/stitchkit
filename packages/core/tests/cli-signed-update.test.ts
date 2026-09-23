@@ -29,13 +29,13 @@ import {
   type CliBuildManifest,
   CliBuildManifestSchema,
   currentCliBuildTarget,
-} from '../src/tools/cli-manifest';
+} from '../src/tools/cli/manifest';
 import {
   type CliTrustRoot,
   signCliManifest,
   verifyCliManifest,
-} from '../src/tools/cli-signature';
-import { applyCliUpdate, checkCliUpdate, rollbackCliUpdate } from '../src/tools/cli-update';
+} from '../src/tools/cli/signature';
+import { applyCliUpdate, checkCliUpdate, rollbackCliUpdate } from '../src/tools/cli/update';
 
 const BINARY = Buffer.from('#!/bin/sh\necho new\n');
 const DIGEST = createHash('sha256').update(BINARY).digest('hex');

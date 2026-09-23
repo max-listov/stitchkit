@@ -3,10 +3,10 @@ import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createClient, createHttpClient } from '../src';
 import { ApiError } from '../src/browser/http';
-import { defineContract } from '../src/contract';
-import { createServer, implement } from '../src/server';
+import { createClient, createHttpClient } from '../src/entrypoints';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 
 // sun_path is ~104-108 bytes — keep socket paths short and unique.
 let socketCounter = 0;

@@ -1,4 +1,4 @@
-import type { RuntimeToolTransport } from '../runtime-tool';
+import type { ToolTransport } from '../../contract/define';
 import type { ConnectionTokenProvider, ConnectionToolSkipReporter } from './runtime';
 
 /** Where one external MCP server lives, plus static request headers. */
@@ -34,7 +34,7 @@ export interface McpClientConnectionConfig {
    * connection without it contributes nothing to the CLI, because CLI exposure
    * is explicit everywhere else in the framework too.
    */
-  transports?: readonly RuntimeToolTransport[];
+  transports?: readonly ToolTransport[];
 }
 
 /** A defined MCP connection. */
@@ -55,7 +55,7 @@ export interface OpenApiConnectionConfig {
   /** Response body ceiling in bytes; defaults to 1 MiB. */
   maxResponseBytes?: number;
   /** Which surfaces every mounted operation appears on; default MCP and AGENT. */
-  transports?: readonly RuntimeToolTransport[];
+  transports?: readonly ToolTransport[];
 }
 
 /** A defined OpenAPI connection. */

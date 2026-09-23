@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { createApplication } from '../src/application/kernel';
 import { defineManagedResource } from '../src/application/resource';
 import { managedServerResource } from '../src/application/server-resource';
-import { defineContract } from '../src/contract';
-import { createServer, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 import type {
   ManagedServerHandle,
   ShutdownOptions,

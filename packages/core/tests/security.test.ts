@@ -9,13 +9,13 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createManagedFileBoundary, type ManagedFileBoundary } from '../src/files/boundary';
+import { parseQueryParams } from '../src/internal/request';
 import { isUnsafeKey, safeJsonParse } from '../src/internal/safe-json';
 import { isWithinDir } from '../src/internal/within-dir';
 import { staticRoute } from '../src/server/file';
 import { parseCookies } from '../src/server/middleware/cookies';
 import { assertCorsConfig, corsHeaders } from '../src/server/middleware/cors';
-import { parseQueryParams } from '../src/server/request';
-import { resolveMedia } from '../src/tools/view-file';
+import { resolveMedia } from '../src/tools/transfer/view-file';
 
 describe('safeJsonParse — prototype pollution', () => {
   test('drops __proto__ from a parsed object', () => {

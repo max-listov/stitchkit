@@ -1,6 +1,6 @@
 import { z } from 'zod';
+import type { AgentStoreEventEnvelope } from '../durability/events';
 import type { SqliteAgentRuntimeStore } from './sqlite';
-import type { AgentStoreEventEnvelope } from './store-events';
 
 export interface AgentProjectionDefinition<STATE> {
   name: string;

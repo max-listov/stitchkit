@@ -16,7 +16,7 @@
  * with another in the same row.
  */
 import { describe, expect, test } from 'bun:test';
-import { createObservability } from '../src/observability';
+import { createObservability } from '../src/entrypoints/observability';
 import { setRequestDimensions } from '../src/observability/context';
 import type { RequestEvent } from '../src/observability/event';
 import { runUnitOfWork } from '../src/observability/work';

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, unauthorized } from '../src/contract';
-import { createHandler, implement } from '../src/server';
+import { defineContract, unauthorized } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
 
 const contract = defineContract(
   { prefix: 'probes', scope: 'private' },

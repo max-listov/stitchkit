@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createApplication } from '../src/application/kernel';
 import { defineManagedResource } from '../src/application/resource';
-import { createServer } from '../src/server';
+import { createServer } from '../src/entrypoints/server';
 import {
   bindProcessSignals,
   type ProcessSignalName,

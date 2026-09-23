@@ -3,9 +3,9 @@
 // the async default writer + immediate process.exit used to cut output at
 // exactly 65536 bytes.
 import { z } from 'zod';
-import { defineContract } from '../../src/contract';
-import { implement } from '../../src/server';
-import { createCli } from '../../src/tools/cli';
+import { defineContract } from '../../src/entrypoints/contract';
+import { implement } from '../../src/entrypoints/server';
+import { createCli } from '../../src/tools/cli/create-cli';
 
 const SIZE = Number(process.env.STITCHKIT_TEST_PAYLOAD_SIZE ?? 200_000);
 
@@ -24,9 +24,9 @@ const contract = defineContract(
       method: 'GET',
       path: '/',
       desc: 'Big payload',
-      toolName: 'blob',
       expose: ['CLI'],
       output: z.object({ data: z.string() }),
+      tool: { name: 'blob' },
     },
   },
 );

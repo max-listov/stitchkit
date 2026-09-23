@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
+import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
 
 /**
  * The registry is only "one source of truth" if it is COMPLETE.

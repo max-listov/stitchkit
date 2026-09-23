@@ -774,6 +774,68 @@ describe('a release commit is checked before it costs a gate', () => {
     expect(validated.packageName).toBe('stitchkit');
   });
 
+  describe('the stable breaking budget is part of the metadata gate — ADR 0198', () => {
+    const GUIDE = [
+      '| Import | Use in | Maturity | Holds |',
+      '|--------|--------|----------|-------|',
+      '| `stitchkit/tools` | server | stable | tools |',
+      '| `stitchkit/live` | browser **and** server | evolving | watched reads |',
+    ].join('\n');
+    const MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
+    const breaking = (entry: string) =>
+      [BREAKING, '', entry, '', '**Who must act:** anyone calling it.'].join('\n');
+    const STABLE_ENTRY =
+      '- `stitchkit/tools` — **a tool moved**, because a reason. → ADR 0198';
+    const tree = (changelog: string) =>
+      treeOf({
+        'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
+        'CHANGELOG.md': changelog,
+        'docs/guide/upgrading.md': MIGRATION,
+        'docs/guide/getting-started.md': GUIDE,
+      });
+    const commit = { sha: SHA, subject: 'release(core): a thing in 9.9.0' };
+
+    test('one stable-breaking minor in the week passes', async () => {
+      const changelog = [
+        '## [9.9.0] — 2026-10-20',
+        '',
+        breaking(STABLE_ENTRY),
+        '',
+        '## [9.8.0] — 2026-10-12',
+        '',
+        breaking(STABLE_ENTRY),
+      ].join('\n');
+      const validated = await validateReleaseCommit(root, commit, { read: tree(changelog) });
+      expect(validated.version).toBe('9.9.0');
+    });
+
+    test('a second one within seven days is refused before any gate runs', async () => {
+      const changelog = [
+        '## [9.9.0] — 2026-10-18',
+        '',
+        breaking(STABLE_ENTRY),
+        '',
+        '## [9.8.0] — 2026-10-12',
+        '',
+        breaking(STABLE_ENTRY),
+      ].join('\n');
+      await expect(
+        validateReleaseCommit(root, commit, { read: tree(changelog) }),
+      ).rejects.toThrow(/the budget is 1/);
+    });
+
+    test('an entry that does not lead with its entrypoint is refused', async () => {
+      const changelog = [
+        '## [9.9.0] — 2026-10-18',
+        '',
+        breaking('- **Something moved**'),
+      ].join('\n');
+      await expect(
+        validateReleaseCommit(root, commit, { read: tree(changelog) }),
+      ).rejects.toThrow(/does not start with the entrypoint/);
+    });
+  });
+
   test('the release commit this repository last made passes it', async () => {
     // Not a synthetic tree: the real one, read out of the real commit. Skipped
     // rather than silently passed when HEAD is an ordinary commit — a test that

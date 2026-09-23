@@ -1,20 +1,21 @@
 import type { ZodType, z } from 'zod';
+import type { McpCallContext, RuntimeContext, TransportSource } from '../contract/define';
 import {
   AppError,
   isRetryableStatus,
   isStitchErrorCode,
-  type McpCallContext,
-  type RuntimeContext,
   STITCH_ERROR_STATUS,
-  type TransportSource,
-} from '../contract';
-import { formatZodError, normalizeError, validateDeclaredOutput } from '../internal/errors';
+} from '../contract/errors';
+import { normalizeError, validateDeclaredOutput } from '../contract/normalize';
+import type { EndpointToolView } from '../contract/tool-view';
 import { isUnsafeKey } from '../internal/safe-json';
 import { isRecord } from '../internal/typed';
+import { formatZodError } from '../internal/zod-issues';
 import { getRequestContext, runWithRequestContext } from '../observability/context';
 import type { OperationIdentity } from '../server/types';
-import { coerceJsonArgs } from './coerce';
-import { objectShapeKeys } from './schema';
+import { applyToolViewDefaults, projectToolView } from './internal/tool-view';
+import { coerceJsonArgs } from './schema/coerce';
+import { objectShapeKeys } from './schema/schema';
 
 export type ToolResult =
   | { ok: true; data: unknown }
@@ -231,6 +232,8 @@ export interface ToolOperation extends OperationIdentity {
   paramsSchema?: ZodType;
   inputSchema?: ZodType;
   outputSchema?: ZodType;
+  /** Applied only by a runner built for the tool surface. → ADR 0196. */
+  toolView?: EndpointToolView;
   handler(ctx: RuntimeContext): unknown | Promise<unknown>;
 }
 
@@ -266,7 +269,10 @@ export type ParsedToolCallArguments =
 export function parseToolCallArguments(
   method: ToolOperation,
   callArgs: Record<string, unknown>,
-  coerceJson: boolean,
+  {
+    coerceJson = false,
+    toolSurface = false,
+  }: Pick<ToolExecutionOptions, 'coerceJson' | 'toolSurface'> = {},
 ): ParsedToolCallArguments {
   // Slice the flat tool args the way the HTTP transport slices a request: path
   // params and body/query are disjoint sets of keys. Parsing each schema over
@@ -288,6 +294,10 @@ export function parseToolCallArguments(
     paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
     inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
   }
+
+  // The view's defaults join the arguments before the one parse, so the
+  // handler receives an ordinary `input` value. → ADR 0196.
+  if (toolSurface) inputArgs = applyToolViewDefaults(inputArgs, method.toolView?.defaults);
 
   let params: unknown;
   if (method.paramsSchema) {
@@ -366,18 +376,37 @@ export function toolCauseFromResult(result: ToolFailure): unknown {
   return normalizedToolErrors.get(result)?.cause;
 }
 
+/** What one tool call is: the name it was called by, its raw arguments, its context. */
+export interface ToolCall {
+  toolName: string;
+  rawArgs: Record<string, unknown>;
+  context: ToolCallContext;
+}
+
+/** How a call is run — every knob optional, named, and off unless set. */
+export interface ToolExecutionOptions {
+  /** Tool-call observability hooks. */
+  hooks?: ToolCallHooks;
+  /** Auth / scope gate and result transform. */
+  lifecycle?: ToolLifecycle;
+  /** Coerce JSON-stringified arrays/objects in the arguments (LLM double-serialization). */
+  coerceJson?: boolean;
+  /** Report handler-output keys the contract schema removed. → ADR 0037. */
+  onOutputStrip?: (paths: string[]) => void;
+  /** Extend arguments resolved, then stripped, before the parse. */
+  extension?: ToolArgumentExtension;
+  /** Last transformation of validated output — a runtime tool's presenter. */
+  finalizeOutput?: (data: unknown) => unknown | Promise<unknown>;
+  /** Answer as the tool surface: apply the endpoint's `toolView`. → ADR 0196. */
+  toolSurface?: boolean;
+}
+
 export async function executeToolMethod(
   method: ToolOperation,
-  toolName: string,
-  rawArgs: Record<string, unknown>,
-  context: ToolCallContext,
-  hooks?: ToolCallHooks,
-  lifecycle?: ToolLifecycle,
-  coerceJson = false,
-  onOutputStrip?: (paths: string[]) => void,
-  extension?: ToolArgumentExtension,
-  finalizeOutput?: (data: unknown) => unknown | Promise<unknown>,
+  call: ToolCall,
+  options: ToolExecutionOptions = {},
 ): Promise<ToolResult> {
+  const { toolName, context } = call;
   // Each call gets its own request context, forked from the ambient one.
   //
   // Without this every tool call in a request writes into **one** store, and the
@@ -390,18 +419,7 @@ export async function executeToolMethod(
   // would stamp every stdio / CLI row with a `parentSpanId` pointing at a span
   // no row ever carries (`audit.ts` treats any context's trace as the *parent*).
   return inToolCallContext({ source: context.source, toolName, method }, () =>
-    runToolMethod(
-      method,
-      toolName,
-      rawArgs,
-      context,
-      hooks,
-      lifecycle,
-      coerceJson,
-      onOutputStrip,
-      extension,
-      finalizeOutput,
-    ),
+    runToolMethod(method, call, options),
   );
 }
 
@@ -450,15 +468,16 @@ export function inToolCallContext<T>(
 /** The call itself. Always runs inside the context `executeToolMethod` chose. */
 async function runToolMethod(
   method: ToolOperation,
-  toolName: string,
-  rawArgs: Record<string, unknown>,
-  context: ToolCallContext,
-  hooks: ToolCallHooks | undefined,
-  lifecycle: ToolLifecycle | undefined,
-  coerceJson: boolean,
-  onOutputStrip: ((paths: string[]) => void) | undefined,
-  extension: ToolArgumentExtension | undefined,
-  finalizeOutput: ((data: unknown) => unknown | Promise<unknown>) | undefined,
+  { toolName, rawArgs, context }: ToolCall,
+  {
+    hooks,
+    lifecycle,
+    coerceJson = false,
+    onOutputStrip,
+    extension,
+    finalizeOutput,
+    toolSurface = false,
+  }: ToolExecutionOptions,
 ): Promise<ToolResult> {
   const startedAt = Date.now();
   let hookContext = context;
@@ -636,7 +655,7 @@ async function runToolMethod(
     rewrittenArgsApplied = true;
   }
 
-  const parsed = parseToolCallArguments(method, callArgs, coerceJson);
+  const parsed = parseToolCallArguments(method, callArgs, { coerceJson, toolSurface });
   if (!parsed.ok) {
     return parsed.thrown !== undefined
       ? finishThrown(parsed.thrown)
@@ -683,6 +702,28 @@ async function runToolMethod(
       });
     }
     data = checked.data;
+
+    // The tool-surface answer is derived from the validated full one, and only
+    // where an output exists: a guard pass that runs no handler has nothing to
+    // project. → ADR 0196.
+    if (toolSurface && method.toolView && method.outputSchema) {
+      const viewed = projectToolView({
+        view: method.toolView,
+        fullSchema: method.outputSchema,
+        full: data,
+        call: { input, source: context.source },
+        operation: `${method.serviceName}.${method.key}`,
+        onStripped: onOutputStrip,
+      });
+      if (!viewed.ok) {
+        return finish({
+          ok: false,
+          code: 'INTERNAL_SERVER_ERROR',
+          details: { message: viewed.message },
+        });
+      }
+      data = viewed.data;
+    }
 
     // Transport-specific presentation still belongs to the canonical attempt:
     // presenter throws and invalid results must reach onToolError/afterToolCall

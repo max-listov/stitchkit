@@ -1,7 +1,10 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { STITCH_ERROR_STATUS } from '../src/contract';
+import { STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
 import { ManagedFileError, type ManagedFileErrorCode } from '../src/files/boundary';
-import { managedFileAppError, normalizeFileToolError } from '../src/tools/managed-file-error';
+import {
+  managedFileAppError,
+  normalizeFileToolError,
+} from '../src/tools/transfer/managed-file-error';
 
 type SafeManagedFileErrorCode = Exclude<ManagedFileErrorCode, 'FILE_IO_ERROR'>;
 

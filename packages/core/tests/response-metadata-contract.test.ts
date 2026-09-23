@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createHttpClient, defineContract } from '../src';
+import { createHttpClient, defineContract } from '../src/entrypoints';
 import { createHandler } from '../src/server/create';
 import { implement } from '../src/server/implement';
 import { collectTools } from '../src/tools/mount';
@@ -53,10 +53,10 @@ describe('typed JSON response metadata — contract boundaries', () => {
     );
 
     const tool = JSON.parse(
-      '{"bad":{"method":"POST","path":"/","desc":"Bad","toolName":"bad","responseMeta":{}}}',
+      '{"bad":{"method":"POST","path":"/","desc":"Bad","tool":{"name":"bad"},"responseMeta":{}}}',
     );
     expect(() => defineContract({ prefix: 'tool-meta' }, tool)).toThrow(
-      'cannot set a toolName',
+      'cannot set tool options',
     );
 
     const missingObject = JSON.parse(
@@ -141,8 +141,8 @@ function compileTimeContractChecks(): void {
         method: 'POST',
         path: '/',
         desc: 'Invalid',
-        toolName: 'bad_tool',
         responseMeta: {},
+        tool: { name: 'bad_tool' },
       },
     },
   );

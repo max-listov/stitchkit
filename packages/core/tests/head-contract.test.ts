@@ -3,9 +3,9 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createClient, createHttpClient, createUrlBuilder } from '../src';
-import { defineContract, type EndpointDef } from '../src/contract';
-import { createHandler, implement, serveFile } from '../src/server';
+import { createClient, createHttpClient, createUrlBuilder } from '../src/entrypoints';
+import { defineContract, type EndpointDef } from '../src/entrypoints/contract';
+import { createHandler, implement, serveFile } from '../src/entrypoints/server';
 import { generateOpenApiDocument } from '../src/server/openapi';
 
 const filePath = join(tmpdir(), `stitchkit-head-contract-${process.pid}.txt`);

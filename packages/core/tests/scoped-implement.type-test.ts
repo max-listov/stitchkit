@@ -7,7 +7,7 @@
  * `expect()` here would never execute.
  */
 import { z } from 'zod';
-import { createContractFactory, defineContract } from '../src/contract';
+import { createContractFactory, defineContract } from '../src/entrypoints/contract';
 import {
   type AuthScopes,
   composeAuthHooks,
@@ -15,7 +15,7 @@ import {
   createScopedImplement,
   createScopedImplementRegistry,
   type RuleScopes,
-} from '../src/server';
+} from '../src/entrypoints/server';
 
 const implementFor = createScopedImplement<{
   public: object;

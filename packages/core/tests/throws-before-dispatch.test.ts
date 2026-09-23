@@ -7,9 +7,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import type { StitchLogger } from '../src/server';
-import { createHandler, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import type { StitchLogger } from '../src/entrypoints/server';
+import { createHandler, implement } from '../src/entrypoints/server';
 
 const ITEM = z.object({ id: z.string() });
 
@@ -82,7 +82,7 @@ describe('a throwing onRequest', () => {
   });
 
   test('an AppError thrown by the gate keeps its status', async () => {
-    const { AppError } = await import('../src/contract');
+    const { AppError } = await import('../src/entrypoints/contract');
     const handler = createHandler({
       services: [itemsService()],
       hooks: {

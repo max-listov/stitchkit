@@ -14,7 +14,7 @@
  * the one that reads as true and is not.
  */
 import { describe, expect, test } from 'bun:test';
-import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime-openrouter';
+import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime/openrouter';
 
 /** One SDK usage record, in the shape the provider hands over. */
 const usage = {

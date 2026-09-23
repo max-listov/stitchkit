@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { RuntimeContext } from '../src/contract';
+import type { RuntimeContext } from '../src/entrypoints/contract';
 import { composeLifecycleHooks } from '../src/server/lifecycle';
 import type {
   AuthorizationContext,

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { AgentMessageSchema, AgentRunSchema } from 'stitchkit/agent-runtime';
-import { runAgentStoreConformance } from 'stitchkit/testing';
+import { runAgentStoreConformance } from 'stitchkit/agent-runtime/testing';
 import { createPrismaAgentStoreFixture } from './adapter';
 
 const connectionString = process.env.AGENT_STORE_DATABASE_URL;

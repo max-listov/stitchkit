@@ -7,7 +7,7 @@
  * The cases below are the ones that list gets wrong or cannot express.
  */
 import { describe, expect, test } from 'bun:test';
-import { classifyTelegramSendFailure } from '../src/telegram';
+import { classifyTelegramSendFailure } from '../src/entrypoints/telegram';
 
 /** A grammY error, in the shape it is thrown: code, prose and parameters. */
 function botApiError(

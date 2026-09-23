@@ -5,9 +5,13 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { GrammyWebhookUnavailableError } from '../src/application/grammy';
-import { ApplicationAdmissionError } from '../src/application/kernel';
-import { AppError, type RuntimeContext, type StitchErrorCode } from '../src/contract';
-import { createErrorHook, createHandler } from '../src/server';
+import { ApplicationAdmissionError } from '../src/application/kernel-contract';
+import {
+  AppError,
+  type RuntimeContext,
+  type StitchErrorCode,
+} from '../src/entrypoints/contract';
+import { createErrorHook, createHandler } from '../src/entrypoints/server';
 import type { MethodDef } from '../src/server/types';
 
 const onError = createErrorHook({

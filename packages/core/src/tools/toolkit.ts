@@ -18,19 +18,19 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { ToolSet } from 'ai';
 import type { ServiceDef } from '../server/types';
 import { type AgentMountConfig, mountAgent } from './agent';
-import { type CliConfig, createCli } from './cli';
+import { type CliConfig, createCli } from './cli/create-cli';
+import { createMcpHandler, type McpHandlerConfig, type McpHttpHandler } from './mcp/handler';
 import {
   buildMcpServer,
   type McpMountConfig,
   type McpServerBuildConfig,
   mountMcp,
-} from './mcp';
-import { createMcpHandler, type McpHandlerConfig, type McpHttpHandler } from './mcp-handler';
+} from './mcp/mount';
 import {
   createStdioMcpServer,
   type McpStdioHandle,
   type StdioMcpServerConfig,
-} from './mcp-stdio';
+} from './mcp/stdio';
 import type { ToolExtend } from './mount';
 
 /** Re-type a config's static `context` (and `extend`) to the toolkit's `TContext`. */

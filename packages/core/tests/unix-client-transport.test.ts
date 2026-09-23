@@ -5,9 +5,9 @@ import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createClient, createHttpClient } from '../src';
 import { ApiError } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { createClient, createHttpClient } from '../src/entrypoints';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createUnixClientTransport,
   UnixClientTransportError,

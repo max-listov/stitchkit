@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
 import { defineContract, type PathParams } from '../src/contract/define';
-import { createHandler, type Handlers, implement } from '../src/server';
+import { createHandler, type Handlers, implement } from '../src/entrypoints/server';
 import { generateOpenApiDocument } from '../src/server/openapi';
 import { buildSurfaceManifest } from '../src/testing/surface-manifest';
 import { collectTools, createToolRunner } from '../src/tools/mount';

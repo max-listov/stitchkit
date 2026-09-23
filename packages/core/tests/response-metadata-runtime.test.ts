@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { createClient, createHttpClient } from '../src';
+import { createClient, createHttpClient } from '../src/entrypoints';
 import { serveNode } from '../src/server/node';
 import {
   createResponseMetadataTestHandler,

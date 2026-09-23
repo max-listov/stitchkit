@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  createBackoff,
-  type ResumableAttempt,
-  resumableIterator,
-} from '../src/browser/resumable';
+import { type ResumableAttempt, resumableIterator } from '../src/browser/resumable';
+import { createBackoff } from '../src/internal/backoff';
 
 async function* fromArray<T>(items: readonly T[], failAfter?: number): AsyncGenerator<T> {
   let delivered = 0;

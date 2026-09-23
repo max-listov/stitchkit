@@ -1,5 +1,5 @@
 import { io as ioClient } from 'socket.io-client';
-import { createServer, createSocketIOServer } from '../../src/server';
+import { createServer, createSocketIOServer } from '../../src/entrypoints/server';
 
 const requestStarted = Promise.withResolvers<void>();
 const socket = await createSocketIOServer({ cors: { origin: '*' } });

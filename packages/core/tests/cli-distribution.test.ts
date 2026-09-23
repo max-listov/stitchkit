@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { renderCliInstaller } from '../src/tools/cli-installer';
+import { renderCliInstaller } from '../src/tools/cli/installer';
 import {
   assertCliPublishable,
   type CliBuildManifest,
@@ -27,8 +27,8 @@ import {
   currentCliBuildTarget,
   formatCliBuildStamp,
   selectCliBuildAsset,
-} from '../src/tools/cli-manifest';
-import { applyCliUpdate, checkCliUpdate, compareCliVersions } from '../src/tools/cli-update';
+} from '../src/tools/cli/manifest';
+import { applyCliUpdate, checkCliUpdate, compareCliVersions } from '../src/tools/cli/update';
 
 const BINARY = Buffer.from('#!/bin/sh\necho hello\n');
 const DIGEST = createHash('sha256').update(BINARY).digest('hex');

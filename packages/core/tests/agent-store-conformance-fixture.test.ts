@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { type AgentRuntimeStore, createMemoryAgentRuntimeStore } from '../src/agent-runtime';
-import { runAgentStoreConformance } from '../src/testing';
+import {
+  type AgentRuntimeStore,
+  createMemoryAgentRuntimeStore,
+} from '../src/entrypoints/agent-runtime';
+import { runAgentStoreConformance } from '../src/entrypoints/agent-runtime/testing';
 
 /**
  * A store whose runtime rows hang off an application-owned conversation row.

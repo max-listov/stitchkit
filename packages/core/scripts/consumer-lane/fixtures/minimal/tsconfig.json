@@ -6,11 +6,11 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "paths": {
-      "stitchkit": ["../../../../src/index.ts"],
-      "stitchkit/*": ["../../../../src/*"],
-      "stitchkit/tools/contract": ["../../../../src/tools-contract.ts"],
-      "stitchkit/tracking": ["../../../../src/tracking.ts"],
-      "stitchkit/tracking/server": ["../../../../src/tracking-server.ts"]
+      "stitchkit": ["../../../../src/entrypoints/index.ts"],
+      "stitchkit/*": ["../../../../src/entrypoints/*"],
+      "stitchkit/tools/contract": ["../../../../src/entrypoints/tools-contract.ts"],
+      "stitchkit/tracking": ["../../../../src/entrypoints/tracking.ts"],
+      "stitchkit/tracking/server": ["../../../../src/entrypoints/tracking-server.ts"]
     },
     "noEmit": true,
     "skipLibCheck": true,

@@ -158,10 +158,20 @@ from the root `stitchkit`.
 | `ScopedContractDef` | _type_ | a factory-defined contract whose `meta.scope` is the required concrete literal |
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns — endpoint `scope` overrides join the union |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
+| `TOOL_TRANSPORTS` / `ToolTransport` | constant / _type_ | `['MCP', 'AGENT', 'CLI']` — the transports a model or tool client reads; the one name for a tool surface everywhere (runtime-tool `transports`, invoker, collector, connections) |
 | `ContractDef` | _type_ | a defined contract |
 | `PathParams` | _type_ | infer named `:segments` and a terminal `*wildcard` from a path literal as string params |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
 | `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
+| `withToolView` | function | declare an endpoint's answer on the tool surface (MCP, AGENT, CLI): input `defaults`, a view `output` and an optional `project`, typed against the endpoint's own schemas; HTTP keeps the full answer — [guide](../guide/mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
+| `EndpointToolOptions` | _type_ | an endpoint's `tool` group — `name`, `view`, `ui`, `annotations`, `mcp`: what the tool surfaces read that HTTP does not |
+| `EndpointToolView` | _type_ | the stored shape of a tool view (`MethodDef.toolView`) |
+| `DeclaredToolView` | _type_ | a tool view as `withToolView` produces it — the only form `tool.view` accepts |
+| `WithToolView` | _type_ | the endpoint `withToolView` returns: its own tool options plus the declared view in `tool.view` — name it when a helper returns such an endpoint |
+| `ProjectedToolView` / `ReshapedToolView` / `SlicedToolView` | _type_ | the three forms `withToolView` accepts: own schema + `project`, `project` inside the full schema, a slice by `output` |
+| `ToolViewCall` | _type_ | what `project` is told besides the full result: the parsed `input` and the `source` |
+| `ToolViewSliceMismatch` | _type_ | the compile-time refusal of a slice whose schema does not accept the full output |
+| `ToolViewNeedsToolTransport` | _type_ | the compile-time refusal of a view on an `expose: ['HTTP']` endpoint |
 | `EndpointStreamDescriptor` | _type_ | HTTP-only schema-derived stream declaration: item schema, envelope/item framing, stream-end/terminal completion, NDJSON/SSE encoding and frame/lifetime/heartbeat/idle bounds — [guide](../guide/server.md#contract-first-streams) |
 | `HeadEndpointDef` | _type_ | explicit HTTP-only, bodyless `HEAD` endpoint definition |
 | `EndpointResponseMeta` | _type_ | static success metadata declared by an HTTP-only typed-data endpoint |
@@ -472,7 +482,6 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ndjsonRoute` | function | `streamingRoute` framed as NDJSON |
 | `sseRoute` | function | `streamingRoute` framed as SSE |
 | `DEFAULT_STREAM_HEARTBEAT_MS` | const | 5000 — deliberately well under Bun's ten-second idle threshold |
-| `parseSSE` | function | parse an SSE `Response` (also on the root entrypoint) |
 | `MultipartLifecycle` | _type_ | request-scoped rollback ownership for accepted streamed handles |
 | `MultipartResult` | _type_ | what `parseMultipart` returns |
 | `parseMultipart` | function | parse a typed buffered/streaming multipart descriptor — [guide](../guide/server.md#multipart) |
@@ -508,7 +517,6 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `EventBus` | _type_ | the `createEventBus` handle |
 | `RateLimitConfig` | _type_ | config for `createRateLimiter` |
 | `ClientIpOptions` | _type_ | trusted-proxy config for `extractIp` / `resolveSocketIp` |
-| `ParseSSEOptions` | _type_ | options for `parseSSE` |
 | `StreamingRouteOptions` | _type_ | options for `streamingRoute` / `ndjsonRoute` / `sseRoute` |
 | `StreamingSourceContext` | _type_ | what a streaming source is given, including the cancellation `signal` |
 | `StreamingFormat` | _type_ | `'ndjson' \| 'sse'` |
@@ -886,8 +894,7 @@ Server-only optional application runtime. See the
 | `composeAgentPrompt` | function | ordered prompt contributions and provenance-aware signed context budget; irreducible reservation deficits are `oversized`, not compactable history |
 | `SeedConversationInputSchema` / `SeedConversationInput` | schema / _type_ | atomic once-seeding input; partial imported identity sets are refused |
 | `AgentSeedReceiptSchema` / `AgentSeedReceipt` | schema / _type_ | durable seed receipt retained beyond compaction and implemented by custom store drivers |
-| `createLocalStepDurability` | function | record JSON step results and park on time/events; a replay returns recorded results, while unrecorded effects require host idempotency |
-| `StepDurabilityLedger` / `LocalStepDurability` / `LocalStepDurabilityOptions` / `StepRunOptions` | _type_ | the narrow ledger the port needs, the step/read surface, and its construction and per-step options |
+| `StepRunOptions` | _type_ | per-step options of the durability engine (`stitchkit/tools`) as the runtime drives it |
 | `DURABILITY_STEP_EVENT_KIND` | const | the ledger event kind a recorded step is written under |
 | `StepResultDecodeError` / `StepResultNotSerializableError` / `StepAbortedError` / `ParkRecordDecodeError` / `ParkAbortedError` | class | fail-closed decode of a recorded step or park, a body whose result cannot be serialized, an aborted step, and a park collapsed around an aborted waiter |
 | `structuredCompaction` | function | summarize a provider-valid snapshot range and replace it through CAS |
@@ -936,7 +943,7 @@ Server-only optional application runtime. See the
 | `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `createAgentScheduleService` / `createAgentScheduleTools` | schema / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, stable dispatch identity and Agent tools |
 | `AgentChildBudgetSchema` / `AgentChildBudget` / `AgentChildStateSchema` / `AgentChildState` / `AgentChildRecordSchema` / `AgentChildRecord` | schema / _type_ | durable child graph, bounded seed and measured budget state |
 | `AgentChildBlockingKindSchema` / `AgentChildBlockingKind` / `AgentChildBlockingSourceSchema` / `AgentChildBlockingSource` / `AgentChildBlockingEventSchema` / `AgentChildBlockingEvent` / `AgentChildBlockingDecision` | schemas / _types_ | parent-owned request identities; responses discriminate approval decisions from JSON input values |
-| `AgentChildHandle` / `AgentChildManager` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
+| `AgentChildHandle` / `AgentChildManager` / `SqliteAgentChildManagerConfig` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
 | `AgentToolDefinition` | _type_ | peer-neutral shape returned by the bound agent-only state, search, schedule and child tool factories |
 | `AgentProviderStreamCutError` | class | explicit retryable provider stream truncation evidence |
 
@@ -1101,6 +1108,9 @@ Credential-free provider and concurrency fixtures for Bun and Node tests.
 | `createAgentRaceBarrier` / `AgentRaceBarrier` | function / _type_ | named bounded deterministic concurrency barrier |
 | `createAgentRaceTrace` / `AgentRaceTrace` / `AgentRaceTraceEntry` | function / _type_ | record and assert exact event order without wall-clock guesses |
 | `createAgentRaceDriver` / `AgentRaceDriver` | function / _type_ | collect named barriers and release their teardown together |
+| `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
+| `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), cleanup?(context) }` — the factory the contract runs against, plus a teardown that runs once whether the scenario passed or failed |
+| `AgentStoreConformanceContext` | _type_ | `{ conversationIds }` — every conversation the scenario will mutate, handed over **before** the first mutation so an adapter can provision application-owned parent rows; a zero-argument factory stays valid |
 
 ## `stitchkit/agent-runtime/harness`
 
@@ -1390,8 +1400,6 @@ payload.
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use peer-free `stitchkit/tools/invoker`, or the full `stitchkit/tools` adapter barrel — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
-| `createCli` | function | a command-line program from contracts — [guide](../guide/cli.md) (also on `stitchkit/cli`) |
-| `defineCliCommand` | function | define one typed CLI-only command with optional post-validation `present` and successful `exitCode` policy — [guide](../guide/cli.md#native-binary-commands) (also on `stitchkit/cli`) |
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
@@ -1447,21 +1455,10 @@ payload.
 | `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
 | `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
-| `RuntimeToolTransport` | _type_ | runtime exposure: `'MCP' \| 'AGENT' \| 'CLI'`; omission still means MCP+Agent only |
 | `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
 | `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
 | `AgentContext` | _type_ | the context merged into agent tool handlers |
-| `CliConfig` | _type_ | config for `createCli`, including program-level `defaultCommand` selection, application-wide `globalOptions` and command-scoped `optionAliases` / `positionals` policy |
-| `CliPresentationPolicyConfig` | _type_ | reusable default-command, short-alias and explicit-positional policy inherited by `CliConfig` |
-| `CliSurfaceSource` | _type_ | static managed surface or identity-dependent surface factory for `createCli` |
-| `CliCommandDefinition` | _type_ | Zod-first CLI-only command union |
-| `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
-| `CliCommandDefinitionWithOutput` | _type_ | native command with declared output schema, validated handler result and typed optional `present` / `exitCode` callbacks |
-| `CliCommandDefinitionWithoutOutput` | _type_ | void native command with no output schema |
-| `CliCommandContext` | _type_ | parsed native command input, framework run options, the application's `globals` and injected writers |
-| `CliWaitConfig` | _type_ | `--wait` polling config |
-| `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
 | `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
@@ -1478,7 +1475,6 @@ payload.
 | `ToolInvoker` | _type_ | immutable compiled dispatcher (`names`, envelope `invoke`, throwing `invokeOrThrow`) |
 | `ToolInvokerConfig` | _type_ | compile-time exposure, extension and presentation options |
 | `ToolInvocationOptions` | _type_ | per-call source, context, lifecycle, hooks and output-strip reporter |
-| `ToolInvokerTransport` | _type_ | invoker exposure policy: `MCP \| AGENT \| CLI` |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source, mcp? }` plus whatever the mount's `context` added |
 | `ViewFileOptions` | _type_ | shared URL/managed-file-boundary policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
 | `ViewFileOutput` | _type_ | neutral managed batch result with multimodal `content` and per-item `errors` |
@@ -1645,7 +1641,6 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `ToolSurfaceDefinition` | _type_ | shared object-shaped `{ services?, runtimeTools? }` introspection surface |
-| `ToolSurfaceTransport` | _type_ | tool collector transport: `'MCP' \| 'AGENT' \| 'CLI'` |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; divergent fields retain every provable base kind in a deterministic `type` array, and the projection never executes validation |
@@ -1678,7 +1673,6 @@ and approval path.
 | `ConnectionMountOptions` | _type_ | shared `{ lifecycle?, budget?, onSkippedTool? }` mount policy |
 | `ConnectionToolSkipReporter` | _type_ | `(skipped) => void` — called per discovered tool the mount could not build; defaults to a stderr line, and the rest of the surface still mounts |
 | `SkippedConnectionTool` | _type_ | `{ connection, tool, reason }` — which tool was not mounted, and why |
-| `RuntimeToolTransport` | _type_ | `'MCP' \| 'AGENT' \| 'CLI'` — the surfaces a connection's `transports` may name |
 | `McpClientConnection` | _type_ | a defined MCP client connection |
 | `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts and `transports` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
 | `McpConnectionTransport` | _type_ | `{ url, headers? }` for one MCP endpoint |
@@ -1697,9 +1691,6 @@ handler pipeline without opening a TCP port.
 |--------|------|---------|
 | `createHandlerTestClient` | function | one contract client backed by an in-process `FetchHandler` |
 | `createHandlerTestClients` | function | exact contract-registry batch form |
-| `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
-| `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), cleanup?(context) }` — the factory the contract runs against, plus a teardown that runs once whether the scenario passed or failed |
-| `AgentStoreConformanceContext` | _type_ | `{ conversationIds }` — every conversation the scenario will mutate, handed over **before** the first mutation so an adapter can provision application-owned parent rows; a zero-argument factory stays valid |
 | `runManagedResourceConformance` | function | run the canonical deterministic lifecycle matrix against a fresh consumer-owned `ManagedResource` fixture; resolves `void` or throws `ManagedResourceConformanceError` with a stable scenario ID and normalized trace |
 | `ManagedResourceConformanceScenarioIdSchema` / `ManagedResourceConformanceScenarioId` | schema / _type_ | stable clean, rollback, readiness/completion, activation, shutdown-race and forced-cleanup scenario vocabulary |
 | `ManagedResourceConformanceScenarioSchema` / `ManagedResourceConformanceScenario` | schema / _type_ | discriminated scenario record including whether the controlled resource is required |
@@ -1710,8 +1701,6 @@ handler pipeline without opening a TCP port.
 | `ManagedResourceConformanceFactoryInput` / `ManagedResourceConformanceControls` | _type_ | current discriminated scenario and caller-controlled startup, readiness, completion, activation, close and force promises |
 | `ManagedResourceConformanceFixture` | _type_ | tested resource plus required bounded disposal callback |
 | `ManagedResourceConformanceError` | class | `MANAGED_RESOURCE_CONFORMANCE_FAILED` diagnostic carrying scenario, expected phase subsequence and observed trace |
-| `createAgentRaceBarrier` / `createAgentRaceDriver` / `createAgentRaceTrace` | function | bounded named barriers and exact partial-order traces for deterministic runtime race probes |
-| `AgentRaceBarrier` / `AgentRaceDriver` / `AgentRaceTrace` / `AgentRaceTraceEntry` | _type_ | public packed-consumer types for the deterministic race harness |
 | `HandlerTestClientDefaults` | _type_ | ordinary bare-client defaults with handler-owned `baseUrl` and `fetch` removed |
 | `HandlerTestClientConfig` | _type_ | handler, contract, path prefix, scoped config and client request defaults |
 | `HandlerTestClientsConfig` | _type_ | batch helper configuration |
@@ -1741,6 +1730,7 @@ handler pipeline without opening a TCP port.
 | `SurfaceManifest` / `SurfaceManifestConfig` | _type_ | deterministic surface snapshot and its inputs |
 | `SurfaceManifestOperation` / `SurfaceManifestOperationSchema` | _type_ / schema | one contract or runtime operation row |
 | `SurfaceManifestOperationMcp` / `SurfaceManifestOperationMcpSchema` | _type_ / schema | the rounds an operation declares before it runs: a fixed list, `'resolved-per-call'`, or `null` for no MCP policy |
+| `SurfaceManifestOperationToolView` / `SurfaceManifestOperationToolViewSchema` | _type_ / schema | an operation's declared tool view — digests of its defaults and output, and whether it projects; present only where a view is declared |
 | `SURFACE_MANIFEST_VERSION` | const | the format version this build writes; a committed snapshot on an older one is refused by name |
 | `SurfaceManifestTool` / `SurfaceManifestToolSchema` | _type_ / schema | one mounted tool row with advertised input digest |
 | `SurfaceManifestToolSurface` / `SurfaceManifestToolSurfaceSchema` | _type_ / schema | one static transport projection, optionally keyed for a finite MCP surface |

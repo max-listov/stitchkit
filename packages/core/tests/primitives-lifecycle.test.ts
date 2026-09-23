@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineLifecycle } from '../src/primitives';
+import { defineLifecycle } from '../src/entrypoints/primitives';
 
 const lifecycle = defineLifecycle({
   name: 'example',

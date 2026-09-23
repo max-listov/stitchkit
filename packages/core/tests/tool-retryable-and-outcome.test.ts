@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
-import { AppError, isRetryableStatus, STITCH_ERROR_STATUS } from '../src/contract';
 import { defineErrors } from '../src/contract/errors-factory';
+import { AppError, isRetryableStatus, STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
 import type { MethodDef } from '../src/server/types';
 import { toolResultFromError } from '../src/tools/execute';
 import { formatToolError } from '../src/tools/mount';
@@ -136,7 +136,7 @@ describe('the outcome of an agent tool call is reported structurally', () => {
   });
 
   test('a consumer can brand-check the failure instead of parsing its message', async () => {
-    const { isAgentToolError } = await import('../src/tools');
+    const { isAgentToolError } = await import('../src/entrypoints/tools');
     const { mountAgent } = await import('../src/tools/agent');
     const tools = mountAgent({
       name: 'journal',

@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import type { RuntimeContext } from '../src/contract';
-import { defineContract } from '../src/contract';
-import { createImplement, createServer, implement } from '../src/server';
+import type { RuntimeContext } from '../src/entrypoints/contract';
+import { defineContract } from '../src/entrypoints/contract';
+import { createImplement, createServer, implement } from '../src/entrypoints/server';
 
 // ─── Gap 1: GET query params ────────────────────────
 

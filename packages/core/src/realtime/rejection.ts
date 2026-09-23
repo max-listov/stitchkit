@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AppError } from '../contract/errors';
-import { zodIssues } from '../internal/errors';
+import { zodIssues } from '../internal/zod-issues';
 import type { RealtimeRejectDirection, RealtimeRejectedEvent } from './contract';
 
 export function realtimeContractViolation(options: {

@@ -1,5 +1,59 @@
 # Upgrading stitchkit
 
+## Released migration: 0.94.0
+
+One breaking minor that consolidates: tool options move into one group, and
+names that were exported from two entrypoints keep only their owner. Every step
+is an edit a type checker or `defineContract` points at; the few behaviour
+changes that need no edit are under Changed and Fixed in the changelog.
+
+1. **Move endpoint tool options into `tool`.** **Who must act:** every project
+   with an endpoint that sets `toolName`, `ui`, `annotations` or `mcp`. Run the
+   codemod from a checkout of this repository, then typecheck:
+
+   ```bash
+   bun packages/core/scripts/codemod-tool-group.ts --check path/to/your/src   # list
+   bun packages/core/scripts/codemod-tool-group.ts path/to/your/src           # rewrite
+   ```
+
+   ```ts
+   // before
+   { method: 'GET', path: '/', desc: 'List', toolName: 'user_list', mcp: { inputRequired } }
+   // after
+   { method: 'GET', path: '/', desc: 'List', tool: { name: 'user_list', mcp: { inputRequired } } }
+   ```
+
+   The codemod leaves two kinds of endpoint for a person and prints where: one
+   built with a spread (`{ ...base, toolName }`), and one exposed on HTTP only,
+   whose tool options never reached a tool — delete them there. Anything left
+   over fails at startup, by name — a key moved into the group under its old
+   name (`tool: { toolName }`) included:
+
+   ```text
+   Contract "users": endpoint "list" sets `toolName` — tool options live in `tool` since 0.94.0: use tool.name
+   ```
+
+   `expose` does not move. `MethodDef` — what hooks and runtime tools see — keeps
+   `toolName`, `ui`, `annotations` and `mcp` at the top level, so hook code does
+   not change. A tool view is declared only with `withToolView`, which now puts
+   it in `tool.view`.
+
+2. **Change imports of moved names.** **Who must act:** projects importing any
+   of these; the compiler lists every site.
+
+   | Name | From | To |
+   |---|---|---|
+   | `RuntimeToolTransport`, `ToolSurfaceTransport`, `ToolInvokerTransport` | `stitchkit/tools`, `stitchkit/tools/invoker`, `stitchkit/tools/connections` | `ToolTransport` from `stitchkit/contract` |
+   | `createCli`, `defineCliCommand`, `CliConfig`, `CliSurfaceSource`, `CliPresentationPolicyConfig`, `CliWaitConfig`, `ExitCodeMap`, `CliCommand*` | `stitchkit/tools` | `stitchkit/cli` |
+   | `parseSSE`, `ParseSSEOptions` | `stitchkit/server` | `stitchkit` |
+   | `runAgentStoreConformance`, `AgentStoreConformance*`, `createAgentRace*`, `AgentRace*` | `stitchkit/testing` | `stitchkit/agent-runtime/testing` |
+   | `createLocalStepDurability`, `LocalStepDurability`, `LocalStepDurabilityOptions`, `StepDurabilityLedger` | `stitchkit/agent-runtime` | `stitchkit/tools` |
+
+3. **Regenerate a surface snapshot only if it reports drift.** **Who must act:**
+   a project whose committed snapshot has an object with integer-like keys
+   (`"9"`, `"10"`) — they are now sorted like every other key. Every other
+   snapshot, CLI manifest signature and agent-store archive is byte-identical.
+
 ## Released migration: 0.93.0
 
 1. **Regenerate every committed surface snapshot, once.** `manifestVersion` is

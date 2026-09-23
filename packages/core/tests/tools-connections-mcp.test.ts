@@ -7,7 +7,6 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { ToolSet } from 'ai';
-import { mountAgent } from '../src/tools/agent';
 import {
   ConnectionAuthorizationRequiredError,
   ConnectionBudgetExceededError,
@@ -15,7 +14,8 @@ import {
   ConnectionUrlError,
   defineMcpClientConnection,
   mountConnections,
-} from '../src/tools/connections';
+} from '../src/entrypoints/tools/connections';
+import { mountAgent } from '../src/tools/agent';
 import {
   ConnectionResponseTooLargeError,
   ConnectionTimeoutError,

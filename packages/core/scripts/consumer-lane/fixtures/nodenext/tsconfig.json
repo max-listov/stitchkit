@@ -6,8 +6,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "paths": {
-      "stitchkit": ["../../../../src/index.ts"],
-      "stitchkit/*": ["../../../../src/*"]
+      "stitchkit": ["../../../../src/entrypoints/index.ts"],
+      "stitchkit/*": ["../../../../src/entrypoints/*"]
     },
     "noEmit": true,
     "skipLibCheck": false,

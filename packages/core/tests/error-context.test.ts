@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, type RuntimeContext } from '../src/contract';
-import { createServer, implement, type MethodDef, type StitchLogger } from '../src/server';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
+import {
+  createServer,
+  implement,
+  type MethodDef,
+  type StitchLogger,
+} from '../src/entrypoints/server';
 
 // A param route with a body schema — a validation failure happens BEFORE
 // `beforeHandle`, so it exercises the error path where the context used to be

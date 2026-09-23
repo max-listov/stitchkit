@@ -1,6 +1,6 @@
 import type { DefaultEventsMap, Socket, Server as SocketIOServer } from 'socket.io';
 import type { SocketEventMap } from '../browser/socket-io';
-import type { StitchLogger } from '../logger';
+import type { StitchLogger } from '../internal/logger';
 import type {
   RealtimeContract,
   RealtimeEventRegistry,

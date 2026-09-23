@@ -1,4 +1,4 @@
-import type { EndpointDef } from '../contract';
+import type { EndpointDef } from '../contract/define';
 import { inputIsQuery } from '../internal/http-input';
 import { parseTrailingWildcard } from '../internal/route-pattern';
 import type { ContractClientConfig, PathPrefixArgs } from './client';

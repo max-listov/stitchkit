@@ -21,7 +21,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 /** A model whose steps report growing prompts, the way a real conversation does. */
 function growingModel(promptTokens: readonly number[]) {

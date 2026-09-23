@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   PROJECT_DECLARATION_SCHEMA_VERSION,
   parseProjectDeclaration,
-} from '../../core/src/declaration';
+} from '../../core/src/entrypoints/declaration';
 import { APP_IDENTITY_PATH, renderAppIdentityModule } from '../src/identity';
 import {
   IGNORED_DIRECTORIES,

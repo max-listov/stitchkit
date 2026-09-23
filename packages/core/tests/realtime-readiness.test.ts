@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { exampleRealtimeContract, publishExampleNote } from '../examples/realtime-room';
+import {
+  exampleRealtimeContract,
+  publishExampleNote,
+} from '../examples/realtime/realtime-room';
 import { createValidatedRealtimeSocket, REALTIME_TARGET_FORMS } from '../src/realtime/socket';
 
 function adapter(target: object) {
@@ -64,7 +67,10 @@ test('the canonical room example executes and matches the guide byte-for-byte', 
   ]);
 
   const root = join(import.meta.dir, '../../..');
-  const source = await readFile(join(root, 'packages/core/examples/realtime-room.ts'), 'utf8');
+  const source = await readFile(
+    join(root, 'packages/core/examples/realtime/realtime-room.ts'),
+    'utf8',
+  );
   const guide = await readFile(join(root, 'docs/guide/realtime.md'), 'utf8');
   const sourceBody = source.match(
     /\/\/ canonical-example:start\n([\s\S]*?)\/\/ canonical-example:end/,

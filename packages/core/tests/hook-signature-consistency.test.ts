@@ -9,10 +9,10 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError, type RuntimeContext } from '../src/contract';
+import { AppError, type RuntimeContext } from '../src/entrypoints/contract';
 import { isRecord } from '../src/internal/typed';
 import { createErrorHook } from '../src/server/error-hook';
-import { buildMcpServer } from '../src/tools/mcp';
+import { buildMcpServer } from '../src/tools/mcp/mount';
 
 /** A RuntimeContext carrying the fields an envelope wants. */
 function ctxWith(traceId: string): RuntimeContext {

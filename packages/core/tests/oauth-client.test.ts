@@ -6,7 +6,7 @@ import {
   type AuthorizationCodeStorage,
   createAuthorizationCodeClient,
   safeInternalReturnPath,
-} from '../src/oauth';
+} from '../src/oauth/authorization-code';
 
 class MemoryStorage implements AuthorizationCodeStorage {
   readonly values = new Map<string, string>();

@@ -3,7 +3,7 @@ import {
   BoundedChannelReaderError,
   createBoundedChannel,
   createCreditWindow,
-} from '../src/application/channel';
+} from '../src/internal/channel';
 
 describe('bounded delivery channel', () => {
   test('ordered mode preserves order and refuses count/byte overflow explicitly', async () => {

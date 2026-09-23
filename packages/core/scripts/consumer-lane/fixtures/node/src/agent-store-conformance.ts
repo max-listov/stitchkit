@@ -14,7 +14,7 @@ import {
 import {
   type AgentStoreConformanceContext,
   runAgentStoreConformance,
-} from 'stitchkit/testing';
+} from 'stitchkit/agent-runtime/testing';
 
 /** Stands in for an application-owned parent table. */
 const parents = new Set<string>();

@@ -37,8 +37,10 @@
  *
  * → ADR 0153.
  */
-import { type BackoffPolicy, createBackoff } from '../browser/resumable';
-import { argumentsDigest, stableValue } from '../internal/stable-digest';
+import { type BackoffPolicy, createBackoff } from '../internal/backoff';
+import { serializeCanonicalJson } from '../internal/canonical-json';
+import type { StitchLogger } from '../internal/logger';
+import { argumentsDigest } from '../internal/stable-digest';
 import {
   type WatchHave,
   type WatchKey,
@@ -47,7 +49,6 @@ import {
   watchKeyString,
 } from '../live/watch-contract';
 import { deltaWins, diff } from '../live/watch-delta';
-import type { StitchLogger } from '../logger';
 
 /** The operation a watched read runs — `OperationIdentity`'s two stable halves. */
 export interface WatchOperation {
@@ -223,8 +224,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
   const deltaMemoryBytes = config.deltaMemoryBytes ?? 262_144;
   const same =
     config.same ??
-    ((previous, next) =>
-      JSON.stringify(stableValue(previous)) === JSON.stringify(stableValue(next)));
+    ((previous, next) => serializeCanonicalJson(previous) === serializeCanonicalJson(next));
   let reads = 0;
   let closed = false;
 
@@ -385,7 +385,7 @@ export function createWatchHub(config: WatchHubConfig): WatchHub {
         try {
           const value = await config.read(source.operation, source.args);
           source.backoff.reset();
-          const signature = JSON.stringify(stableValue(value));
+          const signature = serializeCanonicalJson(value);
           const unchanged = source.signature !== undefined && same(source.value, value);
           source.signature = signature;
           if (!unchanged) publish(source, value, valueFingerprint(value));

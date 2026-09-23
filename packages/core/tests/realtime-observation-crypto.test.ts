@@ -6,8 +6,12 @@ import {
   RealtimeRequestDisconnectedError,
   type RealtimeRequestPhaseEvent,
   RealtimeRequestTimeoutError,
-} from '../src';
-import { bindRealtimeServer, createServer, createSocketIOServer } from '../src/server';
+} from '../src/entrypoints';
+import {
+  bindRealtimeServer,
+  createServer,
+  createSocketIOServer,
+} from '../src/entrypoints/server';
 
 const NumberSchema = z.number();
 const ArgsSchema = z.tuple([NumberSchema]);

@@ -9,7 +9,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { createWatchHub, type WatchSubscriber, watchKey } from '../src/application/watch-hub';
-import { argumentsDigest, stableValue } from '../src/internal/stable-digest';
+import { serializeCanonicalJson } from '../src/internal/canonical-json';
+import { argumentsDigest } from '../src/internal/stable-digest';
 import type { WatchStateFrame, WatchValueFrame } from '../src/live/watch-contract';
 import { apply, deltaWins, diff } from '../src/live/watch-delta';
 
@@ -50,7 +51,7 @@ async function settle(): Promise<void> {
   await Bun.sleep(2);
 }
 
-const sig = (value: unknown) => JSON.stringify(stableValue(value));
+const sig = (value: unknown) => serializeCanonicalJson(value);
 
 /** A list answer of roughly the size the hub was measured on: ~75 KB. */
 function bigList(stamp: string): { items: { id: string; body: string; seen: string }[] } {

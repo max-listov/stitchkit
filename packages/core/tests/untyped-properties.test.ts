@@ -5,9 +5,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { findUntypedProperties, validateMcpSchemas } from '../src/tools';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { findUntypedProperties, validateMcpSchemas } from '../src/entrypoints/tools';
 
 const contract = (input: z.ZodType) =>
   defineContract(
@@ -20,7 +20,7 @@ const contract = (input: z.ZodType) =>
         input: z.object({ operations: z.array(input) }),
         output: z.object({ ok: z.boolean() }),
         expose: ['MCP'],
-        toolName: 'broadcast_patch',
+        tool: { name: 'broadcast_patch' },
       },
     },
   );

@@ -15,7 +15,7 @@ import {
   type AgentMessage,
   AgentMessageSchema,
   selectCompactableHistory,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 const timestamp = '2026-09-01T00:00:00.000Z';
 let sequence = 0;

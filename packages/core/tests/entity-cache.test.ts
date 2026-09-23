@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { type InfiniteData, QueryClient } from '@tanstack/react-query';
-import type { Paginated } from '../src/contract';
+import type { Paginated } from '../src/entrypoints/contract';
 import {
   type CacheBridgeContext,
   createEntityCacheHandlers,
   type EntityCacheEvent,
   type EntityCacheListShape,
   type EntityCacheMembership,
-} from '../src/react';
+} from '../src/entrypoints/react';
 
 interface Widget {
   id: string;

@@ -6,9 +6,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { listContractToolNames, listToolNames } from '../src/tools';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { listContractToolNames, listToolNames } from '../src/entrypoints/tools';
 
 const Ok = z.object({ ok: z.boolean() });
 
@@ -28,9 +28,9 @@ const videos = defineContract(
       path: '/:id/transcode',
       desc: 'Transcode a video',
       params: z.object({ id: z.string() }),
-      toolName: 'transcode_video_now',
       expose: ['HTTP', 'MCP', 'AGENT', 'CLI'],
       output: Ok,
+      tool: { name: 'transcode_video_now' },
     },
     internal: {
       method: 'POST',

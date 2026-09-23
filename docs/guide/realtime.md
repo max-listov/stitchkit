@@ -164,7 +164,7 @@ the framework how to load them so your bundler can put them inside — see
 [shipping one self-contained artifact](./testing-and-deployment.md#shipping-one-self-contained-artifact).
 
 The canonical room-broadcast example below is executed by the test suite. Its
-body is kept byte-identical to `packages/core/examples/realtime-room.ts`.
+body is kept byte-identical to `packages/core/examples/realtime/realtime-room.ts`.
 
 ```ts canonical-realtime-room
 export function publishExampleNote(realtime: ExampleRealtimePublisher): void {

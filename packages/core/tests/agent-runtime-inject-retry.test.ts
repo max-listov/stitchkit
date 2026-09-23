@@ -7,7 +7,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

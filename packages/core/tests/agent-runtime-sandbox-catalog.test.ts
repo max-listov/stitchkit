@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
-import { createMemoryAgentRuntimeStore, recordAgentSandboxProbe } from '../src/agent-runtime';
-import { createAgentCodingTools } from '../src/agent-runtime-coding-tools';
-import { defineRuntimeTool, describeToolCatalog, mountAgent } from '../src/tools';
+import {
+  createMemoryAgentRuntimeStore,
+  recordAgentSandboxProbe,
+} from '../src/entrypoints/agent-runtime';
+import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
+import { defineRuntimeTool, describeToolCatalog, mountAgent } from '../src/entrypoints/tools';
 
 const roots: string[] = [];
 

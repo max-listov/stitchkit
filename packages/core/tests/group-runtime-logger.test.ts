@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StitchLogger } from '../src/logger';
+import type { StitchLogger } from '../src/internal/logger';
 import { createBoundedLogger } from '../src/observability/bounded-logger';
 import { runWithRequestContext } from '../src/observability/context';
 import { createTraceContext } from '../src/observability/trace';

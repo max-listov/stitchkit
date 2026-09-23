@@ -16,15 +16,15 @@ import { simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
-  createAgentRuntime,
-  createSqliteAgentEventSearch,
-  defineAgentProtocol,
-} from '../src/agent-runtime';
-import {
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
   type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
+import {
+  createAgentRuntime,
+  createSqliteAgentEventSearch,
+  defineAgentProtocol,
+} from '../src/entrypoints/agent-runtime';
 
 function argument(name: string, fallback: number): number {
   const index = process.argv.indexOf(`--${name}`);

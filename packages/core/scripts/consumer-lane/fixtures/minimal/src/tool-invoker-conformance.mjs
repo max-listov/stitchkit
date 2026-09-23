@@ -12,9 +12,9 @@ const contract = defineContract(
       path: '/add',
       desc: 'Add two values',
       expose: ['AGENT'],
-      toolName: 'local_add',
       input: z.object({ left: z.number(), right: z.number() }),
       output: z.object({ total: z.number() }),
+      tool: { name: 'local_add' },
     },
   },
 );

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type BoundedChannel, createBoundedChannel } from '../application/channel';
+import { type BoundedChannel, createBoundedChannel } from '../internal/channel';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
 

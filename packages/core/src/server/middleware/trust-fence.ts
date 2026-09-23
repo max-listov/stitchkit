@@ -46,7 +46,7 @@
  *
  * → ADR 0151.
  */
-import type { StitchLogger } from '../../logger';
+import type { StitchLogger } from '../../internal/logger';
 import type { SocketIORequestPolicy } from '../socket-io-config';
 import type { LifecycleHooks } from '../types';
 

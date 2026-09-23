@@ -3,7 +3,7 @@ import {
   AgentMessageSchema,
   AgentRunSchema,
   createMemoryAgentRuntimeStore,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 const timestamp = '2026-08-22T00:00:00.000Z';
 

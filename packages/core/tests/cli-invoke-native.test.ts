@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineCliCommand } from '../src/tools/cli-command';
-import { createCliInvoker } from '../src/tools/cli-invoke';
+import { defineCliCommand } from '../src/tools/cli/command';
+import { createCliInvoker } from '../src/tools/cli/invoke';
 
 /** The consumer's case: a native command that returns and never prints. */
 const describeCommand = defineCliCommand({

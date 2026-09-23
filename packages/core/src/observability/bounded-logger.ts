@@ -1,5 +1,5 @@
+import type { StitchLogger } from '../internal/logger';
 import { isRecord } from '../internal/typed';
-import type { StitchLogger } from '../logger';
 import { getRequestContext } from './context';
 import { type JsonValue, measureSize, sanitizePayload } from './sanitize';
 

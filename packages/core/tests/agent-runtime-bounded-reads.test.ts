@@ -6,7 +6,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 /**
  * Counts every read, so a claim about which one the runtime uses is a number

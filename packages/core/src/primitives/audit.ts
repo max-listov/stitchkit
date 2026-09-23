@@ -1,5 +1,5 @@
 import { type ZodType, z } from 'zod';
-import type { ContractDef, EndpointDef } from '../contract';
+import type { ContractDef, EndpointDef } from '../contract/define';
 import {
   createDomainEventSchema,
   type DomainEventActor,

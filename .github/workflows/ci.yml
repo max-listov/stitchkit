@@ -11,6 +11,11 @@ on:
     branches: [master, main, 'release/**']
   pull_request:
   schedule:
+    # 03:17 UTC is when GitHub may START it, not when it runs: a scheduled run is
+    # queued "no earlier than", and this one has started five to six hours late
+    # every day measured (08:00–09:05 UTC). A failure mail from it is about the
+    # SHA and the time of the run it names — read those before treating it as
+    # news about the release published that morning.
     - cron: '17 3 * * *'
   workflow_dispatch:
 

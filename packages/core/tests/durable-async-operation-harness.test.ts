@@ -8,7 +8,7 @@ import {
   DurableOperationRecordSchema,
   type DurableOperationRequest,
   type DurableOperationStore,
-} from '../examples/durable-async-operation-harness';
+} from '../examples/tools/durable-async-operation-harness';
 
 class MemoryOperationStore implements DurableOperationStore {
   private readonly records = new Map<string, DurableOperationRecord>();

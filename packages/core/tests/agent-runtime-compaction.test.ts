@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { createAgentRaceBarrier } from '../src/agent-runtime/testing';
 import {
   AgentMessageSchema,
   AgentRunSchema,
   type AgentRuntimeStore,
   createMemoryAgentRuntimeStore,
   structuredCompaction,
-} from '../src/agent-runtime';
-import { createAgentRaceBarrier } from '../src/agent-runtime/testing';
+} from '../src/entrypoints/agent-runtime';
 
 const timestamp = '2026-08-22T00:00:00.000Z';
 

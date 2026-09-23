@@ -8,22 +8,22 @@
 
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { serveNode } from '../src/node';
+import { defineContract } from '../src/entrypoints/contract';
+import { serveNode } from '../src/entrypoints/node';
 import {
   createObservability,
   getTraceId,
   setRequestDimensions,
   setRequestUser,
   wrapInRequestContext,
-} from '../src/observability';
-import type { LoggingConfig, RawRoute, StitchLogger } from '../src/server';
+} from '../src/entrypoints/observability';
+import type { LoggingConfig, RawRoute, StitchLogger } from '../src/entrypoints/server';
 import {
   createHandler,
   createServer,
   DEFAULT_CORS_EXPOSE_HEADERS,
   implement,
-} from '../src/server';
+} from '../src/entrypoints/server';
 import { structuredLine } from '../src/server/logger';
 
 interface Line {

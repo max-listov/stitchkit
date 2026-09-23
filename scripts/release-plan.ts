@@ -15,6 +15,12 @@ import {
   readFromWorkingTree,
   readStarterResolution,
 } from './starter-lockfile';
+import {
+  assertStableBreakingBudget,
+  STABLE_BUDGET_SINCE,
+  stableBreakingBudget,
+  stableBudgetSentence,
+} from './surface-cadence';
 
 const ZERO_SHA = /^0+$/;
 
@@ -671,6 +677,9 @@ export interface ValidateReleaseTagOptions {
   read?: ReleaseTreeReader;
 }
 
+/** Where ADR 0103's maturity table lives — the one list of stable entrypoints. */
+const MATURITY_TABLE_PATH = 'docs/guide/getting-started.md';
+
 export async function validateReleaseTag(
   root: string,
   tag: string,
@@ -691,6 +700,21 @@ export async function validateReleaseTag(
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
   assertBreakingAudience(notes, plan.version);
+  // The stable-entrypoint budget is the framework's: the maturity table lists
+  // `stitchkit` entrypoints, and the other packages keep their own changelogs.
+  // The guide is read only when there is something to judge, so an additive
+  // release — and every release before the budget existed — reads one file less.
+  if (
+    plan.target === 'core' &&
+    BREAKING_HEADING.test(notes) &&
+    comparePreOneVersions(plan.version, STABLE_BUDGET_SINCE) >= 0
+  ) {
+    assertStableBreakingBudget({
+      changelog,
+      guide: await read(MATURITY_TABLE_PATH),
+      version: plan.version,
+    });
+  }
   // Both packages, each through its own channel. The scaffolder's guide is for
   // the operator of a GENERATED project — the steps a new version needs before
   // it will start — which is a different reader from the framework's, and a
@@ -1071,6 +1095,16 @@ async function main(): Promise<void> {
     const checked: string[] = [];
     for (const entry of train.releases) {
       const tag = releaseTagForTarget(entry.target, entry.version);
+      if (entry.target === 'core') {
+        // Printed before the gate judges it, so a refusal arrives with the count
+        // it was refused on — ADR 0198.
+        const budget = stableBreakingBudget({
+          changelog: await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
+          guide: await readFile(join(root, MATURITY_TABLE_PATH), 'utf8'),
+          version: entry.version,
+        });
+        process.stderr.write(`[release] ${entry.version}: ${stableBudgetSentence(budget)}\n`);
+      }
       await validateReleaseTag(root, tag);
       checked.push(tag);
     }

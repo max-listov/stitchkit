@@ -1,7 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
-import type { LocalStepDurability } from '../agent-runtime/durability-contract';
 import type {
   EndpointMcpPolicy,
   EndpointToolAnnotations,
@@ -9,13 +8,16 @@ import type {
   HttpMethod,
   McpCallContext,
   RuntimeContext,
-} from '../contract';
+  ToolTransport,
+} from '../contract/define';
+import type { LocalStepDurability } from '../durability/contract';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
-import { projectRuntimeTool } from './internal/surface-projector';
+import {
+  projectRuntimeTool,
+  type SurfaceAgentRuntimeToolDefinition,
+} from './internal/surface-projector';
 import type { MountableTool } from './mount';
-
-export type RuntimeToolTransport = 'MCP' | 'AGENT' | 'CLI';
 
 export interface RuntimeToolIdentity {
   serviceName: string;
@@ -86,7 +88,7 @@ export interface RuntimeToolDefinitionBase<
   identity: RuntimeToolIdentity;
   input: TInput;
   /** Default: MCP and AGENT. CLI is always explicit opt-in. */
-  transports?: readonly RuntimeToolTransport[];
+  transports?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   /** Opt-in multi-round input gate on the MCP transport only. */
@@ -292,4 +294,29 @@ export function runtimeToolMountable(
     presentationSchema: projected.presentationSchema,
     shouldExtend: false,
   };
+}
+
+/**
+ * Agent-only public declarations use a peer-free structural tool definition.
+ * Construction validates executable functions before this boundary restores
+ * the richer internal definition consumed by the canonical mount. A named cast
+ * boundary (ADR 0003): the checks above are what make the cast true.
+ */
+export function executableAgentRuntimeTools(
+  tools: readonly SurfaceAgentRuntimeToolDefinition[],
+): readonly RuntimeToolDefinition[] {
+  for (const tool of tools) {
+    if (typeof tool.handler !== 'function') {
+      throw new TypeError(`Runtime tool "${tool.name}" must provide a handler`);
+    }
+    if (tool.present?.agent !== undefined && typeof tool.present.agent !== 'function') {
+      throw new TypeError(`Runtime tool "${tool.name}" Agent presenter must be a function`);
+    }
+    if (tool.present?.agent !== undefined && tool.output === undefined) {
+      throw new TypeError(
+        `Runtime tool "${tool.name}" Agent presenter requires an output schema`,
+      );
+    }
+  }
+  return tools as readonly RuntimeToolDefinition[];
 }

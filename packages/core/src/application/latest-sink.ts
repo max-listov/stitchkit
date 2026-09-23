@@ -1,10 +1,10 @@
 import { z } from 'zod';
+import { createBoundedChannel } from '../internal/channel';
 import {
   assertDrainBound,
   type ObservabilityDrainBound,
   withinBound,
-} from '../internal/observability-sink';
-import { createBoundedChannel } from './channel';
+} from '../observability/bounded-sink';
 
 const SnapshotRevisionSchema = z.number().int().nonnegative();
 

@@ -16,8 +16,8 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
 import { ApiError, createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
-import { createHandler, createServer, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createHandler, createServer, implement } from '../src/entrypoints/server';
 
 describe('onRequest early response carries CORS', () => {
   const ping = defineContract(

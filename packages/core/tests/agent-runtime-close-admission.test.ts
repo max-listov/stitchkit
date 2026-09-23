@@ -7,7 +7,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 /**
  * `close()` closes admission, and the only proof is the STORE.

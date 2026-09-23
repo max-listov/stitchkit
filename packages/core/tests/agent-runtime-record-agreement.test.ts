@@ -12,7 +12,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
   runStateForTerminalReason,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 const at = '2026-08-26T00:00:00.000Z';
 const base = {

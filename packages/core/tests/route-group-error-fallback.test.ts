@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { AppError, type RuntimeContext } from '../src/contract';
+import { AppError, type RuntimeContext } from '../src/entrypoints/contract';
 import {
   createHandler,
   type LifecycleHooks,
   type MethodDef,
   type StitchLogger,
-} from '../src/server';
+} from '../src/entrypoints/server';
 import { groupErrorRequest, groupErrorService } from './fixtures/route-group-error';
 
 const original = new AppError('FORBIDDEN', 'denied', 403);

@@ -1,13 +1,13 @@
 import { afterEach, expect, test } from 'bun:test';
 import type { ToolSet } from 'ai';
-import { type AgentMountConfig, mountAgent } from '../src/tools/agent';
-import { AgentToolError } from '../src/tools/agent-tool-error';
 import {
   ConnectionAuthorizationRequiredError,
   ConnectionUrlError,
   defineOpenApiConnection,
   mountConnections,
-} from '../src/tools/connections';
+} from '../src/entrypoints/tools/connections';
+import { type AgentMountConfig, mountAgent } from '../src/tools/agent';
+import { AgentToolError } from '../src/tools/agent-tool-error';
 import {
   ConnectionResponseTooLargeError,
   ConnectionTimeoutError,

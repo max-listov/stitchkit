@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { LanguageModelUsage } from 'ai';
+import { normalizeSdkUsage } from '../src/agent-runtime/runtime-internals';
 import {
   AgentCostValueSchema,
   AgentProvenanceSchema,
@@ -8,8 +9,7 @@ import {
   AgentUsageValueSchema,
   composeAgentPrompt,
   selectAgentHistory,
-} from '../src/agent-runtime';
-import { normalizeSdkUsage } from '../src/agent-runtime/runtime-internals';
+} from '../src/entrypoints/agent-runtime';
 
 /**
  * The vocabulary, written out once here on purpose.

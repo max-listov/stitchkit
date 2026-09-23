@@ -7,9 +7,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { validateHandlerOutput } from '../src/internal/errors';
-import { createHandler, implement } from '../src/server';
+import { validateHandlerOutput } from '../src/contract/normalize';
+import { defineContract } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
 import { collectTools, createToolRunner } from '../src/tools/mount';
 
 const OUT = z.object({ id: z.string(), nested: z.object({ keep: z.string() }) });

@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import type { RuntimeContext } from '../src/contract';
+import type { RuntimeContext } from '../src/entrypoints/contract';
 import { RUNTIME_CONTEXT_RESERVED_KEYS } from '../src/server/context-contribution';
 import { composeAuthHooks, createAuthHook } from '../src/server/middleware/auth';
 import type { MethodDef, OperationIdentity } from '../src/server/types';

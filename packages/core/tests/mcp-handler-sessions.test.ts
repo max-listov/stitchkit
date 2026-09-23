@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, type RuntimeContext } from '../src/contract';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
-import { createMcpHandler, createMcpHttpRoute } from '../src/tools/mcp-handler';
+import { createMcpHandler, createMcpHttpRoute } from '../src/tools/mcp/handler';
 
 const contract = defineContract(
   { prefix: 'notes', scope: 'public' },

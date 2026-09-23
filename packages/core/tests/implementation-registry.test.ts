@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract, type RuntimeContext } from '../src/contract';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import {
   createImplementRegistry,
   implementRegistry,
   type RegistryHandlers,
-} from '../src/server';
+} from '../src/entrypoints/server';
 
 const IdParamsSchema = z.object({ id: z.string() });
 const UserSchema = z.object({ id: z.string(), name: z.string() });

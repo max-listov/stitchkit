@@ -1,5 +1,5 @@
-import type { RuntimeContext } from '../../contract';
-import { forbidden, unauthorized } from '../../contract';
+import type { RuntimeContext } from '../../contract/define';
+import { forbidden, unauthorized } from '../../contract/errors';
 import { base64UrlToBytes, bytesToBase64Url } from '../../internal/base64url';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';

@@ -6,9 +6,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createClient, createScopedClients } from '../src/browser/client';
-import { createContractFactory } from '../src/contract';
-import { createServer, implement } from '../src/server';
-import { listToolNames } from '../src/tools';
+import { createContractFactory } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
+import { listToolNames } from '../src/entrypoints/tools';
 
 const { defineContract } = createContractFactory<'public' | 'user' | 'admin'>();
 

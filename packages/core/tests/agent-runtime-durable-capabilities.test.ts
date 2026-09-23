@@ -4,6 +4,11 @@ import { simulateReadableStream, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  createSqliteAgentRuntimeStore,
+  type SqliteDatabase,
+  type SqliteValue,
+} from '../src/agent-runtime/sqlite-bun';
+import {
   AgentProviderStreamCutError,
   agentConversationCardProjection,
   agentGoalStateSlot,
@@ -24,17 +29,12 @@ import {
   defineStateSlot,
   recordAgentRetryDecision,
   renderAgentStateSlots,
-} from '../src/agent-runtime';
-import {
-  createSqliteAgentRuntimeStore,
-  type SqliteDatabase,
-  type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/entrypoints/agent-runtime';
 import {
   createFaultProviderServer,
   createReplayAgentProvider,
-} from '../src/agent-runtime-testing';
-import { mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime/testing';
+import { mountAgent } from '../src/entrypoints/tools';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');

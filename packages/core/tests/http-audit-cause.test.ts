@@ -8,9 +8,13 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
-import { createObservability, type RequestEvent, setRequestError } from '../src/observability';
-import { createHandler, implement } from '../src/server';
+import { AppError, defineContract } from '../src/entrypoints/contract';
+import {
+  createObservability,
+  type RequestEvent,
+  setRequestError,
+} from '../src/entrypoints/observability';
+import { createHandler, implement } from '../src/entrypoints/server';
 
 const widgets = defineContract(
   { prefix: 'widgets' },

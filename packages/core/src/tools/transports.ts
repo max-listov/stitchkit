@@ -7,14 +7,11 @@
  * Tool counts come from the mixed-surface collector the mounts use, so runtime
  * definitions cannot disappear from the boot diagnostic.
  */
-import type { Transport } from '../contract';
+import type { Transport } from '../contract/define';
+import { ALL_TRANSPORTS, TOOL_TRANSPORTS } from '../contract/define';
 import type { ServiceDef } from '../server/types';
 import type { RuntimeToolDefinition } from './runtime-tool';
-import {
-  collectToolSurface,
-  type ToolSurfaceDefinition,
-  type ToolSurfaceTransport,
-} from './surface';
+import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
 
 /** Operation counts per transport, for one service or the whole fleet. */
 export type TransportCounts = Record<Transport, number>;
@@ -34,9 +31,6 @@ export interface TransportSummary {
     counts: TransportCounts;
   }>;
 }
-
-const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] satisfies Transport[];
-const TOOL_TRANSPORTS = ['MCP', 'AGENT', 'CLI'] satisfies ToolSurfaceTransport[];
 
 function emptyCounts(): TransportCounts {
   return { HTTP: 0, MCP: 0, AGENT: 0, CLI: 0 };

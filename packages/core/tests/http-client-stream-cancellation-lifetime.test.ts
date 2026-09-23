@@ -3,9 +3,9 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createClient, createHttpClient } from '../src';
 import type { ClientConfig } from '../src/browser/client';
-import { defineContract } from '../src/contract';
+import { createClient, createHttpClient } from '../src/entrypoints';
+import { defineContract } from '../src/entrypoints/contract';
 import { createUnixClientTransport } from '../src/server/unix-client';
 
 const StreamValue = z.object({ value: z.number().int() }).strict();

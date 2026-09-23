@@ -3,6 +3,10 @@ import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  assistantStatus,
+  isSpeakableAssistantStatus,
+} from '../src/agent-runtime/terminal-status';
+import {
   AgentMessagePartSchema,
   AgentMessageSchema,
   AgentMessageStatusSchema,
@@ -15,11 +19,7 @@ import {
   projectAgentHistoryDetailed,
   selectAgentHistory,
   structuredCompaction,
-} from '../src/agent-runtime';
-import {
-  assistantStatus,
-  isSpeakableAssistantStatus,
-} from '../src/agent-runtime/terminal-status';
+} from '../src/entrypoints/agent-runtime';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

@@ -1,4 +1,4 @@
-import type { RuntimeContext } from '../contract';
+import type { RuntimeContext } from '../contract/define';
 import { isUnsafeKey } from '../internal/safe-json';
 
 /** Keys whose value is owned by a transport/runtime boundary, never by application enrichment. */

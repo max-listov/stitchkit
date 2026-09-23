@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { AgentRuntimeConflictError } from '../src/agent-runtime';
 import { type ActivityToken, ActivityTokenBrand } from '../src/application/activity';
-import type { ApplicationResourceFailure } from '../src/application/kernel';
-import { ApplicationAdmissionError, createApplication } from '../src/application/kernel';
+import { createApplication } from '../src/application/kernel';
+import type { ApplicationResourceFailure } from '../src/application/kernel-contract';
+import { ApplicationAdmissionError } from '../src/application/kernel-contract';
 import type { ManagedResourceContext } from '../src/application/resource';
 import { defineManagedResource } from '../src/application/resource';
 import { managedServerResource } from '../src/application/server-resource';
-import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/contract';
+import { AgentRuntimeConflictError } from '../src/entrypoints/agent-runtime';
+import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
 import type {
   ManagedServerHandle,
   ShutdownOptions,

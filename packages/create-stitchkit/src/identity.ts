@@ -6,7 +6,7 @@ import {
   ProjectIdentitySchema,
   ProjectSlugSchema,
   parseProjectDeclaration,
-} from '../../core/src/declaration';
+} from '../../core/src/entrypoints/declaration';
 
 // The declaration schema is NOT redeclared here. It is imported from the
 // framework source and inlined by `bun build` (a relative import is bundled,

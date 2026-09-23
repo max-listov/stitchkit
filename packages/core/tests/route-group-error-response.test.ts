@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { AppError, defineContract } from '../src/contract';
-import { createObservability, type RequestEvent } from '../src/observability';
-import { createHandler, implement, type StitchLogger } from '../src/server';
+import { AppError, defineContract } from '../src/entrypoints/contract';
+import { createObservability, type RequestEvent } from '../src/entrypoints/observability';
+import { createHandler, implement, type StitchLogger } from '../src/entrypoints/server';
 import { groupErrorRequest, groupErrorService } from './fixtures/route-group-error';
 
 test('group error response preserves CORS, trace and exactly one error completion', async () => {

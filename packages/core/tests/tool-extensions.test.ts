@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/server/implement';
-import { coerceJsonArgs } from '../src/tools/coerce';
 import { executeToolMethod } from '../src/tools/execute';
 import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools, formatToolError } from '../src/tools/mount';
+import { coerceJsonArgs } from '../src/tools/schema/coerce';
 
 // ─── Gap 1: JSON coercion ───────────────────────────────────────────────
 
@@ -82,12 +82,8 @@ describe('coerceJsonArgs in the tool runner — schema stays clean', () => {
     if (!method) throw new Error('expected method');
     const result = await executeToolMethod(
       method,
-      'do_thing',
-      { items: '["a","b"]' },
-      { source: 'agent' },
-      undefined,
-      undefined,
-      true,
+      { toolName: 'do_thing', rawArgs: { items: '["a","b"]' }, context: { source: 'agent' } },
+      { coerceJson: true },
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toEqual({ count: 2 });
@@ -96,12 +92,11 @@ describe('coerceJsonArgs in the tool runner — schema stays clean', () => {
   test('executeToolMethod does not coerce when coerceJson is off', async () => {
     const method = service.methods.doThing;
     if (!method) throw new Error('expected method');
-    const result = await executeToolMethod(
-      method,
-      'do_thing',
-      { items: '["a","b"]' },
-      { source: 'agent' },
-    );
+    const result = await executeToolMethod(method, {
+      toolName: 'do_thing',
+      rawArgs: { items: '["a","b"]' },
+      context: { source: 'agent' },
+    });
     expect(result.ok).toBe(false);
   });
 });
@@ -277,12 +272,11 @@ describe('executeToolMethod with JSON-coerced args (integration)', () => {
     const method = service.methods.process;
     expect(method).toBeDefined();
     if (!method) return;
-    const result = await executeToolMethod(
-      method,
-      'test_process',
-      { items: ['a', 'b'] },
-      { source: 'agent' },
-    );
+    const result = await executeToolMethod(method, {
+      toolName: 'test_process',
+      rawArgs: { items: ['a', 'b'] },
+      context: { source: 'agent' },
+    });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toEqual({ count: 2 });
   });

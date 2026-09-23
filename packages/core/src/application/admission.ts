@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApplicationAdmission, ApplicationOperationLease } from './kernel';
+import type { ApplicationAdmission, ApplicationOperationLease } from './kernel-contract';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
 

@@ -2,20 +2,20 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
+import { AppError, defineContract } from '../src/entrypoints/contract';
 import {
   createObservability,
   type RequestEvent,
   runWithRequestContext,
   setRequestDimensions,
-} from '../src/observability';
-import { implement } from '../src/server';
+} from '../src/entrypoints/observability';
+import { implement } from '../src/entrypoints/server';
 import {
   buildMcpServer,
   defineRuntimeTool,
   mountAgent,
   type ToolCallHooks,
-} from '../src/tools';
+} from '../src/entrypoints/tools';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -335,7 +335,7 @@ describe('framework runtime tools', () => {
           input: z.object({}),
           output: z.object({ ok: z.boolean() }),
           expose: ['AGENT', 'MCP'],
-          toolName: 'duplicate_name',
+          tool: { name: 'duplicate_name' },
         },
       },
     );

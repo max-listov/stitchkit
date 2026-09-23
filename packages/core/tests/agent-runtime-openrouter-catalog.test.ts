@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { searchAgentModelCatalog } from '../src/agent-runtime/models';
-import { openRouterModelCatalog } from '../src/agent-runtime-openrouter';
+import { openRouterModelCatalog } from '../src/agent-runtime/openrouter';
 
 const observedAt = '2026-08-30T12:00:00.000Z';
 

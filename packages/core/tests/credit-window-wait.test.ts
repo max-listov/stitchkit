@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createCreditWindow } from '../src/application/channel';
+import { createCreditWindow } from '../src/internal/channel';
 
 /**
  * Await a waiter, but never longer than the assertion is worth.

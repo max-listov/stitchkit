@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CliProfileError, createCliProfileStore } from '../src/tools/cli-profile';
+import { CliProfileError, createCliProfileStore } from '../src/tools/cli/profile';
 
 const SCHEMA = z.object({ url: z.url(), token: z.string().min(1) });
 const directories: string[] = [];

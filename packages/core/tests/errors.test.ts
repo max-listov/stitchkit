@@ -1,21 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { normalizeError } from '../src/contract/normalize';
 import {
   ApiError,
   zodIssues as barrelZodIssues,
   createClient,
   createHttpClient,
   type ZodIssueSummary,
-} from '../src';
+} from '../src/entrypoints';
 import {
   AppError,
   appError,
   defineContract,
   isStitchErrorCode,
   STITCH_ERROR_STATUS,
-} from '../src/contract';
-import { formatZodError, normalizeError, zodIssues } from '../src/internal/errors';
-import { createServer, implement } from '../src/server';
+} from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
+import { formatZodError, zodIssues } from '../src/internal/zod-issues';
 import { toolErrorFromResult } from '../src/tools/execute';
 
 describe('stitch error registry', () => {

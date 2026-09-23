@@ -9,7 +9,7 @@ import {
   createBubblewrapSandboxBackend,
   SandboxError,
   SandboxNetworkPolicySchema,
-} from '../src/agent-runtime-sandbox';
+} from '../src/entrypoints/agent-runtime/sandbox';
 
 const probe = spawnSync('/usr/bin/bwrap', [
   '--unshare-all',

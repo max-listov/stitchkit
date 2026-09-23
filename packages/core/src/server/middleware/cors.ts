@@ -164,3 +164,67 @@ export function corsPreflightResponse(config: CorsConfig, req: Request): Respons
     headers: corsHeaders(config, req.headers.get('origin')),
   });
 }
+
+/** The CORS headers for one request — none when the handler has no CORS config. */
+export function requestCorsHeaders(
+  cors: CorsConfig | undefined,
+  req: Request,
+): Record<string, string> {
+  if (!cors) return {};
+  return corsHeaders(cors, req.headers.get('origin'));
+}
+
+/**
+ * Apply CORS headers to a response produced outside the framework (a raw route,
+ * a binary endpoint or an `onError` hook).
+ *
+ * Headers are mutated **in place**. Rebuilding with `new Response(res.body, …)`
+ * silently corrupts partial responses: on Bun, reading `.body` of a response
+ * built from `Bun.file().slice()` re-reads the *whole* file, so a `206` keeps
+ * its honest `Content-Range` and `Content-Length` while the payload becomes the
+ * entire file — a client stitching ranges gets garbage.
+ *
+ * A rebuild survives only as the fallback: WHATWG marks `Response.redirect()`
+ * headers immutable (Node throws; Bun currently allows the set), and a redirect
+ * has no body to corrupt.
+ */
+export function applyCors(
+  res: Response,
+  cors: CorsConfig | undefined,
+  req: Request,
+): Response {
+  const extra = requestCorsHeaders(cors, req);
+  if (Object.keys(extra).length === 0) return res;
+  try {
+    for (const [key, value] of Object.entries(extra)) setCorsHeader(res.headers, key, value);
+    return res;
+  } catch {
+    const headers = new Headers(res.headers);
+    for (const [key, value] of Object.entries(extra)) setCorsHeader(headers, key, value);
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  }
+}
+
+/**
+ * `Vary` is a list the handler may already contribute to (a file response
+ * carrying `Vary: Accept-Encoding`); overwriting it with `Origin` would make a
+ * shared cache serve one encoding to everyone. Every other CORS header is
+ * single-valued and ours alone, so it is set.
+ */
+function setCorsHeader(headers: Headers, key: string, value: string): void {
+  if (key !== 'Vary') {
+    headers.set(key, value);
+    return;
+  }
+  const existing = headers.get('Vary');
+  if (existing === null || existing.trim() === '') {
+    headers.set('Vary', value);
+    return;
+  }
+  const present = existing.split(',').some((field) => field.trim().toLowerCase() === 'origin');
+  if (!present) headers.set('Vary', `${existing}, ${value}`);
+}

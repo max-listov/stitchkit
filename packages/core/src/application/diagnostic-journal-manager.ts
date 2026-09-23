@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createBoundedChannel } from './channel';
+import { createBoundedChannel } from '../internal/channel';
 import {
   type DiagnosticJournal,
   DiagnosticJournalCloseResultSchema,

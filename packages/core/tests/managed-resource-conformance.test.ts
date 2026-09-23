@@ -5,7 +5,7 @@ import {
   type ManagedResourceConformanceFactoryInput,
   type ManagedResourceConformanceFixture,
   runManagedResourceConformance,
-} from '../src/testing';
+} from '../src/entrypoints/testing';
 
 function conformingFixture(
   input: ManagedResourceConformanceFactoryInput,

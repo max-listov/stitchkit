@@ -73,11 +73,11 @@ export function mountAgent(
   const tools: ToolSet = {};
   const runTool = createToolRunner({
     source: 'agent',
+    toolSurface: true,
     extend: config.extend,
     context: config.context,
     hooks: config.hooks,
     lifecycle: config.lifecycle,
-    errorHint: config.errorHint,
     coerceJsonArgs: config.coerceJsonArgs,
     onOutputStrip: config.onOutputStrip,
   });
@@ -111,6 +111,7 @@ export function mountAgent(
       const executeTool = durability
         ? createToolRunner({
             source: 'agent',
+            toolSurface: true,
             extend: config.extend,
             context: {
               ...config.context,
@@ -123,7 +124,6 @@ export function mountAgent(
             },
             hooks: config.hooks,
             lifecycle: config.lifecycle,
-            errorHint: config.errorHint,
             coerceJsonArgs: config.coerceJsonArgs,
             onOutputStrip: config.onOutputStrip,
           })

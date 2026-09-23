@@ -2,17 +2,17 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
+import type { StitchLogger } from '../src/entrypoints/server';
+import { implement } from '../src/entrypoints/server';
 import { isRecord } from '../src/internal/typed';
-import type { StitchLogger } from '../src/server';
-import { implement } from '../src/server';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
-} from '../src/tools/mcp';
-import { createMcpHandler } from '../src/tools/mcp-handler';
-import { prepareMcpServerSurface, prepareMcpSurface } from '../src/tools/mcp-prepare';
+} from '../src/tools/mcp/mount';
+import { prepareMcpServerSurface, prepareMcpSurface } from '../src/tools/mcp/prepare';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 function serviceFor(toolName: string, idSchema: z.ZodType = z.string()) {
@@ -24,9 +24,9 @@ function serviceFor(toolName: string, idSchema: z.ZodType = z.string()) {
           method: 'GET',
           path: '/:id',
           desc: `Get ${toolName}`,
-          toolName,
           params: z.object({ id: idSchema }),
           output: z.object({ value: z.string() }),
+          tool: { name: toolName },
         },
       },
     ),

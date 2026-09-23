@@ -3,14 +3,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentMessageSchema, AgentRunSchema } from '../src/agent-runtime';
 import {
   createBunSqliteAgentRuntimeStore,
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
   type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
-import { runAgentStoreConformance } from '../src/testing';
+} from '../src/agent-runtime/sqlite-bun';
+import { AgentMessageSchema, AgentRunSchema } from '../src/entrypoints/agent-runtime';
+import { runAgentStoreConformance } from '../src/entrypoints/agent-runtime/testing';
 
 const paths: string[] = [];
 

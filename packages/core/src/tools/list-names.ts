@@ -1,7 +1,7 @@
 /**
  * Tool-name baseline — the final mounted name of every tool across the tool
  * transports, with its `(service, method)` identity. Tool names are partly
- * derived (`toolName` override, else `toToolName(service, method)`), so a
+ * derived (`tool.name`, else `toToolName(service, method)`), so a
  * consumer pins them with a snapshot test / CI diff: an upgrade that would
  * shift a derived name — and silently break MCP client configs — fails the
  * consumer's build instead. Also the mechanical "what changed" diff when
@@ -10,19 +10,16 @@
  * Built on the mixed-surface collector used by the mounts — the listing cannot
  * drift when pathless runtime tools sit beside contract operations.
  */
-import type { ContractDef, Transport } from '../contract';
+import type { ContractDef, Transport } from '../contract/define';
+import { TOOL_TRANSPORTS } from '../contract/define';
 import { contractOnlyService } from '../server/implement';
-import {
-  collectToolSurface,
-  type ToolSurfaceDefinition,
-  type ToolSurfaceTransport,
-} from './surface';
+import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
 
 /** One mounted tool name and where it comes from. */
 export interface ToolNameEntry {
   /** Whether the operation comes from a contract or a pathless runtime definition. */
   kind: 'contract' | 'runtime';
-  /** Final tool name — the `toolName` override, else derived from service + method. */
+  /** Final tool name — the `tool.name`, else derived from service + method. */
   name: string;
   /** Owning service (`ServiceDef.name` — the contract's prefix). */
   service: string;
@@ -31,8 +28,6 @@ export interface ToolNameEntry {
   /** Tool transports the name is exposed on (mount order: MCP, AGENT, CLI). */
   transports: Transport[];
 }
-
-const TOOL_TRANSPORTS = ['MCP', 'AGENT', 'CLI'] satisfies ToolSurfaceTransport[];
 
 /**
  * Resolve every tool name the surface exposes, sorted by name (then service) —

@@ -19,7 +19,7 @@ const contract = defineContract(meta, endpoints)
   client method name and the handler name.
 
 `defineContract` throws at definition time if two endpoints declare the same
-`toolName` on the same transport — a tool-name clash is a bug, caught early.
+`tool.name` on the same transport — a tool-name clash is a bug, caught early.
 
 ## An endpoint
 
@@ -60,7 +60,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `output` | no | Zod schema for the **response body**; its presence declares a JSON result (`null` is data, `undefined` is not) |
 | `scope` | no | access scope for this endpoint — see [Auth & errors](./auth-and-errors.md) |
 | `expose` | no | which transports carry this endpoint — see [below](#transports) |
-| `toolName` | no | explicit MCP / agent tool name (default: a verb-aware derivation, see below — not a literal `prefix_key`) |
+| `tool` | no | what the tool surfaces (MCP / agent / CLI) read that HTTP does not — see [below](#tool-options-tool) |
 | `multipart` | no | typed file fields, cardinality, delivery and upload policy — see [below](#file-uploads) |
 | `maxJsonBodyBytes` | no | per-route JSON body ceiling; overrides the server default |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
@@ -190,14 +190,34 @@ a tool result cannot carry — it would serialize to `{}`),
 headers have no meaning on a tool call) and `rawBody` (HTTP-only by
 construction).
 
-## `toolName`
+## Tool options (`tool`)
+
+Everything a tool surface reads that HTTP does not lives in one group, so an
+endpoint that can never be a tool (a raw response, a stream, `responseMeta`,
+`rawBody`, `HEAD`) refuses all of it with one key:
+
+| `tool.` | Purpose |
+|---------|---------|
+| `name` | explicit tool name (default: a verb-aware derivation, below) |
+| `view` | a different answer on MCP / agent / CLI — input defaults and a projected, separately validated output; declared only with `withToolView` — see [MCP & agents](./mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
+| `ui` | MCP Apps widget for the tool's results — see [MCP & agents](./mcp-and-agents.md) |
+| `annotations` | MCP behavioural hints (`readOnlyHint`, `destructiveHint`, `title`, …) |
+| `mcp` | elicitation rounds asked before the handler runs (`inputRequired`) |
+
+`expose` stays outside the group: it chooses transports, HTTP included.
+Setting `tool` on an endpoint with no tool transport — `expose: ['HTTP']`, or an
+omitted `expose` under a factory with `toolExposure: 'explicit'` — throws at
+definition time. The pre-0.94 top-level keys (`toolName`, `toolView`, `ui`,
+`annotations`, `mcp`) are refused by name, with where each one went.
+
+### `tool.name`
 
 When an endpoint is exposed as a tool, its name defaults to a verb-aware
 derivation from the method key + prefix (`users` + `create` ⇒ `create_user`,
-`users` + `list` ⇒ `list_users`). Set `toolName` for an explicit, stable name:
+`users` + `list` ⇒ `list_users`). Set `tool.name` for an explicit, stable name:
 
 ```ts
-{ method: 'POST', path: '/', desc: 'Create a user', toolName: 'create_user', /* … */ }
+{ method: 'POST', path: '/', desc: 'Create a user', tool: { name: 'create_user' }, /* … */ }
 ```
 
 **Every tool name — derived or explicit — must match `[a-zA-Z0-9_-]` and be at
@@ -209,13 +229,13 @@ included: `bot-status` + `get` ⇒ `get_bot_status`, `admin/analytics` + `get` �
 `get_admin_analytics`. The *method* half keeps its hyphen and normalises only
 what no provider accepts (`[^a-zA-Z0-9_-]`), because a hyphenated method key has
 always shipped a legal name that a client config may already pin: `notes` +
-`get-user` ⇒ `get-user_notes`. An explicit `toolName` is taken verbatim.
+`get-user` ⇒ `get-user_notes`. An explicit `tool.name` is taken verbatim.
 
 A prefix with *no* usable character at all (`'///'`, `'_'`, a fully non-ASCII
-prefix) and any explicit `toolName` outside the accepted class **throw at
-mount**. An unusable prefix is rescued by setting an explicit `toolName` — the
+prefix) and any explicit `tool.name` outside the accepted class **throw at
+mount**. An unusable prefix is rescued by setting an explicit `tool.name` — the
 prefix then never enters the name. An over-long name is fixed by a shorter
-explicit `toolName` (or a shorter prefix / method key). Nothing downstream checks this: the provider rejects the whole
+explicit `tool.name` (or a shorter prefix / method key). Nothing downstream checks this: the provider rejects the whole
 request, so one bad name takes every tool of that mount down with it.
 → [ADR 0035](../decisions/0035-tool-name-derivation-and-validation.md).
 

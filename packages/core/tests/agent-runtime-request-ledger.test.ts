@@ -6,13 +6,13 @@ import { join } from 'node:path';
 import { simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   createAgentObservability,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
+} from '../src/entrypoints/agent-runtime';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

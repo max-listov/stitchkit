@@ -4,13 +4,13 @@ import {
   advanceAgentRuntimeEventCursor,
   agentDurableEventId,
   createAgentRuntimeEventSink,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 import {
   advanceAgentMultiSessionCursor,
   createAgentControlView,
   reduceAgentControlEvent,
   reduceAgentControlSnapshot,
-} from '../src/agent-runtime-browser';
+} from '../src/entrypoints/agent-runtime/browser';
 
 const emittedAt = '2026-08-22T00:00:00.000Z';
 

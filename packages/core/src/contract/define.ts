@@ -1,6 +1,7 @@
 import type { ZodType, z } from 'zod';
 import { type PathParams, resolveRouteParamsSchema } from '../internal/route-pattern';
 import { isUnsafeKey } from '../internal/safe-json';
+import { assertToolView, type DeclaredToolView } from './tool-view';
 
 export type { PathParams } from '../internal/route-pattern';
 
@@ -8,6 +9,9 @@ export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
 export type Transport = (typeof ALL_TRANSPORTS)[number];
+/** The transports a model or a tool client reads — every transport except HTTP. */
+export const TOOL_TRANSPORTS = ['MCP', 'AGENT', 'CLI'] as const satisfies readonly Transport[];
+export type ToolTransport = (typeof TOOL_TRANSPORTS)[number];
 
 /** Successful HTTP statuses that may be declared by a typed-data endpoint. */
 export type HttpSuccessStatus = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
@@ -96,8 +100,8 @@ export type EndpointStreamDescriptor<TItem extends ZodType = ZodType> =
  */
 export type TransportSource = 'http' | 'mcp' | 'agent' | 'cli' | (string & {});
 
-interface EndpointDefBase {
-  method: Exclude<HttpMethod, 'HEAD'>;
+/** What every endpoint declares, a HEAD operation included: where it lives and how it is described. */
+interface EndpointRouteBase {
   /**
    * Route under the contract prefix. Named segments (`/:id`) are exposed through
    * `params`; a terminal named wildcard (`/*filePath`) additionally exposes the
@@ -107,32 +111,6 @@ interface EndpointDefBase {
   desc: string;
   scope?: string;
   params?: ZodType<unknown>;
-  input?: ZodType<unknown>;
-  output?: ZodType<unknown>;
-  multipart?: MultipartDescriptor;
-  /**
-   * Per-route ceiling in bytes for a JSON request body. Overrides the server's
-   * `maxJsonBodyBytes`; without either, JSON body size is unchanged/unbounded.
-   * Enforced while streaming, before the complete body is buffered.
-   */
-  maxJsonBodyBytes?: number;
-  /**
-   * Accept the JSON body under `text/plain` as well as `application/json` — the
-   * CORS-safelisted media type a page can send **without a preflight**, which
-   * is the only way a document that is being unloaded can deliver a body to
-   * another origin (`navigator.sendBeacon(url, string)`). The body is still
-   * parsed as JSON, validated against `input` and bounded by `maxJsonBodyBytes`.
-   *
-   * The cost is the reason the default refuses `text/plain`: a simple request
-   * is sent with cookies from any site, before CORS can say no. So a
-   * safelisted body is accepted **only** from an `Origin` on the server's
-   * explicit `cors.origin` allow-list — never `'*'`, never `null`, never
-   * absent — and the identity such a body carries is readable in
-   * `beforeHandle` or the handler, not in `authorize`, which runs before the
-   * body is read. `POST` only: the other body methods always preflight.
-   * Transport-neutral — the flag changes HTTP parsing, not `expose`. → ADR 0165.
-   */
-  safelistedBody?: true;
   /**
    * HTTP client timeout in ms for this endpoint. Use it for slow synchronous
    * endpoints (AI generation) that need more than the client default. A
@@ -167,6 +145,36 @@ interface EndpointDefBase {
    * assignable to `Record<string, unknown>`).
    */
   meta?: Record<string, unknown>;
+}
+
+interface EndpointDefBase extends EndpointRouteBase {
+  method: Exclude<HttpMethod, 'HEAD'>;
+  input?: ZodType<unknown>;
+  output?: ZodType<unknown>;
+  multipart?: MultipartDescriptor;
+  /**
+   * Per-route ceiling in bytes for a JSON request body. Overrides the server's
+   * `maxJsonBodyBytes`; without either, JSON body size is unchanged/unbounded.
+   * Enforced while streaming, before the complete body is buffered.
+   */
+  maxJsonBodyBytes?: number;
+  /**
+   * Accept the JSON body under `text/plain` as well as `application/json` — the
+   * CORS-safelisted media type a page can send **without a preflight**, which
+   * is the only way a document that is being unloaded can deliver a body to
+   * another origin (`navigator.sendBeacon(url, string)`). The body is still
+   * parsed as JSON, validated against `input` and bounded by `maxJsonBodyBytes`.
+   *
+   * The cost is the reason the default refuses `text/plain`: a simple request
+   * is sent with cookies from any site, before CORS can say no. So a
+   * safelisted body is accepted **only** from an `Origin` on the server's
+   * explicit `cors.origin` allow-list — never `'*'`, never `null`, never
+   * absent — and the identity such a body carries is readable in
+   * `beforeHandle` or the handler, not in `authorize`, which runs before the
+   * body is read. `POST` only: the other body methods always preflight.
+   * Transport-neutral — the flag changes HTTP parsing, not `expose`. → ADR 0165.
+   */
+  safelistedBody?: true;
 }
 
 /**
@@ -257,23 +265,44 @@ export interface EndpointMcpPolicy<
   inputRequired: TRequests | McpInputRequiredResolver<TRequests>;
 }
 
-interface HttpOnlyEndpointDef extends EndpointDefBase {
-  expose: readonly ['HTTP'];
-  toolName?: never;
-  rawResponse?: never;
-  rawBody?: never;
-  responseMeta?: never;
-}
-
-interface ToolEndpointDef extends EndpointDefBase {
-  toolName?: string;
-  expose?: readonly Transport[];
+/**
+ * Everything a tool surface — MCP, AGENT, CLI — reads from an endpoint that
+ * HTTP does not: the name a model calls, the view it is answered with, the MCP
+ * widget, host hints and elicitation rounds. One group, so an endpoint that can
+ * never be a tool refuses all of it with one key, and a new tool option is
+ * added in one place. `expose` is not in it: it chooses transports, HTTP
+ * included. → ADR 0196.
+ */
+export interface EndpointToolOptions {
+  /** The tool name on MCP / AGENT / CLI; unique per transport within a contract. */
+  name?: string;
+  /**
+   * The answer on the tool surface when it is not the HTTP answer: input
+   * defaults, a narrower output, a projection. Declared only by `withToolView`,
+   * which types `project` against the endpoint's schemas.
+   */
+  view?: DeclaredToolView;
   /** MCP Apps widget for this tool's results (MCP transport only). */
   ui?: EndpointUiMeta;
   /** MCP behavioural hints (read-only / destructive / title) for hosts. */
   annotations?: EndpointToolAnnotations;
   /** Opt-in multi-round input gate; ignored by HTTP, Agent and CLI. */
   mcp?: EndpointMcpPolicy;
+}
+
+interface HttpOnlyEndpointDef extends EndpointDefBase {
+  expose: readonly ['HTTP'];
+  tool?: never;
+  rawResponse?: never;
+  rawBody?: never;
+  responseMeta?: never;
+}
+
+/** The endpoint shape that may reach a tool transport. */
+export interface ToolEndpointDef extends EndpointDefBase {
+  expose?: readonly Transport[];
+  /** What the tool surface reads that HTTP does not. */
+  tool?: EndpointToolOptions;
   rawResponse?: never;
   rawBody?: never;
   responseMeta?: never;
@@ -286,9 +315,7 @@ interface RawBodyEndpointDef extends EndpointDefBase {
   rawBody: true;
   multipart?: never;
   rawResponse?: never;
-  toolName?: never;
-  ui?: never;
-  annotations?: never;
+  tool?: never;
   expose?: readonly ['HTTP'];
   responseMeta?: never;
 }
@@ -296,9 +323,7 @@ interface RawBodyEndpointDef extends EndpointDefBase {
 interface ResponseMetaEndpointDefBase extends EndpointDefBase {
   responseMeta: EndpointResponseMeta;
   rawResponse?: never;
-  toolName?: never;
-  ui?: never;
-  annotations?: never;
+  tool?: never;
   contentType?: never;
   expose?: readonly ['HTTP'];
 }
@@ -376,12 +401,8 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   contentType?: string;
   /** There is no output schema — the handler owns the whole response. */
   output?: never;
-  /** Never a tool, so a tool name would be dead metadata. */
-  toolName?: never;
-  /** MCP-only decoration; a raw endpoint never reaches MCP. */
-  ui?: never;
-  /** MCP-only decoration; a raw endpoint never reaches MCP. */
-  annotations?: never;
+  /** Never a tool, so tool options would be dead metadata. */
+  tool?: never;
   /** Redundant but allowed, so `expose: ['HTTP']` survives a migration. */
   expose?: readonly ['HTTP'];
   responseMeta?: never;
@@ -395,23 +416,13 @@ interface StreamingResponseEndpointDef extends EndpointDefBase {
   rawBody?: never;
   responseMeta?: never;
   multipart?: never;
-  toolName?: never;
-  ui?: never;
-  annotations?: never;
-  mcp?: never;
+  tool?: never;
   expose?: readonly ['HTTP'];
 }
 
 /** An explicit HTTP HEAD operation. Headers/status are handler-owned; the body is always stripped. */
-export interface HeadEndpointDef {
+export interface HeadEndpointDef extends EndpointRouteBase {
   method: 'HEAD';
-  path: string;
-  desc: string;
-  scope?: string;
-  params?: ZodType<unknown>;
-  timeout?: number;
-  idempotent?: boolean;
-  meta?: Record<string, unknown>;
   rawResponse: true;
   input?: never;
   output?: never;
@@ -419,9 +430,7 @@ export interface HeadEndpointDef {
   rawBody?: never;
   maxJsonBodyBytes?: never;
   safelistedBody?: never;
-  toolName?: never;
-  ui?: never;
-  annotations?: never;
+  tool?: never;
   expose?: readonly ['HTTP'];
   responseMeta?: never;
   contentType?: string;
@@ -468,7 +477,7 @@ export interface ContractDef<
  * Declare an API contract — a `prefix` plus a map of endpoints (method, path,
  * Zod `params` / `input` / `output`, `scope`, `expose`). One contract drives
  * the HTTP routes, the MCP and agent tools, and the typed client. Throws at
- * definition time on a duplicate `toolName`.
+ * definition time on a duplicate `tool.name`.
  */
 export function defineContract<const T extends Record<string, EndpointDef>>(
   meta: { prefix: string; meta?: Record<string, unknown> },
@@ -517,25 +526,31 @@ export function defineContract(
     if (ep.rawBody) assertRawBodyEndpoint(meta.prefix, key, ep);
     if (ep.safelistedBody) assertSafelistedBodyEndpoint(meta.prefix, key, ep);
     if ('responseMeta' in ep) assertResponseMetaEndpoint(meta.prefix, key, ep);
-
-    if (!('toolName' in ep) || !ep.toolName) continue;
+    assertNoUngroupedToolOptions(meta.prefix, key, ep);
+    const tool = 'tool' in ep ? ep.tool : undefined;
+    if (tool === undefined) continue;
+    if (typeof tool !== 'object' || tool === null) {
+      throw new Error(`Contract "${meta.prefix}": endpoint "${key}" tool must be an object`);
+    }
     const transports = new Set(
       ep.expose
         ? ep.expose.filter((t) => t !== 'HTTP')
         : (['MCP', 'AGENT'] satisfies Transport[]),
     );
-    // A `toolName` only means anything on a tool transport — setting one on an
-    // HTTP-only endpoint is a contract mistake. The type does **not** catch it:
-    // `expose: ['HTTP']` also satisfies `ToolEndpointDef`, whose members are all
-    // optional, so the union admits the pair. This guard is the real check —
-    // and it also covers a contract assembled at runtime, past the types.
+    // Tool options only mean anything on a tool transport — setting them on an
+    // HTTP-only endpoint is a contract mistake. The type does **not** catch
+    // every case: a contract factory with `toolExposure: 'explicit'` makes an
+    // omitted `expose` HTTP-only after the types have spoken, and a contract
+    // assembled at runtime never met them. This guard is the real check.
     if (transports.size === 0) {
       throw new Error(
-        `Contract "${meta.prefix}": endpoint "${key}" sets toolName "${ep.toolName}" but is not exposed on any tool transport (MCP / AGENT)`,
+        `Contract "${meta.prefix}": endpoint "${key}" sets tool options but is not exposed on any tool transport (${TOOL_TRANSPORTS.join(' / ')}) — a contract factory with toolExposure 'explicit' makes an omitted expose HTTP-only`,
       );
     }
+    if (tool.view !== undefined) assertToolView(meta.prefix, key, ep);
 
-    const existing = toolTransports.get(ep.toolName);
+    if (!tool.name) continue;
+    const existing = toolTransports.get(tool.name);
     if (existing) {
       // Merge into the existing entry — a third endpoint reusing the toolName
       // must be checked against the union of every prior transport, not just
@@ -543,13 +558,13 @@ export function defineContract(
       for (const t of transports) {
         if (existing.transports.has(t)) {
           throw new Error(
-            `Contract "${meta.prefix}": duplicate toolName "${ep.toolName}" on transport "${t}" (endpoints: "${existing.key}" and "${key}")`,
+            `Contract "${meta.prefix}": duplicate tool name "${tool.name}" on transport "${t}" (endpoints: "${existing.key}" and "${key}")`,
           );
         }
         existing.transports.add(t);
       }
     } else {
-      toolTransports.set(ep.toolName, { key, transports });
+      toolTransports.set(tool.name, { key, transports });
     }
   }
 
@@ -609,11 +624,7 @@ function assertMultipartEndpoint(prefix: string, key: string, ep: EndpointDef): 
 function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef): void {
   const where = `Contract "${prefix}": raw endpoint "${key}"`;
   if (ep.output) throw new Error(`${where} cannot declare an output schema`);
-  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
-  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
-  if ('annotations' in ep && ep.annotations) {
-    throw new Error(`${where} cannot set MCP annotations`);
-  }
+  assertNoToolOptions(where, ep);
   const nonHttp = (ep.expose ?? []).filter((t) => t !== 'HTTP');
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
@@ -654,10 +665,65 @@ function assertStreamingResponseEndpoint(prefix: string, key: string, ep: Endpoi
   if (ep.output) throw new Error(`${where} cannot declare an output schema`);
   if (ep.rawResponse) throw new Error(`${where} cannot also be rawResponse`);
   if (ep.multipart) throw new Error(`${where} cannot be multipart`);
-  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
+  assertNoToolOptions(where, ep);
   const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
+  }
+}
+
+/**
+ * Tool options moved into `tool` in 0.94.0. The types cannot catch a leftover
+ * top-level key — `defineContract` infers its endpoints, and inference admits
+ * extra properties — and an ignored `toolName` would rename a tool without a
+ * word. So the old keys are refused by name, with where they went.
+ */
+const UNGROUPED_TOOL_OPTIONS: Readonly<Record<string, string>> = {
+  toolName: 'tool.name',
+  toolView: 'tool.view (declared with withToolView)',
+  ui: 'tool.ui',
+  annotations: 'tool.annotations',
+  mcp: 'tool.mcp',
+};
+
+/**
+ * The keys the `tool` group accepts. Declared against the type, so a new option
+ * that is not listed here fails to compile rather than being refused at run time.
+ */
+const TOOL_OPTION_KEYS = {
+  name: true,
+  view: true,
+  ui: true,
+  annotations: true,
+  mcp: true,
+} as const satisfies Record<keyof EndpointToolOptions, true>;
+
+function assertNoUngroupedToolOptions(prefix: string, key: string, ep: EndpointDef): void {
+  const where = `Contract "${prefix}": endpoint "${key}"`;
+  for (const [name, moved] of Object.entries(UNGROUPED_TOOL_OPTIONS)) {
+    if (Object.hasOwn(ep, name)) {
+      throw new Error(
+        `${where} sets \`${name}\` — tool options live in \`tool\` since 0.94.0: use ${moved}`,
+      );
+    }
+  }
+  // Inside the group the same silence would come back one level down: a
+  // `tool: { toolName }` left half-migrated is still an ignored name.
+  const group = 'tool' in ep ? ep.tool : undefined;
+  if (group === undefined) return;
+  for (const name of Object.keys(group)) {
+    if (!Object.hasOwn(TOOL_OPTION_KEYS, name)) {
+      throw new Error(
+        `${where} sets \`tool.${name}\`, which is not a tool option — \`tool\` accepts ${Object.keys(TOOL_OPTION_KEYS).join(', ')}`,
+      );
+    }
+  }
+}
+
+/** An endpoint that never reaches a tool transport has no tool options to set. */
+function assertNoToolOptions(where: string, ep: EndpointDef): void {
+  if ('tool' in ep && ep.tool !== undefined) {
+    throw new Error(`${where} cannot set tool options — it never reaches a tool transport`);
   }
 }
 
@@ -678,11 +744,7 @@ function assertRawBodyEndpoint(prefix: string, key: string, ep: EndpointDef): vo
   if (ep.method !== 'POST' && ep.method !== 'PUT' && ep.method !== 'PATCH') {
     throw new Error(`${where} must use POST, PUT or PATCH`);
   }
-  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
-  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
-  if ('annotations' in ep && ep.annotations) {
-    throw new Error(`${where} cannot set MCP annotations`);
-  }
+  assertNoToolOptions(where, ep);
   const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
@@ -720,11 +782,7 @@ function assertResponseMetaEndpoint(prefix: string, key: string, ep: EndpointDef
     throw new Error(`${where} cannot combine output with bodyless status ${status}`);
   }
   if (ep.rawResponse) throw new Error(`${where} cannot also be a rawResponse endpoint`);
-  if ('toolName' in ep && ep.toolName) throw new Error(`${where} cannot set a toolName`);
-  if ('ui' in ep && ep.ui) throw new Error(`${where} cannot set MCP ui metadata`);
-  if ('annotations' in ep && ep.annotations) {
-    throw new Error(`${where} cannot set MCP annotations`);
-  }
+  assertNoToolOptions(where, ep);
   const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
   if (nonHttp.length > 0) {
     throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);

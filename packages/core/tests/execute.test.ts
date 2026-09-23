@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError } from '../src/contract';
+import { AppError } from '../src/entrypoints/contract';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
 import {
   type AfterToolCallOptions,
@@ -31,7 +31,11 @@ describe('executeToolMethod', () => {
     const method = makeMethod({
       handler: () => ({ users: ['Alice'] }),
     });
-    const result = await executeToolMethod(method, 'test_tool', {}, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test_tool',
+      rawArgs: {},
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toEqual({ users: ['Alice'] });
   });
@@ -39,7 +43,11 @@ describe('executeToolMethod', () => {
   test('null/undefined no-output handler → { status: ok }', async () => {
     for (const value of [null, undefined]) {
       const method = makeMethod({ outputSchema: undefined, handler: () => value });
-      const result = await executeToolMethod(method, 'test', {}, { source: 'agent' });
+      const result = await executeToolMethod(method, {
+        toolName: 'test',
+        rawArgs: {},
+        context: { source: 'agent' },
+      });
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.data).toEqual({ status: 'ok' });
     }
@@ -48,9 +56,7 @@ describe('executeToolMethod', () => {
   test('rejects undeclared tool data and undefined declared output', async () => {
     const undeclared = await executeToolMethod(
       makeMethod({ outputSchema: undefined, handler: () => ({ leaked: true }) }),
-      'test',
-      {},
-      { source: 'agent' },
+      { toolName: 'test', rawArgs: {}, context: { source: 'agent' } },
     );
     expect(undeclared).toEqual({
       ok: false,
@@ -60,9 +66,7 @@ describe('executeToolMethod', () => {
 
     const missing = await executeToolMethod(
       makeMethod({ outputSchema: z.unknown(), handler: () => undefined }),
-      'test',
-      {},
-      { source: 'mcp' },
+      { toolName: 'test', rawArgs: {}, context: { source: 'mcp' } },
     );
     expect(missing).toEqual({
       ok: false,
@@ -77,9 +81,7 @@ describe('executeToolMethod', () => {
         outputSchema: z.object({ id: z.string() }).nullable(),
         handler: () => null,
       }),
-      'nullable',
-      {},
-      { source: 'mcp' },
+      { toolName: 'nullable', rawArgs: {}, context: { source: 'mcp' } },
     );
     expect(result).toEqual({ ok: true, data: null });
   });
@@ -90,7 +92,11 @@ describe('executeToolMethod', () => {
       handler: (ctx) => ({ id: ctx.params }),
     });
 
-    const result = await executeToolMethod(method, 'test', { id: 123 }, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: { id: 123 },
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
@@ -104,7 +110,11 @@ describe('executeToolMethod', () => {
       handler: () => 'ok',
     });
 
-    const result = await executeToolMethod(method, 'test', { name: 42 }, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: { name: 42 },
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
@@ -119,12 +129,11 @@ describe('executeToolMethod', () => {
       handler: (ctx) => ({ id: ctx.params, name: ctx.input }),
     });
 
-    const result = await executeToolMethod(
-      method,
-      'test',
-      { id: 'abc', name: 'Max' },
-      { source: 'agent' },
-    );
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: { id: 'abc', name: 'Max' },
+      context: { source: 'agent' },
+    });
     expect(result.ok).toBe(true);
   });
 
@@ -148,12 +157,8 @@ describe('executeToolMethod', () => {
       });
       const result = await executeToolMethod(
         method,
-        'test',
-        { target: value },
-        { source: 'mcp' },
-        undefined,
-        undefined,
-        true,
+        { toolName: 'test', rawArgs: { target: value }, context: { source: 'mcp' } },
+        { coerceJson: true },
       );
       expect(result.ok).toBe(false);
     }
@@ -171,12 +176,8 @@ describe('executeToolMethod', () => {
     });
     const result = await executeToolMethod(
       method,
-      'test',
-      { target: '123' },
-      { source: 'mcp' },
-      undefined,
-      undefined,
-      true,
+      { toolName: 'test', rawArgs: { target: '123' }, context: { source: 'mcp' } },
+      { coerceJson: true },
     );
     expect(result.ok).toBe(true);
     expect(received).toBe('123');
@@ -196,12 +197,8 @@ describe('executeToolMethod', () => {
     });
     const result = await executeToolMethod(
       method,
-      'test',
-      { target: '["a","b"]' },
-      { source: 'mcp' },
-      undefined,
-      undefined,
-      true,
+      { toolName: 'test', rawArgs: { target: '["a","b"]' }, context: { source: 'mcp' } },
+      { coerceJson: true },
     );
     expect(result.ok).toBe(true);
     expect(received).toEqual(['a', 'b']);
@@ -214,7 +211,11 @@ describe('executeToolMethod', () => {
       },
     });
 
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: {},
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('NOT_FOUND');
@@ -229,7 +230,11 @@ describe('executeToolMethod', () => {
       },
     });
 
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: {},
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('INTERNAL_SERVER_ERROR');
   });
@@ -243,16 +248,15 @@ describe('executeToolMethod', () => {
       },
     });
 
-    await executeToolMethod(
-      method,
-      'test',
-      {},
-      {
+    await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: {},
+      context: {
         source: 'agent',
         userId: 'user-1',
         projectId: 'proj-1',
       },
-    );
+    });
 
     expect(captured.source).toBe('agent');
     expect(captured.userId).toBe('user-1');
@@ -272,7 +276,11 @@ describe('executeToolMethod', () => {
     };
 
     const method = makeMethod({ handler: () => 'data' });
-    await executeToolMethod(method, 'my_tool', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'my_tool', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     expect(calls).toEqual(['before:my_tool', 'after:my_tool:true']);
   });
@@ -316,7 +324,11 @@ describe('executeToolMethod', () => {
     };
 
     const method = makeMethod({ handler: () => 'data' });
-    await executeToolMethod(method, 'my_tool', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'my_tool', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     // Same stable identity fields as the HTTP MethodDef — no toolName→identity map.
     expect(before?.serviceName).toBe('test');
@@ -337,7 +349,11 @@ describe('executeToolMethod', () => {
       handler: () => 'ok',
     });
 
-    await executeToolMethod(method, 'test', { id: 123 }, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'test', rawArgs: { id: 123 }, context: { source: 'mcp' } },
+      { hooks },
+    );
     expect(afterResults.length).toBe(1);
     expect(afterResults[0]?.ok).toBe(false);
   });
@@ -349,12 +365,11 @@ describe('executeToolMethod', () => {
       handler: (ctx) => ({ params: ctx.params, input: ctx.input }),
     });
 
-    const result = await executeToolMethod(
-      method,
-      'test',
-      { id: 'a', name: 'Max' },
-      { source: 'mcp' },
-    );
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: { id: 'a', name: 'Max' },
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data).toEqual({ params: { id: 'a' }, input: { name: 'Max' } });
@@ -366,7 +381,11 @@ describe('executeToolMethod', () => {
       outputSchema: z.object({ id: z.string() }),
       handler: () => ({ id: 123 }),
     });
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: {},
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('INTERNAL_SERVER_ERROR');
   });
@@ -376,7 +395,11 @@ describe('executeToolMethod', () => {
       outputSchema: z.object({ id: z.string() }),
       handler: () => ({ id: 'ok' }),
     });
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' });
+    const result = await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: {},
+      context: { source: 'mcp' },
+    });
     expect(result.ok).toBe(true);
   });
 
@@ -388,11 +411,17 @@ describe('executeToolMethod', () => {
         return 'ok';
       },
     });
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' }, undefined, {
-      beforeHandle: () => {
-        throw new AppError('FORBIDDEN', 'denied', 403);
+    const result = await executeToolMethod(
+      method,
+      { toolName: 'test', rawArgs: {}, context: { source: 'mcp' } },
+      {
+        lifecycle: {
+          beforeHandle: () => {
+            throw new AppError('FORBIDDEN', 'denied', 403);
+          },
+        },
       },
-    });
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('FORBIDDEN');
     expect(handlerRan).toBe(false);
@@ -400,12 +429,18 @@ describe('executeToolMethod', () => {
 
   test('lifecycle.afterHandle transforms the result', async () => {
     const method = makeMethod({ handler: () => ({ n: 1 }) });
-    const result = await executeToolMethod(method, 'test', {}, { source: 'mcp' }, undefined, {
-      afterHandle: (_ctx, data) => ({
-        ...(data as Record<string, unknown>),
-        wrapped: true,
-      }),
-    });
+    const result = await executeToolMethod(
+      method,
+      { toolName: 'test', rawArgs: {}, context: { source: 'mcp' } },
+      {
+        lifecycle: {
+          afterHandle: (_ctx, data) => ({
+            ...(data as Record<string, unknown>),
+            wrapped: true,
+          }),
+        },
+      },
+    );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toEqual({ n: 1, wrapped: true });
   });
@@ -419,16 +454,15 @@ describe('executeToolMethod', () => {
         return 'ok';
       },
     });
-    await executeToolMethod(
-      method,
-      'test',
-      { id: 'real' },
-      {
+    await executeToolMethod(method, {
+      toolName: 'test',
+      rawArgs: { id: 'real' },
+      context: {
         source: 'agent',
         params: 'HIJACK',
         input: 'HIJACK',
       },
-    );
+    });
     expect(captured.params).toEqual({ id: 'real' });
     expect(captured.source).toBe('agent');
   });

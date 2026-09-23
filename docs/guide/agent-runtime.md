@@ -242,7 +242,7 @@ Each run may resolve a different provider adapter without changing the harness. 
 provenance and sorted direct tool names; it intentionally contains no resource text, prompts,
 arguments or credentials. Observer failure never changes the canonical run outcome.
 
-[`packages/core/examples/headless-agent-runner.ts`](../../packages/core/examples/headless-agent-runner.ts)
+[`packages/core/examples/agent-runtime/headless-agent-runner.ts`](../../packages/core/examples/agent-runtime/headless-agent-runner.ts)
 is a reference structured control loop for `submit`, `interrupt`, `snapshot` and bounded `close`.
 It starts no process and chooses no framing, authentication or transport. Importing either example
 has no side effect; an external supervisor owns process placement and restart.
@@ -1064,11 +1064,11 @@ state. Exactly-once external delivery remains an application-owned outbox.
 ### External channel ingress and delivery
 
 The executable
-[`external-channel-harness.ts`](../../packages/core/examples/external-channel-harness.ts)
+[`external-channel-harness.ts`](../../packages/core/examples/agent-runtime/external-channel-harness.ts)
 is the reference composition for webhooks, polling transports and local-device
 adapters. Its generic boundary injects a runtime, durable store and delivery
 adapter; the optional
-[`external-channel-grammy.ts`](../../packages/core/examples/external-channel-grammy.ts)
+[`external-channel-grammy.ts`](../../packages/core/examples/agent-runtime/external-channel-grammy.ts)
 attaches the same ingress function to grammY polling or webhook lifecycle
 without putting provider types in the agent runtime.
 
@@ -1399,8 +1399,9 @@ outbox.
 
 ## Deterministic race and adapter proof
 
-`stitchkit/testing` exports `createAgentRaceBarrier`, `createAgentRaceDriver` and
-`createAgentRaceTrace`. Barriers have bounded teardown, traces assert exact partial order, and the
+`stitchkit/agent-runtime/testing` exports `createAgentRaceBarrier`, `createAgentRaceDriver`,
+`createAgentRaceTrace` and `runAgentStoreConformance` — agent testing tools live beside the agent
+runtime, and `stitchkit/testing` imports none of it. Barriers have bounded teardown, traces assert exact partial order, and the
 helpers are exercised from packed Bun and Node consumers. `runAgentStoreConformance` runs duplicate,
 coalescing, collision, stale checkpoint, replay safety, terminal race, absorption, bounded reads,
 causal queued-history order, durable interrupt priority, compaction and recovery invariants against

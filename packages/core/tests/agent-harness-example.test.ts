@@ -2,11 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { createMemoryAgentRuntimeStore, defineAgentProtocol } from '../src/agent-runtime';
+import {
+  createMemoryAgentRuntimeStore,
+  defineAgentProtocol,
+} from '../src/entrypoints/agent-runtime';
 import {
   type AgentHarnessProfileEvent,
   createHeadlessAgentHarness,
-} from '../src/agent-runtime-harness';
+} from '../src/entrypoints/agent-runtime/harness';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

@@ -9,9 +9,9 @@
  * `setRequestDimensions`.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { TransportSource } from '../contract';
+import type { TransportSource } from '../contract/define';
+import { getClientInfo, resolveSocketIp } from '../internal/request';
 import { isUnsafeKey } from '../internal/safe-json';
-import { getClientInfo, resolveSocketIp } from '../server/request';
 import { resolveTraceContext, type TraceContext } from './trace';
 
 /** What a unit of work is: a call that arrived, or work that runs on its own. */

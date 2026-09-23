@@ -6,8 +6,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createHandler, implement } from '../src/server';
+import { defineContract, withToolView } from '../src/entrypoints/contract';
+import { createHandler, implement } from '../src/entrypoints/server';
 import { executeToolMethod } from '../src/tools/execute';
 
 const contract = defineContract(
@@ -63,7 +63,11 @@ async function toolCall(
 ): Promise<{ ok: boolean; code: string | null }> {
   const method = service.methods[methodKey];
   if (!method) throw new Error(`no method ${methodKey}`);
-  const result = await executeToolMethod(method, methodKey, args, { source: 'mcp' });
+  const result = await executeToolMethod(method, {
+    toolName: methodKey,
+    rawArgs: args,
+    context: { source: 'mcp' },
+  });
   return result.ok ? { ok: true, code: null } : { ok: false, code: result.code };
 }
 
@@ -74,7 +78,11 @@ async function cliCall(
 ): Promise<{ ok: boolean; code: string | null }> {
   const method = service.methods[methodKey];
   if (!method) throw new Error(`no method ${methodKey}`);
-  const result = await executeToolMethod(method, methodKey, args, { source: 'cli' });
+  const result = await executeToolMethod(method, {
+    toolName: methodKey,
+    rawArgs: args,
+    context: { source: 'cli' },
+  });
   return result.ok ? { ok: true, code: null } : { ok: false, code: result.code };
 }
 
@@ -122,5 +130,74 @@ describe('cross-surface parity (HTTP ≡ tool ≡ CLI)', () => {
     expect(http.code).toBe('INTERNAL_SERVER_ERROR');
     expect(tool.code).toBe('INTERNAL_SERVER_ERROR');
     expect(cli.code).toBe('INTERNAL_SERVER_ERROR');
+  });
+});
+
+/**
+ * The one declared divergence of the answer (ADR 0196): an endpoint with a
+ * `tool.view` answers the tool surface with the view. Acceptance is untouched —
+ * the same arguments are accepted or refused on every surface, because the view
+ * adds input defaults and never input keys.
+ */
+const viewed = defineContract(
+  { prefix: 'viewed', scope: 'public' },
+  {
+    read: withToolView(
+      {
+        method: 'POST',
+        path: '/read',
+        desc: 'Read with a view',
+        input: z.strictObject({ detail: z.boolean().default(true) }),
+        output: z.object({ id: z.string(), secret: z.string().optional() }),
+      },
+      { defaults: { detail: false }, output: z.object({ id: z.string() }) },
+    ),
+  },
+);
+const viewedService = implement(viewed, {
+  read: (ctx) => ({ id: 'r1', ...(ctx.input.detail && { secret: 's' }) }),
+});
+const viewedHandler = createHandler({ services: [viewedService] });
+
+async function viewedHttp(body: unknown): Promise<{ status: number; json: unknown }> {
+  const res = await viewedHandler(
+    new Request('http://localhost/viewed/read', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  );
+  return { status: res.status, json: await res.json() };
+}
+
+async function viewedTool(args: Record<string, unknown>) {
+  const method = viewedService.methods.read;
+  if (!method) throw new Error('no method read');
+  return executeToolMethod(
+    method,
+    { toolName: 'viewed_read', rawArgs: args, context: { source: 'mcp' } },
+    { toolSurface: true },
+  );
+}
+
+describe('a tool view is the declared divergence, not a parity gap', () => {
+  test('the answer differs only by the declaration', async () => {
+    expect(await viewedHttp({})).toEqual({ status: 200, json: { id: 'r1', secret: 's' } });
+    expect(await viewedTool({})).toEqual({ ok: true, data: { id: 'r1' } });
+    // With the detail loaded the full answer carries the secret, and the view
+    // still does not: the slice, not the default, is what removes it.
+    expect(await viewedTool({ detail: true })).toEqual({ ok: true, data: { id: 'r1' } });
+  });
+
+  test('the same arguments are refused on both surfaces', async () => {
+    const http = await viewedHttp({ detail: 'yes' });
+    const tool = await viewedTool({ detail: 'yes' });
+    expect(http.status).toBe(400);
+    expect(tool.ok).toBe(false);
+    expect(tool.ok ? null : tool.code).toBe('VALIDATION_ERROR');
+    const extraHttp = await viewedHttp({ extra: 1 });
+    const extraTool = await viewedTool({ extra: 1 });
+    expect(extraHttp.status).toBe(400);
+    expect(extraTool.ok).toBe(false);
   });
 });

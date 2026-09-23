@@ -7,7 +7,7 @@ import {
   createUrlBuilders,
 } from '../src/browser/client';
 import { createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 
 const UrlEchoSchema = z.object({ url: z.string() });
 const LinkParamsSchema = z.object({ fileId: z.string(), filePath: z.string() });

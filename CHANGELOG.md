@@ -15,6 +15,140 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.94.0] — 2026-09-23
+
+### ⚠️ Breaking changes
+
+**Who must act:** every project that names a tool on an endpoint (`toolName`,
+`ui`, `annotations`, `mcp`) — run the codemod once, and `defineContract` names
+any endpoint it missed at startup; every project that imports one of the moved
+names below — change the import path, nothing else. A project that does
+neither only raises its version range.
+
+- `stitchkit`, `stitchkit/contract` — **an endpoint's tool options are one
+  `tool` group.** `toolName`, `ui`, `annotations` and `mcp` move into `tool: {
+  name, ui, annotations, mcp }`, next to the new `tool.view`. Everything in the
+  group is read by a tool surface and never by HTTP, so an endpoint that can
+  never be a tool refuses all of it with one key, and `mcp` is no longer
+  accepted on HTTP-only endpoint kinds where it meant nothing. `expose` stays
+  where it is: it chooses transports, HTTP included. The old top-level keys are
+  refused at definition time by name — the types cannot catch them, because
+  `defineContract` infers its endpoints and inference admits extra properties,
+  and an ignored `toolName` would rename a tool silently. A key inside the group
+  that is not a tool option (a half-migrated `tool: { toolName }`) is refused the
+  same way. `MethodDef` stays flat.
+  A codemod moves the keys: `bun packages/core/scripts/codemod-tool-group.ts
+  <dir>` from a checkout of this repository.
+  `// before: { method: 'GET', path: '/', desc: 'List', toolName: 'user_list', annotations: { readOnlyHint: true } }` →
+  `// after:  { method: 'GET', path: '/', desc: 'List', tool: { name: 'user_list', annotations: { readOnlyHint: true } } }`
+  → ADR 0196
+- `stitchkit`, `stitchkit/contract`, `stitchkit/tools`, `stitchkit/tools/invoker`,
+  `stitchkit/tools/connections` — **one name for a tool transport.**
+  `ToolTransport` and `TOOL_TRANSPORTS` (`['MCP', 'AGENT', 'CLI']`) are exported
+  from `stitchkit/contract` beside `Transport` and `ALL_TRANSPORTS`;
+  `RuntimeToolTransport`, `ToolSurfaceTransport` and `ToolInvokerTransport` are
+  gone. The type is the same union.
+  `// before: import type { RuntimeToolTransport } from 'stitchkit/tools'` →
+  `// after:  import type { ToolTransport } from 'stitchkit/contract'` → ADR 0199
+- `stitchkit/tools` — **the CLI is exported from `stitchkit/cli` only.**
+  `createCli`, `defineCliCommand`, `CliConfig`, `CliSurfaceSource`,
+  `CliPresentationPolicyConfig`, `CliWaitConfig`, `ExitCodeMap` and the
+  `CliCommand*` types left `stitchkit/tools`, which also spared a CLI binary the
+  MCP and AI peers that barrel pulls in.
+  `// before: import { createCli } from 'stitchkit/tools'` →
+  `// after:  import { createCli } from 'stitchkit/cli'` → ADR 0199
+- `stitchkit/server` — **`parseSSE` is exported from `stitchkit` only.** It is a
+  client parser and lived in both; `ParseSSEOptions` moved with it.
+  `// before: import { parseSSE } from 'stitchkit/server'` →
+  `// after:  import { parseSSE } from 'stitchkit'` → ADR 0199
+- `stitchkit/testing` — **agent testing tools moved to
+  `stitchkit/agent-runtime/testing`.** `runAgentStoreConformance`, its config
+  and context types, and the race driver (`createAgentRaceBarrier`,
+  `createAgentRaceDriver`, `createAgentRaceTrace` and their types) are exported
+  there only; `stitchkit/testing` no longer imports the agent runtime.
+  `// before: import { runAgentStoreConformance } from 'stitchkit/testing'` →
+  `// after:  import { runAgentStoreConformance } from 'stitchkit/agent-runtime/testing'`
+  → ADR 0197, ADR 0199
+- `stitchkit/agent-runtime` — **the durability engine is exported from
+  `stitchkit/tools` only.** `createLocalStepDurability`, `LocalStepDurability`,
+  `LocalStepDurabilityOptions` and `StepDurabilityLedger` left
+  `stitchkit/agent-runtime`; the engine and the event-log vocabulary it speaks
+  now live in a neutral part of the source both products import.
+  `// before: import { createLocalStepDurability } from 'stitchkit/agent-runtime'` →
+  `// after:  import { createLocalStepDurability } from 'stitchkit/tools'`
+
+### Added
+
+- **An endpoint can answer tools with a declared view of its HTTP answer —
+  `withToolView`.** A UI wants the full record and a model wants a card; a
+  consuming project measured one list tool at 140 KB full and 14 KB as a card,
+  and expressed the difference with seven pairs of endpoints on the same path.
+  `withToolView(endpoint, { defaults, output, project })` declares it once, in
+  `tool.view`: `defaults` join a tool call's arguments before the contract's one
+  parse, so the single handler receives `include: []` from a model and loads
+  less; the full result is validated, then projected (or sliced by `output`) and
+  validated against the view's schema. MCP, the agent mount and the CLI answer
+  with the view, and `outputSchema`, the advertised input `default`, the catalog
+  stamp and the surface snapshot follow it; HTTP, OpenAPI, the typed client and
+  `createToolInvoker` keep the full answer byte for byte. `project` is typed
+  against the endpoint's own schemas, a slice whose schema does not accept the
+  full result is refused at compile time, and `defineContract` refuses a view
+  that cannot mean anything, or one not declared through `withToolView`. A
+  surface-snapshot operation row gains `toolView` only where one is declared,
+  so an application without views sees no snapshot change. `createToolInvoker`
+  keeps the full answer unless given `toolSurface: true`, for an invoker that
+  backs a transport a model reads. → ADR 0196
+  `// before: list: {…, expose: ['HTTP']}, listAgent: {…, expose: ['MCP', 'AGENT'], toolName: 'user_list'}` →
+  `// after:  list: withToolView({…, tool: { name: 'user_list' }}, { defaults: { include: [] }, output: UserCardList, project })`
+- **`EndpointToolOptions`, `DeclaredToolView` and `WithToolView` types** on
+  `stitchkit` and `stitchkit/contract` — the `tool` group, the view
+  `withToolView` produces and the endpoint it returns.
+- **`SqliteAgentChildManagerConfig` type** on `stitchkit/agent-runtime` — the
+  options `createSqliteAgentChildManager` takes, which could not be named.
+- **Documentation for agents in slices.** The package ships `llms/`, one slice
+  per entrypoint (each under 50 KB) plus the upgrade guide by version range;
+  `llms.txt` indexes them with their sizes. `llms-full.txt` still ships, but no
+  instruction asks an agent to read it whole.
+- **`docs/PRINCIPLES.md`** — what stitchkit is and is not: fifteen invariants
+  every ADR now names in the index, and the list of what new work does not add.
+- **A breaking budget.** `release:check` prints how many minors broke a stable
+  entrypoint in the last 30 and 7 days and refuses a second one within 7 days,
+  a stable break without an ADR, and a breaking entry that does not lead with
+  the entrypoints it breaks. Counted from 0.94.0. → ADR 0198
+
+### Changed
+
+- **The agent runtime is behind a one-way boundary.** Nothing outside
+  `agent-runtime/` imports it except entrypoint files, and a test holds every
+  direction between the parts of the source. No public change beyond the moves
+  above. → ADR 0197
+- **One implementation per job inside the package:** one canonical JSON
+  serialisation behind every digest, one MCP tool registration for contract
+  endpoints and runtime tools, and one tool executor signature. → ADR 0199
+- **Canonical key order is the agent store's, for every digest.** Keys are
+  sorted by UTF-16 code unit at every depth, now pinned by a test. Agent-store
+  hashes and archives do not move. Surface snapshots, the MCP catalog stamp, CLI
+  manifest signatures and argument digests (watched reads, MCP rounds, CLI checkpoints) used to list
+  integer-like keys (`"9"`, `"10"`) first, in numeric order — an engine does that
+  to any object — and now sort them like every other key, so only a value with
+  such keys changes: a committed snapshot that has one reports drift once.
+- **A runtime tool's failure outside its handler is a tool error.** An exception
+  from a runtime tool's elicitation round or presenter on MCP now answers
+  `isError` with the framework's error code and hint, as a contract endpoint
+  always did; before, it reached the MCP SDK as a raw exception.
+
+### Fixed
+
+- **`implementRemote` never mounts a proxied stream as a tool.** Its `MethodDef`
+  was a hand-written copy of `implement`'s and had drifted: a streaming endpoint
+  without `expose` kept the default tool exposure, so a gateway listed a tool
+  that answered every call with `INTERNAL_SERVER_ERROR` (its handler returned a
+  stream the tool had no output for). Both now come from one builder, and such an endpoint is
+  HTTP-only on the proxy as it is on the origin — its name leaves a gateway's
+  tool list. A proxied endpoint still declares no elicitation rounds, now
+  deliberately: the forwarded call carries only `params` and `input`, so answers
+  asked for on the proxy would never reach the origin.
+
 ## [0.93.0] — 2026-09-22
 
 ### ⚠️ Breaking changes

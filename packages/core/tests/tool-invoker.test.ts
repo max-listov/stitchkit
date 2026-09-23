@@ -2,16 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError, defineContract } from '../src/contract';
+import { AppError, defineContract } from '../src/entrypoints/contract';
 import {
   getRequestContext,
   runWithRequestContext,
   setRequestDimensions,
-} from '../src/observability';
-import { implement } from '../src/server';
+} from '../src/entrypoints/observability';
+import { implement } from '../src/entrypoints/server';
 import { mountAgent } from '../src/tools/agent';
 import { createToolInvoker, type ToolInvocationOptions } from '../src/tools/invoker';
-import { mountMcp } from '../src/tools/mcp';
+import { mountMcp } from '../src/tools/mcp/mount';
 
 const MathInput = z.object({ left: z.number(), right: z.number() });
 const MathOutput = z.object({ total: z.number() });
@@ -27,7 +27,7 @@ const operations = defineContract(
       desc: 'Add two numbers',
       input: MathInput,
       output: MathOutput,
-      toolName: 'math_add',
+      tool: { name: 'math_add' },
     },
     inspect: {
       method: 'POST',
@@ -35,28 +35,28 @@ const operations = defineContract(
       desc: 'Inspect one call',
       input: IdInput,
       output: IdOutput,
-      toolName: 'inspect_call',
+      tool: { name: 'inspect_call' },
     },
     explode: {
       method: 'POST',
       path: '/explode',
       desc: 'Throw an error',
       input: IdInput,
-      toolName: 'explode_call',
+      tool: { name: 'explode_call' },
     },
     agentOnly: {
       method: 'GET',
       path: '/agent',
       desc: 'Agent only',
       expose: ['AGENT'],
-      toolName: 'agent_only',
+      tool: { name: 'agent_only' },
     },
     mcpOnly: {
       method: 'GET',
       path: '/mcp',
       desc: 'MCP only',
       expose: ['MCP'],
-      toolName: 'mcp_only',
+      tool: { name: 'mcp_only' },
     },
   },
 );
@@ -352,7 +352,7 @@ describe('createToolInvoker', () => {
           desc: 'Inner operation',
           input: IdInput,
           output: IdOutput,
-          toolName: 'nested_inner',
+          tool: { name: 'nested_inner' },
         },
         outer: {
           method: 'POST',
@@ -360,7 +360,7 @@ describe('createToolInvoker', () => {
           desc: 'Outer operation',
           input: IdInput,
           output: IdOutput,
-          toolName: 'nested_outer',
+          tool: { name: 'nested_outer' },
         },
       },
     );

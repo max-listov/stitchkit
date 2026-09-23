@@ -4,7 +4,7 @@ import {
   type AgentMessagePart,
   AgentMessageSchema,
   projectAgentHistoryDetailed,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 function record(id: string, role: AgentMessage['role'], parts: AgentMessagePart[]) {
   return AgentMessageSchema.parse({

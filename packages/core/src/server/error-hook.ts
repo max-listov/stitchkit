@@ -36,9 +36,9 @@
  * ```
  */
 
-import type { RuntimeContext } from '../contract';
-import { isStitchErrorCode, type StitchErrorCode } from '../contract';
-import { normalizeError } from '../internal/errors';
+import type { RuntimeContext } from '../contract/define';
+import { isStitchErrorCode, type StitchErrorCode } from '../contract/errors';
+import { normalizeError } from '../contract/normalize';
 import type { LifecycleHooks, MethodDef } from './types';
 
 /** The normalised error handed to `render` — code already remapped. */

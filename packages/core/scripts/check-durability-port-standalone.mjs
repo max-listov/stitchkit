@@ -32,8 +32,9 @@ function graphOf(entry) {
     } catch {
       continue;
     }
-    for (const match of source.matchAll(/(?:from|import)\s*"\.\/([^"]+)"/g)) {
-      queue.push(match[1]);
+    // Entries live in `dist/entrypoints/`, so their chunks are `../chunk-….js`.
+    for (const match of source.matchAll(/(?:from|import)\s*"(\.{1,2}\/[^"]+)"/g)) {
+      queue.push(join(dirname(file), match[1]));
     }
   }
   return seen;
@@ -48,7 +49,7 @@ const RUNTIME_ONLY = [
   'createAgentRuntimeEventSink',
 ];
 
-const graph = graphOf('tools.js');
+const graph = graphOf('entrypoints/tools.js');
 const offenders = [];
 for (const marker of RUNTIME_ONLY) {
   for (const file of graph) {

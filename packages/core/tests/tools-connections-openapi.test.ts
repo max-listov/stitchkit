@@ -3,13 +3,13 @@
  * the request host fence, exercised against a real `Bun.serve`.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mountAgent } from '../src/tools/agent';
 import {
   ConnectionRequestError,
   ConnectionUrlError,
   defineOpenApiConnection,
   mountConnections,
-} from '../src/tools/connections';
+} from '../src/entrypoints/tools/connections';
+import { mountAgent } from '../src/tools/agent';
 import {
   ConnectionResponseTooLargeError,
   ConnectionTimeoutError,

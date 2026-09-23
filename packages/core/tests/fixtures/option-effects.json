@@ -354,5 +354,16 @@
     "listenerTimeoutMs": {
       "test": "a listener that never settles is reported at its deadline and the next still runs"
     }
+  },
+  "EndpointToolView": {
+    "defaults": {
+      "test": "a call gets the projected card, and the handler was asked to load nothing"
+    },
+    "output": {
+      "test": "a view without project slices the full record by its schema"
+    },
+    "project": {
+      "test": "a call gets the projected card, and the handler was asked to load nothing"
+    }
   }
 }

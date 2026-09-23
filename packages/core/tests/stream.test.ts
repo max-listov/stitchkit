@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSSE, streamSSE } from '../src/server/stream';
+import { parseSSE } from '../src/browser/stream';
+import { streamSSE } from '../src/server/stream';
 
 describe('SSE streaming', () => {
   test('streamSSE creates valid SSE response from generator', async () => {

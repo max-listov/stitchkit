@@ -6,13 +6,11 @@
 import { describe, expect, test } from 'bun:test';
 import { signJwt, verifyJwt } from '../src/server/middleware/auth';
 import { deriveCodeChallenge, verifyPkce } from '../src/server/middleware/pkce';
-import type { RawRoute } from '../src/server/types';
-import { createMcpHandler } from '../src/tools/mcp-handler';
 import {
   oauthProtectedResourceRoute,
   protectedResourceMetadataUrl,
   wwwAuthenticateHeader,
-} from '../src/tools/oauth-metadata';
+} from '../src/server/oauth/metadata';
 import {
   type AuthCodeData,
   type CimdClientMetadataFetcher,
@@ -20,7 +18,9 @@ import {
   type OAuthProviderConfig,
   type RefreshData,
   type RegisteredClient,
-} from '../src/tools/oauth-provider';
+} from '../src/server/oauth/provider';
+import type { RawRoute } from '../src/server/types';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 
 const SECRET = 'test-secret-please-change';
 const ISSUER = 'https://api.example.com';
@@ -853,7 +853,7 @@ describe('Client ID Metadata Documents', () => {
   });
 
   test('Age list arithmetic: the FIRST proxy value counts, not zero and not the sum', async () => {
-    const { responseFreshness } = await import('../src/tools/oauth-provider');
+    const { responseFreshness } = await import('../src/server/oauth/provider');
     const base = { 'content-type': 'application/json', 'cache-control': 'max-age=1800' };
     const plain = responseFreshness(new Headers(base), {}, 0);
     const single = responseFreshness(new Headers({ ...base, age: '600' }), {}, 0);

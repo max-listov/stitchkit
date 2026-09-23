@@ -4,11 +4,11 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { AgentMessageSchema, AgentRunSchema } from '../src/agent-runtime';
 import {
   createBunSqliteAgentRuntimeStore,
   type SqliteAgentRuntimeStore,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
+import { AgentMessageSchema, AgentRunSchema } from '../src/entrypoints/agent-runtime';
 
 const paths: string[] = [];
 

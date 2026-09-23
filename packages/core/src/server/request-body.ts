@@ -1,4 +1,4 @@
-import { badRequest } from '../contract';
+import { badRequest } from '../contract/errors';
 
 function requestAbortReason(req: Request): unknown {
   return req.signal.reason ?? new DOMException('The connection was closed', 'AbortError');

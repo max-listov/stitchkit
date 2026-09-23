@@ -6,7 +6,7 @@ import type {
   ScopedUrlBuilder,
   TypedHttpClient,
   TypedUrlBuilder,
-} from '../contract';
+} from '../contract/define';
 import { isRecord, mapObject, typedEntries } from '../internal/typed';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import { buildMultipartForm } from './client-multipart';

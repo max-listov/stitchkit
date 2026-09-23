@@ -7,11 +7,11 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
   purgeAgentConversation,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 import {
   createAgentHarnessControlServer,
   createHeadlessAgentHarness,
-} from '../src/agent-runtime-harness';
+} from '../src/entrypoints/agent-runtime/harness';
 import { purgeAdmission } from './fixtures/agent-purge';
 
 function models(preflight?: () => Promise<void>) {

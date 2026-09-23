@@ -14,7 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import * as declarationModule from '../src/declaration';
+import * as declarationModule from '../src/declaration/declaration';
 import {
   findProjectRole,
   namesAMachine,
@@ -24,7 +24,7 @@ import {
   ProjectIdentitySchema,
   type ProjectRole,
   parseProjectDeclaration,
-} from '../src/declaration';
+} from '../src/declaration/declaration';
 
 const apiRole: ProjectRole = {
   name: 'api',
@@ -556,16 +556,20 @@ describe('declaring yourself is optional', () => {
     return entries
       .filter((entry) => entry.isFile() && /\.ts$/.test(entry.name))
       .map((entry) => join(entry.parentPath, entry.name))
-      .filter((path) => path !== join(sourceRoot, 'declaration.ts'));
+      .filter(
+        (path) =>
+          !path.startsWith(join(sourceRoot, 'declaration/')) &&
+          path !== join(sourceRoot, 'entrypoints/declaration.ts'),
+      );
   }
 
   test('no other framework module imports the declaration schema', async () => {
     const offenders: string[] = [];
     for (const path of await coreSources()) {
       const source = await readFile(path, 'utf8');
-      // Relative import of the leaf module, in any of the shapes a bundler
-      // accepts: `./declaration`, `../declaration`, `../../declaration`.
-      if (/from\s+'(?:\.\.?\/)+declaration'/.test(source)) offenders.push(path);
+      // Relative import of the leaf, in any shape a bundler accepts:
+      // `../declaration/declaration`, `../../declaration/…`.
+      if (/from\s+'(?:\.\.?\/)+declaration(?:\/[\w-]+)*'/.test(source)) offenders.push(path);
     }
     expect(offenders).toEqual([]);
   });

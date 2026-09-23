@@ -11,7 +11,7 @@ import type { ShutdownOptions, ShutdownResult } from '../src/server/shutdown';
 import {
   bindStdioProcessSignals,
   type StdioProcessSignalsErrorPhase,
-} from '../src/tools/mcp-stdio-signals';
+} from '../src/tools/mcp/stdio-signals';
 
 const cleanResult: ShutdownResult = {
   outcome: 'clean',

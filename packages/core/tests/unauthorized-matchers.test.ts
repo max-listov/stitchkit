@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { contractEndpointMatchers, createHttpClient } from '../src';
-import { defineContract } from '../src/contract';
+import { contractEndpointMatchers, createHttpClient } from '../src/entrypoints';
+import { defineContract } from '../src/entrypoints/contract';
 
 const EmptySchema = z.object({});
 

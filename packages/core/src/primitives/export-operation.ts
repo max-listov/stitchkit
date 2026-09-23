@@ -1,5 +1,6 @@
 import { type ZodType, z } from 'zod';
-import { ManagedFileRefSchema } from '../contract';
+import type { EndpointToolOptions } from '../contract/define';
+import { ManagedFileRefSchema } from '../contract/file-ref';
 
 export function createExportResultSchema<TOperationId extends ZodType>(
   operationId: TOperationId,
@@ -53,7 +54,8 @@ export function defineExportOperation<
       readonly path: string;
       readonly desc: string;
       readonly scope: TScope;
-      readonly toolName?: string;
+      /** Tool options for the operation; its view, if any, is declared with `withToolView`. */
+      readonly tool?: Omit<EndpointToolOptions, 'view'>;
       readonly meta?: Record<string, unknown>;
     }) {
       return {

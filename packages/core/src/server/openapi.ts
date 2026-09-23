@@ -11,11 +11,11 @@
  * `$ref` de-duplication can come later if a spec grows unwieldy.
  */
 
-import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract';
+import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
 import { inputIsQuery } from '../internal/http-input';
 import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
-import { jsonSchemaFields, toJsonSchema } from '../tools/json-schema';
+import { jsonSchemaFields, toJsonSchema } from '../json-schema/json-schema';
 import type { MethodDef, RawRoute, ServiceDef } from './types';
 
 export interface OpenApiInfo {

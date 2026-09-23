@@ -40,9 +40,9 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "@opentui/core": "^0.5.11",
-    "@opentui/react": "^0.5.11",
-    "ai": "^7.0.107",
+    "@opentui/core": "^0.5.12",
+    "@opentui/react": "^0.5.12",
+    "ai": "^7.0.111",
     "react": "^19.3.0",
     "stitchkit": "workspace:^",
     "zod": "^4.6.5"

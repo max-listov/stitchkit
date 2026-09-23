@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { createClient, createHttpClient, defineContract } from '../src';
-import { createHandler, implement, respondJson } from '../src/server';
+import { createClient, createHttpClient, defineContract } from '../src/entrypoints';
+import { createHandler, implement, respondJson } from '../src/entrypoints/server';
 import { serveNode } from '../src/server/node';
 
 const NullableResultSchema = z.object({ value: z.string() }).nullable();

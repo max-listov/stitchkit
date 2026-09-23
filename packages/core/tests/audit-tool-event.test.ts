@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createObservability, type RequestEvent } from '../src/observability';
-import { implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createObservability, type RequestEvent } from '../src/entrypoints/observability';
+import { implement } from '../src/entrypoints/server';
 
 const broadcast = defineContract(
   { prefix: 'broadcast' },

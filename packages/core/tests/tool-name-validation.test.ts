@@ -11,12 +11,12 @@
 import { describe, expect, test } from 'bun:test';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { mountAgent } from '../src/tools/agent';
-import { createCli } from '../src/tools/cli';
+import { createCli } from '../src/tools/cli/create-cli';
 import { listToolNames } from '../src/tools/list-names';
-import { mountMcp, validateMcpSchemas } from '../src/tools/mcp';
+import { mountMcp, validateMcpSchemas } from '../src/tools/mcp/mount';
 import { collectTools } from '../src/tools/mount';
 import { toToolName } from '../src/tools/names';
 import { summarizeTransports } from '../src/tools/transports';
@@ -32,7 +32,7 @@ function serviceWith(prefix: string, toolName?: string) {
         method: 'GET',
         path: '/',
         desc: 'Get a thing',
-        ...(toolName ? { toolName } : {}),
+        ...(toolName ? { tool: { name: toolName } } : {}),
         output: z.object({ ok: z.boolean() }),
       },
     },
@@ -104,7 +104,7 @@ describe('toToolName — singularize applies to the last segment', () => {
 });
 
 describe('mount-time assertion', () => {
-  test('an explicit toolName outside the charset throws, naming the endpoint', () => {
+  test('an explicit tool name outside the charset throws, naming the endpoint', () => {
     expect(() => collectTools(serviceWith('notes', 'bad/name'), 'MCP')).toThrow(
       /Tool name "bad\/name".*service "notes".*must match/,
     );
@@ -112,7 +112,7 @@ describe('mount-time assertion', () => {
 
   test('an over-long name throws and points at the remedy', () => {
     expect(() => collectTools(serviceWith('notes', 'x'.repeat(65)), 'MCP')).toThrow(
-      /65 characters \(max 64\).*toolName/,
+      /65 characters \(max 64\).*tool\.name/,
     );
   });
 

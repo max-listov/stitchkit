@@ -8,9 +8,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { createCli } from '../src/tools/cli';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { createCli } from '../src/tools/cli/create-cli';
 
 const STATUSES = ['active', 'idle', 'stopped'] as const;
 /** 98 records — the size the measurement in the report was taken at. */
@@ -27,29 +27,29 @@ const contract = defineContract(
       method: 'GET',
       path: '/',
       desc: 'List items',
-      toolName: 'item_list',
       expose: ['CLI'],
       output: z.object({
         items: z.array(z.object({ id: z.string(), status: z.string(), messages: z.number() })),
       }),
+      tool: { name: 'item_list' },
     },
     partial: {
       method: 'GET',
       path: '/partial',
       desc: 'Records that do not all carry the field',
-      toolName: 'item_partial',
       expose: ['CLI'],
       output: z.object({
         items: z.array(z.object({ id: z.string(), weight: z.number().optional() })),
       }),
+      tool: { name: 'item_partial' },
     },
     one: {
       method: 'GET',
       path: '/one',
       desc: 'A single item',
-      toolName: 'item_one',
       expose: ['CLI'],
       output: z.object({ id: z.string() }),
+      tool: { name: 'item_one' },
     },
   },
 );

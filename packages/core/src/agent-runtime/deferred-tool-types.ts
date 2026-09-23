@@ -1,6 +1,11 @@
 import type { ToolSet } from 'ai';
 import { type ZodObject, type ZodType, z } from 'zod';
-import type { EndpointToolAnnotations, EndpointUiMeta, HttpMethod } from '../contract';
+import type {
+  EndpointToolAnnotations,
+  EndpointUiMeta,
+  HttpMethod,
+  ToolTransport,
+} from '../contract/define';
 import type { ServiceDef } from '../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../tools/execute';
 import type { ToolExtend } from '../tools/mount';
@@ -54,7 +59,7 @@ export interface DeferredAgentRuntimeToolDefinition {
   };
   input: ZodObject;
   output?: ZodType;
-  transports?: readonly ('MCP' | 'AGENT' | 'CLI')[];
+  transports?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   handler: unknown;

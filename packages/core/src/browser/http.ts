@@ -5,7 +5,7 @@ import ky, {
   type KyInstance,
   type Options,
 } from 'ky';
-import type { ErrorEnvelope } from '../contract';
+import type { ErrorEnvelope } from '../contract/errors';
 import { isRecord, transportResult } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';

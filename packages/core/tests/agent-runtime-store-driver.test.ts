@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import type { AgentRuntimeStore } from '../src/agent-runtime';
+import type { AgentRuntimeStore } from '../src/entrypoints/agent-runtime';
 import {
   AgentMessageSchema,
   AgentRunSchema,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { runAgentStoreConformance } from '../src/testing';
+} from '../src/entrypoints/agent-runtime';
+import { runAgentStoreConformance } from '../src/entrypoints/agent-runtime/testing';
 
 describe('agent runtime store driver', () => {
   test('memory driver passes the reusable production-store contract', async () => {

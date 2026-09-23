@@ -18,7 +18,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createClient } from '../src/browser/client';
 import { createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 
 const contract = defineContract(
   { prefix: 'arity' },

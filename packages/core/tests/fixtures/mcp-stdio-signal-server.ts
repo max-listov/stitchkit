@@ -1,5 +1,5 @@
-import { createStdioMcpServer } from '../../src/tools/mcp-stdio';
-import { bindStdioProcessSignals } from '../../src/tools/mcp-stdio-signals';
+import { createStdioMcpServer } from '../../src/tools/mcp/stdio';
+import { bindStdioProcessSignals } from '../../src/tools/mcp/stdio-signals';
 
 const stdio = await createStdioMcpServer({
   serverInfo: { name: 'stitchkit-stdio-signal-test', version: '1' },

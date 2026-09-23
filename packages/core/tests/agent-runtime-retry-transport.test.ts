@@ -8,8 +8,11 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { createAgentControlView, reduceAgentControlEvent } from '../src/agent-runtime-browser';
+} from '../src/entrypoints/agent-runtime';
+import {
+  createAgentControlView,
+  reduceAgentControlEvent,
+} from '../src/entrypoints/agent-runtime/browser';
 
 const usage = (total: number) => ({
   inputTokens: { total, noCache: total, cacheRead: undefined, cacheWrite: undefined },

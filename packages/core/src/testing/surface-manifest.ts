@@ -1,12 +1,19 @@
 import { createHash } from 'node:crypto';
 import { type ZodType, z } from 'zod';
-import type { EndpointMcpPolicy, HttpMethod } from '../contract';
-import { compareCodepoints, serializeCanonicalJson } from '../internal/canonical-json';
+import {
+  type EndpointMcpPolicy,
+  type HttpMethod,
+  TOOL_TRANSPORTS,
+  type ToolTransport,
+} from '../contract/define';
+import type { EndpointToolView } from '../contract/tool-view';
+import { compareCodeUnits, serializeCanonicalJson } from '../internal/canonical-json';
 import { joinRoutePath } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
+import { toJsonSchema } from '../json-schema/json-schema';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 import type { RouteGroup, ServiceDef } from '../server/types';
-import type { CliCommandDefinition } from '../tools/cli-command';
+import type { CliCommandDefinition } from '../tools/cli/command';
 import {
   type McpSchemaValidationConfig,
   mcpProjectionCandidate,
@@ -15,14 +22,13 @@ import {
   type SurfaceRuntimeToolDefinition,
   type SurfaceToolExtension,
 } from '../tools/internal/surface-projector';
-import { toJsonSchema } from '../tools/json-schema';
-import { staticInputRounds } from '../tools/mcp-round-policy';
+import { staticInputRounds } from '../tools/mcp/round-policy';
 
 /** The snapshot format's own version — bumped whenever an operation gains a field. */
 export const SURFACE_MANIFEST_VERSION = 3;
 
 const HttpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
-const ToolTransportSchema = z.enum(['MCP', 'AGENT', 'CLI']);
+const ToolTransportSchema = z.enum(TOOL_TRANSPORTS);
 const SurfaceTransportSchema = z.enum(['HTTP', 'MCP', 'AGENT', 'CLI', 'REALTIME']);
 
 export const SurfaceSchemaDigestsSchema = z.object({
@@ -52,6 +58,19 @@ export const SurfaceManifestOperationMcpSchema = z
   })
   .nullable();
 
+/**
+ * What an operation answers on the tool surface when that is not its HTTP
+ * answer. Present only where a view is declared — absence means the tools answer
+ * exactly as HTTP does — so a snapshot of an application without views does not
+ * move a byte. `project` records THAT a projection runs; its code has no digest,
+ * and the schema it is held to does. → ADR 0196.
+ */
+export const SurfaceManifestOperationToolViewSchema = z.object({
+  defaults: z.string().nullable(),
+  output: z.string().nullable(),
+  project: z.boolean(),
+});
+
 export const SurfaceManifestOperationSchema = z.object({
   kind: z.enum(['contract', 'runtime']),
   service: z.string(),
@@ -61,6 +80,7 @@ export const SurfaceManifestOperationSchema = z.object({
   description: z.string(),
   schemas: SurfaceSchemaDigestsSchema,
   mcp: SurfaceManifestOperationMcpSchema,
+  toolView: SurfaceManifestOperationToolViewSchema.optional(),
   http: z.array(z.object({ method: HttpMethodSchema, path: z.string() })),
 });
 
@@ -116,6 +136,9 @@ export const SurfaceManifestSchema = z.object({
 
 export type SurfaceManifest = z.infer<typeof SurfaceManifestSchema>;
 export type SurfaceManifestOperation = z.infer<typeof SurfaceManifestOperationSchema>;
+export type SurfaceManifestOperationToolView = z.infer<
+  typeof SurfaceManifestOperationToolViewSchema
+>;
 export type SurfaceManifestOperationMcp = z.infer<typeof SurfaceManifestOperationMcpSchema>;
 export type SurfaceManifestTool = z.infer<typeof SurfaceManifestToolSchema>;
 export type SurfaceManifestToolSurface = z.infer<typeof SurfaceManifestToolSurfaceSchema>;
@@ -174,8 +197,12 @@ export interface SurfaceManifestConfig {
   extensions?: readonly SurfaceManifestExtension[];
 }
 
-/** Canonical bytes used by snapshots and schema digests. Arrays retain order. */
-export const serializeSurfaceValue = serializeCanonicalJson;
+/**
+ * Canonical bytes used by snapshots and schema digests. Arrays retain order.
+ * The package's one canonical serialisation, published under the name a
+ * surface test reaches for.
+ */
+export const serializeSurfaceValue: (value: unknown) => string = serializeCanonicalJson;
 
 function digestValue(value: unknown): string {
   return createHash('sha256').update(serializeSurfaceValue(value)).digest('hex').slice(0, 16);
@@ -185,12 +212,12 @@ function canonicalSchemaValue(value: unknown, parentKey?: string): unknown {
   if (Array.isArray(value)) {
     const entries = value.map((entry) => canonicalSchemaValue(entry));
     return parentKey === 'required' && entries.every((entry) => typeof entry === 'string')
-      ? entries.sort((left, right) => compareCodepoints(String(left), String(right)))
+      ? entries.sort((left, right) => compareCodeUnits(String(left), String(right)))
       : entries;
   }
   if (!isRecord(value)) return value;
   const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort(compareCodepoints)) {
+  for (const key of Object.keys(value).sort(compareCodeUnits)) {
     result[key] = canonicalSchemaValue(value[key], key);
   }
   return result;
@@ -231,6 +258,7 @@ interface OperationSource {
   annotations?: unknown;
   ui?: unknown;
   mcp?: EndpointMcpPolicy;
+  toolView?: EndpointToolView;
   rawBody?: true;
   safelistedBody?: true;
   rawResponse?: true;
@@ -259,8 +287,33 @@ function operationFrom(
       multipart: multipartDigest(source.multipart),
     },
     mcp: mcpRoundsOf(source),
+    ...toolViewEntry(source),
     http: [],
   };
+}
+
+/**
+ * The declared tool view, in the one shape both the snapshot and the
+ * fingerprint read — the same reason `mcpRoundsOf` is one function.
+ */
+function toolViewOf(source: OperationSource): SurfaceManifestOperationToolView | null {
+  const view = source.toolView;
+  if (!view) return null;
+  return {
+    defaults:
+      view.defaults === undefined || Object.keys(view.defaults).length === 0
+        ? null
+        : digestValue(view.defaults),
+    output: schemaDigest(view.output, 'output'),
+    project: view.project !== undefined,
+  };
+}
+
+function toolViewEntry(source: OperationSource): {
+  toolView?: SurfaceManifestOperationToolView;
+} {
+  const toolView = toolViewOf(source);
+  return toolView ? { toolView } : {};
 }
 
 /**
@@ -300,11 +353,12 @@ function operationFingerprint(source: OperationSource): string {
     desc: source.desc,
     scope: source.scope ?? null,
     path: source.path ?? null,
-    expose: source.expose ? [...source.expose].sort(compareCodepoints) : null,
+    expose: source.expose ? [...source.expose].sort(compareCodeUnits) : null,
     toolName: source.toolName ?? null,
     annotations: source.annotations ?? null,
     ui: source.ui ?? null,
     mcp,
+    toolView: toolViewOf(source),
     rawBody: source.rawBody ?? false,
     safelistedBody: source.safelistedBody ?? false,
     rawResponse: source.rawResponse ?? false,
@@ -325,10 +379,10 @@ function operationFingerprint(source: OperationSource): string {
 function sortTools(tools: SurfaceManifestTool[]): SurfaceManifestTool[] {
   return tools.sort(
     (left, right) =>
-      compareCodepoints(left.name, right.name) ||
-      compareCodepoints(left.service, right.service) ||
-      compareCodepoints(left.action, right.action) ||
-      compareCodepoints(left.kind, right.kind),
+      compareCodeUnits(left.name, right.name) ||
+      compareCodeUnits(left.service, right.service) ||
+      compareCodeUnits(left.action, right.action) ||
+      compareCodeUnits(left.kind, right.kind),
   );
 }
 
@@ -390,7 +444,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
 
   const toolSurfaces: SurfaceManifestToolSurface[] = [];
   const addToolProjection = (
-    transport: 'MCP' | 'AGENT' | 'CLI',
+    transport: ToolTransport,
     surface: string | null,
     projection: SurfaceToolDefinition,
     presentation: Pick<SurfaceAgentProjection, 'extend' | 'flattenUnionInput'> = {},
@@ -465,7 +519,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
   }
   if (explicitMcp) addToolProjection('MCP', null, explicitMcp);
   if (namedMcp) {
-    for (const name of Object.keys(namedMcp).sort(compareCodepoints)) {
+    for (const name of Object.keys(namedMcp).sort(compareCodeUnits)) {
       const projection = namedMcp[name];
       if (projection) addToolProjection('MCP', name, projection);
     }
@@ -476,7 +530,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
   addToolProjection('CLI', null, config.toolSurfaces?.CLI ?? shared);
 
   const realtime: SurfaceManifestRealtimeEvent[] = [];
-  const realtimeContracts = Object.keys(config.realtime ?? {}).sort(compareCodepoints);
+  const realtimeContracts = Object.keys(config.realtime ?? {}).sort(compareCodeUnits);
   for (const contractName of realtimeContracts) {
     const contract = config.realtime?.[contractName];
     if (!contract) continue;
@@ -484,7 +538,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
       'serverToClient' | 'clientToServer'
     >) {
       const registry = contract[direction];
-      for (const event of Object.keys(registry).sort(compareCodepoints)) {
+      for (const event of Object.keys(registry).sort(compareCodeUnits)) {
         const definition = registry[event];
         if (!definition) continue;
         const argsInput = schemaDigest(definition.args, 'input');
@@ -515,13 +569,12 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
       input: schemaDigest(command.input, 'input') ?? digestValue({}),
       output: schemaDigest(command.output, 'output'),
     }))
-    .sort((left, right) => compareCodepoints(left.name, right.name));
+    .sort((left, right) => compareCodeUnits(left.name, right.name));
 
   for (const operation of operations.values()) {
     operation.http.sort(
       (left, right) =>
-        compareCodepoints(left.path, right.path) ||
-        compareCodepoints(left.method, right.method),
+        compareCodeUnits(left.path, right.path) || compareCodeUnits(left.method, right.method),
     );
   }
 
@@ -530,22 +583,22 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
     digestVersion: 1,
     operations: [...operations.values()].sort(
       (left, right) =>
-        compareCodepoints(left.service, right.service) ||
-        compareCodepoints(left.action, right.action) ||
-        compareCodepoints(left.kind, right.kind),
+        compareCodeUnits(left.service, right.service) ||
+        compareCodeUnits(left.action, right.action) ||
+        compareCodeUnits(left.kind, right.kind),
     ),
     toolSurfaces: toolSurfaces.sort(
       (left, right) =>
-        compareCodepoints(left.transport, right.transport) ||
-        compareCodepoints(left.surface ?? '', right.surface ?? ''),
+        compareCodeUnits(left.transport, right.transport) ||
+        compareCodeUnits(left.surface ?? '', right.surface ?? ''),
     ),
     realtimeContracts,
     realtime,
     cliOnly,
     extensions: [...(config.extensions ?? [])].sort(
       (left, right) =>
-        compareCodepoints(left.transport, right.transport) ||
-        compareCodepoints(left.name, right.name),
+        compareCodeUnits(left.transport, right.transport) ||
+        compareCodeUnits(left.name, right.name),
     ),
   });
 }

@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { type ContractDef, defineContract } from '../contract';
+import { type ContractDef, defineContract } from '../contract/define';
 import {
   createTrackingSchemas,
   type TrackingEventShape,

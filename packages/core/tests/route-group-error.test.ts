@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { AppError, type RuntimeContext, unauthorized } from '../src/contract';
-import { createHandler, implement, type LifecycleHooks, type MethodDef } from '../src/server';
+import { AppError, type RuntimeContext, unauthorized } from '../src/entrypoints/contract';
+import {
+  createHandler,
+  implement,
+  type LifecycleHooks,
+  type MethodDef,
+} from '../src/entrypoints/server';
 import {
   groupErrorContract,
   groupErrorRequest,

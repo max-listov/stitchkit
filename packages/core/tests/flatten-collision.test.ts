@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { isRecord } from '../src/internal/typed';
-import { flattenToolJsonSchema } from '../src/tools/flatten';
-import { toJsonSchema } from '../src/tools/json-schema';
-import { findUntypedProperties } from '../src/tools/untyped-properties';
+import { toJsonSchema } from '../src/json-schema/json-schema';
+import { flattenToolJsonSchema } from '../src/tools/schema/flatten';
+import { findUntypedProperties } from '../src/tools/schema/untyped-properties';
 
 function properties(schema: Record<string, unknown>): Record<string, unknown> {
   const value = schema.properties;

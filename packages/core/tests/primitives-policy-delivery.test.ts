@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   assertAuditDeclared,
   audit,
@@ -9,7 +9,7 @@ import {
   type DomainEventDeliveryOutcome,
   defineDomainEventDelivery,
   definePermissionMatrix,
-} from '../src/primitives';
+} from '../src/entrypoints/primitives';
 
 describe('permission matrix', () => {
   const permissions = definePermissionMatrix({

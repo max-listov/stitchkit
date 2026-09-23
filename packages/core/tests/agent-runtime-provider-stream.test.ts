@@ -2,13 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { ownedProviderStream } from '../src/agent-runtime/owned-provider-stream';
 import {
   type AgentRuntimeStore,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { ownedProviderStream } from '../src/agent-runtime/owned-provider-stream';
+} from '../src/entrypoints/agent-runtime';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

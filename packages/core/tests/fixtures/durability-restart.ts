@@ -2,9 +2,9 @@ import { appendFile } from 'node:fs/promises';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { createAgentRuntime, defineAgentProtocol } from '../../src/agent-runtime';
-import { createBunSqliteAgentRuntimeStore } from '../../src/agent-runtime-sqlite-bun';
-import { defineRuntimeTool, mountAgent } from '../../src/tools';
+import { createBunSqliteAgentRuntimeStore } from '../../src/agent-runtime/sqlite-bun';
+import { createAgentRuntime, defineAgentProtocol } from '../../src/entrypoints/agent-runtime';
+import { defineRuntimeTool, mountAgent } from '../../src/entrypoints/tools';
 
 const [filename, effects, phase] = process.argv.slice(2);
 if (!filename || !effects) throw new Error('fixture requires paths');

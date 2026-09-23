@@ -30,7 +30,7 @@ import {
   createAgentCodingTools,
 } from '../src/agent-runtime/coding-tools';
 import { createSqliteAgentSpillStore } from '../src/agent-runtime/spill';
-import { createSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
+import { createSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import { mountAgent } from '../src/tools/agent';
 
 let root = '';

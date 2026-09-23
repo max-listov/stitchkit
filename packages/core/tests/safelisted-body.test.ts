@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { createHandler } from '../src/server/create';
 import { implement } from '../src/server/implement';
 import { isOriginAllowed } from '../src/server/middleware/cors';

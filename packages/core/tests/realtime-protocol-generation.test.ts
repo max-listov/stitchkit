@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { zodIssues } from '../src/internal/errors';
+import { zodIssues } from '../src/internal/zod-issues';
 import type { RealtimeRejectionIssue } from '../src/realtime';
 
 const ReplicationArguments = z.tuple([

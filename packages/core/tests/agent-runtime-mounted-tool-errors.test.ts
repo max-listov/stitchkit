@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentModelDescriptor,
   type AgentRuntimeEvent,
@@ -12,10 +12,14 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
-import { AppError } from '../src/contract';
-import { defineRuntimeTool, mountAgent, type RuntimeToolDefinition } from '../src/tools';
+} from '../src/entrypoints/agent-runtime';
+import { AppError } from '../src/entrypoints/contract';
+import {
+  defineRuntimeTool,
+  mountAgent,
+  type RuntimeToolDefinition,
+} from '../src/entrypoints/tools';
+import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const roots: string[] = [];
 
@@ -101,7 +105,7 @@ function runtimeConfig(
 
 describe('mounted Agent tool error outcomes', () => {
   test('persists one typed failure, publishes it and continues the model after SQLite reopen', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-mounted-error-'));
+    const root = await sqliteScratchDir('stitchkit-mounted-error-');
     roots.push(root);
     const filename = path.join(root, 'agent.sqlite');
     const mounted = defineRuntimeTool({

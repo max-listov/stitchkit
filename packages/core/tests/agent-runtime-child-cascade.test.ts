@@ -3,15 +3,15 @@ import { describe, expect, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
-  createAgentRuntime,
-  createSqliteAgentChildManager,
-  defineAgentProtocol,
-} from '../src/agent-runtime';
-import {
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
   type SqliteValue,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
+import {
+  createAgentRuntime,
+  createSqliteAgentChildManager,
+  defineAgentProtocol,
+} from '../src/entrypoints/agent-runtime';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');

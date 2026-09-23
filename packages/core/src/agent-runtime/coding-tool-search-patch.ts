@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { conflict } from '../contract';
+import { conflict } from '../contract/errors';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import type {
   AgentCodingToolConfig,

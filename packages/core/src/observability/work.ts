@@ -17,7 +17,7 @@
  * absence — moving the invention from the consumer into the framework would
  * have been the same lie with a better address.
  */
-import type { TransportSource } from '../contract';
+import type { TransportSource } from '../contract/define';
 import type { Observability } from './audit';
 import { type RequestContext, runWithRequestContext } from './context';
 import { resolvePropagationContext } from './trace';

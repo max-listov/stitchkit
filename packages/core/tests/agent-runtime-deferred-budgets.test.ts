@@ -5,8 +5,8 @@ import {
   AgentContextOverflowError,
   AgentRunSchema,
   createDeferredAgentToolSurface,
-} from '../src/agent-runtime';
-import { defineRuntimeTool } from '../src/tools';
+} from '../src/entrypoints/agent-runtime';
+import { defineRuntimeTool } from '../src/entrypoints/tools';
 
 function definition(name: string, description = name) {
   return defineRuntimeTool({

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { HttpMethod } from '../../contract';
+import type { HttpMethod } from '../../contract/define';
 import { isRecord } from '../../internal/typed';
 import { defineRuntimeTool, type RuntimeToolDefinition } from '../runtime-tool';
 import { ConnectionAuthorizationRequiredError, ConnectionRequestError } from './errors';

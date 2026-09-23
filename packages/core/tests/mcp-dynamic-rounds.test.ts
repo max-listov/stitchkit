@@ -22,9 +22,9 @@ import {
   defineContract,
   type McpInputRequiredResolver,
   type RuntimeContext,
-} from '../src/contract';
+} from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+import { createMcpHandler } from '../src/tools/mcp/handler';
 
 const MODERN = '2026-07-28';
 const KEY = '0123456789abcdef0123456789abcdef';
@@ -102,7 +102,7 @@ function handlerFor(
         expose: ['MCP'],
         input: z.object({ model: z.string(), quality: z.string().default('high') }),
         output: z.object({ model: z.string(), answered: z.array(z.string()) }),
-        mcp: { inputRequired: resolve },
+        tool: { mcp: { inputRequired: resolve } },
       },
     },
   );

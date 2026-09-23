@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError } from '../src/contract';
+import { AppError } from '../src/entrypoints/contract';
 import type { MethodDef, OperationIdentity } from '../src/server/types';
 import { mountAgent } from '../src/tools/agent';
 import { executeToolMethod, type ToolCallHooks, type ToolResult } from '../src/tools/execute';
@@ -71,7 +71,11 @@ describe('onToolError — the value as thrown', () => {
     const { seen, hooks } = recorder();
 
     const result = await quietly(() =>
-      executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks),
+      executeToolMethod(
+        method,
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
+      ),
     );
 
     // Same object — not a copy, not a message string.
@@ -101,7 +105,11 @@ describe('onToolError — the value as thrown', () => {
     });
     const { seen, hooks } = recorder();
 
-    await executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     expect(seen[0]?.error).toBe(thrown);
   });
@@ -115,7 +123,11 @@ describe('onToolError — the value as thrown', () => {
     const { seen, hooks } = recorder();
 
     await quietly(() =>
-      executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks),
+      executeToolMethod(
+        method,
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
+      ),
     );
 
     expect(seen[0]?.error).toBe('just a string');
@@ -131,10 +143,12 @@ describe('onToolError — the value as thrown', () => {
 
     await executeToolMethod(
       method,
-      'update_widget',
-      { id: 'w1' },
-      { source: 'agent', userId: 'u-7' },
-      hooks,
+      {
+        toolName: 'update_widget',
+        rawArgs: { id: 'w1' },
+        context: { source: 'agent', userId: 'u-7' },
+      },
+      { hooks },
     );
 
     expect(seen[0]?.toolName).toBe('update_widget');
@@ -152,13 +166,13 @@ describe('onToolError — the span it covers', () => {
 
     const result = await executeToolMethod(
       makeMethod(),
-      'update_widget',
-      {},
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
       {
-        beforeHandle: () => {
-          throw thrown;
+        hooks,
+        lifecycle: {
+          beforeHandle: () => {
+            throw thrown;
+          },
         },
       },
     );
@@ -172,11 +186,18 @@ describe('onToolError — the span it covers', () => {
     const { seen, hooks } = recorder();
 
     await quietly(() =>
-      executeToolMethod(makeMethod(), 'update_widget', {}, { source: 'mcp' }, hooks, {
-        afterHandle: () => {
-          throw thrown;
+      executeToolMethod(
+        makeMethod(),
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        {
+          hooks,
+          lifecycle: {
+            afterHandle: () => {
+              throw thrown;
+            },
+          },
         },
-      }),
+      ),
     );
 
     expect(seen[0]?.error).toBe(thrown);
@@ -197,7 +218,11 @@ describe('onToolError — the span it covers', () => {
       },
     };
 
-    await executeToolMethod(makeMethod(), 'update_widget', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      makeMethod(),
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     expect(seen).toHaveLength(0);
     expect(results[0]).toMatchObject({ ok: false, code: 'UNAUTHORIZED' });
@@ -209,10 +234,8 @@ describe('onToolError — the span it covers', () => {
 
     const result = await executeToolMethod(
       method,
-      'update_widget',
-      { name: 42 },
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'update_widget', rawArgs: { name: 42 }, context: { source: 'mcp' } },
+      { hooks },
     );
 
     expect(seen).toHaveLength(0);
@@ -229,10 +252,8 @@ describe('onToolError — the span it covers', () => {
 
     const result = await executeToolMethod(
       method,
-      'update_widget',
-      {},
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
     );
 
     expect(seen).toHaveLength(0);
@@ -244,10 +265,8 @@ describe('onToolError — the span it covers', () => {
     const { seen, hooks } = recorder();
     const result = await executeToolMethod(
       makeMethod(),
-      'update_widget',
-      {},
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
     );
     expect(seen).toHaveLength(0);
     expect(result.ok).toBe(true);
@@ -261,8 +280,16 @@ describe('onToolError — the span it covers', () => {
       },
     });
 
-    await executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks);
-    await executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
+    await executeToolMethod(
+      method,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     expect(seen).toHaveLength(2);
   });
@@ -286,7 +313,11 @@ describe('onToolError — it observes, it does not interfere', () => {
       },
     });
 
-    await executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      method,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
 
     // Ordered, not merely both-fired: a consumer records the cause here and the
     // audit hook reads it in `afterToolCall`.
@@ -308,10 +339,8 @@ describe('onToolError — it observes, it does not interfere', () => {
 
     const result = await executeToolMethod(
       method,
-      'update_widget',
-      {},
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
     );
 
     expect(result).toEqual({
@@ -344,7 +373,11 @@ describe('onToolError — it observes, it does not interfere', () => {
     console.error = (...args: unknown[]) => logged.push(args[0]);
     let result: ToolResult;
     try {
-      result = await executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks);
+      result = await executeToolMethod(
+        method,
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
+      );
     } finally {
       console.error = original;
     }
@@ -367,7 +400,11 @@ describe('onToolError — it observes, it does not interfere', () => {
     });
 
     const result = await quietly(() =>
-      executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks),
+      executeToolMethod(
+        method,
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
+      ),
     );
 
     expect(result).toMatchObject({ ok: false, code: 'NOT_FOUND' });
@@ -424,7 +461,11 @@ describe('the raw cause reaches afterToolCall too', () => {
     });
 
     await quietly(() =>
-      executeToolMethod(method, 'update_widget', {}, { source: 'mcp' }, hooks),
+      executeToolMethod(
+        method,
+        { toolName: 'update_widget', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
+      ),
     );
 
     expect(seen[0]?.error).toBe(thrown);
@@ -443,33 +484,33 @@ describe('the raw cause reaches afterToolCall too', () => {
     };
 
     // Success.
-    await executeToolMethod(makeMethod(), 'w', {}, { source: 'mcp' }, hooks);
+    await executeToolMethod(
+      makeMethod(),
+      { toolName: 'w', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
+    );
     // Argument validation.
     await executeToolMethod(
       makeMethod({ inputSchema: z.object({ name: z.string() }) }),
-      'w',
-      { name: 42 },
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'w', rawArgs: { name: 42 }, context: { source: 'mcp' } },
+      { hooks },
     );
     // Output-schema mismatch.
     await executeToolMethod(
       makeMethod({ outputSchema: z.object({ id: z.string() }), handler: () => ({ id: 1 }) }),
-      'w',
-      {},
-      { source: 'mcp' },
-      hooks,
+      { toolName: 'w', rawArgs: {}, context: { source: 'mcp' } },
+      { hooks },
     );
     // `beforeToolCall` rejection.
     await executeToolMethod(
       makeMethod(),
-      'w',
-      {},
-      { source: 'mcp' },
+      { toolName: 'w', rawArgs: {}, context: { source: 'mcp' } },
       {
-        ...hooks,
-        beforeToolCall: () => {
-          throw new AppError('UNAUTHORIZED', 'no', 401);
+        hooks: {
+          ...hooks,
+          beforeToolCall: () => {
+            throw new AppError('UNAUTHORIZED', 'no', 401);
+          },
         },
       },
     );
@@ -496,10 +537,8 @@ describe('the raw cause reaches afterToolCall too', () => {
             throw new Error('boom');
           },
         }),
-        'w',
-        {},
-        { source: 'mcp' },
-        hooks,
+        { toolName: 'w', rawArgs: {}, context: { source: 'mcp' } },
+        { hooks },
       ),
     );
 

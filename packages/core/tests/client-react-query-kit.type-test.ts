@@ -1,7 +1,7 @@
 import { createMutation, createQuery } from 'react-query-kit';
 import { z } from 'zod';
 import { createClient, createClients, createScopedClients } from '../src/browser/client';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 
 const ResultSchema = z.object({ value: z.string() });
 const InputSchema = z.object({ value: z.string() });

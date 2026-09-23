@@ -10,7 +10,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 /**
  * A two-step model with a barrier in the middle.

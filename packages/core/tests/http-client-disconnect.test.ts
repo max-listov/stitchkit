@@ -1,20 +1,20 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createConnection, type Socket } from 'node:net';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createObservability,
   createTraceContext,
   type RequestContext,
   type RequestEvent,
-} from '../src/observability';
+} from '../src/entrypoints/observability';
 import {
   createHandler,
   createServer,
   implement,
   type RawRoute,
   type StitchLogger,
-} from '../src/server';
+} from '../src/entrypoints/server';
 
 interface Deferred {
   promise: Promise<void>;

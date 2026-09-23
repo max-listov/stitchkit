@@ -9,8 +9,11 @@ import {
   ExternalIngressRecordSchema,
   type ExternalOutboxRecord,
   ExternalOutboxRecordSchema,
-} from '../examples/external-channel-harness';
-import { type AgentRuntimeEvent, AgentRuntimeEventSchema } from '../src/agent-runtime';
+} from '../examples/agent-runtime/external-channel-harness';
+import {
+  type AgentRuntimeEvent,
+  AgentRuntimeEventSchema,
+} from '../src/entrypoints/agent-runtime';
 
 class MemoryChannelStore implements ExternalChannelStore {
   private readonly ingress = new Map<string, ExternalIngressRecord>();

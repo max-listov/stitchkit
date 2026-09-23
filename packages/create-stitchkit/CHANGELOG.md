@@ -12,6 +12,15 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- **The repository example names its tools in the `tool` group.** Stitchkit
+  0.94.0 moved an endpoint's tool options into `tool: { name, … }` and refuses
+  the old top-level `toolName` at startup, so the example's contract now writes
+  `tool: { name: 'repository_read' }` and `tool: { name: 'repository_refresh' }`.
+  A project generated from it that moves to 0.94.0 follows the framework's
+  [upgrading guide](../../docs/guide/upgrading.md) — one codemod run.
+
 ## [0.6.2] — 2026-09-21
 
 ### Fixed

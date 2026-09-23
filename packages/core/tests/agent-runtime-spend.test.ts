@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { addUsage, unknownUsage } from '../src/agent-runtime/runtime-internals';
 import {
   type AgentRunEvent,
   type AgentRuntimeEvent,
@@ -10,8 +11,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { addUsage, unknownUsage } from '../src/agent-runtime/runtime-internals';
+} from '../src/entrypoints/agent-runtime';
 
 const sdkUsage = (input: number, output: number) => ({
   inputTokens: { total: input, noCache: input, cacheRead: undefined, cacheWrite: undefined },

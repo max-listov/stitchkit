@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   addQuantity,
   defineDeadlinePolicy,
@@ -8,7 +8,7 @@ import {
   defineUnitSystem,
   type Quantity,
   QuantityProjectionSchema,
-} from '../src/primitives';
+} from '../src/entrypoints/primitives';
 
 describe('quantity value and conversion', () => {
   const units = defineUnitSystem({
@@ -118,13 +118,13 @@ describe('declared export operation', () => {
           path: '/export',
           desc: 'Prepare an export',
           scope: 'user',
-          toolName: 'prepare_export',
           meta: { audit: { mode: 'record', change: z.object({}) } },
+          tool: { name: 'prepare_export' },
         }),
       },
     );
     expect(contract.endpoints.export.scope).toBe('user');
-    expect(contract.endpoints.export.toolName).toBe('prepare_export');
+    expect(contract.endpoints.export.tool?.name).toBe('prepare_export');
     expect(
       exportOperation.ready({ range: 'week' }, { path: 'out/week.csv', size: 12 }),
     ).toEqual({

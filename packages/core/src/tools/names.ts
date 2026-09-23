@@ -84,7 +84,7 @@ export function assertToolName(name: string, serviceName: string, key: string): 
   if (!TOOL_NAME_RE.test(name)) {
     const why =
       name.length > 64
-        ? `is ${name.length} characters (max 64) — set an explicit \`toolName\``
+        ? `is ${name.length} characters (max 64) — set an explicit \`tool.name\``
         : 'must match [a-zA-Z0-9_-]';
     throw new Error(`Tool name "${name}" (${where}) ${why}`);
   }

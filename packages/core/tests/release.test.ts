@@ -6,7 +6,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createHttpClient } from '../src/browser/http';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { createReleaseMarker } from '../src/release/marker';
 import { bindReleaseToSocketServer, observeReleaseFromSocket } from '../src/release/socket';
 import {

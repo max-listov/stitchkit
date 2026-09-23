@@ -2,13 +2,15 @@
  * `RuntimeContext` assembly — parses params / body / multipart against the
  * endpoint schemas and gathers request metadata (trace id, client info).
  */
-import { badRequest, forbidden, type RuntimeContext } from '../contract';
+
+import type { RuntimeContext } from '../contract/define';
+import { badRequest, forbidden } from '../contract/errors';
 import { mediaTypeEssence } from '../internal/media-type';
+import { type ClientIpOptions, getClientInfo, parseQueryParams } from '../internal/request';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
 import { RUNTIME_CONTEXT_RESERVED_KEYS } from './context-contribution';
 import { type CorsConfig, isOriginAllowed } from './middleware/cors';
 import { type MultipartLifecycle, parseMultipart } from './multipart';
-import { type ClientIpOptions, getClientInfo, parseQueryParams } from './request';
 import { readRequestText } from './request-body';
 import type { AuthorizationContext, MethodDef } from './types';
 

@@ -16,10 +16,10 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { createManagedFileBoundary } from '../src/files/boundary';
 import { isRecord } from '../src/internal/typed';
-import { mountDownload } from '../src/tools/mount-download';
-import { mountUpload } from '../src/tools/mount-upload';
-import { mountWait } from '../src/tools/mount-wait';
-import { textResult } from '../src/tools/native-result';
+import { mountWait } from '../src/tools/operations/mount-wait';
+import { mountDownload } from '../src/tools/transfer/mount-download';
+import { mountUpload } from '../src/tools/transfer/mount-upload';
+import { textResult } from '../src/tools/transfer/native-result';
 
 /** Spin up an in-memory MCP server with a single mounted tool, return a client. */
 async function connectWith(mount: (server: McpServer) => void): Promise<Client> {

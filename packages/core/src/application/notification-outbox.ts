@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { backoffDelay } from '../browser/resumable';
+import { backoffDelay } from '../internal/backoff';
 import { measureSize } from '../observability/sanitize';
 import { defineManagedResource, type ManagedResource } from './resource';
 import type { StateStore } from './state-store';

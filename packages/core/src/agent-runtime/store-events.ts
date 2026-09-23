@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
+  type AgentStoreEventEnvelope,
+  AgentStoreEventEnvelopeSchema,
+  AgentStoreEventKindSchema,
+  type AppendAgentStoreEvent,
+  AppendAgentStoreEventSchema,
+} from '../durability/events';
+import { serializeCanonicalJson } from '../internal/canonical-json';
+import {
   AcceptInputAndAssignRunSchema,
   AcquireAgentRunSchema,
   CheckpointRunAssistantSchema,
@@ -11,33 +19,6 @@ import {
   RequestRunInterruptSchema,
   SeedConversationInputSchema,
 } from './store';
-
-export const AgentStoreEventKindSchema = z.enum([
-  'runtime/baseline',
-  'runtime/transition',
-  'provider/request',
-  'provider/response',
-  'provider/message',
-  'state/set',
-  'spill/created',
-  'spill/deleted',
-  'schedule/set',
-  'schedule/fired',
-  'schedule/cancelled',
-  'schedule/late',
-  'schedule/failed',
-  'child/spawned',
-  'child/state',
-  'retry/scheduled',
-  'retry/started',
-  'sandbox/probed',
-  'approval/response-rejected',
-  'durability/step',
-  'durability/park',
-  'durability/event',
-]);
-
-export type AgentStoreEventKind = z.infer<typeof AgentStoreEventKindSchema>;
 
 export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('accept'), input: AcceptInputAndAssignRunSchema }).strict(),
@@ -52,58 +33,6 @@ export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
 ]);
 
 export type AgentStoreTransition = z.infer<typeof AgentStoreTransitionSchema>;
-
-export const AgentStoreEventEnvelopeSchema = z
-  .object({
-    schemaVersion: z.int().positive(),
-    eventId: z.string().min(1),
-    conversationId: z.string().min(1),
-    seq: z.int().positive(),
-    kind: z.string().min(1),
-    occurredAt: z.iso.datetime({ offset: true }),
-    payload: z.json(),
-    ignorable: z.literal(true).optional(),
-  })
-  .strict();
-
-export type AgentStoreEventEnvelope = z.infer<typeof AgentStoreEventEnvelopeSchema>;
-
-export const AppendAgentStoreEventSchema = z
-  .object({
-    conversationId: z.string().min(1),
-    kind: AgentStoreEventKindSchema,
-    occurredAt: z.iso.datetime({ offset: true }).optional(),
-    payload: z.json(),
-    ignorable: z.literal(true).optional(),
-  })
-  .strict();
-
-export type AppendAgentStoreEvent = z.infer<typeof AppendAgentStoreEventSchema>;
-
-export const ReadAgentStoreEventsSchema = z
-  .object({
-    conversationId: z.string().min(1),
-    fromSeq: z.int().positive().optional(),
-    toSeq: z.int().positive().optional(),
-    limit: z.int().positive().max(10_000).default(1_000),
-  })
-  .strict()
-  .refine(
-    (input) =>
-      input.fromSeq === undefined || input.toSeq === undefined || input.fromSeq <= input.toSeq,
-    { message: 'fromSeq must not exceed toSeq' },
-  );
-
-export type ReadAgentStoreEvents = z.infer<typeof ReadAgentStoreEventsSchema>;
-
-export const AgentStoreEventPageSchema = z
-  .object({
-    items: z.array(AgentStoreEventEnvelopeSchema),
-    nextSeq: z.int().positive().optional(),
-  })
-  .strict();
-
-export type AgentStoreEventPage = z.infer<typeof AgentStoreEventPageSchema>;
 
 export type AgentStoreEventDraft = Omit<AgentStoreEventEnvelope, 'seq'>;
 
@@ -167,22 +96,14 @@ export function agentStoreEventDraft(input: AppendAgentStoreEvent): AgentStoreEv
   };
 }
 
-function canonicalJsonValue(value: z.infer<typeof z.json>): string {
-  if (value === null || typeof value === 'boolean' || typeof value === 'number') {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJsonValue).join(',')}]`;
-  const record = z.record(z.string(), z.json()).parse(value);
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJsonValue(record[key])}`)
-    .join(',')}}`;
-}
-
-/** Stable UTF-8 JSON used by archives, digests and byte-for-byte round trips. */
+/**
+ * Stable UTF-8 JSON used by archives, digests and byte-for-byte round trips —
+ * the package's one canonical serialisation, after a strict JSON parse: the
+ * store refuses `undefined`, a `Date` or a `BigInt` rather than hashing what
+ * `JSON.stringify` would make of them.
+ */
 export function canonicalAgentJson(value: unknown): string {
-  return canonicalJsonValue(z.json().parse(value));
+  return serializeCanonicalJson(z.json().parse(value));
 }
 
 export const AgentConversationArchiveSchema = z

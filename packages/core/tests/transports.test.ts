@@ -4,9 +4,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { summarizeTransports } from '../src/tools';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { summarizeTransports } from '../src/entrypoints/tools';
 
 const Ok = z.object({ ok: z.boolean() });
 

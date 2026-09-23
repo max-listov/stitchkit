@@ -4,13 +4,11 @@
  * files without the `.test.` segment.
  */
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { createScopedImplement } from '../src/server/implement';
-import {
-  type AdaptedContractAsyncOperationConfig,
-  bindContractAsyncOperation,
-  defineAsyncOperationContract,
-} from '../src/tools/async-operation';
+import { bindContractAsyncOperation } from '../src/tools/operations/async-operation-binding';
+import type { AdaptedContractAsyncOperationConfig } from '../src/tools/operations/async-operation-binding-types';
+import { defineAsyncOperationContract } from '../src/tools/operations/async-operation-canonical';
 
 const IdSchema = z.object({ id: z.string() });
 const EquivalentIdSchema = z.object({ id: z.string() });

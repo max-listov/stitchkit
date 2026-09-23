@@ -10,7 +10,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing') {
   const durable = createMemoryAgentRuntimeStore();

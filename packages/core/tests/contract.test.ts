@@ -7,7 +7,7 @@ import {
   forbidden,
   notFound,
   unauthorized,
-} from '../src/contract';
+} from '../src/entrypoints/contract';
 
 const ListOutputSchema = z.array(z.string());
 const CreateInputSchema = z.object({ name: z.string() });
@@ -51,11 +51,11 @@ describe('defineContract', () => {
       defineContract(
         { prefix: 'test' },
         {
-          a: { method: 'GET', path: '/a', desc: 'A', toolName: 'do_thing' },
-          b: { method: 'POST', path: '/b', desc: 'B', toolName: 'do_thing' },
+          a: { method: 'GET', path: '/a', desc: 'A', tool: { name: 'do_thing' } },
+          b: { method: 'POST', path: '/b', desc: 'B', tool: { name: 'do_thing' } },
         },
       ),
-    ).toThrow('duplicate toolName');
+    ).toThrow('duplicate tool name');
   });
 
   test('allows same toolName on different transports', () => {
@@ -67,15 +67,15 @@ describe('defineContract', () => {
             method: 'GET',
             path: '/a',
             desc: 'A',
-            toolName: 'do_thing',
             expose: ['MCP'] as const,
+            tool: { name: 'do_thing' },
           },
           b: {
             method: 'POST',
             path: '/b',
             desc: 'B',
-            toolName: 'do_thing',
             expose: ['AGENT'] as const,
+            tool: { name: 'do_thing' },
           },
         },
       ),
@@ -91,8 +91,8 @@ describe('defineContract', () => {
             method: 'GET',
             path: '/a',
             desc: 'A',
-            toolName: 'do_thing',
             expose: ['HTTP'] as const,
+            tool: { name: 'do_thing' },
           },
         },
       ),

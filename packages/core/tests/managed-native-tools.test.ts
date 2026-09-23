@@ -5,21 +5,21 @@ import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError } from '../src/contract';
+import { AppError } from '../src/entrypoints/contract';
 import {
   createManagedFileBoundary,
   type ManagedFileBoundary,
   ManagedFileError,
 } from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
-import { defineDownloadTool } from '../src/tools/define-download-tool';
-import { defineUploadTool } from '../src/tools/define-upload-tool';
-import { defineWaitTool } from '../src/tools/define-wait-tool';
 import { listToolNames } from '../src/tools/list-names';
 import { buildToolManifest } from '../src/tools/manifest';
-import { buildMcpServer } from '../src/tools/mcp';
-import { mountDownload } from '../src/tools/mount-download';
-import { mountUpload } from '../src/tools/mount-upload';
+import { buildMcpServer } from '../src/tools/mcp/mount';
+import { defineWaitTool } from '../src/tools/operations/define-wait-tool';
+import { defineDownloadTool } from '../src/tools/transfer/define-download-tool';
+import { defineUploadTool } from '../src/tools/transfer/define-upload-tool';
+import { mountDownload } from '../src/tools/transfer/mount-download';
+import { mountUpload } from '../src/tools/transfer/mount-upload';
 import { summarizeTransports } from '../src/tools/transports';
 
 async function connect(server: McpServer): Promise<Client> {

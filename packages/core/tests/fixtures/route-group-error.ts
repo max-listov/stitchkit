@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { defineContract } from '../../src/contract';
-import { implement } from '../../src/server';
+import { defineContract } from '../../src/entrypoints/contract';
+import { implement } from '../../src/entrypoints/server';
 
 const ParamsSchema = z.object({ id: z.string().min(2) });
 const InputSchema = z.object({ name: z.string() });

@@ -1,18 +1,10 @@
 import { createClient } from '../browser/client';
 import { ApiError, type HttpClient } from '../browser/http';
-import {
-  AppError,
-  type ContractDef,
-  type EndpointDef,
-  type RuntimeContext,
-} from '../contract';
-import { mergeMeta } from '../contract/define';
-import { resolveRouteParamsSchema } from '../internal/route-pattern';
+import type { ContractDef, EndpointDef, RuntimeContext } from '../contract/define';
+import { AppError } from '../contract/errors';
 import { isRecord } from '../internal/typed';
+import { contractMethodFields } from '../server/contract-method';
 import type { MethodDef, ServiceDef } from '../server/types';
-
-/** Frozen so the same array cannot be mutated through one method and seen by another. */
-const HTTP_ONLY = Object.freeze(['HTTP'] as const);
 
 /** A contract's typed client, viewed as a flat string-keyed call map. */
 type RemoteCalls = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
@@ -62,38 +54,15 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
 
   for (const [key, endpoint] of Object.entries(contract.endpoints)) {
     methods[key] = {
-      method: endpoint.method,
-      path: endpoint.path,
-      desc: endpoint.desc,
-      // Stable (service, action) identity for hooks / audit (→ ADR 0022).
-      serviceName: contract.meta.prefix,
-      key,
-      toolName: 'toolName' in endpoint ? endpoint.toolName : undefined,
-      // Forced for a raw endpoint, exactly as in `implement` — see there.
-      expose:
-        endpoint.rawResponse || endpoint.rawBody || endpoint.responseMeta
-          ? HTTP_ONLY
-          : endpoint.expose,
-      ui: 'ui' in endpoint ? endpoint.ui : undefined,
-      annotations: 'annotations' in endpoint ? endpoint.annotations : undefined,
-      // Opaque app metadata rides through (was dropped here), with the
-      // contract-wide default merged under it. → ADR 0021 / 0036.
-      meta: mergeMeta(contract.meta.meta, endpoint.meta),
-      scope: endpoint.scope ?? groupScope,
-      paramsSchema: resolveRouteParamsSchema(endpoint.path, endpoint.params),
-      inputSchema: endpoint.input,
-      outputSchema: endpoint.output,
-      multipart: endpoint.multipart,
-      maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
-      // Transport-neutral retry/replay hint — rides through (→ ADR 0027).
-      idempotent: endpoint.idempotent,
-      // Carried so the tool mounts skip it for the same reason as a local
-      // service, rather than by accident. → ADR 0038.
-      rawResponse: endpoint.rawResponse,
-      rawBody: endpoint.rawBody,
-      safelistedBody: endpoint.safelistedBody,
-      responseMeta: endpoint.responseMeta,
-      contentType: 'contentType' in endpoint ? endpoint.contentType : undefined,
+      ...contractMethodFields(contract, key, endpoint),
+      // The proxy answers a streaming endpoint as it always has — as a plain
+      // forwarded call — rather than taking on the stream framing here.
+      stream: undefined,
+      // Elicitation rounds are asked and answered here, but the forwarded call
+      // carries only `params` and `input`: the answers would never reach the
+      // origin. A proxied tool therefore asks nothing — the origin's own MCP
+      // surface is where its questions are asked.
+      mcp: undefined,
       handler: async (ctx: RuntimeContext) => {
         // A raw endpoint proxies like any other: `createClient` asks for
         // `responseType: 'response'`, so the remote `Response` — bytes, status

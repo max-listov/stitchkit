@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentRunEvent,
   createAgentObservability,
@@ -12,11 +12,11 @@ import {
   defineAgentProtocol,
   projectAgentHistory,
   projectAgentHistoryDetailed,
-} from '../src/agent-runtime';
-import { createAgentCodingTools } from '../src/agent-runtime-coding-tools';
-import { createHeadlessAgentHarness } from '../src/agent-runtime-harness';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
-import { mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime';
+import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
+import { createHeadlessAgentHarness } from '../src/entrypoints/agent-runtime/harness';
+import { mountAgent } from '../src/entrypoints/tools';
+import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -52,7 +52,7 @@ function textStream(text: string): Awaited<ReturnType<MockLanguageModelV4['doStr
 describe('durable approval continuations', () => {
   for (const mode of ['user', 'automatic', 'not-applicable', 'denied']) {
     test(`${mode}: two coding operations survive SQLite reopen and a later message`, async () => {
-      const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-approval-chronology-'));
+      const root = await sqliteScratchDir('stitchkit-approval-chronology-');
       const filename = path.join(root, 'history.sqlite');
       const effects: string[] = [];
       const events: AgentRunEvent[] = [];
@@ -234,7 +234,7 @@ describe('durable approval continuations', () => {
           events.push(event);
         },
       });
-      const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-invalid-approval-'));
+      const root = await sqliteScratchDir('stitchkit-invalid-approval-');
       const effects: string[] = [];
       const model = new MockLanguageModelV4({
         doStream: [

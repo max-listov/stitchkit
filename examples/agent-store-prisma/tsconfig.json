@@ -5,8 +5,10 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "paths": {
-      "stitchkit/agent-runtime": ["../../packages/core/src/agent-runtime.ts"],
-      "stitchkit/testing": ["../../packages/core/src/testing.ts"]
+      "stitchkit/agent-runtime": ["../../packages/core/src/entrypoints/agent-runtime.ts"],
+      "stitchkit/agent-runtime/testing": [
+        "../../packages/core/src/entrypoints/agent-runtime/testing.ts"
+      ]
     },
     "noEmit": true,
     "skipLibCheck": true,

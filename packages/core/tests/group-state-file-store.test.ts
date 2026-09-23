@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createFileStateStore } from '../src/server/file-state-store';
+import { createFileStateStore } from '../src/application/file-state-store';
 
 const directories: string[] = [];
 

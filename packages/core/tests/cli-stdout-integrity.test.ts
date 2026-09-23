@@ -41,7 +41,7 @@ async function bytesThroughSlowReader(source: string): Promise<number> {
 }
 
 const PAYLOAD = "const big = 'x'.repeat(200_000);\nconsole.log(big);\n";
-const CLI = join(import.meta.dir, '../src/cli.ts');
+const CLI = join(import.meta.dir, '../src/entrypoints/cli.ts');
 
 describe('importing the CLI surface leaves stdout intact', () => {
   test('a large write survives the import, and the control proves the probe can fail', async () => {

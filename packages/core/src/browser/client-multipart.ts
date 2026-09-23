@@ -6,7 +6,7 @@
  * the only genuinely subtle part, and keeping it together with its two guards
  * makes that subtlety readable in one screen.
  */
-import type { FileDescriptor, MultipartDescriptor, MultipartFile } from '../contract';
+import type { FileDescriptor, MultipartDescriptor, MultipartFile } from '../contract/define';
 import { refuseLocally } from './http';
 
 /**

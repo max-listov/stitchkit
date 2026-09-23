@@ -1,4 +1,5 @@
-import { AppError, type Transport, type TransportSource } from '../contract';
+import type { ToolTransport, TransportSource } from '../contract/define';
+import { AppError } from '../contract/errors';
 import type { ServiceDef } from '../server/types';
 import {
   type ToolCallContext,
@@ -10,17 +11,24 @@ import {
 import { collectTools, createToolRunner, type MountableTool, type ToolExtend } from './mount';
 import { assertUniqueToolName } from './names';
 
-export type ToolInvokerTransport = Exclude<Transport, 'HTTP'>;
-
 /** Configuration for a compiled in-process contract-tool dispatcher. */
 export interface ToolInvokerConfig {
   /** Existing exposure policy to honour. Required: there is no bypass-all mode. */
-  transport: ToolInvokerTransport;
+  transport: ToolTransport;
   extend?: ToolExtend;
   /** Compiles the same presentation surface as the chosen mount. */
   flattenUnionInput?: boolean;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
+  /**
+   * Answer as the tool surface — each endpoint's `toolView` defaults and
+   * projected answer, exactly as the MCP, agent and CLI mounts do. Default
+   * `false`: the invoker's caller is code and gets the full answer, as HTTP
+   * does. Set it when the invoker backs a transport a model reads, because the
+   * schemas `collectTools` and `buildToolManifest` advertise are the tool
+   * surface's. → ADR 0196.
+   */
+  toolSurface?: boolean;
 }
 
 /** Runtime state for one in-process invocation; never retained by the registry. */
@@ -92,6 +100,7 @@ export function createToolInvoker(
       extend: config.extend,
       coerceJsonArgs: config.coerceJsonArgs,
       onOutputStrip: options.onOutputStrip,
+      toolSurface: config.toolSurface ?? false,
     });
     return runTool(operation(name), args);
   };

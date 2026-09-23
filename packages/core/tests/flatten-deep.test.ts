@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/server/implement';
-import { flattenToolJsonSchema } from '../src/tools/flatten';
 import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools } from '../src/tools/mount';
-import { buildToolPresentationSchema } from '../src/tools/presentation';
+import { flattenToolJsonSchema } from '../src/tools/schema/flatten';
+import { buildToolPresentationSchema } from '../src/tools/schema/presentation';
 
 function hasUnionKeyword(node: unknown): boolean {
   if (Array.isArray(node)) return node.some(hasUnionKeyword);

@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const entry = join(import.meta.dirname, '..', 'dist', 'index.js');
+const entry = join(import.meta.dirname, '..', 'dist', 'entrypoints', 'index.js');
 const source = readFileSync(entry, 'utf8');
 const needle = 'import(SOCKET_IO_CLIENT)';
 const matches = source.split(needle).length - 1;

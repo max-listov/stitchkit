@@ -10,7 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { ApiError, type HttpClient } from '../src/browser/http';
-import { AppError, defineContract, type RuntimeContext } from '../src/contract';
+import { AppError, defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { implementRemote } from '../src/tools/remote';
 
 const BRAND = Symbol.for('stitchkit.ApiError');

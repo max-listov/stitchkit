@@ -10,8 +10,8 @@ import { ShellOutputSchema } from '../src/agent-runtime/coding-tool-contract';
 import {
   type AgentCodingToolAuthorization,
   createAgentCodingTools,
-} from '../src/agent-runtime-coding-tools';
-import { mountAgent } from '../src/tools';
+} from '../src/entrypoints/agent-runtime/coding-tools';
+import { mountAgent } from '../src/entrypoints/tools';
 
 const roots: string[] = [];
 

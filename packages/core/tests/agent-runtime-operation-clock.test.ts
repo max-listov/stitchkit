@@ -7,7 +7,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 test('a backward wall-clock jump cannot fail operation telemetry or the run', async () => {
   const events: AgentRuntimeEvent[] = [];

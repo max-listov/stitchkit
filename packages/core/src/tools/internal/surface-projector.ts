@@ -4,18 +4,21 @@ import type {
   EndpointToolAnnotations,
   EndpointUiMeta,
   HttpMethod,
-} from '../../contract';
+  ToolTransport,
+} from '../../contract/define';
+import { toJsonSchema } from '../../json-schema/json-schema';
 import type { MethodDef, ServiceDef, StitchLogger } from '../../server/types';
-import type { ToolPresentationSchema } from '../flatten';
-import { toJsonSchema } from '../json-schema';
-import { validateMcpRoundPolicy } from '../mcp-round-policy';
+import { validateMcpRoundPolicy } from '../mcp/round-policy';
 import { assertToolName, assertUniqueToolName, hasUsableChars, toToolName } from '../names';
-import { findNonPortableFormats } from '../portable-formats';
-import { buildToolPresentationSchema, isObjectPresentationSchema } from '../presentation';
-import { mergeSchemas } from '../schema';
-import { findUntypedProperties } from '../untyped-properties';
-
-export type ProjectedToolTransport = 'MCP' | 'AGENT' | 'CLI';
+import type { ToolPresentationSchema } from '../schema/flatten';
+import { findNonPortableFormats } from '../schema/portable-formats';
+import {
+  buildToolPresentationSchema,
+  isObjectPresentationSchema,
+} from '../schema/presentation';
+import { mergeSchemas } from '../schema/schema';
+import { findUntypedProperties } from '../schema/untyped-properties';
+import { toolSurfaceOutputSchema } from './tool-view';
 
 /** Non-executable runtime-tool shape needed to project names and advertised schemas. */
 export interface SurfaceRuntimeToolDefinition {
@@ -30,7 +33,7 @@ export interface SurfaceRuntimeToolDefinition {
   };
   input: ZodObject;
   output?: ZodType;
-  transports?: readonly ProjectedToolTransport[];
+  transports?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   mcp?: EndpointMcpPolicy;
@@ -138,7 +141,7 @@ export function projectRuntimeTool<TRuntime extends SurfaceRuntimeToolDefinition
 
 export function projectedRuntimeToolSupports(
   definition: SurfaceRuntimeToolDefinition,
-  transport: ProjectedToolTransport,
+  transport: ToolTransport,
 ): boolean {
   if (definition.transports?.length === 0) {
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
@@ -149,7 +152,7 @@ export function projectedRuntimeToolSupports(
 }
 
 function duplicateLabel(
-  transport: ProjectedToolTransport,
+  transport: ToolTransport,
 ): 'MCP tool name' | 'agent tool name' | 'CLI command' {
   if (transport === 'MCP') return 'MCP tool name';
   if (transport === 'AGENT') return 'agent tool name';
@@ -160,13 +163,13 @@ function assertProjectedName(
   name: string,
   serviceName: string,
   action: string,
-  transport: ProjectedToolTransport,
+  transport: ToolTransport,
   derived: boolean,
 ): void {
   if (transport === 'CLI') return;
   if (derived && !hasUsableChars(serviceName)) {
     throw new Error(
-      `Service prefix "${serviceName}" (method "${action}") has no characters usable in a tool name — set an explicit \`toolName\` or rename the prefix`,
+      `Service prefix "${serviceName}" (method "${action}") has no characters usable in a tool name — set an explicit \`tool.name\` or rename the prefix`,
     );
   }
   assertToolName(name, serviceName, action);
@@ -175,7 +178,7 @@ function assertProjectedName(
 /** Canonical name/exposure/presentation projection shared by mounts and manifests. */
 export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition>(
   surface: ToolSurfaceProjection<TRuntime>,
-  transport: ProjectedToolTransport,
+  transport: ToolTransport,
   config: ToolPresentationProjectionConfig = {},
 ): ProjectedTool<TRuntime>[] {
   const projected: ProjectedTool<TRuntime>[] = [];
@@ -230,6 +233,7 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
         presentationSchema: buildToolPresentationSchema({
           paramsSchema: method.paramsSchema,
           inputSchema: method.inputSchema,
+          defaults: method.toolView?.defaults,
           extendSchema: shouldExtend ? config.extend?.schema : undefined,
           flattenUnionInput: config.flattenUnionInput,
           unrepresentable: 'any',
@@ -277,6 +281,9 @@ export interface McpProjectionCandidate<TTool> {
   name: string;
   paramsSchema?: ZodType;
   inputSchema?: ZodType;
+  /** A tool view's input defaults, stated in the advertised input schema. */
+  inputDefaults?: Readonly<Record<string, unknown>>;
+  /** The tool-surface answer's schema — a tool view's, when one is declared. */
   outputSchema?: ZodType;
   shouldExtend: boolean;
   mcp?: EndpointMcpPolicy;
@@ -301,8 +308,11 @@ export function mcpProjectionCandidate<TRuntime extends SurfaceRuntimeToolDefini
       ...(tool.source.inputSchema !== undefined && {
         inputSchema: tool.source.inputSchema,
       }),
-      ...(tool.source.outputSchema !== undefined && {
-        outputSchema: tool.source.outputSchema,
+      ...(tool.source.toolView?.defaults !== undefined && {
+        inputDefaults: tool.source.toolView.defaults,
+      }),
+      ...(toolSurfaceOutputSchema(tool.source) !== undefined && {
+        outputSchema: toolSurfaceOutputSchema(tool.source),
       }),
       shouldExtend: tool.shouldExtend,
       ...(tool.mcp !== undefined && { mcp: tool.mcp }),
@@ -353,6 +363,7 @@ export function prepareProjectedMcpTools<TTool>(
         extendSchema: tool.shouldExtend && config.extend ? config.extend.schema : undefined,
         flattenUnionInput: config.flattenUnionInput,
         unrepresentable: 'throw',
+        defaults: tool.inputDefaults,
       });
     } catch (error) {
       reportIncompatible(

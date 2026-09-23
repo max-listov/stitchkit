@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createScopedUrlBuilders, type ScopeClientConfigs } from '../src/browser/client';
-import { createContractFactory } from '../src/contract';
+import { createContractFactory } from '../src/entrypoints/contract';
 
 const { defineContract } = createContractFactory<'public' | 'tenant'>();
 

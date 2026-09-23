@@ -7,7 +7,7 @@ import {
   type OwnerScope,
   scanMoneyNumberRisks,
   scanOwnerFilterRisks,
-} from '../src/primitives';
+} from '../src/entrypoints/primitives';
 
 describe('owner scope', () => {
   const scopes = defineOwnerScope<

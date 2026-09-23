@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { placeholderDeferredSearch } from '../src/agent-runtime/deferred-tool-search';
+import { ranked } from '../src/agent-runtime/deferred-tool-selection';
 import {
   AgentContextOverflowError,
   AgentRunSchema,
@@ -9,10 +11,8 @@ import {
   createDeferredAgentToolSurface,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
-import { placeholderDeferredSearch } from '../src/agent-runtime/deferred-tool-search';
-import { ranked } from '../src/agent-runtime/deferred-tool-selection';
-import { defineRuntimeTool } from '../src/tools';
+} from '../src/entrypoints/agent-runtime';
+import { defineRuntimeTool } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

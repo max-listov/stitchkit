@@ -8,7 +8,7 @@
  * `169.254/16`, which is what a host says when DHCP failed.
  */
 import { describe, expect, test } from 'bun:test';
-import { extractIp, isPublicIp } from '../src/server';
+import { extractIp, isPublicIp } from '../src/entrypoints/server';
 
 describe('public IPv4', () => {
   test('routable addresses are public', () => {

@@ -4,7 +4,8 @@ Where stitchkit is and where it is going. This is a direction, not a dated
 commitment — priorities shift as the framework is proven across more projects.
 
 The *why* behind each item lives in an ADR under
-[`docs/decisions/`](./docs/decisions/).
+[`docs/decisions/`](./docs/decisions/); the invariants every item answers to and
+what stitchkit declines are on one page, [`docs/PRINCIPLES.md`](./docs/PRINCIPLES.md).
 
 ## Now — pre-1.0
 
@@ -93,7 +94,9 @@ under semantic versioning — breaking changes only on a major bump.
 
 ## Out of scope
 
-Deliberate non-goals — considered and declined, so they are not re-proposed:
+Deliberate non-goals — considered and declined, so they are not re-proposed. The
+standing rules for new work are the *Not in stitchkit* list in
+[`PRINCIPLES.md`](./docs/PRINCIPLES.md#not-in-stitchkit):
 
 - **A fullstack framework.** No file-based routing, no server components, no
   bundler. stitchkit is the contract and transport layer; the UI build belongs

@@ -4,7 +4,7 @@
  * infinite TanStack Query data without changing its envelope metadata.
  */
 import type { InfiniteData, QueryKey } from '@tanstack/react-query';
-import type { Paginated } from '../contract';
+import type { Paginated } from '../contract/pagination';
 import { isRecord } from '../internal/typed';
 import type { CacheBridgeContext, CacheBridgeHandler } from './cache-bridge';
 

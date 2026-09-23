@@ -1,5 +1,5 @@
-import type { MultipartDescriptor, MultipartFilePolicy } from '../contract';
-import { badRequest } from '../contract';
+import type { MultipartDescriptor, MultipartFilePolicy } from '../contract/define';
+import { badRequest } from '../contract/errors';
 import { isUnsafeKey } from '../internal/safe-json';
 import type { MultipartReceiver, MultipartReceiverResult } from './types';
 

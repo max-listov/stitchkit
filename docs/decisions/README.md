@@ -22,206 +22,224 @@ a later ADR that says so.
 
 A bug fix or a small addition earns a changelog line, not an ADR.
 
+A new ADR names the invariant from [`PRINCIPLES.md`](../PRINCIPLES.md) it
+serves. One that serves none either records a practice (`P`) or proposes a new
+invariant — which is a change to that page, argued in the ADR itself.
+
 ## Index
 
-| ADR | Decision | Status |
-|-----|----------|--------|
-| [0001](0001-bun-serve-no-framework.md) | Build on `Bun.serve()`, no HTTP framework | Accepted |
-| [0002](0002-generic-core.md) | A generic core — the framework carries no domain model | Accepted |
-| [0003](0003-two-context-types.md) | Two context types: `RuntimeContext` and `HandlerContext` | Accepted |
-| [0004](0004-lifecycle-hooks.md) | Four lifecycle hooks instead of a middleware chain | Superseded by 0072 |
-| [0005](0005-typed-client.md) | The typed client is inferred from the contract | Accepted |
-| [0006](0006-route-groups-query-params.md) | Route groups and GET/DELETE query params | Accepted |
-| [0007](0007-mcp-agent-tools.md) | MCP and agent tools from one shared pipeline | Accepted |
-| [0008](0008-thin-wrappers.md) | Thin wrappers over the stack you already use | Accepted |
-| [0009](0009-hand-rolled-websocket.md) | A hand-rolled WebSocket transport | Superseded by 0008 |
-| [0010](0010-fullstack-rejected.md) | Grow stitchkit into a fullstack framework | Rejected |
-| [0011](0011-bun-only-one-package.md) | Bun-only, published as one small package | Accepted |
-| [0012](0012-observability-module.md) | A built-in observability module | Accepted |
-| [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011 |
-| [0014](0014-tool-http-parity.md) | The tool surface carries the same contract guarantees as HTTP | Accepted — refines 0007 |
-| [0015](0015-oauth-resource-server.md) | OAuth 2.1 resource-server toolkit for MCP | Superseded by 0068 |
-| [0016](0016-cli-transport.md) | CLI as the fourth transport | Accepted — extends 0007 |
-| [0017](0017-typed-tool-context.md) | Typed tool-path context via `createToolkit` | Accepted — extends 0003 |
-| [0018](0018-openapi-generation.md) | OpenAPI generated from the contract | Accepted |
-| [0019](0019-generic-native-tools.md) | Generic native MCP tools (wait / download / upload) | Accepted — extends 0007 |
-| [0020](0020-raw-websocket-lane.md) | A raw WebSocket lane composed beside Socket.IO | Accepted — upholds 0008 |
-| [0021](0021-endpoint-meta-passthrough.md) | Endpoint meta passthrough (opaque per-endpoint metadata) | Accepted — extends 0002 |
-| [0022](0022-endpoint-identity.md) | Stable (service, action) identity on MethodDef | Accepted — extends 0002, 0021 |
-| [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013 |
-| [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002; the deferred scope→context clause superseded by 0075 |
-| [0025](0025-typed-scoped-client.md) | Typed scoped client (consumed keys as args) | Accepted — extends 0005 |
-| [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 |
-| [0027](0027-transport-neutral-contract-execution.md) | Transport-neutral contract execution (BYO transport) | Accepted — dispatcher portion superseded by 0028 |
-| [0028](0028-revert-contract-dispatcher.md) | Revert `createContractDispatcher` (no adopting consumer) | Accepted — supersedes the dispatcher part of 0027 |
-| [0029](0029-audit-endpoint-identity-and-dimensions.md) | Endpoint identity + domain dimensions on the audit event | Accepted — extends 0012, 0021, 0022 |
-| [0030](0030-audit-verb-and-json-error-details.md) | Audit verb, sanitised error details, complete error-code logging | Accepted — extends 0029, 0026, 0022 |
-| [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 |
-| [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 |
-| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 |
-| [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Superseded by 0050 |
-| [0035](0035-tool-name-derivation-and-validation.md) | Tool names: normalise the whole character class, assert at mount | Accepted — refines the tool pipeline of 0007 |
-| [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 |
-| [0037](0037-output-strip-diagnostics.md) | The output strip stays, and becomes visible on demand | Accepted — extends 0014 |
-| [0038](0038-raw-response-endpoints.md) | Raw-response endpoints — the handler owns the `Response` | Accepted — documented HTTP-only exception to 0027 |
-| [0039](0039-request-logging-reads-the-request-context.md) | Request logging reads the request context; `logging` becomes a config object | Accepted — connects 0012's logger to its context; upholds 0013, 0021 |
-| [0040](0040-the-log-format-is-chosen-not-guessed.md) | The log format is chosen (`logging.format`), not guessed from `NODE_ENV` | Accepted — repairs the delivery of 0039; upholds 0013 |
-| [0041](0041-tool-error-cause-is-observable.md) | The cause of a failed tool call is observable (`onToolError`) | Accepted — closes an HTTP/tool asymmetry in 0007/0014; extends 0012 |
-| [0042](0042-the-audit-row-may-name-the-cause.md) | The audit row may name the cause, the caller may not | Accepted — completes 0041; makes 0030 true on the tool path |
-| [0043](0043-the-framework-records-the-failure.md) | The framework records the failure; the project overrides it | Accepted — applies 0042's rule to the HTTP path; extends 0012 |
-| [0044](0044-a-collided-field-keeps-its-type.md) | A collided field keeps its type (never `unknown` where a type is provable) | Accepted — narrows 0033's collision rule, keeps its invariant |
-| [0045](0045-a-tool-call-runs-in-its-own-context.md) | A tool call runs in its own request context | Accepted — scopes 0012's context; makes 0029's dimensions hold under concurrency |
-| [0046](0046-tool-hooks-take-options-objects.md) | Tool hooks take one options object | Accepted — makes future hook fields additive; refines 0041/0042 |
-| [0047](0047-one-mcp-schema-validation-profile.md) | One MCP schema validation profile | Accepted — validation and the advertised surface cannot drift |
-| [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Superseded by 0057 |
-| [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Superseded by 0068 |
-| [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 |
-| [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input |
-| [0052](0052-typed-json-response-metadata.md) | Typed JSON response metadata | Accepted — HTTP-only dynamic headers plus a declared success status without transferring `Response` ownership |
-| [0053](0053-explicit-contract-head.md) | HEAD is an explicit contract operation | Accepted — extends 0038 and 0023 |
-| [0054](0054-in-process-tool-invocation.md) | In-process tool calls use the canonical runner | Accepted — extends 0014 and 0045 |
-| [0055](0055-runtime-tools-share-one-neutral-operation.md) | Runtime tools share one neutral operation | Accepted — extends 0014, 0045 and 0048 |
-| [0056](0056-entity-cache-shapes-are-declared.md) | Entity cache shapes are declared | Accepted — keeps the cache bridge generic and explicit |
-| [0057](0057-finite-prepared-mcp-surfaces.md) | Finite prepared MCP surfaces | Accepted — bounded descriptor preparation with fresh request state |
-| [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Extended by 0077 — Accepted — immutable status/schema registry and typed constructors |
-| [0059](0059-unified-tool-surface-introspection.md) | Unified tool-surface introspection | Accepted — one mixed contract/runtime collector for mounts and diagnostics |
-| [0060](0060-official-starter-composes-next-and-stitchkit.md) | Official starter composes Next.js with a separate Stitchkit backend | Accepted — one production-shaped scaffold without framework-owned frontend infrastructure |
-| [0061](0061-independent-starter-release-line.md) | Official starter advances independently from framework HEAD | Accepted — explicit catalog target, lockfile and separate release tags |
-| [0062](0062-explicit-tool-exposure-is-a-factory-policy.md) | Explicit tool exposure is an opt-in factory policy | Accepted — refines 0036 without contract-level inheritance |
-| [0063](0063-one-http-completion-many-observability-projections.md) | One HTTP completion feeds every observability projection | Accepted — supersedes the HTTP wrapper in 0012; refines 0039 |
-| [0064](0064-runtime-tool-factories-validate-context-at-execution.md) | Runtime-tool factories validate context at execution | Accepted — extends 0055 without a parallel runner |
-| [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary |
-| [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — identity clause superseded by 0070 |
-| [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications |
-| [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies |
-| [0069](0069-realtime-contracts-validate-without-owning-delivery.md) | Realtime contracts validate without owning delivery | Accepted — extends 0008; 0020 remains orthogonal |
-| [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066; the file it names became the project declaration in 0104 |
-| [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams |
-| [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks |
-| [0073](0073-client-request-options-are-not-callback-context.md) | Client request options are not callback context | Accepted — extends 0005, 0008 and 0025 |
-| [0074](0074-server-owned-managed-shutdown.md) | Server-owned managed shutdown | Accepted — extends 0008, 0013 and 0020; its signal clause superseded by 0076 |
-| [0075](0075-per-scope-handler-context.md) | Per-scope handler context (`createScopedImplement`) | Accepted — supersedes the deferred scope→context clause of 0024 |
-| [0076](0076-explicit-process-signal-binding.md) | Explicit process-signal binding (`bindProcessSignals`) | Accepted — supersedes the signal clause of 0074 |
-| [0077](0077-error-definition-carries-its-message.md) | An error definition carries its default message | Accepted — extends 0058 |
-| [0078](0078-scope-map-derived-from-the-auth-hook.md) | The scope map is derived from the auth hook | Accepted — extends 0075 |
-| [0079](0079-typed-handshake-identity-gate.md) | Typed handshake identity gate | Accepted |
-| [0080](0080-mcp-call-metadata-is-typed-context.md) | MCP call metadata is typed context | Accepted — extends 0003, 0045 and 0068 |
-| [0081](0081-generic-native-operations-use-managed-definitions.md) | Generic native operations use managed definitions | Accepted — extends 0019, 0055 and 0057 |
-| [0082](0082-view-file-has-one-managed-batch-operation.md) | `view_file` has one managed batch operation | Accepted — supersedes the raw-only view-file clause of 0081 |
-| [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059 |
-| [0084](0084-stdio-signals-are-close-only.md) | Stdio process signals are close-only | Accepted — extends 0076 without fake force semantics |
-| [0085](0085-auth-rules-may-contribute-context.md) | Auth rules may contribute typed context | Accepted — extends 0078 |
-| [0086](0086-lifecycle-composition-is-explicit.md) | Lifecycle composition is explicit and ordered | Accepted — refines 0072 |
-| [0087](0087-surface-conformance-is-a-manifest-plus-probes.md) | Surface conformance is a manifest plus explicit probes | Accepted — extends 0059 |
-| [0088](0088-managed-files-bind-one-root.md) | Managed files bind one application-owned root | Accepted — supersedes file-path mechanics of 0019/0081/0082 |
-| [0089](0089-async-operations-describe-transport-not-jobs.md) | Async operations describe transport, not jobs | Accepted — extends 0081 |
-| [0090](0090-remote-implementation-has-a-peer-free-entrypoint.md) | Remote implementation has a peer-free entrypoint | Accepted — narrows optional-peer ownership |
-| [0091](0091-realtime-request-is-a-typed-native-ack.md) | Realtime request is a typed native acknowledgement | Accepted — extends 0008 and 0069 |
-| [0092](0092-existing-realtime-transport-binding.md) | Realtime contracts may bind an existing transport | Accepted — extends 0008, 0069 and 0091 |
-| [0093](0093-transport-projected-and-realtime-conformance.md) | Surface manifests are transport projections and include realtime | Accepted — extends 0059, 0069 and 0087 |
-| [0094](0094-auth-hook-composition-is-owned-and-atomic.md) | Auth hook composition is owned and atomic | Accepted — extends 0085 and 0086 |
-| [0095](0095-async-operation-contract-factory-and-adapters.md) | Async-operation contracts have one factory and typed adapters | Accepted — extends 0089 |
-| [0096](0096-managed-file-boundary-owns-safe-read-semantics.md) | Managed file boundaries own safe read semantics | Accepted — extends 0088 |
-| [0097](0097-request-cancellation-is-an-opt-in-observability-outcome.md) | Request cancellation is an opt-in observability outcome | Accepted — extends 0063 and 0043 |
-| [0098](0098-optional-agent-application-runtime.md) | Agent conversations have one optional application runtime | Accepted — extends 0007, 0012, 0013, 0086, 0087 and narrows 0089 |
-| [0099](0099-starter-head-skips-require-versioned-review.md) | Starter HEAD skips require an exact-version deferred review | Accepted — refines 0061 |
-| [0100](0100-agent-store-reducer-owns-transitions.md) | The agent store reducer owns runtime transitions | Accepted — refines the persistence boundary of 0098 |
-| [0101](0101-normalized-agent-runtime-persistence.md) | Agent runtime persistence is bounded and normalized | Accepted — replaces the aggregate storage shape of 0100 while retaining reducer ownership |
-| [0102](0102-managed-application-kernel.md) | Application composition is process-local and provider-neutral | Accepted — extends 0008, 0012, 0013, 0076, 0089 and 0098 |
-| [0103](0103-entrypoints-declare-their-maturity.md) | Every entrypoint declares how settled it is | Accepted — scopes 0098 and 0102 |
-| [0104](0104-the-project-declaration-ships-from-the-framework.md) | The project declaration ships from the framework | Accepted — extends 0002 and 0103, and replaces the `app.config.json` of 0070 |
-| [0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md) | The error-code map is partial, and the registry is complete | Accepted — supersedes the exhaustiveness clause of 0026 |
-| [0106](0106-a-refused-frame-answers-its-sender.md) | A refused realtime frame answers its sender | Accepted — refines the realtime rejection surface of 0008 and keeps identity out of the core per 0002 |
-| [0107](0107-a-rollback-spends-a-declared-budget.md) | A rollback spends a declared budget, and the budget is a bound | Accepted — completes the deadline model of 0102 for the rollback path |
-| [0108](0108-what-a-stopped-run-said-is-a-declared-policy.md) | What a stopped run already said is a declared policy, not a default | Accepted — the runtime cannot observe delivery, so the application declares it |
-| [0109](0109-a-spend-figure-never-claims-a-provenance-it-does-not-have.md) | A spend figure never claims a provenance it does not have | Accepted — keeps billing out of the core per 0002 while making what the core reports true |
-| [0110](0110-a-reconciled-cost-belongs-to-the-application.md) | A reconciled cost belongs to the application, not to the core | Accepted — applies 0002 to the ledger question 0109 left open |
-| [0111](0111-the-driver-is-the-extension-point-and-the-runtime-is-not-stable-yet.md) | The driver is the extension point, and the agent runtime is not stable yet | Accepted — settles the promotion question 0103 opened, with named conditions |
-| [0112](0112-a-run-is-read-without-its-conversation.md) | A run is read without its conversation, and history stays whole | Accepted — applies the bounded-read reasoning of 0101 to the conversation, and names the limit it does not lift |
-| [0113](0113-an-absorbed-input-is-committed-with-the-answer.md) | An absorbed input is committed with the answer, never before it | Accepted — reinstates the `inject` policy withdrawn in 0.65.0, with the ordering that made it wrong corrected |
-| [0114](0114-the-graph-carries-values-not-only-order.md) | The resource graph carries values, not only order | Accepted — `dependsOn` expressed half the dependency; the other half lived in a module-local with an unreachable guard |
-| [0115](0115-a-managed-server-resource-owns-when-the-server-exists.md) | A managed server resource owns when the server exists | Accepted — a thunk is created in `start`, because calling it on the way down produced a healthy application with nothing listening |
-| [0116](0116-a-selected-unix-transport-never-becomes-tcp.md) | A selected Unix transport never becomes TCP | Accepted — explicit owned Bun/Node transport with bounded work and delivery state |
-| [0117](0117-contract-streams-own-validation-and-wire-termination.md) | Contract streams own validation and wire termination | Accepted — schema-derived bounded frames and explicit completion on the existing HTTP stream path |
-| [0118](0118-operation-capacity-belongs-to-the-underlying-work.md) | Operation capacity belongs to the underlying work | Accepted — caller deadlines cannot release capacity still consumed by non-cooperative work |
-| [0119](0119-delivery-policy-is-ordered-or-replaceable.md) | Delivery policy is ordered or replaceable | Accepted — finite ordered retention and explicit latest-value coalescing are different contracts |
-| [0120](0120-published-declarations-follow-esm-resolution.md) | Published declarations follow ESM resolution | Accepted — explicit JavaScript targets and a peer-free packed NodeNext root |
-| [0121](0121-managed-server-factories-receive-resource-context.md) | Managed server factories receive resource context | Accepted — declared values and the startup signal reach server construction without an outer handoff |
-| [0122](0122-optional-peer-surfaces-are-proven-from-artifacts.md) | Optional-peer surfaces are proven from artifacts | Accepted — peer-free invocation and warning-free injected Socket.IO loading are packed-consumer guarantees |
-| [0123](0123-agent-terminal-output-and-tool-rounds.md) | Terminal output is accepted before commit and tool rounds keep causal order | Accepted — protocol policy owns completion validity; projection owns persisted execution order |
-| [0124](0124-entity-cache-membership-and-total-policy.md) | Entity cache membership and total deltas are declared per query | Accepted — filtered membership and pagination evidence are explicit without a consumer mutation engine |
-| [0125](0125-streaming-bodies-bound-retained-bytes-not-lifetime-traffic.md) | Streaming bodies bound retained bytes, not lifetime traffic | Accepted — unary totals remain finite while an explicit pull-driven stream has no cumulative lifetime cap |
-| [0126](0126-schema-owned-stream-frames-end-at-the-terminal-item.md) | Schema-owned stream frames end at the terminal item | Accepted — opt-in unwrapped NDJSON retains bounded parsing and completion proof without a second envelope |
-| [0127](0127-interrupt-priority-is-durable-execution-order.md) | Interrupt priority is durable execution order | Accepted — urgent input runs next without deleting ordinary queued work, and recovery preserves the same order |
-| [0128](0128-sqlite-runtime-store-is-a-leaf-adapter.md) | SQLite runtime storage is a leaf adapter | Accepted — one normalized mapping behind isolated Bun and Node built-in bindings |
-| [0129](0129-deferred-agent-tools-are-durable-direct-activation.md) | Deferred Agent tools are durable direct activation | Accepted — bounded search receipts activate real mounted tools per durable run without a gateway |
-| [0130](0130-headless-harness-composes-the-agent-runtime.md) | A headless harness composes the Agent runtime | Accepted — publishes resource-aware composition and isolated direct coding tools without owning supervision or a second loop |
-| [0131](0131-harness-leaves-preserve-canonical-agent-identity.md) | Harness leaves preserve canonical Agent identity | Accepted — lazy resources, signed approval continuations, reconnectable views and coding artifacts retain direct operations and one history |
-| [0132](0132-agent-tui-is-an-explicit-starter-profile.md) | Agent TUI is an explicit starter profile | Superseded by 0133 — the explicit profile remains, but its reusable product mechanics moved out of copied starter source |
-| [0133](0133-agent-tui-is-an-optional-package-over-one-controller.md) | Agent TUI is an optional package over one controller | Accepted — reusable terminal mechanics stay outside core and local attachment enters the host's only controller |
-| [0134](0134-diagnostic-journal-is-bounded-local-evidence.md) | Diagnostic journal is bounded local evidence | Accepted — one finite FIFO local writer without durable-delivery claims or a second observability framework |
-| [0135](0135-contained-files-use-native-darwin-capabilities.md) | Contained files use native Darwin directory capabilities | Accepted — packaged openat leaf, one JS policy and real macOS artifact proof |
-| [0136](0136-one-exact-tree-drives-a-package-aware-release-train.md) | One exact tree drives a package-aware release train | Accepted — one manifest, one exact-SHA CI and target-aware evidence lanes for every selected package |
-| [0137](0137-live-state-opens-one-continuous-source-generation.md) | Live state opens one continuous source generation | Accepted — browser-safe bounded snapshot/event synchronization without owning transport retry, cursors or storage |
-| [0138](0138-conversation-purge-reserves-identity-atomically.md) | Conversation purge reserves identity atomically | Accepted — optional atomic payload deletion with active-run refusal and permanent ID fencing |
-| [0139](0139-a-coding-tool-refusal-is-something-a-model-can-act-on.md) | A coding-tool refusal is something a model can act on | Accepted — ordinary outcomes become typed; host causes stay scrubbed, and `edit_file` replaces `apply_patch` |
-| [0140](0140-the-runtime-tells-a-step-how-full-the-context-is.md) | The runtime tells a step how full the context is | Accepted — the last step's prompt size with provenance, never the cumulative total |
-| [0141](0141-a-provider-refusal-is-classified-not-phrased.md) | A provider refusal is classified, not phrased | Accepted — the core names the failure and its evidence; the wording stays with the application |
-| [0142](0142-a-primitive-leaves-the-runtime-when-nothing-in-it-needs-the-runtime.md) | A primitive leaves the runtime when nothing in it needs the runtime | Accepted — three conditions decide what is published, and two named refusals prove they can fail |
-| [0143](0143-telegram-platform-primitives-need-no-bot-library.md) | Telegram platform primitives need no bot library | Accepted — `stitchkit/telegram` holds Mini App verification and Bot API failure classification, peer-free and server-only |
-| [0144](0144-generic-application-primitives-declare-facts-not-infrastructure.md) | Generic application primitives declare facts, not infrastructure | Accepted — one browser-safe declaration leaf with application-owned persistence and execution |
-| [0145](0145-a-reclaimed-lock-is-proven-never-assumed.md) | A reclaimed lock is proven, never assumed | Accepted — liveness proof reclaims an abandoned journal lock; no age or heartbeat variant is offered |
-| [0146](0146-a-scanning-gate-asserts-what-it-scanned.md) | A scanning gate asserts what it scanned | Accepted — a test that discovers its inputs states the size of the set before calling it clean |
-| [0147](0147-machine-identity-not-host-name-decides-whose-pid-this-is.md) | Machine identity, not host name, decides whose pid this is | Accepted — refines 0145: a renamed machine reclaims its own lock, and a refusal says which refusal it is |
-| [0148](0148-a-refusal-that-never-left-the-process-is-a-validation-error.md) | A refusal that never left the process is a `VALIDATION_ERROR` with status 0 | Accepted — one shape and one timing for every local refusal, and argument validation stays on the server |
-| [0149](0149-a-zombie-owner-is-gone-and-it-is-the-safer-half-of-gone.md) | A zombie owner is gone, and it is the safer half of gone | Accepted — refines 0147: a signal probe reports a table entry, and an unreaped pid cannot have been reused |
-| [0150](0150-an-event-declaration-projects-onto-the-socket-we-already-run.md) | An event declaration projects onto the socket we already run | Accepted — `defineEvents` declares topics and delivery modes; the wire stays the existing realtime contract, and ADR 0008 is not reopened |
-| [0151](0151-a-trust-fence-names-its-lanes-because-one-of-them-bypasses-hooks.md) | A trust fence names its lanes, because one of them bypasses hooks entirely | Accepted — authority comparison at `onRequest` and at `allowRequest`; the socket lane never reaches the hooks on either runtime |
-| [0152](0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md) | A keyspace is memory that nothing reaches before it is durable | Accepted — backend, then memory, then the change event; opened as a managed resource because the kernel cannot register one later |
-| [0153](0153-a-watched-read-is-one-read-per-question.md) | A watched read is one read per question, and the question is not a function | Accepted — single-flight per key is the ordering guarantee, and the client is built from the contract because a method carries no identity |
-| [0154](0154-the-unit-of-a-restart-is-the-subtree.md) | The unit of a restart is the subtree, not the resource | Accepted — a dependant left running holds a handle to a closed generation, so the transitive dependants go down with it and the process epoch stays |
-| [0155](0155-one-decision-vocabulary-and-an-unanswered-question-is-an-error.md) | One decision vocabulary, and an unanswered question is an error | Accepted — `PolicyDecision` is shared by events and the pipeline; every policy deferring raises rather than defaulting either way |
-| [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted, partly corrected by 0157 — the schemas got their own entrypoint and the gate refuses an unreachable one; the claim that `./application` could not be browser-safe was wrong |
-| [0157](0157-a-restartable-resource-begins-a-generation.md) | A resource that can be restarted is a resource that can begin a generation | Accepted — `start` begins a generation, the result agrees with the snapshot, and the close phase is bounded like every other way down |
-| [0158](0158-a-gate-that-does-not-run-the-code-is-a-proxy.md) | A gate that does not run the code is measuring a proxy | Accepted — every promised browser entry is bundled and executed, after six of them killed the page while passing every static check |
-| [0159](0159-a-replacement-says-so-and-a-teardown-is-announced.md) | A replacement says so, and a teardown is announced | Accepted — the snapshot names the subtree being replaced, and a closing watch hub tells its subscribers instead of dropping them |
-| [0160](0160-one-declaration-of-which-entrypoints-a-browser-may-import.md) | One declaration of which entrypoints a browser may import | Accepted — one manifest, one build pass, and the guide and consumer lane asserted against it |
-| [0161](0161-a-gate-that-knows-one-error-is-blind-to-the-rest.md) | A gate that recognises one error is blind to every other | Accepted — the consumer lane's declaration check subtracts what is accepted and fails on the rest, after printing five `TS2344` errors for two releases and discarding them |
-| [0162](0162-a-gate-that-reddens-from-load-teaches-you-to-disbelieve-red.md) | A gate that reddens from load teaches you to disbelieve red | Accepted — heavy-lane concurrency is measured from available memory and reported, and a failing lane names itself before its siblings are cancelled |
-| [0163](0163-a-revision-signal-broadcasts-a-fact-not-an-item.md) | A revision signal broadcasts a fact, not an item | Accepted — cursor-safe change waits are finite, broadcast and lifecycle-complete without becoming a queue or a second managed resource |
-| [0164](0164-a-local-gate-refuses-ci-only-reports.md) | A local gate refuses; CI only reports | Accepted — the publication-privacy scan runs on every push outside the memo, after a memo key that could not describe its input let a real machine path reach a public repository |
-| [0165](0165-a-safelisted-body-is-accepted-only-from-an-allowed-origin.md) | A safelisted body is accepted only from an allowed origin | Accepted — a `POST` may opt into a `text/plain` JSON body for page-unload beacons, and the server honours it only for an `Origin` on its explicit CORS allow-list; `'*'`, `null` and an absent header are refused before parsing |
-| [0166](0166-tracking-mechanics-in-core-storage-and-domain-outside.md) | Tracking mechanics live in core; storage and domain stay outside | Accepted — `stitchkit/tracking` owns the outbox, the beacon, visible time, clicks and attribution behind a host interface, `stitchkit/tracking/server` owns dispositions and the visit-lease algorithm over an application-implemented store; tables, transactions, event types and reports remain the application's |
-| [0167](0167-a-page-follows-the-release-it-was-built-for.md) | A page follows the release it was built for | Accepted — the server names the current build on every response and socket connection, the browser compares it to its own build id and reloads under a declared policy; the build-id source and the deploy signal stay with the application |
-| [0168](0168-path-literals-materialize-string-params.md) | Path literals materialize string params | Accepted — one canonical parser drives runtime validation, types and every generated projection; explicit schemas refine but must cover the path |
-| [0169](0169-durable-runtime-facts-use-one-atomic-state-boundary.md) | Durable runtime facts use one atomic state boundary | Accepted — lifecycle facts and at-least-once notifications share async atomic updates while rendering and transport remain application-owned |
-| [0170](0170-new-mechanics-compose-existing-owners.md) | New mechanics compose existing owners | Accepted — socket membership, error maps and log bounds extend existing auth, error and sanitizer paths; duplicate DSL/plugin/name surfaces are rejected |
-| [0171](0171-geoip-swaps-complete-reader-generations.md) | GeoIP swaps complete reader generations | Accepted — City and optional ASN swap together, in-flight reads drain and failed reloads retain the last known good reader |
-| [0172](0172-a-path-policy-runs-before-discovery-or-reading.md) | A path policy runs before discovery or reading | Accepted — one host path decision gates direct file effects and filters discovery before any selected content is opened |
-| [0173](0173-a-read-snapshot-does-not-reserve-the-wal-writer.md) | A read snapshot does not reserve the WAL writer | Accepted — one transaction access hint preserves adapter compatibility while SQLite reads use `BEGIN` and mutations retain `BEGIN IMMEDIATE` |
-| [0174](0174-runtime-operations-are-durable-run-facts.md) | Runtime operations are durable run facts | Accepted — model requests and compaction update one revision-checked run projection before provider work |
-| [0175](0175-the-event-ledger-is-the-agent-runtime-source-of-truth.md) | The event ledger is the agent runtime source of truth | Accepted — one append-only conversation sequence owns replay while normalized tables and checkpoints remain bounded views |
-| [0176](0176-tool-slots-replace-and-disable-by-name.md) | Tool slots replace and disable by name, and an unknown name refuses | Accepted — `defineToolRegistry` composes one declared default set; `replace`/`disable` address it and a name outside it is a build error |
-| [0177](0177-an-approval-response-is-authorized-separately.md) | An approval response is authorized separately from the approval request | Accepted — `authorizeApprovalResponse` judges the responder; a refusal is a durable event and leaves the request pending for a valid responder |
-| [0178](0178-instructions-carry-a-role.md) | Instructions carry a role, and user-role instructions are durable history | Accepted — system text stays outside history and is rebuilt per call; user text is seeded once as an ordinary durable message; no `step.started` resolver |
-| [0179](0179-the-parent-owns-a-childs-blocking-events.md) | The parent owns a child's blocking events | Accepted — a child result settles a parent call by the running handle's callId, and the parent alone presents and routes the child's approval or input request |
-| [0180](0180-external-connections-are-a-separate-tools-subexport.md) | External MCP and OpenAPI connections are a separate tools subexport | Accepted — `stitchkit/tools/connections` consumes external servers with a narrow SSE fallback, typed `401` reauthorization and a non-durable principal-scoped token |
-| [0181](0181-a-sandbox-backend-is-an-optional-two-phase-contract.md) | A sandbox backend is an optional two-phase contract with an explicit network policy | Accepted — opt-in Linux Bubblewrap `prewarm`/`create`, durable workspace reconnect, and an exact-origin HTTP gateway that injects headers on the host |
-| [0182](0182-a-durability-port-exposes-step-sleep-and-wait.md) | A durability port exposes step, sleep and wait over the store | Accepted — runtime-tool bodies checkpoint memoized steps and park on time or an event through a swappable port over our store; no workflow SDK |
-| [0183](0183-a-watched-value-may-cross-as-a-difference.md) | A watched value may cross as a difference to a revision the subscriber holds | Accepted — `full`/`delta`/`unchanged` chosen per subscriber, fingerprint-checked reassembly, per-key resync, and never sent when it is not smaller |
-| [0184](0184-audit-machinery-not-audit-policy.md) | The audit layer ships the filter and the spool, and stays optional | Accepted — `auditChanges` and `createSpooledSink` become machinery; audit on by default was rejected on a re-measurement that found absent surfaces, not forgetting |
-| [0185](0185-a-served-schema-speaks-the-dialect-it-is-stamped-with.md) | A served schema speaks the dialect it is stamped with | Accepted — MCP metadata moves to `$defs`, definitions hoist to the document root, the client refuses to believe a contradicted stamp, and one unconvertible tool no longer takes the connection down |
-| [0186](0186-the-cli-owns-its-own-distribution.md) | The CLI surface owns aggregates, profiles and its own distribution | Accepted — `--count-by`/`--sum`/`--top`/`--table`, never-substituted named profiles, a manifest-generated installer with a decompressed-bytes digest, and `transports` opt-in for discovered tools |
-| [0187](0187-the-framework-hands-over-what-it-already-knows.md) | The framework hands over what it already knows | Accepted — `beforeToolCall` may rewrite arguments, the refusal carries `retryable`, `toolCallId` travels as call context, the tools layer owns a durability port, and an unimplemented endpoint can be a `501` stub on a dev stand |
-| [0188](0188-collecting-the-truth-is-not-presenting-it.md) | Collecting the truth is not presenting it | Accepted — a union branch is described by the deepest field it reached, the summary keeps the branches that got furthest, the text projection drops repeated paths, and the expansion limit no longer silences the wording |
-| [0189](0189-the-framework-reports-nothing-on-its-own.md) | The framework reports nothing on its own | Accepted — `ctx.reportProgress` on every tool call, a no-op where nobody listens, the ordinal instead of a synthesised percentage, and `mountWait` as the one relay |
-| [0190](0190-a-question-plan-is-signed-like-everything-else.md) | A question plan is part of the state it is asked in | Accepted — `inputRequired` may be a function of the parsed call; the resolved plan is fingerprinted into the signed state, and the guard runs before the resolver |
-| [0191](0191-a-unit-of-work-is-not-a-request.md) | A unit of work is not a request, and must not have to pretend | Accepted — `kind`/`name`, optional `method`/`path`/`statusCode`, `runUnitOfWork`; dropping one fabricated transport field while keeping another is the same defect |
-| [0192](0192-a-cli-namespace-belongs-to-the-application.md) | Running a parsed call, without owning the application's namespace | Accepted — `createCliInvoker`, stream and batch as factories rather than reserved names, and a checkpoint that records successes only |
-| [0193](0193-an-unchecked-signature-must-be-visible.md) | An unchecked signature must be visible | Accepted — Ed25519 over everything that acts before the digest, five verdicts including `unenforced`, and the channel deliberately left out of the framework |
-| [0194](0194-printing-is-the-exclusion-not-being-native.md) | Printing is the exclusion, not being native | Accepted — the invoker admits a native command iff it declares `output`; amends the criterion 0192 stated in its Consequences |
-| [0195](0195-a-declaration-the-host-can-see-belongs-in-the-snapshot.md) | A declaration the host can see belongs in the snapshot | Accepted — an operation row carries its declared rounds or the `resolved-per-call` marker; `manifestVersion` is 3 |
+| ADR | Decision | Status | Invariant |
+|-----|----------|--------|-----------|
+| [0001](0001-bun-serve-no-framework.md) | Build on `Bun.serve()`, no HTTP framework | Accepted | I5, I6 |
+| [0002](0002-generic-core.md) | A generic core — the framework carries no domain model | Accepted | I4 |
+| [0003](0003-two-context-types.md) | Two context types: `RuntimeContext` and `HandlerContext` | Accepted | I3 |
+| [0004](0004-lifecycle-hooks.md) | Four lifecycle hooks instead of a middleware chain | Superseded by 0072 | superseded → 0072 |
+| [0005](0005-typed-client.md) | The typed client is inferred from the contract | Accepted | I1 |
+| [0006](0006-route-groups-query-params.md) | Route groups and GET/DELETE query params | Accepted | I1 |
+| [0007](0007-mcp-agent-tools.md) | MCP and agent tools from one shared pipeline | Accepted | I1, I2 |
+| [0008](0008-thin-wrappers.md) | Thin wrappers over the stack you already use | Accepted | I5 |
+| [0009](0009-hand-rolled-websocket.md) | A hand-rolled WebSocket transport | Superseded by 0008 | superseded → 0008 |
+| [0010](0010-fullstack-rejected.md) | Grow stitchkit into a fullstack framework | Rejected | I5 |
+| [0011](0011-bun-only-one-package.md) | Bun-only, published as one small package | Accepted | I7 |
+| [0012](0012-observability-module.md) | A built-in observability module | Accepted | I13 |
+| [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011 | I6 |
+| [0014](0014-tool-http-parity.md) | The tool surface carries the same contract guarantees as HTTP | Accepted — refines 0007 | I2 |
+| [0015](0015-oauth-resource-server.md) | OAuth 2.1 resource-server toolkit for MCP | Superseded by 0068 | superseded → 0068 |
+| [0016](0016-cli-transport.md) | CLI as the fourth transport | Accepted — extends 0007 | I1 |
+| [0017](0017-typed-tool-context.md) | Typed tool-path context via `createToolkit` | Accepted — extends 0003 | I3 |
+| [0018](0018-openapi-generation.md) | OpenAPI generated from the contract | Accepted | I1 |
+| [0019](0019-generic-native-tools.md) | Generic native MCP tools (wait / download / upload) | Accepted — extends 0007 | I4 |
+| [0020](0020-raw-websocket-lane.md) | A raw WebSocket lane composed beside Socket.IO | Accepted — upholds 0008 | I5 |
+| [0021](0021-endpoint-meta-passthrough.md) | Endpoint meta passthrough (opaque per-endpoint metadata) | Accepted — extends 0002 | I4 |
+| [0022](0022-endpoint-identity.md) | Stable (service, action) identity on MethodDef | Accepted — extends 0002, 0021 | I1 |
+| [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013 | I6 |
+| [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002; the deferred scope→context clause superseded by 0075 | I4 |
+| [0025](0025-typed-scoped-client.md) | Typed scoped client (consumed keys as args) | Accepted — extends 0005 | I1, I3 |
+| [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 | I3 |
+| [0027](0027-transport-neutral-contract-execution.md) | Transport-neutral contract execution (BYO transport) | Accepted — dispatcher portion superseded by 0028 | I1, I2 |
+| [0028](0028-revert-contract-dispatcher.md) | Revert `createContractDispatcher` (no adopting consumer) | Accepted — supersedes the dispatcher part of 0027 | I8 |
+| [0029](0029-audit-endpoint-identity-and-dimensions.md) | Endpoint identity + domain dimensions on the audit event | Accepted — extends 0012, 0021, 0022 | I13 |
+| [0030](0030-audit-verb-and-json-error-details.md) | Audit verb, sanitised error details, complete error-code logging | Accepted — extends 0029, 0026, 0022 | I13 |
+| [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 | I2 |
+| [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 | I6 |
+| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 | I2 |
+| [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Superseded by 0050 | superseded → 0050 |
+| [0035](0035-tool-name-derivation-and-validation.md) | Tool names: normalise the whole character class, assert at mount | Accepted — refines the tool pipeline of 0007 | I1 |
+| [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 | I1 |
+| [0037](0037-output-strip-diagnostics.md) | The output strip stays, and becomes visible on demand | Accepted — extends 0014 | I13 |
+| [0038](0038-raw-response-endpoints.md) | Raw-response endpoints — the handler owns the `Response` | Accepted — documented HTTP-only exception to 0027 | I2 |
+| [0039](0039-request-logging-reads-the-request-context.md) | Request logging reads the request context; `logging` becomes a config object | Accepted — connects 0012's logger to its context; upholds 0013, 0021 | I13 |
+| [0040](0040-the-log-format-is-chosen-not-guessed.md) | The log format is chosen (`logging.format`), not guessed from `NODE_ENV` | Accepted — repairs the delivery of 0039; upholds 0013 | I9 |
+| [0041](0041-tool-error-cause-is-observable.md) | The cause of a failed tool call is observable (`onToolError`) | Accepted — closes an HTTP/tool asymmetry in 0007/0014; extends 0012 | I2, I13 |
+| [0042](0042-the-audit-row-may-name-the-cause.md) | The audit row may name the cause, the caller may not | Accepted — completes 0041; makes 0030 true on the tool path | I13 |
+| [0043](0043-the-framework-records-the-failure.md) | The framework records the failure; the project overrides it | Accepted — applies 0042's rule to the HTTP path; extends 0012 | I13 |
+| [0044](0044-a-collided-field-keeps-its-type.md) | A collided field keeps its type (never `unknown` where a type is provable) | Accepted — narrows 0033's collision rule, keeps its invariant | I3 |
+| [0045](0045-a-tool-call-runs-in-its-own-context.md) | A tool call runs in its own request context | Accepted — scopes 0012's context; makes 0029's dimensions hold under concurrency | I2 |
+| [0046](0046-tool-hooks-take-options-objects.md) | Tool hooks take one options object | Accepted — makes future hook fields additive; refines 0041/0042 | I14 |
+| [0047](0047-one-mcp-schema-validation-profile.md) | One MCP schema validation profile | Accepted — validation and the advertised surface cannot drift | I2, I8 |
+| [0048](0048-framework-owned-native-mcp-registration.md) | Framework-owned native MCP registration | Superseded by 0057 | superseded → 0057 |
+| [0049](0049-stateless-mcp-http-is-the-default.md) | Stateless MCP HTTP is the default | Superseded by 0068 | superseded → 0068 |
+| [0050](0050-presentation-schema-is-not-a-parser.md) | The tool presentation schema is not a parser | Accepted — supersedes the executable-schema mechanism of 0031/0033/0034/0044 | I3 |
+| [0051](0051-signed-webhooks-retain-raw-json.md) | Signed HTTP webhooks retain raw JSON text on demand | Accepted — validated contracts no longer lose HMAC input | I12 |
+| [0052](0052-typed-json-response-metadata.md) | Typed JSON response metadata | Accepted — HTTP-only dynamic headers plus a declared success status without transferring `Response` ownership | I2 |
+| [0053](0053-explicit-contract-head.md) | HEAD is an explicit contract operation | Accepted — extends 0038 and 0023 | I1 |
+| [0054](0054-in-process-tool-invocation.md) | In-process tool calls use the canonical runner | Accepted — extends 0014 and 0045 | I2, I8 |
+| [0055](0055-runtime-tools-share-one-neutral-operation.md) | Runtime tools share one neutral operation | Accepted — extends 0014, 0045 and 0048 | I8 |
+| [0056](0056-entity-cache-shapes-are-declared.md) | Entity cache shapes are declared | Accepted — keeps the cache bridge generic and explicit | I4 |
+| [0057](0057-finite-prepared-mcp-surfaces.md) | Finite prepared MCP surfaces | Accepted — bounded descriptor preparation with fresh request state | I10 |
+| [0058](0058-zod-first-domain-error-definitions.md) | Zod-first domain error definitions | Extended by 0077 — Accepted — immutable status/schema registry and typed constructors | I3 |
+| [0059](0059-unified-tool-surface-introspection.md) | Unified tool-surface introspection | Accepted — one mixed contract/runtime collector for mounts and diagnostics | I8 |
+| [0060](0060-official-starter-composes-next-and-stitchkit.md) | Official starter composes Next.js with a separate Stitchkit backend | Accepted — one production-shaped scaffold without framework-owned frontend infrastructure | I5 |
+| [0061](0061-independent-starter-release-line.md) | Official starter advances independently from framework HEAD | Accepted — explicit catalog target, lockfile and separate release tags | P |
+| [0062](0062-explicit-tool-exposure-is-a-factory-policy.md) | Explicit tool exposure is an opt-in factory policy | Accepted — refines 0036 without contract-level inheritance | I1 |
+| [0063](0063-one-http-completion-many-observability-projections.md) | One HTTP completion feeds every observability projection | Accepted — supersedes the HTTP wrapper in 0012; refines 0039 | I8, I13 |
+| [0064](0064-runtime-tool-factories-validate-context-at-execution.md) | Runtime-tool factories validate context at execution | Accepted — extends 0055 without a parallel runner | I8 |
+| [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary | I3 |
+| [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — identity clause superseded by 0070 | P |
+| [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications | I11 |
+| [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies | I14 |
+| [0069](0069-realtime-contracts-validate-without-owning-delivery.md) | Realtime contracts validate without owning delivery | Accepted — extends 0008; 0020 remains orthogonal | I5 |
+| [0070](0070-scaffold-identity-is-derived.md) | Scaffold identity is derived from one config | Accepted — supersedes the identity clause of 0066; the file it names became the project declaration in 0104 | P |
+| [0071](0071-streaming-multipart-uses-a-fetch-clean-parser.md) | Streaming multipart uses a Fetch-clean sequential parser | Accepted — bounded direct-to-receiver delivery without runtime-specific streams | I6, I10 |
+| [0072](0072-http-authorization-precedes-payload-parsing.md) | HTTP authorization precedes payload parsing | Accepted — supersedes 0004 while retaining flat lifecycle hooks | I12 |
+| [0073](0073-client-request-options-are-not-callback-context.md) | Client request options are not callback context | Accepted — extends 0005, 0008 and 0025 | I3 |
+| [0074](0074-server-owned-managed-shutdown.md) | Server-owned managed shutdown | Accepted — extends 0008, 0013 and 0020; its signal clause superseded by 0076 | I10 |
+| [0075](0075-per-scope-handler-context.md) | Per-scope handler context (`createScopedImplement`) | Accepted — supersedes the deferred scope→context clause of 0024 | I3 |
+| [0076](0076-explicit-process-signal-binding.md) | Explicit process-signal binding (`bindProcessSignals`) | Accepted — supersedes the signal clause of 0074 | I9 |
+| [0077](0077-error-definition-carries-its-message.md) | An error definition carries its default message | Accepted — extends 0058 | I3 |
+| [0078](0078-scope-map-derived-from-the-auth-hook.md) | The scope map is derived from the auth hook | Accepted — extends 0075 | I8 |
+| [0079](0079-typed-handshake-identity-gate.md) | Typed handshake identity gate | Accepted | I12 |
+| [0080](0080-mcp-call-metadata-is-typed-context.md) | MCP call metadata is typed context | Accepted — extends 0003, 0045 and 0068 | I3 |
+| [0081](0081-generic-native-operations-use-managed-definitions.md) | Generic native operations use managed definitions | Accepted — extends 0019, 0055 and 0057 | I8 |
+| [0082](0082-view-file-has-one-managed-batch-operation.md) | `view_file` has one managed batch operation | Accepted — supersedes the raw-only view-file clause of 0081 | I8 |
+| [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059 | I1 |
+| [0084](0084-stdio-signals-are-close-only.md) | Stdio process signals are close-only | Accepted — extends 0076 without fake force semantics | I13 |
+| [0085](0085-auth-rules-may-contribute-context.md) | Auth rules may contribute typed context | Accepted — extends 0078 | I12 |
+| [0086](0086-lifecycle-composition-is-explicit.md) | Lifecycle composition is explicit and ordered | Accepted — refines 0072 | I9 |
+| [0087](0087-surface-conformance-is-a-manifest-plus-probes.md) | Surface conformance is a manifest plus explicit probes | Accepted — extends 0059 | I2 |
+| [0088](0088-managed-files-bind-one-root.md) | Managed files bind one application-owned root | Accepted — supersedes file-path mechanics of 0019/0081/0082 | I12 |
+| [0089](0089-async-operations-describe-transport-not-jobs.md) | Async operations describe transport, not jobs | Accepted — extends 0081 | I11 |
+| [0090](0090-remote-implementation-has-a-peer-free-entrypoint.md) | Remote implementation has a peer-free entrypoint | Accepted — narrows optional-peer ownership | I7 |
+| [0091](0091-realtime-request-is-a-typed-native-ack.md) | Realtime request is a typed native acknowledgement | Accepted — extends 0008 and 0069 | I5 |
+| [0092](0092-existing-realtime-transport-binding.md) | Realtime contracts may bind an existing transport | Accepted — extends 0008, 0069 and 0091 | I5 |
+| [0093](0093-transport-projected-and-realtime-conformance.md) | Surface manifests are transport projections and include realtime | Accepted — extends 0059, 0069 and 0087 | I2 |
+| [0094](0094-auth-hook-composition-is-owned-and-atomic.md) | Auth hook composition is owned and atomic | Accepted — extends 0085 and 0086 | I12 |
+| [0095](0095-async-operation-contract-factory-and-adapters.md) | Async-operation contracts have one factory and typed adapters | Accepted — extends 0089 | I11 |
+| [0096](0096-managed-file-boundary-owns-safe-read-semantics.md) | Managed file boundaries own safe read semantics | Accepted — extends 0088 | I12 |
+| [0097](0097-request-cancellation-is-an-opt-in-observability-outcome.md) | Request cancellation is an opt-in observability outcome | Accepted — extends 0063 and 0043 | I13 |
+| [0098](0098-optional-agent-application-runtime.md) | Agent conversations have one optional application runtime | Accepted — extends 0007, 0012, 0013, 0086, 0087 and narrows 0089 | I15 |
+| [0099](0099-starter-head-skips-require-versioned-review.md) | Starter HEAD skips require an exact-version deferred review | Accepted — refines 0061 | P |
+| [0100](0100-agent-store-reducer-owns-transitions.md) | The agent store reducer owns runtime transitions | Accepted — refines the persistence boundary of 0098 | I15 |
+| [0101](0101-normalized-agent-runtime-persistence.md) | Agent runtime persistence is bounded and normalized | Accepted — replaces the aggregate storage shape of 0100 while retaining reducer ownership | I10, I15 |
+| [0102](0102-managed-application-kernel.md) | Application composition is process-local and provider-neutral | Accepted — extends 0008, 0012, 0013, 0076, 0089 and 0098 | I11 |
+| [0103](0103-entrypoints-declare-their-maturity.md) | Every entrypoint declares how settled it is | Accepted — scopes 0098 and 0102; amended by 0198 (the level now carries a breaking budget for stable) | I14 |
+| [0104](0104-the-project-declaration-ships-from-the-framework.md) | The project declaration ships from the framework | Accepted — extends 0002 and 0103, and replaces the `app.config.json` of 0070 | I11 |
+| [0105](0105-the-error-code-map-is-partial-and-the-registry-is-complete.md) | The error-code map is partial, and the registry is complete | Accepted — supersedes the exhaustiveness clause of 0026 | I3 |
+| [0106](0106-a-refused-frame-answers-its-sender.md) | A refused realtime frame answers its sender | Accepted — refines the realtime rejection surface of 0008 and keeps identity out of the core per 0002 | I13 |
+| [0107](0107-a-rollback-spends-a-declared-budget.md) | A rollback spends a declared budget, and the budget is a bound | Accepted — completes the deadline model of 0102 for the rollback path | I10 |
+| [0108](0108-what-a-stopped-run-said-is-a-declared-policy.md) | What a stopped run already said is a declared policy, not a default | Accepted — the runtime cannot observe delivery, so the application declares it | I9 |
+| [0109](0109-a-spend-figure-never-claims-a-provenance-it-does-not-have.md) | A spend figure never claims a provenance it does not have | Accepted — keeps billing out of the core per 0002 while making what the core reports true | I4, I13 |
+| [0110](0110-a-reconciled-cost-belongs-to-the-application.md) | A reconciled cost belongs to the application, not to the core | Accepted — applies 0002 to the ledger question 0109 left open | I4 |
+| [0111](0111-the-driver-is-the-extension-point-and-the-runtime-is-not-stable-yet.md) | The driver is the extension point, and the agent runtime is not stable yet | Accepted — settles the promotion question 0103 opened, with named conditions | I14, I15 |
+| [0112](0112-a-run-is-read-without-its-conversation.md) | A run is read without its conversation, and history stays whole | Accepted — applies the bounded-read reasoning of 0101 to the conversation, and names the limit it does not lift | I10, I15 |
+| [0113](0113-an-absorbed-input-is-committed-with-the-answer.md) | An absorbed input is committed with the answer, never before it | Accepted — reinstates the `inject` policy withdrawn in 0.65.0, with the ordering that made it wrong corrected | I15 |
+| [0114](0114-the-graph-carries-values-not-only-order.md) | The resource graph carries values, not only order | Accepted — `dependsOn` expressed half the dependency; the other half lived in a module-local with an unreachable guard | I9 |
+| [0115](0115-a-managed-server-resource-owns-when-the-server-exists.md) | A managed server resource owns when the server exists | Accepted — a thunk is created in `start`, because calling it on the way down produced a healthy application with nothing listening | I9 |
+| [0116](0116-a-selected-unix-transport-never-becomes-tcp.md) | A selected Unix transport never becomes TCP | Accepted — explicit owned Bun/Node transport with bounded work and delivery state | I9 |
+| [0117](0117-contract-streams-own-validation-and-wire-termination.md) | Contract streams own validation and wire termination | Accepted — schema-derived bounded frames and explicit completion on the existing HTTP stream path | I2, I10 |
+| [0118](0118-operation-capacity-belongs-to-the-underlying-work.md) | Operation capacity belongs to the underlying work | Accepted — caller deadlines cannot release capacity still consumed by non-cooperative work | I10 |
+| [0119](0119-delivery-policy-is-ordered-or-replaceable.md) | Delivery policy is ordered or replaceable | Accepted — finite ordered retention and explicit latest-value coalescing are different contracts | I10 |
+| [0120](0120-published-declarations-follow-esm-resolution.md) | Published declarations follow ESM resolution | Accepted — explicit JavaScript targets and a peer-free packed NodeNext root | I6 |
+| [0121](0121-managed-server-factories-receive-resource-context.md) | Managed server factories receive resource context | Accepted — declared values and the startup signal reach server construction without an outer handoff | I11 |
+| [0122](0122-optional-peer-surfaces-are-proven-from-artifacts.md) | Optional-peer surfaces are proven from artifacts | Accepted — peer-free invocation and warning-free injected Socket.IO loading are packed-consumer guarantees | I7 |
+| [0123](0123-agent-terminal-output-and-tool-rounds.md) | Terminal output is accepted before commit and tool rounds keep causal order | Accepted — protocol policy owns completion validity; projection owns persisted execution order | I15 |
+| [0124](0124-entity-cache-membership-and-total-policy.md) | Entity cache membership and total deltas are declared per query | Accepted — filtered membership and pagination evidence are explicit without a consumer mutation engine | I4 |
+| [0125](0125-streaming-bodies-bound-retained-bytes-not-lifetime-traffic.md) | Streaming bodies bound retained bytes, not lifetime traffic | Accepted — unary totals remain finite while an explicit pull-driven stream has no cumulative lifetime cap | I10 |
+| [0126](0126-schema-owned-stream-frames-end-at-the-terminal-item.md) | Schema-owned stream frames end at the terminal item | Accepted — opt-in unwrapped NDJSON retains bounded parsing and completion proof without a second envelope | I10 |
+| [0127](0127-interrupt-priority-is-durable-execution-order.md) | Interrupt priority is durable execution order | Accepted — urgent input runs next without deleting ordinary queued work, and recovery preserves the same order | I15 |
+| [0128](0128-sqlite-runtime-store-is-a-leaf-adapter.md) | SQLite runtime storage is a leaf adapter | Accepted — one normalized mapping behind isolated Bun and Node built-in bindings | I7, I15 |
+| [0129](0129-deferred-agent-tools-are-durable-direct-activation.md) | Deferred Agent tools are durable direct activation | Accepted — bounded search receipts activate real mounted tools per durable run without a gateway | I15 |
+| [0130](0130-headless-harness-composes-the-agent-runtime.md) | A headless harness composes the Agent runtime | Accepted — publishes resource-aware composition and isolated direct coding tools without owning supervision or a second loop | I8, I15 |
+| [0131](0131-harness-leaves-preserve-canonical-agent-identity.md) | Harness leaves preserve canonical Agent identity | Accepted — lazy resources, signed approval continuations, reconnectable views and coding artifacts retain direct operations and one history | I15 |
+| [0132](0132-agent-tui-is-an-explicit-starter-profile.md) | Agent TUI is an explicit starter profile | Superseded by 0133 — the explicit profile remains, but its reusable product mechanics moved out of copied starter source | superseded → 0133 |
+| [0133](0133-agent-tui-is-an-optional-package-over-one-controller.md) | Agent TUI is an optional package over one controller | Accepted — reusable terminal mechanics stay outside core and local attachment enters the host's only controller | I7 |
+| [0134](0134-diagnostic-journal-is-bounded-local-evidence.md) | Diagnostic journal is bounded local evidence | Accepted — one finite FIFO local writer without durable-delivery claims or a second observability framework | I10, I13 |
+| [0135](0135-contained-files-use-native-darwin-capabilities.md) | Contained files use native Darwin directory capabilities | Accepted — packaged openat leaf, one JS policy and real macOS artifact proof | I12 |
+| [0136](0136-one-exact-tree-drives-a-package-aware-release-train.md) | One exact tree drives a package-aware release train | Accepted — one manifest, one exact-SHA CI and target-aware evidence lanes for every selected package | P |
+| [0137](0137-live-state-opens-one-continuous-source-generation.md) | Live state opens one continuous source generation | Accepted — browser-safe bounded snapshot/event synchronization without owning transport retry, cursors or storage | I4, I10 |
+| [0138](0138-conversation-purge-reserves-identity-atomically.md) | Conversation purge reserves identity atomically | Accepted — optional atomic payload deletion with active-run refusal and permanent ID fencing | I15 |
+| [0139](0139-a-coding-tool-refusal-is-something-a-model-can-act-on.md) | A coding-tool refusal is something a model can act on | Accepted — ordinary outcomes become typed; host causes stay scrubbed, and `edit_file` replaces `apply_patch` | I13 |
+| [0140](0140-the-runtime-tells-a-step-how-full-the-context-is.md) | The runtime tells a step how full the context is | Accepted — the last step's prompt size with provenance, never the cumulative total | I13 |
+| [0141](0141-a-provider-refusal-is-classified-not-phrased.md) | A provider refusal is classified, not phrased | Accepted — the core names the failure and its evidence; the wording stays with the application | I4 |
+| [0142](0142-a-primitive-leaves-the-runtime-when-nothing-in-it-needs-the-runtime.md) | A primitive leaves the runtime when nothing in it needs the runtime | Accepted — three conditions decide what is published, and two named refusals prove they can fail | I14, I15 |
+| [0143](0143-telegram-platform-primitives-need-no-bot-library.md) | Telegram platform primitives need no bot library | Accepted — `stitchkit/telegram` holds Mini App verification and Bot API failure classification, peer-free and server-only | I7 |
+| [0144](0144-generic-application-primitives-declare-facts-not-infrastructure.md) | Generic application primitives declare facts, not infrastructure | Accepted — one browser-safe declaration leaf with application-owned persistence and execution | I11 |
+| [0145](0145-a-reclaimed-lock-is-proven-never-assumed.md) | A reclaimed lock is proven, never assumed | Accepted — liveness proof reclaims an abandoned journal lock; no age or heartbeat variant is offered | I13 |
+| [0146](0146-a-scanning-gate-asserts-what-it-scanned.md) | A scanning gate asserts what it scanned | Accepted — a test that discovers its inputs states the size of the set before calling it clean | P |
+| [0147](0147-machine-identity-not-host-name-decides-whose-pid-this-is.md) | Machine identity, not host name, decides whose pid this is | Accepted — refines 0145: a renamed machine reclaims its own lock, and a refusal says which refusal it is | I13 |
+| [0148](0148-a-refusal-that-never-left-the-process-is-a-validation-error.md) | A refusal that never left the process is a `VALIDATION_ERROR` with status 0 | Accepted — one shape and one timing for every local refusal, and argument validation stays on the server | I2 |
+| [0149](0149-a-zombie-owner-is-gone-and-it-is-the-safer-half-of-gone.md) | A zombie owner is gone, and it is the safer half of gone | Accepted — refines 0147: a signal probe reports a table entry, and an unreaped pid cannot have been reused | I13 |
+| [0150](0150-an-event-declaration-projects-onto-the-socket-we-already-run.md) | An event declaration projects onto the socket we already run | Accepted — `defineEvents` declares topics and delivery modes; the wire stays the existing realtime contract, and ADR 0008 is not reopened | I1, I5 |
+| [0151](0151-a-trust-fence-names-its-lanes-because-one-of-them-bypasses-hooks.md) | A trust fence names its lanes, because one of them bypasses hooks entirely | Accepted — authority comparison at `onRequest` and at `allowRequest`; the socket lane never reaches the hooks on either runtime | I12 |
+| [0152](0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md) | A keyspace is memory that nothing reaches before it is durable | Accepted — backend, then memory, then the change event; opened as a managed resource because the kernel cannot register one later | I13 |
+| [0153](0153-a-watched-read-is-one-read-per-question.md) | A watched read is one read per question, and the question is not a function | Accepted — single-flight per key is the ordering guarantee, and the client is built from the contract because a method carries no identity | I1 |
+| [0154](0154-the-unit-of-a-restart-is-the-subtree.md) | The unit of a restart is the subtree, not the resource | Accepted — a dependant left running holds a handle to a closed generation, so the transitive dependants go down with it and the process epoch stays | I11 |
+| [0155](0155-one-decision-vocabulary-and-an-unanswered-question-is-an-error.md) | One decision vocabulary, and an unanswered question is an error | Accepted — `PolicyDecision` is shared by events and the pipeline; every policy deferring raises rather than defaulting either way | I8, I9 |
+| [0156](0156-a-schema-a-browser-cannot-import-is-not-a-contract.md) | A schema a browser cannot import is not a contract | Accepted, partly corrected by 0157 — the schemas got their own entrypoint and the gate refuses an unreachable one; the claim that `./application` could not be browser-safe was wrong | I7 |
+| [0157](0157-a-restartable-resource-begins-a-generation.md) | A resource that can be restarted is a resource that can begin a generation | Accepted — `start` begins a generation, the result agrees with the snapshot, and the close phase is bounded like every other way down | I11 |
+| [0158](0158-a-gate-that-does-not-run-the-code-is-a-proxy.md) | A gate that does not run the code is measuring a proxy | Accepted — every promised browser entry is bundled and executed, after six of them killed the page while passing every static check | P |
+| [0159](0159-a-replacement-says-so-and-a-teardown-is-announced.md) | A replacement says so, and a teardown is announced | Accepted — the snapshot names the subtree being replaced, and a closing watch hub tells its subscribers instead of dropping them | I13 |
+| [0160](0160-one-declaration-of-which-entrypoints-a-browser-may-import.md) | One declaration of which entrypoints a browser may import | Accepted — one manifest, one build pass, and the guide and consumer lane asserted against it | I7 |
+| [0161](0161-a-gate-that-knows-one-error-is-blind-to-the-rest.md) | A gate that recognises one error is blind to every other | Accepted — the consumer lane's declaration check subtracts what is accepted and fails on the rest, after printing five `TS2344` errors for two releases and discarding them | P |
+| [0162](0162-a-gate-that-reddens-from-load-teaches-you-to-disbelieve-red.md) | A gate that reddens from load teaches you to disbelieve red | Accepted — heavy-lane concurrency is measured from available memory and reported, and a failing lane names itself before its siblings are cancelled | P |
+| [0163](0163-a-revision-signal-broadcasts-a-fact-not-an-item.md) | A revision signal broadcasts a fact, not an item | Accepted — cursor-safe change waits are finite, broadcast and lifecycle-complete without becoming a queue or a second managed resource | I10 |
+| [0164](0164-a-local-gate-refuses-ci-only-reports.md) | A local gate refuses; CI only reports | Accepted — the publication-privacy scan runs on every push outside the memo, after a memo key that could not describe its input let a real machine path reach a public repository | P |
+| [0165](0165-a-safelisted-body-is-accepted-only-from-an-allowed-origin.md) | A safelisted body is accepted only from an allowed origin | Accepted — a `POST` may opt into a `text/plain` JSON body for page-unload beacons, and the server honours it only for an `Origin` on its explicit CORS allow-list; `'*'`, `null` and an absent header are refused before parsing | I12 |
+| [0166](0166-tracking-mechanics-in-core-storage-and-domain-outside.md) | Tracking mechanics live in core; storage and domain stay outside | Accepted — `stitchkit/tracking` owns the outbox, the beacon, visible time, clicks and attribution behind a host interface, `stitchkit/tracking/server` owns dispositions and the visit-lease algorithm over an application-implemented store; tables, transactions, event types and reports remain the application's | I4 |
+| [0167](0167-a-page-follows-the-release-it-was-built-for.md) | A page follows the release it was built for | Accepted — the server names the current build on every response and socket connection, the browser compares it to its own build id and reloads under a declared policy; the build-id source and the deploy signal stay with the application | I11 |
+| [0168](0168-path-literals-materialize-string-params.md) | Path literals materialize string params | Accepted — one canonical parser drives runtime validation, types and every generated projection; explicit schemas refine but must cover the path | I1, I3 |
+| [0169](0169-durable-runtime-facts-use-one-atomic-state-boundary.md) | Durable runtime facts use one atomic state boundary | Accepted — lifecycle facts and at-least-once notifications share async atomic updates while rendering and transport remain application-owned | I15 |
+| [0170](0170-new-mechanics-compose-existing-owners.md) | New mechanics compose existing owners | Accepted — socket membership, error maps and log bounds extend existing auth, error and sanitizer paths; duplicate DSL/plugin/name surfaces are rejected | I8 |
+| [0171](0171-geoip-swaps-complete-reader-generations.md) | GeoIP swaps complete reader generations | Accepted — City and optional ASN swap together, in-flight reads drain and failed reloads retain the last known good reader | I13 |
+| [0172](0172-a-path-policy-runs-before-discovery-or-reading.md) | A path policy runs before discovery or reading | Accepted — one host path decision gates direct file effects and filters discovery before any selected content is opened | I12 |
+| [0173](0173-a-read-snapshot-does-not-reserve-the-wal-writer.md) | A read snapshot does not reserve the WAL writer | Accepted — one transaction access hint preserves adapter compatibility while SQLite reads use `BEGIN` and mutations retain `BEGIN IMMEDIATE` | I15 |
+| [0174](0174-runtime-operations-are-durable-run-facts.md) | Runtime operations are durable run facts | Accepted — model requests and compaction update one revision-checked run projection before provider work | I15 |
+| [0175](0175-the-event-ledger-is-the-agent-runtime-source-of-truth.md) | The event ledger is the agent runtime source of truth | Accepted — one append-only conversation sequence owns replay while normalized tables and checkpoints remain bounded views | I15 |
+| [0176](0176-tool-slots-replace-and-disable-by-name.md) | Tool slots replace and disable by name, and an unknown name refuses | Accepted — `defineToolRegistry` composes one declared default set; `replace`/`disable` address it and a name outside it is a build error | I9 |
+| [0177](0177-an-approval-response-is-authorized-separately.md) | An approval response is authorized separately from the approval request | Accepted — `authorizeApprovalResponse` judges the responder; a refusal is a durable event and leaves the request pending for a valid responder | I12 |
+| [0178](0178-instructions-carry-a-role.md) | Instructions carry a role, and user-role instructions are durable history | Accepted — system text stays outside history and is rebuilt per call; user text is seeded once as an ordinary durable message; no `step.started` resolver | I15 |
+| [0179](0179-the-parent-owns-a-childs-blocking-events.md) | The parent owns a child's blocking events | Accepted — a child result settles a parent call by the running handle's callId, and the parent alone presents and routes the child's approval or input request | I15 |
+| [0180](0180-external-connections-are-a-separate-tools-subexport.md) | External MCP and OpenAPI connections are a separate tools subexport | Accepted — `stitchkit/tools/connections` consumes external servers with a narrow SSE fallback, typed `401` reauthorization and a non-durable principal-scoped token | I7 |
+| [0181](0181-a-sandbox-backend-is-an-optional-two-phase-contract.md) | A sandbox backend is an optional two-phase contract with an explicit network policy | Accepted — opt-in Linux Bubblewrap `prewarm`/`create`, durable workspace reconnect, and an exact-origin HTTP gateway that injects headers on the host | I7, I12 |
+| [0182](0182-a-durability-port-exposes-step-sleep-and-wait.md) | A durability port exposes step, sleep and wait over the store | Accepted — runtime-tool bodies checkpoint memoized steps and park on time or an event through a swappable port over our store; no workflow SDK | I15 |
+| [0183](0183-a-watched-value-may-cross-as-a-difference.md) | A watched value may cross as a difference to a revision the subscriber holds | Accepted — `full`/`delta`/`unchanged` chosen per subscriber, fingerprint-checked reassembly, per-key resync, and never sent when it is not smaller | I10 |
+| [0184](0184-audit-machinery-not-audit-policy.md) | The audit layer ships the filter and the spool, and stays optional | Accepted — `auditChanges` and `createSpooledSink` become machinery; audit on by default was rejected on a re-measurement that found absent surfaces, not forgetting | I4 |
+| [0185](0185-a-served-schema-speaks-the-dialect-it-is-stamped-with.md) | A served schema speaks the dialect it is stamped with | Accepted — MCP metadata moves to `$defs`, definitions hoist to the document root, the client refuses to believe a contradicted stamp, and one unconvertible tool no longer takes the connection down | I13 |
+| [0186](0186-the-cli-owns-its-own-distribution.md) | The CLI surface owns aggregates, profiles and its own distribution | Accepted — `--count-by`/`--sum`/`--top`/`--table`, never-substituted named profiles, a manifest-generated installer with a decompressed-bytes digest, and `transports` opt-in for discovered tools | I1 |
+| [0187](0187-the-framework-hands-over-what-it-already-knows.md) | The framework hands over what it already knows | Accepted — `beforeToolCall` may rewrite arguments, the refusal carries `retryable`, `toolCallId` travels as call context, the tools layer owns a durability port, and an unimplemented endpoint can be a `501` stub on a dev stand | I2 |
+| [0188](0188-collecting-the-truth-is-not-presenting-it.md) | Collecting the truth is not presenting it | Accepted — a union branch is described by the deepest field it reached, the summary keeps the branches that got furthest, the text projection drops repeated paths, and the expansion limit no longer silences the wording | I13 |
+| [0189](0189-the-framework-reports-nothing-on-its-own.md) | The framework reports nothing on its own | Accepted — `ctx.reportProgress` on every tool call, a no-op where nobody listens, the ordinal instead of a synthesised percentage, and `mountWait` as the one relay | I13 |
+| [0190](0190-a-question-plan-is-signed-like-everything-else.md) | A question plan is part of the state it is asked in | Accepted — `inputRequired` may be a function of the parsed call; the resolved plan is fingerprinted into the signed state, and the guard runs before the resolver | I12 |
+| [0191](0191-a-unit-of-work-is-not-a-request.md) | A unit of work is not a request, and must not have to pretend | Accepted — `kind`/`name`, optional `method`/`path`/`statusCode`, `runUnitOfWork`; dropping one fabricated transport field while keeping another is the same defect | I13 |
+| [0192](0192-a-cli-namespace-belongs-to-the-application.md) | Running a parsed call, without owning the application's namespace | Accepted — `createCliInvoker`, stream and batch as factories rather than reserved names, and a checkpoint that records successes only | I4 |
+| [0193](0193-an-unchecked-signature-must-be-visible.md) | An unchecked signature must be visible | Accepted — Ed25519 over everything that acts before the digest, five verdicts including `unenforced`, and the channel deliberately left out of the framework | I12 |
+| [0194](0194-printing-is-the-exclusion-not-being-native.md) | Printing is the exclusion, not being native | Accepted — the invoker admits a native command iff it declares `output`; amends the criterion 0192 stated in its Consequences | I1 |
+| [0195](0195-a-declaration-the-host-can-see-belongs-in-the-snapshot.md) | A declaration the host can see belongs in the snapshot | Accepted — an operation row carries its declared rounds or the `resolved-per-call` marker; `manifestVersion` is 3 | I2 |
+| [0196](0196-a-tool-answer-is-a-declared-view.md) | A tool answer is a declared view of the HTTP answer | Accepted — `withToolView`: input `defaults` before the one parse, a projected and separately validated answer on MCP / AGENT / CLI; HTTP and the invoker keep the full one; tool options become one `tool` group (`name`, `view`, `ui`, `annotations`, `mcp`) | I1 |
+| [0197](0197-the-agent-runtime-is-a-product-behind-a-one-way-boundary.md) | The agent runtime is a product behind a one-way boundary | Accepted — stays in the package; the core never imports `agent-runtime/` (gated); durability moved to a neutral part; physical split has a named trigger | I15 |
+| [0198](0198-stable-is-earned-and-kept-on-a-budget.md) | Stable is earned, and kept on a budget | Accepted — amends 0103 ("the level changes no versioning policy"): promotion needs two independent consumers, a stable entrypoint breaks in at most one minor per 7 days with an ADR, every breaking entry leads with its entrypoints; from 0.94.0 | I14 |
+| [0199](0199-one-owner-per-name-and-one-way-per-job.md) | One owner per name, one way per job: the 0.94 consolidation | Accepted — duplicate public names moved to their owners, one canonical JSON, one MCP registration, one tool transport type, a public-surface budget, a declared import graph | I8 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
 later ADR, kept for history · _Rejected_ — considered, deliberately not done.
+
+**Invariant:** every row carries exactly one of — the id(s) of the invariant it
+serves in [`PRINCIPLES.md`](../PRINCIPLES.md) (`I1`…`I15`); `P` for a practice or
+an incident record (release, gates, the starter's own line); or
+`superseded → NNNN` when the whole record was replaced. A record whose single
+clause was superseded keeps the invariant its remaining decision serves.
+Seven records are superseded whole (0004, 0009, 0015, 0034, 0048, 0049, 0132);
+0132's own status line still reads `accepted` and 0133 records the replacement.
+`scripts/decisions-index.test.ts` refuses a row without the column or with an
+id `PRINCIPLES.md` does not declare.

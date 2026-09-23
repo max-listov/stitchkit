@@ -19,9 +19,9 @@ Unlike MCP and agent — where an endpoint with no `expose` is a tool by default
 the CLI never silently turns your existing API tools into shell commands.
 
 ```ts
-{ method: 'POST', path: '/', desc: 'Generate media', toolName: 'generate',
+{ method: 'POST', path: '/', desc: 'Generate media', tool: { name: 'generate' },
   expose: ['CLI', 'MCP', 'AGENT'], input: GenerateInput, output: Generation }   // CLI + MCP + agent
-{ method: 'GET', path: '/models', desc: 'List models', toolName: 'list_models',
+{ method: 'GET', path: '/models', desc: 'List models', tool: { name: 'list_models' },
   expose: ['CLI'] }                                                             // CLI only
 { method: 'GET', path: '/search', desc: 'Search' }                              // HTTP + MCP + AGENT — NOT CLI
 ```
@@ -29,7 +29,7 @@ the CLI never silently turns your existing API tools into shell commands.
 A fresh contract shows **zero** CLI commands until methods opt in — that is the
 design, not a bug. A pathless runtime definition follows the same rule: it must
 explicitly include `'CLI'` in `transports`; the undefined default remains
-`['MCP', 'AGENT']`. The command name is the tool name — `toolName` if set, else
+`['MCP', 'AGENT']`. The command name is the tool name — `tool.name` if set, else
 a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
 `get_widget`), not a literal `prefix_key`.
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createAgentToolFenceLifecycle } from '../src/agent-runtime';
-import { ToolExecutionControlError } from '../src/tools';
+import { createAgentToolFenceLifecycle } from '../src/entrypoints/agent-runtime';
+import { ToolExecutionControlError } from '../src/entrypoints/tools';
 
 describe('managed agent tool fence', () => {
   test('uses an internal control outcome before a stale tool effect', async () => {

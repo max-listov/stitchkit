@@ -3,9 +3,9 @@
  * feeds an optional metrics sink, keyed by the endpoint's identity.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { wrapInRequestContext } from '../src/observability';
-import type { MethodDef } from '../src/server';
-import { createToolLogger, type ToolCallRecord } from '../src/tools';
+import { wrapInRequestContext } from '../src/entrypoints/observability';
+import type { MethodDef } from '../src/entrypoints/server';
+import { createToolLogger, type ToolCallRecord } from '../src/entrypoints/tools';
 
 // A minimal MethodDef — the logger only reads `serviceName` / `key`.
 const endpoint: MethodDef = {

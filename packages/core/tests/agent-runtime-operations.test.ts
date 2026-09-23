@@ -6,6 +6,7 @@ import { setImmediate } from 'node:timers/promises';
 import { type LanguageModel, simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV3, MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentCompactionResult,
   type AgentRuntimeEvent,
@@ -14,13 +15,12 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 import {
   AgentControlDeliverySchema,
   createAgentControlView,
   reduceAgentControlEvent,
-} from '../src/agent-runtime-browser';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
+} from '../src/entrypoints/agent-runtime/browser';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

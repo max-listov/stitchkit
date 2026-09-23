@@ -10,9 +10,9 @@ import {
   ManagedFileError,
 } from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
-import { defineViewFileTool } from '../src/tools/define-view-file-tool';
-import { buildMcpServer } from '../src/tools/mcp';
-import { mountViewFile, runViewFileOperation } from '../src/tools/view-file';
+import { buildMcpServer } from '../src/tools/mcp/mount';
+import { defineViewFileTool } from '../src/tools/transfer/define-view-file-tool';
+import { mountViewFile, runViewFileOperation } from '../src/tools/transfer/view-file';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

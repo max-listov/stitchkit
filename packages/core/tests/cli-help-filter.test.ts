@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
-import { createCli } from '../src/tools/cli';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
+import { createCli } from '../src/tools/cli/create-cli';
 
 /**
  * A large surface. On a discovered CLI this is 205 commands and 230 lines, at
@@ -16,23 +16,23 @@ const contract = defineContract(
       method: 'POST',
       path: '/broadcast',
       desc: 'Send a broadcast to every subscriber',
-      toolName: 'broadcast_send',
       expose: ['CLI'],
       input: z.object({ text: z.string() }),
+      tool: { name: 'broadcast_send' },
     },
     cancelBroadcast: {
       method: 'POST',
       path: '/broadcast/cancel',
       desc: 'Stop a running broadcast',
-      toolName: 'broadcast_cancel',
       expose: ['CLI'],
+      tool: { name: 'broadcast_cancel' },
     },
     listItems: {
       method: 'GET',
       path: '/items',
       desc: 'List every item',
-      toolName: 'item_list',
       expose: ['CLI'],
+      tool: { name: 'item_list' },
     },
     announce: {
       method: 'POST',
@@ -40,8 +40,8 @@ const contract = defineContract(
       // The word lives in the sentence, not in the name — which is the usual
       // case for the word a reader actually knows.
       desc: 'Publish an announcement as a broadcast',
-      toolName: 'announce_publish',
       expose: ['CLI'],
+      tool: { name: 'announce_publish' },
     },
   },
 );

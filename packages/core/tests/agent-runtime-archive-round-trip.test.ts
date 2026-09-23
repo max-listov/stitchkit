@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentMessageSchema, AgentRunSchema } from '../src/agent-runtime';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import type { AgentRuntimeStore } from '../src/agent-runtime/store';
-import { createMemoryAgentRuntimeStore } from '../src/agent-runtime/store-driver';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
+import { createMemoryAgentRuntimeStore } from '../src/agent-runtime/store-memory';
+import { AgentMessageSchema, AgentRunSchema } from '../src/entrypoints/agent-runtime';
 
 const paths: string[] = [];
 

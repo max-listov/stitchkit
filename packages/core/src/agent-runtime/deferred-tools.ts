@@ -1,7 +1,7 @@
 import type { ToolCallRepairFunction, ToolSet } from 'ai';
-import { executableAgentRuntimeTools } from '../internal/typed';
 import { mountAgent } from '../tools/agent';
 import { buildToolManifest } from '../tools/manifest';
+import { executableAgentRuntimeTools } from '../tools/runtime-tool';
 import { AgentContextOverflowError } from './context-refusal';
 import { createDeferredSearchTool, placeholderDeferredSearch } from './deferred-tool-search';
 import {

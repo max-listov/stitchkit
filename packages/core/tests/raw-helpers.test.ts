@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { AppError, badRequest } from '../src/contract';
+import { AppError, badRequest } from '../src/entrypoints/contract';
 import { runWithRequestContext } from '../src/observability/context';
 import { createTraceContext } from '../src/observability/trace';
 import { errorResponse, parseBody, respondJson } from '../src/server/raw';

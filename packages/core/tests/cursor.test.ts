@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { decodeCursor, encodeCursor } from '../src/contract';
+import { decodeCursor, encodeCursor } from '../src/entrypoints/contract';
 
 const Cursor = z.object({ v: z.union([z.string(), z.number()]), id: z.string() });
 

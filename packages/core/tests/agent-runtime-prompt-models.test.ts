@@ -6,7 +6,7 @@ import {
   defineModelRegistry,
   selectAgentHistory,
   validateAgentModelSnapshot,
-} from '../src/agent-runtime';
+} from '../src/entrypoints/agent-runtime';
 
 describe('agent prompt and model policy', () => {
   test('reservation overflow is irreducible even with empty history', async () => {

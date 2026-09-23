@@ -2,17 +2,17 @@ import { describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { AppError } from '../src/contract';
-import { isRecord } from '../src/internal/typed';
+import { AppError } from '../src/entrypoints/contract';
 import {
   createObservability,
   createTraceContext,
   type RequestEvent,
   runWithRequestContext,
   setRequestDimensions,
-} from '../src/observability';
-import { buildMcpServer } from '../src/tools/mcp';
-import { createMcpHandler } from '../src/tools/mcp-handler';
+} from '../src/entrypoints/observability';
+import { isRecord } from '../src/internal/typed';
+import { createMcpHandler } from '../src/tools/mcp/handler';
+import { buildMcpServer } from '../src/tools/mcp/mount';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 async function connect(server: McpServer): Promise<Client> {
@@ -63,6 +63,8 @@ function listedToolNames(body: unknown): string[] {
     isRecord(tool) && typeof tool.name === 'string' ? [tool.name] : [],
   );
 }
+
+const ROUND_KEY = '0123456789abcdef0123456789abcdef';
 
 const transportProbe = defineRuntimeTool({
   name: 'transport_probe',
@@ -166,6 +168,46 @@ describe('framework-owned native MCP registration', () => {
     expect(response.isError).toBe(true);
     expect(observedErrors).toEqual([presenterError]);
     expect(completed).toEqual([false]);
+    await client.close();
+  });
+
+  test('a failure outside the handler is a tool error, not a raw exception', async () => {
+    // Since 0.94.0 the runtime path shares the contract path's registrar, so a
+    // throw before the tool runs — here in the input-round resolver — answers
+    // `isError` with the framework's code, as a contract endpoint always did.
+    const server = buildMcpServer(
+      {
+        serverInfo: { name: 'native', version: '1' },
+        services: [],
+        multiRound: { state: { key: ROUND_KEY, principal: () => 'alpha' } },
+        runtimeTools: [
+          defineRuntimeTool({
+            name: 'broken_round',
+            description: 'Round resolver failure fixture',
+            identity: { serviceName: 'rounds', action: 'broken', method: 'POST' },
+            input: z.object({}),
+            mcp: {
+              inputRequired: () => {
+                throw new Error('round resolver unavailable');
+              },
+            },
+            handler: () => undefined,
+          }),
+        ],
+      },
+      undefined,
+    );
+    const client = await connect(server);
+    const originalError = console.error;
+    console.error = () => undefined;
+    let response: Awaited<ReturnType<typeof client.callTool>>;
+    try {
+      response = await client.callTool({ name: 'broken_round', arguments: {} });
+    } finally {
+      console.error = originalError;
+    }
+    expect(response.isError).toBe(true);
+    expect(JSON.stringify(response.content)).toContain('INTERNAL_SERVER_ERROR');
     await client.close();
   });
 

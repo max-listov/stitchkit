@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { streamText } from 'ai';
-import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime-openrouter';
+import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime/openrouter';
 
 async function readStep(details?: number, omitUsage = false) {
   const usage = {

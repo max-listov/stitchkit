@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import {
   buildToolManifest,
   defineRuntimeTool,
   listToolNames,
   summarizeTransports,
-} from '../src/tools';
+} from '../src/entrypoints/tools';
 import { runtimeToolMountable } from '../src/tools/runtime-tool';
 
 const contract = defineContract(
@@ -17,8 +17,8 @@ const contract = defineContract(
       method: 'GET',
       path: '/',
       desc: 'List catalog entries',
-      toolName: 'list_catalog',
       output: z.array(z.string()),
+      tool: { name: 'list_catalog' },
     },
   },
 );

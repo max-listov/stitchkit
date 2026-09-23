@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { unknownUsage } from '../src/agent-runtime/runtime-internals';
 import {
   AgentRunEventSchema,
   AgentRunTerminalEventSchema,
   AgentStepFinishedEventSchema,
   createAgentObservability,
-} from '../src/agent-runtime';
-import { unknownUsage } from '../src/agent-runtime/runtime-internals';
+} from '../src/entrypoints/agent-runtime';
 
 describe('agent observability', () => {
   test('isolates a failing operator sink from runtime callers', async () => {

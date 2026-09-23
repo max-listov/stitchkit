@@ -13,7 +13,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import {
   createObservability,
   getRequestContext,
@@ -22,10 +22,10 @@ import {
   setRequestDimensions,
   setRequestError,
   setRequestUser,
-} from '../src/observability';
+} from '../src/entrypoints/observability';
+import { createHandler, implement } from '../src/entrypoints/server';
+import type { ToolLifecycle } from '../src/entrypoints/tools';
 import { childSpan } from '../src/observability/trace';
-import { createHandler, implement } from '../src/server';
-import type { ToolLifecycle } from '../src/tools';
 import { mountAgent } from '../src/tools/agent';
 
 const contract = defineContract(
@@ -38,7 +38,7 @@ const contract = defineContract(
       input: z.object({ id: z.string() }),
       output: z.object({ ok: z.boolean() }),
       expose: ['AGENT'],
-      toolName: 'widget_touch',
+      tool: { name: 'widget_touch' },
     },
   },
 );

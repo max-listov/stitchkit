@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { createAgentSessionCoordinator } from '../src/agent-runtime';
-import { createAgentRaceDriver, createAgentRaceTrace } from '../src/testing';
+import { createAgentSessionCoordinator } from '../src/entrypoints/agent-runtime';
+import {
+  createAgentRaceDriver,
+  createAgentRaceTrace,
+} from '../src/entrypoints/agent-runtime/testing';
 
 describe('deterministic agent race harness', () => {
   test('proves abort request, actual settlement and successor admission order', async () => {

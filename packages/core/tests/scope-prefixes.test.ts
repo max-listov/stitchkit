@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createServer, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 
 // A tenant-scoped contract and a public one — scope drives where each mounts.
 const widgets = defineContract(

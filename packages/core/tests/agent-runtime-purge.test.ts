@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   AgentConversationPurgedError,
   AgentMessageSchema,
   createMemoryAgentRuntimeStore,
   purgeAgentConversation,
-} from '../src/agent-runtime';
-import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime-sqlite-bun';
+} from '../src/entrypoints/agent-runtime';
 import {
   beginPurgeFixture,
   completePurgeFixture,

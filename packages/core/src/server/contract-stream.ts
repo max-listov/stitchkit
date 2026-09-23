@@ -1,9 +1,7 @@
-import {
-  AppError,
-  DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
-  type EndpointStreamDescriptor,
-} from '../contract';
-import { normalizeError } from '../internal/errors';
+import type { EndpointStreamDescriptor } from '../contract/define';
+import { AppError } from '../contract/errors';
+import { normalizeError } from '../contract/normalize';
+import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
 import {
   isStreamCancellation,
   ownHttpStream,

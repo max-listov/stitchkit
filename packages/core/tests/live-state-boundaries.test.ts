@@ -6,7 +6,7 @@ import {
   type LiveStateEventDecision,
   type LiveStateSource,
   parseNDJSON,
-} from '../src';
+} from '../src/entrypoints';
 import { defineRealtimeContract } from '../src/realtime';
 import { createServer } from '../src/server/bun';
 import { bindRealtimeServer } from '../src/server/realtime';

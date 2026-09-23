@@ -1,6 +1,6 @@
 import type { z } from 'zod';
-import { zodIssues } from '../internal/errors';
-import type { StitchLogger } from '../logger';
+import type { StitchLogger } from '../internal/logger';
+import { zodIssues } from '../internal/zod-issues';
 import type {
   RealtimeEmitArguments,
   RealtimeEventDefinition,

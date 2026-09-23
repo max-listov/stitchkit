@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createWatchHub, type WatchSubscriber, watchKey } from '../src/application/watch-hub';
 import { createRealtimeClient } from '../src/browser/socket-io';
-import { defineContract } from '../src/contract';
+import { defineContract } from '../src/entrypoints/contract';
 import { argumentsDigest } from '../src/internal/stable-digest';
 import { createWatchClient, watchTransport } from '../src/live/watch-client';
 import {

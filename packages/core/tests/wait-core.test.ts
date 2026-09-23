@@ -6,7 +6,7 @@
  * never waits real time.
  */
 import { describe, expect, test } from 'bun:test';
-import { pollUntil } from '../src/tools/wait-core';
+import { pollUntil } from '../src/tools/operations/wait-core';
 
 describe('pollUntil — backoff & ordering', () => {
   test('done on the first poll → no sleep, one poll, not timed out', async () => {

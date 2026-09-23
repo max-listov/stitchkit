@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { createServer, implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { createServer, implement } from '../src/entrypoints/server';
 
 const UserSchema = z.object({ id: z.string(), name: z.string() });
 const CreateUserSchema = z.object({ name: z.string() });

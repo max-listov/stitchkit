@@ -7,8 +7,8 @@
     "skipLibCheck": true,
     "types": [],
     "paths": {
-      "stitchkit/application": ["../../../../src/application.ts"],
-      "stitchkit/application/grammy": ["../../../../src/application-grammy.ts"]
+      "stitchkit/application": ["../../../../src/entrypoints/application.ts"],
+      "stitchkit/application/grammy": ["../../../../src/entrypoints/application/grammy.ts"]
     }
   },
   "include": ["src"]

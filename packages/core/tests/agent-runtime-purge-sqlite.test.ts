@@ -1,21 +1,24 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AgentConversationPurgedError, purgeAgentConversation } from '../src/agent-runtime';
 import {
   createBunSqliteAgentRuntimeStore,
   createSqliteAgentRuntimeStore,
   type SqliteDatabase,
-} from '../src/agent-runtime-sqlite-bun';
+} from '../src/agent-runtime/sqlite-bun';
+import {
+  AgentConversationPurgedError,
+  purgeAgentConversation,
+} from '../src/entrypoints/agent-runtime';
 import { completePurgeFixture, purgeAdmission } from './fixtures/agent-purge';
+import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const tables = ['messages', 'admissions', 'runs', 'heads'];
 const purgeTriggerTables = ['spills', 'schedules', 'projections', 'events', ...tables];
 
 test('SQLite purge rolls back after each deletion and commit failure, then survives reopen', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'stitchkit-purge-'));
+  const root = await sqliteScratchDir('stitchkit-purge-');
   const filename = join(root, 'runtime.sqlite');
   const database = new Database(filename);
   let failAt = '';
@@ -134,7 +137,7 @@ test('SQLite purge rolls back after each deletion and commit failure, then survi
 });
 
 test('competing SQLite connection cannot submit through an in-flight purge transaction', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'stitchkit-purge-race-'));
+  const root = await sqliteScratchDir('stitchkit-purge-race-');
   const filename = join(root, 'runtime.sqlite');
   const first = createBunSqliteAgentRuntimeStore({ filename });
   const second = createBunSqliteAgentRuntimeStore({ filename });
@@ -155,7 +158,7 @@ test('competing SQLite connection cannot submit through an in-flight purge trans
 });
 
 test('additive v1 initialization fences an already-open pre-purge writer', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'stitchkit-purge-migration-'));
+  const root = await sqliteScratchDir('stitchkit-purge-migration-');
   const filename = join(root, 'runtime.sqlite');
   const initialized = createBunSqliteAgentRuntimeStore({ filename });
   await initialized.close();

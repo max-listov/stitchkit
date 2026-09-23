@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { flattenToolJsonSchema } from '../src/tools/flatten';
-import { toJsonSchema } from '../src/tools/json-schema';
+import { toJsonSchema } from '../src/json-schema/json-schema';
+import { flattenToolJsonSchema } from '../src/tools/schema/flatten';
 
 function advertised(union: z.ZodType): Record<string, Record<string, unknown>> {
   const flat = flattenToolJsonSchema(toJsonSchema(union, 'input', 'any'));

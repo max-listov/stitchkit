@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApplicationHandle } from './kernel';
+import type { ApplicationHandle } from './kernel-contract';
 import { projectApplicationStatus } from './schemas';
 
 export const ApplicationHealthHandlerOptionsSchema = z.object({

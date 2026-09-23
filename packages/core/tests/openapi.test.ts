@@ -5,8 +5,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineContract } from '../src/contract';
-import { implement } from '../src/server';
+import { defineContract } from '../src/entrypoints/contract';
+import { implement } from '../src/entrypoints/server';
 import { generateOpenApiDocument, openApiRoute } from '../src/server/openapi';
 
 const contract = defineContract(
@@ -44,9 +44,9 @@ const contract = defineContract(
       method: 'POST',
       path: '/tool',
       desc: 'MCP-only tool',
-      toolName: 'tool_thing',
       expose: ['MCP'],
       input: z.object({ x: z.number() }),
+      tool: { name: 'tool_thing' },
     },
     accepted: {
       method: 'POST',
