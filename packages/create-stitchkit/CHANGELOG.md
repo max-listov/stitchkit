@@ -12,6 +12,35 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-23
+
+### Fixed
+
+- **The board reaches the API on two local ports.** The base template's board
+  posts to its own origin (`/api/…`), and the README said the web role forwards
+  that — but the forwarding route lived only in the repository example, so a
+  blank scaffold answered 404. The route
+  (`packages/frontend/src/app/api/[...path]/route.ts`) is now in the base
+  template, and says in words when `INTERNAL_API_URL` is unset.
+- **The browser build carries the socket client.** The board passes
+  `peers: { client: () => import('socket.io-client') }` to
+  `createRealtimeClient`; without the literal loader the bundle had no
+  `socket.io-client` and the page failed with "needs the socket.io-client peer".
+- **The socket dials the API role in development.** `.env.example` now sets
+  `INTERNAL_API_URL`, `PUBLIC_REALTIME_ORIGIN` and `CORS_ORIGIN` for the two
+  local ports, and the repository example passes its realtime origin to the
+  board. A two-tab browser test proves a note posted in one tab reaches the
+  other in both variants.
+
+### Changed
+
+- **A scaffold starts on stitchkit 0.95.3**, whose watch client no longer drops
+  the values of a restarted API. The template's range moves from `^0.94.0` to
+  `^0.95.3`, over a lockfile resolving 0.95.3.
+
+  A project generated from 0.6.3 adds the route file above, the `peers` line in
+  `features/board/board-live.ts` and the three variables to its `.env`.
+
 ## [0.6.3] — 2026-09-23
 
 ### Changed
