@@ -35,6 +35,24 @@ test('calls the live backend through the typed contract client', async () => {
   }).toPass({ timeout: 5_000 });
 });
 
+test('a note posted in one tab reaches another through the web origin and the socket', async ({
+  browser,
+}) => {
+  // The browser's own origin carries HTTP (`/api` is forwarded by the web
+  // role) and the socket dials the API role; a post in one tab must reach a
+  // second tab that never asked for it. Both halves failed silently before:
+  // `/api` was a 404 on the web port, and the browser build had no socket.
+  const writer = await browser.newPage();
+  const reader = await browser.newPage();
+  await Promise.all([writer.goto('/en'), reader.goto('/en')]);
+  const note = `note ${Date.now()}`;
+  await writer.getByRole('textbox', { name: 'Note' }).fill(note);
+  await writer.getByRole('button', { name: 'Post' }).click();
+  await expect(writer.getByText(note)).toBeVisible();
+  await expect(reader.getByText(note)).toBeVisible({ timeout: 10_000 });
+  await Promise.all([writer.close(), reader.close()]);
+});
+
 test('publishes complete page metadata', async ({ page }) => {
   await page.goto('/en/ui/themes');
   await expect(page).toHaveTitle(`Theme system · ${appDeclaration.identity.name}`);

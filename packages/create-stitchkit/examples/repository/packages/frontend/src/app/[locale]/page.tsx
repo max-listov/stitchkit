@@ -3,6 +3,7 @@ import { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
 import { LocaleSchema } from '@/i18n/locales';
+import { publicRealtimeOrigin } from '@/lib/api/place';
 import { useRepository } from '@/lib/api/queries';
 import { createServerRepositoryApi } from '@/lib/api/server-client';
 import { getQueryClient } from '@/lib/query-client';
@@ -39,6 +40,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
         heroTitle={t('heroTitle')}
         catalogueLabel={t('ui')}
         locale={appLocale}
+        realtimeOrigin={publicRealtimeOrigin()}
       />
     </HydrationBoundary>
   );

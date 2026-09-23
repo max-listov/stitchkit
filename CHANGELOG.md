@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.95.3] — 2026-09-23
+
+### Fixed
+
+- `stitchkit/live` — the watch client took a revision as a floor across two
+  lives of the hub. Revisions count one hub's life of a key, so after an API
+  restart the new hub answered the reopen with a `full` value at revision 1
+  and the client dropped it, and every later one, as "no newer" until the new
+  counter passed the old — while showing the key live. The first answer to
+  each `open` is now taken whatever its revision; within one open the
+  counter orders frames as before.
+- `stitchkit/agent-runtime` — a turn total no longer knows more than its
+  steps. `mergeModelTotals` took each field from the SDK aggregate, which the
+  OpenRouter adapter had already summed with `cached_tokens ?? 0`, so a turn
+  whose every request reported no cache figure ended as
+  `{ value: 0, provenance: 'computed' }`. A field every step reported as
+  `unavailable` now stays `unavailable` in the total; an explicit zero and a
+  positive count are kept.
+
 ## [0.95.2] — 2026-09-23
 
 ### Added

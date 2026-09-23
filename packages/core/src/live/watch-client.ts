@@ -181,6 +181,17 @@ interface Entry {
    * reconnect has to clear it for both.
    */
   opened: boolean;
+  /**
+   * Whether a value frame has answered the latest `open`.
+   *
+   * A revision is a counter of one hub's life of the key, so it orders frames
+   * within one open and says nothing across two: a restarted API starts at 1
+   * again. Until the first answer to an open arrives, the held revision is not
+   * a floor — without this, a client that held revision 40 from the previous
+   * process dropped every full value of the new one as "no newer" until its
+   * counter passed 40, while showing itself live.
+   */
+  answered: boolean;
   state: WatchStateFrame;
   release?: ReturnType<typeof setTimeout>;
 }
@@ -210,6 +221,7 @@ async function openWatch(
 ): Promise<void> {
   if (entry.opened) return;
   entry.opened = true;
+  entry.answered = false;
   try {
     // What this client already holds travels with the open, so a reconnection
     // costs a difference — or nothing at all — instead of the value again.
@@ -272,12 +284,16 @@ function applyWatchFrame(
     }
     entry.revision = frame.revision;
     entry.fingerprint = frame.fingerprint;
+    entry.answered = true;
     return { kind: 'confirmed' };
   }
   // A frame no newer than what is held is a late answer to an older question.
   // The hub reads one at a time so this should not happen; dropping it anyway
   // costs one comparison and means the rule is stated where a reader can see it.
-  if (entry.hasValue && frame.revision <= entry.revision) return { kind: 'stale' };
+  // Only within one open: the first answer to an open may come from another hub.
+  if (entry.hasValue && entry.answered && frame.revision <= entry.revision) {
+    return { kind: 'stale' };
+  }
   let value: unknown;
   if (frame.kind === 'full') {
     value = frame.value;
@@ -313,6 +329,7 @@ function applyWatchFrame(
   entry.value = value;
   entry.fingerprint = frame.fingerprint;
   entry.hasValue = true;
+  entry.answered = true;
   return { kind: 'value', value };
 }
 
@@ -405,6 +422,7 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
       revision: 0,
       hasValue: false,
       opened: false,
+      answered: false,
       state: { key, phase: 'opening' },
     };
     entries.set(id, entry);

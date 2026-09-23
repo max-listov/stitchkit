@@ -72,10 +72,12 @@ Two things can pull a deployment out of that, and they are separate questions,
 so they have separate variables. **`PUBLIC_REALTIME_ORIGIN`** is the socket: a
 WebSocket upgrade does not survive the route handler that forwards `/api`, so
 two roles on two ports with nothing in front of them must name the socket's
-origin even though their HTTP is already same-origin. Behind one routing layer
-that forwards `/socket.io`, leave it unset. **`PUBLIC_API_ORIGIN`** is HTTP, for
-a frontend that genuinely dials the API role itself — and setting it changes
-nothing on its own: switching is one import in
+origin even though their HTTP is already same-origin — `.env.example` sets it,
+with `CORS_ORIGIN` admitting the web origin, for the two local ports. Behind one
+routing layer that forwards `/socket.io`, leave both unset.
+**`PUBLIC_API_ORIGIN`** is HTTP, for a frontend that genuinely dials the API
+role itself — and setting it changes nothing on its own: with
+`--example repository`, switching is one import in
 `packages/frontend/src/lib/api/queries.ts`, documented in
 `packages/frontend/src/lib/api/cross-origin.ts`. That variant costs a
 server-delivered address, a client built on first use (hence the parentheses),

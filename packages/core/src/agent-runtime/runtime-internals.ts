@@ -155,6 +155,12 @@ export function addUsage(total: AgentUsage | undefined, step: AgentUsage): Agent
  * handed us. Which loop did the adding is not a difference a caller filtering
  * for a billable figure cares about, and pretending otherwise made one run
  * report `provider-reported` on success and `computed` on abort.
+ *
+ * A field every step reported as `unavailable` stays `unavailable`: the
+ * aggregate is summed from the SDK's normalized usage, where an adapter may
+ * already have written `cached_tokens ?? 0`, so its zero is the adapter's word
+ * and not the provider's. The OpenRouter adapter did exactly that, and a turn
+ * whose every request said "no cache figure" ended as a confident "cache 0".
  */
 export function mergeModelTotals(
   sdkTotal: AgentUsage,
@@ -163,10 +169,12 @@ export function mergeModelTotals(
   const pick = (
     total: AgentUsage['inputTokens'] | undefined,
     ours: AgentUsage['inputTokens'] | undefined,
-  ): AgentUsage['inputTokens'] =>
-    total?.value !== undefined
+  ): AgentUsage['inputTokens'] => {
+    if (ours?.provenance === 'unavailable') return ours;
+    return total?.value !== undefined
       ? { value: total.value, provenance: 'computed' }
       : (ours ?? { provenance: 'unavailable' });
+  };
   return {
     inputTokens: pick(sdkTotal.inputTokens, accumulated?.inputTokens),
     outputTokens: pick(sdkTotal.outputTokens, accumulated?.outputTokens),

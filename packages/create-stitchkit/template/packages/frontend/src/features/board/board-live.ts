@@ -27,6 +27,10 @@ let shared: ReturnType<typeof connect> | undefined;
 function connect(realtimeOrigin?: string) {
   const realtime = createRealtimeClient(liveContract, {
     url: realtimeOrigin ?? window.location.origin,
+    // The literal loader is what puts the socket client into this bundle.
+    // Stitchkit's own import of the peer is left alone by bundlers on purpose,
+    // so without this line the browser build has no `socket.io-client` in it.
+    peers: { client: () => import('socket.io-client') },
   });
   realtime.connect();
   return {

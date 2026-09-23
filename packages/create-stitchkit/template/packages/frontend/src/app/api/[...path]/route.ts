@@ -1,10 +1,10 @@
-import { internalApiUrl } from '@/lib/api/place';
+import { env } from '@/env';
 
 /**
  * The default shape: the browser talks to its OWN origin, and the web role
- * forwards to the API role.
+ * forwards `/api/…` to the API role.
  *
- * This is what makes the example's client a plain module constant. A browser
+ * This is what makes the board's client a plain module constant. A browser
  * that dials the API role directly needs that role's public address, which is a
  * property of the place — so the address has to arrive from the server at
  * runtime, the client cannot exist until it does, and every call site pays for
@@ -13,9 +13,9 @@ import { internalApiUrl } from '@/lib/api/place';
  *
  * What it costs: one extra hop through the web role, and no WebSocket — a
  * route handler cannot proxy an upgrade. The realtime socket is therefore the
- * one place this example still needs the API role's address, or a routing layer
- * in front of both roles that serves them on one origin (see
- * `lib/api/cross-origin.ts`).
+ * one place the browser still needs the API role's address
+ * (`PUBLIC_REALTIME_ORIGIN`), or a routing layer in front of both roles that
+ * serves them on one origin.
  */
 export const dynamic = 'force-dynamic';
 
@@ -28,10 +28,18 @@ const FORWARDED_REQUEST_HEADERS = [
 const FORWARDED_RESPONSE_HEADERS = ['content-type', 'cache-control', 'etag'];
 
 async function forward(request: Request): Promise<Response> {
+  const apiUrl = env.INTERNAL_API_URL;
+  if (!apiUrl) {
+    // Said here, in words, rather than as a 404 from a route that is not there.
+    return Response.json(
+      { error: 'INTERNAL_API_URL is not set, so the web role cannot reach the API role' },
+      { status: 503 },
+    );
+  }
   const incoming = new URL(request.url);
   // Rebuilt from the incoming pathname rather than from the matched segments,
   // so an encoded segment reaches the API role exactly as it arrived.
-  const target = new URL(`${incoming.pathname}${incoming.search}`, internalApiUrl());
+  const target = new URL(`${incoming.pathname}${incoming.search}`, apiUrl);
 
   const headers = new Headers();
   for (const name of FORWARDED_REQUEST_HEADERS) {

@@ -393,15 +393,15 @@ try {
         // names are the deployment's choice and nothing has to agree with them.
         `PUBLIC_WEB_HOSTS=127.0.0.1:${webPort},alpha.example,beta.example:8443`,
         'LOG_FORMAT=json',
+        // HTTP is already same-origin here — the web role forwards `/api`.
+        // The SOCKET cannot be forwarded by a route handler, so this lane,
+        // which runs the two roles on two ports with nothing in front of
+        // them, names the socket's origin and admits the browser for it.
+        `PUBLIC_REALTIME_ORIGIN=${apiOrigin}`,
+        `CORS_ORIGIN=${webOrigin}`,
       ];
       if (example === 'repository') {
         environmentLines.push(
-          // HTTP is already same-origin here — the web role forwards `/api`.
-          // The SOCKET cannot be forwarded by a route handler, so this lane,
-          // which runs the two roles on two ports with nothing in front of
-          // them, names the socket's origin and admits the browser for it.
-          `PUBLIC_REALTIME_ORIGIN=${apiOrigin}`,
-          `CORS_ORIGIN=${webOrigin}`,
           `GITHUB_API_URL=${githubApiUrl}`,
           'GITHUB_REPOSITORY=max-listov/stitchkit',
           'GITHUB_CACHE_TTL_SECONDS=900',
@@ -422,9 +422,9 @@ try {
         PUBLIC_WEB_HOSTS: `127.0.0.1:${webPort},alpha.example,beta.example:8443`,
         PLAYWRIGHT_BASE_URL: webOrigin,
         LOG_FORMAT: 'json',
+        PUBLIC_REALTIME_ORIGIN: apiOrigin,
+        CORS_ORIGIN: webOrigin,
         ...(example === 'repository' && {
-          PUBLIC_REALTIME_ORIGIN: apiOrigin,
-          CORS_ORIGIN: webOrigin,
           GITHUB_API_URL: githubApiUrl,
           GITHUB_REPOSITORY: 'max-listov/stitchkit',
           GITHUB_CACHE_TTL_SECONDS: '900',

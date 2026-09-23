@@ -696,6 +696,27 @@ describe('the client shares one subscription', () => {
     expect(resumed?.have).toEqual({ revision: 4, fingerprint: frame.fingerprint });
   });
 
+  test('after the API restarts, the first full value of the new hub is taken whatever its revision', async () => {
+    const fake = fakeTransport();
+    const watch = createWatchClient(contract, { transport: fake.transport });
+    const seen: unknown[] = [];
+    watch.list({}).subscribe({ value: (v) => seen.push(v) });
+    await settle();
+    const key = sentKey(fake.sent);
+    // Hub A counted this key to 3.
+    fake.deliver(WATCH_VALUE, fullFrame(key, 3, { n: 3 }));
+
+    // The API restarts; hub B starts counting at 1 and sees other content.
+    fake.setConnected(false, 'transport close');
+    fake.setConnected(true);
+    await settle();
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { n: 5 }));
+    fake.deliver(WATCH_VALUE, fullFrame(key, 2, { n: 6 }));
+    // Within hub B's life the counter orders frames again.
+    fake.deliver(WATCH_VALUE, fullFrame(key, 1, { n: 5 }));
+    expect(seen).toEqual([{ n: 3 }, { n: 5 }, { n: 6 }]);
+  });
+
   test('a difference is folded, and the listener sees the whole answer', async () => {
     const fake = fakeTransport();
     const watch = createWatchClient(contract, { transport: fake.transport });
