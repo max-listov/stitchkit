@@ -728,7 +728,51 @@ export async function validateReleaseTag(
   if (plan.target === 'create-stitchkit' && options.checkStarterLockfile !== false) {
     await assertStarterLockfileIsCurrent(root, options.fetch, read);
   }
+  const lock = await read('bun.lock');
+  const manifests: Record<string, string> = {};
+  for (const directory of WORKSPACE_PACKAGE_DIRS) {
+    manifests[directory] = manifestVersion(await read(`${directory}/package.json`), directory);
+  }
+  assertLockfileWorkspaceVersions(lock, manifests);
   return { ...plan, notes };
+}
+
+/** The published workspace packages, whose versions `bun pm pack` reads from `bun.lock`. */
+const WORKSPACE_PACKAGE_DIRS = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
+
+/** The `version` `bun.lock` records for one workspace, or `null` when it lists none. */
+export function lockedWorkspaceVersion(lock: string, directory: string): string | null {
+  const escaped = directory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const entry = new RegExp(`"${escaped}": \\{[^{}]*?"version": "([^"]+)"`).exec(lock);
+  return entry?.[1] ?? null;
+}
+
+/**
+ * Every workspace version in `bun.lock` equals its manifest.
+ *
+ * `bun pm pack` writes a `workspace:^` dependency from the version the
+ * LOCKFILE records for that workspace, not from its `package.json`, and
+ * `bun install --frozen-lockfile` does not treat a bumped manifest version as
+ * drift. So a version bump without an install ships a sibling package pinned to
+ * the previous release: stitchkit-tui 0.1.3 was published depending on
+ * `stitchkit ^0.93.0` the day core 0.94.0 went out, because the lockfile still
+ * said 0.93.0. Run `bun install` after a bump; this refuses the release until then.
+ */
+export function assertLockfileWorkspaceVersions(
+  lock: string,
+  manifests: Record<string, string>,
+): void {
+  const stale = Object.entries(manifests).flatMap(([directory, version]) => {
+    const locked = lockedWorkspaceVersion(lock, directory);
+    return locked === version
+      ? []
+      : [`${directory}: bun.lock ${locked ?? 'none'}, package.json ${version}`];
+  });
+  if (stale.length > 0) {
+    throw new Error(
+      `bun.lock records workspace versions its manifests no longer carry — run \`bun install\`:\n  ${stale.join('\n  ')}`,
+    );
+  }
 }
 
 /** The `version` field of a package manifest, or a refusal that names the file. */

@@ -56,6 +56,19 @@ async function releaseTree(options: TreeOptions): Promise<string> {
       catalog: { stitchkit: options.range },
     }),
     'packages/create-stitchkit/template/bun.lock': `{\n  "packages": {\n    "stitchkit": ["stitchkit@${options.locked}", "", {}, "sha512-x"],\n  }\n}\n`,
+    'packages/tui/package.json': JSON.stringify({ version: '0.0.0' }),
+    // The root lockfile agrees with every manifest: its own gate is tested in
+    // release-plan.test.ts, and this tree is about the starter's wiring.
+    'bun.lock': [
+      ['packages/core', options.coreVersion],
+      ['packages/tui', '0.0.0'],
+      ['packages/create-stitchkit', options.starterVersion],
+    ]
+      .map(
+        ([dir, version]) =>
+          `    "${dir}": {\n      "name": "x",\n      "version": "${version}",\n    },`,
+      )
+      .join('\n'),
   };
   for (const [relative, contents] of Object.entries(files)) {
     const path = join(root, relative);

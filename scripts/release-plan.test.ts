@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   assertBreakingAudience,
+  assertLockfileWorkspaceVersions,
   assertMigrationSection,
   assertReleaseCommitSubject,
   assertReleaseSubjectForTag,
@@ -15,6 +16,7 @@ import {
   extractReleaseNotes,
   isReleaseCommitSubject,
   localGateProfile,
+  lockedWorkspaceVersion,
   MIGRATION_CHANNELS,
   prePushMetadataGate,
   releaseCandidateIdentity,
@@ -664,7 +666,24 @@ describe('a release commit is checked before it costs a gate', () => {
   const root = resolve(import.meta.dir, '..');
 
   /** A tree the check reads instead of the repository — one file at a time. */
-  const treeOf = (files: Record<string, string>) => (relativePath: string) => {
+  // Every tree carries the workspace manifests and a lockfile that agrees with
+  // them, unless a test says otherwise: the lockfile gate has its own tests.
+  const WORKSPACES = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
+  const lockFor = (versions: Record<string, string>) =>
+    Object.entries(versions)
+      .map(
+        ([dir, version]) =>
+          `    "${dir}": {\n      "name": "x",\n      "version": "${version}",\n    },`,
+      )
+      .join('\n');
+  const treeOf = (given: Record<string, string>) => (relativePath: string) => {
+    const files: Record<string, string> = { ...given };
+    const versions: Record<string, string> = {};
+    for (const dir of WORKSPACES) {
+      files[`${dir}/package.json`] ??= JSON.stringify({ version: '0.0.0' });
+      versions[dir] = JSON.parse(files[`${dir}/package.json`] ?? '{}').version;
+    }
+    files['bun.lock'] ??= lockFor(versions);
     const contents = files[relativePath];
     if (contents === undefined) {
       return Promise.reject(new Error(`no ${relativePath} in this tree`));
@@ -1037,5 +1056,57 @@ describe('a train cannot publish the framework its own starter must pin', () => 
         assertTrainDoesNotOutrunTheStarter(root, train(releases), starterTree('^0.90.5')),
       ).resolves.toBeUndefined();
     }
+  });
+});
+
+describe('the lockfile names the versions the manifests carry', () => {
+  // `bun pm pack` writes `workspace:^` from bun.lock, not from package.json:
+  // stitchkit-tui 0.1.3 shipped depending on `stitchkit ^0.93.0` beside 0.94.0.
+  const lock = [
+    '    "packages/core": {',
+    '      "name": "stitchkit",',
+    '      "version": "0.94.0",',
+    '      "bin": {',
+    '        "stitchkit": "./dist/bin.js",',
+    '      },',
+    '    },',
+    '    "packages/tui": {',
+    '      "name": "stitchkit-tui",',
+    '      "version": "0.1.3",',
+    '    },',
+  ].join('\n');
+
+  test('reads the version each workspace entry records', () => {
+    expect(lockedWorkspaceVersion(lock, 'packages/core')).toBe('0.94.0');
+    expect(lockedWorkspaceVersion(lock, 'packages/tui')).toBe('0.1.3');
+    expect(lockedWorkspaceVersion(lock, 'packages/create-stitchkit')).toBeNull();
+  });
+
+  test('accepts a lockfile that agrees and refuses one a bump left behind', () => {
+    expect(() =>
+      assertLockfileWorkspaceVersions(lock, {
+        'packages/core': '0.94.0',
+        'packages/tui': '0.1.3',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertLockfileWorkspaceVersions(lock, {
+        'packages/core': '0.95.0',
+        'packages/tui': '0.1.3',
+      }),
+    ).toThrow('packages/core: bun.lock 0.94.0, package.json 0.95.0');
+  });
+
+  test("this repository's lockfile agrees with its manifests", () => {
+    const root = resolve(import.meta.dir, '..');
+    const manifests = Object.fromEntries(
+      ['packages/core', 'packages/tui', 'packages/create-stitchkit'].map((dir) => [
+        dir,
+        JSON.parse(readFileSync(`${root}/${dir}/package.json`, 'utf8')).version,
+      ]),
+    );
+    expect(() =>
+      assertLockfileWorkspaceVersions(readFileSync(`${root}/bun.lock`, 'utf8'), manifests),
+    ).not.toThrow();
   });
 });
