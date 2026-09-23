@@ -2,14 +2,23 @@
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-09-23
+
+### Fixed
+
+- **Depends on stitchkit `^0.94.0`, as 0.1.3 meant to.** 0.1.3 was published
+  depending on `^0.93.0`: the packer takes a workspace version from the
+  lockfile, which still recorded the previous core release. A project on 0.94.0
+  therefore installed a second, older framework beside the terminal. The
+  release gate now refuses a lockfile that disagrees with the manifests.
+
 ## [0.1.3] — 2026-09-23
 
 ### Changed
 
-- Targets stitchkit 0.94.0: the published dependency range moves from `^0.90.5` to
-  `^0.94.0`, so a project on the current framework no longer installs a second,
-  older copy beside it. No source change was needed — the terminal imports none
-  of the names 0.94.0 moved.
+- Meant to target stitchkit 0.94.0 (published range `^0.90.5` → `^0.94.0`), but
+  shipped depending on `^0.93.0` — see 0.1.4. No source change was needed: the
+  terminal imports none of the names 0.94.0 moved.
 - Updated OpenTUI to 0.5.12 and the AI SDK to 7.0.111.
 
 ## [0.1.2] — 2026-09-20
