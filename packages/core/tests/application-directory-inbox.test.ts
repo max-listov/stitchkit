@@ -64,6 +64,12 @@ async function open(
 
 const context = {} as never;
 
+/** Wait for a condition, not a duration: a poll on a slow disk takes what it takes. */
+async function until(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 1_000 && !check(); attempt += 1) await Bun.sleep(5);
+  expect(check()).toBe(true);
+}
+
 describe('createDirectoryInbox', () => {
   test('a restart after the first entry delivers the second and never repeats the first', async () => {
     const dir = await directory();
@@ -237,10 +243,10 @@ describe('createDirectoryInbox', () => {
     expect(seen).toEqual([]);
 
     await resource.activate?.(context);
-    await Bun.sleep(40);
+    await until(() => seen.length > 0);
     expect(seen).toEqual(['early.json']);
     await drop(dir, 'polled.json', { from: '2', to: '3' });
-    await Bun.sleep(60);
+    await until(() => seen.length > 1);
     expect(seen).toEqual(['early.json', 'polled.json']);
 
     await resource.stopAdmission?.(context);
@@ -254,10 +260,12 @@ describe('createDirectoryInbox', () => {
   test('force aborts the delivery in flight', async () => {
     const dir = await directory();
     let aborted = false;
+    let started = false;
     const { resource } = await open(
       dir,
       ({ signal }) =>
         new Promise<void>((_, reject) => {
+          started = true;
           signal.addEventListener('abort', () => {
             aborted = true;
             reject(new Error('aborted'));
@@ -267,7 +275,9 @@ describe('createDirectoryInbox', () => {
     );
     await drop(dir, 'slow.json', { from: '1', to: '2' });
     await resource.activate?.(context);
-    await Bun.sleep(30);
+    // Force a delivery that is in flight, which is what this is about — not a
+    // race with the first poll.
+    await until(() => started);
     await resource.force?.(context);
     expect(aborted).toBe(true);
     expect(await readdir(dir)).toContain('slow.json');
