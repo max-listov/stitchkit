@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "kind": "application",
+  "identity": {
+    "slug": "stitchkit-telegram-bot-starter",
+    "name": "Stitchkit Telegram Bot Starter",
+    "version": "0.1.0",
+    "description": {
+      "en": "A long-polling Telegram bot assembled from Stitchkit primitives."
+    }
+  },
+  "roles": [
+    {
+      "name": "bot",
+      "workingDirectory": ".",
+      "commands": {
+        "development": {
+          "executable": "bun",
+          "args": [
+            "--watch",
+            "src/index.ts"
+          ]
+        },
+        "production": {
+          "executable": "bun",
+          "args": [
+            "dist/index.js"
+          ]
+        }
+      },
+      "drainFloorMs": 1000
+    }
+  ],
+  "requires": [],
+  "release": {},
+  "env": {
+    "variables": [
+      {
+        "name": "BOT_TOKEN",
+        "shape": "string",
+        "required": true
+      },
+      {
+        "name": "LOG_LEVEL",
+        "shape": "enum",
+        "required": false,
+        "members": [
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      {
+        "name": "DATABASE_PATH",
+        "shape": "string",
+        "required": false
+      },
+      {
+        "name": "OPERATOR_CHAT_ID",
+        "shape": "integer",
+        "required": false
+      },
+      {
+        "name": "BOT_API_URL",
+        "shape": "url",
+        "required": false
+      },
+      {
+        "name": "BOT_API_FILES_ROOT",
+        "shape": "string",
+        "required": false
+      }
+    ]
+  }
+}

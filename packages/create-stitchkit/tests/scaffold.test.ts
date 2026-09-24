@@ -577,6 +577,36 @@ describe('scaffoldProject', () => {
     expect(await readFile(join(destination, '.gitignore'), 'utf8')).toContain('.stitchkit/');
   });
 
+  test('materialises the Telegram bot template with the canonical catalog and its own ignore rules', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'templates/telegram-bot');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'support-bot');
+    created.push(parent);
+
+    await scaffoldProject(templateRoot, destination, {
+      identityModule: false,
+      lockfile: false,
+      stitchkitCatalogTarget: '^0.96.0',
+    });
+
+    const manifest = JSON.parse(await readFile(join(destination, 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({
+      name: 'support-bot',
+      catalog: { stitchkit: '^0.96.0' },
+      dependencies: { stitchkit: 'catalog:', grammy: expect.any(String) },
+    });
+    const declaration = JSON.parse(await readFile(join(destination, 'project.json'), 'utf8'));
+    expect(declaration.identity.slug).toBe('support-bot');
+    expect(declaration.roles.map((role: { name: string }) => role.name)).toEqual(['bot']);
+    expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
+    expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();
+    expect(await readFile(join(destination, 'src/application.ts'), 'utf8')).toContain(
+      'grammyBotResources',
+    );
+    expect(await readFile(join(destination, '.env.example'), 'utf8')).toContain('BOT_TOKEN=');
+    expect(await readFile(join(destination, '.gitignore'), 'utf8')).toContain('.data/');
+  });
+
   test('rejects a non-empty destination', async () => {
     const template = await mkdtemp(join(tmpdir(), 'stitchkit-template-'));
     const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));

@@ -6,6 +6,10 @@ import { parse } from 'dotenv';
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = resolve(repositoryRoot, 'packages/create-stitchkit/template');
 const agentTemplateRoot = resolve(repositoryRoot, 'packages/create-stitchkit/templates/agent');
+const telegramBotTemplateRoot = resolve(
+  repositoryRoot,
+  'packages/create-stitchkit/templates/telegram-bot',
+);
 
 // The DEV WORKSPACE keeps the example under its pre-scaffold name
 // (`_env.example` — the scaffolder renames it to `.env.example` in generated
@@ -56,3 +60,4 @@ for (const templateCore of templateCoreLinks) {
 }
 await run(['bun', 'run', 'db:generate'], templateRoot, { ...Bun.env, ...environment });
 await run(['bun', 'install', '--frozen-lockfile'], agentTemplateRoot);
+await run(['bun', 'install', '--frozen-lockfile'], telegramBotTemplateRoot);

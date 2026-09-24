@@ -741,39 +741,77 @@ Install grammY only in an application that imports the adapter:
 
 ```ts
 import { Bot } from 'grammy'
-import {
-  createGrammyWebhookResource,
-  grammyPollingResource,
-} from 'stitchkit/application/grammy'
+import { grammyBotResources } from 'stitchkit/application/grammy'
 ```
 
-For simple long polling, pass an already-configured bot:
+A long-polling bot is two resources, and one call gives both:
 
 ```ts
 const bot = new Bot(env.BOT_TOKEN)
 bot.command('start', (ctx) => ctx.reply('Hello'))
-bot.catch(({ error }) => internalLogger.error(error))
+bot.catch(({ error }) => logger.error('Telegram handler failed', { error }))
 
-const telegram = grammyPollingResource({
-  id: 'telegram',
+const telegram = grammyBotResources({
   bot,
-  required: true,
+  dependsOn: [database, http],             // what handlers need before the first update
+  configure: () => bot.api.setMyCommands([{ command: 'start', description: 'Start' }]),
+  onEnded: ({ error }) => stopProcess(error), // see below
 })
+
+const app = createApplication({ id: 'bot', resources: [database, http, ...telegram.resources] })
 ```
 
-Readiness follows grammY's `onStart`. Shutdown calls `bot.stop()` once and then
-awaits the retained `bot.start()` promise, because grammY documents that
-`stop()` alone does not wait for middleware completion.
+The ids are stable — `telegram-configuration`, then `telegram-polling` — so a
+monitor, a test or `app.restart()` can name them. `configure` runs on every
+start, before polling, so a command menu that failed to publish fails the start
+instead of hiding behind a bot that answers.
+
+**Updates are admitted by batch.** grammY confirms a batch to Telegram by
+asking for the next one, and it asks as soon as the batch went through
+middleware — whatever the middleware did. An update that arrived while the
+application was starting, degraded or stopping was refused by its handler and
+then confirmed as handled. The polling resource now waits for admission before
+asking for a batch, holds one admission lease for the batch it returns to
+grammY, and releases it when grammY asks for the next. On shutdown the batch in
+hand is finished before `bot.stop()` confirms the offset, so a stop neither
+loses an update nor hands the next process one this process already handled; a
+batch that arrives once the application will not admit it is never returned, and
+Telegram keeps it for the next process.
+
+**When polling ends on its own** — Telegram refused the token (401), another
+process took the bot (409), or `bot.catch` rethrew — grammY's poller does not
+recover in-process. The resource becomes `failed`, the application stops being
+ready, and `onEnded` is called once; it is never called for a stop the
+application asked for. The framework does not exit processes (ADR 0074): the
+entry point turns `onEnded` into its own shutdown and a non-zero exit so the
+supervisor starts a fresh process. The Telegram bot template shows the one way.
+
+**429s** are the application's for its own replies: install
+`@grammyjs/auto-retry` on `bot.api.config` with a bounded delay. Polling itself
+already waits Telegram's `retry_after`, and the broadcast and operator channel
+in `stitchkit/telegram` handle theirs.
+
+`grammyPollingResource` is the polling half on its own, for a bot that needs no
+configuration step; it admits updates the same way.
 
 For webhook ingress, `createGrammyWebhookResource` wraps provider-owned update
 handling with admission and drain. The application still mounts the HTTP route,
 verifies/configures its webhook and chooses the grammY framework adapter. An
 update accepted before shutdown may finish; a later update is rejected.
 
-The adapter never reads the token/env, installs commands, changes `bot.catch`,
+The adapter never reads the token or the environment, changes `bot.catch`,
 chooses retry plugins, drops pending updates, sends outbound messages or stores
 updates. A durable inbox/retry worker remains an application component, not a
 mode of this adapter.
+
+### A resource that fetches work
+
+`context.admission` is the application's admission as a resource sees it.
+`acquire()` answers now; `acquireWhenAccepting(signal)` waits until the
+application admits and then holds one operation — the right move for a poller or
+a queue consumer, which should not fetch at all while the application is not
+ready. It rejects with the signal's reason on abort, and with
+`ApplicationAdmissionError` once the application is shutting down or failed.
 
 ## What disappears from an application
 

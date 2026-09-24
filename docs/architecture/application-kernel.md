@@ -277,10 +277,31 @@ Only `stitchkit/application/grammy` resolves grammY. Both factories accept an
 already-created bot; neither reads a token or environment variable.
 
 `grammyPollingResource` starts grammY polling as an immediately observed
-background promise. `onStart` settles resource readiness. Shutdown closes
-admission, calls `bot.stop()` once and awaits the retained polling promise so
-accepted middleware may finish. A polling rejection before or after readiness
-is observed and projected without an unhandled rejection.
+background promise. `onStart` settles resource readiness. A polling rejection
+before or after readiness is observed and projected without an unhandled
+rejection; one after readiness that the application did not ask for is reported
+once to `onEnded`.
+
+Updates are admitted by batch through a transformer installed once per bot on
+`getUpdates` — the one call that moves grammY's offset. Before a long poll it
+waits on `context.admission.acquireWhenAccepting`; a non-empty answer is
+returned to grammY only with one admission lease held for the whole batch, and
+that lease is released by the next `getUpdates`, which grammY sends only after
+handling the batch sequentially. A batch the application will not admit is
+never returned: the request fails with an abort and the offset stays. Shutdown's
+`stopAdmission` waits for the batch in hand (bounded by the grace signal) before
+`bot.stop()`, whose confirming `getUpdates` carries no signal and so passes the
+gate. Kernel shutdown then waits for no lease the batch still holds.
+
+`grammyBotResources` composes the optional `telegram-configuration` resource
+(the application's `configure`, e.g. `setMyCommands`) and `telegram-polling`
+with those stable ids, both after the bot's `dependsOn`.
+
+`context.admission` exposes `acquire` and `acquireWhenAccepting(signal)` from
+the kernel admission. The waiter retries on the next snapshot publication, in a
+microtask so it never admits from inside a publication, and settles exactly
+once; it rejects with the signal's reason, or `ApplicationAdmissionError` once
+shutdown was requested or the lifecycle is `failed` / `stopped`.
 
 `createGrammyWebhookResource` initializes the bot and wraps provider-owned
 update handling with resource-local admission and drain. It does not host HTTP,

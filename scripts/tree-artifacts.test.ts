@@ -23,6 +23,7 @@ const root = resolve(import.meta.dir, '..');
 const templateDirectories = [
   'packages/create-stitchkit/template',
   'packages/create-stitchkit/templates/agent',
+  'packages/create-stitchkit/templates/telegram-bot',
 ];
 
 /** A path that the pattern must cover, for each pattern the template declares. */

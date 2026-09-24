@@ -1,6 +1,11 @@
 import { type Bot, Context, type PollingOptions, type WebhookReplyEnvelope } from 'grammy';
 import { AppError } from '../contract/errors';
-import { defineManagedResource, type ManagedResource } from './resource';
+import { updateAdmissionGate } from './grammy-update-admission';
+import {
+  defineManagedResource,
+  type ManagedResource,
+  type ManagedResourceDependency,
+} from './resource';
 
 if (typeof Context !== 'function') {
   throw new TypeError('[stitchkit] stitchkit/application/grammy requires the grammY peer');
@@ -9,11 +14,24 @@ if (typeof Context !== 'function') {
 export interface GrammyPollingResourceConfig<C extends Context> {
   readonly id: string;
   readonly bot: Bot<C>;
-  readonly dependsOn?: readonly string[];
+  readonly dependsOn?: readonly ManagedResourceDependency[];
   readonly required?: boolean;
   readonly polling?: Omit<PollingOptions, 'onStart'>;
   readonly onStart?: PollingOptions['onStart'];
   readonly onError?: (error: unknown) => void | Promise<void>;
+  /**
+   * Polling ended on its own after it was ready — Telegram refused the token,
+   * another process took the same bot (409), or the error handler rethrew.
+   * Called once, never for a stop the application asked for. grammY's poller
+   * does not recover in-process, and the framework does not exit processes
+   * (ADR 0074): this is where an application turns the end into its shutdown.
+   */
+  readonly onEnded?: (end: GrammyPollingEnd) => void | Promise<void>;
+}
+
+/** How a poller that was ready came to an end; `error` is absent when it simply returned. */
+export interface GrammyPollingEnd {
+  readonly error?: unknown;
 }
 
 function reportIsolated(
@@ -28,10 +46,36 @@ function reportIsolated(
     });
 }
 
-/** Thin lifecycle adapter for grammY's built-in long polling. */
+function reportEnd(
+  callback: ((end: GrammyPollingEnd) => void | Promise<void>) | undefined,
+  end: GrammyPollingEnd,
+): void {
+  if (!callback) return;
+  // A macrotask later: the kernel records the ended completion as this
+  // resource's failure first. Called in the same turn, an observer that shuts
+  // down marks the shutdown requested before that, and the one failure that
+  // happened is never recorded.
+  setTimeout(() => {
+    void Promise.resolve()
+      .then(() => callback(end))
+      .catch(() => {
+        // The observer of an ended poller cannot fail the poller a second time.
+      });
+  }, 0);
+}
+
+/**
+ * Lifecycle adapter for grammY's built-in long polling.
+ *
+ * Updates are admitted by batch (see `grammy-update-admission`): no batch is
+ * fetched while the application is not accepting, and the batch in hand is
+ * finished before `bot.stop()` confirms the offset, so a stop neither loses an
+ * update nor hands the next process one this process already handled.
+ */
 export function grammyPollingResource<C extends Context>(
   config: GrammyPollingResourceConfig<C>,
 ): ManagedResource {
+  const gate = updateAdmissionGate(config.bot);
   let completion: Promise<void> | undefined;
   let stopPromise: Promise<void> | undefined;
 
@@ -47,7 +91,9 @@ export function grammyPollingResource<C extends Context>(
     id: config.id,
     ...(config.dependsOn && { dependsOn: config.dependsOn }),
     ...(config.required !== undefined && { required: config.required }),
-    start() {
+    start(context) {
+      stopPromise = undefined;
+      gate.bind(context.admission);
       let resolveReady: () => void = () => undefined;
       let rejectReady: (error: unknown) => void = () => undefined;
       let becameReady = false;
@@ -65,15 +111,18 @@ export function grammyPollingResource<C extends Context>(
       });
       completion = polling.then(
         () => {
+          gate.release();
           if (!becameReady) {
             rejectReady(
               new Error('[stitchkit] grammY polling stopped before reaching readiness'),
             );
-          }
+          } else if (!stopPromise) reportEnd(config.onEnded, {});
         },
         (error: unknown) => {
+          gate.release();
           if (!becameReady) rejectReady(error);
           reportIsolated(config.onError, error);
+          if (becameReady && !stopPromise) reportEnd(config.onEnded, { error });
           throw error;
         },
       );
@@ -81,11 +130,16 @@ export function grammyPollingResource<C extends Context>(
       void completion.catch(() => undefined);
       return { ready, completion };
     },
-    stopAdmission() {
-      return stop();
+    // The batch in hand finishes first, so the offset `stop()` confirms covers
+    // all of it. The graceful deadline aborts the wait, never the handlers.
+    async stopAdmission(context) {
+      await gate.whenIdle(context.signal);
+      await stop();
     },
+    // Polling that already ended was recorded as this resource's `completion`
+    // failure; draining it is done, not a second failure of the same end.
     async drain() {
-      await completion;
+      await completion?.catch(() => undefined);
     },
     async close() {
       await stop();
@@ -103,7 +157,7 @@ export type GrammyUpdate<C extends Context = Context> = Parameters<Bot<C>['handl
 export interface GrammyWebhookResourceConfig<C extends Context> {
   readonly id: string;
   readonly bot: Bot<C>;
-  readonly dependsOn?: readonly string[];
+  readonly dependsOn?: readonly ManagedResourceDependency[];
   readonly required?: boolean;
   readonly onError?: (error: unknown) => void | Promise<void>;
 }

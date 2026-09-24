@@ -1,5 +1,42 @@
 # Upgrading stitchkit
 
+## Released migration: 0.96.0
+
+### resource-context-admission
+
+One breaking change in `stitchkit/application`: `ManagedResourceContext` gains a
+required `admission`. Every context the kernel hands a resource already carries
+it; only a context built by hand needs it.
+
+1. **Give a hand-built resource context an `admission`.** **Who must act:** a
+   project whose tests call a resource's phase directly with a context object
+   they wrote themselves (`resource.close?.({ applicationId, signal, … })`).
+   The type checker names each one:
+
+   ```ts
+   // before
+   await resource.close?.({ applicationId: 'test', signal, now, reportHealth, use })
+   // after
+   await resource.close?.({
+     applicationId: 'test',
+     signal,
+     now,
+     reportHealth,
+     use,
+     admission: { acquire: () => null, acquireWhenAccepting: () => new Promise(() => {}) },
+   })
+   ```
+
+   A test that needs real admission starts the resource inside
+   `createApplication` instead.
+
+2. **Nothing to do for grammY polling, but know what changed.** **Who must
+   act:** nobody. `grammyPollingResource` now admits updates by batch: it does
+   not fetch while the application is not accepting, and finishes the batch in
+   hand before `bot.stop()`. A project that wrote its own `getUpdates`
+   transformer for this (waiting on `app.admission` before returning a batch)
+   deletes it; keeping both waits twice and is harmless.
+
 ## Released migration: 0.95.0
 
 One breaking change in `stitchkit/application`: the process lifecycle ledger

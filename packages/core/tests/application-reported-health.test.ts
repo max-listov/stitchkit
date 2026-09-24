@@ -526,6 +526,10 @@ describe('the server adapter hands the server a budget it can accept', () => {
     const resource = managedServerResource({ id: 'fake', server: capturingServer(captured) });
     void resource.close?.({
       applicationId: 'x',
+      admission: {
+        acquire: () => null,
+        acquireWhenAccepting: () => new Promise(() => undefined),
+      },
       signal: new AbortController().signal,
       now: () => 1_000.25,
       reportHealth: () => undefined,
@@ -578,6 +582,10 @@ describe('the server adapter hands the server a budget it can accept', () => {
     const startedAt = 1_000.25;
     resource.force?.({
       applicationId: 'x',
+      admission: {
+        acquire: () => null,
+        acquireWhenAccepting: () => new Promise(() => undefined),
+      },
       signal: new AbortController().signal,
       now: () => startedAt,
       // 0.4 ms left: floored it becomes an impossible budget, rounded up a

@@ -48,6 +48,12 @@ export {
 } from '../observability/context';
 export type { RequestEvent } from '../observability/event';
 export {
+  createJsonLogger,
+  JSON_LOG_LEVELS,
+  type JsonLoggerOptions,
+  type JsonLogLevel,
+} from '../observability/json-logger';
+export {
   type JsonValue,
   measureSize,
   redact,

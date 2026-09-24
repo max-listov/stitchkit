@@ -1,0 +1,11 @@
+# The bot's token from @BotFather.
+BOT_TOKEN=
+# debug | info | warn | error
+LOG_LEVEL=info
+# SQLite file for the bot's own data; relative paths are from the working directory.
+DATABASE_PATH=.data/bot.sqlite
+# Optional: the operators' chat (a group, forum topics welcome) for product events.
+OPERATOR_CHAT_ID=
+# Optional: a local Bot API server, and the directory it was started with (--dir).
+BOT_API_URL=
+BOT_API_FILES_ROOT=

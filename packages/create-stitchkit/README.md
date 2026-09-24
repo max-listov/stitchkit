@@ -32,6 +32,22 @@ and recovery state. The bounded startup picker reads current tool-capable models
 windows from OpenRouter instead of duplicating provider metadata in environment variables. The
 workspace path is a containment boundary, not an OS sandbox.
 
+To start from a long-polling Telegram bot:
+
+```bash
+bun create stitchkit my-bot --template telegram-bot
+cd my-bot
+cp .env.example .env
+# Set BOT_TOKEN.
+bun run dev
+```
+
+The bot is assembled from published primitives only: the bot's resources with
+updates admitted by batch, a JSON journal, an SQLite database resource, an
+optional operator channel and local Bot API files, and one entry point that
+turns signals — and a poller that ended on its own — into a bounded shutdown.
+Its product is `src/handlers.ts`.
+
 It uses one conventional `packages/*` namespace: `backend`, `frontend`,
 `config`, `db` and `shared`. The destination name becomes the generated slug;
 `--display-name` sets the human title. Both are recorded once in

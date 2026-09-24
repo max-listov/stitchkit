@@ -12,6 +12,18 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Added
+
+- `--template telegram-bot` — a long-polling Telegram bot assembled from
+  Stitchkit primitives: `grammyBotResources` (command menu, then polling with
+  updates admitted by batch), the JSON journal, an SQLite database resource,
+  an optional operator channel and local Bot API files, an entry point with
+  signals and the one policy for a poller that ended on its own (shut down,
+  exit 1), a `runtime-bindings.ts` where a deployment platform's state
+  publisher attaches, and a lifecycle test against a stand-in for Telegram.
+  Needs the Stitchkit release that ships those primitives; the template's
+  catalog target moves to it when this scaffolder is released.
+
 ## [0.6.4] — 2026-09-23
 
 ### Fixed

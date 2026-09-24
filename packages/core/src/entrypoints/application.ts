@@ -211,6 +211,7 @@ export {
 export {
   defineManagedResource,
   type ManagedResource,
+  type ManagedResourceAdmission,
   type ManagedResourceContext,
   type ManagedResourceDependency,
   type ManagedResourcePublished,

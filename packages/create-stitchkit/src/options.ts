@@ -1,7 +1,7 @@
 export interface CliOptions {
   destination: string;
   install: boolean;
-  template: 'application' | 'agent';
+  template: 'application' | 'agent' | 'telegram-bot';
   example?: 'repository';
   displayName?: string;
 }
@@ -9,7 +9,7 @@ export interface CliOptions {
 const HELP = `Create a production-shaped Stitchkit application.
 
 Usage:
-  bun create stitchkit <directory> [--template application|agent] [--display-name "Product Name"] [--example repository] [--no-install]
+  bun create stitchkit <directory> [--template application|agent|telegram-bot] [--display-name "Product Name"] [--example repository] [--no-install]
 
 Options:
   --no-install  Generate files without installing dependencies
@@ -52,10 +52,10 @@ export function parseOptions(args: string[]): CliOptions | 'help' {
   if (templateFlagIndex !== -1 && template === undefined) {
     throw new Error('--template requires a value');
   }
-  if (template !== 'application' && template !== 'agent') {
+  if (template !== 'application' && template !== 'agent' && template !== 'telegram-bot') {
     throw new Error(`Unknown template: ${template}`);
   }
-  if (template === 'agent' && example !== undefined) {
+  if (template !== 'application' && example !== undefined) {
     throw new Error('--example is only supported by the application template');
   }
 

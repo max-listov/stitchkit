@@ -600,6 +600,7 @@ cutovers are covered by the executable
 | `ApplicationConfig` / `ApplicationHandle` | _type_ | application declaration and its start/snapshot/subscription/admission/shutdown handle |
 | `ApplicationAdmission` / `ApplicationOperationLease` | _type_ | atomic process-local admission and idempotent release primitive |
 | `ManagedResource` / `ManagedResourceContext` / `ManagedResourceStartResult` | _type_ | resource lifecycle callbacks, shared deadlines, health reporting, separate readiness/completion promises and the value a resource publishes to its dependants |
+| `ManagedResourceAdmission` | _type_ | `context.admission`: `acquire()` now or `null`, and `acquireWhenAccepting(signal)` for a resource that fetches work — a poller waits instead of fetching while the application is starting or degraded; rejects on abort and once the application can no longer admit |
 | `ManagedResourceDependency` | _type_ | a dependency named by id or given as the resource itself — the second form is what `context.use(...)` can type |
 | `ManagedResourcePublished` | _type_ | the value type `context.use(resource)` returns, recovered from that resource's own `start` |
 | `ManagedResourcePublishesNoValue` | _type_ | what `context.use(...)` returns for a resource that publishes nothing — a branded refusal rather than `never`, so reading it does not silently compile |
@@ -777,6 +778,10 @@ does not resolve grammY.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `grammyPollingResource` | function | adapt an injected bot's long polling with distinct `onStart` readiness, observed completion and one stop chain |
+| `grammyBotResources` | function | a long-polling bot as `telegram-configuration` (optional `configure`, e.g. `setMyCommands`) then `telegram-polling`, both after the bot's `dependsOn`; updates admitted by batch and the end of polling reported to `onEnded` |
+| `GrammyBotResourcesConfig` / `GrammyBotResources` | _type_ | injected bot, `dependsOn`, `configure`, polling options, `onStart` / `onError` / `onEnded`; `{ configuration?, polling, resources }` in start order |
+| `TELEGRAM_CONFIGURATION_RESOURCE_ID` / `TELEGRAM_POLLING_RESOURCE_ID` | constant | the two stable ids a monitor, a test or a restart addresses |
+| `GrammyPollingEnd` | _type_ | `{ error? }` — how a poller that was ready ended on its own; never reported for a requested stop |
 | `createGrammyWebhookResource` | function | return a managed resource plus admission-guarded `handleUpdate`; HTTP hosting and webhook registration stay application-owned |
 | `GrammyWebhookUnavailableError` | class | stable `GRAMMY_WEBHOOK_NOT_ACCEPTING` rejection after webhook admission closes |
 | `GrammyPollingResourceConfig` | _type_ | injected bot, polling options, resource graph policy and isolated error observer |
@@ -1306,6 +1311,8 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `DimensionCollision` / `SetRequestDimensionsOptions` | _type_ | explicit overwrite, preserve or error policy for dimension keys |
 | `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |
 | `DEFAULT_REDACT_PATHS` | constant | baseline credential/token paths added to the sanitizer's sensitive-key policy |
+| `createJsonLogger` | function | the process journal: one JSON line per call in pino's shape (numeric `level`, epoch `time`, `msg`) on standard output, through `createBoundedLogger` — an `Error` in any field keeps name, message, stack and cause; secrets masked; `level` threshold, static `fields`, injectable `write` |
+| `JsonLoggerOptions` / `JsonLogLevel` / `JSON_LOG_LEVELS` | _type_ / constant | the bounded-logger options plus `level`, `fields`, `write`, `now`; pino's numbers `debug` 20 … `error` 50, which a line reader matches on |
 | `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings (`stringLengthByKey` raises the string bound for named keys such as `stack`) plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `runUnitOfWork` / `RunUnitOfWorkOptions` | function / _type_ | run work that did not arrive over a transport — an agent loop, a scheduled broadcast — inside one context, with the same completion record a request gets |
@@ -1778,9 +1785,10 @@ available from `stitchkit/contract`.
 
 ## `stitchkit/telegram`
 
-Peer-free server-only Telegram platform primitives. Importing this resolves no
+Peer-free server-only Telegram platform primitives — the Bot API's own
+protocols and the jobs every bot rewrote around them. Importing this resolves no
 bot library; `stitchkit/application/grammy` remains the lifecycle adapter for an
-injected grammY bot. → ADR 0143
+injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
 
 | Export | Kind | Summary |
 |--------|------|---------|
@@ -1793,6 +1801,16 @@ injected grammY bot. → ADR 0143
 | `classifyTelegramSendFailure` | function | name a refused Bot API send and separate "retry this send" from "stop addressing this recipient" |
 | `TelegramSendFailure` | _type_ | reason, `status`, Telegram-stated `retryAfterSeconds`, `retryable`, `recipientUnreachable` and which evidence produced the answer |
 | `TelegramSendFailureReason` | _type_ | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `unknown` |
+| `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience written once, an append-only journal, pacing at `ratePerSecond` (25), 429 waits `retry_after`, unreachable recipients never addressed again, a `message-invalid` or unreachable Telegram halts without charging the recipient, a send in flight at a crash is `uncertain` and not repeated, `dryRun`, one runner per name |
+| `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
+| `telegramBroadcastSender` / `TelegramBroadcastSenderConfig` / `TelegramBroadcastMessage` | function / _type_ | the standard `send`: `sendMessage` with a text or `copyMessage` of a prepared message, through the Bot API |
+| `createTelegramOperatorChannel` | function | the operator chat, apart from the journal: `post(text, topic?)` returns at once and never throws; paced sends into forum topics, 429 honoured, oldest dropped on overflow, `drain(signal)` and `close()` for the way down |
+| `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `onDropped`; a drop is `overflow` / `refused` / `attempts` / `closed` with its classification |
+| `telegramOperatorSender` / `TelegramOperatorSenderConfig` | function / _type_ | the standard `send`: `sendMessage` into the chat and topic, plain text unless `parseMode` |
+| `createTelegramLocalFiles` | function | files the local Bot API server wrote under `<root>/<token>/`: `resolve(file_path)` and `remove(file_path)` only inside the bot's directory, judged on real paths so a link is judged by where it leads; `check()` for readiness. Recommended root variable: `BOT_API_FILES_ROOT` |
+| `TelegramLocalFilesConfig` / `TelegramLocalFiles` / `TelegramLocalFilesCheck` / `TelegramLocalFileError` / `TelegramLocalFileRefusal` | _type_ / class | `root`, `token`; refusals `root-not-absolute` / `bot-directory-unavailable` / `outside-bot-directory` / `missing` / `not-a-file`, never carrying the path or the token |
+| `callTelegramBotApi` / `TelegramBotApiCall` / `TelegramBotApiError` | function / _type_ / class | one Bot API method over `fetch`; a refusal keeps `error_code`, `description` and `parameters` for the classifier, and no error names the URL |
+| `TELEGRAM_BOT_TOKEN_PATTERN` | constant | the shape of a bot token, for a logger's `sensitiveUrlPatterns` |
 
 ---
 

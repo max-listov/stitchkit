@@ -1,0 +1,30 @@
+{
+  "name": "stitchkit-telegram-bot-starter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun dist/index.js",
+    "check": "bun x tsgo --noEmit",
+    "lint": "bun x biome check --error-on-warnings .",
+    "lint:fix": "bun x biome check --write .",
+    "test": "bun test",
+    "build": "bun build src/index.ts --outdir dist --target bun --packages external"
+  },
+  "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
+    "grammy": "^1.46.0",
+    "stitchkit": "file:../../../core",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "packageManager": "bun@1.3.14"
+}

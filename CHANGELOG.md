@@ -15,6 +15,105 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.96.0] — 2026-09-24
+
+### ⚠️ Breaking changes
+
+**Who must act:** only a project whose tests call a managed resource's phase
+with a context object they wrote by hand — it adds `admission`. Every other
+project raises its range; grammY polling admits updates by batch with no edit.
+
+- `stitchkit/application` — **`ManagedResourceContext` carries the
+  application's admission.** A resource that *fetches* work — a poller, a queue
+  consumer — should not fetch while the application is starting or degraded,
+  and until now reached the handle through a closure over a variable assigned
+  after the graph that contained it. `context.admission`
+  (`ManagedResourceAdmission`) offers `acquire()` and
+  `acquireWhenAccepting(signal)`, which waits and then holds one operation,
+  rejecting on abort and once the application can no longer admit. The kernel
+  supplies it to every phase; a context built by hand in a test must add it:
+
+  ```ts
+  // before
+  resource.close?.({ applicationId, signal, now, reportHealth, use })
+  // after
+  resource.close?.({ applicationId, signal, now, reportHealth, use,
+    admission: { acquire: () => null, acquireWhenAccepting: () => new Promise(() => {}) } })
+  ```
+
+### Added
+
+- `stitchkit/application/grammy` — **`grammyBotResources`**: a long-polling bot
+  as `telegram-configuration` (the application's `configure`, e.g.
+  `setMyCommands`, run before polling on every start) and `telegram-polling`,
+  both after the bot's `dependsOn`, with those stable ids
+  (`TELEGRAM_CONFIGURATION_RESOURCE_ID`, `TELEGRAM_POLLING_RESOURCE_ID`).
+  Three consuming bots each assembled this pair by hand under their own names.
+- `stitchkit/application/grammy` — `onEnded` on `grammyPollingResource` and
+  `grammyBotResources`: called once when polling that was ready ends on its own
+  (401, 409, a rethrowing `bot.catch`), never for a requested stop. grammY's
+  poller does not recover in-process and the framework does not exit processes,
+  so this is the one place an application turns that end into its shutdown.
+- `stitchkit/observability` — **`createJsonLogger`**: the process journal for a
+  bot or worker. One JSON line per call in pino's shape (numeric `level`,
+  epoch `time`, `msg`) on standard output, through `createBoundedLogger`, so an
+  `Error` under any key keeps name, message, stack and cause — a consuming
+  bot's startup failure had reached its journal as `"error":{}` — and secrets
+  are masked. `level`, static `fields`, injectable `write`; `JSON_LOG_LEVELS`
+  names the numbers a line reader matches on (`error` is 50).
+- `stitchkit/telegram` — **`runTelegramBroadcast`**: a broadcast resumable by
+  name. The audience is written once, progress is an append-only journal; a
+  send in flight at a crash is `uncertain` and not repeated; blocked, gone and
+  never-started recipients are `unreachable` and never addressed again; a 429
+  waits Telegram's `retry_after`; a server error is retried up to
+  `maxAttempts`; a message Telegram cannot parse, or Telegram unreachable,
+  halts the run without charging the recipient. Pacing at `ratePerSecond` (25),
+  `dryRun`, one runner per name. `telegramBroadcastSender` is the standard
+  `send` (`sendMessage` or `copyMessage`). Two consuming bots carried the same
+  five-file subsystem with its own refusal phrases.
+- `stitchkit/telegram` — **`createTelegramOperatorChannel`**: the operator's
+  chat, apart from the journal. `post` returns at once and never throws; paced
+  sends into forum topics, 429 honoured, the oldest message dropped on
+  overflow and every drop reported with why; `drain` and `close` for the way
+  down. `telegramOperatorSender` is the standard `send`.
+- `stitchkit/telegram` — **`createTelegramLocalFiles`**: a file the local Bot
+  API server wrote under `<root>/<token>/`. `resolve` and `remove` stay inside
+  the bot's directory — `../`, an absolute path elsewhere and a link pointing
+  out are refused on real paths — and a refusal names a reason, never the path
+  or the token. `check()` for readiness. The recommended root variable is
+  `BOT_API_FILES_ROOT`.
+- `stitchkit/telegram` — `callTelegramBotApi` / `TelegramBotApiError`: one Bot
+  API call over `fetch` whose refusal keeps `error_code`, `description` and
+  `parameters` for `classifyTelegramSendFailure`, and
+  `TELEGRAM_BOT_TOKEN_PATTERN` for a logger's `sensitiveUrlPatterns`.
+- Public-surface ceilings raised for these: `stitchkit/telegram` 9 → 37,
+  `stitchkit/application/grammy` 7 → 13, `stitchkit/observability` 61 → 65,
+  `stitchkit/application` 277 → 278.
+
+### Changed
+
+- `stitchkit/application/grammy` — **`grammyPollingResource` admits updates by
+  batch.** grammY confirms a batch by asking for the next one, whatever its
+  middleware did, so an update that arrived while the application was
+  starting, degraded or stopping was refused and then confirmed as handled —
+  lost on every restart of two consuming bots. The resource now waits for
+  admission before each long poll, returns a batch to grammY only while holding
+  one admission lease for it, and on shutdown finishes that batch before
+  `bot.stop()` confirms the offset. A batch the application will not admit is
+  never returned; Telegram keeps it for the next process.
+- `stitchkit/application/grammy` — `dependsOn` on both grammY resources takes
+  resource objects as well as ids, like every other resource.
+
+### Fixed
+
+- `stitchkit/application/grammy` — a poller that ended on its own is one
+  failure, not two. Its `drain` awaited the ended completion again and failed
+  with the same error, so the shutdown that followed was `forced` and the
+  journal carried a `drain` failure for an end that had already happened. The
+  ended completion is now drained quietly, and `onEnded` runs a macrotask later
+  so the kernel records it as `completion` before an observer's shutdown can
+  mark the application stopping.
+
 ## [0.95.3] — 2026-09-23
 
 ### Fixed

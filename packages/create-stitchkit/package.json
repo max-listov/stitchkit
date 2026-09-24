@@ -45,6 +45,7 @@
     "!templates/**/*.tsbuildinfo",
     "!templates/**/coverage/**",
     "!templates/agent/bun.lock",
+    "!templates/telegram-bot/bun.lock",
     "!examples/**/.env",
     "!examples/**/.build-stamp.json",
     "!examples/**/node_modules/**",

@@ -19,6 +19,7 @@
       "!**/generated",
       "!!packages/create-stitchkit/template",
       "!!packages/create-stitchkit/templates/agent",
+      "!!packages/create-stitchkit/templates/telegram-bot",
       "!!packages/create-stitchkit/examples/*/project.json"
     ]
   },

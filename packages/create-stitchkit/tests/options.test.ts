@@ -47,6 +47,17 @@ describe('create-stitchkit options', () => {
     );
   });
 
+  test('parses the Telegram bot template, which takes no example either', () => {
+    expect(parseOptions(['my-bot', '--template', 'telegram-bot'])).toEqual({
+      destination: 'my-bot',
+      install: true,
+      template: 'telegram-bot',
+    });
+    expect(() =>
+      parseOptions(['my-bot', '--template', 'telegram-bot', '--example', 'repository']),
+    ).toThrow('--example is only supported');
+  });
+
   test('rejects missing and extra destinations', () => {
     expect(() => parseOptions([])).toThrow('Exactly one destination');
     expect(() => parseOptions(['one', 'two'])).toThrow('Exactly one destination');

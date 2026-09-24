@@ -1,5 +1,6 @@
 export {
   createGrammyWebhookResource,
+  type GrammyPollingEnd,
   type GrammyPollingResourceConfig,
   type GrammyUpdate,
   type GrammyWebhookResource,
@@ -7,3 +8,10 @@ export {
   GrammyWebhookUnavailableError,
   grammyPollingResource,
 } from '../../application/grammy';
+export {
+  type GrammyBotResources,
+  type GrammyBotResourcesConfig,
+  grammyBotResources,
+  TELEGRAM_CONFIGURATION_RESOURCE_ID,
+  TELEGRAM_POLLING_RESOURCE_ID,
+} from '../../application/grammy-bot';

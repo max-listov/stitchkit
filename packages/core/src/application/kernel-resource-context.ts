@@ -1,3 +1,4 @@
+import { acquire, acquireWhenAccepting } from './kernel-admission';
 import {
   isReady,
   type KernelState,
@@ -25,6 +26,10 @@ export function contextFor(
       forceDeadlineAt: options.forceDeadlineAt,
     }),
     now: () => performance.now(),
+    admission: {
+      acquire: () => acquire(state),
+      acquireWhenAccepting: (signal) => acquireWhenAccepting(state, signal),
+    },
     use<TResource extends ManagedResource>(resource: TResource) {
       const dependencyId = resource?.id;
       if (typeof dependencyId !== 'string' || dependencyId.length === 0) {

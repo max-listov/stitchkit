@@ -18,16 +18,16 @@ export async function run(args: string[]): Promise<number> {
     const destination = resolve(options.destination);
     const applicationTemplateDirectory = resolve(import.meta.dir, '../template');
     const templateDirectory =
-      options.template === 'agent'
-        ? resolve(import.meta.dir, '../templates/agent')
-        : applicationTemplateDirectory;
+      options.template === 'application'
+        ? applicationTemplateDirectory
+        : resolve(import.meta.dir, `../templates/${options.template}`);
     const overlayDirectory = options.example
       ? resolve(import.meta.dir, `../examples/${options.example}`)
       : undefined;
     await scaffoldProject(templateDirectory, destination, {
       ...(overlayDirectory && { overlayDirectory }),
       ...(options.displayName && { displayName: options.displayName }),
-      ...(options.template === 'agent' && {
+      ...(options.template !== 'application' && {
         identityModule: false,
         lockfile: false,
         stitchkitCatalogTarget: await readStitchkitCatalogTarget(applicationTemplateDirectory),
@@ -46,8 +46,8 @@ export async function run(args: string[]): Promise<number> {
     }
 
     const mode =
-      options.template === 'agent'
-        ? ' from the agent template'
+      options.template !== 'application'
+        ? ` from the ${options.template} template`
         : options.example
           ? ` with the ${options.example} example`
           : '';

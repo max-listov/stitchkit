@@ -32,6 +32,8 @@ packages/create-stitchkit/template/packages/db/src/generated/
 .build-stamp.json
 playwright-report
 test-results
+# the Telegram bot template's local SQLite database
+.data/
 
 # code coverage
 coverage

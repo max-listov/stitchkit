@@ -1,3 +1,4 @@
+import type { ApplicationOperationLease } from './kernel-contract';
 import type { ApplicationHealth } from './schemas';
 
 /**
@@ -49,9 +50,31 @@ export type ManagedResourcePublished<TResource> = TResource extends {
       : ManagedResourcePublishesNoValue
   : ManagedResourcePublishesNoValue;
 
+/**
+ * The application's admission, as a resource that brings work in sees it.
+ *
+ * A caller handed work — an HTTP request, a webhook update — asks once and is
+ * refused. A resource that *fetches* work — a poller, a queue consumer — has a
+ * better move while the application is starting or degraded: not to fetch yet.
+ * Without this, such a resource reached for the application handle through a
+ * closure over a variable assigned after the graph that contains it.
+ */
+export interface ManagedResourceAdmission {
+  /** Admit one operation now, or `null` while the application is not accepting. */
+  acquire(): ApplicationOperationLease | null;
+  /**
+   * Admit one operation as soon as the application accepts. Rejects with the
+   * signal's reason on abort, and with `ApplicationAdmissionError` once the
+   * application is shutting down or failed, since it will not admit again.
+   */
+  acquireWhenAccepting(signal: AbortSignal): Promise<ApplicationOperationLease>;
+}
+
 export interface ManagedResourceContext {
   readonly applicationId: string;
   readonly signal: AbortSignal;
+  /** The application's operation admission — see `ManagedResourceAdmission`. */
+  readonly admission: ManagedResourceAdmission;
   readonly deadlineAt?: number;
   readonly forceDeadlineAt?: number;
   now(): number;

@@ -148,6 +148,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'stitchkit/voice — sentences cut while a reply streams, the text a voice reads, a speech queue that synthesises ahead and stops on interruption',
   ],
   [
+    'telegram.md',
+    'Telegram bots',
+    'stitchkit/telegram — the journal, the operator channel, resumable broadcasts, local Bot API files; the bot as application resources',
+  ],
+  [
     'geo.md',
     'GeoIP',
     'stitchkit/geo — a server-only managed reader, three observable states and last-known-good generation reloads',
@@ -235,6 +240,7 @@ export const GUIDE_SLICES: GuideMap = {
   'react.md': { primary: './react' },
   'geo.md': { primary: './geo' },
   'voice.md': { primary: './voice' },
+  'telegram.md': { primary: './telegram', also: ['./application/grammy', './observability'] },
   'upgrading.md': UPGRADING,
   'declaration.md': { primary: './declaration' },
 };

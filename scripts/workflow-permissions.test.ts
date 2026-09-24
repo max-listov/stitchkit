@@ -52,6 +52,7 @@ describe('target-aware CI graph', () => {
     expect(scaffolder).not.toContain('bun run check:template');
     expect(scaffolder).toContain('bun --filter stitchkit-tui build');
     expect(scaffolder).toContain('bun run agent-template-lane');
+    expect(scaffolder).toContain('bun run telegram-bot-template-lane');
   });
 
   test('portable validation starts after planning, never after Darwin', () => {

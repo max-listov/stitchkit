@@ -442,5 +442,123 @@
     "onError": {
       "test": "a handler that throws leaves the entry, reports it and takes it again after a backoff"
     }
+  },
+  "GrammyBotResourcesConfig": {
+    "bot": {
+      "exempt": "the grammY bot both resources drive; every test in the file polls it against a fake Bot API"
+    },
+    "dependsOn": {
+      "test": "stable resource ids, configuration before polling, both after the bot dependencies"
+    },
+    "configure": {
+      "test": "stable resource ids, configuration before polling, both after the bot dependencies"
+    },
+    "polling": {
+      "exempt": "forwarded unchanged to grammY bot.start as its polling options; grammY owns their meaning"
+    },
+    "onStart": {
+      "test": "stable resource ids, configuration before polling, both after the bot dependencies"
+    },
+    "onError": {
+      "test": "polling that ends on its own after readiness is reported once to onEnded and onError; a requested stop is not"
+    },
+    "onEnded": {
+      "test": "polling that ends on its own after readiness is reported once to onEnded and onError; a requested stop is not"
+    }
+  },
+  "JsonLoggerOptions": {
+    "level": {
+      "test": "lines below the level are not written"
+    },
+    "fields": {
+      "test": "one JSON object per line in pino shape: numeric level, epoch time, msg"
+    },
+    "write": {
+      "test": "one JSON object per line in pino shape: numeric level, epoch time, msg"
+    },
+    "now": {
+      "test": "one JSON object per line in pino shape: numeric level, epoch time, msg"
+    },
+    "sensitiveUrlPatterns": {
+      "test": "secrets are masked, including a pattern the application names"
+    },
+    "redact": {
+      "exempt": "passed unchanged to createBoundedLogger, whose redaction tests prove it"
+    },
+    "bounds": {
+      "exempt": "passed unchanged to createBoundedLogger, whose bounds tests prove it"
+    }
+  },
+  "TelegramBroadcastConfig": {
+    "name": {
+      "test": "a resumed broadcast never writes again to anyone already delivered"
+    },
+    "directory": {
+      "test": "a resumed broadcast never writes again to anyone already delivered"
+    },
+    "recipients": {
+      "test": "a resumed broadcast never writes again to anyone already delivered"
+    },
+    "send": {
+      "test": "a resumed broadcast never writes again to anyone already delivered"
+    },
+    "signal": {
+      "test": "a resumed broadcast never writes again to anyone already delivered"
+    },
+    "ratePerSecond": {
+      "test": "dry-run counts without sending or writing; sends are paced at ratePerSecond"
+    },
+    "dryRun": {
+      "test": "dry-run counts without sending or writing; sends are paced at ratePerSecond"
+    },
+    "onProgress": {
+      "test": "dry-run counts without sending or writing; sends are paced at ratePerSecond"
+    },
+    "progressEveryMs": {
+      "test": "progressEveryMs sets how often progress is reported while sending"
+    },
+    "maxAttempts": {
+      "test": "a server error retried past maxAttempts is failed, and the broadcast goes on"
+    },
+    "sleep": {
+      "test": "a 429 waits the retry_after Telegram named and sends the same recipient again"
+    },
+    "now": {
+      "test": "dry-run counts without sending or writing; sends are paced at ratePerSecond"
+    }
+  },
+  "TelegramOperatorChannelConfig": {
+    "chatId": {
+      "test": "posts to the topic thread, in order, paced by minIntervalMs"
+    },
+    "topics": {
+      "test": "posts to the topic thread, in order, paced by minIntervalMs"
+    },
+    "send": {
+      "test": "posts to the topic thread, in order, paced by minIntervalMs"
+    },
+    "minIntervalMs": {
+      "test": "posts to the topic thread, in order, paced by minIntervalMs"
+    },
+    "sleep": {
+      "test": "posts to the topic thread, in order, paced by minIntervalMs"
+    },
+    "maxQueued": {
+      "test": "a refusal repeating will not fix is dropped with its classification; overflow drops the oldest"
+    },
+    "onDropped": {
+      "test": "a refusal repeating will not fix is dropped with its classification; overflow drops the oldest"
+    },
+    "maxAttempts": {
+      "test": "post never throws, even when the observer and the sender do"
+    }
+  },
+  "TelegramLocalFilesConfig": {
+    "root": {
+      "test": "a relative file_path resolves inside the bot directory; so does a --local absolute one"
+    },
+    "token": {
+      "test": "a relative file_path resolves inside the bot directory; so does a --local absolute one"
+    }
   }
 }

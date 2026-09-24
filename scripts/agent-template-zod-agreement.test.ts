@@ -34,6 +34,7 @@ const TREES: Record<string, string> = {
   repository: 'bun.lock',
   'application template': 'packages/create-stitchkit/template/bun.lock',
   'agent template': 'packages/create-stitchkit/templates/agent/bun.lock',
+  'telegram bot template': 'packages/create-stitchkit/templates/telegram-bot/bun.lock',
 };
 
 function resolvedZod(lockfile: string): string | undefined {

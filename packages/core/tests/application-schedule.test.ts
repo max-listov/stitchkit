@@ -109,6 +109,10 @@ function resourceContext(
   return {
     context: {
       applicationId: 'test-app',
+      admission: {
+        acquire: () => null,
+        acquireWhenAccepting: () => new Promise(() => undefined),
+      },
       signal: controller.signal,
       ...(deadlineAt !== undefined && { deadlineAt }),
       now: () => clock.now(),

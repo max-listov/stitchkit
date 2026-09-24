@@ -366,6 +366,9 @@ and our payload is wrong, which is the case a list of substrings quietly counts
 against the user. An unrecognised refusal leaves the recipient reachable: losing
 a working subscriber forever costs more than one wasted send.
 
+The rest of what a bot is assembled from — its resources, journal, operator
+channel, broadcasts and local Bot API files — is in [Telegram bots](telegram.md).
+
 ## Cookies
 
 ```ts
