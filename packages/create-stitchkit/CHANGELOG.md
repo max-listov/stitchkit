@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.7] — 2026-09-24
+
 ### Fixed
 
 - **A bot from `--template telegram-bot` starts with an operators' chat.** With
@@ -23,6 +25,11 @@ step is overwritten by the next release.
   generated from 0.6.5 or 0.6.6 moves the `operator-channel` resource out of the
   `dependsOn` it passes to `grammyBotResources` and into the application's
   `resources`.
+
+### Changed
+
+- Generated projects track Stitchkit `^0.96.1`, whose operator channel masks
+  a bot token before a message leaves.
 
 ## [0.6.6] — 2026-09-24
 
