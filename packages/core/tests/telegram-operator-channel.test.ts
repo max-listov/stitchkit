@@ -144,6 +144,47 @@ describe('createTelegramOperatorChannel', () => {
   });
 });
 
+describe('the operator channel masks secrets', () => {
+  test('a bot token in a posted text is sent and reported masked, and so is an application pattern', async () => {
+    const token = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
+    const sent: string[] = [];
+    const drops: string[] = [];
+    const channel = createTelegramOperatorChannel({
+      chatId: 1,
+      sleep: noSleep,
+      maxQueued: 1,
+      sensitivePatterns: [/card \d{16}/],
+      onDropped: (drop) => void drops.push(drop.text),
+      send: async (message) => void sent.push(message.text),
+    });
+    channel.post(`cannot read /srv/bot-api/${token}/videos/file_1.mp4`);
+    channel.post(`dropped with ${token}`);
+    channel.post('paid with card 4111111111111111');
+    await channel.drain();
+    expect(sent.join(' ')).not.toContain(token);
+    expect(sent[0]).toBe('cannot read /srv/bot-api/[redacted]/videos/file_1.mp4');
+    expect(sent.at(-1)).toBe('paid with [redacted]');
+    expect(drops.join(' ')).not.toContain(token);
+  });
+
+  test('the standard sender masks its own token whatever its shape', async () => {
+    const token = 'short-test-token';
+    const bodies: { text: string }[] = [];
+    const fetcher: typeof fetch = Object.assign(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Response.json({ ok: true, result: {} });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await telegramOperatorSender({ token, fetch: fetcher })(
+      { chatId: 1, text: `token ${token} leaked` },
+      new AbortController().signal,
+    );
+    expect(bodies[0]?.text).toBe('token [redacted] leaked');
+  });
+});
+
 describe('callTelegramBotApi', () => {
   test('a refusal keeps Telegram answer as fields the classifier reads, and no token in the message', async () => {
     const token = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';

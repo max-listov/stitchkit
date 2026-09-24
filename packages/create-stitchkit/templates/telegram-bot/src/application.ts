@@ -27,11 +27,14 @@ export interface BotApplicationConfig {
 /**
  * The graph, in start order:
  *
- *   database → [telegram-files] → [operator-channel] → telegram-configuration → telegram-polling
+ *   database → [telegram-files] → telegram-configuration → telegram-polling
+ *   [operator-channel]              beside the bot, not under it
  *
- * Product resources — queues, an HTTP server for payment webhooks, schedules,
- * metrics — go between the database and the bot, and join the bot's
- * `dependsOn` when handlers need them before the first update.
+ * The bot depends only on what it cannot answer without — required resources.
+ * An optional one (the operators' chat, metrics) stands beside the bot: a
+ * required resource may not depend on an optional one, and the bot must keep
+ * answering when the chat is unreachable. Queues and an HTTP server for
+ * payment webhooks are required and join the bot's `dependsOn`.
  */
 export function createBotApplication(config: BotApplicationConfig): ApplicationHandle {
   const database = createDatabase(config.databasePath);
@@ -59,17 +62,17 @@ export function createBotApplication(config: BotApplicationConfig): ApplicationH
     );
   }
   const operators = config.operators;
-  if (operators) {
-    botDependencies.push(
-      defineManagedResource({
-        id: 'operator-channel',
-        required: false,
-        start() {},
-        drain: (context) => operators.drain(context.signal),
-        close: () => operators.close(),
-      }),
-    );
-  }
+  const beside: ManagedResource[] = operators
+    ? [
+        defineManagedResource({
+          id: 'operator-channel',
+          required: false,
+          start() {},
+          drain: (context) => operators.drain(context.signal),
+          close: () => operators.close(),
+        }),
+      ]
+    : [];
 
   const telegram = grammyBotResources({
     bot: config.bot,
@@ -84,7 +87,7 @@ export function createBotApplication(config: BotApplicationConfig): ApplicationH
 
   return createApplication({
     id: 'telegram-bot',
-    resources: [...botDependencies, ...telegram.resources],
+    resources: [...botDependencies, ...beside, ...telegram.resources],
     shutdown: config.shutdown ?? { gracePeriodMs: 30_000, forceTimeoutMs: 5_000 },
     onResourceFailure: ({ resourceId, phase, error }) =>
       config.log.error('Resource failed', { resourceId, phase, error }),

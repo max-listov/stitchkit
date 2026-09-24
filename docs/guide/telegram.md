@@ -66,7 +66,10 @@ const operators = createTelegramOperatorChannel<'users' | 'payments' | 'errors'>
 operators.post(`New user ${user.id}`, 'users')
 ```
 
-What to post stays the bot's. On the way down, drain it within the grace period
+Every message is masked before it leaves: a bot token always — bots post their
+errors here, and an error about a local Bot API file carries the token in its
+path — plus any `sensitivePatterns` the bot adds; `telegramOperatorSender` also
+masks its own exact token. What to post stays the bot's. On the way down, drain it within the grace period
 and close it: `drain: (context) => operators.drain(context.signal)`,
 `close: () => operators.close()` in a resource.
 

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Bot } from 'grammy';
+import { createTelegramLocalFiles, createTelegramOperatorChannel } from 'stitchkit/telegram';
 import { z } from 'zod';
 import { createBotApplication } from '../src/application';
 import { createLog } from '../src/log';
@@ -73,8 +77,12 @@ function fakeTelegram() {
 }
 
 const servers: { stop(): void }[] = [];
-afterEach(() => {
+const directories: string[] = [];
+afterEach(async () => {
   for (const server of servers.splice(0)) server.stop();
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
 });
 
 async function until(check: () => boolean): Promise<void> {
@@ -116,5 +124,48 @@ describe('the bot application', () => {
     expect(result.outcome).toBe('clean');
     expect(Math.max(...telegram.offsets)).toBe(6);
     expect(ended).toEqual([]);
+  });
+
+  test('starts with an operators chat and local Bot API files, and the channel drains on the way down', async () => {
+    const telegram = fakeTelegram();
+    servers.push(telegram);
+    const root = await mkdtemp(join(tmpdir(), 'template-bot-files-'));
+    directories.push(root);
+    await mkdir(join(root, '1:template'));
+    const bot = new Bot('1:template', { client: { apiRoot: telegram.origin } });
+    const posted: string[] = [];
+    const operators = createTelegramOperatorChannel<'users' | 'errors'>({
+      chatId: -100,
+      minIntervalMs: 1,
+      send: async (message) => void posted.push(message.text),
+    });
+    const app = createBotApplication({
+      bot,
+      databasePath: ':memory:',
+      log: createLog({ LOG_LEVEL: 'info' }),
+      operators,
+      files: createTelegramLocalFiles({ root, token: '1:template' }),
+      onPollingEnded: () => undefined,
+      shutdown: { gracePeriodMs: 2_000, forceTimeoutMs: 200 },
+    });
+
+    const snapshot = await app.start();
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.resources.map((resource) => resource.id)).toEqual([
+      'database',
+      'operator-channel',
+      'telegram-files',
+      'telegram-configuration',
+      'telegram-polling',
+    ]);
+    // The bot waits for what it cannot answer without, never for the chat.
+    expect(
+      snapshot.resources.find((resource) => resource.id === 'telegram-configuration')
+        ?.dependsOn,
+    ).toEqual(['database', 'telegram-files']);
+    telegram.push(8);
+    await until(() => posted.length > 0);
+    expect(posted).toEqual(['New user 7']);
+    expect((await app.shutdown()).outcome).toBe('clean');
   });
 });

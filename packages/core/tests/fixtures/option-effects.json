@@ -551,6 +551,9 @@
     },
     "maxAttempts": {
       "test": "post never throws, even when the observer and the sender do"
+    },
+    "sensitivePatterns": {
+      "test": "a bot token in a posted text is sent and reported masked, and so is an application pattern"
     }
   },
   "TelegramLocalFilesConfig": {

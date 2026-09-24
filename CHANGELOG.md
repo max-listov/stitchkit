@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.96.1] — 2026-09-24
+
+### Fixed
+
+- `stitchkit/telegram` — **the operator channel no longer posts a bot token.**
+  Bots post their errors to the operators' chat, and an error about a local
+  Bot API file carries `<root>/<token>/…` in its path; the journal masked it,
+  the chat did not. `createTelegramOperatorChannel` now masks a bot token in
+  every message before it is queued — so a dropped message is reported masked
+  too — plus any `sensitivePatterns` given, and `telegramOperatorSender` masks
+  its own exact token whatever its shape.
+
 ## [0.96.0] — 2026-09-24
 
 ### ⚠️ Breaking changes

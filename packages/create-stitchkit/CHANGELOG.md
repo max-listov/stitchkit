@@ -12,6 +12,18 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A bot from `--template telegram-bot` starts with an operators' chat.** With
+  `OPERATOR_CHAT_ID` set, the optional `operator-channel` was one of the bot's
+  dependencies, and the kernel refuses a required resource that depends on an
+  optional one: the bot started without the chat and not with it. The channel
+  now stands beside the bot and still drains on the way down; the template's
+  test starts the graph with the chat and with local Bot API files. A bot
+  generated from 0.6.5 or 0.6.6 moves the `operator-channel` resource out of the
+  `dependsOn` it passes to `grammyBotResources` and into the application's
+  `resources`.
+
 ## [0.6.6] — 2026-09-24
 
 ### Fixed

@@ -14,13 +14,36 @@
  * topics, 429s and the bounded way down.
  */
 
-import { callTelegramBotApi } from './bot-api';
+import { callTelegramBotApi, TELEGRAM_BOT_TOKEN_PATTERN } from './bot-api';
 import { classifyTelegramSendFailure, type TelegramSendFailure } from './send-failure';
 
 export type TelegramChatId = number | string;
 
 /** Telegram's limit for one message's text. */
 const TEXT_LIMIT = 4_096;
+
+/** What a masked secret reads as — the same word the journal writes. */
+const MASK = '[redacted]';
+
+/**
+ * Replace every match of every pattern. A pattern written without the global
+ * flag still masks every occurrence, not only the first.
+ */
+function masked(text: string, patterns: readonly RegExp[]): string {
+  let output = text;
+  for (const pattern of patterns) {
+    output = output.replace(
+      new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}g`),
+      MASK,
+    );
+  }
+  return output;
+}
+
+/** A literal as a pattern that matches only itself. */
+function literal(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+}
 
 export interface TelegramOperatorMessage {
   readonly chatId: TelegramChatId;
@@ -57,6 +80,12 @@ export interface TelegramOperatorChannelConfig<TTopic extends string> {
   readonly onDropped?: (drop: TelegramOperatorDrop<TTopic>) => void;
   /** Default: a timer. Rejects when `signal` aborts. */
   readonly sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * More secrets to mask in every message before it leaves. A bot token is
+   * always masked: bots post their errors here, and an error about a local Bot
+   * API file carries `<root>/<token>/…` in its path.
+   */
+  readonly sensitivePatterns?: readonly RegExp[];
 }
 
 export interface TelegramOperatorChannel<TTopic extends string> {
@@ -103,6 +132,7 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
   const minIntervalMs = config.minIntervalMs ?? 3_000;
   const maxAttempts = config.maxAttempts ?? 3;
   const sleep = config.sleep ?? timer;
+  const patterns = [TELEGRAM_BOT_TOKEN_PATTERN, ...(config.sensitivePatterns ?? [])];
   const queue: Queued<TTopic>[] = [];
   const idle = new Set<() => void>();
   let lifetime = new AbortController();
@@ -195,9 +225,10 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
   return {
     post(text, topic) {
       try {
+        // Masked on the way in, so a dropped message is reported masked too.
         const item: Queued<TTopic> = {
           ...(topic !== undefined && { topic }),
-          text,
+          text: masked(text, patterns),
           attempts: 0,
         };
         if (closed) {
@@ -254,13 +285,15 @@ export interface TelegramOperatorSenderConfig {
 export function telegramOperatorSender(
   config: TelegramOperatorSenderConfig,
 ): TelegramOperatorChannelConfig<string>['send'] {
+  // This sender knows the exact token, so it masks it whatever its shape.
+  const token = literal(config.token);
   return (message, signal) =>
     callTelegramBotApi({
       token: config.token,
       method: 'sendMessage',
       params: {
         chat_id: message.chatId,
-        text: message.text,
+        text: masked(message.text, [token]),
         ...(message.threadId !== undefined && { message_thread_id: message.threadId }),
         ...(config.parseMode && { parse_mode: config.parseMode }),
         link_preview_options: { is_disabled: true },

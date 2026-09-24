@@ -16,9 +16,10 @@ bun run dev
 
 - `src/handlers.ts` — the product: commands, messages, what goes to the operators' chat.
 - `src/application.ts` — the resource graph: `database` → (`telegram-files`) →
-  (`operator-channel`) → `telegram-configuration` → `telegram-polling`. Queues, an
-  HTTP server for payment webhooks, schedules and metrics go between the database
-  and the bot.
+  `telegram-configuration` → `telegram-polling`, with the optional
+  `operator-channel` beside the bot rather than under it. Required resources the
+  handlers need — queues, an HTTP server for payment webhooks — join the bot's
+  dependencies; optional ones — the operators' chat, metrics — stand beside it.
 - `src/index.ts` — the entry point: environment, journal, signals, and the one
   policy for a poller that ended on its own (shut down, exit 1, let the supervisor
   restart).
