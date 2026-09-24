@@ -188,6 +188,7 @@ jobs:
       - run: bun --filter stitchkit-tui build
       - run: bun run agent-template-lane
       - run: bun run telegram-bot-template-lane
+      - run: bun run generated-templates-lane
 
   darwin-contained-files:
     name: Packed contained files / ${{ matrix.arch }}

@@ -38,6 +38,7 @@ export const VERIFY_STEPS = [
   'tui-packed-lane',
   'agent-template-lane',
   'telegram-bot-template-lane',
+  'generated-templates-lane',
   'starter-lane',
   // The supervised lane used to be the one gate CI ran and `verify` did not,
   // because it needed `pm2` on PATH. The supervisor is a pinned devDependency
@@ -349,6 +350,7 @@ async function releaseProfile(): Promise<VerifyProfile> {
     lanes.push(
       'agent-template-lane',
       'telegram-bot-template-lane',
+      'generated-templates-lane',
       'starter-lane',
       'supervised-lane',
     );

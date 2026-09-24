@@ -31,6 +31,7 @@
     "contained-files-packed-lane": "bun --filter stitchkit consumer-lane --contained-files-only",
     "tui-packed-lane": "bun scripts/tui-packed-lane.ts",
     "agent-template-lane": "cd packages/core && bun ../../scripts/package-build-lock.ts -- sh -c 'cd ../create-stitchkit/templates/agent && bun install --frozen-lockfile --ignore-scripts && bun run check && bun test && bun run build'",
+    "generated-templates-lane": "bun scripts/generated-templates-lane.ts",
     "telegram-bot-template-lane": "cd packages/core && bun ../../scripts/package-build-lock.ts -- sh -c 'cd ../create-stitchkit/templates/telegram-bot && bun install --frozen-lockfile --ignore-scripts && bun run check && bun test && bun run build'",
     "starter-lane": "bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=target --variant=repository --browser=all",
     "starter-head-lane": "bun scripts/starter-lane.ts --mode=head --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=head --variant=repository --browser=all",

@@ -40,6 +40,7 @@ const TEMPLATE_RENAMES = new Map([
 const RootManifestSchema = z.looseObject({
   name: z.string().min(1),
   catalog: z.record(z.string(), z.string()).optional(),
+  workspaces: z.unknown().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),
   devDependencies: z.record(z.string(), z.string()).optional(),
 });
@@ -255,23 +256,36 @@ export async function scaffoldProject(
     const catalog = options.stitchkitCatalogTarget
       ? { ...(manifest.catalog ?? {}), stitchkit: options.stitchkitCatalogTarget }
       : manifest.catalog;
+    // Bun reads a catalog only in a workspace root. A single-package project
+    // has no workspace, so `catalog:` there fails `bun install` with "not in
+    // the catalog"; its dependency line is the one declaration of the range.
+    const isWorkspace = manifest.workspaces !== undefined;
+    const localReference = (name: 'stitchkit' | 'stitchkit-tui'): string => {
+      if (isWorkspace) return 'catalog:';
+      const range = catalog?.[name];
+      if (!range) throw new Error(`Template catalog has no range for ${name}`);
+      return range;
+    };
     const replaceLocalPackages = (dependencies: Record<string, string> | undefined) => {
       if (!dependencies) return dependencies;
       return {
         ...dependencies,
-        ...(dependencies.stitchkit?.startsWith('file:') && { stitchkit: 'catalog:' }),
+        ...(dependencies.stitchkit?.startsWith('file:') && {
+          stitchkit: localReference('stitchkit'),
+        }),
         ...(dependencies['stitchkit-tui']?.startsWith('file:') && {
-          'stitchkit-tui': 'catalog:',
+          'stitchkit-tui': localReference('stitchkit-tui'),
         }),
       };
     };
+    const { catalog: _templateCatalog, ...withoutCatalog } = manifest;
     await writeFile(
       manifestPath,
       `${JSON.stringify(
         {
-          ...manifest,
+          ...(isWorkspace ? manifest : withoutCatalog),
           name: identity.slug,
-          ...(catalog && { catalog }),
+          ...(isWorkspace && catalog && { catalog }),
           ...(manifest.dependencies && {
             dependencies: replaceLocalPackages(manifest.dependencies),
           }),

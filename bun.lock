@@ -94,7 +94,7 @@
     },
     "packages/create-stitchkit": {
       "name": "create-stitchkit",
-      "version": "0.6.5",
+      "version": "0.6.6",
       "bin": {
         "create-stitchkit": "./dist/cli.js",
       },

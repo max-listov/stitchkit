@@ -545,7 +545,7 @@ describe('scaffoldProject', () => {
     expect(missing).toEqual([]);
   });
 
-  test('materialises the Agent template with the canonical catalog and no app identity module', async () => {
+  test('materialises the Agent template with the canonical range and no app identity module', async () => {
     const templateRoot = join(import.meta.dir, '..', 'templates/agent');
     const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
     const destination = join(parent, 'terminal-agent');
@@ -558,11 +558,12 @@ describe('scaffoldProject', () => {
     });
 
     const manifest = JSON.parse(await readFile(join(destination, 'package.json'), 'utf8'));
+    // No workspace, so no catalog: Bun reads one only in a workspace root.
     expect(manifest).toMatchObject({
       name: 'terminal-agent',
-      catalog: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.1.1' },
-      dependencies: { stitchkit: 'catalog:', 'stitchkit-tui': 'catalog:' },
+      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.1.1' },
     });
+    expect(manifest.catalog).toBeUndefined();
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
     expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();
     expect(await readFile(join(destination, 'src/runtime.ts'), 'utf8')).toContain(
@@ -577,7 +578,7 @@ describe('scaffoldProject', () => {
     expect(await readFile(join(destination, '.gitignore'), 'utf8')).toContain('.stitchkit/');
   });
 
-  test('materialises the Telegram bot template with the canonical catalog and its own ignore rules', async () => {
+  test('materialises the Telegram bot template with the canonical range and its own ignore rules', async () => {
     const templateRoot = join(import.meta.dir, '..', 'templates/telegram-bot');
     const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
     const destination = join(parent, 'support-bot');
@@ -592,9 +593,9 @@ describe('scaffoldProject', () => {
     const manifest = JSON.parse(await readFile(join(destination, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: 'support-bot',
-      catalog: { stitchkit: '^0.96.0' },
-      dependencies: { stitchkit: 'catalog:', grammy: expect.any(String) },
+      dependencies: { stitchkit: '^0.96.0', grammy: expect.any(String) },
     });
+    expect(manifest.catalog).toBeUndefined();
     const declaration = JSON.parse(await readFile(join(destination, 'project.json'), 'utf8'));
     expect(declaration.identity.slug).toBe('support-bot');
     expect(declaration.roles.map((role: { name: string }) => role.name)).toEqual(['bot']);

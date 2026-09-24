@@ -16,6 +16,7 @@
     "build": "bun build src/index.ts --outdir dist --target bun --packages external"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "ai": "^7.0.111",
     "stitchkit": "file:../../../core",

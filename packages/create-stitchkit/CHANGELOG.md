@@ -12,6 +12,28 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-09-24
+
+### Fixed
+
+- **A project from `--template agent` or `--template telegram-bot` installs.**
+  The scaffolder rewrote their Stitchkit dependency to `catalog:` and wrote a
+  root `catalog`, which Bun reads only in a workspace root, so `bun install`
+  refused the generated project ("stitchkit@catalog: is not in the catalog").
+  A project without `workspaces` now gets the range itself —
+  `"stitchkit": "^0.96.0"` — and no catalog; the application template, a
+  workspace, is unchanged. A project already generated from either template
+  replaces each `"catalog:"` in its dependencies with the range from its
+  `catalog` field and deletes that field.
+- **A project from `--template agent` passes its own tests.** It mounts its
+  agent with `stitchkit/tools`, whose optional peer
+  `@modelcontextprotocol/server` the template did not declare; inside this
+  repository the workspace supplied it. The template now depends on
+  `@modelcontextprotocol/server` `^2.0.0`.
+- A new lane generates both single-package templates the way a user does,
+  installs them from the registry, and runs their check and tests — neither
+  defect above could be seen by a lane that installs the template directory.
+
 ## [0.6.5] — 2026-09-24
 
 ### Added
