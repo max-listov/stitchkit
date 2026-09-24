@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-24
+
 ### Added
 
 - `--template telegram-bot` — a long-polling Telegram bot assembled from
@@ -21,8 +23,12 @@ step is overwritten by the next release.
   signals and the one policy for a poller that ended on its own (shut down,
   exit 1), a `runtime-bindings.ts` where a deployment platform's state
   publisher attaches, and a lifecycle test against a stand-in for Telegram.
-  Needs the Stitchkit release that ships those primitives; the template's
-  catalog target moves to it when this scaffolder is released.
+  Generated with `bun create stitchkit my-bot --template telegram-bot`.
+
+### Changed
+
+- Generated projects track Stitchkit `^0.96.0`, the release that ships the
+  bot primitives the new template is built from.
 
 ## [0.6.4] — 2026-09-23
 
