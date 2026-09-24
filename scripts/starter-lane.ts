@@ -12,6 +12,7 @@ import {
   sweepAbandonedTemporaryDirectories,
 } from './lane-processes';
 import { findNeutralIdentity } from './neutral-identity';
+import { buildStarter, spawnTee } from './starter-build';
 import { createStarterLaneDatabase } from './starter-database';
 import { parseStarterLaneOptions } from './starter-lane-options';
 import {
@@ -470,9 +471,16 @@ try {
       // imported by a component imported by a page. Pointing the build at a
       // closed port is the only check that covers every path at once, and it
       // fails loudly the moment a prerender starts dialling.
-      await run(['bun', 'run', 'build'], generated, {
-        env: { ...env, DATABASE_URL: `postgresql://nobody@127.0.0.1:${freePort()}/absent` },
-      });
+      const buildEnv = {
+        ...env,
+        DATABASE_URL: `postgresql://nobody@127.0.0.1:${freePort()}/absent`,
+      };
+      const build = await buildStarter(() =>
+        spawnTee(['bun', 'run', 'build'], generated, buildEnv),
+      );
+      if (build.exitCode !== 0) {
+        throw new Error(`bun run build failed with exit code ${build.exitCode}`);
+      }
       await run(['bun', 'run', 'lint'], generated, { env });
 
       // Second-developer scenario: a fresh clone carries no `.env`. Both the

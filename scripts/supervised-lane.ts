@@ -29,6 +29,7 @@ import {
   sweepAbandonedLaneProcesses,
   sweepAbandonedTemporaryDirectories,
 } from './lane-processes';
+import { buildStarter } from './starter-build';
 import { createStarterLaneDatabase } from './starter-database';
 
 const repositoryRoot = resolve(import.meta.dir, '..');
@@ -262,7 +263,13 @@ try {
 
   await run(['bun', 'install'], generated, env);
   await run(['bun', 'run', 'db:setup'], generated, env);
-  await run(['bun', 'run', 'build'], generated, env);
+  const build = await buildStarter(async () => {
+    const result = await capture(['bun', 'run', 'build'], generated, env);
+    return { exitCode: result.exitCode, output: `${result.stdout}\n${result.stderr}` };
+  });
+  if (build.exitCode !== 0) {
+    throw new Error(`bun run build failed with exit code ${build.exitCode}\n${build.output}`);
+  }
 
   // Exactly the entry point the README gives an operator — not a hand-built
   // pm2 command that could differ from what a project actually runs.
