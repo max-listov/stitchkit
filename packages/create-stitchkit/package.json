@@ -69,7 +69,7 @@
   },
   "scripts": {
     "check": "bun x tsc --noEmit",
-    "test": "bun test tests",
+    "test": "bun test ./tests",
     "build": "rm -rf dist && bun build src/cli.ts --outdir dist --target bun --packages external && chmod +x dist/cli.js",
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
