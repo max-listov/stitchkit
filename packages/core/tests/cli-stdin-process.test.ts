@@ -30,25 +30,50 @@ test('required input fails within one second on an empty open pipe', async () =>
 
 async function runPipe(
   args: string[],
-  feed: (stdin: ReturnType<typeof spawnProbe>['stdin']) => Promise<void>,
+  feed: (stdin: ReturnType<typeof pipeInput>) => Promise<void>,
   explicitReader = false,
 ) {
   const child = spawnProbe(args, explicitReader);
+  const input = pipeInput(child.stdin);
   const guard = setTimeout(() => child.kill(), 4000);
   try {
+    let feedError: unknown;
     const [code, out, err] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
-      feed(child.stdin),
+      feed(input).catch((error: unknown) => {
+        feedError = error;
+      }),
     ]);
+    if (feedError)
+      throw new Error(
+        `stdin writer failed; child exit=${code}, stdout=${out.slice(0, 500)}, stderr=${err}`,
+        { cause: feedError },
+      );
     expect(child.signalCode).toBeNull();
     return { code, out, err };
   } finally {
     clearTimeout(guard);
-    child.stdin.end();
+    await input.end();
     child.kill();
   }
+}
+
+/** A producer owns EOF exactly once, including cleanup after a failed assertion. */
+function pipeInput(stdin: Bun.FileSink) {
+  let ended = false;
+  return {
+    write: (data: Uint8Array | string) => stdin.write(data),
+    flush: () => stdin.flush(),
+    end: async () => {
+      if (ended) return;
+      ended = true;
+      // Drain pending writes before closing the producer's pipe.
+      await stdin.flush();
+      await stdin.end();
+    },
+  };
 }
 
 function spawnProbe(args: string[], explicitReader = false) {
