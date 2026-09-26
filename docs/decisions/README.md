@@ -231,6 +231,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0199](0199-one-owner-per-name-and-one-way-per-job.md) | One owner per name, one way per job: the 0.94 consolidation | Accepted — duplicate public names moved to their owners, one canonical JSON, one MCP registration, one tool transport type, a public-surface budget, a declared import graph | I8 |
 | [0200](0200-an-effect-is-recorded-before-it-runs.md) | An effect is recorded before it runs, and settled only by its recipient | Accepted — `durability.effect`: intent before `run`, outcome after; an intent without an outcome is reconciled, never run again; `uncertain` is a recorded, final answer; amends 0182's "make effects idempotent" for effects that cannot be | I8 |
 | [0201](0201-a-telegram-bot-is-assembled-from-primitives.md) | A Telegram bot is assembled from primitives | Accepted — updates admitted by batch at `getUpdates` through `context.admission`; `onEnded` for a dead poller; the pino-shaped `createJsonLogger` journal; an operator channel apart from it; a resumable broadcast recording intent before each send; the `telegram` leaf still imports only `internal` | I8 |
+| [0202](0202-schedule-retries-preserve-occurrence-identity.md) | Schedule retries preserve occurrence identity | Accepted — indexed durable backoff, terminal failures, bounded dispatch and fenced settlement | I10 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

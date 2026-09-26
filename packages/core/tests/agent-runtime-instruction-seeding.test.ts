@@ -119,7 +119,15 @@ describe('durable once-seeding of user-role instructions', () => {
     });
     // V3 adds only this table; dropping it and restoring the meta version
     // constructs the exact V2 schema while retaining real normalized history.
-    fixture.database.exec('DROP TABLE stitchkit_agent_runtime_seeds');
+    fixture.database.exec(`
+      DROP TABLE stitchkit_agent_runtime_seeds;
+      DROP INDEX stitchkit_agent_runtime_schedules_due;
+      ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN eligible_at;
+      ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN retry_at;
+      ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN attempts;
+      ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN last_error;
+      CREATE INDEX stitchkit_agent_runtime_schedules_due ON stitchkit_agent_runtime_schedules (state, next_at);
+    `);
     fixture.database
       .prepare("UPDATE stitchkit_agent_runtime_meta SET value='2' WHERE key='schema_version'")
       .run();
@@ -130,7 +138,7 @@ describe('durable once-seeding of user-role instructions', () => {
         migrated.database
           .prepare("SELECT value FROM stitchkit_agent_runtime_meta WHERE key='schema_version'")
           .get(),
-      ).toEqual({ value: '3' });
+      ).toEqual({ value: '4' });
       expect(
         (await migrated.store.loadSnapshot('old')).messages.map((message) => message.id),
       ).toEqual(['existing']);

@@ -11,10 +11,12 @@ import {
   migrateAgentRuntimeSqliteV2ToV3,
 } from './store-migrations/v2-to-v3';
 
+import { migrateAgentRuntimeSqliteV3ToV4 } from './store-migrations/v3-to-v4';
+
 const MetaRowSchema = z.object({ value: z.string() });
 const TableRowSchema = z.object({ name: z.string() });
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const TABLES = [
   'stitchkit_agent_runtime_heads',
   'stitchkit_agent_runtime_runs',
@@ -62,12 +64,20 @@ export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
       if (version === 1) {
         migrateAgentRuntimeSqliteV1ToV2(database);
         migrateAgentRuntimeSqliteV2ToV3(database);
+        migrateAgentRuntimeSqliteV3ToV4(database);
         initializeSqliteConversationPurge(database);
         database.exec('COMMIT');
         return;
       }
       if (version === 2) {
         migrateAgentRuntimeSqliteV2ToV3(database);
+        migrateAgentRuntimeSqliteV3ToV4(database);
+        initializeSqliteConversationPurge(database);
+        database.exec('COMMIT');
+        return;
+      }
+      if (version === 3) {
+        migrateAgentRuntimeSqliteV3ToV4(database);
         initializeSqliteConversationPurge(database);
         database.exec('COMMIT');
         return;
@@ -135,6 +145,7 @@ export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
         "INSERT INTO stitchkit_agent_runtime_meta (key, value) VALUES ('schema_version', '3')",
       )
       .run();
+    migrateAgentRuntimeSqliteV3ToV4(database);
     initializeSqliteConversationPurge(database);
     database.exec('COMMIT');
   } catch (error) {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { defineAgentTool } from './agent-tool';
-import type { AgentScheduleService } from './schedules';
+import type { AgentScheduleService } from './schedule-contract';
 
 const ScheduledOutputSchema = z
   .object({ scheduleId: z.string(), nextAt: z.string() })

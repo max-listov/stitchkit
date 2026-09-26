@@ -1295,6 +1295,8 @@
     "AgentSandboxRestriction",
     "AgentSandboxRestrictionSchema",
     "AgentSchedule",
+    "AgentScheduleDeliveryOutcome",
+    "AgentScheduleDeliveryOutcomeSchema",
     "AgentScheduleSchema",
     "AgentScheduleService",
     "AgentSeedReceipt",

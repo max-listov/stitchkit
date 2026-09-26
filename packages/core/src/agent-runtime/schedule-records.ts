@@ -5,12 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import {
-  type AgentSchedule,
-  AgentScheduleSchema,
-  ClaimRowSchema,
-  FinalizeRowSchema,
-} from './schedules';
+import { type AgentSchedule, AgentScheduleSchema } from './schedule-contract';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 
 export interface ScheduleRequest {
@@ -26,7 +21,7 @@ export interface ScheduleRequest {
 export interface ClaimedFiring {
   readonly schedule: AgentSchedule;
   readonly occurrence: number;
-  readonly at: string;
+  readonly now: () => Date;
   readonly owner: string;
 }
 
@@ -107,78 +102,103 @@ export async function insertSchedule(
   });
 }
 
-/**
- * The row stays due and unclaimed; the failure is a durable fact of the
- * conversation, not a silent skip and not a dead timer.
- */
+/** A settlement is valid only for this unexpired attempt and unchanged occurrence. */
+function holdsClaim(raw: unknown, firing: ClaimedFiring, at: string): boolean {
+  if (raw === null || raw === undefined) return false;
+  const row = z
+    .object({
+      state: z.string(),
+      claim_owner: z.string().nullable(),
+      claim_until: z.string().nullable(),
+      occurrence: z.int(),
+      next_at: z.string(),
+    })
+    .parse(raw);
+  return (
+    row.state === 'scheduled' &&
+    row.claim_owner === firing.owner &&
+    row.claim_until !== null &&
+    row.claim_until > at &&
+    row.occurrence === firing.schedule.occurrence &&
+    row.next_at === firing.schedule.nextAt
+  );
+}
+
+/** Retry delay is durable, capped at a minute, and never changes the occurrence's due time. */
 export async function recordDispatchFailure(
   sqlite: SqliteAgentRuntimeStore,
-  { schedule, occurrence, at, owner }: ClaimedFiring,
-  error: unknown,
+  firing: ClaimedFiring,
+  reason: string,
+  terminal = false,
 ): Promise<void> {
+  const { schedule, occurrence } = firing;
   await sqlite.transaction(async (scope) => {
+    const at = firing.now().toISOString();
+    const raw = scope.database
+      .prepare(`
+      SELECT state, claim_owner, claim_until, occurrence, next_at
+      FROM stitchkit_agent_runtime_schedules WHERE id = ?
+    `)
+      .get(schedule.id);
+    if (!holdsClaim(raw, firing, at)) return;
+    const attempts = Math.min((schedule.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER);
+    const retryAt = terminal
+      ? null
+      : new Date(
+          new Date(at).getTime() + Math.min(60_000, 1_000 * 2 ** Math.min(attempts - 1, 6)),
+        ).toISOString();
     scope.database
       .prepare(`
-        UPDATE stitchkit_agent_runtime_schedules
-        SET claim_owner = NULL, claim_until = NULL, updated_at = ?
-        WHERE id = ? AND claim_owner = ?
-      `)
-      .run(at, schedule.id, owner);
+      UPDATE stitchkit_agent_runtime_schedules
+      SET state = ?, retry_at = ?, attempts = ?, last_error = ?,
+        claim_owner = NULL, claim_until = NULL, updated_at = ? WHERE id = ?
+    `)
+      .run(terminal ? 'failed' : 'scheduled', retryAt, attempts, reason, at, schedule.id);
     await scope.appendEvent({
       conversationId: schedule.conversationId,
       kind: 'schedule/failed',
       occurredAt: at,
-      payload: {
-        id: schedule.id,
-        occurrence,
-        message: error instanceof Error ? error.message : String(error),
-      },
+      payload: { id: schedule.id, occurrence, message: reason, attempts, retryAt, terminal },
     });
   });
 }
 
-/** Advance a dispatched occurrence and record it fired — or that it was cancelled meanwhile. */
+/** Advance only the held occurrence; stale and cancelled attempts produce no settlement events. */
 export async function settleFiring(
   sqlite: SqliteAgentRuntimeStore,
-  { schedule, occurrence, at, owner }: ClaimedFiring,
-  observedAt: Date,
+  firing: ClaimedFiring,
   lateByMs: number,
 ): Promise<void> {
-  // `every` after an idle stretch fires once and lands on the next slot
-  // that is still ahead — not once per interval it slept through.
-  let nextAt = schedule.nextAt;
-  if (schedule.kind === 'every' && schedule.intervalMs) {
-    let next = new Date(schedule.nextAt).getTime() + schedule.intervalMs;
-    while (next <= observedAt.getTime()) next += schedule.intervalMs;
-    nextAt = new Date(next).toISOString();
-  }
+  const { schedule, occurrence } = firing;
   const state = schedule.kind === 'every' ? 'scheduled' : 'completed';
   await sqlite.transaction(async (scope) => {
-    // Only the row this process still holds, and only while it is still
-    // scheduled: a `cancelSchedule` that landed during `dispatch` stays a
-    // cancellation, it is not written back to `scheduled`.
-    const held = scope.database
-      .prepare(`
-        SELECT state, claim_owner FROM stitchkit_agent_runtime_schedules WHERE id = ?
-      `)
-      .get(schedule.id);
-    const settled =
-      held !== null &&
-      held !== undefined &&
-      (() => {
-        const row = FinalizeRowSchema.parse(held);
-        return row.state === 'scheduled' && row.claim_owner === owner;
-      })();
-    if (settled) {
-      scope.database
-        .prepare(`
-          UPDATE stitchkit_agent_runtime_schedules
-          SET state = ?, occurrence = ?, next_at = ?, updated_at = ?,
-            claim_owner = NULL, claim_until = NULL
-          WHERE id = ?
-        `)
-        .run(state, occurrence, nextAt, at, schedule.id);
+    const observedAt = firing.now();
+    const at = observedAt.toISOString();
+    let nextAt = schedule.nextAt;
+    if (schedule.kind === 'every' && schedule.intervalMs) {
+      const due = new Date(schedule.nextAt).getTime();
+      const slots = Math.max(
+        1,
+        Math.floor((observedAt.getTime() - due) / schedule.intervalMs) + 1,
+      );
+      nextAt = new Date(due + slots * schedule.intervalMs).toISOString();
     }
+
+    const raw = scope.database
+      .prepare(`
+      SELECT state, claim_owner, claim_until, occurrence, next_at
+      FROM stitchkit_agent_runtime_schedules WHERE id = ?
+    `)
+      .get(schedule.id);
+    if (!holdsClaim(raw, firing, at)) return;
+    scope.database
+      .prepare(`
+      UPDATE stitchkit_agent_runtime_schedules
+      SET state = ?, occurrence = ?, next_at = ?, updated_at = ?,
+        claim_owner = NULL, claim_until = NULL, retry_at = NULL, attempts = 0, last_error = NULL
+      WHERE id = ?
+    `)
+      .run(state, occurrence, nextAt, at, schedule.id);
     if (lateByMs > 0) {
       await scope.appendEvent({
         conversationId: schedule.conversationId,
@@ -191,45 +211,41 @@ export async function settleFiring(
       conversationId: schedule.conversationId,
       kind: 'schedule/fired',
       occurredAt: at,
-      payload: {
-        id: schedule.id,
-        occurrence,
-        lateByMs,
-        nextAt,
-        state: settled ? state : 'cancelled',
-      },
+      payload: { id: schedule.id, occurrence, lateByMs, nextAt, state },
     });
   });
 }
 
-/**
- * Claim one due row for `owner` under a compare-and-set on its state and any
- * stale claim; `false` when another process holds it or it is no longer due.
- */
+/** Recheck both eligibility and the selected occurrence under BEGIN IMMEDIATE. */
 export function claimSchedule(
   sqlite: SqliteAgentRuntimeStore,
   owner: string,
-  id: string,
-  until: string,
-  at: string,
+  schedule: AgentSchedule,
+  now: () => Date,
 ): Promise<boolean> {
   return sqlite.transaction(async (scope) => {
+    const observedAt = now();
+    const at = observedAt.toISOString();
+    const until = new Date(observedAt.getTime() + 60_000).toISOString();
     const raw = scope.database
       .prepare(`
-        SELECT state, claim_until FROM stitchkit_agent_runtime_schedules WHERE id = ?
-      `)
-      .get(id);
+      SELECT occurrence, next_at, attempts FROM stitchkit_agent_runtime_schedules
+      WHERE id = ? AND state = 'scheduled' AND eligible_at <= ?
+    `)
+      .get(schedule.id, at);
     if (raw === null || raw === undefined) return false;
-    const row = ClaimRowSchema.parse(raw);
-    if (row.state !== 'scheduled') return false;
-    if (row.claim_until !== null && row.claim_until >= at) return false;
+    const row = z
+      .object({ occurrence: z.int(), next_at: z.string(), attempts: z.int() })
+      .parse(raw);
+    if (row.attempts !== (schedule.attempts ?? 0)) return false;
+    if (row.occurrence !== schedule.occurrence || row.next_at !== schedule.nextAt)
+      return false;
     scope.database
       .prepare(`
-        UPDATE stitchkit_agent_runtime_schedules
-        SET claim_owner = ?, claim_until = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(owner, until, at, id);
+      UPDATE stitchkit_agent_runtime_schedules
+      SET claim_owner = ?, claim_until = ?, updated_at = ? WHERE id = ?
+    `)
+      .run(owner, until, at, schedule.id);
     return true;
   });
 }

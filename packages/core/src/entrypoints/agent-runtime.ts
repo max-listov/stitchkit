@@ -243,13 +243,15 @@ export {
   probeAgentProcessSandbox,
   recordAgentSandboxProbe,
 } from '../agent-runtime/sandbox';
-export { createAgentScheduleTools } from '../agent-runtime/schedule-tools';
 export {
   type AgentSchedule,
+  type AgentScheduleDeliveryOutcome,
+  AgentScheduleDeliveryOutcomeSchema,
   AgentScheduleSchema,
   type AgentScheduleService,
-  createAgentScheduleService,
-} from '../agent-runtime/schedules';
+} from '../agent-runtime/schedule-contract';
+export { createAgentScheduleTools } from '../agent-runtime/schedule-tools';
+export { createAgentScheduleService } from '../agent-runtime/schedules';
 export * from '../agent-runtime/schemas';
 export { createSqliteAgentSpillStore } from '../agent-runtime/spill';
 export {

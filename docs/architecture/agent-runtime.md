@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-09-10
+updated: 2026-09-26 16:00 +07:00
 ---
 
 # Agent application runtime architecture
@@ -169,3 +169,13 @@ current exported schema, and write only the current version. Unknown future vers
 - Public bounded barriers/traces from `stitchkit/testing` run from packed Bun and Node consumers.
 - The official PostgreSQL/Prisma fixture proves duplicate/coalesced admission, stale checkpoint,
   terminal race, compaction conflict, constant-size heads, normalized recovery and rollback on real transactions.
+
+## Schedule delivery
+
+The SQLite schedule service owns occurrence identity, retry eligibility and unique attempt
+leases in one row. The partial eligibility index drives batches of 32 and the nearest-due
+timer. Typed retry/terminal outcomes, 1–60 second durable backoff, a 30-second dispatch
+deadline and a 60-second lease bound failure amplification. Settlement is fenced before
+writing state or events. Consumer admission is at-least-once and requires durable key
+deduplication. [ADR 0202](../decisions/0202-schedule-retries-preserve-occurrence-identity.md)
+defines the transition/event policy and SQLite v4 migration.

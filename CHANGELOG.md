@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.97.0] — 2026-09-26
+
+### ⚠️ Breaking changes
+
+- `stitchkit/agent-runtime` — schedule delivery has a 30-second deadline and durable
+  retry pacing; `AgentSchedule.state` includes `failed`. Before: dispatch throws could
+  retry immediately and callbacks could run indefinitely. After: return
+  `{ status: 'terminal', reason: 'destination closed' }` to stop a schedule, or
+  `{ status: 'retry', reason: 'temporarily unavailable' }` (or throw) for retries
+  after 1–60 seconds; return `void` on success and honor the supplied `signal`.
+  SQLite migrates to v4; stop old schedulers before opening the store with this version.
+  See ADR 0202 and the 0.97.0 schedule migration in `docs/guide/upgrading.md`.
+
+**Who must act:** schedule service consumers and operators of existing SQLite stores.
+
+### Fixed
+
+- Schedule selection uses indexed eligibility in batches of 32. Unique attempt tokens
+  fence late results, cancellation produces no false firing, and recurring schedules
+  coalesce missed slots in constant time. Retry identity and lateness survive restart;
+  storage failures retain a bounded recovery timer instead of spinning or stopping.
+
 ## [0.96.1] — 2026-09-24
 
 ### Fixed

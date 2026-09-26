@@ -119,7 +119,7 @@ describe('schedule delivery', () => {
     await runtime.close();
   });
 
-  test('a dispatch that throws is recorded, leaves the row due, and the timer alive', async () => {
+  test('a dispatch failure waits for its retry deadline and keeps the timer alive', async () => {
     let attempts = 0;
     const f = fixture(() => {
       attempts += 1;
@@ -135,6 +135,9 @@ describe('schedule delivery', () => {
     await f.schedules.tick();
     expect(await f.kinds('s')).toContain('schedule/failed');
     expect(f.armed()).toBeGreaterThan(armedBefore);
+    await f.schedules.tick();
+    expect(attempts).toBe(1);
+    f.advance(1_000);
     await f.schedules.tick();
     expect(attempts).toBe(2);
     expect((await f.kinds('s')).filter((kind) => kind === 'schedule/fired')).toHaveLength(1);
@@ -187,7 +190,7 @@ describe('schedule delivery', () => {
     const fired = (
       await f.runtime.store.readEvents({ conversationId: 's', limit: 20 })
     ).items.find((event) => event.kind === 'schedule/fired');
-    expect(fired?.payload).toMatchObject({ state: 'cancelled' });
+    expect(fired).toBeUndefined();
     f.schedules.close();
     await f.runtime.close();
   });
@@ -218,7 +221,7 @@ describe('schedule delivery', () => {
     // is the claim's remaining life, not zero — a zero re-armed every ~1.5 ms.
     delays.length = 0;
     await bystander.tick();
-    expect(delays.length).toBe(1);
+    expect(delays.at(-1)).toBe(60_000);
     expect(delays[0]).toBeGreaterThan(1_000);
     gate.resolve();
     await holding;
@@ -270,6 +273,9 @@ describe('schedule delivery', () => {
       'injected store failure',
     ]);
     expect(armed).toBeGreaterThan(before);
+    await schedules.tick();
+    expect(deliveries).toEqual([]);
+    current = new Date(current.getTime() + 1_000);
     await schedules.tick();
     expect(deliveries).toEqual([1]);
     schedules.close();

@@ -1,5 +1,41 @@
 # Upgrading stitchkit
 
+## Released migration: 0.97.0
+
+### schedule delivery
+
+**Who must act:** consumers of `createAgentScheduleService`, exhaustive switches on
+`AgentSchedule.state`, and operators opening existing agent-runtime SQLite stores.
+
+- Stop old scheduler processes and back up SQLite before startup. The store migrates
+  transactionally to v4; old binaries cannot open it. Rollback uses the backup.
+- Handle `failed` as a terminal schedule state. To refuse future delivery (including
+  recurring delivery), return `{ status: 'terminal', reason: 'destination closed' }`.
+  The occurrence remains unadvanced; `schedule/failed` carries `terminal: true`.
+- A throw or `{ status: 'retry', reason: 'temporarily unavailable' }` retries the same
+  key after 1, 2, 4, 8, 16, 32, then 60 seconds. `nextAt` remains the original due time;
+  `retryAt`, `attempts` and `lastError` expose retry diagnostics. Success clears them.
+- Resolve `void` only after durable consumer admission. Honor the supplied `signal`:
+  dispatch has a 30-second deadline and a 60-second lease. Durable deduplication by
+  `idempotencyKey` is required even after abort or crash; do not implement sleeps in dispatch.
+- Stale/cancelled attempts emit no `schedule/fired` or `schedule/late`. Observe the
+  cancellation event instead of relying on a synthetic cancelled firing.
+
+```ts
+// before
+async function dispatch(request) {
+  if (await destinationClosed(request.conversationId)) throw new Error('closed')
+  await admit(request)
+}
+// after: use this callback as createAgentScheduleService({ dispatch, ... })
+async function dispatch(request) {
+  if (await destinationClosed(request.conversationId)) {
+    return { status: 'terminal', reason: 'destination closed' }
+  }
+  await admit({ ...request, signal: request.signal }) // durably deduplicates idempotencyKey
+}
+```
+
 ## Released migration: 0.96.0
 
 ### resource-context-admission

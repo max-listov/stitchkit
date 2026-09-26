@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-08-29
+updated: 2026-09-26 16:00 +07:00
 ---
 
 # Agent application runtime
@@ -621,6 +621,23 @@ has invoked a tool is never automatically replayed.
 `createAgentScheduleService` persists `at`, `after` and `every` input. Repeating
 schedules require an explicit IANA time zone. Dispatch uses a stable
 `schedule:<id>:<occurrence>` idempotency key, and restart lateness is recorded.
+Resolve `void` after durable admission; return `{ status: 'retry', reason }` for a
+transient refusal or `{ status: 'terminal', reason }` to stop the entire schedule in
+`failed` state. Throws retry too. Backoff is 1, 2, 4, 8, 16, 32, then 60 seconds,
+capped at 60 seconds and persisted across restart. `retryAt`, `attempts` and `lastError`
+show retry diagnostics; success resets them. `nextAt` and `lateByMs` retain the original
+occurrence time. Recurring schedules fire once after an idle stretch and advance to the
+next future slot on their original cadence.
+
+Dispatch receives an `AbortSignal`, has a 30-second deadline and holds a unique
+60-second lease. A late or cancelled attempt cannot settle or emit firing events.
+Honor the signal and durably deduplicate the key: a crash after admission but before
+settlement can replay delivery. This is at-least-once, not exactly-once.
+Due selection is indexed, limited to 32 parallel deliveries per tick; one hung batch
+can delay newly due work by at most its deadline. The service keeps one nearest-due
+timer plus per-attempt deadline timers. Storage failures use a bounded recovery timer;
+idle ticks do not write. SQLite v4 migration preserves due times and claims; stop older
+scheduler processes before migration. See [ADR 0202](../decisions/0202-schedule-retries-preserve-occurrence-identity.md).
 `createAgentScheduleTools` exposes the exact `schedule_after`, `schedule_at`,
 `schedule_every`, `schedule_list` and `schedule_cancel` surface.
 
