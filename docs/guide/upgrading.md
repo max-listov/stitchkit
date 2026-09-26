@@ -1,5 +1,30 @@
 # Upgrading stitchkit
 
+## Released migration: 0.98.0
+
+### automatic stdin availability
+
+**Who must act:** CLI applications or scripts relying on automatic stdin routing
+from a producer that can take more than 250 ms to write its first byte.
+
+Automatic routing now probes for the first byte for 250 ms. An empty open pipe
+leaves the required field unset and normal validation reports its name. Once
+data arrives, the entire stream is read until EOF without a total deadline.
+
+```sh
+# before: may now fail if the producer starts late
+slow-producer | myapp generate
+# after: provide the value explicitly after the producer completes
+myapp generate --prompt "$(slow-producer)"
+```
+
+For large input that should stay in a pipe, supply a `CliConfig.stdin` reader
+that waits for the producer and EOF; this existing hook is not wrapped in the
+availability probe. A custom reader owns its limits and error handling.
+`-` remains literal data. TTY and empty EOF produce ordinary validation errors;
+explicit arguments skip stdin. JSONL stream/batch commands, MCP/serve and
+long-running handlers have no new deadline. See ADR 0203.
+
 ## Released migration: 0.97.0
 
 ### schedule delivery

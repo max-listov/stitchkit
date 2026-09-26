@@ -34,7 +34,7 @@ Each ADR in the [index](./decisions/README.md) names the invariant it serves, or
 | I11 | Compose one process; durable jobs, supervision, deployment and the project declaration never become conditions. | 0089, 0102, 0104, 0144 |
 | I12 | Decide trust before work: authorize before parsing, fence every lane, keep unchecked trust visible. | 0072, 0151, 0172, 0193 |
 | I13 | Report only what was observed: the cause stays inside, a safe error goes out, nothing is synthesised. | 0012, 0042, 0109, 0189 |
-| I14 | Every entrypoint declares its maturity; stable is earned and kept on a budget; a break is marked, migrated, never silent. | 0068, 0103, 0111, 0198 |
+| I14 | Every entrypoint declares its maturity; stable is earned; a break is marked, migrated and validated, never silent. | 0068, 0103, 0111, 0198, 0204 |
 | I15 | Treat the agent runtime as a separate product with a one-way boundary and one atomic store. | 0098, 0100, 0142, 0175, 0197 |
 
 ## Not in stitchkit

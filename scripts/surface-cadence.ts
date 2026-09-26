@@ -107,26 +107,9 @@ export function cadenceSentence(cadence: SurfaceCadence): string {
   }`;
 }
 
-/**
- * The breaking budget for stable entrypoints — ADR 0198.
- *
- * ADR 0103 declared which entrypoints are stable and, deliberately, attached no
- * versioning policy to the word. ADR 0198 attaches one: a stable entrypoint is
- * broken in at most one minor per rolling seven days, and a breaking entry says
- * which entrypoints it breaks before it says anything else. Everything here is
- * read from two files the release already carries — the changelog and the
- * maturity table in the getting-started guide — so the budget cannot drift from
- * either, and there is no third list to keep in step.
- */
-
-/** Releases before this one are not counted: the rule did not exist when they shipped. */
-export const STABLE_BUDGET_SINCE = '0.94.0';
-
-/** Breaking minors a stable entrypoint may take per window. */
-export const STABLE_BREAKING_BUDGET = 1;
-
-/** The window the budget is kept over, and the wider one printed beside it. */
-const BUDGET_WINDOW_DAYS = 7;
+/** Breaking metadata and observed release cadence — ADR 0198, amended by ADR 0204. */
+export const BREAKING_METADATA_SINCE = '0.94.0';
+const SHORT_REPORT_WINDOW_DAYS = 7;
 const REPORT_WINDOW_DAYS = 30;
 
 export type Maturity = 'stable' | 'evolving';
@@ -232,8 +215,8 @@ function daysBetween(earlier: string, later: string): number {
   return (Date.parse(`${later}T00:00:00Z`) - Date.parse(`${earlier}T00:00:00Z`)) / 86_400_000;
 }
 
-export interface StableBudget {
-  /** The release the budget is judged for. */
+export interface StableBreakingCadence {
+  /** The release whose cadence is measured. */
   readonly version: string;
   /** Its date, from its heading; absent when the heading carries none. */
   readonly date?: string;
@@ -241,28 +224,27 @@ export interface StableBudget {
   readonly breaksStable: boolean;
   /** Breaking minors touching a stable entrypoint within 30 days, this one included. */
   readonly last30: number;
-  /** The same within the 7-day budget window, this one included. */
+  /** The same within the 7-day reporting window, this one included. */
   readonly last7: number;
-  /** Those 7-day minors, newest first, for the refusal message. */
+  /** Those 7-day minors, newest first, for the report. */
   readonly counted: readonly string[];
-  readonly budget: number;
 }
 
 /**
- * How much of the budget the release `version` spends, counted from its own date.
+ * Observed stable-breaking cadence, counted from the release date.
  *
  * The window is anchored on the release's heading, never on the clock, so a tag
  * re-validated a month later gets the same answer it got when it was cut. Only
  * releases at or above `since` are counted and only those at or below `version`:
- * a later release cannot spend an earlier one's budget.
+ * a later release cannot change an earlier release's measured cadence.
  */
-export function stableBreakingBudget(input: {
+export function stableBreakingCadence(input: {
   changelog: string;
   guide: string;
   version: string;
   since?: string;
-}): StableBudget {
-  const since = input.since ?? STABLE_BUDGET_SINCE;
+}): StableBreakingCadence {
+  const since = input.since ?? BREAKING_METADATA_SINCE;
   const known = maturityTable(input.guide);
   const dates = releaseDates(input.changelog);
   const date = dates.get(input.version);
@@ -288,7 +270,7 @@ export function stableBreakingBudget(input: {
     }
     return minors;
   };
-  const counted = [...within(BUDGET_WINDOW_DAYS)];
+  const counted = [...within(SHORT_REPORT_WINDOW_DAYS)];
   return {
     version: input.version,
     ...(date && { date }),
@@ -296,35 +278,26 @@ export function stableBreakingBudget(input: {
     last30: within(REPORT_WINDOW_DAYS).size,
     last7: counted.length,
     counted,
-    budget: STABLE_BREAKING_BUDGET,
   };
 }
 
 /** The line `release:check` prints. */
-export function stableBudgetSentence(budget: StableBudget): string {
-  return `stable breaking: ${budget.last30} in ${REPORT_WINDOW_DAYS} days, ${budget.last7} in ${BUDGET_WINDOW_DAYS} days (budget ${budget.budget})`;
+export function stableCadenceSentence(cadence: StableBreakingCadence): string {
+  return `stable breaking: ${cadence.last30} in ${REPORT_WINDOW_DAYS} days, ${cadence.last7} in ${SHORT_REPORT_WINDOW_DAYS} days`;
 }
 
-/**
- * Refuse a release that overspends the budget or writes a breaking entry the
- * budget cannot read.
- *
- * Three refusals, all for versions at or above `since`: an entry that does not
- * lead with the entrypoints it breaks (the budget classifies by that prefix and
- * nothing else); an entry breaking a stable entrypoint with no `ADR NNNN`; and a
- * release that breaks a stable entrypoint while another minor within seven days
- * already did. The last one needs the release's date, so a stable-breaking
- * release with an undated heading is refused rather than waved through.
+/** Require named entrypoints, an ADR for stable breaks and a dated heading.
+ * Release cadence is reported but never limits publication (ADR 0204).
  */
-export function assertStableBreakingBudget(input: {
+export function assertBreakingReleaseMetadata(input: {
   changelog: string;
   guide: string;
   version: string;
   since?: string;
-}): StableBudget {
-  const since = input.since ?? STABLE_BUDGET_SINCE;
-  const budget = stableBreakingBudget(input);
-  if (compareVersion(input.version, since) < 0) return budget;
+}): StableBreakingCadence {
+  const since = input.since ?? BREAKING_METADATA_SINCE;
+  const cadence = stableBreakingCadence(input);
+  if (compareVersion(input.version, since) < 0) return cadence;
   const known = maturityTable(input.guide);
   const release = releases(input.changelog).find((entry) => entry.version === input.version);
   const entries = breakingEntries(breakingSection(release?.body ?? ''), known);
@@ -344,16 +317,11 @@ export function assertStableBreakingBudget(input: {
       `${input.version}: a breaking entry for a stable entrypoint must cite the ADR that authorises it (ADR 0198) — "→ ADR NNNN". Uncited: ${uncited.map((entry) => entry.entrypoints.join(', ')).join('; ')}`,
     );
   }
-  if (!budget.breaksStable) return budget;
-  if (!budget.date) {
+  if (!cadence.breaksStable) return cadence;
+  if (!cadence.date) {
     throw new Error(
-      `${input.version} breaks a stable entrypoint but its changelog heading carries no date, so the 7-day budget (ADR 0198) cannot be measured. Write "## [${input.version}] — YYYY-MM-DD".`,
+      `${input.version} breaks a stable entrypoint but its changelog heading carries no date, so its release cadence cannot be measured. Write "## [${input.version}] — YYYY-MM-DD".`,
     );
   }
-  if (budget.last7 > budget.budget) {
-    throw new Error(
-      `${input.version} breaks a stable entrypoint, and ${budget.last7} minors did within 7 days of ${budget.date} (${budget.counted.join(', ')}); the budget is ${budget.budget} (ADR 0198). Ship the break in a later minor, or move it off the stable entrypoint.`,
-    );
-  }
-  return budget;
+  return cadence;
 }

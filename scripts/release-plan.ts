@@ -16,10 +16,10 @@ import {
   readStarterResolution,
 } from './starter-lockfile';
 import {
-  assertStableBreakingBudget,
-  STABLE_BUDGET_SINCE,
-  stableBreakingBudget,
-  stableBudgetSentence,
+  assertBreakingReleaseMetadata,
+  BREAKING_METADATA_SINCE,
+  stableBreakingCadence,
+  stableCadenceSentence,
 } from './surface-cadence';
 
 const ZERO_SHA = /^0+$/;
@@ -700,16 +700,16 @@ export async function validateReleaseTag(
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
   assertBreakingAudience(notes, plan.version);
-  // The stable-entrypoint budget is the framework's: the maturity table lists
+  // The stable-entrypoint metadata validation is the framework's: the maturity table lists
   // `stitchkit` entrypoints, and the other packages keep their own changelogs.
   // The guide is read only when there is something to judge, so an additive
-  // release — and every release before the budget existed — reads one file less.
+  // release — and every release before the metadata rule existed — reads one file less.
   if (
     plan.target === 'core' &&
     BREAKING_HEADING.test(notes) &&
-    comparePreOneVersions(plan.version, STABLE_BUDGET_SINCE) >= 0
+    comparePreOneVersions(plan.version, BREAKING_METADATA_SINCE) >= 0
   ) {
-    assertStableBreakingBudget({
+    assertBreakingReleaseMetadata({
       changelog,
       guide: await read(MATURITY_TABLE_PATH),
       version: plan.version,
@@ -1140,14 +1140,15 @@ async function main(): Promise<void> {
     for (const entry of train.releases) {
       const tag = releaseTagForTarget(entry.target, entry.version);
       if (entry.target === 'core') {
-        // Printed before the gate judges it, so a refusal arrives with the count
-        // it was refused on — ADR 0198.
-        const budget = stableBreakingBudget({
+        // Observed cadence is informational; metadata validation remains mandatory.
+        const cadence = stableBreakingCadence({
           changelog: await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
           guide: await readFile(join(root, MATURITY_TABLE_PATH), 'utf8'),
           version: entry.version,
         });
-        process.stderr.write(`[release] ${entry.version}: ${stableBudgetSentence(budget)}\n`);
+        process.stderr.write(
+          `[release] ${entry.version}: ${stableCadenceSentence(cadence)}\n`,
+        );
       }
       await validateReleaseTag(root, tag);
       checked.push(tag);

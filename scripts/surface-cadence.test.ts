@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  assertStableBreakingBudget,
+  assertBreakingReleaseMetadata,
+  BREAKING_METADATA_SINCE,
   breakingEntries,
   cadenceSentence,
   maturityTable,
-  STABLE_BUDGET_SINCE,
-  stableBreakingBudget,
-  stableBudgetSentence,
+  stableBreakingCadence,
+  stableCadenceSentence,
   surfaceCadence,
 } from './surface-cadence';
 
@@ -127,14 +127,14 @@ test('the maturity table carries the figure the changelog supports', async () =>
   const sentence = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: AGENT_RUNTIME_TERMS }),
   );
-  expect(sentence).toBe('redefined in 22 of the 42 minors since 0.56.2, most recently 0.97.0');
+  expect(sentence).toBe('redefined in 22 of the 43 minors since 0.56.2, most recently 0.97.0');
   expect(guide).toContain(`_${sentence}_`);
 
   const application = cadenceSentence(
     surfaceCadence({ changelog, since: '0.56.2', terms: APPLICATION_TERMS }),
   );
   expect(application).toBe(
-    'redefined in 9 of the 42 minors since 0.56.2, most recently 0.96.0',
+    'redefined in 9 of the 43 minors since 0.56.2, most recently 0.96.0',
   );
   expect(guide).toContain(`_${application}_`);
 
@@ -142,12 +142,12 @@ test('the maturity table carries the figure the changelog supports', async () =>
     surfaceCadence({ changelog, since: '0.56.2', terms: OBSERVABILITY_TERMS }),
   );
   expect(observability).toBe(
-    'redefined in 2 of the 42 minors since 0.56.2, most recently 0.92.0',
+    'redefined in 2 of the 43 minors since 0.56.2, most recently 0.92.0',
   );
   expect(guide).toContain(`_${observability}_`);
 });
 
-describe('the breaking budget for stable entrypoints — ADR 0198', () => {
+describe('breaking metadata and observed cadence — ADR 0204', () => {
   const GUIDE = [
     '| Import | Use in | Maturity | Holds |',
     '|--------|--------|----------|-------|',
@@ -208,38 +208,36 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
     ]);
   });
 
-  test('one stable-breaking minor in seven days is within the budget', () => {
+  test('release cadence counts dated stable-breaking minors', () => {
     const changelog = [
       release('9.3.0', '2026-10-20', STABLE),
       release('9.2.0', '2026-10-13', STABLE),
       release('9.1.0', '2026-10-12', EVOLVING),
     ].join('\n');
-    const budget = assertStableBreakingBudget({
+    const cadence = assertBreakingReleaseMetadata({
       changelog,
       guide: GUIDE,
       version: '9.3.0',
       since: '9.0.0',
     });
-    expect(budget.last7).toBe(1);
-    expect(budget.last30).toBe(2);
-    expect(stableBudgetSentence(budget)).toBe(
-      'stable breaking: 2 in 30 days, 1 in 7 days (budget 1)',
-    );
+    expect(cadence.last7).toBe(1);
+    expect(cadence.last30).toBe(2);
+    expect(stableCadenceSentence(cadence)).toBe('stable breaking: 2 in 30 days, 1 in 7 days');
   });
 
-  test('a second stable-breaking minor within seven days is refused', () => {
+  test('multiple stable-breaking minors in one week are allowed and reported', () => {
     const changelog = [
       release('9.3.0', '2026-10-19', STABLE),
       release('9.2.0', '2026-10-13', STABLE),
     ].join('\n');
-    expect(() =>
-      assertStableBreakingBudget({
-        changelog,
-        guide: GUIDE,
-        version: '9.3.0',
-        since: '9.0.0',
-      }),
-    ).toThrow(/2 minors did within 7 days of 2026-10-19 \(9\.3, 9\.2\); the budget is 1/);
+    const cadence = assertBreakingReleaseMetadata({
+      changelog,
+      guide: GUIDE,
+      version: '9.3.0',
+      since: '9.0.0',
+    });
+    expect(cadence.last7).toBe(2);
+    expect(cadence.counted).toEqual(['9.3', '9.2']);
   });
 
   test('evolving entrypoints break freely', () => {
@@ -247,14 +245,14 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
       release('9.3.0', '2026-10-13', EVOLVING),
       release('9.2.0', '2026-10-13', STABLE),
     ].join('\n');
-    const budget = assertStableBreakingBudget({
+    const cadence = assertBreakingReleaseMetadata({
       changelog,
       guide: GUIDE,
       version: '9.3.0',
       since: '9.0.0',
     });
-    expect(budget.breaksStable).toBe(false);
-    expect(budget.last7).toBe(1);
+    expect(cadence.breaksStable).toBe(false);
+    expect(cadence.last7).toBe(1);
   });
 
   test('releases before the effective version are not counted', () => {
@@ -264,17 +262,17 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
       release('9.2.0', '2026-10-12', '- **`createMcpHandler` moved** in stitchkit/tools'),
       release('9.1.0', '2026-10-11', STABLE),
     ].join('\n');
-    const budget = assertStableBreakingBudget({
+    const cadence = assertBreakingReleaseMetadata({
       changelog,
       guide: GUIDE,
       version: '9.3.0',
       since: '9.3.0',
     });
-    expect(budget.last7).toBe(1);
-    expect(budget.last30).toBe(1);
+    expect(cadence.last7).toBe(1);
+    expect(cadence.last30).toBe(1);
     // And a release below the effective version is never refused by it.
     expect(() =>
-      assertStableBreakingBudget({
+      assertBreakingReleaseMetadata({
         changelog,
         guide: GUIDE,
         version: '9.2.0',
@@ -286,7 +284,7 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
   test('a breaking entry that does not lead with its entrypoint is refused', () => {
     const changelog = release('9.3.0', '2026-10-13', '- **`createMcpHandler` moved**');
     expect(() =>
-      assertStableBreakingBudget({
+      assertBreakingReleaseMetadata({
         changelog,
         guide: GUIDE,
         version: '9.3.0',
@@ -298,7 +296,7 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
   test('a stable break without an ADR is refused', () => {
     const changelog = release('9.3.0', '2026-10-13', '- `stitchkit/tools` — **moved**');
     expect(() =>
-      assertStableBreakingBudget({
+      assertBreakingReleaseMetadata({
         changelog,
         guide: GUIDE,
         version: '9.3.0',
@@ -310,7 +308,7 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
   test('a stable break with an undated heading is refused, not waved through', () => {
     const changelog = release('9.3.0', 'x', STABLE);
     expect(() =>
-      assertStableBreakingBudget({
+      assertBreakingReleaseMetadata({
         changelog,
         guide: GUIDE,
         version: '9.3.0',
@@ -319,13 +317,13 @@ describe('the breaking budget for stable entrypoints — ADR 0198', () => {
     ).toThrow(/carries no date/);
   });
 
-  test('the budget starts at 0.94.0 and the real changelog reports against it', async () => {
-    expect(STABLE_BUDGET_SINCE).toBe('0.94.0');
+  test('metadata classification starts at 0.94.0', async () => {
+    expect(BREAKING_METADATA_SINCE).toBe('0.94.0');
     const changelog = await Bun.file(`${import.meta.dir}/../CHANGELOG.md`).text();
     const guide = await Bun.file(`${import.meta.dir}/../docs/guide/getting-started.md`).text();
-    // 0.93.0 predates the rule, so however much it broke it spends nothing.
-    const budget = stableBreakingBudget({ changelog, guide, version: '0.93.0' });
-    expect(budget.last7).toBe(0);
-    expect(budget.last30).toBe(0);
+    // 0.93.0 predates the rule, so its breaks are not classified by the new metadata.
+    const cadence = stableBreakingCadence({ changelog, guide, version: '0.93.0' });
+    expect(cadence.last7).toBe(0);
+    expect(cadence.last30).toBe(0);
   });
 });

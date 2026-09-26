@@ -86,6 +86,10 @@ export interface CliConfig<
   stderr?: (text: string) => void;
   /** Exit hook — default `process.exit`; injectable for tests. */
   exit?: (code: number) => void;
-  /** Read piped stdin — default reads when not a TTY; injectable for tests. */
+  /**
+   * Read stdin for the first required unset field. The default skips TTYs,
+   * waits up to 250 ms for the first byte, then reads to EOF without a deadline.
+   * Override to explicitly wait for a delayed producer; no probe wraps this hook.
+   */
   stdin?: () => Promise<string | null>;
 }

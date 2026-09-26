@@ -1,17 +1,7 @@
 import { writeSync } from 'node:fs';
 import { isRecord } from '../../internal/typed';
 import type { CliConfig } from './config';
-
-/** Default stdin reader — `null` on an interactive TTY (nothing piped). */
-async function readPipedStdin(): Promise<string | null> {
-  if (process.stdin.isTTY) return null;
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  }
-  const text = Buffer.concat(chunks).toString('utf8').trim();
-  return text.length > 0 ? text : null;
-}
+import { readPipedStdin } from './stdin';
 
 /** Where one invocation writes, reads and exits — injected sinks or the real process. */
 export interface CliIo {

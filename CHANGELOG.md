@@ -15,6 +15,34 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.98.0] — 2026-09-26
+
+### ⚠️ Breaking changes
+
+- `stitchkit/cli` — automatic stdin routing waits only 250 ms for its first byte.
+  A producer that starts later now reaches required-field validation instead of
+  waiting indefinitely. Before: `slow-producer | myapp generate`. After:
+  `myapp generate --prompt "$(slow-producer)"`, or supply an explicit
+  `CliConfig.stdin` reader. Once input starts, it is still read fully to EOF.
+  → ADR 0203
+
+**Who must act:** CLI consumers whose piped producer may take more than 250 ms
+before writing its first byte. See the 0.98.0 migration in `docs/guide/upgrading.md`.
+
+### Fixed
+
+- `stitchkit/cli` — a missing required argument on an empty, open stdin pipe
+  reaches validation after a 250 ms first-byte probe instead of hanging for EOF.
+  Once data starts, the full stream is read to EOF without truncating delayed
+  chunks. TTYs, explicit arguments, custom stdin readers and streaming commands
+  retain their separate input behavior; see the CLI guide for delayed producers.
+
+### Changed
+
+- Release validation no longer limits stable-breaking releases by calendar cadence.
+  Named entrypoints, stable ADR citations, minor versioning, dated changelogs,
+  migrations and exact-SHA CI remain mandatory. See ADR 0204.
+
 ## [0.97.0] — 2026-09-26
 
 ### ⚠️ Breaking changes

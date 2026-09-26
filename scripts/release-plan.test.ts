@@ -793,7 +793,7 @@ describe('a release commit is checked before it costs a gate', () => {
     expect(validated.packageName).toBe('stitchkit');
   });
 
-  describe('the stable breaking budget is part of the metadata gate — ADR 0198', () => {
+  describe('breaking metadata validation preserves disclosure without a calendar limit — ADR 0204', () => {
     const GUIDE = [
       '| Import | Use in | Maturity | Holds |',
       '|--------|--------|----------|-------|',
@@ -828,7 +828,7 @@ describe('a release commit is checked before it costs a gate', () => {
       expect(validated.version).toBe('9.9.0');
     });
 
-    test('a second one within seven days is refused before any gate runs', async () => {
+    test('a second stable-breaking minor within seven days passes metadata validation', async () => {
       const changelog = [
         '## [9.9.0] — 2026-10-18',
         '',
@@ -840,7 +840,7 @@ describe('a release commit is checked before it costs a gate', () => {
       ].join('\n');
       await expect(
         validateReleaseCommit(root, commit, { read: tree(changelog) }),
-      ).rejects.toThrow(/the budget is 1/);
+      ).resolves.toMatchObject({ target: 'core', version: '9.9.0' });
     });
 
     test('an entry that does not lead with its entrypoint is refused', async () => {

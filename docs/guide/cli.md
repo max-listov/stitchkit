@@ -191,6 +191,21 @@ fields in declaration order, so `myapp generate "a fox"` is
 `--prompt "a fox"`. A piped value fills the first required unset field:
 `echo "a fox" | myapp generate`.
 
+Automatic stdin routing skips TTYs and waits at most **250 ms for the first byte**.
+An empty open pipe or EOF without data leaves the field unset, so normal schema
+validation reports the missing field instead of waiting indefinitely. Once any
+byte arrives, the reader collects the entire stream until EOF, including chunks
+separated by long pauses; it decodes UTF-8 after collecting all bytes and trims
+surrounding whitespace. Read errors or a close before EOF fail the invocation.
+Explicit arguments and commands without required unset fields never read stdin.
+
+A producer that takes longer than 250 ms to start must supply its value as an
+argument (for example, `myapp generate --prompt "$(slow-producer)"`) or the
+application must provide an explicit `CliConfig.stdin` reader that waits for it.
+That hook is not wrapped in the availability timeout. `-` remains literal data,
+not a special stdin marker. JSONL stream/batch commands own their input and wait
+for lines as usual; MCP/serve and long-running handlers have no new deadline.
+
 A token is an option only when it is a long form (`--name`, `--name=value`,
 `--`) or `-` followed by a letter. Anything else that starts with `-` is data:
 `myapp note a "- item"` fills a positional, and after an option that expects a

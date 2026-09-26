@@ -28,8 +28,8 @@ changed default, stricter validation):
    with the backticked entrypoint name(s) it breaks** (from the maturity table in
    `docs/guide/getting-started.md`), then states *what* broke, *why*, and a **before → after**
    snippet; an item breaking a **stable** entrypoint also cites its ADR. `release:check` refuses an
-   item without the prefix, and a second stable-breaking minor within 7 days
-   (→ [ADR 0198](../decisions/0198-stable-is-earned-and-kept-on-a-budget.md), from 0.94.0):
+   item without the prefix or the required stable-entrypoint ADR citation. Release cadence
+   is reported without a calendar limit (→ ADR 0198, ADR 0204):
 
    ```md
    ### ⚠️ Breaking changes
@@ -131,8 +131,8 @@ bun run release:train
 
 `release:check` runs the same metadata gate the push runs, against the working tree, before
 anything expensive: version against manifest, breaking section against its `**Who must act:**`
-line and against the version calibre, the promoted migration heading, and the stable-breaking
-budget (ADR 0198). It costs a second, and the mistake it catches otherwise costs a whole gate run —
+line and against the version calibre, the promoted migration heading, and breaking-entry
+metadata (ADR 0198, ADR 0204). It costs a second, and the mistake it catches otherwise costs a whole gate run —
 editing `release-train.json` after a green local gate invalidates the memo, and 0.87.0 paid
 exactly that.
 

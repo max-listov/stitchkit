@@ -80,8 +80,8 @@ a refusal. It costs 367 ms. → [ADR 0164](../decisions/0164-a-local-gate-refuse
 
 On both pushes a release commit's changelog is read — version against the manifest,
 `### ⚠️ Breaking changes` against its `**Who must act:**` line, the breaking section against the
-version calibre, the promoted migration section, and from 0.94.0 the stable-breaking budget of
-[ADR 0198](../decisions/0198-stable-is-earned-and-kept-on-a-budget.md) — *before* `verify` starts,
+version calibre, the promoted migration section, and from 0.94.0 the breaking-entry metadata of
+[ADR 0198](../decisions/0198-stable-is-earned-and-kept-on-a-budget.md), amended by ADR 0204 — *before* `verify` starts,
 out of the commit being pushed rather than the working tree. It is one file and a regular
 expression; the gate behind it is eight minutes. Until 0.67.0 this ran for pushed **tags** only, so
 a release commit went through the whole gate and a CI run before the tag was refused — at which

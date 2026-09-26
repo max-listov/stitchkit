@@ -57,8 +57,8 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Lead the version with `### ⚠️ Breaking changes` (exact heading); start each item with the
   **backticked entrypoint(s)** it breaks, then what, why and a before → after snippet.
   → [release-process](./docs/architecture/release-process.md#breaking-changes-and-migration)
-- Cite an ADR in an item breaking a **stable** entrypoint; at most one stable-breaking minor per rolling
-  seven days, so batch the breaks (`release:check` refuses, from 0.94.0). → ADR 0198
+- Cite an ADR in an item breaking a **stable** entrypoint; release cadence is reported without a
+  calendar limit. → ADR 0198, ADR 0204
 - Pre-1.0 a break bumps the **minor**; everything non-breaking, new API included, is a **patch**.
   → [release-process](./docs/architecture/release-process.md#which-number-moves)
 - **NEVER** add deprecation shims, compat wrappers or aliases — one clean path. → PRINCIPLES I8
