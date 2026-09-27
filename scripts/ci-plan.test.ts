@@ -1,7 +1,34 @@
 import { describe, expect, test } from 'bun:test';
 import { planCi } from './ci-plan';
+import type { ReleaseTarget } from './release-train';
+
+const packageReleases: [string, ReleaseTarget][] = [
+  ['core', 'core'],
+  ['starter', 'create-stitchkit'],
+  ['tui', 'tui'],
+];
 
 describe('package-aware CI planning', () => {
+  test.each(packageReleases)(
+    'a release(%s) creates publication artifacts for its package',
+    (scope, target) => {
+      const plan = planCi({
+        event: 'push',
+        subject: `release(${scope}): publish package in 0.98.2`,
+        changedPaths: ['release-train.json', 'bun.lock'],
+      });
+      expect(plan.targets).toEqual([target]);
+      expect(plan.artifacts).toBe(true);
+    },
+  );
+
+  test('an ordinary fix never creates publication artifacts', () => {
+    expect(
+      planCi({ event: 'push', subject: 'fix: repair core', changedPaths: ['bun.lock'] })
+        .artifacts,
+    ).toBe(false);
+  });
+
   test('a TUI-only release runs no unrelated heavy lane', () => {
     expect(
       planCi({

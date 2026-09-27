@@ -15,7 +15,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
-## [0.98.1] — 2026-09-27
+## [0.98.2] — 2026-09-27
 
 ### Fixed
 
@@ -23,6 +23,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   so a sliding window sends the new head plus one copy run instead of rewriting
   the window. Duplicate lookup advances through each signature bucket once;
   full-value fallback and the delta wire format are unchanged.
+- Package-scoped release commits now produce the same validated publication
+  artifacts as release trains; a green CI run no longer omits their npm tarball.
 
 ## [0.98.0] — 2026-09-26
 

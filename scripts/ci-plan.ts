@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReleaseCommitSubject, releaseScopeForSubject } from './release-plan';
 import { type ReleaseTarget, readReleaseTrain } from './release-train';
 
 export const CiPlanSchema = z.object({
@@ -30,18 +31,21 @@ export function planCi(input: {
   releaseTargets?: readonly ReleaseTarget[];
 }): CiPlan {
   const full = input.event === 'schedule' || input.event === 'workflow_dispatch';
-  const train = /^release\(train\):/.test(input.subject.trim());
+  const release = isReleaseCommitSubject(input.subject);
+  const scope = release ? releaseScopeForSubject(input.subject) : undefined;
   const global = input.changedPaths.some((path) =>
     GLOBAL_PATHS.some((prefix) => path === prefix || path.startsWith(prefix)),
   );
   const targets = new Set<ReleaseTarget>();
 
-  if (full || (!train && global)) {
+  if (full || (!release && global)) {
     targets.add('core');
     targets.add('tui');
     targets.add('create-stitchkit');
-  } else if (train) {
+  } else if (scope === 'train') {
     for (const target of input.releaseTargets ?? []) targets.add(target);
+  } else if (scope !== undefined) {
+    targets.add(scope === 'starter' ? 'create-stitchkit' : scope);
   } else {
     if (input.changedPaths.some((path) => path.startsWith('packages/core/')))
       targets.add('core');
@@ -66,12 +70,12 @@ export function planCi(input: {
   return CiPlanSchema.parse({
     schemaVersion: 1,
     targets: [...targets],
-    portable: core || (!train && global) || full,
+    portable: core || (!release && global) || full,
     tui,
     starter: starterModes.length > 0,
     supervised: core || starterTarget || full,
     darwin: core,
-    artifacts: train,
+    artifacts: release,
     starterModes,
   });
 }
@@ -97,9 +101,10 @@ async function main(): Promise<void> {
       .split('\n')
       .filter(Boolean);
   }
-  const releaseTargets = /^release\(train\):/.test(subject)
-    ? (await readReleaseTrain(process.cwd())).releases.map((release) => release.target)
-    : undefined;
+  const releaseTargets =
+    isReleaseCommitSubject(subject) && releaseScopeForSubject(subject) === 'train'
+      ? (await readReleaseTrain(process.cwd())).releases.map((release) => release.target)
+      : undefined;
   process.stdout.write(
     JSON.stringify(planCi({ event, subject, changedPaths, releaseTargets })),
   );
