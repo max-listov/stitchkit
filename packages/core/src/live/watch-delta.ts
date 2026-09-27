@@ -147,7 +147,7 @@ function objectDiff(
 /**
  * Arrays by runs, so a window that slid costs one op rather than N.
  *
- * The walk is greedy and single-pass, and the order of its three attempts is the
+ * The walk is greedy, and the order of its attempts is the
  * whole design. First it tries to *continue* the run it is already copying:
  * that is what turns "drop k from the head, append a tail" — the shape every
  * paged and tailing list has — into one `copy` plus the new elements, and it is
@@ -155,8 +155,12 @@ function objectDiff(
  * the same elements but not cheaply express them as runs. Second it looks the
  * element up by identity anywhere in the previous array, which is what carries a
  * reordering without resending the elements that merely moved. Only then does it
- * fall back to a difference against the element sitting in the same place, and
- * finally to sending the element.
+ * fall back to a difference against the element sitting at the cursor, provided
+ * that value is not needed by a later exact match, and finally to sending the
+ * element. Remaining signature counts protect those future copies from patches.
+ * Each identity bucket has a forward-only offset: even interleaved duplicates
+ * visit each previous index at most once during lookup. Matching is linear in
+ * array length after canonical signatures are computed, with linear workspace.
  *
  * Greedy is a deliberate limit, not an oversight: an optimal alignment is
  * quadratic, and the caller measures the result anyway — a worse alignment can
@@ -164,12 +168,16 @@ function objectDiff(
  */
 function arrayDiff(previous: readonly unknown[], next: readonly unknown[]): WatchDelta {
   const previousSignatures = previous.map(signature);
+  const nextSignatures = next.map(signature);
+  const remaining = new Map<string, number>();
+  for (const value of nextSignatures) remaining.set(value, (remaining.get(value) ?? 0) + 1);
   const positions = new Map<string, number[]>();
   previousSignatures.forEach((value, index) => {
     const bucket = positions.get(value);
     if (bucket) bucket.push(index);
     else positions.set(value, [index]);
   });
+  const offsets = new Map<string, number>();
   const taken = new Set<number>();
   const ops: WatchArrayOp[] = [];
   let cursor = 0;
@@ -181,8 +189,9 @@ function arrayDiff(previous: readonly unknown[], next: readonly unknown[]): Watc
     return true;
   };
 
-  for (const element of next) {
-    const wanted = signature(element);
+  for (const [index, wanted] of nextSignatures.entries()) {
+    const element = next[index];
+    remaining.set(wanted, (remaining.get(wanted) ?? 0) - 1);
     // 1. Continue the run in progress.
     const last = ops.at(-1);
     const continuation = last?.o === 'copy' ? last.from + last.count : undefined;
@@ -199,15 +208,25 @@ function arrayDiff(previous: readonly unknown[], next: readonly unknown[]): Watc
     }
     // 2. The same element somewhere else — a move, not a rewrite.
     const bucket = positions.get(wanted);
-    const found = bucket?.find((index) => !taken.has(index));
+    let offset = offsets.get(wanted) ?? 0;
+    let found = bucket?.[offset];
+    while (found !== undefined && taken.has(found)) {
+      offset += 1;
+      found = bucket?.[offset];
+    }
+    offsets.set(wanted, found === undefined ? offset : offset + 1);
     if (found !== undefined) {
       taken.add(found);
       if (!extend(found)) ops.push({ o: 'copy', from: found, count: 1 });
       cursor = found + 1;
       continue;
     }
-    // 3. Changed in place: patch it against whatever sits here now.
-    const counterpart = cursor < previous.length && !taken.has(cursor) ? cursor : undefined;
+    // 3. Patch only a base that no later exact match needs.
+    const candidate = previousSignatures[cursor];
+    const counterpart =
+      candidate !== undefined && !taken.has(cursor) && !remaining.get(candidate)
+        ? cursor
+        : undefined;
     const nested =
       counterpart === undefined ? undefined : diff(previous[counterpart], element);
     if (counterpart !== undefined && nested !== undefined) {

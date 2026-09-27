@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.98.1] — 2026-09-27
+
+### Fixed
+
+- `stitchkit/live` — prepending to a watched array preserves future copy bases,
+  so a sliding window sends the new head plus one copy run instead of rewriting
+  the window. Duplicate lookup advances through each signature bucket once;
+  full-value fallback and the delta wire format are unchanged.
+
 ## [0.98.0] — 2026-09-26
 
 ### ⚠️ Breaking changes

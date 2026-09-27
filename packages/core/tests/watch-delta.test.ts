@@ -65,6 +65,71 @@ function bigList(stamp: string): { items: { id: string; body: string; seen: stri
 }
 
 describe('a difference carries the news, not the answer', () => {
+  test('a prepended window sends delta, serves fresh subscribers and resumes an older baseline', async () => {
+    const bus = topics();
+    let value = Array.from({ length: 100 }, (_, i) => ({
+      id: `entry-${i}`,
+      payload: String(i).repeat(400),
+    }));
+    const original = value;
+    const hub = createWatchHub({
+      read: async () => value,
+      watchable: () => true,
+      invalidatedBy: () => ['notes'],
+      subscribe: bus.subscribe,
+      deltaMemoryBytes: 2_097_152,
+      holdMs: 5_000,
+    });
+    try {
+      const key = watchKey(notes, {});
+      const subscriber = recorder();
+      hub.attach(subscriber).open(key, {});
+      await settle();
+      const initial = subscriber.values.at(-1);
+      if (initial?.kind !== 'full') throw new Error('expected initial full frame');
+
+      value = [{ id: 'new', payload: 'new'.repeat(400) }, ...value.slice(0, -1)];
+      bus.announce('notes');
+      await settle();
+      expect(subscriber.values.map((frame) => frame.kind)).toEqual(['full', 'delta']);
+      expect(subscriber.held()).toEqual(value);
+      expect(JSON.stringify(subscriber.values.at(-1)).length).toBeLessThan(
+        JSON.stringify(value).length * 0.05,
+      );
+
+      const fresh = recorder();
+      hub.attach(fresh).open(key, {});
+      await settle();
+      expect(fresh.values.at(-1)?.kind).toBe('full');
+      expect(fresh.held()).toEqual(value);
+
+      const resumed = recorder();
+      // The reconnecting client still holds the original full answer.
+      resumed.value(initial);
+      hub.attach(resumed).open(
+        key,
+        {},
+        {
+          revision: initial.revision,
+          fingerprint: initial.fingerprint,
+        },
+      );
+      await settle();
+      const catchup = resumed.values.at(-1);
+      if (catchup?.kind !== 'delta') throw new Error('expected catch-up delta');
+      expect(apply(original, catchup.delta)).toEqual(value);
+      expect(resumed.held()).toEqual(value);
+
+      value = [{ id: 'replacement', payload: 'short' }];
+      bus.announce('notes');
+      await settle();
+      expect(subscriber.values.at(-1)?.kind).toBe('full');
+      expect(subscriber.held()).toEqual(value);
+    } finally {
+      hub.close();
+    }
+  });
+
   test('a 75 KB answer with one field changed crosses as a frame under 1 KB', async () => {
     const bus = topics();
     let stamp = '2026-09-15T01:00:00.000Z';

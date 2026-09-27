@@ -45,7 +45,8 @@ test('a note posted in one tab reaches another through the web origin and the so
   const writer = await browser.newPage();
   const reader = await browser.newPage();
   await Promise.all([writer.goto('/en'), reader.goto('/en')]);
-  const note = `note ${Date.now()}`;
+  // Browser projects share the backend and can post in the same millisecond.
+  const note = `note ${crypto.randomUUID()}`;
   await writer.getByRole('textbox', { name: 'Note' }).fill(note);
   await writer.getByRole('button', { name: 'Post' }).click();
   await expect(writer.getByText(note)).toBeVisible();
