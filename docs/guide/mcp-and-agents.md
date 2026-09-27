@@ -707,14 +707,15 @@ as one thing. Where they agree, that is what you get; where they disagree — a
 `.refine()` only one of them carries, two different bounds on the same number, an
 enum against a free string — the *constraint* is dropped and the **type** is not.
 A field that is a number in every variant is advertised as a number, not as a
-bare description. When the kinds genuinely differ, the flat projection keeps
-every provable kind in a deterministic JSON Schema type array — for example
-`type: ['string', 'array']` — while dropping constraints that are not sound for
-all branches. Nested `oneOf` / `anyOf` values still contribute their provable
-base kinds without reintroducing union keywords. Only a branch whose kind is
+bare description. Scalar collisions keep every provable kind in a deterministic
+JSON Schema type array. If any alternative is an object or array, the property
+retains distinct structural alternatives in `anyOf`: object properties, typed
+array items, bounds and nullable values remain available to the model. The
+containing discriminated union still becomes one object; flat mode does not
+promise to remove every nested union keyword. Only a branch whose kind is
 actually unknowable, such as a free-form schema or unresolved reference, leaves
 the collision unconstrained. → ADRs [0044](../decisions/0044-a-collided-field-keeps-its-type.md)
-and [0065](../decisions/0065-flat-collisions-preserve-every-known-kind.md)
+and [0205](../decisions/0205-flat-tool-collisions-retain-structural-alternatives.md).
 
 It is **deep** because the projection walks the generated JSON Schema document,
 including objects, arrays, tuples and schema-definition nodes. Structurally
@@ -723,8 +724,8 @@ Plain unions and unions hidden behind unresolved external references remain
 unions because Stitchkit cannot soundly invent a discriminator.
 
 Use the default `flattenUnionInput: false` when the model must see the exact
-relationship between a discriminator and each branch. The flat type array is a
-sound set of possible JSON kinds, not a reconstruction of those correlations.
+relationship between a discriminator and each branch. Joined property schemas
+describe allowed values without reconstructing those correlations.
 
 The flattened form is **lossy but never executable**. Per-variant refinements
 and incompatible constraints are widened in the presentation document; the

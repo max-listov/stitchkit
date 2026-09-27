@@ -71,6 +71,8 @@ describe('collided fields retain the common useful kind', () => {
       z.object({ op: z.literal('one'), value: z.string() }),
     ]);
     expect(advertised(first).value).toEqual(advertised(second).value);
-    expect(advertised(first).value?.type).toEqual(['string', 'array']);
+    expect(advertised(first).value).toEqual({
+      anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }],
+    });
   });
 });

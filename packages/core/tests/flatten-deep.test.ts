@@ -77,7 +77,13 @@ describe('presentation flattening walks the JSON Schema graph', () => {
     if (!mcp || !agent) throw new Error('expected both tool transports');
     expect(mcp.presentationSchema).toEqual(agent.presentationSchema);
     expect(JSON.stringify(mcp.presentationSchema)).not.toContain('oneOf');
-    expect(JSON.stringify(mcp.presentationSchema)).not.toContain('anyOf');
+    expect(mcp.presentationSchema.type).toBe('object');
+    expect(mcp.presentationSchema.anyOf).toBeUndefined();
+    expect(mcp.presentationSchema).toMatchObject({
+      properties: {
+        value: { anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }] },
+      },
+    });
   });
 
   test('the manifest reuses the same flattened presentation document', () => {

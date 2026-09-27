@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.99.0] — 2026-09-27
+
+### ⚠️ Breaking changes
+
+- `stitchkit/tools` — `flattenUnionInput` preserves object properties and typed
+  array items when discriminated-union variants share a field with different
+  structures. Flat mode no longer guarantees the absence of nested `anyOf`.
+  Before: a collided object/array field was `{ type: ['object', 'array'] }`.
+  After: `{ anyOf: [{ type: 'object', properties: ... }, { type: 'array', items: ... }] }`.
+  The containing union stays an object and the original contract still validates
+  execution. Schema consumers must traverse these nested alternatives; no
+  contract changes or global flatten opt-out are needed. This avoids provider
+  rejection of array schemas with missing `items`. See
+  [ADR 0205](docs/decisions/0205-flat-tool-collisions-retain-structural-alternatives.md).
+
+**Who must act:** users of `flattenUnionInput: true` whose schema walkers,
+snapshots or provider restrictions assume no nested `anyOf`. Other consumers
+only update the dependency; runtime input validation is unchanged.
+
 ## [0.98.2] — 2026-09-27
 
 ### Fixed

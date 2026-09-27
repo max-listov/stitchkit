@@ -179,10 +179,7 @@ function typeNames(schema: ToolPresentationSchema): JsonSchemaType[] | null {
 }
 
 function typeSchema(type: JsonSchemaType, nullable: boolean): ToolPresentationSchema {
-  const schema: ToolPresentationSchema = { type: nullable ? [type, 'null'] : type };
-  if (type === 'array') schema.items = {};
-  if (type === 'object') schema.additionalProperties = {};
-  return schema;
+  return { type: nullable ? [type, 'null'] : type };
 }
 
 function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSchema {
@@ -198,6 +195,17 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
     }
   }
   if (bases.size === 0) return nullable ? { type: 'null' } : {};
+  // Structured alternatives carry the model's field/item vocabulary. A bare
+  // type union loses it, and an array without items is rejected by providers.
+  // anyOf preserves every allowed value without inventing cross-branch rules.
+  if (bases.has('array') || bases.has('object')) {
+    const alternatives = new Map<string, ToolPresentationSchema>();
+    for (const schema of schemas) alternatives.set(serializeCanonicalJson(schema), schema);
+    const ordered = [...alternatives]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, schema]) => schema);
+    return { anyOf: structuredClone(ordered) };
+  }
   if (bases.size === 1) {
     const [only] = bases;
     return only ? typeSchema(only, nullable) : {};
@@ -226,7 +234,7 @@ export function mergePropertySchemas(properties: VariantProperty[]): ToolPresent
     const allStrings = values.every((value) => value !== null);
     merged = allStrings
       ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))] }
-      : commonBaseType(schemas);
+      : commonBaseType(structural);
   }
   const descriptions = [
     ...new Set(

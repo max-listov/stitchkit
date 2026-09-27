@@ -1,5 +1,34 @@
 # Upgrading stitchkit
 
+## Released migration: 0.99.0
+
+### structural alternatives in flattened tool schemas
+
+**Who must act:** applications using `flattenUnionInput: true` with schema
+walkers, snapshots or provider restrictions that assume there is no nested
+`anyOf`. Applications without that assumption need only update the dependency.
+
+Colliding object/array fields retain their complete structural alternatives:
+
+```ts
+// Before: loses both field vocabulary and array items.
+{ type: ['object', 'array'] }
+// After: structural alternatives live inside the property schema.
+{ anyOf: [
+  { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  { type: 'array', items: {
+    type: 'object', properties: { id: { type: 'string' } }, required: ['id'],
+  } },
+] }
+```
+
+Traverse each nested alternative when inspecting schemas and regenerate schema
+snapshots. Verify the actual manifest with the chosen provider. Keep flatten
+enabled when a top-level discriminated union needs to be advertised as an
+object; do not erase `items` or introduce consumer-specific schema patches.
+The root object, discriminator enum, requiredness hints and strict runtime
+contract validation are unchanged. See ADR 0205.
+
 ## Released migration: 0.98.0
 
 ### automatic stdin availability

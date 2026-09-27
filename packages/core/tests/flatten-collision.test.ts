@@ -39,7 +39,12 @@ describe('conservative discriminated-union join', () => {
         z.object({ kind: z.literal('many'), media: z.array(z.object({ id: z.string() })) }),
       ]),
     );
-    expect(field(schema, 'media')).toEqual({ type: ['object', 'array'] });
+    expect(field(schema, 'media')).toMatchObject({
+      anyOf: [
+        { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } } } },
+        { type: 'object', properties: { id: { type: 'string' } } },
+      ],
+    });
     expect(findUntypedProperties(schema)).toEqual([]);
   });
 
@@ -56,11 +61,21 @@ describe('conservative discriminated-union join', () => {
         }),
       ]),
     );
-    expect(field(schema, 'target')).toEqual({ type: ['string', 'object'] });
+    expect(field(schema, 'target')).toMatchObject({
+      anyOf: [
+        {
+          anyOf: [
+            { properties: { names: { type: 'array', items: { type: 'string' } } } },
+            { properties: { pattern: { type: 'string' } } },
+          ],
+        },
+        { type: 'string' },
+      ],
+    });
     expect(findUntypedProperties(schema)).toEqual([]);
   });
 
-  test('projects different nested object unions to one loose object kind', () => {
+  test('preserves the structure of different nested object unions', () => {
     const schema = flatten(
       z.discriminatedUnion('kind', [
         z.object({
@@ -73,7 +88,22 @@ describe('conservative discriminated-union join', () => {
         }),
       ]),
     );
-    expect(field(schema, 'value')).toEqual({ type: 'object', additionalProperties: {} });
+    expect(field(schema, 'value')).toMatchObject({
+      anyOf: [
+        {
+          anyOf: [
+            { properties: { a: { type: 'string' } } },
+            { properties: { b: { type: 'number' } } },
+          ],
+        },
+        {
+          anyOf: [
+            { properties: { c: { type: 'boolean' } } },
+            { properties: { d: { type: 'array', items: { type: 'string' } } } },
+          ],
+        },
+      ],
+    });
   });
 
   test('retains null alongside every divergent non-null kind', () => {
@@ -83,7 +113,12 @@ describe('conservative discriminated-union join', () => {
         z.object({ kind: z.literal('many'), value: z.array(z.string()).nullable() }),
       ]),
     );
-    expect(field(schema, 'value')).toEqual({ type: ['string', 'array', 'null'] });
+    expect(field(schema, 'value')).toEqual({
+      anyOf: [
+        { type: ['array', 'null'], items: { type: 'string' } },
+        { type: ['string', 'null'] },
+      ],
+    });
   });
 
   test('derives divergent kinds from const and enum values', () => {
