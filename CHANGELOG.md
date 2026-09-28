@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.100.2] — 2026-09-28
+
+### Added
+
+- `stitchkit/application` — `versionChangeOverlap: 'abnormal'` on
+  `createProcessLifecycleLedger` (and `TransitionStartInput`) declares that
+  builds never overlap: one process per deployment, the old one stopped before
+  the new one starts. An open predecessor of another build is then a crash —
+  `previousExit: 'abnormal'` (or `startup-failed`), closed at the new start,
+  `ReadyFact.downtimeMs: null` instead of `0` — while `previousVersion` and
+  `versionChanged` still describe the release. The default stays `handoff`;
+  the type is `VersionChangeOverlap`.
+
 ## [0.100.1] — 2026-09-28
 
 ### Fixed

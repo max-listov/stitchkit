@@ -862,7 +862,8 @@ ever became ready:
 | none | — | — | `first-boot` | — |
 | recorded `stoppedAt` | — | — | `clean` / `forced` / `startup-failed` / `abnormal` as recorded | unchanged |
 | still open | yes | — | `hot-reload` | `hot-reload`, closed at the new start |
-| still open | no | changed | `handoff` | stays open; it records its own stop later |
+| still open | no | changed | `handoff` (default) | stays open; it records its own stop later |
+| still open | no | changed, `versionChangeOverlap: 'abnormal'` | `abnormal` / `startup-failed` | closed at the new start, as for the same version |
 | still open, was ready | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
 | still open, never ready | no | same | `startup-failed` (default) | `startup-failed`, closed at the new start |
 
@@ -904,7 +905,22 @@ zero-downtime reload of the same build — pass `sameVersionOverlap: 'handoff'`
 to the ledger, and every open run stays open until it records its own
 shutdown. The cost of that setting is symmetric: a real crash under it is
 reported as a handoff and the dead run stays open in the ledger until
-retention drops it. The list is kept in the order the transitions wrote it —
+retention drops it.
+
+A version change is the other axis, and its default is the opposite:
+`handoff`, because a release that starts the new build before stopping the
+old one is the common zero-downtime shape. Where builds never overlap — one
+process per deployment (a pm2 fork, a systemd unit, one container), the old
+one stopped before the new one starts — pass `versionChangeOverlap:
+'abnormal'`. An open predecessor of another build then died without
+recording its exit, most often killed during the release itself: it is closed
+as `abnormal` (or `startup-failed`) at the new start, `downtimeMs` is `null`
+instead of `0`, and `previousVersion` / `versionChanged` still describe the
+release. A predecessor that did record its stop is read as before, and its
+downtime is measured. The two settings compose: `sameVersionOverlap:
+'handoff'` keeps open only the runs of a build allowed to overlap the new one.
+
+The list is kept in the order the transitions wrote it —
 every write goes through one atomic update, so that order is the causal one,
 and a successor whose clock lags its predecessor still finds it at the head;
 `startedAt` is data, not the sort key. Retention (`retain`, default 20) drops

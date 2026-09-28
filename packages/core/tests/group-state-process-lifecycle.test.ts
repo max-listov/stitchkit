@@ -422,6 +422,119 @@ describe('process lifecycle transitions', () => {
     expect(stopped.fact).toMatchObject({ recorded: true, termination: 'clean' });
   });
 
+  test('a version change is a handoff by default and a crash when builds never overlap', () => {
+    const first = transitionProcessStart(null, {
+      runId: 'release-1',
+      pid: 10,
+      version: '1.0.0',
+      now: at(0),
+    });
+    const serving = ready(first.state, 'release-1', 10, 0);
+    const handoff = transitionProcessStart(serving, {
+      runId: 'release-2',
+      pid: 11,
+      version: '1.1.0',
+      now: at(5),
+    });
+    expect(handoff.fact.previousExit).toBe('handoff');
+
+    const crashed = transitionProcessStart(serving, {
+      runId: 'release-2',
+      pid: 11,
+      version: '1.1.0',
+      now: at(5),
+      versionChangeOverlap: 'abnormal',
+    });
+    expect(crashed.fact).toMatchObject({
+      previousExit: 'abnormal',
+      previousVersion: '1.0.0',
+      versionChanged: true,
+      processGapMs: null,
+    });
+    expect(crashed.state.runs.find((run) => run.runId === 'release-1')).toMatchObject({
+      termination: 'abnormal',
+      stoppedAt: at(5),
+      unavailableAt: null,
+    });
+    // Nobody timed the crash, so the downtime is unknown — never zero.
+    const readyAfterCrash = transitionProcessReady(crashed.state, {
+      runId: 'release-2',
+      pid: 11,
+      now: at(9),
+    });
+    expect(readyAfterCrash.fact).toMatchObject({ downtimeMs: null, unavailableSince: null });
+
+    const neverReady = transitionProcessStart(first.state, {
+      runId: 'release-2',
+      pid: 11,
+      version: '1.1.0',
+      now: at(5),
+      versionChangeOverlap: 'abnormal',
+    });
+    expect(neverReady.fact.previousExit).toBe('startup-failed');
+    expect(neverReady.state.runs.find((run) => run.runId === 'release-1')?.termination).toBe(
+      'startup-failed',
+    );
+  });
+
+  test('a clean stop before a version change still measures downtime when builds never overlap', () => {
+    const first = transitionProcessStart(null, {
+      runId: 'release-1',
+      pid: 10,
+      version: '1.0.0',
+      now: at(0),
+    });
+    const stopped = transitionProcessShutdown(ready(first.state, 'release-1', 10, 1), {
+      runId: 'release-1',
+      pid: 10,
+      now: at(10),
+    }).state;
+    const next = transitionProcessStart(stopped, {
+      runId: 'release-2',
+      pid: 11,
+      version: '1.1.0',
+      now: at(12),
+      versionChangeOverlap: 'abnormal',
+    });
+    expect(next.fact).toMatchObject({ previousExit: 'clean', versionChanged: true });
+    const readyFact = transitionProcessReady(next.state, {
+      runId: 'release-2',
+      pid: 11,
+      now: at(15),
+    }).fact;
+    expect(readyFact).toMatchObject({ downtimeMs: 5_000, unavailableSince: at(10) });
+  });
+
+  test('declared same-build overlap does not keep a different build open when builds never overlap', () => {
+    const first = transitionProcessStart(null, {
+      runId: 'a',
+      pid: 10,
+      version: '1',
+      now: at(0),
+    });
+    const second = transitionProcessStart(ready(first.state, 'a', 10, 0), {
+      runId: 'b',
+      pid: 11,
+      version: '1',
+      now: at(1),
+      sameVersionOverlap: 'handoff',
+    });
+    const third = transitionProcessStart(ready(second.state, 'b', 11, 1), {
+      runId: 'c',
+      pid: 12,
+      version: '2',
+      now: at(2),
+      sameVersionOverlap: 'handoff',
+      versionChangeOverlap: 'abnormal',
+    });
+    expect(third.fact).toMatchObject({ previousExit: 'abnormal', versionChanged: true });
+    expect(third.state.runs.map((run) => [run.runId, run.termination])).toEqual([
+      ['c', 'active'],
+      ['b', 'abnormal'],
+      ['a', 'abnormal'],
+    ]);
+  });
+
   test('the ledger carries the overlap policy into every start', async () => {
     const store = memoryStore<LifecycleState>();
     const older = createProcessLifecycleLedger({
@@ -441,6 +554,32 @@ describe('process lifecycle transitions', () => {
     await older.recordStart({ version: '3' });
     expect((await newer.recordStart({ version: '3' })).previousExit).toBe('handoff');
     expect((await older.recordShutdown()).recorded).toBeTrue();
+  });
+
+  test('the ledger carries the version-change policy into every start', async () => {
+    const store = memoryStore<LifecycleState>();
+    const older = createProcessLifecycleLedger({
+      store,
+      versionChangeOverlap: 'abnormal',
+      pid: 20,
+      runId: 'older',
+      clock: () => new Date(at(0)),
+    });
+    const newer = createProcessLifecycleLedger({
+      store,
+      versionChangeOverlap: 'abnormal',
+      pid: 21,
+      runId: 'newer',
+      clock: () => new Date(at(3)),
+    });
+    await older.recordStart({ version: '3' });
+    await older.recordReady();
+    expect(await newer.recordStart({ version: '4' })).toMatchObject({
+      previousExit: 'abnormal',
+      versionChanged: true,
+    });
+    expect((await newer.recordReady()).downtimeMs).toBeNull();
+    expect((await older.recordShutdown()).recorded).toBeFalse();
   });
   test("a restarted ledger resource records the second run's shutdown too", async () => {
     let sequence = 0;

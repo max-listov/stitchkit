@@ -161,10 +161,21 @@ export function normalizeLifecycleState(
  * without recording its exit — one process per deployment, a restart after a
  * kill. `handoff`: processes of one build overlap on purpose (a cluster, a
  * zero-downtime reload of the same build), so every open run stays open and
- * records its own shutdown later. A different version is always a handoff; a
- * version of `unknown` on either side is never a version change.
+ * records its own shutdown later. A version of `unknown` on either side is
+ * never a version change.
  */
 export type SameVersionOverlap = 'abnormal' | 'handoff';
+
+/**
+ * What a start means when the newest run is still open under another pid
+ * **and a different version**. `handoff` (default): a release starts the new
+ * build before the old one stops, so the predecessor stays open and records
+ * its own shutdown. `abnormal`: builds never overlap — one process per
+ * deployment, the old one is stopped before the new one starts — so an open
+ * predecessor of another build died without recording its exit, most often
+ * killed during the release itself.
+ */
+export type VersionChangeOverlap = 'abnormal' | 'handoff';
 
 export interface TransitionStartInput {
   readonly runId: string;
@@ -173,6 +184,12 @@ export interface TransitionStartInput {
   readonly now: string;
   readonly retain?: number;
   readonly sameVersionOverlap?: SameVersionOverlap;
+  readonly versionChangeOverlap?: VersionChangeOverlap;
+}
+
+interface OverlapPolicy {
+  readonly sameVersion: SameVersionOverlap;
+  readonly versionChange: VersionChangeOverlap;
 }
 
 const UNKNOWN_VERSION = 'unknown';
@@ -186,35 +203,40 @@ const RetainSchema = z.number().int().min(1).max(1_000);
 function previousExitOf(
   previous: LifecycleRun | null,
   run: LifecycleRun,
-  overlap: SameVersionOverlap,
+  overlap: OverlapPolicy,
 ): PreviousExit {
   if (!previous) return 'first-boot';
   const ended = previous.termination;
   if (ended !== 'active' && ended !== 'draining') return ended;
   if (previous.pid === run.pid) return 'hot-reload';
-  if (isVersionChange(previous.version, run.version) || overlap === 'handoff')
-    return 'handoff';
+  const declared = isVersionChange(previous.version, run.version)
+    ? overlap.versionChange
+    : overlap.sameVersion;
+  if (declared === 'handoff') return 'handoff';
   return previous.readyAt === null ? 'startup-failed' : 'abnormal';
 }
 
 /**
  * How a start closes the open runs it finds. The same pid is always a hot
  * reload. Otherwise a run stays open only when it may still be answering: the
- * newest one in a handoff, or any one where overlap was declared. Every other
- * open run was abandoned — not only the newest: two crashes in a row leave two.
+ * newest one in a handoff, or any one where same-build overlap was declared
+ * and its build is allowed to overlap this one. Every other open run was
+ * abandoned — not only the newest: two crashes in a row leave two.
  */
 function closeAbandoned(
   candidate: LifecycleRun,
   previous: LifecycleRun | null,
   previousExit: PreviousExit,
   run: LifecycleRun,
-  overlap: SameVersionOverlap,
+  overlap: OverlapPolicy,
 ): LifecycleRun {
   if (!isOpenRun(candidate)) return candidate;
   // The crash time is unknown; the successor's start is the upper bound.
   const closed = { ...candidate, stoppedAt: run.startedAt };
   if (candidate.pid === run.pid) return { ...closed, termination: 'hot-reload' };
-  if (overlap === 'handoff') return candidate;
+  const overlapsThisBuild =
+    overlap.versionChange === 'handoff' || !isVersionChange(candidate.version, run.version);
+  if (overlap.sameVersion === 'handoff' && overlapsThisBuild) return candidate;
   if (candidate.runId === previous?.runId && previousExit === 'handoff') return candidate;
   return {
     ...closed,
@@ -228,7 +250,10 @@ export function transitionProcessStart(
   input: TransitionStartInput,
 ): LifecycleTransition<StartFact> {
   const retain = RetainSchema.parse(input.retain ?? 20);
-  const overlap = input.sameVersionOverlap ?? 'abnormal';
+  const overlap: OverlapPolicy = {
+    sameVersion: input.sameVersionOverlap ?? 'abnormal',
+    versionChange: input.versionChangeOverlap ?? 'handoff',
+  };
   const state = normalizeLifecycleState(source, 1_000);
   const run = LifecycleRunSchema.parse({
     runId: input.runId,

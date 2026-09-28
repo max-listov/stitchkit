@@ -13,6 +13,7 @@ import {
   transitionProcessReady,
   transitionProcessShutdown,
   transitionProcessStart,
+  type VersionChangeOverlap,
 } from './process-lifecycle-transitions';
 import { defineManagedResource, type ManagedResource } from './resource';
 import type { StateStore } from './state-store';
@@ -35,6 +36,7 @@ export interface ProcessLifecycleLedgerConfig {
   readonly retain?: number;
   readonly runId?: string | (() => string);
   readonly sameVersionOverlap?: SameVersionOverlap;
+  readonly versionChangeOverlap?: VersionChangeOverlap;
   readonly onSubscriberError?: (
     error: unknown,
     fact: ProcessLifecycleFact,
@@ -86,6 +88,7 @@ export function createProcessLifecycleLedger(
           now: clock().toISOString(),
           retain,
           sameVersionOverlap: config.sameVersionOverlap,
+          versionChangeOverlap: config.versionChangeOverlap,
         });
         return { state: transition.state, result: transition.fact };
       });

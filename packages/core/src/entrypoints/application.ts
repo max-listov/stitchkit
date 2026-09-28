@@ -220,6 +220,7 @@ export {
   transitionProcessReady,
   transitionProcessShutdown,
   transitionProcessStart,
+  type VersionChangeOverlap,
 } from '../application/process-lifecycle-transitions';
 export {
   defineManagedResource,

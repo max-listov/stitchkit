@@ -1907,6 +1907,7 @@
     "TransitionRunInput",
     "TransitionShutdownInput",
     "TransitionStartInput",
+    "VersionChangeOverlap",
     "WatchAdmissionScope",
     "WatchHub",
     "WatchHubConfig",
