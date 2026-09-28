@@ -617,6 +617,9 @@
     },
     "refreshTimeoutMs": {
       "test": "credential write capacity and refresh deadline refuse bounded work visibly"
+    },
+    "storageTimeoutMs": {
+      "test": "a storage write that hangs does not keep logout from clearing, and a late write is undone"
     }
   },
   "ChangeSubscriptionConfig": {
@@ -647,13 +650,16 @@
   },
   "NotificationDeliveryConfig": {
     "version": {
-      "test": "plans are immutable across attempts and mismatched versions are quarantined through onDropped"
+      "test": "plans are immutable across attempts and a plan of an unknown version waits for its executor"
     },
     "actions": {
-      "test": "plans are immutable across attempts and mismatched versions are quarantined through onDropped"
+      "test": "plans are immutable across attempts and a plan of an unknown version waits for its executor"
     },
     "project": {
       "test": "action receipts survive restart and projection retry never repeats confirmed sends"
+    },
+    "retiredVersions": {
+      "test": "a retired plan version drains through its projection; an unknown one waits without classify"
     }
   },
   "CacheBridgeConfig": {

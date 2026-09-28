@@ -1077,6 +1077,7 @@ async function release(target: ReleaseTarget): Promise<void> {
   );
   await run(['git', 'tag', tag, head]);
   await run(['git', 'push', 'origin', `refs/tags/${tag}`]);
+  await retireReleaseBranches(head);
 }
 
 async function releaseTrain(): Promise<void> {
@@ -1103,6 +1104,46 @@ async function releaseTrain(): Promise<void> {
     tags.push(`refs/tags/${tag}`);
   }
   await run(['git', 'push', 'origin', ...tags]);
+  await retireReleaseBranches(head);
+}
+
+/**
+ * A `release/…` branch exists to carry one candidate through its exact-SHA CI
+ * run. Once that commit is on the default branch and tagged, the branch says
+ * nothing the tag does not — and twenty-nine of them had piled up, local and
+ * remote. Only branches whose tip is already contained in the released head
+ * are removed, so nothing unreleased goes with them. The tags are pushed by
+ * then, so a failure here is reported and does not fail the release.
+ */
+async function retireReleaseBranches(head: string): Promise<void> {
+  const merged = async (refs: string, format: string): Promise<string[]> =>
+    (await output(['git', 'for-each-ref', `--format=${format}`, '--merged', head, refs]))
+      .split('\n')
+      .filter((name) => name !== '');
+  // One at a time: a branch that cannot go (checked out elsewhere, already
+  // gone) must not keep the rest.
+  const retire = async (command: string[]): Promise<void> => {
+    try {
+      await run(command);
+    } catch (error) {
+      process.stderr.write(
+        `Release branch not retired: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
+  };
+  try {
+    for (const branch of await merged('refs/heads/release/', '%(refname:short)')) {
+      await retire(['git', 'branch', '--delete', branch]);
+    }
+    await run(['git', 'fetch', '--prune', 'origin']);
+    for (const branch of await merged('refs/remotes/origin/release/', '%(refname:lstrip=3)')) {
+      await retire(['git', 'push', 'origin', '--delete', branch]);
+    }
+  } catch (error) {
+    process.stderr.write(
+      `Release branches were not retired: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
 }
 
 async function main(): Promise<void> {

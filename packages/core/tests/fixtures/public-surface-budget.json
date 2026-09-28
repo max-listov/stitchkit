@@ -1,5 +1,5 @@
 {
-  "$comment": "ADRs 0206\u20130209: shared model receipts, seven session names, eight application lifetime/delivery names and one watch-cache binding. Each extends its existing owner; other budgets and overlaps are unchanged.",
+  "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. \u2192 ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
     "stitchkit": 223,
     "stitchkit/agent-runtime": 364,
@@ -11,7 +11,7 @@
     "stitchkit/agent-runtime/sqlite/bun": 10,
     "stitchkit/agent-runtime/sqlite/node": 10,
     "stitchkit/agent-runtime/testing": 15,
-    "stitchkit/application": 286,
+    "stitchkit/application": 288,
     "stitchkit/application/diagnostic-journal": 1,
     "stitchkit/application/directory-inbox": 1,
     "stitchkit/application/grammy": 13,

@@ -5,6 +5,7 @@ import {
   type NotificationDeliveryConfig,
   type NotificationDeliveryState,
   NotificationDeliveryStateSchema,
+  NotificationPlanVersionError,
   notificationDeliveryPlan,
 } from './notification-delivery';
 import {
@@ -160,20 +161,28 @@ function notificationRejection<TPayload>(
   bounded: (state: NotificationOutboxState<TPayload>) => NotificationOutboxState<TPayload>,
   clock: () => Date,
   backoffMs: (attempt: number) => number,
+  pollIntervalMs: number,
 ) {
   const maxAttempts = config.maxAttempts ?? 100;
   return async (
     claimed: NotificationOutboxItem<TPayload>,
     error: unknown,
   ): Promise<DroppedNotification<TPayload> | null> => {
-    const classification = await config.classify(error);
+    // A plan this executor does not know is not a failed attempt: an executor
+    // that knows it — the other side of a rolling deploy, or the version a
+    // rollback returns to — will. It waits, attempts untouched, and is reported.
+    const unknownPlan = error instanceof NotificationPlanVersionError;
+    if (unknownPlan) await reportOutboxError(config, error);
+    const classification: NotificationFailureClassification = unknownPlan
+      ? { retryable: true }
+      : await config.classify(error);
     return config.store.update((current) => {
       const state = parse(current);
       const live = state.queue.find(
         (item) => item.key === claimed.key && item.leaseId === claimed.leaseId,
       );
       if (!live) return { state, result: null };
-      const attempts = live.attempts;
+      const attempts = unknownPlan ? Math.max(0, live.attempts - 1) : live.attempts;
       const reason = dropReason(classification, attempts, maxAttempts);
       if (reason) {
         return {
@@ -184,9 +193,13 @@ function notificationRejection<TPayload>(
           result: { item: { ...live, attempts }, error, reason },
         };
       }
-      const wait = RetryDelaySchema.parse(backoffMs(attempts));
+      // An unknown plan spends no attempt, so nothing else bounds its retries:
+      // it waits at least a poll interval, never within the same pass.
+      const backoff = RetryDelaySchema.parse(backoffMs(Math.max(1, attempts)));
+      const wait = unknownPlan ? Math.max(backoff, pollIntervalMs) : backoff;
       const retry: NotificationOutboxItem<TPayload> = {
         ...live,
+        attempts,
         nextAttemptAt: new Date(clock().getTime() + wait).toISOString(),
         ...NO_LEASE,
       };
@@ -299,7 +312,14 @@ export function createNotificationOutbox<TPayload>(
     });
   };
 
-  const reject = notificationRejection(config, parse, bounded, clock, backoffMs);
+  const reject = notificationRejection(
+    config,
+    parse,
+    bounded,
+    clock,
+    backoffMs,
+    pollIntervalMs,
+  );
 
   const flushPass = async (): Promise<number> => {
     let delivered = 0;
@@ -317,6 +337,7 @@ export function createNotificationOutbox<TPayload>(
             bounded,
             leaseMs,
             active: () => !interrupted,
+            report: (error) => reportOutboxError(config, error),
           });
           if (!finished) return delivered;
         } else {

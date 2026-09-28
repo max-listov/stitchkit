@@ -228,13 +228,22 @@ const RuntimeSummarySchema = z
 /** Small list-card state derived only from the canonical ledger. */
 export const agentSummaryProjection = defineAgentProjection({
   name: 'summary',
-  version: 1,
+  version: 2,
   schema: RuntimeSummarySchema,
   initial: (): z.infer<typeof RuntimeSummarySchema> => ({ eventCount: 0, lastSeq: 0 }),
   fold: (state, event) => {
+    // An audited request records what was sent under `sent`; an unaudited one
+    // carries `modelId` at the top.
     const request =
       event.kind === 'provider/request'
-        ? z.object({ modelId: z.string().optional() }).passthrough().safeParse(event.payload)
+        ? z
+            .object({
+              modelId: z.string().optional(),
+              sent: z.object({ modelId: z.string() }).passthrough().optional(),
+            })
+            .passthrough()
+            .transform((payload) => ({ modelId: payload.modelId ?? payload.sent?.modelId }))
+            .safeParse(event.payload)
         : undefined;
     return {
       eventCount: state.eventCount + 1,

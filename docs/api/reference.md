@@ -143,18 +143,22 @@ can emit / propagate a `traceparent` (see `HttpClientConfig.trace`).
 
 `createSessionScope` (`stitchkit`) returns the generic `SessionScope`: `replace(context)`
 creates a new login lifetime (including same-account relogin), `capture()` returns
-its `SessionOperation<T>`, `clear()` invalidates it, and `stop()` permanently closes
-the host. Operations expose `id`, `generation`, `context`, `signal`, `current()` and
+its `SessionOperation<T>`, `clear()` invalidates it, `stop()` permanently closes
+the host, and `owns(operation)` answers whether an operation is this scope's current
+one — `current()` alone cannot tell an operation of another scope. Operations expose `id`, `generation`, `context`, `signal`, `current()` and
 `assertCurrent()`. `run(callback)` checks both success and failure across an await;
 `deliver(callback)` admits a synchronous final send/state change or returns false.
 `bindFetch(fetch, headers?)` guards every attempt and scopes its abort signal. Wrap
 the complete client call in `run` too: headers are not the response body boundary.
-Expired work throws `SessionExpiredError`, not a refresh instruction.
+Expired work throws `SessionExpiredError`, not a refresh instruction; when the work
+itself failed, that failure is its `cause`.
 
 `createSessionCredentials` accepts `SessionCredentialsConfig`:
 `scope`, `refresh(credentials, signal)`, `storage.write(session, credentials)`,
-`storage.clear()`, `maxPendingWrites` (128), and `refreshTimeoutMs` (30000, at most one
-hour). `SessionCredentials` provides `login`, `logout`, `read(operation)` and
+`storage.clear()`, `maxPendingWrites` (128), `refreshTimeoutMs` (30000, at most one
+hour) and `storageTimeoutMs` (30000, at most one hour): a storage call past it
+rejects and frees the queue, so `logout()` still clears; when the late call settles,
+storage is written again from memory, or cleared when nobody is logged in. `SessionCredentials` provides `login`, `logout`, `read(operation)` and
 `refresh(operation)`. Concurrent refresh calls in one generation share the same
 promise. Logout invalidates memory before its returned persistence promise settles.
 Storage errors and queue-capacity refusals reject; callers must handle them. All
@@ -304,7 +308,8 @@ realtime contract from `stitchkit`, and the server halves live in `stitchkit/app
 ### Session-scoped watch lifetime
 
 `WatchClientConfig.session` captures a `SessionOperation`; `maxKeys` (1024) and
-`maxListenersPerKey` (128) bound retained subscriptions. Its lifetime nonce travels
+`maxListenersPerKey` (128) bound retained subscriptions; a handle takes its key on
+`subscribe`, which is where capacity refuses. Its lifetime nonce travels
 in optional `WatchKey.instance`, preventing old-session frames from matching a new
 client on the same socket. This is routing identity, never authorization.
 
@@ -817,7 +822,10 @@ periodically even when no notification arrives.
 `reconcileIntervalMs` (10 ms–1 h). `hub.attach(subscriber, scope?)` accepts a
 `WatchAdmissionScope` containing a **server-verified** `key` (1–512 characters) and
 revocation `signal`. The key separates sharing and is the optional third argument
-of `read(operation, args, scope)`. It must represent account, session and permissions;
+of `read(operation, args, scope)`; a key's `instance` routes frames and never
+separates sources. Attached over `maxSubscribers`, a subscriber gets a watcher whose
+`open` refuses with `Watch subscriber capacity exceeded`; `attach` does not throw
+for capacity. It must represent account, session and permissions;
 never trust a client-supplied owner ID as that scope.
 
 
@@ -828,7 +836,13 @@ never trust a client-supplied owner ID as that scope.
 immutable executor `version`, pure `actions(payload)` plan selector (1–128 unique
 names, each at most 128 characters), and idempotent `project(notification, receipts)`.
 `send` receives optional `action` and stable `idempotencyKey`, and returns a JSON
-remote receipt (void becomes null). `NotificationDeliveryStateSchema` validates the
+remote receipt (void becomes null). A result that is not JSON or does not fit the
+byte budget is kept as `receipt: null` with `unrecorded: 'not-json' | 'too-large'`;
+the action stays confirmed and is not sent again. `retiredVersions` maps earlier
+plan versions to their `NotificationProjection` so queued items drain after an
+executor upgrade; an unknown version is reported to `onError` as
+`NotificationPlanVersionError` and waits, spending no attempt and not consulting
+`classify`, for an executor that knows it. `NotificationDeliveryStateSchema` validates the
 optional `NotificationDeliveryState` on queued items and completed receipts:
 `version`, `actions`, `receipts` and optional `projectedAt`. Checkpoints share the
 existing atomic StateStore and lease fence. Receipt retention and serialized byte
@@ -1014,7 +1028,7 @@ Server-only optional application runtime. See the
 | `AgentSandboxProcess` / `AgentSandboxOutputStream` | _types_ | structural child/output interface for optional lifecycle-owned `AgentProcessSandbox.spawn`, without Node ambient type dependencies |
 | `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createSqliteAgentEventSearch` / `createAgentEventSearchTools` | schema / _type_ / functions | authorized FTS5 search with exact event addresses and `session_*` tools |
 | `createSqliteAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
-| `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `AgentScheduleDeliveryOutcomeSchema` / `AgentScheduleDeliveryOutcome` / `createAgentScheduleService` / `createAgentScheduleTools` | schemas / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, indexed retry eligibility, typed retry/terminal failure, bounded dispatch and fenced stable occurrence identity (ADR 0202) |
+| `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `AgentScheduleDeliveryOutcomeSchema` / `AgentScheduleDeliveryOutcome` / `createAgentScheduleService` / `createAgentScheduleTools` | schemas / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, indexed retry eligibility, typed retry/terminal failure (any other returned value delivers), `maxAttempts` (default 1000) per occurrence — a one-off ends `failed`, a recurring schedule skips to its next slot — bounded dispatch and fenced stable occurrence identity (ADR 0202) |
 | `AgentChildBudgetSchema` / `AgentChildBudget` / `AgentChildStateSchema` / `AgentChildState` / `AgentChildRecordSchema` / `AgentChildRecord` | schema / _type_ | durable child graph, bounded seed and measured budget state |
 | `AgentChildBlockingKindSchema` / `AgentChildBlockingKind` / `AgentChildBlockingSourceSchema` / `AgentChildBlockingSource` / `AgentChildBlockingEventSchema` / `AgentChildBlockingEvent` / `AgentChildBlockingDecision` | schemas / _types_ | parent-owned request identities; responses discriminate approval decisions from JSON input values |
 | `AgentChildHandle` / `AgentChildManager` / `SqliteAgentChildManagerConfig` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
@@ -1175,7 +1189,9 @@ operator-only observability sink explicitly opts in.
 `ModelInvocationConfig`: the existing store and model registry, a 32-byte payload
 key, required host authorization, optional bounded payload size and `onAttempt`.
 `complete(input, context, signal?)` executes only the supplied prompt, with no tools
-or framework instructions; repeated keys return the existing invocation ID.
+or framework instructions; repeated keys return the existing invocation ID. It
+resolves `{ invocationId, outcome, text?, receiptError? }`: `receiptError` says a
+receipt could not be written and never changes `outcome` or drops `text`.
 `read(input, context)` returns a bounded event page shared by agent and completion;
 `readPayload(input, context)` requires a separate authorization action to decrypt
 one protected artifact. See the [guide and migration example](../guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).
@@ -1190,8 +1206,11 @@ one protected artifact. See the [guide and migration example](../guide/agent-run
 
 The runtime `invocations` option takes this ledger and a trace callback; it requires
 the same store and preserves the existing tool loop. `AgentRuntimeStore.appendEventOnce`
-is an optional atomic capability required by receipt admission. Built-in stores
-supply it; custom adapters must honor its once-only transaction contract.
+is an optional atomic capability required by receipt admission, and
+`AgentRuntimeStore.findEventOnce` reads the event it wrote by kind and key. Built-in
+stores supply both; custom adapters must honor the once-only transaction contract.
+A driver's optional `events.find(transaction, { conversationId, eventId })` makes
+both one lookup instead of a scan of the conversation log.
 
 ## `stitchkit/agent-runtime/testing`
 

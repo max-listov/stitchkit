@@ -169,6 +169,15 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
       transaction: TRANSACTION,
       input: z.infer<typeof ReadAgentStoreEventsSchema>,
     ): Promise<AgentStoreEventPage>;
+    /**
+     * One event by its identity, or `undefined`. Once-only admission asks this
+     * on every call; without it the store pages through the whole conversation
+     * log, which is linear in its length and reads every payload on the way.
+     */
+    find?(
+      transaction: TRANSACTION,
+      input: { conversationId: string; eventId: string },
+    ): Promise<AgentStoreEventEnvelope | undefined>;
   };
   /** Optional driver-owned durable payloads included in the canonical archive. */
   archive?: {

@@ -2,8 +2,8 @@ import type { ClientFetch } from './transport';
 
 /** An operation's originating login has ended. Never an auth-refresh instruction. */
 export class SessionExpiredError extends Error {
-  constructor() {
-    super('The originating session is no longer active');
+  constructor(options?: { cause?: unknown }) {
+    super('The originating session is no longer active', options);
     this.name = 'SessionExpiredError';
   }
 }
@@ -75,7 +75,9 @@ export function createSessionScope<T>(): SessionScope<T> {
             assertCurrent();
             return result;
           } catch (error) {
-            assertCurrent();
+            // The session ended while the work failed: that is the answer, and
+            // the failure stays attached as why the work itself stopped.
+            if (!current()) throw new SessionExpiredError({ cause: error });
             throw error;
           }
         },

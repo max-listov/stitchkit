@@ -60,9 +60,9 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0028](0028-revert-contract-dispatcher.md) | Revert `createContractDispatcher` (no adopting consumer) | Accepted — supersedes the dispatcher part of 0027 | I8 |
 | [0029](0029-audit-endpoint-identity-and-dimensions.md) | Endpoint identity + domain dimensions on the audit event | Accepted — extends 0012, 0021, 0022 | I13 |
 | [0030](0030-audit-verb-and-json-error-details.md) | Audit verb, sanitised error details, complete error-code logging | Accepted — extends 0029, 0026, 0022 | I13 |
-| [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014 | I2 |
+| [0031](0031-deep-union-flatten.md) | Deep discriminated-union flattening for tool schemas | Accepted — completes `flattenUnionInput`; refines 0007, 0014; its no-nested-`anyOf` shape amended by 0205 | I2 |
 | [0032](0032-apperror-brand-identity.md) | Brand-based `AppError` identification (not `instanceof`) | Accepted — fixes 0026; consequence of 0011/0013 | I6 |
-| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034 | I2 |
+| [0033](0033-sound-flatten-collisions.md) | Sound flatten: collision widening, discriminator support, probe parity | Accepted — completes/repairs 0031; "advertised-only" premise superseded by 0034; collision widening amended by 0205 | I2 |
 | [0034](0034-advertised-schema-key-policy.md) | The advertised tool schema carries each object's key policy | Superseded by 0050 | superseded → 0050 |
 | [0035](0035-tool-name-derivation-and-validation.md) | Tool names: normalise the whole character class, assert at mount | Accepted — refines the tool pipeline of 0007 | I1 |
 | [0036](0036-contract-level-meta.md) | `meta` cascades from the contract; `expose` deliberately does not | Accepted — extends 0021 | I1 |
@@ -94,7 +94,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0062](0062-explicit-tool-exposure-is-a-factory-policy.md) | Explicit tool exposure is an opt-in factory policy | Accepted — refines 0036 without contract-level inheritance | I1 |
 | [0063](0063-one-http-completion-many-observability-projections.md) | One HTTP completion feeds every observability projection | Accepted — supersedes the HTTP wrapper in 0012; refines 0039 | I8, I13 |
 | [0064](0064-runtime-tool-factories-validate-context-at-execution.md) | Runtime-tool factories validate context at execution | Accepted — extends 0055 without a parallel runner | I8 |
-| [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary | I3 |
+| [0065](0065-flat-collisions-preserve-every-known-kind.md) | Flat collisions preserve every known JSON kind | Accepted — extends 0044 while preserving 0050's presentation boundary; collision shape amended by 0205 | I3 |
 | [0066](0066-the-starter-template-is-the-development-workspace.md) | The starter template is the development workspace | Accepted — identity clause superseded by 0070 | P |
 | [0067](0067-the-starter-connects-to-external-postgresql.md) | The starter connects to external PostgreSQL | Accepted — one `DATABASE_URL`; infrastructure stays outside generated applications | I11 |
 | [0068](0068-mcp-v2-is-one-stateless-hard-cut.md) | MCP SDK v2 is one stateless hard cut | Accepted — supersedes 0049; one v2 API and explicit modern policies | I14 |

@@ -131,16 +131,20 @@ test('verified watch scopes isolate identical arguments and revocation fences pe
         },
       }),
     ).not.toThrow();
-    expect(() =>
-      hub.attach({
-        value() {
-          /* Fixture intentionally performs no work. */
-        },
-        state() {
-          /* Fixture intentionally performs no work. */
-        },
-      }),
-    ).toThrow('capacity');
+    // Over capacity the subscriber is refused through `open`, never by a throw
+    // that would land in a connection handler.
+    const overflow = hub.attach({
+      value() {
+        /* Fixture intentionally performs no work. */
+      },
+      state() {
+        /* Fixture intentionally performs no work. */
+      },
+    });
+    expect(overflow.open(key, {})).toEqual({
+      accepted: false,
+      reason: 'Watch subscriber capacity exceeded',
+    });
   } finally {
     release.resolve();
     hub.close();
@@ -224,7 +228,16 @@ test('watch lifetime nonce rejects old frames on a reused socket; cache is stale
         },
       }),
     ).toThrow('capacity');
-    expect(() => client.list({ another: 1 })).toThrow('capacity');
+    // A handle takes no key until it subscribes: capacity refuses the
+    // subscription, not the handle a render made and may never use.
+    const unused = client.list({ another: 1 });
+    expect(() =>
+      unused.subscribe({
+        value() {
+          /* Fixture intentionally performs no work. */
+        },
+      }),
+    ).toThrow('capacity');
     const b = scope.replace('B');
     expect(query.getQueryData<string[]>(['items', a.id])).toBeUndefined();
     const next = createWatchClient(contract, { transport: t.wire, session: b });
@@ -247,5 +260,141 @@ test('watch lifetime nonce rejects old frames on a reused socket; cache is stale
     bridge.disconnect();
     scope.stop();
     query.clear();
+  }
+});
+
+test('an invalidation during the hold window is read for the next subscriber', async () => {
+  const listeners = new Set<() => void>();
+  let answer = 1;
+  let reads = 0;
+  const hub = createWatchHub({
+    read: async () => {
+      reads++;
+      return answer;
+    },
+    watchable: () => true,
+    invalidatedBy: () => ['items'],
+    subscribe: (_, listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    holdMs: 60_000,
+  });
+  const key = watchKey({ service: 'items', action: 'list' }, {});
+  const seen: unknown[] = [];
+  const subscriber = {
+    value: (frame: WatchValueFrame) => {
+      if (frame.kind === 'full') seen.push(frame.value);
+    },
+    state() {
+      /* Fixture intentionally performs no work. */
+    },
+  };
+  try {
+    const first = hub.attach(subscriber);
+    first.open(key, {});
+    await until(() => seen.length === 1);
+    first.detach();
+    answer = 2;
+    for (const listener of listeners) listener();
+    const second = hub.attach(subscriber);
+    second.open(key, {});
+    await until(() => seen.includes(2));
+    expect(reads).toBe(2);
+  } finally {
+    hub.close();
+  }
+});
+
+test('one scope reads once for every client instance and routes frames by instance', async () => {
+  let reads = 0;
+  const hub = createWatchHub({
+    read: async () => {
+      reads++;
+      return ['a'];
+    },
+    watchable: () => true,
+    invalidatedBy: () => [],
+    subscribe: () => () => undefined,
+  });
+  const base = watchKey({ service: 'items', action: 'list' }, {});
+  const received: { tab: string; instance?: string }[] = [];
+  const tab = (name: string, instance: string, scope: string) => {
+    const watcher = hub.attach(
+      {
+        value: (frame) => {
+          received.push({ tab: name, instance: frame.key.instance });
+        },
+        state() {
+          /* Fixture intentionally performs no work. */
+        },
+      },
+      { key: scope, signal: new AbortController().signal },
+    );
+    return watcher.open({ ...base, instance }, {});
+  };
+  try {
+    expect(tab('one', 'tab-1', 'user-a').accepted).toBe(true);
+    expect(tab('two', 'tab-2', 'user-a').accepted).toBe(true);
+    await until(() => received.length === 2);
+    expect(reads).toBe(1);
+    expect(received).toEqual(
+      expect.arrayContaining([
+        { tab: 'one', instance: 'tab-1' },
+        { tab: 'two', instance: 'tab-2' },
+      ]),
+    );
+    // A different scope is a different question, whatever the instance.
+    expect(tab('three', 'tab-1', 'user-b').accepted).toBe(true);
+    await until(() => received.length === 3);
+    expect(reads).toBe(2);
+  } finally {
+    hub.close();
+  }
+});
+
+test('handles that are never subscribed take no watch key', () => {
+  const t = transport();
+  const client = createWatchClient(contract, { transport: t.wire, maxKeys: 1 });
+  for (let index = 0; index < 5; index++) client.list({ render: index });
+  const off = client.list({ used: true }).subscribe({
+    value() {
+      /* Fixture intentionally performs no work. */
+    },
+  });
+  expect(t.opened).toHaveLength(1);
+  off();
+});
+
+test('a second instance on one connection starts from the whole value', async () => {
+  const hub = createWatchHub({
+    read: async () => ['a'],
+    watchable: () => true,
+    invalidatedBy: () => [],
+    subscribe: () => () => undefined,
+  });
+  const base = watchKey({ service: 'items', action: 'list' }, {});
+  const frames: { instance?: string; kind: string }[] = [];
+  const watcher = hub.attach(
+    {
+      value: (frame) => {
+        frames.push({ instance: frame.key.instance, kind: frame.kind });
+      },
+      state() {
+        /* Fixture intentionally performs no work. */
+      },
+    },
+    { key: 'user-a', signal: new AbortController().signal },
+  );
+  try {
+    watcher.open({ ...base, instance: 'tab-1' }, {});
+    await until(() => frames.length === 1);
+    watcher.open({ ...base, instance: 'tab-2' }, {});
+    expect(frames).toEqual([
+      { instance: 'tab-1', kind: 'full' },
+      { instance: 'tab-2', kind: 'full' },
+    ]);
+  } finally {
+    hub.close();
   }
 });

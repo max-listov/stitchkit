@@ -1,7 +1,7 @@
 'use client';
 
 import type { Board } from '@app/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WatchStateFrame } from 'stitchkit/live';
 import {
   Button,
@@ -27,6 +27,14 @@ export function BoardPanel({ realtimeOrigin }: { realtimeOrigin?: string }) {
   const [state, setState] = useState<WatchStateFrame>();
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
+  const draftInput = useRef<HTMLInputElement>(null);
+
+  // Text typed before hydration is in the input but not in state, which would
+  // leave Post disabled over a filled field. Take it once, on mount.
+  useEffect(() => {
+    const typed = draftInput.current?.value;
+    if (typed) setDraft(typed);
+  }, []);
 
   useEffect(() => {
     const watch = watchBoard(setBoard, setState, realtimeOrigin);
@@ -60,6 +68,7 @@ export function BoardPanel({ realtimeOrigin }: { realtimeOrigin?: string }) {
             maxLength={140}
             onChange={(event) => setDraft(event.target.value)}
             placeholder='Say something, then open a second tab'
+            ref={draftInput}
             value={draft}
           />
           <Button disabled={posting || draft.trim().length === 0} type='submit'>

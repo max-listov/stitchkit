@@ -8,7 +8,11 @@
  * moment its signal aborts — during the wait, not after it — and a refusal names
  * the resource and whoever holds it, so "timed out" is never the whole message.
  */
-import { attemptExclusiveLock, type ExclusiveLockOwner } from './exclusive-lock';
+import {
+  attemptExclusiveLock,
+  type ExclusiveLockDiagnosis,
+  type ExclusiveLockOwner,
+} from './exclusive-lock';
 
 export type { ExclusiveLockOwner } from './exclusive-lock';
 
@@ -76,6 +80,13 @@ function describeHolder(holder: ExclusiveLockOwner | null): string {
   if (!holder) return 'a holder that recorded no owner';
   const machine = holder.machine === undefined ? '' : `, machine ${holder.machine}`;
   return `pid ${holder.pid} on ${holder.host}${machine} since ${holder.acquiredAt}`;
+}
+
+/** Why the holder was judged alive or unknown — the part that tells an operator what to do. */
+function describeEvidence(diagnosis: ExclusiveLockDiagnosis | undefined): string {
+  if (!diagnosis) return '';
+  const identity = diagnosis.identity === undefined ? '' : `, identity ${diagnosis.identity}`;
+  return ` (${diagnosis.attribution}, liveness ${diagnosis.liveness}${identity})`;
 }
 
 /** Sleep until `ms` passes or `signal` aborts, whichever is first. */
@@ -153,7 +164,7 @@ export async function withExclusiveLock<T>(
         'LOCK_TIMEOUT',
         label,
         holder,
-        `[stitchkit] the lock on "${label}" is held by ${describeHolder(holder)}; gave up after ${timeoutMs} ms`,
+        `[stitchkit] the lock on "${label}" is held by ${describeHolder(holder)}${describeEvidence(attempt.diagnosis)}; gave up after ${timeoutMs} ms`,
         { cause: attempt.error },
       );
     }

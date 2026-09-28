@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-09-26 16:00 +07:00
+updated: 2026-09-28 18:39 +07:00
 ---
 
 # Agent application runtime
@@ -621,9 +621,14 @@ has invoked a tool is never automatically replayed.
 `createAgentScheduleService` persists `at`, `after` and `every` input. Repeating
 schedules require an explicit IANA time zone. Dispatch uses a stable
 `schedule:<id>:<occurrence>` idempotency key, and restart lateness is recorded.
-Resolve `void` after durable admission; return `{ status: 'retry', reason }` for a
+Resolve after durable admission; return `{ status: 'retry', reason }` for a
 transient refusal or `{ status: 'terminal', reason }` to stop the entire schedule in
-`failed` state. Throws retry too. Backoff is 1, 2, 4, 8, 16, 32, then 60 seconds,
+`failed` state. Only those two shapes are failures: any other returned value — a
+queue length, a receipt — means the callback returned, so it delivered. Throws retry
+too. `maxAttempts` (default 1000, about sixteen hours at the retry ceiling) bounds
+one occurrence: a one-off schedule then becomes `failed`, a recurring one gives up
+that occurrence (`schedule/failed` with `skipped: true` and the `nextAt` it moves
+to) and keeps its cadence. A failure reason is kept to 1000 characters. Backoff is 1, 2, 4, 8, 16, 32, then 60 seconds,
 capped at 60 seconds and persisted across restart. `retryAt`, `attempts` and `lastError`
 show retry diagnostics; success resets them. `nextAt` and `lateByMs` retain the original
 occurrence time. Recurring schedules fire once after an idle stretch and advance to the
@@ -1505,15 +1510,23 @@ hashes; `readPayload({ conversationId, artifactId }, context)` separately author
 `read-payload` and checks authentication tags and hashes. `payloadKey` must be 32
 bytes and is copied at construction. Keep it outside the event store/backups; retain
 the appropriate key when restoring an archive. `maxPayloadBytes` defaults to 4 MiB
-(range 1 KiB–64 MiB); streaming output evidence is capped at 1 MiB. Request headers
+(range 1 KiB–64 MiB). Streaming output evidence keeps parts up to half of it; past
+that the evidence carries `truncated: { parts, sha256 }` over the whole stream, and
+the answer itself is never cut. A receipt that cannot be written never changes an
+outcome: `complete()` returns it with `receiptError` beside it, and a succeeded
+answer keeps its `text`. Request headers
 are excluded. Protect existing agent history independently: enabling receipts does
 not encrypt its ordinary conversation records.
 
 The built-in memory and SQLite stores implement `appendEventOnce`. Custom stores
 must implement its once-only check and append atomically, returning the original
 event on a duplicate key scoped by conversation and kind. A factory without this
-capability refuses receipt setup. The driver-backed implementation reads bounded
-pages under one transaction, without another table or database.
+capability refuses receipt setup. The driver-backed implementation finds the keyed
+event by its identity through the driver's optional `events.find` — one index probe
+in SQLite — so admission costs the same on a long conversation as on a new one; a
+custom driver without `find` falls back to paging the log in one transaction.
+`store.findEventOnce({ conversationId, kind, key })` reads the same event back.
+Invocation payload artifacts are keyed by their artifact id the same way.
 
 ### Migration from direct SDK completions
 
@@ -1521,5 +1534,5 @@ pages under one transaction, without another table or database.
 Replace the direct `generateText` call with `invocations.complete`, configure host
 authorization and a retained payload key, and pass the same ledger in the agent's
 `invocations` option. Use the returned invocation ID and the paginated `read` method
-for receipt queries; do not import runtime internals. This API is unreleased; it is
-not present in 0.99.0. Existing runtime configurations need no migration.
+for receipt queries; do not import runtime internals. Available since 0.100.0;
+existing runtime configurations need no migration.

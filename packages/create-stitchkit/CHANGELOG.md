@@ -12,6 +12,22 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.100.0`. The catalog stayed on
+  `^0.96.1` while 0.97.0–0.100.0 shipped, and on 0.x a caret never crosses a
+  minor, so a new project started four minors behind. The generated code needs
+  no change; what a project that grows past the new defaults must know — the
+  finite watch capacities of 0.100.0 among them — is in Stitchkit's
+  `docs/guide/upgrading.md`.
+
+### Fixed
+
+- The board keeps a note typed before the page hydrated. The text reached the
+  input but not React's state, so Post stayed disabled over a filled field — a
+  slow browser's end-to-end run timed out on it, and a person typing early saw
+  the same.
+
 ## [0.6.7] — 2026-09-24
 
 ### Fixed

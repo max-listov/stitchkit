@@ -280,6 +280,11 @@ const memoryEvents: MemoryDriver['events'] = {
       ...(selected.length > items.length && last ? { nextSeq: last.seq + 1 } : {}),
     });
   },
+  async find(transaction, input) {
+    return (transaction.events.get(input.conversationId) ?? []).find(
+      (event) => event.eventId === input.eventId,
+    );
+  },
 };
 
 /** The keyset-paginated recovery scan over the committed (not transactional) runs. */

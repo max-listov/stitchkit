@@ -38,7 +38,10 @@ must recover without a reconnect.
 For multi-action outboxes, enqueue new items with a versioned delivery plan and
 return small JSON receipts from `send`. Existing queued single-send items should
 be drained before enabling a delivery executor on that queue, or migrated under
-the store's atomic transition. Preserve executor versions until their queues drain.
+the store's atomic transition. When a new executor version ships, list the old
+version's projection in `delivery.retiredVersions` until its queued items drain;
+a plan version with no executor waits, reported to `onError` as
+`NotificationPlanVersionError` (from 0.100.1).
 Make projection idempotent. Provider idempotency/reconciliation remains necessary
 for a crash between remote success and checkpoint. These APIs are available starting with 0.100.0.
 
@@ -61,7 +64,9 @@ write the modern record; no journal data migration is needed.
 Darwin distributions must retain the package's architecture-matched native
 `.node` asset for process birth measurement, as for contained filesystem access.
 If native/proc identity cannot be read, new locks explicitly record null and
-recovery refuses rather than treating unknown ownership as death. Existing
+recovery refuses rather than treating unknown ownership as death. From 0.100.1 a
+Linux kernel without time namespaces (before 5.6) records the PID namespace alone
+instead of null, so its locks recover like any other. Existing
 `refuse` policy and the separately configured ownerless-file grace are unchanged.
 
 ## Released migration: 0.99.0
@@ -79,12 +84,19 @@ Colliding object/array fields retain their complete structural alternatives:
 { type: ['object', 'array'] }
 // After: structural alternatives live inside the property schema.
 { anyOf: [
-  { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   { type: 'array', items: {
     type: 'object', properties: { id: { type: 'string' } }, required: ['id'],
   } },
+  { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
 ] }
 ```
+
+Alternatives come in kind order, independent of variant order. The same shape
+covers every collision of different kinds, scalars included: `string` against
+`string[]` becomes `{ anyOf: [{ type: 'array', items: { type: 'string' } }, { type:
+'string' }] }`. A nullable field keeps `null` in each alternative's `type`, and
+differing nested object unions remain nested `anyOf` inside the alternatives. Update
+snapshots to this order.
 
 Traverse each nested alternative when inspecting schemas and regenerate schema
 snapshots. Verify the actual manifest with the chosen provider. Keep flatten

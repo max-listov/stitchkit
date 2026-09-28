@@ -58,6 +58,14 @@ export function resolveOutboxLimits<TPayload>(config: NotificationOutboxConfig<T
   return { pollIntervalMs, leaseMs, maxAttempts, maxQueue, maxStateBytes, retainReceipts };
 }
 
+/** The state would not fit `maxStateBytes` even with every receipt dropped. */
+export class OutboxStateLimitError extends Error {
+  constructor(maxStateBytes: number) {
+    super(`[stitchkit] notification outbox state limit (${maxStateBytes} bytes) exceeded`);
+    this.name = 'OutboxStateLimitError';
+  }
+}
+
 /**
  * The state a transition may write: the queue within its limit, and receipts
  * dropped oldest-first until the whole state fits its byte budget.
@@ -77,11 +85,7 @@ export function boundedOutboxState<TPayload>(
     receipts = receipts.slice(0, -1);
     next = { ...parsed, receipts };
   }
-  if (sizeOf(next) > maxStateBytes) {
-    throw new Error(
-      `[stitchkit] notification outbox state limit (${maxStateBytes} bytes) exceeded`,
-    );
-  }
+  if (sizeOf(next) > maxStateBytes) throw new OutboxStateLimitError(maxStateBytes);
   return next;
 }
 

@@ -204,3 +204,42 @@ test('managed subscription fences late publication and bounds keys and connectio
   expect(closes).toBe(1);
   expect(String(errors[0])).toContain('deadline');
 });
+
+test('a lost connection whose close fails is still replaced', async () => {
+  let disconnect: (error: unknown) => void = () => undefined;
+  let connections = 0;
+  const errors: string[] = [];
+  const resource = changeSubscriptionResource({
+    id: 'subscription',
+    keys: ['items'],
+    reconcileIntervalMs: 1_000,
+    backoff: { minDelayMs: 2, maxDelayMs: 2, jitter: 0 },
+    timeoutMs: 1_000,
+    async connect() {
+      connections++;
+      const failsToClose = connections === 1;
+      return {
+        async subscribe(input) {
+          disconnect = input.disconnected;
+        },
+        close() {
+          if (failsToClose) throw new Error('close failed');
+        },
+      };
+    },
+    async reconcile() {
+      /* Fixture intentionally performs no work. */
+    },
+    onError: (error) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  });
+  try {
+    await resource.start(resourceContext([])).ready;
+    disconnect(new Error('socket dropped'));
+    await until(() => connections === 2);
+    expect(errors).toEqual(expect.arrayContaining(['socket dropped', 'close failed']));
+  } finally {
+    await resource.close();
+  }
+});

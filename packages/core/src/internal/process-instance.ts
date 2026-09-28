@@ -42,7 +42,12 @@ export async function readProcessInstance(
       readFile(`${procRoot}/sys/kernel/random/boot_id`, 'utf8'),
       readlink(`${procRoot}/self/ns/pid`),
       readFile(`${procRoot}/self/status`, 'utf8'),
-      readlink(`${procRoot}/self/ns/time`),
+      // Time namespaces arrived in Linux 5.6; an older kernel has one clock
+      // for everyone, so its absence is part of the identity, not a gap in it.
+      readlink(`${procRoot}/self/ns/time`).catch((error: unknown) => {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
+        throw error;
+      }),
       readFile(`${procRoot}/self/stat`, 'utf8'),
       readFile(`${procRoot}/${pid}/stat`, 'utf8'),
     ]);

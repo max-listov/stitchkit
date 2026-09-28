@@ -15,7 +15,17 @@ export function createAgentScheduleService(input: {
   clearTimer?: ScheduleDispatchContext['clearTimer'];
   /** Storage/tick failures; dispatch failures are recorded in schedule/failed. */
   onError?: (error: unknown) => void;
+  /**
+   * Failed dispatch attempts after which a schedule is `failed` rather than
+   * retried. Default 1000 — about sixteen hours at the one-minute retry ceiling.
+   */
+  maxAttempts?: number;
 }): AgentScheduleService {
+  const maxAttempts = z
+    .number()
+    .int()
+    .min(1)
+    .parse(input.maxAttempts ?? 1_000);
   const now = input.now ?? (() => new Date());
   const database = input.sqlite.database;
   const setTimer = input.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
@@ -100,6 +110,7 @@ export function createAgentScheduleService(input: {
             setTimer,
             clearTimer,
             signal: lifecycle.signal,
+            maxAttempts,
           },
           schedule,
         ),

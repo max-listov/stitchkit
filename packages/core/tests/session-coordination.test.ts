@@ -5,6 +5,7 @@ import { createHttpClient } from '../src/browser/http';
 import { createSessionScope, SessionExpiredError } from '../src/browser/session';
 import { createSessionCredentials } from '../src/browser/session-credentials';
 import { defineContract } from '../src/contract/define';
+import { until } from './session-delivery-fixture';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -271,4 +272,90 @@ test('credential write capacity and refresh deadline refuse bounded work visibly
   const current = await auth.login('B', 'b');
   await expect(auth.refresh(current)).rejects.toThrow('Refresh timed out');
   expect(auth.read(current)).toBe('b');
+});
+
+test('an expired session keeps the failure that stopped its work as the cause', async () => {
+  const scope = createSessionScope<string>();
+  const op = scope.replace('A');
+  const pending = deferred<void>();
+  const result = op.run(() => pending.promise).catch((e) => e);
+  scope.clear();
+  const failure = new Error('upstream refused');
+  pending.reject(failure);
+  const error = await result;
+  expect(error).toBeInstanceOf(SessionExpiredError);
+  expect(error.cause).toBe(failure);
+});
+
+test('a storage write that hangs does not keep logout from clearing, and a late write is undone', async () => {
+  const scope = createSessionScope<string>();
+  const hung = deferred<void>();
+  const writing = deferred<void>();
+  const landed = deferred<void>();
+  let stored: string | undefined;
+  let hang = false;
+  const auth = createSessionCredentials({
+    scope,
+    storageTimeoutMs: 20,
+    refresh: async () => 'refreshed',
+    storage: {
+      async write(_, value) {
+        if (hang) {
+          hang = false;
+          writing.resolve();
+          await hung.promise;
+          stored = value;
+          landed.resolve();
+          return;
+        }
+        stored = value;
+      },
+      async clear() {
+        stored = undefined;
+      },
+    },
+  });
+  const a = await auth.login('A', 'a');
+  hang = true;
+  const refresh = auth.refresh(a).catch((e) => e);
+  await writing.promise;
+  await auth.logout();
+  expect(stored).toBeUndefined();
+  expect(await refresh).toBeInstanceOf(SessionExpiredError);
+  // The hung write lands after the logout that cleared it: it is cleared again.
+  hung.resolve();
+  await landed.promise;
+  expect(stored).toBe('refreshed');
+  await until(() => stored === undefined);
+});
+
+test('a refresh whose store is slow keeps the issued credentials, and a slow store converges', async () => {
+  const scope = createSessionScope<string>();
+  let stored: string | undefined;
+  let writes = 0;
+  let slow = false;
+  const auth = createSessionCredentials({
+    scope,
+    storageTimeoutMs: 5,
+    refresh: async () => 'new-token',
+    storage: {
+      async write(_, value) {
+        writes++;
+        if (slow) await Bun.sleep(20);
+        stored = value;
+      },
+      async clear() {
+        stored = undefined;
+      },
+    },
+  });
+  const a = await auth.login('A', 'old-token');
+  slow = true;
+  await expect(auth.refresh(a)).rejects.toThrow('storageTimeoutMs');
+  // The server issued the new pair; memory holds it and storage ends with it.
+  expect(auth.read(a)).toBe('new-token');
+  await until(() => stored === 'new-token');
+  const settled = writes;
+  await Bun.sleep(100);
+  expect(writes).toBe(settled);
 });

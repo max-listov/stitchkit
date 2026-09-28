@@ -124,14 +124,36 @@ function holdsClaim(raw: unknown, firing: ClaimedFiring, at: string): boolean {
   );
 }
 
-/** Retry delay is durable, capped at a minute, and never changes the occurrence's due time. */
+/** Every failed attempt writes its reason twice; a long one would grow the journal without end. */
+const MAX_FAILURE_REASON = 1_000;
+
+/** The next slot of a recurring schedule strictly after `observedAt`, on its original cadence. */
+function nextSlot(schedule: AgentSchedule, observedAt: Date, intervalMs: number): string {
+  const due = new Date(schedule.nextAt).getTime();
+  const slots = Math.max(1, Math.floor((observedAt.getTime() - due) / intervalMs) + 1);
+  return new Date(due + slots * intervalMs).toISOString();
+}
+
+/**
+ * Retry delay is durable, capped at a minute, and never changes the occurrence's due time.
+ *
+ * `maxAttempts` bounds one occurrence, not the schedule: a one-off becomes
+ * `failed`, a recurring schedule gives up this occurrence and waits for its
+ * next slot — an outage longer than the retries does not end a recurring job.
+ */
 export async function recordDispatchFailure(
   sqlite: SqliteAgentRuntimeStore,
   firing: ClaimedFiring,
   reason: string,
-  terminal = false,
+  maxAttempts: number,
+  explicitlyTerminal = false,
 ): Promise<void> {
   const { schedule, occurrence } = firing;
+  const characters = Array.from(reason);
+  const message =
+    characters.length > MAX_FAILURE_REASON
+      ? `${characters.slice(0, MAX_FAILURE_REASON).join('')}…`
+      : reason;
   await sqlite.transaction(async (scope) => {
     const at = firing.now().toISOString();
     const raw = scope.database
@@ -142,6 +164,34 @@ export async function recordDispatchFailure(
       .get(schedule.id);
     if (!holdsClaim(raw, firing, at)) return;
     const attempts = Math.min((schedule.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER);
+    const exhausted = !explicitlyTerminal && attempts >= maxAttempts;
+    if (exhausted && schedule.kind === 'every' && schedule.intervalMs) {
+      const nextAt = nextSlot(schedule, firing.now(), schedule.intervalMs);
+      scope.database
+        .prepare(`
+        UPDATE stitchkit_agent_runtime_schedules
+        SET state = 'scheduled', occurrence = ?, next_at = ?, retry_at = NULL, attempts = 0,
+          last_error = ?, claim_owner = NULL, claim_until = NULL, updated_at = ? WHERE id = ?
+      `)
+        .run(occurrence, nextAt, message, at, schedule.id);
+      await scope.appendEvent({
+        conversationId: schedule.conversationId,
+        kind: 'schedule/failed',
+        occurredAt: at,
+        payload: {
+          id: schedule.id,
+          occurrence,
+          message,
+          attempts,
+          retryAt: null,
+          terminal: false,
+          skipped: true,
+          nextAt,
+        },
+      });
+      return;
+    }
+    const terminal = explicitlyTerminal || exhausted;
     const retryAt = terminal
       ? null
       : new Date(
@@ -153,12 +203,12 @@ export async function recordDispatchFailure(
       SET state = ?, retry_at = ?, attempts = ?, last_error = ?,
         claim_owner = NULL, claim_until = NULL, updated_at = ? WHERE id = ?
     `)
-      .run(terminal ? 'failed' : 'scheduled', retryAt, attempts, reason, at, schedule.id);
+      .run(terminal ? 'failed' : 'scheduled', retryAt, attempts, message, at, schedule.id);
     await scope.appendEvent({
       conversationId: schedule.conversationId,
       kind: 'schedule/failed',
       occurredAt: at,
-      payload: { id: schedule.id, occurrence, message: reason, attempts, retryAt, terminal },
+      payload: { id: schedule.id, occurrence, message, attempts, retryAt, terminal },
     });
   });
 }
@@ -174,15 +224,10 @@ export async function settleFiring(
   await sqlite.transaction(async (scope) => {
     const observedAt = firing.now();
     const at = observedAt.toISOString();
-    let nextAt = schedule.nextAt;
-    if (schedule.kind === 'every' && schedule.intervalMs) {
-      const due = new Date(schedule.nextAt).getTime();
-      const slots = Math.max(
-        1,
-        Math.floor((observedAt.getTime() - due) / schedule.intervalMs) + 1,
-      );
-      nextAt = new Date(due + slots * schedule.intervalMs).toISOString();
-    }
+    const nextAt =
+      schedule.kind === 'every' && schedule.intervalMs
+        ? nextSlot(schedule, observedAt, schedule.intervalMs)
+        : schedule.nextAt;
 
     const raw = scope.database
       .prepare(`

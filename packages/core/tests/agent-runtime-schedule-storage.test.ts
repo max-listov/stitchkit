@@ -143,7 +143,11 @@ test('read failures back off with one recovery timer and recover without writes'
   }
 });
 
-test('indexed hot path remains bounded with 100k schedules and a million events', async () => {
+// The claim is about the query plan and the writes a tick makes, not about
+// wall-clock time: without ANALYZE, SQLite's plan does not depend on row
+// counts, so a small table proves the same index use a large one would, in a
+// fraction of the time and without depending on how loaded the machine is.
+test('the due path reads through its index and idle ticks write nothing', async () => {
   const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
   const clock = scheduleClock();
   let calls = 0;
@@ -156,13 +160,13 @@ test('indexed hot path remains bounded with 100k schedules and a million events'
   });
   try {
     sqlite.database.exec(`
-      WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000)
+      WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<5000)
       INSERT INTO stitchkit_agent_runtime_schedules
       (id, conversation_id, kind, next_at, input_payload, state, created_at, updated_at)
       SELECT 's'||x, 'scale', 'at', '2026-09-26T00:00:00.000Z', '{}',
         CASE WHEN x<=40 THEN 'scheduled' ELSE 'completed' END,
         '2026-09-26T00:00:00.000Z', '2026-09-26T00:00:00.000Z' FROM n;
-      WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000)
+      WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20000)
       INSERT INTO stitchkit_agent_runtime_events
       (conversation_id, seq, event_id, schema_version, kind, occurred_at, payload)
       SELECT 'history', x, 'event-'||x, 1, 'schedule/failed', '2026-09-26T00:00:00.000Z', '{}' FROM n;
@@ -190,7 +194,7 @@ test('indexed hot path remains bounded with 100k schedules and a million events'
     service.close();
     await sqlite.close();
   }
-}, 20_000);
+});
 
 test('every coalesces decades of missed millisecond slots in constant arithmetic', async () => {
   const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });

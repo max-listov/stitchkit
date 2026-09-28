@@ -51,6 +51,13 @@ export async function readInvocationPayload(
   payloads: ReturnType<typeof createInvocationPayloads>,
   input: { conversationId: string; artifactId: string },
 ) {
+  const keyed = await store.findEventOnce?.({
+    conversationId: input.conversationId,
+    kind: 'provider/payload',
+    key: input.artifactId,
+  });
+  if (keyed) return payloads.decrypt(input.conversationId, keyed.payload);
+  // An artifact written by 0.100.0 carries a random event id: only a scan finds it.
   let fromSeq: number | undefined;
   do {
     const page = await store.readEvents({

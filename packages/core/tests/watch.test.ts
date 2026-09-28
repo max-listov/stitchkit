@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createWatchHub, type WatchSubscriber, watchKey } from '../src/application/watch-hub';
 import { createRealtimeClient } from '../src/browser/socket-io';
+import { AppError } from '../src/contract/errors';
 import { defineContract } from '../src/entrypoints/contract';
 import { argumentsDigest } from '../src/internal/stable-digest';
 import { createWatchClient, watchTransport } from '../src/live/watch-client';
@@ -23,6 +24,7 @@ import {
   watchContract,
 } from '../src/live/watch-contract';
 import { apply } from '../src/live/watch-delta';
+import { until } from './session-delivery-fixture';
 
 const notes = { service: 'notes', action: 'list' } as const;
 const folders = { service: 'notes', action: 'folders' } as const;
@@ -273,8 +275,11 @@ describe('a failed read says what failed, in words', () => {
       read: async () => {
         attempt += 1;
         if (attempt === 1) {
-          throw Object.assign(new Error('the database is not accepting connections'), {
-            code: 'SERVICE_UNAVAILABLE',
+          throw new AppError('SERVICE_UNAVAILABLE', 'the notes store is restarting', 503);
+        }
+        if (attempt === 2) {
+          throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.7:5432'), {
+            code: 'ECONNREFUSED',
           });
         }
         return { ok: true };
@@ -288,12 +293,26 @@ describe('a failed read says what failed, in words', () => {
     hub.attach(subscriber).open(watchKey(notes, {}), {});
     await settle();
 
-    const failure = subscriber.states.find((state) => state.phase === 'unavailable');
-    expect(failure?.code).toBe('SERVICE_UNAVAILABLE');
-    expect(failure?.message).toBe('the database is not accepting connections');
+    const failures = subscriber.states.filter((state) => state.phase === 'unavailable');
+    expect(failures[0]).toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'the notes store is restarting',
+    });
+    // A driver's code and message are not the browser's to read.
+    await until(
+      () => subscriber.states.filter((state) => state.phase === 'unavailable').length === 2,
+    );
+    const internal = subscriber.states.filter((state) => state.phase === 'unavailable')[1];
+    expect(internal).toEqual({
+      key: watchKey(notes, {}),
+      phase: 'unavailable',
+      reason: 'source-error',
+      message: 'The watched read failed',
+    });
+    expect(JSON.stringify(subscriber.states)).not.toContain('10.0.0.7');
 
     // The retry is the hub's own; nothing outside had to ask for it.
-    await Bun.sleep(30);
+    await until(() => subscriber.states.at(-1)?.phase === 'live');
     expect(subscriber.states.at(-1)?.phase).toBe('live');
     expect(subscriber.seen.at(-1)).toEqual({ ok: true });
   });

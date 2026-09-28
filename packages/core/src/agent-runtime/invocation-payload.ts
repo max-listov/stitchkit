@@ -12,6 +12,8 @@ import type { AgentRuntimeStore } from './store';
 
 /** Serialize SDK payloads at the typed external boundary, retaining binary bytes privately. */
 export function invocationJson(value: unknown) {
+  // An error's cause chain may lead back to itself; each error is written once.
+  const errors = new WeakSet<Error>();
   return z.json().parse(
     JSON.parse(
       JSON.stringify(value, (_key, item: unknown) => {
@@ -19,8 +21,11 @@ export function invocationJson(value: unknown) {
           return { base64: Buffer.from(item).toString('base64') };
         if (item instanceof ArrayBuffer)
           return { base64: Buffer.from(item).toString('base64') };
-        if (item instanceof Error)
+        if (item instanceof Error) {
+          if (errors.has(item)) return { name: item.name, message: item.message };
+          errors.add(item);
           return { name: item.name, message: item.message, cause: item.cause };
+        }
         return item;
       }),
     ),
@@ -41,6 +46,8 @@ export function createInvocationPayloads(
     throw new TypeError('Invocation payload key must contain 32 bytes');
   const encryptionKey = Uint8Array.from(key);
   return {
+    /** The largest serialized payload one artifact may hold. */
+    maxBytes,
     async write(
       identity: {
         conversationId: string;
@@ -64,19 +71,26 @@ export function createInvocationPayloads(
       );
       const ciphertext = Buffer.concat([cipher.update(data), cipher.final()]);
       const { conversationId } = identity;
-      await store.appendEvent({
-        conversationId,
-        kind: 'provider/payload',
-        payload: {
-          ...identity,
-          artifactId,
-          sha256,
-          bytes: data.byteLength,
-          iv: iv.toString('base64'),
-          tag: cipher.getAuthTag().toString('base64'),
-          ciphertext: ciphertext.toString('base64'),
+      if (!store.appendEventOnce)
+        throw new TypeError('Invocation payloads require atomic store.appendEventOnce');
+      // Keyed by the artifact, so a read finds it by identity instead of by
+      // scanning the conversation's log.
+      await store.appendEventOnce(
+        {
+          conversationId,
+          kind: 'provider/payload',
+          payload: {
+            ...identity,
+            artifactId,
+            sha256,
+            bytes: data.byteLength,
+            iv: iv.toString('base64'),
+            tag: cipher.getAuthTag().toString('base64'),
+            ciphertext: ciphertext.toString('base64'),
+          },
         },
-      });
+        artifactId,
+      );
       return { artifactId, sha256 };
     },
     decrypt(conversationId: string, value: unknown) {

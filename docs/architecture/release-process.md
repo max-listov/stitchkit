@@ -129,6 +129,11 @@ git push origin HEAD:master
 bun run release:train
 ```
 
+`release:train` ends by retiring every `release/…` branch, local and on `origin`, whose tip the
+tagged head already contains; the tag is the lasting record, the branch only carried the candidate
+through CI. An unreleased branch is never touched, and a failed cleanup is reported without
+failing the release.
+
 `release:check` runs the same metadata gate the push runs, against the working tree, before
 anything expensive: version against manifest, breaking section against its `**Who must act:**`
 line and against the version calibre, the promoted migration heading, and breaking-entry

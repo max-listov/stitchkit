@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { LanguageModelUsage } from 'ai';
 import { type LanguageModel, type LanguageModelMiddleware, wrapLanguageModel } from 'ai';
 import type { z } from 'zod';
@@ -37,6 +37,12 @@ export interface InvocationAttemptWriter {
   payloads: ReturnType<typeof createInvocationPayloads>;
   append(record: ModelInvocationRecord): Promise<void>;
   onAttempt?(context: ModelInvocationAttemptContext): void | Promise<void>;
+  /**
+   * Where a provider attempt's own record could not be written. The provider
+   * has answered by then, so the failure is kept here instead of replacing
+   * the answer — or the provider's own error — with a receipt error.
+   */
+  readonly receiptErrors: unknown[];
 }
 
 /** The single audited provider boundary, used by completion and the existing agent loop. */
@@ -82,7 +88,11 @@ export function wrapInvocationModel(
       }
       return context;
     });
-  const finish = async (
+  const finish = (...args: Parameters<typeof recordResponse>): Promise<void> =>
+    recordResponse(...args).catch((error: unknown) => {
+      writer.receiptErrors.push(error);
+    });
+  const recordResponse = async (
     context: ModelInvocationAttemptContext,
     status: 'succeeded' | 'failed' | 'cancelled',
     payload: unknown,
@@ -91,7 +101,10 @@ export function wrapInvocationModel(
     providerMetadata?: unknown,
   ) =>
     invocationAudit(async () => {
-      const artifact = await writer.payloads.write(writer.identity, payload);
+      const artifact = await writer.payloads.write(
+        writer.identity,
+        boundedEvidence(payload, Math.floor(writer.payloads.maxBytes / 2)),
+      );
       await writer.append({
         ...writer.identity,
         type: 'provider/response',
@@ -156,9 +169,8 @@ export function wrapInvocationModel(
         let ended = false;
         let failed = false;
         let response: { id?: string; modelId?: string } | undefined;
-        // The evidence retains output through the encrypted artifact. It is bounded by the writer.
-        const output: ReturnType<typeof invocationJson>[] = [];
-        let outputBytes = 0;
+        // Up to half the artifact limit, so the terminal part always fits beside it.
+        const evidence = streamEvidence(Math.floor(writer.payloads.maxBytes / 2));
         const end = async (
           status: 'succeeded' | 'failed' | 'cancelled',
           value: unknown,
@@ -167,14 +179,7 @@ export function wrapInvocationModel(
         ) => {
           if (ended) return;
           ended = true;
-          await finish(
-            context,
-            status,
-            { output, terminal: value },
-            usage,
-            response,
-            metadata,
-          );
+          await finish(context, status, evidence.payload(value), usage, response, metadata);
         };
         return {
           ...result,
@@ -204,14 +209,7 @@ export function wrapInvocationModel(
                 );
               } else {
                 if (part.type === 'error') failed = true;
-                const json = invocationJson(part);
-                outputBytes += Buffer.byteLength(JSON.stringify(json));
-                if (outputBytes > 1_048_576) {
-                  await reader.cancel();
-                  await end('failed', { reason: 'receipt-output-limit' });
-                  throw new RangeError('Invocation stream evidence exceeds 1 MiB');
-                }
-                output.push(json);
+                evidence.record(part);
               }
               controller.enqueue(part);
             },
@@ -227,6 +225,54 @@ export function wrapInvocationModel(
       },
     },
   });
+}
+
+/**
+ * A response payload as evidence: whole while it fits `limit` bytes, otherwise
+ * its size and fingerprint. A long answer is the provider's to give; the
+ * evidence of it is what is bounded.
+ */
+function boundedEvidence(payload: unknown, limit: number): unknown {
+  const serialized = JSON.stringify(invocationJson(payload));
+  const bytes = Buffer.byteLength(serialized);
+  if (bytes <= limit) return payload;
+  return {
+    truncated: { bytes, sha256: createHash('sha256').update(serialized).digest('hex') },
+  };
+}
+
+/**
+ * What a stream's evidence keeps: its parts up to `limit` bytes, then a count
+ * and a fingerprint of the whole stream. The consumer's stream is never cut —
+ * the evidence is truncated instead.
+ */
+function streamEvidence(limit: number) {
+  // The evidence retains output through the encrypted artifact.
+  const output: ReturnType<typeof invocationJson>[] = [];
+  const whole = createHash('sha256');
+  let bytes = 0;
+  let parts = 0;
+  let truncated = false;
+  return {
+    record(part: unknown) {
+      const json = invocationJson(part);
+      const serialized = JSON.stringify(json);
+      whole.update(serialized).update('\n');
+      parts += 1;
+      const size = Buffer.byteLength(serialized);
+      if (!truncated && bytes + size > limit) truncated = true;
+      if (truncated) return;
+      bytes += size;
+      output.push(json);
+    },
+    payload(terminal: unknown) {
+      return {
+        output,
+        terminal,
+        ...(truncated && { truncated: { parts, sha256: whole.digest('hex') } }),
+      };
+    },
+  };
 }
 
 function reportedUsage(

@@ -190,7 +190,8 @@ verifies caller identity through `authorize`; execution process identity is loca
 The runtime `invocations` option binds the same store and a trace callback.
 
 The atomic admission point is `store.appendEventOnce`: a driver transaction checks
-for the keyed start and appends it once. Repeating a completion returns its existing
+for the keyed start by its identity (`events.find`, one index probe in SQLite) and
+appends it once. Repeating a completion returns its existing
 invocation; changed request/caller/trace conflicts. This fences duplicate execution
 across processes without claiming exactly-once upstream execution after a crash.
 Provider attempts are independent records with requested, sent and effective model

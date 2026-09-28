@@ -170,6 +170,8 @@ export {
   type NotificationDeliveryConfig,
   type NotificationDeliveryState,
   NotificationDeliveryStateSchema,
+  NotificationPlanVersionError,
+  type NotificationProjection,
 } from '../application/notification-delivery';
 export {
   createNotificationOutbox,

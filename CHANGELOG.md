@@ -15,6 +15,77 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.100.1] — 2026-09-28
+
+### Fixed
+
+- `stitchkit/application` — an outbox action that succeeded is never sent again.
+  A `send` result that is not JSON (a `Date`, a `bigint`) or does not fit
+  `maxStateBytes` failed the checkpoint after the send, and the error was
+  classified and retried: the same message went out up to `maxAttempts` times.
+  The action is now confirmed with `receipt: null` and
+  `unrecorded: 'not-json' | 'too-large'`, and the cause goes to `onError`; any
+  other store failure while recording propagates as before.
+- `stitchkit/application` — `delivery.retiredVersions` drains items queued under
+  an earlier plan version through that version's projection. A plan version with
+  no executor is no longer dropped: it is reported to `onError` as
+  `NotificationPlanVersionError` and waits, spending no attempt, for a process that
+  knows it — the other side of a rolling deploy or a rollback.
+- `stitchkit/agent-runtime` — a schedule `dispatch` that returns a value other
+  than a `retry`/`terminal` outcome (e.g. `jobs.push(...)`'s length) delivered;
+  it was parsed as a failure and retried without end. Failed attempts of one
+  occurrence now stop at `maxAttempts` (default 1000): a one-off schedule becomes
+  `failed`, a recurring one skips to its next slot and keeps its cadence. A
+  recorded reason is kept to 1000 characters.
+- `stitchkit/agent-runtime` — once-only admission (`appendEventOnce`, used by every
+  `complete()` and audited run) finds its event by identity instead of reading the
+  whole conversation log, payloads included, inside the write transaction. Measured
+  before on 1500 events of 100 KB: 223 ms and 770 MB RSS per admission. Drivers gain
+  an optional `events.find`, the store an optional `findEventOnce`; invocation payload
+  artifacts are keyed by artifact id, and ones written by 0.100.0 are still found.
+- `stitchkit/files`, `stitchkit/application` — on a Linux kernel without time
+  namespaces (before 5.6) an exclusive lock records its owner's PID namespace
+  alone; since 0.100.0 it recorded no identity at all, so a lock left by a crashed
+  owner was never recovered there. A timeout now names the attribution, liveness
+  and identity evidence behind the refusal.
+- `stitchkit/application` — a watch hub over `maxSubscribers` refuses through
+  `open` instead of throwing from `attach`, where the throw landed in a connection
+  handler. `bindRealtimeServer` catches a connection handler's failure, sync or
+  async: that connection is closed and the error logged, and the server goes on.
+- `stitchkit/application` — an invalidation that arrived during `holdMs`, while
+  nobody watched, is read for the next subscriber; it received the old value as
+  `live`.
+- `stitchkit/application` — one admission scope shares one source and one read
+  across client instances, as ADR 0208 states; each session-scoped tab opened its
+  own source and read.
+- `stitchkit/live` — a watch handle takes its key on `subscribe`, not when it is
+  made, so handles that are never subscribed no longer hold keys or count against
+  `maxKeys`.
+- `stitchkit/application` — a change subscription whose lost connection fails to
+  `close()` reconnects; it reported the failure and stayed disconnected for good.
+- `stitchkit/agent-runtime` — audited streaming evidence no longer cuts the answer:
+  past half of `maxPayloadBytes` the evidence is truncated and fingerprinted
+  (`truncated: { parts, sha256 }`), where a fixed 1 MiB cap failed the run as
+  `provider_failure`.
+- `stitchkit/agent-runtime` — `complete()` returns a paid answer when its
+  `invocation/finished` record cannot be written, with `receiptError`; it recorded
+  the answer as failed and dropped the text. A failure payload that cannot be
+  written — an error whose `cause` loops, which also no longer throws — keeps the
+  `invocation/finished` record and the outcome.
+- `stitchkit/agent-runtime` — the summary projection's `lastModelId` follows audited
+  requests, which record the model under `sent`.
+- `stitchkit` — `createSessionCredentials` bounds each storage call by
+  `storageTimeoutMs` (default 30 s): a hung `storage.write` held the queue, so
+  `logout()` never cleared persisted credentials. A call that lands after its
+  deadline, when memory has moved on, is followed by a write of the current
+  credentials or a clear. A refresh keeps the credentials the server issued in
+  memory even when storing them fails, so a slow store cannot restore a spent
+  pair. `SessionExpiredError` keeps the failure that stopped the work as `cause`.
+- `stitchkit/application` — a failed watched read sends the browser the code and
+  message of an `AppError` only; any other error's code and message — a driver's,
+  with an address or a path in it — stay in the server log, and the frame says
+  `The watched read failed`.
+
 ## [0.100.0] — 2026-09-28
 
 ### ⚠️ Breaking changes
@@ -67,7 +138,12 @@ keep their existing configuration; new session and delivery APIs are opt-in.
   array items when discriminated-union variants share a field with different
   structures. Flat mode no longer guarantees the absence of nested `anyOf`.
   Before: a collided object/array field was `{ type: ['object', 'array'] }`.
-  After: `{ anyOf: [{ type: 'object', properties: ... }, { type: 'array', items: ... }] }`.
+  After: `{ anyOf: [{ type: 'array', items: ... }, { type: 'object', properties: ... }] }`
+  — alternatives in kind order, whatever the variant order. Every collision of
+  different kinds takes this shape, a scalar one too (`string` / `string[]` →
+  `{ anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }] }`);
+  nullable kinds keep `null` in each alternative's `type`, and differing nested
+  object unions stay nested `anyOf` inside the alternatives.
   The containing union stays an object and the original contract still validates
   execution. Schema consumers must traverse these nested alternatives; no
   contract changes or global flatten opt-out are needed. This avoids provider
@@ -79,6 +155,9 @@ snapshots or provider restrictions assume no nested `anyOf`. Other consumers
 only update the dependency; runtime input validation is unchanged.
 
 ## [0.98.2] — 2026-09-27
+
+The tag `v0.98.1` exists but was never published to npm: its publication failed.
+Everything it carried is in this release.
 
 ### Fixed
 

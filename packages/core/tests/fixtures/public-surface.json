@@ -1866,6 +1866,8 @@
     "NotificationOutboxResource",
     "NotificationOutboxResourceConfig",
     "NotificationOutboxState",
+    "NotificationPlanVersionError",
+    "NotificationProjection",
     "NotificationSend",
     "OpenKeyspace",
     "OpenedKeyspace",

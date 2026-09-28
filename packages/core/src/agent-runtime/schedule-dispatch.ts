@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
-import {
-  type AgentSchedule,
-  type AgentScheduleDeliveryOutcome,
-  AgentScheduleDeliveryOutcomeSchema,
-} from './schedule-contract';
+import { type AgentSchedule, AgentScheduleDeliveryOutcomeSchema } from './schedule-contract';
 import { claimSchedule, recordDispatchFailure, settleFiring } from './schedule-records';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 
@@ -18,14 +14,18 @@ export interface ScheduleDispatchRequest {
 }
 export interface ScheduleDispatchContext {
   sqlite: SqliteAgentRuntimeStore;
-  dispatch(
-    request: ScheduleDispatchRequest,
-    // biome-ignore lint/suspicious/noConfusingVoidType: void is the existing successful callback contract.
-  ): void | AgentScheduleDeliveryOutcome | Promise<void | AgentScheduleDeliveryOutcome>;
+  /**
+   * Admit the firing. Return an `AgentScheduleDeliveryOutcome` (or throw) to
+   * fail it; returning anything else — nothing, a queue length, a receipt —
+   * means it was delivered.
+   */
+  dispatch(request: ScheduleDispatchRequest): unknown;
   now: () => Date;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   signal: AbortSignal;
+  /** Failed attempts after which a schedule becomes `failed` instead of retrying. */
+  maxAttempts: number;
 }
 
 /** One fenced, bounded attempt. Consumer admission and settlement are at-least-once. */
@@ -64,15 +64,18 @@ export async function dispatchSchedule(
       }),
     ]);
     const firing = { schedule, occurrence, now: context.now, owner };
-    if (outcome === undefined) {
+    // Only an explicit outcome is a failure. Whatever else the callback returns
+    // — `jobs.push(...)`'s length, a receipt — it returned, so it delivered.
+    const failure = AgentScheduleDeliveryOutcomeSchema.safeParse(outcome);
+    if (!failure.success) {
       await settleFiring(context.sqlite, firing, lateByMs);
     } else {
-      const failure = AgentScheduleDeliveryOutcomeSchema.parse(outcome);
       await recordDispatchFailure(
         context.sqlite,
         firing,
-        failure.reason,
-        failure.status === 'terminal',
+        failure.data.reason,
+        context.maxAttempts,
+        failure.data.status === 'terminal',
       );
     }
   } catch (error) {
@@ -82,6 +85,7 @@ export async function dispatchSchedule(
         context.sqlite,
         { schedule, occurrence, now: context.now, owner },
         error instanceof Error ? error.message : String(error),
+        context.maxAttempts,
       );
     }
   } finally {

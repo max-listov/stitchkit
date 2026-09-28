@@ -1020,6 +1020,28 @@ The nonce is not authorization: the server still admits a verified identity and
 uses `hub.attach(subscriber, { key: verifiedScope, signal: revocationSignal })`.
 The scope key must change with session and permission boundaries.
 
+One scope and one question share one source and one read, however many client
+instances watch it: the hub routes each frame to every instance under its own
+key. A new tab of the same session costs a route, not a read.
+
+### Capacity
+
+A hub admits at most `maxSources` sources (1024) and `maxSubscribers` attached
+subscribers (1024); a client holds at most `maxKeys` keys (1024) and
+`maxListenersPerKey` listeners per key (128). Every excess is a refusal, never
+unbounded state: `open` answers `{ accepted: false, reason }` — including for a
+subscriber attached over capacity, whose `attach` returns a watcher that refuses
+every `open` — and a client's `subscribe` throws. A client handle takes its key
+when it subscribes, so handles a render creates and never subscribes cost
+nothing. A connection handler that throws closes that connection and is logged;
+the server goes on. A subscriber attached over capacity is not tracked: its
+refusals stand until it reconnects.
+
+A read that fails sends its subscribers `unavailable` / `source-error` with the
+`code` and `message` of an `AppError`, which is written for its caller. Any other
+error reaches only the hub's `logger`; the browser reads `The watched read failed`. Set larger finite limits for larger workloads, and
+`reconcileIntervalMs` when a lost invalidation must recover without a reconnect.
+
 `createCacheBridge` can bind watched handles directly:
 
 ```ts

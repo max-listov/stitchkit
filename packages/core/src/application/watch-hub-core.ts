@@ -3,19 +3,12 @@
  * retry, the frames each subscriber is sent — whole values or differences
  * against what it holds — and the release of a source nobody watches.
  */
+
+import { AppError } from '../contract/errors';
 import type { BackoffPolicy } from '../internal/backoff';
 import { serializeCanonicalJson } from '../internal/canonical-json';
-import { type CoalescedTask, createCoalescedTask } from '../internal/coalesced-task';
-import { argumentsDigest } from '../internal/stable-digest';
-import {
-  type WatchHave,
-  type WatchKey,
-  type WatchStateFrame,
-  type WatchValueFrame,
-  watchKeyString,
-} from '../live/watch-contract';
-import { deltaWins, diff } from '../live/watch-delta';
-
+import { createCoalescedTask } from '../internal/coalesced-task';
+import { type WatchKey, type WatchStateFrame, watchKeyString } from '../live/watch-contract';
 import type {
   AttachedWatcher,
   WatchAdmissionScope,
@@ -23,46 +16,16 @@ import type {
   WatchOperation,
   WatchSubscriber,
 } from './watch-hub';
+import {
+  adoptBaseline,
+  frameFor,
+  fullFrame,
+  remember,
+  type Source,
+  valueFingerprint,
+} from './watch-hub-source';
 
 const DEFAULT_BACKOFF: BackoffPolicy = { minDelayMs: 250, maxDelayMs: 30_000, jitter: 0.2 };
-
-interface Source {
-  readonly id: string;
-  readonly scope?: string;
-  readonly key: WatchKey;
-  readonly operation: WatchOperation;
-  readonly args: unknown;
-  readonly subscribers: Set<WatchSubscriber>;
-  readonly unsubscribes: (() => void)[];
-  revision: number;
-  value?: unknown;
-  signature?: string;
-  fingerprint?: string;
-  /**
-   * Superseded values by revision, oldest first, under a byte ceiling.
-   *
-   * Insertion order is the eviction order, which is why this is a `Map` and not
-   * an object: the oldest revision is the one least likely to still be anyone's
-   * baseline.
-   */
-  readonly history: Map<number, { value: unknown; fingerprint: string; bytes: number }>;
-  historyBytes: number;
-  /**
-   * The revision each subscriber is known to hold — the base its next difference
-   * is taken against.
-   *
-   * "Known to hold" means delivered without throwing, not acknowledged. There is
-   * no ack on this protocol and adding one would put a round trip in front of
-   * every frame; the socket is ordered and reliable while it is up, and when it
-   * is not the subscriber re-declares what it has in `open`. A frame whose
-   * delivery threw does not advance the baseline, so the next one is taken
-   * against what actually arrived.
-   */
-  readonly baselines: Map<WatchSubscriber, number>;
-  readonly task: CoalescedTask;
-  state: WatchStateFrame;
-  release?: ReturnType<typeof setTimeout>;
-}
 
 /**
  * The hub's shared sources and what each subscriber holds. A class because
@@ -71,7 +34,7 @@ interface Source {
  */
 export class WatchHubCore {
   readonly sources = new Map<string, Source>();
-  readonly held = new Map<WatchSubscriber, Set<string>>();
+  readonly held = new Map<WatchSubscriber, Map<string, string>>();
   readonly maxWatches: number;
   readonly holdMs: number;
   readonly deltaMemoryBytes: number;
@@ -131,112 +94,31 @@ export class WatchHubCore {
   announceState(source: Source, state: WatchStateFrame): void {
     source.state = state;
     for (const subscriber of source.subscribers) {
-      this.tell(source.key, () => subscriber.state(state));
-    }
-  }
-
-  /**
-   * Remember the value a subscriber may still be holding, under the byte ceiling.
-   *
-   * Called with the value being *superseded*, because that is the only one a
-   * difference can be taken against: the current value is `source.value` and
-   * needs no memory.
-   */
-  remember(source: Source, revision: number, value: unknown, fingerprint: string): void {
-    if (this.deltaMemoryBytes === 0) return;
-    const bytes = (JSON.stringify(value) ?? 'null').length;
-    if (bytes > this.deltaMemoryBytes) return;
-    source.history.set(revision, { value, fingerprint, bytes });
-    source.historyBytes += bytes;
-    for (const [oldest, entry] of source.history) {
-      if (source.historyBytes <= this.deltaMemoryBytes) break;
-      source.history.delete(oldest);
-      source.historyBytes -= entry.bytes;
-    }
-  }
-
-  /**
-   * The frame this one subscriber should receive — a difference when it saves,
-   * the value when it does not.
-   *
-   * The choice is per subscriber and it has to be: eight panels on one key can
-   * each be holding a different revision, one of them having just joined with
-   * nothing at all. A single broadcast frame would have to be the value, which
-   * is the behaviour this replaces.
-   */
-  frameFor(source: Source, subscriber: WatchSubscriber): WatchValueFrame {
-    const value = source.value;
-    const fingerprint = source.fingerprint ?? valueFingerprint(value);
-    const full: WatchValueFrame = {
-      kind: 'full',
-      key: source.key,
-      revision: source.revision,
-      fingerprint,
-      value,
-    };
-    const base = source.baselines.get(subscriber);
-    if (base === undefined) return full;
-    // Already current — which happens when a subscriber reconnected holding the
-    // answer that is still the answer. Saying so costs tens of bytes; saying it
-    // with the value costs the value.
-    if (base === source.revision) {
-      return { kind: 'unchanged', key: source.key, revision: source.revision, fingerprint };
-    }
-    const held = source.history.get(base);
-    if (!held) return full;
-    const delta = diff(held.value, value);
-    if (delta === undefined || !deltaWins(delta, value)) return full;
-    return {
-      kind: 'delta',
-      key: source.key,
-      revision: source.revision,
-      fingerprint,
-      base,
-      delta,
-    };
-  }
-
-  /**
-   * Believe a reconnecting subscriber about what it holds, as far as the
-   * fingerprint goes.
-   *
-   * The revision it names is a hint about *where* to look; the fingerprint is
-   * what decides. They are checked in that order against the current value first
-   * — the common case is a page that came back to an answer that never moved —
-   * and then against the superseded values still in memory.
-   *
-   * A fingerprint that matches nothing is not an error and is not announced: the
-   * subscriber simply has no baseline, and the next frame is the whole value,
-   * which is exactly right for a client holding something this hub cannot
-   * reconstruct.
-   */
-  adoptBaseline(source: Source, subscriber: WatchSubscriber, have: WatchHave): void {
-    if (source.fingerprint === have.fingerprint) {
-      source.baselines.set(subscriber, source.revision);
-      return;
-    }
-    const named = source.history.get(have.revision);
-    if (named?.fingerprint === have.fingerprint) {
-      source.baselines.set(subscriber, have.revision);
-      return;
-    }
-    for (const [revision, entry] of source.history) {
-      if (entry.fingerprint !== have.fingerprint) continue;
-      source.baselines.set(subscriber, revision);
-      return;
+      for (const key of source.routes.get(subscriber)?.values() ?? []) {
+        this.tell(key, () => subscriber.state({ ...state, key }));
+      }
     }
   }
 
   deliver(source: Source, subscriber: WatchSubscriber): boolean {
-    const frame = this.frameFor(source, subscriber);
-    const delivered = this.tell(source.key, () => subscriber.value(frame));
+    const frame = frameFor(source, subscriber);
+    let delivered = true;
+    for (const key of source.routes.get(subscriber)?.values() ?? []) {
+      delivered = this.tell(key, () => subscriber.value({ ...frame, key })) && delivered;
+    }
     if (delivered) source.baselines.set(subscriber, source.revision);
     return delivered;
   }
 
   publish(source: Source, value: unknown, fingerprint: string): void {
     if (source.fingerprint !== undefined) {
-      this.remember(source, source.revision, source.value, source.fingerprint);
+      remember(
+        source,
+        this.deltaMemoryBytes,
+        source.revision,
+        source.value,
+        source.fingerprint,
+      );
     }
     source.revision += 1;
     source.value = value;
@@ -257,13 +139,16 @@ export class WatchHubCore {
   }
 
   readFailed(source: Source, error: unknown): void {
-    const code = readErrorCode(error);
+    // The frame goes to a browser. An application error is written for its
+    // caller and travels with its code; anything else — a driver's code and
+    // message, with an address or a path in it — stays in the log.
     this.announceState(source, {
       key: source.key,
       phase: 'unavailable',
       reason: 'source-error',
-      ...(code !== undefined && { code }),
-      message: error instanceof Error ? error.message : String(error),
+      ...(AppError.is(error)
+        ? { code: error.code, message: error.message }
+        : { message: 'The watched read failed' }),
     });
     this.config.logger?.warn?.('[stitchkit] watched read failed', {
       key: watchKeyString(source.key),
@@ -271,8 +156,9 @@ export class WatchHubCore {
     });
   }
 
-  acquire(operation: WatchOperation, key: WatchKey, args: unknown, scope?: string): Source {
-    const id = JSON.stringify([scope ?? null, watchKeyString(key)]);
+  acquire(operation: WatchOperation, routed: WatchKey, args: unknown, scope?: string): Source {
+    const id = sourceId(scope, routed);
+    const key = sharedKey(routed);
     const existing = this.sources.get(id);
     if (existing) {
       clearTimeout(existing.release);
@@ -286,6 +172,7 @@ export class WatchHubCore {
       operation,
       args,
       subscribers: new Set(),
+      routes: new Map(),
       unsubscribes: [],
       revision: 0,
       history: new Map(),
@@ -336,12 +223,36 @@ export class WatchHubCore {
     source.release.unref?.();
   }
 
+  /**
+   * Take one subscriber's route off a source; the subscriber leaves the source
+   * with its last route.
+   */
+  unroute(source: Source, subscriber: WatchSubscriber, route: string): void {
+    const routes = source.routes.get(subscriber);
+    routes?.delete(route);
+    if (routes && routes.size > 0) return;
+    source.routes.delete(subscriber);
+    source.subscribers.delete(subscriber);
+    source.baselines.delete(subscriber);
+    this.release(source);
+  }
+
   attach(subscriber: WatchSubscriber, scope?: WatchAdmissionScope): AttachedWatcher {
-    if (this.held.size >= (this.config.maxSubscribers ?? 1024))
-      throw new Error('Watch subscriber capacity exceeded');
+    // Over capacity the subscriber is refused the way every other refusal is:
+    // through `open`. A throw here would land in a connection handler, where
+    // it has no one to answer and can take the server down with it.
+    if (this.held.size >= (this.config.maxSubscribers ?? 1024)) {
+      const refused: AttachedWatcher = {
+        open: () => ({ accepted: false, reason: 'Watch subscriber capacity exceeded' }),
+        close: () => undefined,
+        detach: () => undefined,
+      };
+      return refused;
+    }
     if (scope && (!scope.key || scope.key.length > 512))
       throw new Error('Invalid watch admission scope');
-    const keys = new Set<string>();
+    /** Each watched key this subscriber opened, to the source that answers it. */
+    const keys = new Map<string, string>();
     this.held.set(subscriber, keys);
     let detached = false;
     const attached: AttachedWatcher = {
@@ -356,8 +267,9 @@ export class WatchHubCore {
             reason: `${key.service}.${key.action} is not watchable`,
           };
         }
-        const id = JSON.stringify([scope?.key ?? null, watchKeyString(key)]);
-        if (keys.has(id)) return { accepted: true };
+        const route = watchKeyString(key);
+        const id = sourceId(scope?.key, key);
+        if (keys.has(route)) return { accepted: true };
         if (keys.size >= this.maxWatches) {
           return {
             accepted: false,
@@ -367,12 +279,19 @@ export class WatchHubCore {
         if (!this.sources.has(id) && this.sources.size >= (this.config.maxSources ?? 1024))
           return { accepted: false, reason: 'Watch source capacity exceeded' };
         const source = this.acquire(operation, key, args, scope?.key);
+        // A baseline belongs to the subscriber, so it describes its first
+        // route. A further route with nothing to show for itself starts from
+        // the whole value, not from what another route holds.
+        const alreadyRouted = source.routes.has(subscriber);
         source.subscribers.add(subscriber);
-        keys.add(id);
+        const routes = source.routes.get(subscriber) ?? new Map<string, WatchKey>();
+        routes.set(route, key);
+        source.routes.set(subscriber, routes);
+        keys.set(route, id);
         // What the caller says it already holds, believed only as far as the
         // fingerprint bears out: a revision on its own would let a value from
         // a previous life of this key pass for the current one.
-        if (have) this.adoptBaseline(source, subscriber, have);
+        if (have) adoptBaseline(source, subscriber, have);
         // A subscriber arriving after the answer is known gets it now, from
         // memory, before any network happens. That is the difference between a
         // panel that paints and a panel that spins.
@@ -385,46 +304,46 @@ export class WatchHubCore {
         // for exactly this, so it is used instead of hiding the failure.
         try {
           if (source.signature !== undefined) {
-            const frame = this.frameFor(source, subscriber);
-            subscriber.value(frame);
+            const frame =
+              alreadyRouted && !have ? fullFrame(source) : frameFor(source, subscriber);
+            subscriber.value({ ...frame, key });
             source.baselines.set(subscriber, source.revision);
           }
-          subscriber.state(source.state);
+          subscriber.state({ ...source.state, key });
         } catch (error) {
-          source.subscribers.delete(subscriber);
-          source.baselines.delete(subscriber);
-          keys.delete(id);
-          this.release(source);
+          keys.delete(route);
+          this.unroute(source, subscriber, route);
           return {
             accepted: false,
             reason: error instanceof Error ? error.message : String(error),
           };
         }
+        // `pending`: an invalidation arrived while nobody was subscribed — in
+        // the hold window — and was never read. The value in memory says
+        // `live` but is not.
         if (
           !source.task.running &&
-          (source.signature === undefined || source.state.phase !== 'live')
+          (source.signature === undefined ||
+            source.state.phase !== 'live' ||
+            source.task.pending)
         )
           source.task.trigger();
         return { accepted: true };
       },
       close: (key) => {
-        const id = JSON.stringify([scope?.key ?? null, watchKeyString(key)]);
-        if (!keys.delete(id)) return;
+        const route = watchKeyString(key);
+        const id = keys.get(route);
+        if (id === undefined) return;
+        keys.delete(route);
         const source = this.sources.get(id);
-        if (!source) return;
-        source.subscribers.delete(subscriber);
-        source.baselines.delete(subscriber);
-        this.release(source);
+        if (source) this.unroute(source, subscriber, route);
       },
       detach: () => {
         detached = true;
         scope?.signal.removeEventListener('abort', onAbort);
-        for (const id of keys) {
+        for (const [route, id] of keys) {
           const source = this.sources.get(id);
-          if (!source) continue;
-          source.subscribers.delete(subscriber);
-          source.baselines.delete(subscriber);
-          this.release(source);
+          if (source) this.unroute(source, subscriber, route);
         }
         keys.clear();
         this.held.delete(subscriber);
@@ -480,20 +399,13 @@ export class WatchHubCore {
   }
 }
 
-/**
- * The identity of a value, order-independent and synchronous.
- *
- * The same digest the watch key is built from, over `{ value }` rather than over
- * arguments — one implementation, because two hashes that had to agree across a
- * socket and were written twice would eventually not.
- */
-function valueFingerprint(value: unknown): string {
-  return argumentsDigest({ value });
+/** A key without its routing `instance`: what the source answering it is shared by. */
+function sharedKey(key: WatchKey): WatchKey {
+  const { instance: _routing, ...shared } = key;
+  return shared;
 }
 
-/** An `ApiError`-shaped failure carries a code; anything else does not, and says so by absence. */
-function readErrorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const code = Reflect.get(error, 'code');
-  return typeof code === 'string' ? code : undefined;
+/** The one source per admission scope and question. */
+function sourceId(scope: string | undefined, key: WatchKey): string {
+  return JSON.stringify([scope ?? null, watchKeyString(sharedKey(key))]);
 }

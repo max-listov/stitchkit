@@ -1009,6 +1009,9 @@ Opt into `delivery: { version, actions, project }` on `createNotificationOutbox`
 The pure `actions(payload)` selector runs at enqueue; the versioned plan remains
 fixed throughout retry. Each `send` receives its action and a stable idempotency
 key; return a small JSON receipt such as a remote message or uploaded object ID.
+An action that returned is confirmed and is never sent again: a result that is not
+JSON, or does not fit the state's byte budget, is kept as `receipt: null` with
+`unrecorded: 'not-json' | 'too-large'` and reported to `onError`.
 `project(notification, receipts)` applies all confirmed results locally and must
 be idempotent. Checkpoints and the final projection timestamp live in the existing
 atomic StateStore; completed receipts retain them within retention/byte limits.
@@ -1020,9 +1023,13 @@ not repeat confirmed sends. A crash after remote success but before receipt comm
 is ambiguous: the provider must deduplicate the action key or reconcile its result.
 A projection can also repeat if its completion checkpoint is lost.
 
-A new executor version must explicitly migrate or terminally classify incompatible
-queued plans. Existing `classify`/`onDropped` handles terminal items; a durable
-quarantine is the application's responsibility. Whole-state file and memory stores
+A plan keeps its actions from enqueue, so an older version needs only its
+projection to finish: a new executor lists it in `retiredVersions: { v1: project }`
+until the queue has drained. A plan version the executor does not know is reported
+to `onError` as `NotificationPlanVersionError` and waits — at least a poll interval,
+spending no attempt, without `classify` — for a process that knows it: the other
+side of a rolling deploy, the version a rollback returns to, or this one once it
+lists the version. Whole-state file and memory stores
 remain supported. Atomic enqueue with an unrelated business transaction is not
 provided by this contract; retain the application's transactional adapter when that
 boundary is required. Send and projection callbacks own their external deadlines.

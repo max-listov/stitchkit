@@ -90,6 +90,18 @@ export const sqliteEvents: SqliteStoreDriver['events'] = {
       ...(hasMore && lastEvent ? { nextSeq: lastEvent.seq + 1 } : {}),
     });
   },
+  async find(transaction, input) {
+    // `event_id` is UNIQUE, so this is one index probe.
+    const row = transaction
+      .prepare(`
+        SELECT event_id, conversation_id, seq, schema_version, kind, occurred_at,
+          ignorable, payload
+        FROM stitchkit_agent_runtime_events
+        WHERE event_id = ? AND conversation_id = ?
+      `)
+      .get(input.eventId, input.conversationId);
+    return row === null || row === undefined ? undefined : parseEventRow(row);
+  },
 };
 
 /** Projections and spills: the durable companions an archive carries beside the events. */

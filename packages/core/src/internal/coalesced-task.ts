@@ -2,6 +2,8 @@ import { type BackoffPolicy, createBackoff } from './backoff';
 
 export interface CoalescedTask {
   readonly running: boolean;
+  /** A trigger arrived that no pass has served yet. */
+  readonly pending: boolean;
   trigger(): void;
   pauseRetry(): void;
   close(): void;
@@ -52,6 +54,9 @@ export function createCoalescedTask(config: {
   return {
     get running() {
       return running;
+    },
+    get pending() {
+      return dirty;
     },
     trigger() {
       if (closed) return;

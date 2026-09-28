@@ -44,6 +44,10 @@ test('Linux kernel fixtures retain boot, PID and time namespace and refuse a for
       namespace: 'pid:[1];time:[1]',
       startId: '98765',
     });
+    // A kernel before 5.6 has no time namespace: the identity keeps the PID namespace.
+    await rm(join(root, 'self/ns/time'));
+    expect((await readProcessInstance(42, root))?.namespace).toBe('pid:[1];');
+    await symlink('time:[1]', join(root, 'self/ns/time'));
     await writeFile(join(root, 'self/stat'), stat(process.pid + 1));
     expect(await readProcessInstance(42, root)).toBeNull();
     expect(await readProcessInstance(43, root)).toBeNull();

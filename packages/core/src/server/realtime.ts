@@ -82,11 +82,28 @@ export function bindRealtimeServer<
           onRejected: options.onRejected,
           logger: options.logger,
         });
-        void handler({
-          raw,
-          events,
-          to: (room) => outbound(raw.to(room)),
-        });
+        // A connection handler that fails — synchronously or not — fails that
+        // connection, never the server: the socket is closed and the error
+        // logged, and every other connection goes on. It still runs inside the
+        // `connection` event, so listeners it attaches see the first frame.
+        const failed = (error: unknown) => {
+          try {
+            raw.disconnect(true);
+          } catch {
+            // A socket that cannot be closed is already gone; the failure to
+            // report is the handler's.
+          }
+          if (options.logger)
+            options.logger.error('Realtime connection handler failed', { error });
+          else console.error('[stitchkit] realtime connection handler failed', error);
+        };
+        try {
+          void Promise.resolve(
+            handler({ raw, events, to: (room) => outbound(raw.to(room)) }),
+          ).catch(failed);
+        } catch (error) {
+          failed(error);
+        }
       };
       handle.io.on('connection', listener);
       return () => {

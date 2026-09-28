@@ -263,10 +263,13 @@ try {
 
   await run(['bun', 'install'], generated, env);
   await run(['bun', 'run', 'db:setup'], generated, env);
-  const build = await buildStarter(async () => {
-    const result = await capture(['bun', 'run', 'build'], generated, env);
-    return { exitCode: result.exitCode, output: `${result.stdout}\n${result.stderr}` };
-  });
+  const build = await buildStarter(
+    async () => {
+      const result = await capture(['bun', 'run', 'build'], generated, env);
+      return { exitCode: result.exitCode, output: `${result.stdout}\n${result.stderr}` };
+    },
+    { caches: [join(generated, 'packages/frontend/.next')] },
+  );
   if (build.exitCode !== 0) {
     throw new Error(`bun run build failed with exit code ${build.exitCode}\n${build.output}`);
   }

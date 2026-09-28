@@ -97,6 +97,30 @@ test('same-boot PID reuse is reclaimed but a matching live writer and foreign na
   }
 });
 
+test('a lock whose owner recorded no identity is refused, and the refusal says why', async () => {
+  const owner = await currentOwner();
+  const child = Bun.spawn(['true']);
+  await child.exited;
+  const path = await fixture();
+  await writeFile(
+    path,
+    JSON.stringify({
+      ...owner,
+      pid: child.pid,
+      acquiredAt: '1900-01-01T00:00:00.000Z',
+      process: null,
+    }),
+  );
+  // ADR 0210: without process identity even an absent PID proves nothing —
+  // it may belong to another PID namespace.
+  await expect(
+    withExclusiveLock(path, (lock) => lock.reclaimed, {
+      machineIdentity: 'fixture-machine',
+      timeoutMs: 0,
+    }),
+  ).rejects.toThrow('(this-machine, liveness not-probed, identity unavailable)');
+});
+
 test('an abandoned reclaim guard uses boot and process identity without removing a live guard', async () => {
   const owner = await currentOwner();
   if (!owner.process) throw new Error('Current kernel process identity unavailable');

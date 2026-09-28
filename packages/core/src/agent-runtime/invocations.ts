@@ -55,6 +55,12 @@ export interface ModelInvocationLedger {
     invocationId: string;
     outcome: 'succeeded' | 'failed' | 'cancelled' | 'duplicate';
     text?: string;
+    /**
+     * The outcome stands, but its `invocation/finished` record (or failure
+     * artifact) could not be written: why. The provider's own attempt records
+     * were written before it.
+     */
+    receiptError?: unknown;
   }>;
   read(
     input: z.infer<typeof InvocationReadInputSchema>,
@@ -84,6 +90,42 @@ export function beginAgentInvocation(
   if (!binding || binding.store !== store)
     throw new TypeError('Agent and invocations must share the same store');
   return binding.start(input, context);
+}
+
+/** The outcome, with the first receipt that could not be written beside it. */
+function withReceipt<T extends object>(
+  result: T,
+  writer: InvocationAttemptWriter,
+): T & { receiptError?: unknown } {
+  const [receiptError] = writer.receiptErrors;
+  return receiptError === undefined ? result : { ...result, receiptError };
+}
+
+/** Each model in order until one answers; only a provider failure moves on. */
+async function generateWithFallback(
+  models: ModelInvocationConfig['models'],
+  writer: InvocationAttemptWriter,
+  input: CompletionInvocationInput,
+  abortSignal: AbortSignal,
+): Promise<string> {
+  for (const [step, key] of input.models.entries()) {
+    abortSignal.throwIfAborted();
+    const selected = models.resolve(key);
+    try {
+      const result = await generateText({
+        model: wrapInvocationModel(writer, selected, step),
+        prompt: input.prompt,
+        ...input.settings,
+        maxRetries: 0,
+        abortSignal,
+      });
+      return result.text;
+    } catch (error) {
+      if (!hasProviderOrigin(error) || abortSignal.aborted || step === input.models.length - 1)
+        throw error;
+    }
+  }
+  throw new Error('No completion model attempt available');
 }
 
 /** One canonical provider ledger for plain completions and agent tool loops. */
@@ -154,6 +196,7 @@ export function createModelInvocationLedger(
       process: executingProcess,
       payloads,
       onAttempt: config.onAttempt,
+      receiptErrors: [],
       async append(record) {
         const parsed = ModelInvocationRecordSchema.parse(record);
         await store.appendEvent({
@@ -194,39 +237,36 @@ export function createModelInvocationLedger(
       if (duplicate) return { invocationId, outcome: 'duplicate' };
       const deadline = AbortSignal.timeout(input.timeoutMs);
       const abortSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      let text: string;
       try {
-        for (const [step, key] of input.models.entries()) {
-          abortSignal.throwIfAborted();
-          const selected = config.models.resolve(key);
-          try {
-            const result = await generateText({
-              model: wrapInvocationModel(writer, selected, step),
-              prompt: input.prompt,
-              ...input.settings,
-              maxRetries: 0,
-              abortSignal,
-            });
-            await finish(writer, 'succeeded');
-            return { invocationId, outcome: 'succeeded', text: result.text };
-          } catch (error) {
-            if (
-              !hasProviderOrigin(error) ||
-              abortSignal.aborted ||
-              step === input.models.length - 1
-            )
-              throw error;
-          }
-        }
-        throw new Error('No completion model attempt available');
+        text = await generateWithFallback(config.models, writer, input, abortSignal);
       } catch (error) {
         const status = abortSignal.aborted ? 'cancelled' : 'failed';
-        const artifact = await payloads.write(writer.identity, { error });
-        await finish(writer, status, {
-          artifactId: artifact.artifactId,
-          payloadSha256: artifact.sha256,
-        });
-        return { invocationId, outcome: status };
+        // Recording the failure must not replace it: a failure payload that
+        // cannot be written is recorded without its artifact, and a record
+        // that cannot be written is returned beside the outcome.
+        try {
+          const artifact = await payloads.write(writer.identity, { error });
+          await finish(writer, status, {
+            artifactId: artifact.artifactId,
+            payloadSha256: artifact.sha256,
+          });
+        } catch (receiptError) {
+          writer.receiptErrors.push(receiptError);
+          await finish(writer, status).catch((error: unknown) => {
+            writer.receiptErrors.push(error);
+          });
+        }
+        return withReceipt({ invocationId, outcome: status }, writer);
       }
+      // The provider answered and was paid; a receipt that cannot be written
+      // does not turn that into a failure or lose the text.
+      try {
+        await finish(writer, 'succeeded');
+      } catch (receiptError) {
+        writer.receiptErrors.push(receiptError);
+      }
+      return withReceipt({ invocationId, outcome: 'succeeded', text }, writer);
     },
     async read(rawInput, context) {
       const input = InvocationReadInputSchema.parse(rawInput);

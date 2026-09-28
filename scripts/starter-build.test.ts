@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildStarter, failedOnGoogleFonts, type StarterBuildResult } from './starter-build';
 
 /*
@@ -33,6 +37,17 @@ describe('starter build', () => {
         'Failed to fetch font `Montserrat`.\nURL: https://fonts.googleapis.com/…',
       ),
     ).toBe(true);
+    // vercel/next.js#99114 — Google answered with `/l/font?kit=` URLs.
+    expect(
+      failedOnGoogleFonts(
+        'Error while looking up import map: next/font/google queries have exactly one entry',
+      ),
+    ).toBe(true);
+    expect(
+      failedOnGoogleFonts(
+        "app/layout.js\nAn error occurred in `next/font`.\n\nTypeError: Cannot read properties of null (reading '1')",
+      ),
+    ).toBe(true);
     expect(failedOnGoogleFonts("Type error: Property 'x' does not exist on type 'Y'.")).toBe(
       false,
     );
@@ -51,7 +66,7 @@ describe('starter build', () => {
     });
     expect(result.exitCode).toBe(0);
     expect(calls).toEqual([1, 2]);
-    expect(logs).toEqual([expect.stringContaining('Google Fonts did not answer')]);
+    expect(logs).toEqual([expect.stringContaining('Google Fonts failed the build')]);
   });
 
   test('any other failure fails at once; a second font failure is the answer', async () => {
@@ -75,5 +90,25 @@ describe('starter build', () => {
     const green = attempts({ exitCode: 0, output: 'ok' });
     await buildStarter(green.attempt, { pauseMs: 0 });
     expect(green.calls).toEqual([1]);
+  });
+
+  test('the build cache holding the first answer is removed before the second attempt', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'starter-build-cache-'));
+    await writeFile(join(cache, 'google-fonts.css'), 'src: url(/l/font?kit=a&skey=b)');
+    let cacheAtRetry: boolean | undefined;
+    let calls = 0;
+    const result = await buildStarter(
+      async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { exitCode: 1, output: 'next/font/google queries have exactly one entry' };
+        }
+        cacheAtRetry = existsSync(cache);
+        return { exitCode: 0, output: 'ok' };
+      },
+      { log: () => undefined, pauseMs: 0, caches: [cache] },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(cacheAtRetry).toBe(false);
   });
 });

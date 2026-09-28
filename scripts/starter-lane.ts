@@ -475,8 +475,9 @@ try {
         ...env,
         DATABASE_URL: `postgresql://nobody@127.0.0.1:${freePort()}/absent`,
       };
-      const build = await buildStarter(() =>
-        spawnTee(['bun', 'run', 'build'], generated, buildEnv),
+      const build = await buildStarter(
+        () => spawnTee(['bun', 'run', 'build'], generated, buildEnv),
+        { caches: [join(generated, 'packages/frontend/.next')] },
       );
       if (build.exitCode !== 0) {
         throw new Error(`bun run build failed with exit code ${build.exitCode}`);

@@ -267,6 +267,12 @@ export interface AgentRuntimeStore {
     outcome: 'applied' | 'duplicate';
     event: AgentStoreEventEnvelope;
   }>;
+  /** The event `appendEventOnce` wrote for this kind and key — one lookup, not a log scan. */
+  findEventOnce?(input: {
+    conversationId: string;
+    kind: string;
+    key: string;
+  }): Promise<AgentStoreEventEnvelope | undefined>;
   /** Read one bounded ordered slice of the canonical conversation event log. */
   readEvents(input: ReadAgentStoreEvents): Promise<AgentStoreEventPage>;
   /** Deterministic canonical archive bytes for one conversation's durable event log. */

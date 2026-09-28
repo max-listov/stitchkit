@@ -304,3 +304,81 @@ test('crash after durable admission replays the key without adding another logic
     1,
   );
 });
+
+test('a dispatch returning anything but an outcome delivered; failures stop at maxAttempts', async () => {
+  const clock = scheduleClock();
+  const sqlite = store();
+  const jobs: string[] = [];
+  const delivering = service({
+    sqlite,
+    ...clock,
+    // `push` returns the new length: a number, not an outcome.
+    dispatch: (request) => jobs.push(request.idempotencyKey),
+  });
+  await delivering.scheduleInput({
+    conversationId: 'synthetic',
+    input: {},
+    at: new Date(clock.now().getTime() + 10).toISOString(),
+  });
+  clock.advance(10);
+  await delivering.tick();
+  await delivering.tick();
+  expect(jobs).toHaveLength(1);
+  expect(delivering.listSchedules('synthetic')[0]?.state).toBe('completed');
+
+  const failing = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
+  cleanup.push(() => failing.close());
+  let calls = 0;
+  const scheduler = service({
+    sqlite: failing,
+    ...clock,
+    maxAttempts: 3,
+    dispatch: () => {
+      calls++;
+      throw new Error('x'.repeat(5_000));
+    },
+  });
+  await scheduler.scheduleInput({
+    conversationId: 'synthetic',
+    input: {},
+    everyMs: 10,
+    timeZone: 'UTC',
+  });
+  for (let step = 0; step < 10; step++) {
+    clock.advance(60_000);
+    await scheduler.tick();
+  }
+  // A recurring schedule gives up the occurrence, not itself: after three
+  // failures it moves to its next slot and keeps firing.
+  expect(calls).toBeGreaterThan(3);
+  const [schedule] = scheduler.listSchedules('synthetic');
+  expect(schedule?.state).toBe('scheduled');
+  expect(schedule?.lastError?.length).toBeLessThanOrEqual(1_001);
+  const failures = (await events(failing)).filter((event) => event.kind === 'schedule/failed');
+  expect(failures[2]?.payload).toMatchObject({ attempts: 3, terminal: false, skipped: true });
+
+  // A one-off schedule has no next slot: its occurrence exhausted, it is failed.
+  const once = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
+  cleanup.push(() => once.close());
+  let onceCalls = 0;
+  const oneOff = service({
+    sqlite: once,
+    ...clock,
+    maxAttempts: 2,
+    dispatch: () => {
+      onceCalls++;
+      throw new Error('down');
+    },
+  });
+  await oneOff.scheduleInput({
+    conversationId: 'synthetic',
+    input: {},
+    at: new Date(clock.now().getTime() + 10).toISOString(),
+  });
+  for (let step = 0; step < 5; step++) {
+    clock.advance(60_000);
+    await oneOff.tick();
+  }
+  expect(onceCalls).toBe(2);
+  expect(oneOff.listSchedules('synthetic')[0]?.state).toBe('failed');
+});

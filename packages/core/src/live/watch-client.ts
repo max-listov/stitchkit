@@ -313,43 +313,43 @@ export function createWatchClient<T extends Record<string, EndpointDef>>(
 
   function handleFor(action: string, args: Record<string, unknown>): WatchHandle<unknown> {
     const mine = new Set<WatchListeners<unknown>>();
-    // The key is computed here and now. It used to be a promise, which made the
-    // first subscription of a question asynchronous and forced a cache beside it
-    // so that at least the *second* one could hand back a retained value in the
-    // same turn. A synchronous digest removes the promise, the cache, and the
-    // difference between the first subscription and every later one.
-    let entry = entryFor(
-      {
-        service,
-        action,
-        digest: argumentsDigest(args),
-        ...(config.session && { instance: config.session.id }),
-      },
-      args,
-    );
+    // The key is computed here and now, synchronously, so the first
+    // subscription of a question hands back a retained value in the same turn
+    // as every later one. The entry is taken only by `subscribe`: a handle
+    // made during a render and never subscribed holds no key, no capacity and
+    // no reopen on reconnect.
+    const key: WatchKey = {
+      service,
+      action,
+      digest: argumentsDigest(args),
+      ...(config.session && { instance: config.session.id }),
+    };
+    let entry: WatchClientEntry | undefined;
 
     return {
       subscribe(listeners) {
         config.session?.assertCurrent();
-        if (entry.released) entry = entryFor(entry.key, args);
-        if (entry.listeners.size >= maxListeners)
+        if (!entry || entry.released) entry = entryFor(key, args);
+        const current = entry;
+        if (current.listeners.size >= maxListeners)
           throw new Error('Watch listener capacity exceeded');
         const registered = listeners as WatchListeners<unknown>;
         mine.add(registered);
-        entry.listeners.add(registered);
+        current.listeners.add(registered);
         // Retained value first, state second: a subscriber that receives `live`
         // before the value it describes has been told the wrong thing for one
         // turn.
-        if (entry.hasValue) registered.value(entry.value);
-        registered.state?.(entry.state);
-        void openWatch(config, openTimeoutMs, entry);
+        if (current.hasValue) registered.value(current.value);
+        registered.state?.(current.state);
+        void openWatch(config, openTimeoutMs, current);
         return () => {
           mine.delete(registered);
-          entry.listeners.delete(registered);
-          releaseWatchClientEntry(entry);
+          current.listeners.delete(registered);
+          releaseWatchClientEntry(current);
         };
       },
       close() {
+        if (!entry) return;
         for (const listener of mine) entry.listeners.delete(listener);
         mine.clear();
         releaseWatchClientEntry(entry);

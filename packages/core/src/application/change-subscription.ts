@@ -146,10 +146,12 @@ class ChangeSubscription {
     this.connection = undefined;
     this.attempt?.abort();
     this.report(error);
-    void this.release(handle).then(
-      () => this.schedule(),
-      (cause) => this.report(cause),
-    );
+    // A close that failed is reported, not waited on forever: `release` has
+    // already outlived any close still running, so the old transport is done
+    // either way and the subscription must come back.
+    void this.release(handle)
+      .catch((cause: unknown) => this.report(cause))
+      .then(() => this.schedule());
   }
 
   open(): Promise<void> {
@@ -212,7 +214,6 @@ class ChangeSubscription {
           await this.release(handle);
         } catch (cause) {
           this.report(cause);
-          return;
         }
       }
       if (!lifetime.signal.aborted) {

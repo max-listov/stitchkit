@@ -8,16 +8,27 @@
  * it did, twice on 2026-09-24, once in a local release gate and once on CI, and
  * each cost a rerun of the whole gate.
  *
- * A build that failed for exactly that reason is run once more, and the lane
- * says so. Any other failure fails the lane as before, and a second font
- * failure too: an outage that outlasts one retry is a real answer.
+ * Google Fonts also answers about one request in sixty with font URLs of the
+ * form `/l/font?kit=…&skey=…`, which Next cannot parse (vercel/next.js#99114):
+ * Turbopack fails with `next/font/google queries have exactly one entry`,
+ * webpack with a `TypeError` inside `next/font`. Nothing is wrong in the tree
+ * then either, and the next request is almost always the usual shape.
+ *
+ * A build that failed for one of those reasons is run once more — after the
+ * build cache that holds Google's answer is removed, or the retry reads the
+ * same answer back — and the lane says so. Any other failure fails the lane as
+ * before, and a second font failure too: an outage that outlasts one retry is
+ * a real answer.
  */
+import { rm } from 'node:fs/promises';
 
-/** What Next prints when the Google Fonts download, not the code, failed. */
+/** What Next prints when the Google Fonts answer, not the code, failed the build. */
 const GOOGLE_FONTS_UNREACHABLE = [
   /Failed to fetch font `[^`]+`/,
   /Failed to fetch `[^`]+` from Google Fonts/,
   /internal\/font\/google\/[\w.-]+/,
+  /next\/font\/google queries have exactly one entry/,
+  /An error occurred in `next\/font`/,
 ];
 
 export function failedOnGoogleFonts(output: string): boolean {
@@ -34,13 +45,19 @@ export type StarterBuildAttempt = () => Promise<StarterBuildResult>;
 
 export async function buildStarter(
   attempt: StarterBuildAttempt,
-  options: { readonly log?: (line: string) => void; readonly pauseMs?: number } = {},
+  options: {
+    readonly log?: (line: string) => void;
+    readonly pauseMs?: number;
+    /** Build caches to remove before the second attempt — they hold Google's first answer. */
+    readonly caches?: readonly string[];
+  } = {},
 ): Promise<StarterBuildResult> {
   const first = await attempt();
   if (first.exitCode === 0 || !failedOnGoogleFonts(first.output)) return first;
   (options.log ?? console.log)(
-    '[starter build] Google Fonts did not answer during the build — building once more',
+    '[starter build] Google Fonts failed the build — clearing the build cache and building once more',
   );
+  for (const cache of options.caches ?? []) await rm(cache, { recursive: true, force: true });
   await Bun.sleep(options.pauseMs ?? 5_000);
   return attempt();
 }

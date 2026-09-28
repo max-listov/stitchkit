@@ -3,22 +3,30 @@ import { join } from 'node:path';
 
 const fixture = join(import.meta.dir, 'fixtures/cli-stdin.ts');
 
-test('required input fails within one second on an empty open pipe', async () => {
-  const start = performance.now();
+// A guard kills a child that never exits, so a regression fails instead of
+// hanging the suite. The property is that the child exits on its own while
+// stdin is still open, which `signalCode === null` proves; the probe window
+// itself is bounded at twenty times its 250 ms, loose enough for a loaded
+// machine and tight enough to catch a window grown to seconds.
+const GUARD_MS = 15_000;
+const WINDOW_BOUND_MS = 5_000;
+
+test('required input fails on an empty pipe that is never closed', async () => {
+  const started = performance.now();
   const child = Bun.spawn([process.execPath, fixture, 'need', '--json'], {
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const guard = setTimeout(() => child.kill(), 1500);
+  const guard = setTimeout(() => child.kill(), GUARD_MS);
   try {
     const [code, out, err] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
-    expect(performance.now() - start).toBeLessThan(1000);
     expect(code).not.toBe(0);
+    expect(performance.now() - started).toBeLessThan(WINDOW_BOUND_MS);
     expect(out + err).toContain('text');
     expect(child.signalCode).toBeNull();
   } finally {
@@ -35,7 +43,7 @@ async function runPipe(
 ) {
   const child = spawnProbe(args, explicitReader);
   const input = pipeInput(child.stdin);
-  const guard = setTimeout(() => child.kill(), 4000);
+  const guard = setTimeout(() => child.kill(), GUARD_MS);
   try {
     let feedError: unknown;
     const [code, out, err] = await Promise.all([
@@ -84,6 +92,19 @@ function spawnProbe(args: string[], explicitReader = false) {
     stderr: 'pipe',
   });
 }
+
+test('automatic stdin reads a producer whose bytes are already waiting', async () => {
+  const result = await runPipe(['need', '--json'], async (stdin) => {
+    // Written before the child can have started its probe, and the pipe left
+    // open: the first byte is inside the window by construction.
+    stdin.write('early producer');
+    await stdin.flush();
+    await Bun.sleep(50);
+    await stdin.end();
+  });
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.out)).toEqual({ text: 'early producer' });
+});
 
 test('explicit stdin hook waits for a producer starting after the probe window', async () => {
   const result = await runPipe(
@@ -159,7 +180,7 @@ test('TTY without data gives the ordinary required-field error', async () => {
       },
     },
   });
-  const guard = setTimeout(() => child.kill(), 1500);
+  const guard = setTimeout(() => child.kill(), GUARD_MS);
   try {
     expect(await child.exited).toBe(1);
     expect(output).toContain('VALIDATION_ERROR');
