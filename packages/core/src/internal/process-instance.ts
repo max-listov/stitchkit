@@ -38,18 +38,26 @@ export async function readProcessInstance(
       return result.success ? result.data : null;
     }
     if (platform() !== 'linux') return null;
-    const [bootId, namespace, initNamespace, timeNamespace, ownStat, stat] = await Promise.all(
-      [
-        readFile(`${procRoot}/sys/kernel/random/boot_id`, 'utf8'),
-        readlink(`${procRoot}/self/ns/pid`),
-        readlink(`${procRoot}/1/ns/pid`),
-        readlink(`${procRoot}/self/ns/time`),
-        readFile(`${procRoot}/self/stat`, 'utf8'),
-        readFile(`${procRoot}/${pid}/stat`, 'utf8'),
-      ],
-    );
-    // A host-mounted /proc inside a child PID namespace is not this caller's PID table.
-    if (namespace !== initNamespace || linuxProcessStart(ownStat, process.pid) === null)
+    const [bootId, namespace, ownStatus, timeNamespace, ownStat, stat] = await Promise.all([
+      readFile(`${procRoot}/sys/kernel/random/boot_id`, 'utf8'),
+      readlink(`${procRoot}/self/ns/pid`),
+      readFile(`${procRoot}/self/status`, 'utf8'),
+      readlink(`${procRoot}/self/ns/time`),
+      readFile(`${procRoot}/self/stat`, 'utf8'),
+      readFile(`${procRoot}/${pid}/stat`, 'utf8'),
+    ]);
+    // NStgid starts at the procfs mount's namespace. Multiple IDs mean a
+    // host-mounted /proc inside a child namespace, even if the numeric IDs coincide.
+    // Read our own status, not PID 1's namespace (ptrace-restricted for ordinary users).
+    const namespacePids = ownStatus
+      .match(/^NStgid:[ \t]*(.*)$/m)?.[1]
+      ?.trim()
+      .split(/\s+/);
+    if (
+      namespacePids?.length !== 1 ||
+      namespacePids[0] !== String(process.pid) ||
+      linuxProcessStart(ownStat, process.pid) === null
+    )
       return null;
     const startId = linuxProcessStart(stat, pid);
     if (startId === null || !bootId.trim()) return null;

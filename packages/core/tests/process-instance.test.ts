@@ -30,13 +30,13 @@ test('Linux kernel fixtures retain boot, PID and time namespace and refuse a for
   if (process.platform !== 'linux') return;
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-proc-fixture-'));
   try {
-    for (const dir of ['sys/kernel/random', 'self/ns', '1/ns', '42'])
+    for (const dir of ['sys/kernel/random', 'self/ns', '42'])
       await mkdir(join(root, dir), { recursive: true });
     await writeFile(join(root, 'sys/kernel/random/boot_id'), 'boot-id\n');
     await writeFile(join(root, 'self/stat'), stat(process.pid));
+    await writeFile(join(root, 'self/status'), `NStgid:\t${process.pid}\n`);
     await writeFile(join(root, '42/stat'), stat(42));
     await symlink('pid:[1]', join(root, 'self/ns/pid'));
-    await symlink('pid:[1]', join(root, '1/ns/pid'));
     await symlink('time:[1]', join(root, 'self/ns/time'));
     expect(await readProcessInstance(42, root)).toEqual({
       platform: 'linux',
@@ -47,6 +47,15 @@ test('Linux kernel fixtures retain boot, PID and time namespace and refuse a for
     await writeFile(join(root, 'self/stat'), stat(process.pid + 1));
     expect(await readProcessInstance(42, root)).toBeNull();
     expect(await readProcessInstance(43, root)).toBeNull();
+    await writeFile(join(root, 'self/stat'), stat(process.pid));
+    for (const status of [
+      `NStgid:\t${process.pid}\t${process.pid}\n`,
+      `NStgid:\t${process.pid + 1}\n`,
+      'Name:\tmissing namespace evidence\n',
+    ]) {
+      await writeFile(join(root, 'self/status'), status);
+      expect(await readProcessInstance(42, root)).toBeNull();
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

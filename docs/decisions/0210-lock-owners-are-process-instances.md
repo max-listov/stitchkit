@@ -14,8 +14,9 @@ an optional process identity alongside its existing machine attribution. Both
 the protected lock and its reclaim guard use the same record and diagnosis.
 
 Linux uses `/proc/sys/kernel/random/boot_id`, field 22 of `/proc/<pid>/stat`, and
-PID/time namespace identities. A proc mount that cannot be attributed to the
-caller's PID namespace supplies no evidence. Darwin uses `kern.bootsessionuuid`
+PID/time namespace identities. The caller's own `NStgid` status verifies the proc
+mount's PID namespace without requiring permission to inspect PID 1. A proc mount
+that cannot be attributed to the caller supplies no evidence. Darwin uses `kern.bootsessionuuid`
 and `proc_pid_rusage(RUSAGE_INFO_V0).ri_proc_start_abstime` through the existing
 packaged Node-API binding. The shared binding lives in `internal`; recovery
 never imports the agent runtime. These are kernel lifetime identifiers, not
@@ -37,7 +38,8 @@ identity when releasing a file. Diagnosis distinguishes lifetime evidence from
 legacy PID reachability. Kernel token collisions cause a conservative refusal,
 never age-based takeover.
 
-References: [Linux proc stat](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html)
+References: [Linux proc stat](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html),
+[Linux namespace process IDs](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html)
 and [Darwin resource API](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/resource.h).
 
 Invariants: I8, I10, I12, I13.
