@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ExclusiveLockDiagnosis, ExclusiveLockOwner } from '../internal/exclusive-lock';
 import { isRecord } from '../internal/typed';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
@@ -217,7 +218,8 @@ export function parseDiagnosticJournalMode(mode: number | undefined): number {
 export interface DiagnosticJournalLockDiagnosis {
   readonly attribution: 'this-machine' | 'another-machine' | 'unattributable';
   readonly liveness: 'alive' | 'gone' | 'not-probed';
-  readonly owner: { pid: number; host: string; acquiredAt: string; machine?: string } | null;
+  readonly owner: ExclusiveLockOwner | null;
+  readonly identity?: ExclusiveLockDiagnosis['identity'];
 }
 
 /** Read the diagnosis a refused acquisition attached to its error, if it carried one. */

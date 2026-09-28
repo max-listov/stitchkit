@@ -108,9 +108,12 @@ export async function machineIdentity(declared: string | undefined): Promise<str
  * carries the ordinary doubt about reuse. Found by a consuming application, which measured `Z` and a
  * successful signal on both platforms of its fleet. → ADR 0147.
  */
-export async function probeLiveness(pid: number): Promise<'alive' | 'gone'> {
+export async function probeLiveness(
+  pid: number,
+  reach = (target: number) => process.kill(target, 0),
+): Promise<'alive' | 'gone'> {
   try {
-    process.kill(pid, 0);
+    reach(pid);
   } catch (error) {
     return isRecord(error) && error.code === 'ESRCH' ? 'gone' : 'alive';
   }

@@ -50,6 +50,15 @@ keep their existing configuration; new session and delivery APIs are opt-in.
   Opt in with the runtime `invocations` option. See ADR 0206 and the
   [migration example](docs/guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).
 
+### Fixed
+
+- `stitchkit/files`, `stitchkit/application` — exclusive locks and journal reclaim
+  guards identify the owning boot and process lifetime, so a PID reused after a
+  crash or reboot no longer impersonates an abandoned owner. Linux uses proc
+  start ticks and namespaces; macOS uses the packaged native kernel probe.
+  Unknown identity refuses takeover. Legacy records retain conservative PID
+  checks and require operator recovery when a live PID has been reused. See ADR 0210.
+
 ## [0.99.0] — 2026-09-27
 
 ### ⚠️ Breaking changes

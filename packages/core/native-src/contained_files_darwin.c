@@ -5,6 +5,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <node_api.h>
+#include <libproc.h>
+#include <inttypes.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -294,8 +298,45 @@ static napi_value create_directory_at(napi_env env, napi_callback_info info) {
   return result;
 }
 
+/* Boot epoch plus monotonic process birth: no wall-clock or locale inference. */
+static napi_value process_identity(napi_env env, napi_callback_info info) {
+  napi_value values[1];
+  size_t count = 1;
+  int pid;
+  if (napi_get_cb_info(env, info, &count, values, NULL, NULL) != napi_ok || count != 1 ||
+      !integer_argument(env, values[0], &pid) || pid <= 0) {
+    napi_throw_type_error(env, NULL, "Expected a positive process ID");
+    return NULL;
+  }
+  char boot[128] = {0};
+  size_t boot_size = sizeof(boot);
+  struct rusage_info_v0 usage = {0};
+  if (sysctlbyname("kern.bootsessionuuid", boot, &boot_size, NULL, 0) != 0 ||
+      boot_size == 0 || boot_size > sizeof(boot) || boot[sizeof(boot) - 1] != 0 ||
+      proc_pid_rusage(pid, RUSAGE_INFO_V0, (rusage_info_t *)&usage) != 0 ||
+      usage.ri_proc_start_abstime == 0) {
+    napi_value absent;
+    napi_get_null(env, &absent);
+    return absent;
+  }
+  char start[32];
+  snprintf(start, sizeof(start), "%" PRIu64, usage.ri_proc_start_abstime);
+  napi_value result, boot_value, start_value, platform_value, namespace_value;
+  napi_create_object(env, &result);
+  napi_create_string_utf8(env, boot, NAPI_AUTO_LENGTH, &boot_value);
+  napi_create_string_utf8(env, start, NAPI_AUTO_LENGTH, &start_value);
+  napi_create_string_utf8(env, "darwin", NAPI_AUTO_LENGTH, &platform_value);
+  napi_create_string_utf8(env, "host", NAPI_AUTO_LENGTH, &namespace_value);
+  napi_set_named_property(env, result, "bootId", boot_value);
+  napi_set_named_property(env, result, "startId", start_value);
+  napi_set_named_property(env, result, "platform", platform_value);
+  napi_set_named_property(env, result, "namespace", namespace_value);
+  return result;
+}
+
 static napi_value initialize(napi_env env, napi_value exports) {
   const napi_property_descriptor methods[] = {
+      {"processIdentity", NULL, process_identity, NULL, NULL, NULL, napi_default, NULL},
       {"openDirectoryAt", NULL, open_directory_at, NULL, NULL, NULL, napi_default, NULL},
       {"openFileAt", NULL, open_file_at, NULL, NULL, NULL, napi_default, NULL},
       {"createFileAt", NULL, create_file_at, NULL, NULL, NULL, napi_default, NULL},

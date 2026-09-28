@@ -696,7 +696,7 @@ cutovers are covered by the executable
 | `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
 | `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
 | `DiagnosticJournalLockPolicySchema` / `DiagnosticJournalLockPolicy` | schema / _type_ | `refuse` (default) or `reclaim-stale`, which reclaims only a lock whose recorded owner is provably gone |
-| `readDiagnosticJournalLockDiagnosis` / `DiagnosticJournalLockDiagnosis` | function / _type_ | why a `reclaim-stale` acquisition refused — owner alive, another machine, or a lock this host cannot attribute — read off the thrown `EEXIST` |
+| `readDiagnosticJournalLockDiagnosis` / `DiagnosticJournalLockDiagnosis` | function / _type_ | why a `reclaim-stale` acquisition refused — attribution, PID liveness and optional process `identity` evidence (`matched`, `different-boot`, `reused-pid`, `pid-gone`, `legacy`, `unavailable`) — read off the thrown `EEXIST` |
 | `DiagnosticJournalSubmitResultSchema` / `DiagnosticJournalSubmitResult` | schema / _type_ | accepted epoch/sequence or explicit invalid, oversized, capacity, closed or failed refusal |
 | `DiagnosticJournalStatusSchema` / `DiagnosticJournalStatus` | schema / _type_ | state, limits, exact admission/write/failure counters, pending ownership, rotations, partial tails and last safe sequences |
 | `DiagnosticJournalFrameSchema` / `DiagnosticJournalFrame` | schema / _type_ | version-1 JSONL frame carrying process epoch, contiguous accepted sequence and schema-validated JSON event |
@@ -1869,7 +1869,7 @@ available from `stitchkit/contract`.
 | `ManagedFileInspector` | _type_ | bounded-prefix read/write inspection callback with a finite cancellation signal that cannot own path or size |
 | `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
 | `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running |
-| `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; an ownerless lock only after `ownerlessGraceMs` |
+| `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time and nullable kernel process identity); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; an ownerless lock only after `ownerlessGraceMs` |
 | `ExclusiveLockError` | class | `LOCK_TIMEOUT` naming the resource and its holder, or `LOCK_ABORTED` with the signal's reason |
 
 ---

@@ -6,7 +6,8 @@
  * its holder. A crashed process cannot unlink its lock, so a lock with no way to
  * tell a dead owner from a slow one either wedges forever or is taken from under
  * a live writer. The rule is that time never proves death: an owner is reclaimed
- * only when it is on THIS machine and its pid is provably gone (or a zombie).
+ * only when it is on THIS machine and its recorded process lifetime is gone.
+ * Boot and start identity disambiguate a reused PID; unknown evidence refuses.
  * Age decides exactly one case — a lock with no readable owner at all, left by
  * a process that died between creating the file and writing to it — and only
  * after a grace period.
@@ -23,24 +24,34 @@
 import { constants } from 'node:fs';
 import { lstat, open, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { machineIdentity, probeLiveness } from './process-identity';
+import { z } from 'zod';
+import { machineIdentity } from './process-identity';
+import {
+  ProcessInstanceSchema,
+  type ProcessOwnerEvidence,
+  probeProcessOwner,
+  readProcessInstance,
+} from './process-instance';
 import { isRecord } from './typed';
 
 type FileHandle = Awaited<ReturnType<typeof open>>;
 
 /** Who holds a lock, as its file records it. */
-export interface ExclusiveLockOwner {
-  readonly pid: number;
-  readonly host: string;
-  readonly acquiredAt: string;
-  /** Stable machine identity; absent where the platform offers none, and in older locks. */
-  readonly machine?: string;
-}
+const ExclusiveLockOwnerSchema = z.object({
+  pid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  host: z.string().min(1),
+  acquiredAt: z.string(),
+  machine: z.string().min(1).optional().catch(undefined),
+  // Missing is a legacy record; explicit null is an unverified modern record.
+  process: ProcessInstanceSchema.nullable().optional().catch(null),
+});
+export type ExclusiveLockOwner = z.infer<typeof ExclusiveLockOwnerSchema>;
 
 /** Why a present lock was not taken. */
 export interface ExclusiveLockDiagnosis {
   readonly attribution: 'this-machine' | 'another-machine' | 'unattributable';
   readonly liveness: 'alive' | 'gone' | 'not-probed';
+  readonly identity?: ProcessOwnerEvidence['identity'];
   readonly owner: ExclusiveLockOwner | null;
 }
 
@@ -86,13 +97,8 @@ function readOwner(text: string): ExclusiveLockOwner | undefined {
   } catch {
     return undefined;
   }
-  if (!isRecord(parsed)) return undefined;
-  const { pid, host, acquiredAt, machine } = parsed;
-  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return undefined;
-  if (typeof host !== 'string' || host.length === 0) return undefined;
-  if (typeof acquiredAt !== 'string') return undefined;
-  const identified = typeof machine === 'string' && machine.length > 0 ? { machine } : {};
-  return { pid, host, acquiredAt, ...identified };
+  const owner = ExclusiveLockOwnerSchema.safeParse(parsed);
+  return owner.success ? owner.data : undefined;
 }
 
 /**
@@ -120,7 +126,7 @@ async function diagnose(
   if (!owner) return { attribution: 'unattributable', liveness: 'not-probed', owner: null };
   const attribution = attribute(owner, await machineIdentity(declaredIdentity));
   if (attribution !== 'this-machine') return { attribution, liveness: 'not-probed', owner };
-  return { attribution, liveness: await probeLiveness(owner.pid), owner };
+  return { attribution, ...(await probeProcessOwner(owner.pid, owner.process)), owner };
 }
 
 interface LockFileState {
@@ -165,9 +171,11 @@ async function createOwned(
   // Identity first: on darwin it may spawn a registry read, and every moment
   // between the create and the owner write is a moment the lock has no owner.
   const identity = await machineIdentity(options.machineIdentity);
+  const instance = await readProcessInstance(process.pid);
   const handle = await open(path, 'wx', options.mode);
   const owner: ExclusiveLockOwner = {
     pid: process.pid,
+    process: instance,
     host: hostname(),
     acquiredAt: new Date().toISOString(),
     ...(identity !== null && { machine: identity }),

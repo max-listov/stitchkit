@@ -173,6 +173,16 @@ try {
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
+    if (name === 'node') {
+      for (const runtime of ['bun', 'node']) {
+        const proof = step(`node: process-owned lock (${runtime})`, () =>
+          run(runtime, ['src/exclusive-lock.mjs'], dir),
+        );
+        if (!proof.includes('packed exclusive lock process identity: ok'))
+          throw new Error(`Missing ${runtime} process-owned lock proof`);
+      }
+    }
+
     if (containedFilesOnly) {
       for (const runtime of ['bun', 'node']) {
         const containedFilesOutput = step(`node: contained files (${runtime})`, () =>

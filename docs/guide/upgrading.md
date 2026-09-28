@@ -42,6 +42,28 @@ the store's atomic transition. Preserve executor versions until their queues dra
 Make projection idempotent. Provider idempotency/reconciliation remains necessary
 for a crash between remote success and checkpoint. These APIs are available starting with 0.100.0.
 
+### exclusive lock recovery
+
+New lock and reclaim-guard records include `owner.process`: kernel boot identity,
+process birth token and namespace. `readDiagnosticJournalLockDiagnosis(error)`
+adds `identity` to distinguish matched lifetime evidence, PID reuse, a different
+boot, an absent PID, a legacy record or unavailable identity. Legacy `alive` only
+means the PID is present; it does not prove that the recorded writer still exists.
+
+**Who must act:** deployments recovering a legacy lock with a reused live PID,
+or bundling file-lock consumers into a standalone Darwin executable. Legacy
+records cannot safely infer their missing boot/start identity from `acquiredAt`.
+Stop all writers to that resource, verify exclusive ownership, preserve the old
+lock for incident evidence outside the active lock path, and restart with the
+new package. Never delete a lock merely because it is old. New acquisitions
+write the modern record; no journal data migration is needed.
+
+Darwin distributions must retain the package's architecture-matched native
+`.node` asset for process birth measurement, as for contained filesystem access.
+If native/proc identity cannot be read, new locks explicitly record null and
+recovery refuses rather than treating unknown ownership as death. Existing
+`refuse` policy and the separately configured ownerless-file grace are unchanged.
+
 ## Released migration: 0.99.0
 
 ### structural alternatives in flattened tool schemas

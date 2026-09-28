@@ -642,7 +642,12 @@ refusals are explicit; accepted ordered frames are never evicted.
 The absolute path's parent must already exist and be operator-controlled. One manager owns it via
 an exclusive `.lock`; new files use mode `0600` by default. `maxFiles` includes the active file,
 and a non-newline startup tail is rotated intact rather than guessed or repaired. An abrupt process
-death may leave the lock for an operator to remove only after proving the former owner is gone.
+death may leave a lock. The default `refuse` policy leaves recovery to the operator;
+`lock: 'reclaim-stale'` compares machine, boot and process birth identity before
+recovery. A reused PID cannot impersonate a modern owner. Legacy records with a
+live PID, foreign namespaces and unavailable identity refuse automatic recovery;
+see the upgrading guide for quiescent legacy recovery. The same mechanism owns the
+short-lived reclaim guard.
 
 `flush()` means every accepted append through that call's boundary settled. It is not `fsync`, a
 durable receipt, exactly-once execution or remote delivery. Timeout/cancellation bound only the

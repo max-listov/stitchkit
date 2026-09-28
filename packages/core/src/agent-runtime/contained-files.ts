@@ -1,12 +1,12 @@
 import { constants, type Stats } from 'node:fs';
 import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { loadDarwinBinding } from '../internal/darwin-binding';
 
 import {
   FILE_TYPE_DIRECTORY,
   FILE_TYPE_REGULAR,
   FILE_TYPE_SYMLINK,
-  loadDarwinBinding,
   modeIs,
   NumericFileHandle,
 } from './contained-darwin';

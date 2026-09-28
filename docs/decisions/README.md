@@ -239,6 +239,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0207](0207-session-lifetimes-fence-client-work.md) | Session lifetimes fence client work | Accepted | I8, I10, I12, I13 |
 | [0208](0208-change-hints-reconcile-owned-reads.md) | Change hints reconcile owned reads | Accepted | I8, I10, I12, I13 |
 | [0209](0209-outbox-actions-and-projections-have-separate-receipts.md) | Outbox actions and projections have separate receipts | Accepted | I3, I8, I10, I13 |
+| [0210](0210-lock-owners-are-process-instances.md) | Lock owners are process instances | Accepted | I8, I10, I12, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -7,7 +7,8 @@ import { fchmod, write as writeDescriptor } from 'node:fs';
 import { rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { loadDarwinBinding, NumericFileHandle } from './contained-darwin';
+import { loadDarwinBinding } from '../internal/darwin-binding';
+import { NumericFileHandle } from './contained-darwin';
 import {
   type ContainedFileHandle,
   type ContainedParent,
