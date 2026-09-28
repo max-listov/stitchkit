@@ -12,10 +12,12 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.8] — 2026-09-28
+
 ### Changed
 
-- Generated projects track Stitchkit `^0.100.0`. The catalog stayed on
-  `^0.96.1` while 0.97.0–0.100.0 shipped, and on 0.x a caret never crosses a
+- Generated projects track Stitchkit `^0.100.1`. The catalog stayed on
+  `^0.96.1` while 0.97.0–0.100.1 shipped, and on 0.x a caret never crosses a
   minor, so a new project started four minors behind. The generated code needs
   no change; what a project that grows past the new defaults must know — the
   finite watch capacities of 0.100.0 among them — is in Stitchkit's

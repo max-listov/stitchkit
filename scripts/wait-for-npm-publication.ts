@@ -17,11 +17,13 @@ function isPackageManifest(value: unknown): value is { name: string; version: st
   );
 }
 
-// npm may accept a trusted publish several minutes before the public registry
-// serves that exact version. Keep the release job alive across normal registry
-// processing instead of turning a successful publish into a false failure.
-const attempts = 100;
-const retryDelayMs = 3_000;
+// npm may accept a trusted publish well before the public registry serves that
+// exact version: 0.96.0, 0.100.0 and 0.100.1 each took eight to eleven minutes
+// (2026-09-24 and 2026-09-28), past the five minutes this used to wait, and each
+// cost a manual rerun of a publish that had succeeded. Twenty minutes keeps the
+// job alive across that processing instead of turning it into a false failure.
+const attempts = 240;
+const retryDelayMs = 5_000;
 let lastFailure = 'the registry returned no response';
 
 for (let attempt = 1; attempt <= attempts; attempt += 1) {
