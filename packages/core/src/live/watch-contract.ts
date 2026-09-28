@@ -28,6 +28,8 @@ export const WatchKeySchema = z
   .object({
     /** `OperationIdentity.serviceName` — the contract's service. */
     service: z.string().min(1),
+    /** Client lifetime nonce for late-frame isolation, never an authorization claim. */
+    instance: z.string().min(1).max(128).optional(),
     /** `OperationIdentity.key` — the action within it. */
     action: z.string().min(1),
     /**
@@ -163,5 +165,5 @@ export const watchContract = {
 
 /** The wire key as one string — what a map is keyed by on both ends. */
 export function watchKeyString(key: WatchKey): string {
-  return `${key.service}/${key.action}/${key.digest}`;
+  return `${key.service}/${key.action}/${key.digest}${key.instance === undefined ? '' : `/${encodeURIComponent(key.instance)}`}`;
 }

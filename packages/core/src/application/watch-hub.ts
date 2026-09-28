@@ -76,7 +76,16 @@ export interface AttachedWatcher {
   detach(): void;
 }
 
+/** Server-verified account/session/permission revision; never accepted from a wire payload. */
+export interface WatchAdmissionScope {
+  readonly key: string;
+  readonly signal: AbortSignal;
+}
+
 export interface WatchHubConfig {
+  readonly reconcileIntervalMs?: number;
+  readonly maxSources?: number;
+  readonly maxSubscribers?: number;
   /**
    * Perform one read. Supplied by the application, so a watched read goes
    * through the same authorization as the request it mirrors.
@@ -93,7 +102,7 @@ export interface WatchHubConfig {
    * user". Then every subscriber to that key receives whatever the first read
    * happened to resolve. Do not; put the identity in the arguments.
    */
-  read(operation: WatchOperation, args: unknown): Promise<unknown>;
+  read(operation: WatchOperation, args: unknown, scope?: string): Promise<unknown>;
   /** Whether an operation may be watched at all. Refusal is answered in words. */
   watchable(operation: WatchOperation): boolean;
   /**
@@ -141,7 +150,7 @@ export interface WatchHubConfig {
 }
 
 export interface WatchHub {
-  attach(subscriber: WatchSubscriber): AttachedWatcher;
+  attach(subscriber: WatchSubscriber, scope?: WatchAdmissionScope): AttachedWatcher;
   /**
    * How many reads have actually been performed.
    *
@@ -176,7 +185,7 @@ export function watchKey(operation: WatchOperation, args: unknown): WatchKey {
 export function createWatchHub(config: WatchHubConfig): WatchHub {
   const hub = new WatchHubCore(config);
   return {
-    attach: (subscriber) => hub.attach(subscriber),
+    attach: (subscriber, scope) => hub.attach(subscriber, scope),
     readCount: () => hub.reads,
     size: () => hub.sources.size,
     close: () => hub.close(),

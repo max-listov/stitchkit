@@ -15,6 +15,41 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.100.0] — 2026-09-28
+
+### ⚠️ Breaking changes
+
+- `stitchkit/application`, `stitchkit/live` — watched reads now enforce finite
+  capacity by default: 1024 hub sources, 1024 hub subscribers, 1024 client keys
+  and 128 listeners per key. Excess admission is refused instead of retaining
+  unbounded state. Before: `createWatchHub({ read, watchable })` admitted an
+  unlimited number of hub sources/subscribers. After, for a larger workload:
+  `createWatchHub({ read, watchable, maxSources: 4096, maxSubscribers: 4096 })`.
+  Set `maxKeys` and `maxListenersPerKey` on `createWatchClient` when needed.
+  See ADR 0208 and the 0.100.0 migration in `docs/guide/upgrading.md`.
+
+**Who must act:** watch consumers whose hub or client exceeds these defaults.
+Choose explicit finite limits for the expected workload. Other consumers may
+keep their existing configuration; new session and delivery APIs are opt-in.
+
+### Added
+
+- `stitchkit` — `createSessionScope` fences requests and final delivery by login
+  lifetime; `createSessionCredentials` coordinates refresh and credential writes.
+- `stitchkit/application` — managed change subscriptions with bounded keys,
+  reconnect and periodic reconciliation; watch admission scopes and capacity limits;
+  optional outbox action checkpoints and a separate projection receipt.
+- `stitchkit/live`, `stitchkit/react` — session-scoped watch instances and explicit
+  watched-handle/cache bindings. Hub reconciliation can repair lost hints without
+  reconnect. Existing non-session watches and single-send outboxes remain supported.
+
+- `stitchkit/agent-runtime` — public `createModelInvocationLedger` for plain text
+  completions and shared agent provider receipts, with atomic idempotent admission,
+  verified caller context, explicit fallback attempts, transport correlation IDs,
+  provenance-aware usage and encrypted payload artifacts in the existing store.
+  Opt in with the runtime `invocations` option. See ADR 0206 and the
+  [migration example](docs/guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).
+
 ## [0.99.0] — 2026-09-27
 
 ### ⚠️ Breaking changes

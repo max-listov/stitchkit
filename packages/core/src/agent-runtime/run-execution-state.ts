@@ -1,8 +1,9 @@
 import type { ToolSet } from 'ai';
+import type { MutationQueue } from '../internal/mutation-queue';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import type { AgentInjectionRegistry } from './injection';
+import type { AgentInvocationScope } from './invocations';
 import type { AgentResolvedModel } from './models';
-import type { RunMutationQueue } from './run-mutation-queue';
 import type { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import type { AgentRuntimeConfig } from './runtime';
 import {
@@ -136,6 +137,7 @@ type RootTrace<CONTEXT, TOOLS extends ToolSet> = ReturnType<
 
 /** One acquired run: its dependencies, its input, its state and its owned machinery. */
 export interface RunExecution<CONTEXT, TOOLS extends ToolSet> {
+  invocation?: AgentInvocationScope;
   readonly dependencies: RunExecutorDependencies<CONTEXT, TOOLS>;
   readonly input: RunExecutionInput<CONTEXT>;
   readonly state: RunExecutionState;
@@ -150,7 +152,7 @@ export interface RunExecution<CONTEXT, TOOLS extends ToolSet> {
    * two independent schedules — the stream consumer and the SDK's model
    * middleware — against one compare-and-set revision.
    */
-  readonly serialize: RunMutationQueue;
+  readonly serialize: MutationQueue;
   readonly operationLifecycle: ReturnType<typeof createAgentRunOperationLifecycle>;
 }
 

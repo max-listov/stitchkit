@@ -167,7 +167,9 @@ async function prepareAttemptStep<CONTEXT, TOOLS extends ToolSet>(
   // recorded in ledger order, and the provider is not called until
   // it is.
   const model = await execution.operationLifecycle.prepareModel(
-    preparedStep?.model ?? turn.selectedModel.model,
+    execution.invocation
+      ? execution.invocation.wrap(turn.selectedModel, options.stepNumber, preparedStep?.model)
+      : (preparedStep?.model ?? turn.selectedModel.model),
     options.stepNumber,
     generateId(),
   );
@@ -406,6 +408,7 @@ export async function runModelAttempts<CONTEXT, TOOLS extends ToolSet>(
     store: config.store,
     state,
     selectedModel: turn.selectedModel,
+    audited: execution.invocation !== undefined,
   });
   const context: AttemptContext<CONTEXT, TOOLS> = { execution, turn, loop, ledger };
   for (;;) {

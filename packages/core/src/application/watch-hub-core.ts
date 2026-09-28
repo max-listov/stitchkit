@@ -3,8 +3,9 @@
  * retry, the frames each subscriber is sent — whole values or differences
  * against what it holds — and the release of a source nobody watches.
  */
-import { type BackoffPolicy, createBackoff } from '../internal/backoff';
+import type { BackoffPolicy } from '../internal/backoff';
 import { serializeCanonicalJson } from '../internal/canonical-json';
+import { type CoalescedTask, createCoalescedTask } from '../internal/coalesced-task';
 import { argumentsDigest } from '../internal/stable-digest';
 import {
   type WatchHave,
@@ -17,6 +18,7 @@ import { deltaWins, diff } from '../live/watch-delta';
 
 import type {
   AttachedWatcher,
+  WatchAdmissionScope,
   WatchHubConfig,
   WatchOperation,
   WatchSubscriber,
@@ -25,6 +27,8 @@ import type {
 const DEFAULT_BACKOFF: BackoffPolicy = { minDelayMs: 250, maxDelayMs: 30_000, jitter: 0.2 };
 
 interface Source {
+  readonly id: string;
+  readonly scope?: string;
   readonly key: WatchKey;
   readonly operation: WatchOperation;
   readonly args: unknown;
@@ -55,12 +59,9 @@ interface Source {
    * against what actually arrived.
    */
   readonly baselines: Map<WatchSubscriber, number>;
-  reading: boolean;
-  dirty: boolean;
+  readonly task: CoalescedTask;
   state: WatchStateFrame;
-  retry?: ReturnType<typeof setTimeout>;
   release?: ReturnType<typeof setTimeout>;
-  backoff: ReturnType<typeof createBackoff>;
 }
 
 /**
@@ -77,9 +78,26 @@ export class WatchHubCore {
   readonly same: NonNullable<WatchHubConfig['same']>;
   reads = 0;
   closed = false;
+  periodic?: ReturnType<typeof setInterval>;
 
   constructor(readonly config: WatchHubConfig) {
     this.maxWatches = config.maxWatchesPerSubscriber ?? 64;
+    for (const bound of [config.maxSources ?? 1024, config.maxSubscribers ?? 1024]) {
+      if (!Number.isInteger(bound) || bound < 1)
+        throw new RangeError('Watch capacity must be positive');
+    }
+    if (config.reconcileIntervalMs !== undefined) {
+      if (
+        !Number.isInteger(config.reconcileIntervalMs) ||
+        config.reconcileIntervalMs < 10 ||
+        config.reconcileIntervalMs > 3_600_000
+      )
+        throw new RangeError('Invalid reconciliation interval');
+      this.periodic = setInterval(() => {
+        for (const source of this.sources.values()) source.task.trigger();
+      }, config.reconcileIntervalMs);
+      this.periodic.unref?.();
+    }
     this.holdMs = config.holdMs ?? 0;
     this.deltaMemoryBytes = config.deltaMemoryBytes ?? 262_144;
     this.same =
@@ -226,62 +244,35 @@ export class WatchHubCore {
     for (const subscriber of source.subscribers) this.deliver(source, subscriber);
   }
 
-  async pump(source: Source): Promise<void> {
-    if (source.reading || this.closed) return;
-    source.reading = true;
-    try {
-      // The dirty bit is cleared *before* the read, not after: an invalidation
-      // that lands while this read is running has to cause another one, and
-      // clearing afterwards would swallow exactly that case.
-      while (source.dirty && !this.closed) {
-        source.dirty = false;
-        this.reads += 1;
-        try {
-          const value = await this.config.read(source.operation, source.args);
-          source.backoff.reset();
-          const signature = serializeCanonicalJson(value);
-          const unchanged = source.signature !== undefined && this.same(source.value, value);
-          source.signature = signature;
-          if (!unchanged) this.publish(source, value, valueFingerprint(value));
-          if (source.state.phase !== 'live') {
-            this.announceState(source, { key: source.key, phase: 'live' });
-          }
-        } catch (error) {
-          // A failed read is said in the words the read used — a flag would make
-          // "the database is down" and "you are not allowed" the same fact.
-          const code = readErrorCode(error);
-          this.announceState(source, {
-            key: source.key,
-            phase: 'unavailable',
-            reason: 'source-error',
-            ...(code !== undefined && { code }),
-            message: error instanceof Error ? error.message : String(error),
-          });
-          this.config.logger?.warn?.('[stitchkit] watched read failed', {
-            key: watchKeyString(source.key),
-            error,
-          });
-          this.scheduleRetry(source);
-          return;
-        }
-      }
-    } finally {
-      source.reading = false;
-    }
+  async readSource(source: Source): Promise<void> {
+    this.reads += 1;
+    const value = await this.config.read(source.operation, source.args, source.scope);
+    if (this.closed || this.sources.get(source.id) !== source) return;
+    const signature = serializeCanonicalJson(value);
+    const unchanged = source.signature !== undefined && this.same(source.value, value);
+    source.signature = signature;
+    if (!unchanged) this.publish(source, value, valueFingerprint(value));
+    if (source.state.phase !== 'live')
+      this.announceState(source, { key: source.key, phase: 'live' });
   }
 
-  scheduleRetry(source: Source): void {
-    if (this.closed || source.subscribers.size === 0) return;
-    clearTimeout(source.retry);
-    source.retry = setTimeout(() => {
-      source.dirty = true;
-      void this.pump(source);
-    }, source.backoff.next());
-    source.retry.unref?.();
+  readFailed(source: Source, error: unknown): void {
+    const code = readErrorCode(error);
+    this.announceState(source, {
+      key: source.key,
+      phase: 'unavailable',
+      reason: 'source-error',
+      ...(code !== undefined && { code }),
+      message: error instanceof Error ? error.message : String(error),
+    });
+    this.config.logger?.warn?.('[stitchkit] watched read failed', {
+      key: watchKeyString(source.key),
+      error,
+    });
   }
 
-  acquire(operation: WatchOperation, key: WatchKey, args: unknown): Source {
-    const id = watchKeyString(key);
+  acquire(operation: WatchOperation, key: WatchKey, args: unknown, scope?: string): Source {
+    const id = JSON.stringify([scope ?? null, watchKeyString(key)]);
     const existing = this.sources.get(id);
     if (existing) {
       clearTimeout(existing.release);
@@ -289,6 +280,8 @@ export class WatchHubCore {
       return existing;
     }
     const source: Source = {
+      id,
+      scope,
       key,
       operation,
       args,
@@ -298,18 +291,20 @@ export class WatchHubCore {
       history: new Map(),
       historyBytes: 0,
       baselines: new Map(),
-      reading: false,
-      dirty: true,
+      task: createCoalescedTask({
+        run: () => this.readSource(source),
+        active: () => !this.closed && source.subscribers.size > 0,
+        onError: (error) => this.readFailed(source, error),
+        backoff: this.config.backoff ?? DEFAULT_BACKOFF,
+      }),
       state: { key, phase: 'opening' },
-      backoff: createBackoff(this.config.backoff ?? DEFAULT_BACKOFF),
     };
     // Computed for THIS key's arguments, so the subscription is as narrow as the
     // caller made its topic.
     for (const topic of this.config.invalidatedBy(operation, args)) {
       source.unsubscribes.push(
         this.config.subscribe(topic, () => {
-          source.dirty = true;
-          void this.pump(source);
+          source.task.trigger();
         }),
       );
     }
@@ -319,19 +314,19 @@ export class WatchHubCore {
 
   release(source: Source): void {
     if (source.subscribers.size > 0) return;
-    clearTimeout(source.retry);
-    source.retry = undefined;
+    source.task.pauseRetry();
     const drop = () => {
       // A read may still be in flight; dropping the source now would publish its
       // result into nothing and let the next subscriber start a second read for
       // the same question. Wait for it to finish, then let go.
-      if (source.reading) {
+      if (source.task.running) {
         source.release = setTimeout(drop, 10);
         source.release.unref?.();
         return;
       }
+      source.task.close();
       for (const unsubscribe of source.unsubscribes) unsubscribe();
-      this.sources.delete(watchKeyString(source.key));
+      this.sources.delete(source.id);
     };
     if (this.holdMs === 0) {
       drop();
@@ -341,11 +336,18 @@ export class WatchHubCore {
     source.release.unref?.();
   }
 
-  attach(subscriber: WatchSubscriber): AttachedWatcher {
+  attach(subscriber: WatchSubscriber, scope?: WatchAdmissionScope): AttachedWatcher {
+    if (this.held.size >= (this.config.maxSubscribers ?? 1024))
+      throw new Error('Watch subscriber capacity exceeded');
+    if (scope && (!scope.key || scope.key.length > 512))
+      throw new Error('Invalid watch admission scope');
     const keys = new Set<string>();
     this.held.set(subscriber, keys);
-    return {
+    let detached = false;
+    const attached: AttachedWatcher = {
       open: (key, args, have) => {
+        if (detached || scope?.signal.aborted)
+          return { accepted: false, reason: 'Watch scope ended' };
         if (this.closed) return { accepted: false, reason: 'the watch hub is closed' };
         const operation = { service: key.service, action: key.action };
         if (!this.config.watchable(operation)) {
@@ -354,7 +356,7 @@ export class WatchHubCore {
             reason: `${key.service}.${key.action} is not watchable`,
           };
         }
-        const id = watchKeyString(key);
+        const id = JSON.stringify([scope?.key ?? null, watchKeyString(key)]);
         if (keys.has(id)) return { accepted: true };
         if (keys.size >= this.maxWatches) {
           return {
@@ -362,7 +364,9 @@ export class WatchHubCore {
             reason: `this connection is already watching ${keys.size} reads (limit ${this.maxWatches})`,
           };
         }
-        const source = this.acquire(operation, key, args);
+        if (!this.sources.has(id) && this.sources.size >= (this.config.maxSources ?? 1024))
+          return { accepted: false, reason: 'Watch source capacity exceeded' };
+        const source = this.acquire(operation, key, args, scope?.key);
         source.subscribers.add(subscriber);
         keys.add(id);
         // What the caller says it already holds, believed only as far as the
@@ -396,11 +400,15 @@ export class WatchHubCore {
             reason: error instanceof Error ? error.message : String(error),
           };
         }
-        void this.pump(source);
+        if (
+          !source.task.running &&
+          (source.signature === undefined || source.state.phase !== 'live')
+        )
+          source.task.trigger();
         return { accepted: true };
       },
       close: (key) => {
-        const id = watchKeyString(key);
+        const id = JSON.stringify([scope?.key ?? null, watchKeyString(key)]);
         if (!keys.delete(id)) return;
         const source = this.sources.get(id);
         if (!source) return;
@@ -409,6 +417,8 @@ export class WatchHubCore {
         this.release(source);
       },
       detach: () => {
+        detached = true;
+        scope?.signal.removeEventListener('abort', onAbort);
         for (const id of keys) {
           const source = this.sources.get(id);
           if (!source) continue;
@@ -420,10 +430,15 @@ export class WatchHubCore {
         this.held.delete(subscriber);
       },
     };
+    const onAbort = () => attached.detach();
+    if (scope?.signal.aborted) attached.detach();
+    else scope?.signal.addEventListener('abort', onAbort, { once: true });
+    return attached;
   }
 
   close(): void {
     this.closed = true;
+    clearInterval(this.periodic);
     // The map is emptied BEFORE anybody is told.
     //
     // Announcing while iterating `sources.values()` invites the natural client
@@ -437,7 +452,7 @@ export class WatchHubCore {
     this.sources.clear();
     this.held.clear();
     for (const source of teardown) {
-      clearTimeout(source.retry);
+      source.task.close();
       clearTimeout(source.release);
       // Told, not dropped.
       //
@@ -459,6 +474,7 @@ export class WatchHubCore {
         phase: 'unavailable',
         reason: 'source-unavailable',
       });
+      source.task.close();
       for (const unsubscribe of source.unsubscribes) unsubscribe();
     }
   }

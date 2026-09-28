@@ -102,6 +102,21 @@ export {
   projectAgentHistory,
   projectAgentHistoryDetailed,
 } from '../agent-runtime/history';
+export { currentModelInvocationAttempt } from '../agent-runtime/invocation-attempt';
+export {
+  type CompletionInvocationInput,
+  CompletionInvocationInputSchema,
+  type ModelInvocationAttemptContext,
+  type ModelInvocationRecord,
+  ModelInvocationRecordSchema,
+  type ModelInvocationTrace,
+  ModelInvocationTraceSchema,
+} from '../agent-runtime/invocation-schema';
+export {
+  createModelInvocationLedger,
+  type ModelInvocationConfig,
+  type ModelInvocationLedger,
+} from '../agent-runtime/invocations';
 export {
   type AgentToolFenceConfig,
   type AgentToolFenceContext,

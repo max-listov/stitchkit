@@ -1,5 +1,47 @@
 # Upgrading stitchkit
 
+## Released migration: 0.100.0
+
+### watch capacity and session/live/delivery adoption
+
+**Who must act:** watch consumers exceeding 1024 hub sources, 1024 hub subscribers,
+1024 client keys or 128 listeners per key. These previously unbounded collections
+now refuse excess admission. Choose explicit positive finite limits, for example:
+
+```ts
+// Before: no hub-wide capacity bounds.
+createWatchHub({ read, watchable });
+// After: explicitly budget a larger workload.
+createWatchHub({ read, watchable, maxSources: 4096, maxSubscribers: 4096 });
+// Client limits are configured independently.
+createWatchClient({ ...clientConfig, maxKeys: 2048, maxListenersPerKey: 256 });
+```
+
+The remaining steps apply only to applications opting into session lifetimes,
+scoped watched reads, managed subscriptions or multi-action notification delivery.
+Existing clients within the limits and single-send outboxes need no migration.
+
+Replace local session generation counters with one `createSessionScope`; share it
+with `createSessionCredentials`. Guard transport attempts, complete asynchronous
+operations and final synchronous delivery. Route credential persistence through
+one coordinator. Keep provider-specific error classification and bounded command
+retry in the application. Coordination is per client instance.
+
+Upgrade both watch endpoints before enabling session-scoped watches: strict older
+servers reject the new optional `WatchKey.instance`. Server-verified scope controls
+sharing; the client instance is only routing identity. Bind exact watched handles
+to session-qualified cache keys. Existing delta/reconnect behavior stays in place.
+For applications needing more than 1024 hub sources/subscribers or client keys, set
+explicit finite capacity options. Enable a reconciliation interval when lost hints
+must recover without a reconnect.
+
+For multi-action outboxes, enqueue new items with a versioned delivery plan and
+return small JSON receipts from `send`. Existing queued single-send items should
+be drained before enabling a delivery executor on that queue, or migrated under
+the store's atomic transition. Preserve executor versions until their queues drain.
+Make projection idempotent. Provider idempotency/reconciliation remains necessary
+for a crash between remote success and checkpoint. These APIs are available starting with 0.100.0.
+
 ## Released migration: 0.99.0
 
 ### structural alternatives in flattened tool schemas

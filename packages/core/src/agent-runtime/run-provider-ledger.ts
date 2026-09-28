@@ -59,8 +59,24 @@ export async function createRunProviderLedger(input: {
   store: AgentRuntimeStore;
   state: RunExecutionState;
   selectedModel: AgentResolvedModel;
+  audited?: boolean;
 }): Promise<RunProviderLedger> {
   const { store, state } = input;
+  if (input.audited) {
+    return {
+      async recordRequest() {
+        // The audited SDK boundary owns this record, after all step overrides.
+      },
+      async recordResponse(response) {
+        return providerResponseIdentity(
+          response.id,
+          state.selectedModel?.resolveResponseProvider?.({
+            providerMetadata: response.providerMetadata,
+          }),
+        );
+      },
+    };
+  }
   const requestModelId = input.selectedModel.descriptor.modelId;
   /**
    * Message bodies already in this conversation's ledger, by content hash.

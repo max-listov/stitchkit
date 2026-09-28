@@ -1,6 +1,7 @@
 import type { ToolSet } from 'ai';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
+import { InvocationReceiptError } from './invocation-failure';
 import { hasProviderOrigin, isOwnInputRefusal } from './provider-origin';
 import type { RunExecution } from './run-execution-state';
 import { abortTerminalReason } from './runtime-internals';
@@ -15,6 +16,7 @@ import { AgentRuntimeConflictError } from './terminal-commit';
  * same question and used to answer it differently.
  */
 export function failureThisRuntimeOwns(error: unknown): AgentTerminalReason | undefined {
+  if (error instanceof InvocationReceiptError) return 'runtime_failure';
   if (error instanceof AgentContextOverflowError) return 'context_overflow';
   if (error instanceof AgentRuntimeConflictError) return 'storage_conflict';
   if (isOwnInputRefusal(error)) return 'runtime_failure';

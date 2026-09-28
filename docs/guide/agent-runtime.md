@@ -1429,3 +1429,97 @@ first mutation**, so an adapter whose runtime rows reference an application-owne
 can provision those parents; the optional `cleanup(context)` removes them again, and runs once
 whether the scenario passed or failed. A factory that owns no fixture state ignores the argument and
 keeps working unchanged.
+
+## Plain completions and shared invocation receipts
+
+Use `createModelInvocationLedger` from `stitchkit/agent-runtime` when a direct text
+completion and an agent must share causal provider evidence. It uses the existing
+runtime store, not a second database. The completion path sends exactly one user
+prompt, no framework instructions and no tools. It never starts an agent loop.
+
+```ts
+import { createModelInvocationLedger } from 'stitchkit/agent-runtime';
+
+const invocations = createModelInvocationLedger({
+  store, // the same AgentRuntimeStore object passed to createAgentRuntime
+  models, // an existing defineModelRegistry result
+  payloadKey, // 32 bytes from the host's secret store; retain separately from archives
+  authorize: async ({ context, conversationId, action, trace }) => {
+    const session = await authenticate(context);
+    await authorizeConversation(session, conversationId, action, trace);
+    return { subject: session.subject }; // verified identity, never a body field
+  },
+});
+
+const completion = await invocations.complete({
+  conversationId: 'evaluation-42',
+  idempotencyKey: 'summary-case-3',
+  trace: {
+    operationId: 'summary-42', purpose: 'summarize', project: 'example',
+    parent: { traceId: 'trace-42' }, experiment: 'evaluation', case: 'case-3',
+  },
+  prompt: 'Summarize these supplied facts.',
+  models: ['primary', 'fallback'], // registry keys; repeat a key for an explicit retry
+  settings: { maxOutputTokens: 500 },
+  timeoutMs: 30_000,
+}, authenticatedContext);
+
+// Add to the existing createAgentRuntime configuration:
+const receiptConfig = {
+  ledger: invocations,
+  trace: ({ run }) => ({
+    operationId: run.id, purpose: 'assistant-turn', project: 'example',
+  }),
+};
+// createAgentRuntime({ ...existingConfig, invocations: receiptConfig });
+
+const page = await invocations.read({
+  conversationId: 'evaluation-42', limit: 100,
+}, authenticatedContext);
+// Continue with fromSeq: page.nextSeq while it is defined.
+```
+
+`complete` returns `invocationId`, `outcome` and, on success, `text`. `duplicate`
+returns the existing ID without provider execution or replaying plaintext. Changed
+input, trace or caller under the same key is a conflict. Model attempts are explicit
+and bounded to eight; SDK retries are disabled. Only provider failures trigger the
+next attempt. Abort, audit refusal and configuration errors do not. An admitted call
+whose process died stays claimed: inspect the receipt before choosing a new key.
+
+The agent retains its existing prompt, tools and loop. Both modes produce
+`invocation/started`, `provider/request`, `provider/response` and
+`invocation/finished` records through `read`. Each attempt has its own ID; response
+usage is counted once and keeps `unavailable` distinct from measured zero. Requested
+registry selection, sent adapter identity and effective provider identity are
+separate. Effective identity is null when not reported. A gateway's hidden retries
+are not visible as additional attempts.
+
+`currentModelInvocationAttempt()` returns the causal context inside a provider's
+`fetch` callback or streamed read. Use it to join a host transport audit to
+`operationId`, `invocationId`, `attemptId`, optional `runId` and `step`.
+`onAttempt` is an awaited admission hook; a rejected hook prevents the provider call.
+SDK payload hashes are not represented as hashes of HTTP wire bytes.
+
+Prompts and output are AES-256-GCM payload artifacts. `read` returns references and
+hashes; `readPayload({ conversationId, artifactId }, context)` separately authorizes
+`read-payload` and checks authentication tags and hashes. `payloadKey` must be 32
+bytes and is copied at construction. Keep it outside the event store/backups; retain
+the appropriate key when restoring an archive. `maxPayloadBytes` defaults to 4 MiB
+(range 1 KiB–64 MiB); streaming output evidence is capped at 1 MiB. Request headers
+are excluded. Protect existing agent history independently: enabling receipts does
+not encrypt its ordinary conversation records.
+
+The built-in memory and SQLite stores implement `appendEventOnce`. Custom stores
+must implement its once-only check and append atomically, returning the original
+event on a duplicate key scoped by conversation and kind. A factory without this
+capability refuses receipt setup. The driver-backed implementation reads bounded
+pages under one transaction, without another table or database.
+
+### Migration from direct SDK completions
+
+**Who must act:** applications opting into shared completion/agent receipts.
+Replace the direct `generateText` call with `invocations.complete`, configure host
+authorization and a retained payload key, and pass the same ledger in the agent's
+`invocations` option. Use the returned invocation ID and the paginated `read` method
+for receipt queries; do not import runtime internals. This API is unreleased; it is
+not present in 0.99.0. Existing runtime configurations need no migration.

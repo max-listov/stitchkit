@@ -60,6 +60,17 @@ export {
   resumableIterator,
 } from '../browser/resumable';
 export { createRetainedTopics, type RetainedTopics } from '../browser/retained';
+export {
+  createSessionScope,
+  SessionExpiredError,
+  type SessionOperation,
+  type SessionScope,
+} from '../browser/session';
+export {
+  createSessionCredentials,
+  type SessionCredentials,
+  type SessionCredentialsConfig,
+} from '../browser/session-credentials';
 export type {
   RealtimeClient,
   RealtimeClientOptions,

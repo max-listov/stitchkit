@@ -1,8 +1,8 @@
 import { type LanguageModel, wrapLanguageModel } from 'ai';
+import type { MutationQueue } from '../internal/mutation-queue';
 import type { AgentRuntimeEvent } from './event-schema';
 import { agentDurableEventId } from './event-schema';
 import { isOwnInputRefusal, markProviderOrigin, markProviderStream } from './provider-origin';
-import type { RunMutationQueue } from './run-mutation-queue';
 import { findRun } from './runtime-internals';
 import {
   type AgentRun,
@@ -23,7 +23,7 @@ export interface AgentRunOperationLifecycleConfig {
   publish(event: AgentRuntimeEvent): Promise<void>;
   now(): Date;
   /** The order every owned mutation of this run takes its turn in. */
-  serialize: RunMutationQueue;
+  serialize: MutationQueue;
 }
 
 /** One durable latest-operation state machine for an executing run. */

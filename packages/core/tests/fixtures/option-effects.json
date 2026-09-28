@@ -294,6 +294,15 @@
     },
     "deltaMemoryBytes": {
       "test": "a hub told to keep no history sends values, never differences"
+    },
+    "reconcileIntervalMs": {
+      "test": "hub periodic reconciliation repairs a lost hint without reconnect and enforces source capacity"
+    },
+    "maxSources": {
+      "test": "hub periodic reconciliation repairs a lost hint without reconnect and enforces source capacity"
+    },
+    "maxSubscribers": {
+      "test": "verified watch scopes isolate identical arguments and revocation fences pending read delivery"
     }
   },
   "WatchClientConfig": {
@@ -308,6 +317,15 @@
     },
     "onRefused": {
       "test": "a refusal reaches the subscriber in the words the server used"
+    },
+    "session": {
+      "test": "watch lifetime nonce rejects old frames on a reused socket; cache is stale on loss and removed on logout"
+    },
+    "maxKeys": {
+      "test": "watch lifetime nonce rejects old frames on a reused socket; cache is stale on loss and removed on logout"
+    },
+    "maxListenersPerKey": {
+      "test": "watch lifetime nonce rejects old frames on a reused socket; cache is stale on loss and removed on logout"
     }
   },
   "ApiErrorRetryConfig": {
@@ -562,6 +580,103 @@
     },
     "token": {
       "test": "a relative file_path resolves inside the bot directory; so does a --local absolute one"
+    }
+  },
+  "ModelInvocationConfig": {
+    "store": {
+      "test": "durable idempotency fences concurrent callers and survives SQLite reopen and archive restore"
+    },
+    "models": {
+      "test": "fallback has separate attempts, measured usage and no invented effective identity"
+    },
+    "payloadKey": {
+      "test": "real provider wire contains only the completion prompt, with transport IDs and unknown usage"
+    },
+    "maxPayloadBytes": {
+      "test": "payload limits, missing atomic admission and wrong stores fail closed"
+    },
+    "authorize": {
+      "test": "caller spoof and unauthorized reads refuse before provider execution"
+    },
+    "onAttempt": {
+      "test": "receipt admission and transport audit failures never invoke or retry the provider"
+    }
+  },
+  "SessionCredentialsConfig": {
+    "scope": {
+      "test": "credentials refresh is shared per generation and an old flight cannot clear the new one"
+    },
+    "refresh": {
+      "test": "credentials refresh is shared per generation and an old flight cannot clear the new one"
+    },
+    "storage": {
+      "test": "credentials refresh is shared per generation and an old flight cannot clear the new one"
+    },
+    "maxPendingWrites": {
+      "test": "credential write capacity and refresh deadline refuse bounded work visibly"
+    },
+    "refreshTimeoutMs": {
+      "test": "credential write capacity and refresh deadline refuse bounded work visibly"
+    }
+  },
+  "ChangeSubscriptionConfig": {
+    "id": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "keys": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "connect": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "reconcile": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "reconcileIntervalMs": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "backoff": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "onError": {
+      "test": "managed subscription reconciles lost hints, coalesces a burst and retries without another event"
+    },
+    "timeoutMs": {
+      "test": "managed subscription fences late publication and bounds keys and connection deadlines"
+    }
+  },
+  "NotificationDeliveryConfig": {
+    "version": {
+      "test": "plans are immutable across attempts and mismatched versions are quarantined through onDropped"
+    },
+    "actions": {
+      "test": "plans are immutable across attempts and mismatched versions are quarantined through onDropped"
+    },
+    "project": {
+      "test": "action receipts survive restart and projection retry never repeats confirmed sends"
+    }
+  },
+  "CacheBridgeConfig": {
+    "watched": {
+      "test": "watch lifetime nonce rejects old frames on a reused socket; cache is stale on loss and removed on logout"
+    },
+    "session": {
+      "test": "watch lifetime nonce rejects old frames on a reused socket; cache is stale on loss and removed on logout"
+    },
+    "socket": {
+      "test": "socket event updates the query cache via handler"
+    },
+    "queryClient": {
+      "test": "socket event updates the query cache via handler"
+    },
+    "handlers": {
+      "test": "socket event updates the query cache via handler"
+    },
+    "freshWindow": {
+      "test": "freshness expires, can be cleared, and is bounded by oldest-first eviction"
+    },
+    "maxFreshKeys": {
+      "test": "freshness expires, can be cleared, and is bounded by oldest-first eviction"
     }
   }
 }

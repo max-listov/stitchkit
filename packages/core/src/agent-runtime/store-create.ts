@@ -14,6 +14,7 @@ import {
 } from './store';
 import { exportConversation, importConversation } from './store-archive';
 import type { AgentRuntimeStoreDriver } from './store-driver-contract';
+import { appendEventOnce } from './store-event-once';
 import { mutateStore } from './store-mutate';
 import { createStoreConversationPurge } from './store-purge';
 import { appendEvent, listActiveRuns, loadRun, loadSnapshot, readEvents } from './store-reads';
@@ -39,6 +40,7 @@ export function createAgentRuntimeStore<TRANSACTION>(
     loadSnapshot: (conversationId) => loadSnapshot(driver, conversationId),
     loadRun: (input) => loadRun(driver, input),
     listActiveRuns: (conversationId) => listActiveRuns(driver, conversationId),
+    appendEventOnce: (input, key) => appendEventOnce(driver, input, key),
     appendEvent: (input) => appendEvent(driver, input),
     readEvents: (input) => readEvents(driver, input),
     exportConversation: (conversationId) => exportConversation(driver, conversationId),

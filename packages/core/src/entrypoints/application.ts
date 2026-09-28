@@ -48,6 +48,12 @@ export {
   createBoundedAdmission,
 } from '../application/admission';
 export {
+  type ChangeConnection,
+  type ChangeReconciliation,
+  type ChangeSubscriptionConfig,
+  changeSubscriptionResource,
+} from '../application/change-subscription';
+export {
   createDecisionPipeline,
   type DecisionPipeline,
   type DecisionPipelineConfig,
@@ -161,6 +167,11 @@ export {
   type RevisionedApplicationSnapshot,
 } from '../application/latest-sink';
 export {
+  type NotificationDeliveryConfig,
+  type NotificationDeliveryState,
+  NotificationDeliveryStateSchema,
+} from '../application/notification-delivery';
+export {
   createNotificationOutbox,
   type DroppedNotification,
   type EnqueueNotification,
@@ -262,6 +273,7 @@ export type { StateStore, StateStoreUpdate } from '../application/state-store';
 export {
   type AttachedWatcher,
   createWatchHub,
+  type WatchAdmissionScope,
   type WatchHub,
   type WatchHubConfig,
   type WatchOperation,

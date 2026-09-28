@@ -235,6 +235,10 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0203](0203-automatic-stdin-probes-only-for-the-first-byte.md) | Automatic stdin probes only for the first byte | Accepted — bounded availability probe, full input through EOF, explicit delayed producers; release consequence amended by 0204 | I2, I8, I10 |
 | [0204](0204-release-cadence-is-observation-not-a-gate.md) | Release cadence is observation, not a gate | Accepted — amends calendar restrictions in 0198 and 0203; migration and validation remain mandatory | I14 |
 | [0205](0205-flat-tool-collisions-retain-structural-alternatives.md) | Flat tool collisions retain structural alternatives | Accepted — amends the no-nested-union collision rule of 0033/0065, preserves 0050 | I3, I8 |
+| [0206](0206-model-invocations-share-provider-evidence.md) | Model invocations share provider evidence | Accepted | I3, I8, I10, I12, I13, I15 |
+| [0207](0207-session-lifetimes-fence-client-work.md) | Session lifetimes fence client work | Accepted | I8, I10, I12, I13 |
+| [0208](0208-change-hints-reconcile-owned-reads.md) | Change hints reconcile owned reads | Accepted | I8, I10, I12, I13 |
+| [0209](0209-outbox-actions-and-projections-have-separate-receipts.md) | Outbox actions and projections have separate receipts | Accepted | I3, I8, I10, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

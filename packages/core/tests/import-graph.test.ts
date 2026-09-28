@@ -48,7 +48,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   realtime: ['contract', 'internal', 'server'],
   browser: ['contract', 'internal', 'observability', 'realtime'],
   live: ['browser', 'contract', 'internal', 'realtime'],
-  react: ['browser', 'contract', 'internal', 'realtime'],
+  react: ['browser', 'contract', 'internal', 'live', 'realtime'],
   application: ['contract', 'internal', 'live', 'observability', 'server'],
   geo: ['application', 'internal'],
   tracking: ['browser', 'contract'],

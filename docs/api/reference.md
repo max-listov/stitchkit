@@ -139,6 +139,28 @@ can emit / propagate a `traceparent` (see `HttpClientConfig.trace`).
 
 ---
 
+### Session lifetime and credential coordination
+
+`createSessionScope` (`stitchkit`) returns the generic `SessionScope`: `replace(context)`
+creates a new login lifetime (including same-account relogin), `capture()` returns
+its `SessionOperation<T>`, `clear()` invalidates it, and `stop()` permanently closes
+the host. Operations expose `id`, `generation`, `context`, `signal`, `current()` and
+`assertCurrent()`. `run(callback)` checks both success and failure across an await;
+`deliver(callback)` admits a synchronous final send/state change or returns false.
+`bindFetch(fetch, headers?)` guards every attempt and scopes its abort signal. Wrap
+the complete client call in `run` too: headers are not the response body boundary.
+Expired work throws `SessionExpiredError`, not a refresh instruction.
+
+`createSessionCredentials` accepts `SessionCredentialsConfig`:
+`scope`, `refresh(credentials, signal)`, `storage.write(session, credentials)`,
+`storage.clear()`, `maxPendingWrites` (128), and `refreshTimeoutMs` (30000, at most one
+hour). `SessionCredentials` provides `login`, `logout`, `read(operation)` and
+`refresh(operation)`. Concurrent refresh calls in one generation share the same
+promise. Logout invalidates memory before its returned persistence promise settles.
+Storage errors and queue-capacity refusals reject; callers must handle them. All
+writes must pass through the same instance. There is no cross-process/tab lock,
+provider error classifier or automatic retry of arbitrary application callbacks.
+
 ## `stitchkit/contract`
 
 The contract layer alone — browser-and-server safe. All of this is also exported
@@ -278,6 +300,13 @@ realtime contract from `stitchkit`, and the server halves live in `stitchkit/app
 | `watchDiff` / `applyWatchDelta` / `watchDeltaWins` | functions | build a difference (`undefined` when equal), rebuild the value from one (throws rather than inventing), and whether it is actually smaller than the value |
 
 ---
+
+### Session-scoped watch lifetime
+
+`WatchClientConfig.session` captures a `SessionOperation`; `maxKeys` (1024) and
+`maxListenersPerKey` (128) bound retained subscriptions. Its lifetime nonce travels
+in optional `WatchKey.instance`, preventing old-session frames from matching a new
+client on the same socket. This is routing identity, never authorization.
 
 ## `stitchkit/primitives`
 
@@ -770,6 +799,44 @@ vocabulary with an event topic declared `mode: 'decision'`.
 → [ADR 0152](../decisions/0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md),
 [ADR 0153](../decisions/0153-a-watched-read-is-one-read-per-question.md).
 
+### Managed change subscriptions and scoped watches
+
+`changeSubscriptionResource` (`stitchkit/application`) accepts
+`ChangeSubscriptionConfig`: `id`, unique `keys` (1–128, at most 256 characters each),
+`connect(signal)`, `reconcile(key, context)`, required `reconcileIntervalMs` (10 ms–1 h),
+optional `timeoutMs` (30000; 1 ms–1 h), `backoff`, and `onError`.
+`ChangeConnection` supplies `subscribe({ signal, hint, disconnected })`, which completes subscription
+before the first read; `close()` releases it. `ChangeReconciliation` exposes `signal`
+and a synchronous `commit(callback)` guard against late publication. Drivers must
+honor cancellation. Uncooperative work retains its slot until settled instead of
+allowing overlapping connections/reads. Errors reach `onError`; no raw payload or
+connection string is logged by this resource. Recovery runs after reconnect and
+periodically even when no notification arrives.
+
+`WatchHubConfig` adds `maxSources` (1024), `maxSubscribers` (1024), and optional
+`reconcileIntervalMs` (10 ms–1 h). `hub.attach(subscriber, scope?)` accepts a
+`WatchAdmissionScope` containing a **server-verified** `key` (1–512 characters) and
+revocation `signal`. The key separates sharing and is the optional third argument
+of `read(operation, args, scope)`. It must represent account, session and permissions;
+never trust a client-supplied owner ID as that scope.
+
+
+
+### Notification action and projection receipts
+
+`NotificationOutboxConfig.delivery` accepts `NotificationDeliveryConfig`:
+immutable executor `version`, pure `actions(payload)` plan selector (1–128 unique
+names, each at most 128 characters), and idempotent `project(notification, receipts)`.
+`send` receives optional `action` and stable `idempotencyKey`, and returns a JSON
+remote receipt (void becomes null). `NotificationDeliveryStateSchema` validates the
+optional `NotificationDeliveryState` on queued items and completed receipts:
+`version`, `actions`, `receipts` and optional `projectedAt`. Checkpoints share the
+existing atomic StateStore and lease fence. Receipt retention and serialized byte
+budgets still apply. Single-send configuration remains valid without `delivery`.
+A remote result lost before its checkpoint may be sent again; provider idempotency
+or reconciliation is required. A projection may repeat after a crash before its
+checkpoint. Business-transaction enqueue and durable quarantine are not implied.
+
 ## `stitchkit/application/grammy`
 
 Isolated optional-peer lifecycle adapters. Importing `stitchkit/application`
@@ -1101,6 +1168,30 @@ Managed effects and operator telemetry additionally export `AgentToolFenceConfig
 `AgentRunSinkConfig`, `AgentRunSinkDrop` and `AgentRunSinkError`. A monotonic run `fencingToken`
 may accompany checkpoint/terminal writes and tool context; internal causes are redacted unless an
 operator-only observability sink explicitly opts in.
+
+### Completion and agent invocation receipts
+
+`createModelInvocationLedger` constructs a `ModelInvocationLedger` from
+`ModelInvocationConfig`: the existing store and model registry, a 32-byte payload
+key, required host authorization, optional bounded payload size and `onAttempt`.
+`complete(input, context, signal?)` executes only the supplied prompt, with no tools
+or framework instructions; repeated keys return the existing invocation ID.
+`read(input, context)` returns a bounded event page shared by agent and completion;
+`readPayload(input, context)` requires a separate authorization action to decrypt
+one protected artifact. See the [guide and migration example](../guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).
+
+| Export | Kind | Purpose |
+| --- | --- | --- |
+| `CompletionInvocationInputSchema` / `CompletionInvocationInput` | schema/type | strict prompt, model-attempt list, deadline, idempotency key and trace input |
+| `ModelInvocationTraceSchema` / `ModelInvocationTrace` | schema/type | operation, purpose, project, parent trace and optional experiment/case/profile |
+| `ModelInvocationRecordSchema` / `ModelInvocationRecord` | schema/type | discriminated invocation start/finish and per-attempt requested/sent/effective evidence |
+| `ModelInvocationAttemptContext` | type | conversation, operation, invocation, attempt, step and optional agent run identity |
+| `currentModelInvocationAttempt` | function | returns causal IDs inside the provider transport; undefined outside an invocation |
+
+The runtime `invocations` option takes this ledger and a trace callback; it requires
+the same store and preserves the existing tool loop. `AgentRuntimeStore.appendEventOnce`
+is an optional atomic capability required by receipt admission. Built-in stores
+supply it; custom adapters must honor its once-only transaction contract.
 
 ## `stitchkit/agent-runtime/testing`
 
@@ -2157,6 +2248,14 @@ Browser- and server-render-safe React data-layer helpers. Needs the
 For the rationale behind these APIs — why `Bun.serve` and not a framework, why
 two context types, why thin wrappers — see the
 [Architecture Decisions](../decisions/).
+
+### Watched handles in the query cache
+
+`CacheBridgeConfig.watched` accepts `WatchCacheBinding` entries with `handle`,
+`queryKey` and optional `state(frame)` observer. Include the session in query keys.
+`CacheBridgeConfig.session` fences events and removes bound queries when that login
+ends. Watch loss marks a query stale without triggering an independent refetch;
+recovery belongs to the watched read.
 
 ## `stitchkit/agent-runtime/sandbox`
 

@@ -327,6 +327,23 @@ try {
     if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
     if (name === 'full') {
+      for (const runtime of ['bun', 'node']) {
+        const invocationOutput = step(`full: ${runtime} model invocations`, () =>
+          run(runtime, ['src/model-invocations.ts'], dir),
+        );
+        if (!invocationOutput.includes('model invocation consumer: ok')) {
+          failed = true;
+          console.error('[consumer-lane] model invocation proof missing', invocationOutput);
+        }
+        const sessionOutput = step(`full: ${runtime} session and delivery`, () =>
+          run(runtime, ['src/session-delivery.ts'], dir),
+        );
+        if (!sessionOutput.includes('session and delivery consumer: ok')) {
+          failed = true;
+          console.error('[consumer-lane] session and delivery proof missing', sessionOutput);
+        }
+      }
+
       // The agent runtime needs `ai`, so this belongs to the fixture that
       // opted into it — and it is the exact invocation the upgrading guide
       // shows, so the guide cannot drift from the package again unnoticed.

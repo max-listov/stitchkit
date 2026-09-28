@@ -1,3 +1,6 @@
+import type { SessionOperation } from '../browser/session';
+import type { WatchHandle } from '../live/watch-client';
+import type { WatchStateFrame } from '../live/watch-contract';
 /**
  * Cache bridge — wire socket events into the TanStack Query cache.
  *
@@ -38,7 +41,15 @@ export type CacheBridgeHandlers<TEvents> = {
   [K in keyof TEvents & string]?: CacheBridgeHandler<EventPayload<TEvents[K]>>;
 };
 
+export interface WatchCacheBinding {
+  readonly handle: WatchHandle<unknown>;
+  readonly queryKey: QueryKey;
+  readonly state?: (state: WatchStateFrame) => void;
+}
+
 export interface CacheBridgeConfig<TEvents> {
+  readonly watched?: readonly WatchCacheBinding[];
+  readonly session?: SessionOperation<unknown>;
   socket: CacheBridgeSocket<TEvents>;
   /**
    * The TanStack Query client, or a thunk returning it. A thunk is resolved
@@ -106,38 +117,81 @@ export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): 
     freshAt.clear();
   };
 
+  let connected = false;
+  let clearWatched: (() => void) | undefined;
+  const disconnect = () => {
+    for (const off of unsubscribers) off();
+    unsubscribers = [];
+    connected = false;
+    clearFresh();
+    config.session?.signal.removeEventListener('abort', invalidateSession);
+  };
+  const invalidateSession = () => {
+    disconnect();
+    clearWatched?.();
+  };
   return {
     connect() {
-      if (unsubscribers.length > 0) return;
+      config.session?.assertCurrent();
+      if (connected) return;
       // queryClient resolved lazily — a thunk is called here (browser, from an
       // effect), never at module evaluation → the bridge is SSR-safe as a const.
       const queryClient =
         typeof config.queryClient === 'function' ? config.queryClient() : config.queryClient;
-      const ctx: CacheBridgeContext = { queryClient, isFresh };
-      // Adapter boundary: iterating the handlers map erases the key↔payload
-      // correlation. These casts bridge the typed config to the emitter's
-      // loose per-event subscribe — sound at runtime (each handler is invoked
-      // with exactly its own event's payload).
-      const handlers = config.handlers as Record<
-        string,
-        CacheBridgeHandler<unknown> | undefined
-      >;
-      const socket = config.socket as CacheBridgeSocket<
-        Record<string, (data: unknown) => void>
-      >;
-      for (const event of Object.keys(handlers)) {
-        const handler = handlers[event];
-        if (!handler) continue;
-        const off = socket.on(event, (data: unknown) => handler(data, ctx));
-        unsubscribers.push(off);
+      connected = true;
+      try {
+        clearWatched = () => {
+          for (const binding of config.watched ?? [])
+            queryClient.removeQueries({ queryKey: binding.queryKey, exact: true });
+        };
+        config.session?.signal.addEventListener('abort', invalidateSession, { once: true });
+        for (const binding of config.watched ?? []) {
+          unsubscribers.push(
+            binding.handle.subscribe({
+              value(value) {
+                if (!config.session || config.session.current())
+                  queryClient.setQueryData(binding.queryKey, value);
+              },
+              state(state) {
+                if (config.session && !config.session.current()) return;
+                if (state.phase !== 'live')
+                  void queryClient.invalidateQueries({
+                    queryKey: binding.queryKey,
+                    exact: true,
+                    refetchType: 'none',
+                  });
+                binding.state?.(state);
+              },
+            }),
+          );
+        }
+        const ctx: CacheBridgeContext = { queryClient, isFresh };
+        // Adapter boundary: iterating the handlers map erases the key↔payload
+        // correlation. These casts bridge the typed config to the emitter's
+        // loose per-event subscribe — sound at runtime (each handler is invoked
+        // with exactly its own event's payload).
+        const handlers = config.handlers as Record<
+          string,
+          CacheBridgeHandler<unknown> | undefined
+        >;
+        const socket = config.socket as CacheBridgeSocket<
+          Record<string, (data: unknown) => void>
+        >;
+        for (const event of Object.keys(handlers)) {
+          const handler = handlers[event];
+          if (!handler) continue;
+          const off = socket.on(event, (data: unknown) => {
+            if (!config.session || config.session.current()) handler(data, ctx);
+          });
+          unsubscribers.push(off);
+        }
+      } catch (error) {
+        disconnect();
+        throw error;
       }
     },
 
-    disconnect() {
-      for (const off of unsubscribers) off();
-      unsubscribers = [];
-      clearFresh();
-    },
+    disconnect,
 
     markFresh(key: QueryKey) {
       const serialised = JSON.stringify(key);

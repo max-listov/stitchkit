@@ -8,6 +8,7 @@ export {
   createCacheBridge,
   createRealtimeCacheBridge,
   type RealtimeCacheBridgeConfig,
+  type WatchCacheBinding,
 } from '../react/cache-bridge';
 export { type CursorQueryConfig, createCursorQuery } from '../react/cursor-query';
 export {

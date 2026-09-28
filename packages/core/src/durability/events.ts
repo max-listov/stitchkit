@@ -14,6 +14,9 @@ import { z } from 'zod';
 export const AgentStoreEventKindSchema = z.enum([
   'runtime/baseline',
   'runtime/transition',
+  'invocation/started',
+  'invocation/finished',
+  'provider/payload',
   'provider/request',
   'provider/response',
   'provider/message',

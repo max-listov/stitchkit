@@ -814,3 +814,44 @@ A delivered item resets the backoff, so a stream that reconnects, works for an
 hour and drops again starts its next retry at `minDelayMs` rather than the
 ceiling it reached last time. Aborting the signal ends the iteration promptly,
 including in the middle of a wait.
+
+## Operations belong to a login lifetime
+
+Use `createSessionScope` when a client can log out or switch accounts. The scope is
+host-owned and context is immutable. Replace it for **every** login, even to the
+same account. Capture once for an entire compound operation:
+
+```ts
+import { createClient, createSessionScope } from 'stitchkit'
+
+const sessions = createSessionScope<{ accountId: string }>()
+const operation = sessions.replace({ accountId: 'account-a' })
+const client = createClient(contract, {
+  baseUrl,
+  fetch: operation.bindFetch(fetch, () => ({ Authorization: tokenFor(operation) })),
+})
+const value = await operation.run(() => client.read())
+operation.deliver(() => applyResult(value))
+```
+
+Capture before the first request, keep the same operation for a second request or
+one explicitly allowed auth retry, and guard the **actual** final transport send
+or local state change. An async delivery callback needs another check after its
+await; `deliver` itself is synchronous. Guard error delivery too. Cancellation is
+additional protection and cannot undo server effects. `SessionExpiredError` means
+discard the stale operation, not refresh a new user's credentials. For raw/stream
+responses, guard each consumed chunk and final delivery; `run` returning a stream
+does not mean its future contents have been consumed.
+
+`createSessionCredentials({ scope, refresh, storage })` coordinates the same scope.
+`login(context, credentials)` creates a generation, `read(operation)` resolves only
+that generation's credentials, and concurrent `refresh(operation)` shares one
+flight. `logout()` invalidates memory immediately and resolves after its ordered
+storage clear (or a newer login superseding that clear). Handle storage and capacity
+errors explicitly; a rejected write is not proof of durable login/logout. Refresh
+network work never holds the storage queue. Callers decide whether a failed command
+may be retried once; do not replay a multi-step callback or treat any `403` as expiry.
+
+This is per-instance coordination. Route all writes through it; shared tabs/processes
+need storage-level locking. Replace the local session counter and refresh queue when
+adopting these primitives instead of retaining two independent lifetimes.

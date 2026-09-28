@@ -1,8 +1,8 @@
 {
-  "$comment": "Ceilings on the public surface. ADR 0202 adds the delivery outcome schema/type to agent-runtime (+2). Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot. → ADR 0198, docs/PRINCIPLES.md I8.",
+  "$comment": "ADRs 0206\u20130209: shared model receipts, seven session names, eight application lifetime/delivery names and one watch-cache binding. Each extends its existing owner; other budgets and overlaps are unchanged.",
   "limits": {
-    "stitchkit": 216,
-    "stitchkit/agent-runtime": 353,
+    "stitchkit": 223,
+    "stitchkit/agent-runtime": 364,
     "stitchkit/agent-runtime/browser": 82,
     "stitchkit/agent-runtime/coding-tools": 10,
     "stitchkit/agent-runtime/harness": 31,
@@ -11,7 +11,7 @@
     "stitchkit/agent-runtime/sqlite/bun": 10,
     "stitchkit/agent-runtime/sqlite/node": 10,
     "stitchkit/agent-runtime/testing": 15,
-    "stitchkit/application": 278,
+    "stitchkit/application": 286,
     "stitchkit/application/diagnostic-journal": 1,
     "stitchkit/application/directory-inbox": 1,
     "stitchkit/application/grammy": 13,
@@ -29,7 +29,7 @@
     "stitchkit/voice": 6,
     "stitchkit/observability": 65,
     "stitchkit/primitives": 71,
-    "stitchkit/react": 29,
+    "stitchkit/react": 30,
     "stitchkit/release": 17,
     "stitchkit/remote": 2,
     "stitchkit/server": 214,
@@ -546,7 +546,7 @@
     {
       "entrypoint": "stitchkit/tools",
       "names": ["MountableTool", "ToolOperation"],
-      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<…>."
+      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<\u2026>."
     },
     {
       "entrypoint": "stitchkit/tools",

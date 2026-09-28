@@ -259,6 +259,14 @@ export interface AgentRuntimeStore {
   scanRecoverable(input: { cursor?: string; limit: number }): Promise<AgentRecoverablePage>;
   /** Append one declared non-transition fact without creating a second history store. */
   appendEvent(input: AppendAgentStoreEvent): Promise<AgentStoreEventEnvelope>;
+  /** Optional atomic once-only admission. Required by model invocation receipts. */
+  appendEventOnce?(
+    input: AppendAgentStoreEvent,
+    key: string,
+  ): Promise<{
+    outcome: 'applied' | 'duplicate';
+    event: AgentStoreEventEnvelope;
+  }>;
   /** Read one bounded ordered slice of the canonical conversation event log. */
   readEvents(input: ReadAgentStoreEvents): Promise<AgentStoreEventPage>;
   /** Deterministic canonical archive bytes for one conversation's durable event log. */

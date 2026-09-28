@@ -19,6 +19,8 @@ import type {
 } from './coordinator';
 import type { AgentRuntimeEvent, AgentRuntimePublisher } from './events';
 import type { AgentHistoryProjectionOptions } from './history';
+import type { ModelInvocationTrace } from './invocation-schema';
+import type { ModelInvocationLedger } from './invocations';
 import type { AgentResolvedModel } from './models';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
@@ -175,6 +177,15 @@ export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends ToolSet = ToolSet> = 
 export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   protocol: AgentRuntimeProtocolInput<CONTEXT>;
   store: AgentRuntimeStore;
+  /** Opt into shared completion/agent receipts using this same store. */
+  invocations?: {
+    ledger: ModelInvocationLedger;
+    trace(input: {
+      context: CONTEXT;
+      conversationId: string;
+      run: AgentRun;
+    }): ModelInvocationTrace | Promise<ModelInvocationTrace>;
+  };
   /** Tool-call durability; the host retains process placement and cross-process run leases. */
   durability?:
     | true

@@ -972,3 +972,52 @@ so a scheduler stall on a loaded host cannot pull a live lock from under its
 holder — after which the heartbeat wins and the lock is abandoned. Temporary files a crashed writer left beside the state are swept on
 the store's first update. Ledger corruption may be declared reconstructable;
 an outbox must fail closed rather than silently discard pending delivery.
+
+## Recovering change subscriptions
+
+`changeSubscriptionResource` is an optional resource over a consumer-owned driver.
+It uses a finite declared key set, subscribes before reading, reconciles after
+reconnect and periodically repairs lost hints. `reconcileIntervalMs` is explicit;
+notifications alone cannot prove freshness. Within a key, hints coalesce into one
+trailing read and a failed read retries with backoff. Use the supplied
+`context.commit(() => publish(value))` after awaits to reject an obsolete connection.
+
+Drivers implement `connect(signal)` and return `subscribe({ signal, hint,
+disconnected })` plus `close()`. Subscribe must establish the notification boundary
+before resolving. A database LISTEN driver owns its connection, channels, decoding
+and transaction ordering; no SQL or database driver is included here. The resource
+owns reconnect, deadlines and shutdown. Drivers must honor abort. If one ignores it,
+its slot remains occupied until settlement; deadlines cannot safely manufacture
+successful cleanup or permit an overlapping connection.
+
+For watched reads, set `reconcileIntervalMs` on the existing `createWatchHub` rather
+than building a second read loop. Its per-key machinery is shared with managed
+subscriptions. Limits default to 1024 sources and 1024 subscribers per hub; set
+explicit finite values for larger workloads. Supply a server-verified admission
+scope to `attach` and abort it on logout, permission revocation or session replacement.
+The read callback receives the trusted scope as its third argument. A client owner
+ID in arguments is not authentication.
+
+## Multi-action notification delivery
+
+Opt into `delivery: { version, actions, project }` on `createNotificationOutbox`.
+The pure `actions(payload)` selector runs at enqueue; the versioned plan remains
+fixed throughout retry. Each `send` receives its action and a stable idempotency
+key; return a small JSON receipt such as a remote message or uploaded object ID.
+`project(notification, receipts)` applies all confirmed results locally and must
+be idempotent. Checkpoints and the final projection timestamp live in the existing
+atomic StateStore; completed receipts retain them within retention/byte limits.
+
+This supports, for example, text plus attachment delivery with a local timeline
+projection, or upload plus publication with a local asset index. These are protocol
+examples, not claims of deployed consumer adoption. A failure in projection does
+not repeat confirmed sends. A crash after remote success but before receipt commit
+is ambiguous: the provider must deduplicate the action key or reconcile its result.
+A projection can also repeat if its completion checkpoint is lost.
+
+A new executor version must explicitly migrate or terminally classify incompatible
+queued plans. Existing `classify`/`onDropped` handles terminal items; a durable
+quarantine is the application's responsibility. Whole-state file and memory stores
+remain supported. Atomic enqueue with an unrelated business transaction is not
+provided by this contract; retain the application's transactional adapter when that
+boundary is required. Send and projection callbacks own their external deadlines.

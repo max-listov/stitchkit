@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { createMutationQueue } from '../internal/mutation-queue';
 import { agentDurableEventId } from './events';
 import {
   adoptSnapshot,
@@ -6,7 +7,6 @@ import {
   type RunExecutionInput,
   type RunExecutorDependencies,
 } from './run-execution-state';
-import { createRunMutationQueue } from './run-mutation-queue';
 import { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import { createIdleDeadline, findRun } from './runtime-internals';
 import type { AgentRuntimeResult } from './runtime-result';
@@ -153,7 +153,7 @@ export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
     lastPromptTokens: { provenance: 'unavailable' },
   };
   const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs);
-  const serialize = createRunMutationQueue();
+  const serialize = createMutationQueue();
   const operationLifecycle = createAgentRunOperationLifecycle({
     store: config.store,
     runtimeEpoch,

@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-09-26 16:00 +07:00
+updated: 2026-09-28 13:25 +07:00
 ---
 
 # Agent application runtime architecture
@@ -179,3 +179,34 @@ deadline and a 60-second lease bound failure amplification. Settlement is fenced
 writing state or events. Consumer admission is at-least-once and requires durable key
 deduplication. [ADR 0202](../decisions/0202-schedule-retries-preserve-occurrence-identity.md)
 defines the transition/event policy and SQLite v4 migration.
+
+
+## Shared completion invocation receipts
+
+`createModelInvocationLedger` uses the canonical event store for both direct text
+completions and audited agent calls. A completion has an operation and invocation
+but no artificial agent run; an agent retains its real run ID and loop. The host
+verifies caller identity through `authorize`; execution process identity is local.
+The runtime `invocations` option binds the same store and a trace callback.
+
+The atomic admission point is `store.appendEventOnce`: a driver transaction checks
+for the keyed start and appends it once. Repeating a completion returns its existing
+invocation; changed request/caller/trace conflicts. This fences duplicate execution
+across processes without claiming exactly-once upstream execution after a crash.
+Provider attempts are independent records with requested, sent and effective model
+facts and provenance-aware usage. A provider finish is counted once, even when a
+failed stream is drained for its billed usage.
+
+`invocation-attempt.ts` owns the shared SDK boundary; `invocation-schema.ts` owns the
+receipt shapes, `invocations.ts` owns admission/authentication and completion,
+`invocation-read.ts` owns paginated reads, and `invocation-payload.ts` encrypts and
+verifies payload artifacts. No second database or loop is introduced. The optional
+agent integration suppresses the legacy provider writer for that invocation.
+`currentModelInvocationAttempt` supplies transport correlation; metadata cannot
+claim HTTP wire bytes or gateway retries the adapter did not expose.
+
+The host retains the AES-256-GCM payload key separately from its database/archive
+and authorizes plaintext artifact reads independently from metadata queries.
+Ordinary agent conversation history retains its existing access policy. See
+[ADR 0206](../decisions/0206-model-invocations-share-provider-evidence.md) and the
+[consumer example](../guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).

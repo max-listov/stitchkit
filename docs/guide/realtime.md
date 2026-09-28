@@ -1009,3 +1009,38 @@ registry, and a name seen once does not live on in a map. This ordering exists o
 through `emitTo`; a broadcast through `realtime.to(room).emit` reaches the
 socket immediately, replay or not, so keep room traffic whose order matters
 relative to the snapshot on the registry.
+
+## Session-scoped watches and query cache
+
+Pass the captured login operation as `createWatchClient(contract, { transport,
+session })`. It adds a lifetime nonce to watch keys and detaches on invalidation;
+a late frame for a previous login cannot match a new client's key on the same socket.
+Both client and server must support the new optional `WatchKey.instance` field.
+The nonce is not authorization: the server still admits a verified identity and
+uses `hub.attach(subscriber, { key: verifiedScope, signal: revocationSignal })`.
+The scope key must change with session and permission boundaries.
+
+`createCacheBridge` can bind watched handles directly:
+
+```ts
+const bridge = createCacheBridge({
+  socket, queryClient, handlers: {}, session,
+  watched: [{
+    handle: watches.list({ folderId }),
+    queryKey: ['items', session.id, folderId],
+    state: frame => showWatchState(frame),
+  }],
+})
+bridge.connect()
+```
+
+A value updates that exact query; non-live state marks it stale while retaining its
+value. The existing phases (`opening`, `live`, `unavailable`, `resync-required`)
+remain the status model. Do not replace unavailable data with an empty collection.
+Session invalidation removes bound queries. Include the session identity in query
+keys and guard any application-level side effects with that same operation.
+
+Use existing shared watches for paginated lists and selected-detail queries; bind
+each exact argument set to its query key. No global domain/query registry or new
+UI components are needed. Reconnect and revision/delta recovery remain owned by the
+watch client; silent lost notifications are repaired by hub reconciliation.

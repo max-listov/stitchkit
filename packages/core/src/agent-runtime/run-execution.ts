@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { beginAgentInvocation } from './invocations';
 import { acquireRun } from './run-acquisition';
 import type { RunExecutionInput, RunExecutorDependencies } from './run-execution-state';
 import { classifyRunFailure } from './run-failure';
@@ -31,6 +32,20 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     if (acquisition.kind === 'absorbed') return acquisition.result;
     const { execution } = acquisition;
     try {
+      const invocations = dependencies.config.invocations;
+      if (invocations) {
+        const trace = await invocations.trace({
+          context: input.context,
+          conversationId: execution.state.run.conversationId,
+          run: execution.state.run,
+        });
+        execution.invocation = await beginAgentInvocation(
+          invocations.ledger,
+          dependencies.config.store,
+          { run: execution.state.run, trace },
+          input.context,
+        );
+      }
       const turn = await prepareTurn(execution);
       await runModelAttempts(execution, turn);
       await settleStreamOutcome(execution);
@@ -42,6 +57,14 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       // timer armed for the rest of the process's life.
       execution.idleDeadline.dispose();
     }
-    return commitRunTerminal(execution);
+    const result = await commitRunTerminal(execution);
+    await execution.invocation?.finish(
+      result.reason === 'success'
+        ? 'succeeded'
+        : ['interrupted', 'cancelled', 'timeout', 'shutdown'].includes(result.reason)
+          ? 'cancelled'
+          : 'failed',
+    );
+    return result;
   };
 }
