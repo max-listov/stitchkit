@@ -1422,7 +1422,8 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |
 | `DEFAULT_REDACT_PATHS` | constant | baseline credential/token paths added to the sanitizer's sensitive-key policy |
 | `createJsonLogger` | function | the process journal: one JSON line per call in pino's shape (numeric `level`, epoch `time`, `msg`) on standard output, through `createBoundedLogger` — an `Error` in any field keeps name, message, stack and cause; secrets masked; `level` threshold, static `fields`, injectable `write` |
-| `JsonLoggerOptions` / `JsonLogLevel` / `JSON_LOG_LEVELS` | _type_ / constant | the bounded-logger options plus `level`, `fields`, `write`, `now`; pino's numbers `debug` 20 … `error` 50, which a line reader matches on |
+| `JsonLoggerOptions` / `JsonLogLevel` / `JSON_LOG_LEVELS` | _type_ / constant | the bounded-logger options plus `level`, `fields`, `write`, `now`; pino's numbers `debug` 20 … `error` 50, which a line reader matches on; `sensitiveValues` masks exact secrets in every string |
+| `secretValuesFromEnv` / `SecretValuesOptions` | function / _type_ | every secret an environment holds, for `sensitiveValues`: variables named as a token, secret, key, password or credential, the password and secret query values in any URL variable, each URL-encoded too, longest first; values under `minLength` (8) skipped |
 | `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings (`stringLengthByKey` raises the string bound for named keys such as `stack`) plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
 | `runUnitOfWork` / `RunUnitOfWorkOptions` | function / _type_ | run work that did not arrive over a transport — an agent loop, a scheduled broadcast — inside one context, with the same completion record a request gets |
@@ -1915,12 +1916,81 @@ injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `telegramBroadcastSender` / `TelegramBroadcastSenderConfig` / `TelegramBroadcastMessage` | function / _type_ | the standard `send`: `sendMessage` with a text or `copyMessage` of a prepared message, through the Bot API |
 | `createTelegramOperatorChannel` | function | the operator chat, apart from the journal: `post(text, topic?)` returns at once and never throws; paced sends into forum topics, 429 honoured, oldest dropped on overflow, `drain(signal)` and `close()` for the way down |
-| `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `onDropped`, `sensitivePatterns` (a bot token is always masked); a drop is `overflow` / `refused` / `attempts` / `closed` with its classification |
-| `telegramOperatorSender` / `TelegramOperatorSenderConfig` | function / _type_ | the standard `send`: `sendMessage` into the chat and topic, plain text unless `parseMode` |
+| `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `onDropped`, `sensitivePatterns` and `sensitiveValues` (a bot token is always masked), `dedupe`; a drop is `overflow` / `refused` / `attempts` / `closed` / `repeated` / `over-budget` with its classification |
+| `TelegramOperatorDedupe` | _type_ | `windowMs` (10 min): one message per `fingerprint` per window, the next one sent carries `repeatedLine(count)`; `maxPerWindow` (20) across fingerprints, the overflow counted onto the next one sent with `overBudgetLine(count)`; `now` |
+| `telegramOperatorSender` / `TelegramOperatorSenderConfig` | function / _type_ | the standard `send`: `sendMessage` into the chat and topic, plain text unless `parseMode`; with `'HTML'` the markup is cleaned and cut by what it shows, so the channel's cut never leaves a tag open |
 | `createTelegramLocalFiles` | function | files the local Bot API server wrote under `<root>/<token>/`: `resolve(file_path)` and `remove(file_path)` only inside the bot's directory, judged on real paths so a link is judged by where it leads; `check()` for readiness. Recommended root variable: `BOT_API_FILES_ROOT` |
 | `TelegramLocalFilesConfig` / `TelegramLocalFiles` / `TelegramLocalFilesCheck` / `TelegramLocalFileError` / `TelegramLocalFileRefusal` | _type_ / class | `root`, `token`; refusals `root-not-absolute` / `bot-directory-unavailable` / `outside-bot-directory` / `missing` / `not-a-file`, never carrying the path or the token |
 | `callTelegramBotApi` / `TelegramBotApiCall` / `TelegramBotApiError` | function / _type_ / class | one Bot API method over `fetch`; a refusal keeps `error_code`, `description` and `parameters` for the classifier, and no error names the URL |
 | `TELEGRAM_BOT_TOKEN_PATTERN` | constant | the shape of a bot token, for a logger's `sensitiveUrlPatterns` |
+| `claimTelegramWebhook` | function | set the webhook only where it already points here, or by naming the host it is taken from; confirm Telegram holds it; pending updates kept unless `dropPendingUpdates` |
+| `ClaimTelegramWebhookConfig` / `TelegramWebhookConfig` / `TelegramWebhookClaim` | _type_ | `token`, `url`, `secret`, `apiRoot`, `fetch`, `signal`; `takeoverFrom` (a host, or `'none'`), `allowedUpdates`, `maxConnections`, `dropPendingUpdates`; the claim's tagged `url`, `takenFrom`, `pendingUpdates` |
+| `TelegramWebhookClaimError` / `TelegramWebhookRefusal` / `TELEGRAM_WEBHOOK_NONE` | class / _type_ / constant | `owned-elsewhere` / `other-secret` / `not-confirmed` with `ownerHost` — a host, never a path; `'none'` names no webhook |
+| `telegramWebhookUrl` | function | the address with an `owner` tag derived from the secret: equal for one secret, different for another, the path untouched |
+| `checkTelegramWebhook` / `TelegramWebhookState` | function / _type_ | whether the webhook still points here: `owned`, `ownerHost`, `pendingUpdates`, Telegram's `lastError` |
+| `receiveTelegramWebhook` / `ReceiveTelegramWebhookOptions` / `TelegramUpdateAcceptance` | function / _type_ | one webhook `Request`: 403 without the secret (compared in constant time), 405 for another method, 400 for no update, 200 once `accept` recorded it |
+| `createTelegramUpdateIntake` | function | webhook updates recorded before Telegram is answered and handled after: chat order kept, other chats alongside up to `maxConcurrent`, a renewed lease per attempt, a sweep that takes over what a restart or a dead process left, retries, `maxAttempts`, finished updates remembered `retainMs` to refuse repeats; at least once |
+| `TelegramUpdateIntakeConfig` / `TelegramUpdateIntake` / `TelegramUpdateEnvelope` / `TelegramUpdateFailure` / `TelegramUpdateStoreStep` | _type_ | `store`, `handle`, `retry`, `maxAttempts` (5), `leaseMs` (120 000), `pendingGraceMs` (60 000), `sweepEveryMs` (30 000), `retainMs` (24 h), `maxConcurrent` (32), `onFailure`, `onStoreError`, `now`; `accept(body)`, `start()`, `sweep()`, `idle()`, `close()` |
+| `TelegramUpdateStore` / `StoredTelegramUpdate` / `TelegramUpdateState` / `TelegramUpdateSettlement` / `TelegramUpdateClaimOptions` / `TelegramUpdateDueQuery` | _type_ | the store an intake runs on: `add`, `claim`, `renew`, `settle`, `due`, `prune`, each atomic on one record — a claim takes `pending`, a due `failed` or a lapsed `processing`; renew and settle only by the attempt holding it |
+| `memoryTelegramUpdateStore` | function | the store in this process's memory — tests, or a bot that accepts losing unhandled updates to a restart |
+| `sqliteTelegramUpdateStore` / `SqliteTelegramUpdateStoreConfig` / `TelegramSqliteDatabase` | function / _type_ | the store in SQLite over the handle the application opened — `bun:sqlite` `Database` or `node:sqlite` `DatabaseSync`; `table` (default `telegram_updates`) created when missing |
+
+---
+
+## `stitchkit/telegram/html`
+
+Telegram's HTML parse mode as a tree: any markup in, markup Telegram accepts
+out, cut to its limits by what the reader sees. No peer and no DOM — the same
+parse serves a server send and a browser preview. → ADR 0213 —
+[guide](../guide/telegram.md#message-markup)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `parseTelegramHtml` | function | markup into nodes Telegram accepts: synonyms renamed (`strong` → `b`), block tags into line breaks, a link only with an `http`/`https`/`tg`/`mailto` `href`, an element where Telegram forbids it kept as text, a closing tag closing what is open inside it; never throws |
+| `TelegramHtmlNode` / `TelegramHtmlElement` / `TelegramHtmlTextNode` / `TelegramHtmlTag` / `TelegramHtmlStyle` | _type_ | text nodes hold decoded text; elements `b` `i` `u` `s` `tg-spoiler` `code`, `a` with `href`, `pre` with `language`, `blockquote` with `expandable`, `tg-emoji` with `emojiId`, `tg-time` with `unix` and `format` |
+| `renderTelegramHtml` | function | nodes back to markup Telegram parses into exactly them |
+| `sanitizeTelegramHtml` | function | any markup as markup Telegram accepts — `renderTelegramHtml(parseTelegramHtml(markup))` |
+| `splitTelegramHtml` / `TelegramHtmlLimitOptions` | function / _type_ | parts within `limit` visible characters (default 4096), cut at a paragraph, a line, a space, else anywhere but inside a character or a custom emoji; an element across a cut is closed and reopened with its attributes; nothing visible is no parts |
+| `truncateTelegramHtml` / `TelegramHtmlTruncateOptions` | function / _type_ | one part: cut to `limit` with `ellipsis` (`…`) inside it, still valid |
+| `telegramHtmlText` | function | the text a reader sees, entities decoded |
+| `checkTelegramHtml` / `TelegramHtmlCheck` / `TelegramHtmlProblem` | function / _type_ | the first thing Telegram would refuse, unrepaired — `bare-character` / `unsupported-tag` / `unmatched-end-tag` / `unclosed-tag` — and the visible text before it |
+| `escapeTelegramHtml` | function | `&`, `<`, `>` and `"` escaped for Telegram's HTML |
+| `TELEGRAM_TEXT_LIMIT` / `TELEGRAM_CAPTION_LIMIT` | constant | 4096 and 1024, counted after the markup is parsed, in UTF-16 code units |
+
+---
+
+## `stitchkit/telegram/screens`
+
+A bot's menus as declared screens over grammY: a screen says what the chat
+should show, and the runtime decides what to send, edit and delete. Server-only,
+Bun or Node; `grammy` and `zod` appear in the declarations, and nothing imports
+grammY at run time — the bot's own `ctx.api` and a grammY `StorageAdapter` are
+the whole dependency. → ADR 0211 — [guide](../guide/telegram-screens.md)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `telegramScreens` | function | `telegramScreens<Ctx>()` — the root the bot's screens are declared from; the context type is named once |
+| `TelegramScreensRoot` / `ScreenScope` | class | `screen(path, options?)`, `group(prefix, { params?, id? })`, and on the root `create(config)` |
+| `ScreenGroupBuilder` / `ScreenBuilder` / `ScreenBodyBuilder` | class | the chain: `load` (first or never) → `action` / `on` → `view`, which ends the declaration |
+| `ScopeOptions` / `ScreenOptions` / `ParamsSchemaFor` / `ActionInputSchema` | _type_ | a group's `params` schema and `id`; a screen's explicit `id`; the schema a path's params accept; an action's flat input schema |
+| `TelegramScreen` / `AnyTelegramScreen` | class / _type_ | a declared screen, typed by its context, params, data and actions |
+| `ScreenLoadContext` / `ScreenActionContext` / `ScreenInputContext` / `ScreenViewContext` | _type_ | `ctx`, `params`, `data`; an action's `input`; an input's `message`, `text` and `pending(text)`; a view's `act` buttons |
+| `ScreenParams` / `ScreenParamValue` / `ScreenPathParams` / `ScreenLinkArgs` | _type_ | params parsed from the path literal (or its schema); the argument a `link` or `go` takes — required exactly when the path has params |
+| `ScreenActions` / `ScreenActionButtons` / `NoActionInput` | _type_ | action name → input; `act.<name>(label, input?)` typed by the action's schema |
+| `ScreenInputKind` / `ScreenInputOptions` | _type_ | `text` `rich` `photo` `video` `animation` `document` `audio` `voice` `video_note` `sticker` `location` `contact`; `keepMessage` leaves the user's message (default: deleted before the handler) |
+| `ScreenHandlerResult` / `ScreenOutcome` / `ScreenOutcomeBuilders` / `ScreenInputOutcomeBuilders` | _type_ / class | what a load, action or input answers: `stay()`, `go(screen, params?)`, `back()`, `toast(text, { alert? })` (≤ 200 characters), `notice(content, { expiresInMs? })`; `void` is `stay()`; after input there is no press, so no `toast` |
+| `ScreenNavigation` / `ScreenToast` / `ScreenNotice` / `NoticeOptions` | _type_ | the parts of an outcome; a notice without `expiresInMs` is a receipt the screen moves below, with it a remark under the screen that removes itself |
+| `ViewMessage` / `ScreenViewResult` / `TextViewMessage` / `RichViewMessage` / `PhotoViewMessage` / `VideoViewMessage` / `AnimationViewMessage` / `DocumentViewMessage` / `AudioViewMessage` / `ScreenMediaKind` | _type_ | one message or several; exactly one content (`text`, `rich`, or a media file id or URL with `caption`), plus `keyboard`, `key` and `linkPreview` |
+| `link` / `back` / `ScreenButton` | function / class | a button to a screen with its params; a button to the parent screen |
+| `Keyboard` / `KeyboardRow` / `KeyboardButton` / `PlainKeyboardButton` / `ButtonLabel` | _type_ | rows of screen buttons and plain Telegram buttons without `callback_data`; `false`, `null` and `undefined` are skipped; a label is text or `{ text, style?, icon_custom_emoji_id? }` |
+| `html` / `TelegramHtml` / `HtmlTag` / `HtmlValue` / `TelegramText` | function / class / _type_ | Telegram HTML with every interpolation escaped; `html.raw()` for markup already safe, `html.join()`; a plain string is always escaped (`escapeTelegramHtml` is `stitchkit/telegram/html`'s) |
+| `ActionValue` | _type_ | what a button can carry: a string, a finite number, a boolean or `null` |
+| `TelegramScreensConfig` | _type_ | `screens`, `storage`, `chatKey` (default `screens:<chat id>`), `callbackPrefix` (default `~`), `chats` (`'private'` by default, or `'all'`), `onStale`, `onError`, `onEvent`, `clock` |
+| `TelegramScreens` / `OpenArgs` / `OpenOptions` | _type_ | `bot.use(screens)`; `open(ctx, screen, params?, { previous: 'keep' \| 'delete' })`; `button(link(…))` for a message the screens do not own; `close()` cancels expiry timers |
+| `ScreenStaleContext` / `ScreenStaleReason` / `ScreenErrorContext` / `ScreenTrigger` | _type_ | a press nothing can answer — `malformed` / `forged` / `inaccessible` / `unknown-token` / `unknown-screen` / `invalid-params` / `unknown-action` / `invalid-input`; an error with its trigger `open` / `press` / `input` |
+| `ScreenEvent` / `ExecutionReport` | _type_ | `transition` (trigger, path templates, duration, messages sent / edited / kept / deleted), `state-discarded`, `message-kept`, `sweep-failed`; never message text |
+| `ScreenChatState` / `ScreenChatStateSchema` / `TelegramScreenStorage` | _type_ / schema | one record per chat — the shown view and expiring remarks, no message text; any grammY `StorageAdapter<ScreenChatState>` |
+| `createScreenTestChat` / `ScreenTestChat` / `TestChatOptions` / `TestChatMessage` / `TestChatCall` / `TestMessageKind` | function / _type_ | a chat with the application's own `Bot` and no Telegram: `send`, `sendPhoto`, `press(label)`, `pressData`, `failNext`, `deleteByUser`, `restart(bot)`; `messages`, `calls`, `answers` |
 
 ---
 
@@ -2275,6 +2345,31 @@ two context types, why thin wrappers — see the
 `CacheBridgeConfig.session` fences events and removes bound queries when that login
 ends. Watch loss marks a query stale without triggering an independent refetch;
 recovery belongs to the watched read.
+
+## `stitchkit/react/keyboard`
+
+Browser-only, headless keyboard handling for React: which part of a screen gets a
+key, and lists the arrows move through with real focus. Needs the `react` peer;
+no component, no styles, no router — see the [keyboard guide](../guide/keyboard.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `useKeyLayer` | hook | put a layer on the window's one key stack — asked `overlay` → `local` → `route` → `zone` → `global`, innermost first within a kind |
+| `useEscapeLayer` | hook | an `overlay`, `local` or `route` layer for Escape: one press closes one level |
+| `useNavZone` | hook | a list zone — roving tab stop, arrows move DOM focus, select or highlight mode, cross-axis enter/exit, boundaries |
+| `nextZoneIndex` | function | where a move lands in a list of a given length: an index, `'before-start'` or `'after-end'` |
+| `isKeyFieldTarget` | function | whether a key was pressed in a field or a `data-local-keys` area, the test layers use |
+| `KeyLayerOptions` | _type_ | `kind`, `onKey`, `active`, `scope`, `fields` |
+| `KeyLayerKind` | _type_ | `'overlay' \| 'local' \| 'route' \| 'zone' \| 'global'` |
+| `EscapeLayerOptions` | _type_ | `kind`, `onEscape`, `active`, `scope` |
+| `NavZoneOptions` | _type_ | `items`, `value`, `onChange`, `mode`, `orientation`, `role`, `loop`, `onEnter`, `onExit`, `onBoundary`, `active`, `label`, `onReveal` |
+| `NavZone` | _type_ | what `useNavZone` returns — `zoneProps`, `itemProps(id)`, `element`, `current`, `focus(id?)` |
+| `NavZoneProps` / `NavZoneItemProps` | _type_ | the props spread on the zone's element and on each item |
+| `NextZoneIndexInput` | _type_ | `length`, `index`, `move`, `loop` |
+| `ZoneItemId` | _type_ | an item id — `string \| number` |
+| `ZoneChangeCause` | _type_ | `'arrow' \| 'confirm'` |
+| `ZoneMove` | _type_ | `'next' \| 'previous' \| 'first' \| 'last'` |
+| `ZoneOrientation` | _type_ | `'vertical' \| 'horizontal'` |
 
 ## `stitchkit/agent-runtime/sandbox`
 

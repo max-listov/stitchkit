@@ -24,6 +24,9 @@
  */
 
 import { z } from 'zod';
+import { digestsEqual, hmacSha256, toHex } from './crypto';
+
+const encoder = new TextEncoder();
 
 /**
  * The Telegram user record, as our surface names things.
@@ -121,44 +124,6 @@ export interface VerifyTelegramInitDataOptions {
   maxAgeSeconds?: number;
   /** Epoch milliseconds, for a caller that owns its own clock. */
   now?: () => number;
-}
-
-const encoder = new TextEncoder();
-
-async function hmacSha256(
-  key: ArrayBuffer | Uint8Array,
-  message: string,
-): Promise<ArrayBuffer> {
-  const imported = await crypto.subtle.importKey(
-    'raw',
-    key as BufferSource,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  return crypto.subtle.sign('HMAC', imported, encoder.encode(message));
-}
-
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, '0')).join(
-    '',
-  );
-}
-
-/**
- * Compare two hex digests without leaking where they first differ.
- *
- * A plain `===` on a digest returns as soon as one byte disagrees, and the time
- * it took is a measurement of how much of the digest was right. The whole point
- * of the comparison is that an attacker cannot get a partial answer.
- */
-function digestsEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
-  }
-  return difference === 0;
 }
 
 function optionalUser(

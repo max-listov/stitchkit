@@ -37,6 +37,7 @@ export {
   type TelegramChatId,
   type TelegramOperatorChannel,
   type TelegramOperatorChannelConfig,
+  type TelegramOperatorDedupe,
   type TelegramOperatorDrop,
   type TelegramOperatorMessage,
   type TelegramOperatorSenderConfig,
@@ -47,3 +48,40 @@ export {
   type TelegramSendFailure,
   type TelegramSendFailureReason,
 } from '../telegram/send-failure';
+export {
+  createTelegramUpdateIntake,
+  type TelegramUpdateEnvelope,
+  type TelegramUpdateFailure,
+  type TelegramUpdateIntake,
+  type TelegramUpdateIntakeConfig,
+  type TelegramUpdateStoreStep,
+} from '../telegram/update-intake';
+export {
+  memoryTelegramUpdateStore,
+  type StoredTelegramUpdate,
+  type TelegramUpdateClaimOptions,
+  type TelegramUpdateDueQuery,
+  type TelegramUpdateSettlement,
+  type TelegramUpdateState,
+  type TelegramUpdateStore,
+} from '../telegram/update-store';
+export {
+  type SqliteTelegramUpdateStoreConfig,
+  sqliteTelegramUpdateStore,
+  type TelegramSqliteDatabase,
+} from '../telegram/update-store-sqlite';
+export {
+  type ClaimTelegramWebhookConfig,
+  checkTelegramWebhook,
+  claimTelegramWebhook,
+  type ReceiveTelegramWebhookOptions,
+  receiveTelegramWebhook,
+  TELEGRAM_WEBHOOK_NONE,
+  type TelegramUpdateAcceptance,
+  type TelegramWebhookClaim,
+  TelegramWebhookClaimError,
+  type TelegramWebhookConfig,
+  type TelegramWebhookRefusal,
+  type TelegramWebhookState,
+  telegramWebhookUrl,
+} from '../telegram/webhook';

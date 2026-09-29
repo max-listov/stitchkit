@@ -505,6 +505,9 @@
     },
     "bounds": {
       "exempt": "passed unchanged to createBoundedLogger, whose bounds tests prove it"
+    },
+    "sensitiveValues": {
+      "test": "a journal given them masks every occurrence in the message and in any field"
     }
   },
   "TelegramBroadcastConfig": {
@@ -572,6 +575,12 @@
     },
     "sensitivePatterns": {
       "test": "a bot token in a posted text is sent and reported masked, and so is an application pattern"
+    },
+    "sensitiveValues": {
+      "test": "exact secret values are masked before anything else sees the text"
+    },
+    "dedupe": {
+      "test": "one failure is sent once per window; the next one says how many were held back"
     }
   },
   "TelegramLocalFilesConfig": {
@@ -683,6 +692,257 @@
     },
     "maxFreshKeys": {
       "test": "freshness expires, can be cleared, and is bounded by oldest-first eviction"
+    }
+  },
+  "TelegramScreensConfig": {
+    "callbackPrefix": {
+      "test": "callbackPrefix marks every screen button, and other prefixes pass through"
+    },
+    "chatKey": {
+      "test": "chatKey names where the record is stored"
+    },
+    "chats": {
+      "test": "chats: 'all' answers presses in a group"
+    },
+    "clock": {
+      "test": "clock times the expiry of a remark; close() cancels pending sweeps"
+    },
+    "onError": {
+      "test": "onError turns a thrown action into the outcome it answers"
+    },
+    "onEvent": {
+      "test": "a message Telegram will not delete loses its buttons and is reported"
+    },
+    "onStale": {
+      "test": "onStale gets the reason and its outcome is shown"
+    },
+    "screens": {
+      "test": "open, navigate by editing in place, back, and a two-message screen"
+    },
+    "storage": {
+      "test": "state survives a restart: input after a new runtime over the same storage reaches the screen"
+    }
+  },
+  "OpenOptions": {
+    "previous": {
+      "test": "open keeps the previous view by default, and deletes it when asked"
+    }
+  },
+  "ScreenInputOptions": {
+    "keepMessage": {
+      "test": "keepMessage leaves the message and sends the view below it"
+    }
+  },
+  "NoticeOptions": {
+    "expiresInMs": {
+      "test": "an expiring notice sits below the screen and is swept once due"
+    }
+  },
+  "KeyLayerOptions": {
+    "kind": {
+      "test": "layers are asked overlay, local, route, zone, global — whatever order they mount in"
+    },
+    "onKey": {
+      "test": "the first layer that takes the key is the only one that hears it, and its default is prevented"
+    },
+    "active": {
+      "test": "a layer is heard while its component is mounted and active"
+    },
+    "scope": {
+      "test": "a layer scoped to an inert element is not heard"
+    },
+    "fields": {
+      "test": "keys typed in an input reach only a layer that includes fields"
+    }
+  },
+  "EscapeLayerOptions": {
+    "kind": {
+      "test": "an open overlay takes Escape before the page, and nothing below it hears other keys"
+    },
+    "onEscape": {
+      "test": "a layer with nothing to close answers false and the one below is asked"
+    },
+    "active": {
+      "test": "an inactive Escape layer is passed over, and hears again once active"
+    },
+    "scope": {
+      "test": "one Escape closes one level: the inner panel, then the page, though both mounted together"
+    }
+  },
+  "NavZoneOptions": {
+    "items": {
+      "test": "the tab stop is the pointed item, else the chosen one, else the first — of the listed items"
+    },
+    "value": {
+      "test": "the tab stop is the pointed item, else the chosen one, else the first — of the listed items"
+    },
+    "onChange": {
+      "test": "an arrow moves real focus and the tab stop, and chooses in select mode"
+    },
+    "mode": {
+      "test": "in highlight mode an arrow only moves focus, and Enter chooses"
+    },
+    "orientation": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "role": {
+      "test": "a tablist has tabs; role none keeps the items own and marks the chosen one current"
+    },
+    "loop": {
+      "test": "a looping zone wraps instead of reaching a boundary"
+    },
+    "onEnter": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "onExit": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "onBoundary": {
+      "test": "past the last item a zone hands the key to onBoundary, or leaves it"
+    },
+    "active": {
+      "test": "with focus in no zone, an arrow lands on the active zone, and an inactive zone takes none"
+    },
+    "label": {
+      "test": "a listbox of options: one tab stop, the chosen option selected, orientation and name"
+    },
+    "onReveal": {
+      "test": "an item without an element is revealed, and focused the moment its element mounts"
+    }
+  },
+  "ScreenOptions": {
+    "id": {
+      "test": "an explicit id keeps sent buttons working after the path is renamed; a derived one does not"
+    },
+    "params": {
+      "test": "a params schema on a screen or a group parses what the button carries"
+    }
+  },
+  "ScopeOptions": {
+    "params": {
+      "test": "a params schema on a screen or a group parses what the button carries"
+    }
+  },
+  "TestChatOptions": {
+    "chatId": {
+      "test": "the test chat takes its chat id, chat type and user id"
+    },
+    "chatType": {
+      "test": "the test chat takes its chat id, chat type and user id"
+    },
+    "userId": {
+      "test": "the test chat takes its chat id, chat type and user id"
+    }
+  },
+  "TelegramOperatorDedupe": {
+    "windowMs": {
+      "test": "one failure is sent once per window; the next one says how many were held back"
+    },
+    "now": {
+      "test": "one failure is sent once per window; the next one says how many were held back"
+    },
+    "maxPerWindow": {
+      "test": "a storm of different messages spends the budget; the overflow rides on the next one sent"
+    },
+    "fingerprint": {
+      "test": "the lines and the fingerprint are the application to word"
+    },
+    "repeatedLine": {
+      "test": "the lines and the fingerprint are the application to word"
+    },
+    "overBudgetLine": {
+      "test": "the lines and the fingerprint are the application to word"
+    }
+  },
+  "ClaimTelegramWebhookConfig": {
+    "token": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "url": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "secret": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "fetch": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "allowedUpdates": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "maxConnections": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "dropPendingUpdates": {
+      "test": "its own webhook is refreshed, a named takeover moves it, and pending updates are kept"
+    },
+    "takeoverFrom": {
+      "test": "a foreign webhook is refused without setWebhook, and the refusal names only the owner's host"
+    },
+    "apiRoot": {
+      "test": "a local Bot API root and an abort signal reach every call"
+    },
+    "signal": {
+      "test": "a local Bot API root and an abort signal reach every call"
+    }
+  },
+  "TelegramUpdateIntakeConfig": {
+    "store": {
+      "test": "answers before a slow update finishes, keeps chat order, runs other chats alongside"
+    },
+    "handle": {
+      "test": "answers before a slow update finishes, keeps chat order, runs other chats alongside"
+    },
+    "retry": {
+      "test": "an update stops after maxAttempts"
+    },
+    "maxAttempts": {
+      "test": "an update stops after maxAttempts"
+    },
+    "now": {
+      "test": "an update stops after maxAttempts"
+    },
+    "leaseMs": {
+      "test": "a live handler's lease keeps a second process off it; a dead one's lapses to the second"
+    },
+    "pendingGraceMs": {
+      "test": "a pending update waits pendingGraceMs for its own process, then any process takes it; finished ones are forgotten after retainMs"
+    },
+    "retainMs": {
+      "test": "a pending update waits pendingGraceMs for its own process, then any process takes it; finished ones are forgotten after retainMs"
+    },
+    "sweepEveryMs": {
+      "test": "the sweep runs on its own every sweepEveryMs"
+    },
+    "maxConcurrent": {
+      "test": "at most maxConcurrent chats are handled at once"
+    },
+    "onFailure": {
+      "test": "a failure is retried from the stored body when due; a refusal repeating cannot fix is abandoned"
+    },
+    "onStoreError": {
+      "test": "a store that fails a step is reported, and the update is not lost"
+    }
+  },
+  "SecretValuesOptions": {
+    "minLength": {
+      "test": "collects named secrets and the credentials inside URLs, encoded too, longest first"
+    }
+  },
+  "TelegramHtmlTruncateOptions": {
+    "limit": {
+      "test": "truncation keeps the markup valid and the ellipsis inside the limit"
+    },
+    "ellipsis": {
+      "test": "truncation keeps the markup valid and the ellipsis inside the limit"
+    }
+  },
+  "SqliteTelegramUpdateStoreConfig": {
+    "database": {
+      "test": "a live handler's lease keeps a second process off it; a dead one's lapses to the second"
+    },
+    "table": {
+      "exempt": "only names the table; the store rules run against the default name in every store test"
     }
   }
 }

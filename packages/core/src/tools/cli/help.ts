@@ -186,6 +186,13 @@ export function renderCommandHelp(
       const label = labels.get(f.name) ?? `--${f.name}`;
       lines.push(`  ${padRight(label, width)}  <${typeLabel(f.schema)}>${req}${desc}`);
     }
+    const flag = [...kinds].find(([, info]) => info.kind === 'boolean')?.[0];
+    if (flag !== undefined) {
+      lines.push(
+        '',
+        `A boolean flag is on alone or takes true/false: --${flag}, --${flag} false, --no-${flag}`,
+      );
+    }
     lines.push('');
   }
   const applicationLines = applicationOptionLines(applicationOptions);

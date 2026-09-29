@@ -143,6 +143,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'request-local SSR clients, a browser singleton and ApiError retry rules',
   ],
   [
+    'keyboard.md',
+    'Keyboard layers and list zones',
+    'stitchkit/react/keyboard — which part of a screen gets a key: ordered layers, one Escape per level, list zones that move real focus',
+  ],
+  [
     'voice.md',
     'Voice',
     'stitchkit/voice — sentences cut while a reply streams, the text a voice reads, a speech queue that synthesises ahead and stops on interruption',
@@ -150,7 +155,12 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
   [
     'telegram.md',
     'Telegram bots',
-    'stitchkit/telegram — the journal, the operator channel, resumable broadcasts, local Bot API files; the bot as application resources',
+    'stitchkit/telegram — the journal, the operator channel, resumable broadcasts, local Bot API files, webhook ownership and durable update intake, message markup (stitchkit/telegram/html); the bot as application resources',
+  ],
+  [
+    'telegram-screens.md',
+    'Telegram screens',
+    'stitchkit/telegram/screens — a bot menu as declared screens: typed paths, actions and input, messages reconciled in place, state in a StorageAdapter, a test chat',
   ],
   [
     'geo.md',
@@ -238,9 +248,14 @@ export const GUIDE_SLICES: GuideMap = {
   'multi-tenant.md': { primary: './server' },
   'frontend-integrations.md': { primary: './react' },
   'react.md': { primary: './react' },
+  'keyboard.md': { primary: './react/keyboard' },
   'geo.md': { primary: './geo' },
   'voice.md': { primary: './voice' },
-  'telegram.md': { primary: './telegram', also: ['./application/grammy', './observability'] },
+  'telegram.md': {
+    primary: './telegram',
+    also: ['./telegram/html', './application/grammy', './observability'],
+  },
+  'telegram-screens.md': { primary: './telegram/screens', also: ['./telegram'] },
   'upgrading.md': UPGRADING,
   'declaration.md': { primary: './declaration' },
 };

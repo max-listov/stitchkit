@@ -25,6 +25,7 @@ import {
   describeSchemaFields,
   looseCoerce,
   parseReservedBool,
+  separateBoolValue,
   setNested,
 } from './args-fields';
 import {
@@ -69,7 +70,7 @@ export interface ParsedCliArgs {
  *
  * Supported forms:
  *  - `--key value` / `--key=value` / `-` repeated for arrays
- *  - `--flag` boolean presence, `--no-flag` to negate
+ *  - `--flag` boolean presence, `--flag true|false` as a separate token, `--no-flag` to negate
  *  - `--a.b=c` dotted path → nested object (loose-coerced leaf)
  *  - positional args fill non-boolean fields in schema-declaration order
  */
@@ -140,7 +141,12 @@ function readCliTokens(
       const inline = match?.[2];
       const info = fields.get(field);
       if (info?.kind === 'boolean') {
-        boolFlags.set(field, inline === undefined ? true : parseReservedBool(field, inline));
+        const separate = inline === undefined ? separateBoolValue(argv[i + 1]) : undefined;
+        if (separate !== undefined) i++;
+        boolFlags.set(
+          field,
+          inline === undefined ? (separate ?? true) : parseReservedBool(field, inline),
+        );
         continue;
       }
       let value = inline;
@@ -163,7 +169,10 @@ function readCliTokens(
     if (name.length === 0) throw new CliArgumentError('Invalid empty option name');
 
     if (option.globalKind === 'boolean') {
-      const enabled = value === undefined ? true : parseReservedBool(name, value);
+      const separate = value === undefined ? separateBoolValue(argv[i + 1]) : undefined;
+      if (separate !== undefined) i++;
+      const enabled =
+        value === undefined ? (separate ?? true) : parseReservedBool(name, value);
       if (name === 'dry-run') options.dryRun = enabled;
       else if (name === 'json') options.json = enabled;
       else if (name === 'wait') options.wait = enabled;
@@ -216,7 +225,9 @@ function readCliTokens(
     }
     if (value === undefined) {
       if (info?.kind === 'boolean') {
-        boolFlags.set(name, true);
+        const separate = separateBoolValue(argv[i + 1]);
+        if (separate !== undefined) i++;
+        boolFlags.set(name, separate ?? true);
         continue;
       }
       // The next token is the value unless it is itself an option: `--grep
@@ -407,7 +418,9 @@ export function extractCliGlobalOptions(
     }
     let { value } = option;
     if (value === undefined && info.kind === 'boolean') {
-      value = 'true';
+      const separate = separateBoolValue(argv[i + 1]);
+      if (separate !== undefined) i++;
+      value = String(separate ?? true);
     } else if (value === undefined) {
       const next = argv[i + 1];
       if (next !== undefined && !isOptionToken(next)) {

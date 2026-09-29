@@ -129,6 +129,9 @@ both. Read it there; the four that come up most:
 | what a repository says about itself: identity, roles, build, release steps, the names of the values a deployment supplies | Project declaration | `llms/declaration.txt` |
 | visitor tracking: the outbox, the visit lease, the page-leave beacon, visible time, clicks, attribution, and the server-side decisions | Visitor tracking | `llms/tracking.txt` |
 | the page reloads onto the release it was built for: build marker, `X-Build-Id`, socket event, reload policy | Release | `llms/release.txt` |
+| a Telegram bot: journal, operator chat, broadcasts, a webhook only this process may set, updates recorded before Telegram is answered, HTML cleaned and cut to the limit | Telegram bots | `llms/telegram.txt` |
+| a Telegram bot's menus: screens, buttons, actions, input, message editing, a test chat | Telegram screens | `llms/telegram-screens.txt` |
+| keyboard on a React screen: shortcuts, one Escape per level, arrow-key lists with real focus | Keyboard layers and list zones | `llms/react-keyboard.txt` |
 
 Some of those surfaces are declared **evolving** — `stitchkit/declaration`,
 `stitchkit/tracking`, `stitchkit/release`, `stitchkit/live`, `stitchkit/agent-runtime` and `stitchkit/application` may be redefined in any minor, always with a marked

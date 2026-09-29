@@ -159,6 +159,12 @@ export const STITCHKIT_EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
       'This file proves each shape fires, which it can only do by containing one of each.',
   },
   {
+    file: 'packages/core/tests/observability-secret-values.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'A synthetic database URL: the test proves its password is collected for masking, encoded and decoded, and its user name is not.',
+  },
+  {
     file: 'scripts/publication-privacy.ts',
     rule: 'agent or session routing metadata',
     because:

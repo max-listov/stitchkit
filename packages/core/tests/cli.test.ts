@@ -194,6 +194,9 @@ describe('createCli — routing & help', () => {
     expect(out).toContain('--name');
     expect(out).toContain('--count');
     expect(out).toContain('(required)');
+    expect(out).toContain(
+      'A boolean flag is on alone or takes true/false: --active, --active false, --no-active',
+    );
   });
 });
 

@@ -118,6 +118,19 @@ const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
 const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
 
 /** Strict boolean for a RESERVED option — an unrecognised value is a usage error, never a silent `true`. */
+/**
+ * The token after a bare boolean flag, when it is the flag's value: exactly
+ * `true` or `false` — `--verbose false` is a common habit, and reading it as
+ * "on, plus a positional `false`" silently does the opposite of what was said.
+ * Only those two words: `1`, `yes` or `no` there stay positionals, since a
+ * flag followed by an ordinary value must not swallow it.
+ */
+export function separateBoolValue(next: string | undefined): boolean | undefined {
+  if (next === 'true') return true;
+  if (next === 'false') return false;
+  return undefined;
+}
+
 /** True for a value the reserved-boolean grammar already claims. */
 export function isReservedBoolWord(value: string): boolean {
   const word = value.toLowerCase();

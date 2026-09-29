@@ -62,6 +62,7 @@ export {
   sanitizePayload,
   truncatePreview,
 } from '../observability/sanitize';
+export { type SecretValuesOptions, secretValuesFromEnv } from '../observability/secret-values';
 export {
   createSpooledSink,
   type SpooledSink,

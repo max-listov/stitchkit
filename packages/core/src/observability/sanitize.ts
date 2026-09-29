@@ -29,6 +29,12 @@ export interface SanitizeOptions {
   sensitivePaths?: readonly string[];
   /** Patterns whose matching portions are masked in every string, including messages. */
   sensitiveUrlPatterns?: readonly RegExp[];
+  /**
+   * Exact secret values masked wherever they occur in any string — a
+   * provider's key has no shape a pattern could guess. `secretValuesFromEnv`
+   * collects them from the environment.
+   */
+  sensitiveValues?: readonly string[];
   /** Cap on the serialised payload — anything larger collapses to a preview. Default 16 KB. */
   maxBytes?: number;
   /** Recursion limit — deeper nesting collapses to a marker. Default 20. */
@@ -143,6 +149,32 @@ const DEFAULT_MAX_NODES = 20_000;
 const MASK = '[redacted]';
 
 /**
+ * Masks every secret value and every match of every sensitive pattern in one
+ * string. Values go longest first, so a secret containing another is masked whole.
+ */
+function secretMasker(options: SanitizeOptions): (input: string) => string {
+  const values = [...(options.sensitiveValues ?? [])]
+    .filter((value) => value !== '')
+    .sort((left, right) => right.length - left.length);
+  const patterns = options.sensitiveUrlPatterns ?? [];
+  return (input) => {
+    let output = input;
+    for (const value of values) output = output.replaceAll(value, MASK);
+    for (const pattern of patterns) {
+      try {
+        // Rebuilt as global and never sticky: a `y` flag would mask only a
+        // match at position 0 and leave every later secret in place.
+        const global = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}g`);
+        output = output.replace(global, MASK);
+      } catch {
+        // A consumer regexp must not turn diagnostics into application failure.
+      }
+    }
+    return output;
+  };
+}
+
+/**
  * Deep-copy `value` into a JSON-safe shape: secret-named keys masked wherever
  * a key exists — object fields and `Map` entries alike, at any depth; a `Set`
  * member has no key and is therefore not masked, binary
@@ -190,19 +222,10 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
     const byKey = key === undefined ? undefined : options.maxStringLengthByKey?.[key];
     return byKey ?? maxStringLength;
   };
+  const mask = secretMasker(options);
   const safeString = (input: string, key?: string): string => {
     const bound = stringBoundFor(key);
-    let output = input;
-    for (const pattern of options.sensitiveUrlPatterns ?? []) {
-      try {
-        // Rebuilt as global and never sticky: a `y` flag would mask only a
-        // match at position 0 and leave every later secret in place.
-        const global = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}g`);
-        output = output.replace(global, MASK);
-      } catch {
-        // A consumer regexp must not turn diagnostics into application failure.
-      }
-    }
+    const output = mask(input);
     if (output.length <= bound) return output;
     return `${output.slice(0, Math.max(0, bound))}…[truncated]`;
   };

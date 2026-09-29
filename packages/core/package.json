@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.100.2",
+  "version": "0.100.3",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -61,6 +61,10 @@
     "./react": {
       "types": "./dist/entrypoints/react.d.ts",
       "import": "./dist/entrypoints/react.js"
+    },
+    "./react/keyboard": {
+      "types": "./dist/entrypoints/react/keyboard.d.ts",
+      "import": "./dist/entrypoints/react/keyboard.js"
     },
     "./tools": {
       "types": "./dist/entrypoints/tools.d.ts",
@@ -173,6 +177,14 @@
     "./telegram": {
       "types": "./dist/entrypoints/telegram.d.ts",
       "import": "./dist/entrypoints/telegram.js"
+    },
+    "./telegram/html": {
+      "types": "./dist/entrypoints/telegram/html.d.ts",
+      "import": "./dist/entrypoints/telegram/html.js"
+    },
+    "./telegram/screens": {
+      "types": "./dist/entrypoints/telegram/screens.d.ts",
+      "import": "./dist/entrypoints/telegram/screens.js"
     },
     "./tracking": {
       "types": "./dist/entrypoints/tracking.d.ts",
@@ -308,6 +320,7 @@
     "ky": "^2.1.0"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.14.5",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
@@ -319,12 +332,14 @@
     "@types/bun": "^1.4.2",
     "@types/json-schema": "^7.0.15",
     "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@typescript/typescript6": "^6.0.2",
     "ai": "^7.0.111",
     "fake-indexeddb": "^6.2.5",
-    "grammy": "^1.46.0",
     "google-auth-library": "^11.1.0",
+    "grammy": "^1.46.0",
     "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "react-query-kit": "^3.3.4",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",

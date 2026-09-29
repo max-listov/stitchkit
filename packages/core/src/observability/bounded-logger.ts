@@ -33,6 +33,8 @@ export interface BoundedLoggerOptions {
   };
   readonly bounds?: BoundedLoggerBounds;
   readonly sensitiveUrlPatterns?: readonly RegExp[];
+  /** Exact secret values masked in every string — see `SanitizeOptions.sensitiveValues`. */
+  readonly sensitiveValues?: readonly string[];
 }
 
 type LogLevel = keyof StitchLogger;
@@ -115,6 +117,7 @@ export function createBoundedLogger(options: BoundedLoggerOptions): StitchLogger
             ...(options.redact?.paths ?? []).map((path) => `data.${path}`),
           ],
           sensitiveUrlPatterns: options.sensitiveUrlPatterns,
+          sensitiveValues: options.sensitiveValues,
           maxStringLength: options.bounds?.stringLength ?? 4_000,
           ...(options.bounds?.stringLengthByKey !== undefined && {
             maxStringLengthByKey: options.bounds.stringLengthByKey,

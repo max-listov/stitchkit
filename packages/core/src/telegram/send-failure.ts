@@ -210,3 +210,48 @@ export function classifyTelegramSendFailure(error: unknown): TelegramSendFailure
     evidence: 'none',
   };
 }
+
+/**
+ * What a refused edit, deletion or press answer means for the chat — the
+ * questions a screen asks after the message exists, which a send never does.
+ *
+ * - `not-modified`: the edit asked for what is already there. Success.
+ * - `message-gone`: the message is not there — the user deleted it, or the id
+ *   is not a message at all. A deletion of it has nothing left to do.
+ * - `message-locked`: the message is there and cannot be changed that way — too
+ *   old to delete, not the bot's to edit, no text or caption to edit. An edit
+ *   has to send it anew; a deletion leaves it in the chat.
+ * - `query-expired`: the press waited too long to be answered; nothing to do.
+ * - `other`: everything else, including a malformed payload — the caller's to
+ *   raise.
+ *
+ * Internal to the screens: it reads Telegram's prose the same way
+ * {@link classifyTelegramSendFailure} does and is not a public vocabulary.
+ */
+export type TelegramEditRefusal =
+  | 'not-modified'
+  | 'message-gone'
+  | 'message-locked'
+  | 'query-expired'
+  | 'other';
+
+const EDIT_REFUSALS: readonly (readonly [RegExp, TelegramEditRefusal])[] = [
+  [/message is not modified/i, 'not-modified'],
+  [
+    /message to (edit|delete) not found|message_id_invalid|message identifier is not specified/i,
+    'message-gone',
+  ],
+  [
+    /message can'?t be (edited|deleted)|there is no (text|caption) in the message to edit/i,
+    'message-locked',
+  ],
+  [/query is too old|query id is invalid/i, 'query-expired'],
+];
+
+export function classifyTelegramEditRefusal(error: unknown): TelegramEditRefusal {
+  const description = descriptionOf(error);
+  for (const [pattern, refusal] of EDIT_REFUSALS) {
+    if (pattern.test(description)) return refusal;
+  }
+  return 'other';
+}

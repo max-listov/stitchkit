@@ -134,6 +134,24 @@ const ACCEPTED = {
   BunServeOptions: 'alias over @types/bun',
   BunWebSocketHandlers: 'alias over @types/bun',
   BunDevelopmentOptions: 'alias over @types/bun',
+
+  // Telegram screens. A consumer declares screens with the builders and writes
+  // view literals typed by the exported `*ViewMessage`; what the builders carry
+  // between steps and what the runtime reads off a screen or a button is
+  // machinery, free to be rearranged.
+  ScopeCore: 'screens builder internals — what a scope hands the screens declared in it',
+  ActionEntry: 'screens builder internals — an action as the runtime calls it',
+  InputEntry: 'screens builder internals — an input handler as the runtime calls it',
+  ScreenDefinition: 'screens runtime shape — a consumer holds the TelegramScreen around it',
+  ButtonTarget: 'screens runtime shape — buttons are built with link, back and act',
+  MaybePromise: 'inference helper — a screen callback may answer now or later',
+  AcceptsOwnOutput:
+    'inference helper — refuses a params schema whose output its own input rejects',
+  ViewMessageCommon: 'structural base — the fields every exported view message shares',
+  ElementBase: 'structural base — the kind and children every exported markup element shares',
+  MediaViewMessageOf: 'structural base — the exported photo/video/… view messages are it',
+  ContentKey: 'structural base — the content fields a view message chooses one of',
+  Without: 'structural base — forbids the content fields a view message did not choose',
 };
 
 if (!existsSync(distDir)) {

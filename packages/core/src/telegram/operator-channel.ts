@@ -15,12 +15,11 @@
  */
 
 import { callTelegramBotApi, TELEGRAM_BOT_TOKEN_PATTERN } from './bot-api';
+import { TELEGRAM_TEXT_LIMIT } from './html/nodes';
+import { truncateTelegramHtml } from './html/render';
 import { classifyTelegramSendFailure, type TelegramSendFailure } from './send-failure';
 
 export type TelegramChatId = number | string;
-
-/** Telegram's limit for one message's text. */
-const TEXT_LIMIT = 4_096;
 
 /** What a masked secret reads as — the same word the journal writes. */
 const MASK = '[redacted]';
@@ -58,9 +57,11 @@ export interface TelegramOperatorDrop<TTopic extends string> {
   /**
    * `overflow` — the queue was full and this was the oldest; `refused` —
    * Telegram said no in a way repeating will not fix; `attempts` — it kept
-   * failing; `closed` — the channel closed before it was sent.
+   * failing; `closed` — the channel closed before it was sent; `repeated`
+   * — the same message was sent within the dedupe window; `over-budget` —
+   * the window's budget was spent.
    */
-  readonly reason: 'overflow' | 'refused' | 'attempts' | 'closed';
+  readonly reason: 'overflow' | 'refused' | 'attempts' | 'closed' | 'repeated' | 'over-budget';
   readonly failure?: TelegramSendFailure;
 }
 
@@ -86,6 +87,34 @@ export interface TelegramOperatorChannelConfig<TTopic extends string> {
    * API file carries `<root>/<token>/…` in its path.
    */
   readonly sensitivePatterns?: readonly RegExp[];
+  /** Exact secret values to mask as well — `secretValuesFromEnv(process.env)`. */
+  readonly sensitiveValues?: readonly string[];
+  /**
+   * Hold back repeats and storms. The same message — by `fingerprint` — is
+   * sent once per window; the next one sent says how many were held back.
+   * Past `maxPerWindow` messages in a window the rest are counted, and the
+   * count rides on the first message sent after.
+   */
+  readonly dedupe?: TelegramOperatorDedupe<TTopic>;
+}
+
+export interface TelegramOperatorDedupe<TTopic extends string> {
+  /** Default 600 000 — ten minutes. */
+  readonly windowMs?: number;
+  /** Messages sent per window, whatever their fingerprint. Default 20. */
+  readonly maxPerWindow?: number;
+  /**
+   * What makes two messages the same. Default: the topic and the text with
+   * numbers, UUIDs and long identifiers blanked — they differ between two
+   * occurrences of one failure without making it another.
+   */
+  readonly fingerprint?: (text: string, topic: TTopic | undefined) => string;
+  /** The line added to a message after `count` of its repeats were held back. */
+  readonly repeatedLine?: (count: number) => string;
+  /** The line added to the first message after `count` were held back by the budget. */
+  readonly overBudgetLine?: (count: number) => string;
+  /** Default `Date.now`. */
+  readonly now?: () => number;
 }
 
 export interface TelegramOperatorChannel<TTopic extends string> {
@@ -101,7 +130,7 @@ export interface TelegramOperatorChannel<TTopic extends string> {
 
 interface Queued<TTopic extends string> {
   readonly topic?: TTopic;
-  readonly text: string;
+  text: string;
   attempts: number;
 }
 
@@ -122,7 +151,66 @@ function timer(milliseconds: number, signal: AbortSignal): Promise<void> {
 
 function fitted(text: string): string {
   const points = Array.from(text);
-  return points.length <= TEXT_LIMIT ? text : `${points.slice(0, TEXT_LIMIT - 1).join('')}…`;
+  return points.length <= TELEGRAM_TEXT_LIMIT
+    ? text
+    : `${points.slice(0, TELEGRAM_TEXT_LIMIT - 1).join('')}…`;
+}
+
+function defaultFingerprint(text: string, topic: string | undefined): string {
+  const blanked = text
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '#')
+    .replace(/\b[a-z0-9]{20,}\b/gi, '#')
+    .replace(/\d+/g, '#');
+  return `${topic ?? ''}\u0000${blanked.slice(0, 300)}`;
+}
+
+type DedupeVerdict =
+  | { readonly send: true; readonly text: string }
+  | { readonly send: false; readonly reason: 'repeated' | 'over-budget' };
+
+/** The dedupe window: which messages go, and the counts the ones that go carry. */
+function dedupeWindow<TTopic extends string>(
+  options: TelegramOperatorDedupe<TTopic>,
+): (text: string, topic: TTopic | undefined) => DedupeVerdict {
+  const windowMs = options.windowMs ?? 600_000;
+  const maxPerWindow = options.maxPerWindow ?? 20;
+  const fingerprint = options.fingerprint ?? defaultFingerprint;
+  const now = options.now ?? Date.now;
+  const repeatedLine =
+    options.repeatedLine ?? ((count: number) => `(+${count} more like this)`);
+  const overBudgetLine =
+    options.overBudgetLine ?? ((count: number) => `(+${count} more messages over the limit)`);
+  const recent = new Map<string, { sentAt: number; held: number }>();
+  let windowStart = Number.NEGATIVE_INFINITY;
+  let sentInWindow = 0;
+  let overBudget = 0;
+  return (text, topic) => {
+    const at = now();
+    const key = fingerprint(text, topic);
+    const previous = recent.get(key);
+    if (previous && at - previous.sentAt < windowMs) {
+      previous.held += 1;
+      return { send: false, reason: 'repeated' };
+    }
+    if (at - windowStart >= windowMs) {
+      windowStart = at;
+      sentInWindow = 0;
+    }
+    if (sentInWindow >= maxPerWindow) {
+      overBudget += 1;
+      return { send: false, reason: 'over-budget' };
+    }
+    sentInWindow += 1;
+    for (const [stale, entry] of recent) {
+      if (at - entry.sentAt >= windowMs) recent.delete(stale);
+    }
+    recent.set(key, { sentAt: at, held: 0 });
+    const lines = [text];
+    if (previous?.held) lines.push(repeatedLine(previous.held));
+    if (overBudget > 0) lines.push(overBudgetLine(overBudget));
+    overBudget = 0;
+    return { send: true, text: lines.join('\n\n') };
+  };
 }
 
 export function createTelegramOperatorChannel<TTopic extends string = never>(
@@ -132,7 +220,16 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
   const minIntervalMs = config.minIntervalMs ?? 3_000;
   const maxAttempts = config.maxAttempts ?? 3;
   const sleep = config.sleep ?? timer;
-  const patterns = [TELEGRAM_BOT_TOKEN_PATTERN, ...(config.sensitivePatterns ?? [])];
+  const patterns = [
+    TELEGRAM_BOT_TOKEN_PATTERN,
+    ...(config.sensitivePatterns ?? []),
+    // Longest first, so a secret containing another is masked whole.
+    ...[...(config.sensitiveValues ?? [])]
+      .filter((value) => value !== '')
+      .sort((left, right) => right.length - left.length)
+      .map(literal),
+  ];
+  const admit = config.dedupe ? dedupeWindow(config.dedupe) : undefined;
   const queue: Queued<TTopic>[] = [];
   const idle = new Set<() => void>();
   let lifetime = new AbortController();
@@ -235,6 +332,12 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
           drop(item, 'closed');
           return;
         }
+        const verdict = admit?.(item.text, topic);
+        if (verdict && !verdict.send) {
+          drop(item, verdict.reason);
+          return;
+        }
+        if (verdict) item.text = verdict.text;
         queue.push(item);
         while (queue.length > maxQueued) {
           const oldest = queue.shift();
@@ -281,7 +384,22 @@ export interface TelegramOperatorSenderConfig {
   readonly fetch?: typeof fetch;
 }
 
-/** The standard `send`: `sendMessage` through the Bot API, no bot library. */
+/**
+ * HTML the channel cut by characters may end inside a tag; parsed again and
+ * cut by what it shows, it is markup Telegram accepts.
+ */
+function markupFitted(
+  text: string,
+  parseMode: TelegramOperatorSenderConfig['parseMode'],
+): string {
+  return parseMode === 'HTML' ? truncateTelegramHtml(text) : text;
+}
+
+/**
+ * The standard `send`: `sendMessage` through the Bot API, no bot library. With
+ * `parseMode: 'HTML'` the text is repaired and cut by what it shows, so a cut
+ * never leaves a tag open.
+ */
 export function telegramOperatorSender(
   config: TelegramOperatorSenderConfig,
 ): TelegramOperatorChannelConfig<string>['send'] {
@@ -293,7 +411,7 @@ export function telegramOperatorSender(
       method: 'sendMessage',
       params: {
         chat_id: message.chatId,
-        text: masked(message.text, [token]),
+        text: markupFitted(masked(message.text, [token]), config.parseMode),
         ...(message.threadId !== undefined && { message_thread_id: message.threadId }),
         ...(config.parseMode && { parse_mode: config.parseMode }),
         link_preview_options: { is_disabled: true },

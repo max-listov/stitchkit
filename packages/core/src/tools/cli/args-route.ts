@@ -3,7 +3,7 @@
  * the framework rather than to a command, and which command an invocation
  * selects before any of its own arguments are read.
  */
-import { isReservedBoolWord } from './args-fields';
+import { isReservedBoolWord, separateBoolValue } from './args-fields';
 
 /**
  * Whether the token after an option that expects a value is another option
@@ -171,6 +171,16 @@ export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRo
     if (option.globalKind === 'boolean') {
       globals.push(token);
       index += 1;
+      // `--json false list`: the word is the flag's value, not the command.
+      const next = argv[index];
+      if (
+        option.value === undefined &&
+        next !== undefined &&
+        separateBoolValue(next) !== undefined
+      ) {
+        globals.push(next);
+        index += 1;
+      }
       continue;
     }
     if (option.globalKind === 'value') {

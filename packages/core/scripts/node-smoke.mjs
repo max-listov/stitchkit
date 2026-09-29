@@ -40,6 +40,8 @@ const entrypoints = [
   'stitchkit/agent-runtime/sqlite/node',
   'stitchkit/testing',
   'stitchkit/files',
+  'stitchkit/telegram/screens',
+  'stitchkit/telegram/html',
 ];
 for (const name of entrypoints) {
   await import(name);

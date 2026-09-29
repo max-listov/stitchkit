@@ -240,6 +240,9 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0208](0208-change-hints-reconcile-owned-reads.md) | Change hints reconcile owned reads | Accepted | I8, I10, I12, I13 |
 | [0209](0209-outbox-actions-and-projections-have-separate-receipts.md) | Outbox actions and projections have separate receipts | Accepted | I3, I8, I10, I13 |
 | [0210](0210-lock-owners-are-process-instances.md) | Lock owners are process instances | Accepted | I8, I10, I12, I13 |
+| [0211](0211-telegram-screens-are-declared-views-over-grammy.md) | Telegram screens are declared views over grammY | Accepted — screens reconciled against the chat by message key; middleware over `ctx.api` and a grammY `StorageAdapter`, grammY type-only; navigation by the path tree; a press trusted only if the pressed message carries it; record written after Telegram answers, last write wins | I5, I7, I10, I12 |
+| [0212](0212-keyboard-layers-are-a-headless-react-subpath.md) | Keyboard layers are a headless React subpath | Accepted — one window listener asks ordered layers (overlay, local, route, zone, global), innermost first; lists move real focus; hooks only, no location owned; an isolated `stitchkit/react/keyboard` leaf with `react` as its only peer, not a separate package | I7, I8 |
+| [0213](0213-telegram-markup-is-a-tree-and-webhook-intake-is-durable.md) | Telegram markup is a tree, and webhook intake is durable | Accepted — `stitchkit/telegram/html` parses Telegram HTML into a tree, peer-free and browser-safe, and cuts by visible text; a webhook set only where it is this process's (address and secret) or by naming its owner; an update recorded before Telegram is answered, handled from an atomic store after; operator dedupe; exact secret values masked | I7, I8, I10, I12 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

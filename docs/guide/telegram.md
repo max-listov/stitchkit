@@ -10,6 +10,8 @@ way: [ADR 0201](../decisions/0201-a-telegram-bot-is-assembled-from-primitives.md
 | Job | Where |
 |---|---|
 | the bot as resources: command menu, then long polling with updates admitted by batch | `grammyBotResources` — [application kernel](application-kernel.md#optional-grammy-adapter) |
+| a bot on a webhook: set only where it is this process's, updates recorded before Telegram is answered | `claimTelegramWebhook`, `createTelegramUpdateIntake`, `receiveTelegramWebhook` — [below](#a-bot-on-a-webhook) |
+| text for Telegram's HTML: cleaned, cut to the limit, checked | `stitchkit/telegram/html` — [below](#message-markup) |
 | the process journal | `createJsonLogger` from `stitchkit/observability` |
 | the operator's chat: product events, apart from the journal | `createTelegramOperatorChannel` |
 | a broadcast that survives crashes, deploys and Ctrl-C | `runTelegramBroadcast` |
@@ -17,6 +19,7 @@ way: [ADR 0201](../decisions/0201-a-telegram-bot-is-assembled-from-primitives.md
 | why a send was refused | `classifyTelegramSendFailure` — [auth and errors](auth-and-errors.md#telegram-mini-apps) |
 | Mini App `initData` | `verifyTelegramInitData` — [auth and errors](auth-and-errors.md#telegram-mini-apps) |
 | one Bot API call without a bot library | `callTelegramBotApi` |
+| menus: screens, buttons, actions, input and message editing | `stitchkit/telegram/screens` — [Telegram screens](telegram-screens.md) |
 
 ## The journal
 
@@ -39,6 +42,24 @@ export const logger = createJsonLogger({
 
 logger.error('Application startup failed', { error })
 ```
+
+A provider's key, a webhook secret or a database password has no shape a
+pattern could guess, so the journal also masks exact values — and the
+environment already names them. `secretValuesFromEnv` collects every variable
+named as a token, secret, key, password or credential, the password and secret
+query values inside any URL variable (`DATABASE_URL`), and each URL-encoded:
+
+```ts
+import { createJsonLogger, secretValuesFromEnv } from 'stitchkit/observability'
+
+export const logger = createJsonLogger({
+  sensitiveUrlPatterns: [TELEGRAM_BOT_TOKEN_PATTERN],
+  sensitiveValues: secretValuesFromEnv(process.env),
+})
+```
+
+A key added to the environment is masked from its first line; a URL's user name
+is left alone, since it names a role that appears in ordinary text.
 
 The error line contract, for whatever recognises a failure from the journal: a
 line whose `level` is `50` or more is an error. There is no separate `fatal`;
@@ -68,8 +89,32 @@ operators.post(`New user ${user.id}`, 'users')
 
 Every message is masked before it leaves: a bot token always — bots post their
 errors here, and an error about a local Bot API file carries the token in its
-path — plus any `sensitivePatterns` the bot adds; `telegramOperatorSender` also
-masks its own exact token. What to post stays the bot's. On the way down, drain it within the grace period
+path — plus any `sensitivePatterns` and exact `sensitiveValues` the bot adds;
+`telegramOperatorSender` also masks its own exact token, and with `parseMode:
+'HTML'` repairs the markup — a text cut at Telegram's limit never leaves a tag
+open.
+
+A failure that repeats a hundred times, or a storm of a hundred different ones
+when a database goes down, is a line with a count for the person reading, not a
+hundred messages. `dedupe` sends one message per fingerprint per window — the
+topic and the text with numbers, UUIDs and long identifiers blanked — and the
+next one of that kind carries how many were held back; past `maxPerWindow`
+messages in a window the rest are counted onto the next message sent:
+
+```ts
+const operators = createTelegramOperatorChannel<'errors'>({
+  chatId: env.OPERATOR_CHAT_ID,
+  send: telegramOperatorSender({ token: env.BOT_TOKEN }),
+  sensitiveValues: secretValuesFromEnv(process.env),
+  dedupe: {
+    windowMs: 10 * 60_000,
+    maxPerWindow: 20,
+    repeatedLine: (count) => `Same again: ${count}`,
+  },
+})
+```
+
+Held-back messages reach `onDropped` as `repeated` or `over-budget`. What to post stays the bot's. On the way down, drain it within the grace period
 and close it: `drain: (context) => operators.drain(context.signal)`,
 `close: () => operators.close()` in a resource.
 
@@ -112,6 +157,102 @@ The same call works from a script (the process's signal) and inside a live
 application (the application's signal, with admission held by the caller).
 The recipient state contains Telegram ids: keep it in the state directory, out
 of git.
+
+## Message markup
+
+`stitchkit/telegram/html` is Telegram's HTML parse mode as a tree, with no peer
+and no DOM, so a server sending a message and a browser previewing it share one
+parser. Text written by someone else — a model, an editor, an owner's greeting —
+becomes markup Telegram accepts: synonyms renamed (`strong` → `b`), block tags
+turned into line breaks, a link kept only with an `href` Telegram opens,
+anything Telegram forbids (a tag it does not know, formatting inside `code`, a
+quote inside a quote) left as its words.
+
+```ts
+import { sanitizeTelegramHtml, splitTelegramHtml } from 'stitchkit/telegram/html'
+
+for (const part of splitTelegramHtml(summary)) {
+  await ctx.reply(part, { parse_mode: 'HTML' })
+}
+```
+
+Telegram's limits — 4096 for a message, 1024 for a caption (`{ limit:
+TELEGRAM_CAPTION_LIMIT }`) — count the text after the markup is parsed, so a
+text is cut by what the reader sees, not by the length of its tags. A cut
+prefers a paragraph, then a line, then a space; it never splits a character or
+a custom emoji, and an element open across it is closed in one part and opened
+again, attributes and all, in the next. `truncateTelegramHtml` keeps one part
+with an ellipsis; `telegramHtmlText` is what the reader sees; `parseTelegramHtml`
+gives the nodes to render a preview or an email from. `checkTelegramHtml` says,
+without repairing anything, what Telegram would refuse — for an editor that
+should warn a person rather than change their text.
+
+## A bot on a webhook
+
+A webhook is one place in all of Telegram, and `setWebhook` takes it without
+asking whose it was: a staging host or a developer's machine started with the
+production token takes the production bot with one call. `claimTelegramWebhook`
+sets it only where it already points here — address *and* secret — or where the
+bot names the current owner's host as the one it takes over from (`'none'` when
+there is no webhook: a bot on long polling is somebody's bot too). Telegram never
+returns the secret, so the address carries an `owner` tag derived from it; a
+copy of the production address with another secret is refused as
+`other-secret` instead of quietly installing its own.
+
+```ts
+import {
+  checkTelegramWebhook,
+  claimTelegramWebhook,
+  createTelegramUpdateIntake,
+  receiveTelegramWebhook,
+  sqliteTelegramUpdateStore,
+} from 'stitchkit/telegram'
+import { Database } from 'bun:sqlite'
+import type { Update } from 'grammy/types'
+
+const webhook = { token: env.BOT_TOKEN, url: env.WEBHOOK_URL, secret: env.WEBHOOK_SECRET }
+
+const intake = createTelegramUpdateIntake<Update>({
+  store: sqliteTelegramUpdateStore({ database: new Database(env.UPDATES_DB) }),
+  handle: (update) => bot.handleUpdate(update),
+  onFailure: (failure) => logger.warn('Update failed', { ...failure }),
+})
+
+// start: set the webhook, then handle what was recorded before the restart
+await bot.init()
+await claimTelegramWebhook({ ...webhook, takeoverFrom: env.WEBHOOK_TAKEOVER_FROM })
+await intake.start()
+
+// the route
+const route = (request: Request) =>
+  receiveTelegramWebhook(request, { secret: webhook.secret, accept: intake.accept })
+
+// stop admission: `await intake.close()` waits for the handlers in flight
+```
+
+A refusal names the owner's host, never its path — a foreign webhook's path may
+itself be a secret — and says what to pass: set the takeover for one start and
+remove it. `checkTelegramWebhook` on a timer notices a webhook that moved
+elsewhere, which this process cannot see any other way.
+
+**The update is recorded before Telegram is answered.** A handler that runs
+longer than Telegram waits — a large file from a local Bot API server — gets the
+same update again while it still works, and a process that answers and then
+dies loses the update for good. `receiveTelegramWebhook` answers 200 once the
+intake recorded the body; the handler runs after, outside the request. Updates
+of one chat run in order, other chats alongside (`maxConcurrent`, 32). An
+attempt holds a lease it renews while the handler lives; a sweep takes over what
+was left — `pending` whose process never got to it (`pendingGraceMs`), `failed`
+whose retry is due, `processing` whose process died. A failure is retried with
+backoff or after Telegram's `retry_after`; one Telegram said repeating cannot
+fix (a refused message, a blocked user) is abandoned; `maxAttempts` (5) ends
+the rest. Delivery is at least once: a handler that finished but could not be
+recorded as finished runs again.
+
+The store is an interface of six atomic steps (`TelegramUpdateStore`), so the
+bot's own database can hold it; `sqliteTelegramUpdateStore` takes a
+`bun:sqlite` or `node:sqlite` handle as it is, and `memoryTelegramUpdateStore`
+is for tests.
 
 ## Files from a local Bot API server
 

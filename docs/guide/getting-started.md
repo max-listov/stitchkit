@@ -49,7 +49,9 @@ own, recorded as an ADR.
 | `stitchkit/cli` | server | stable | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
-| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel and local Bot API files |
+| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel with dedupe, local Bot API files, webhook ownership and durable webhook update intake |
+| `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |
+| `stitchkit/telegram/screens` | server (Bun or Node) | evolving | a bot's menus as declared screens over grammY — typed paths, actions and input, message reconciliation, state in any `StorageAdapter`, a test chat |
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
 | `stitchkit/tracking/server` | server (Bun or Node) | evolving | the decisions a tracking backend makes — dispositions, visit lease over an application-owned store, active intervals, presence; no database |
 | `stitchkit/release` | browser **and** server | evolving | a page follows the release it was built for — `createReleaseMarker` on the server, `createReleaseWatcher` in the browser, the `X-Build-Id` header and a socket event between them |
@@ -61,6 +63,7 @@ own, recorded as an ADR.
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the managed-resource conformance kit |
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser + server rendering | stable | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
+| `stitchkit/react/keyboard` | browser | evolving | which part of a screen gets a key — ordered layers, one Escape per level, list zones with real focus; see [keyboard guide](keyboard.md) |
 | `stitchkit/agent-runtime` | server | evolving<br>_redefined in 22 of the 45 minors since 0.56.2, most recently 0.97.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/sandbox` | server | evolving | optional Linux Bubblewrap sessions, durable workspaces and a host HTTP credential gateway; see [sandbox guide](sandbox.md) |
 | `stitchkit/agent-runtime/testing` | tests on Bun or Node | evolving | credential-free replay, scripted provider faults, deterministic race controls and the agent-store conformance kit |
@@ -183,6 +186,7 @@ map — feature → packages:
 | MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
+| Keyboard layers and list zones (`stitchkit/react/keyboard`) | `react` |
 | MaxMind GeoIP (`stitchkit/geo`) | `maxmind` |
 | Browser OAuth client (`stitchkit/oauth`) | — |
 | Google OIDC verifier (`stitchkit/google`) | `google-auth-library` |
@@ -191,6 +195,8 @@ map — feature → packages:
 | Socket.IO client | `socket.io-client` (runtime peer; unrelated root declarations remain peer-free) |
 | grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
 | Telegram platform primitives (`stitchkit/telegram`) | — (peer-free) |
+| Telegram message markup (`stitchkit/telegram/html`) | — (peer-free) |
+| Telegram screens (`stitchkit/telegram/screens`) | `grammy` (types only; the bot brings it) |
 | OpenTelemetry gauges (`stitchkit/application/opentelemetry`) | `@opentelemetry/api` |
 
 ```bash

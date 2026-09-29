@@ -19,6 +19,7 @@ export const ENTRYPOINTS = [
   { subpath: '.', source: 'src/entrypoints/index.ts', browser: true },
   { subpath: './live', source: 'src/entrypoints/live.ts', browser: true },
   { subpath: './react', source: 'src/entrypoints/react.ts', browser: true },
+  { subpath: './react/keyboard', source: 'src/entrypoints/react/keyboard.ts', browser: true },
   { subpath: './tools', source: 'src/entrypoints/tools.ts', browser: false },
   { subpath: './tools/contract', source: 'src/entrypoints/tools/contract.ts', browser: true },
   { subpath: './tools/invoker', source: 'src/entrypoints/tools/invoker.ts', browser: false },
@@ -103,6 +104,12 @@ export const ENTRYPOINTS = [
   { subpath: './testing', source: 'src/entrypoints/testing.ts', browser: false },
   { subpath: './files', source: 'src/entrypoints/files.ts', browser: false },
   { subpath: './telegram', source: 'src/entrypoints/telegram.ts', browser: false },
+  { subpath: './telegram/html', source: 'src/entrypoints/telegram/html.ts', browser: true },
+  {
+    subpath: './telegram/screens',
+    source: 'src/entrypoints/telegram/screens.ts',
+    browser: false,
+  },
   { subpath: './tracking', source: 'src/entrypoints/tracking.ts', browser: true },
   { subpath: './release', source: 'src/entrypoints/release.ts', browser: true },
   {

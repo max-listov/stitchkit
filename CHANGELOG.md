@@ -15,6 +15,92 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.100.3] — 2026-09-29
+
+### Added
+
+- `stitchkit/react/keyboard` (new, evolving) — which part of a React screen
+  gets a key. `useKeyLayer` puts a layer on one window-wide stack asked
+  `overlay` → `local` → `route` → `zone` → `global`, innermost first within a
+  kind (by element containment, so a panel outranks the page it mounted with);
+  a live overlay is a barrier, keys typed in fields pass layers by except
+  Escape, and the listener sits in the bubbling phase so widgets and fields keep
+  what they handle. `useEscapeLayer` closes one level per press, and a held
+  Escape closes one. `useNavZone` makes a list the arrows move through with real
+  focus — roving `tabIndex`, `listbox`/`tablist` roles or `aria-current`,
+  `select` and `highlight` modes, `onEnter`/`onExit` on the cross axis,
+  `onBoundary` or `loop` at the ends, and `onReveal` for a virtualized list
+  whose next row is not rendered yet — focus lands on it when it mounts. Hooks
+  only; `react` is the only peer.
+  → ADR 0212, [keyboard guide](docs/guide/keyboard.md)
+- `stitchkit/telegram/html` (new, evolving; browser and server, no peer) —
+  Telegram's HTML parse mode as a tree. `parseTelegramHtml` turns any markup
+  into nodes Telegram accepts — synonyms renamed, block tags into line breaks, a
+  link only with an `href` Telegram opens, an entity where Telegram forbids it
+  (formatting inside `code`, a quote in a quote) kept as its words — and
+  `renderTelegramHtml` / `sanitizeTelegramHtml` write it back.
+  `splitTelegramHtml` cuts by what the reader sees, not the markup's length, at
+  a paragraph, a line, a space, never inside a character or a custom emoji, and
+  reopens every element across a cut with its attributes; `truncateTelegramHtml`,
+  `telegramHtmlText`, `checkTelegramHtml` (what Telegram would refuse, without
+  repairing), `escapeTelegramHtml`, `TELEGRAM_TEXT_LIMIT` /
+  `TELEGRAM_CAPTION_LIMIT`. → ADR 0213, [guide](docs/guide/telegram.md#message-markup)
+- `stitchkit/telegram` — a bot on a webhook. `claimTelegramWebhook` sets the
+  webhook only where it already points to this address with this secret, or
+  where `takeoverFrom` names the current owner's host (`'none'` for no webhook);
+  the address carries an `owner` tag of the secret, so a copy of the production
+  address with another secret is refused (`TelegramWebhookClaimError`:
+  `owned-elsewhere`, `other-secret`, `not-confirmed`, hosts only).
+  `checkTelegramWebhook` notices a webhook that moved; `receiveTelegramWebhook`
+  answers a request — 403 without the secret, 200 once the update is recorded.
+  `createTelegramUpdateIntake` records an update before Telegram is answered and
+  handles it after: chat order kept, other chats alongside, a renewed lease per
+  attempt, a sweep that takes over what a restart or a dead process left,
+  retries, `maxAttempts`, repeats refused for `retainMs`; at least once. The
+  store is an interface of atomic steps, with `memoryTelegramUpdateStore` and
+  `sqliteTelegramUpdateStore` over a `bun:sqlite` or `node:sqlite` handle.
+  → ADR 0213, [guide](docs/guide/telegram.md#a-bot-on-a-webhook)
+- `stitchkit/telegram` — `dedupe` on `createTelegramOperatorChannel`: one
+  message per fingerprint per window, the next one sent carries how many were
+  held back, and a budget per window turns a storm into one count; held-back
+  messages reach `onDropped` as `repeated` / `over-budget`. `sensitiveValues`
+  masks exact secrets.
+- `stitchkit/observability` — `sensitiveValues` on `createJsonLogger`,
+  `createBoundedLogger` and `SanitizeOptions` masks exact secret values in every
+  string; `secretValuesFromEnv(env)` collects them from variables named as a
+  token, secret, key, password or credential and from inside URL variables,
+  URL-encoded too.
+- `stitchkit/telegram/screens` (new, evolving) — a bot's menus as declared
+  screens over grammY. `telegramScreens<Ctx>()` declares screens and groups by
+  path (`tg.screen('/project/:id').load(…).action(…).on(…).view(…)`), with params
+  typed from the path literal, typed action buttons (`act.name(label, input)`)
+  and a group `load` that checks access for every screen under it. A view is
+  reconciled against what the chat shows by message key — only the part that
+  changed is edited, order holds, "not modified" and a deleted message are
+  absorbed — and the chat's record lives in any grammY `StorageAdapter`, so
+  navigation and waiting for input survive a restart. Outcomes `stay`, `go`,
+  `back`, `toast` and `notice` (a receipt, or a remark with `expiresInMs`);
+  input deleted before any load or handler unless `keepMessage`; a params
+  schema must accept its own output (a compile error otherwise); a refusal
+  halfway leaves the record on the screen the chat was on; `screens.open`,
+  `screens.button(link(…))` for notifications, `onStale`, `onError`, `onEvent`;
+  a forged `callback_data` never reaches a handler. `createScreenTestChat(bot)`
+  drives the application's own `Bot` against an in-memory Bot API. grammY is
+  named in the declarations only. → ADR 0211, [guide](docs/guide/telegram-screens.md)
+
+### Fixed
+
+- `stitchkit/cli` — `--flag true` and `--flag false` after a boolean flag are
+  its value. The word used to be read as a positional argument: it filled the
+  first non-boolean field, so the refusal named a field nobody had touched, and
+  `--flag false` turned the flag on. The same for a short alias, a framework
+  flag (`--json false`) and an application option; any other word stays a
+  positional, and command help says so.
+- `stitchkit/telegram` — `telegramOperatorSender({ parseMode: 'HTML' })` sends
+  markup Telegram accepts. The channel cuts a long text by characters, and the
+  cut could end inside a tag, so Telegram refused the message and it was dropped
+  as `refused`; the sender now cleans the markup and cuts it by what it shows.
+
 ## [0.100.2] — 2026-09-28
 
 ### Added

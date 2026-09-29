@@ -180,11 +180,17 @@ string, the schema says what it should be:
 | -------------------- | ---------------------------------------------- |
 | `z.string()`         | `--name "box"` or a positional                 |
 | `z.number()`         | `--count 3` → `3`                              |
-| `z.boolean()`        | `--active` (presence) / `--no-active`          |
+| `z.boolean()`        | `--active` (presence) / `--active false` / `--no-active` |
 | `z.enum([...])`      | `--size large`                                 |
 | `z.array(z.string())`| `--tag a --tag b` → `["a","b"]`                |
 | `z.object({...})`    | `--opts '{"k":"v"}'` (JSON) or `--opts.k v`    |
 | `.optional()` / `.default()` | not required                           |
+
+After a bare boolean flag, the next token is its value when it is exactly
+`true` or `false` — `--active false` turns it off, as it reads. Any other word
+there stays a positional, and `--` makes a literal `false` one too. The same
+holds for a short alias, a framework flag such as `--json false` and an
+application option.
 
 Without presentation configuration, positional arguments fill non-boolean
 fields in declaration order, so `myapp generate "a fox"` is
@@ -244,7 +250,7 @@ framework globals may precede that explicit command. Top-level `--help`, `-h`
 and `--version` never execute the default, and top-level help marks it.
 
 Aliases are command-local, one ASCII letter and validated against the resolved
-command schema. `-f` / `-f=false` are boolean forms; values accept `-n 100` and
+command schema. `-f` / `-f=false` / `-f false` are boolean forms; values accept `-n 100` and
 `-n=100`. Arrays accumulate across short and long forms. `-h` is reserved,
 bundles such as `-fn`, attached values such as `-n100`, `--no-f` and unknown
 short flags are rejected. Canonical `--no-follow` remains available.

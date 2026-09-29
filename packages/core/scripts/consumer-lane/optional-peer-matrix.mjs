@@ -70,6 +70,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    id: 'react-keyboard',
+    subpath: './react/keyboard',
+    fixture: 'full',
+    installedPeers: FIXTURE_PEERS.full,
+    target: 'browser',
+    source: featureSource('stitchkit/react/keyboard', 'useNavZone'),
+    runtimePeers: ['react'],
+    declarationPeers: ['react'],
+    execute: false,
+  },
+  {
     id: 'tools-contract',
     subpath: './tools/contract',
     fixture: 'minimal',
@@ -581,6 +592,44 @@ export const OPTIONAL_PEER_MATRIX = [
     source: featureSource('stitchkit/telegram', 'classifyTelegramSendFailure'),
     runtimePeers: [],
     declarationPeers: [],
+    execute: true,
+  },
+  {
+    // Markup is parsed without a DOM so a browser preview and a server send
+    // share one parser: the browser row is the claim, not symmetry.
+    id: 'telegram-html',
+    subpath: './telegram/html',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/telegram/html', 'splitTelegramHtml'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    // Screens are middleware over the bot's own `ctx.api` and grammY's
+    // `StorageAdapter`: grammY is named in the declarations and never imported
+    // at run time, so the bundle stays free of it on either runtime.
+    id: 'telegram-screens',
+    subpath: './telegram/screens',
+    fixture: 'grammy',
+    installedPeers: FIXTURE_PEERS.grammy,
+    target: 'bun',
+    source: featureSource('stitchkit/telegram/screens', 'telegramScreens'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
+    execute: true,
+  },
+  {
+    id: 'telegram-screens-node',
+    subpath: './telegram/screens',
+    fixture: 'node',
+    installedPeers: FIXTURE_PEERS.node,
+    target: 'node',
+    source: featureSource('stitchkit/telegram/screens', 'createScreenTestChat'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
     execute: true,
   },
   {
