@@ -5,7 +5,6 @@
  */
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { DatabaseSync } from 'node:sqlite';
 import {
   createTelegramUpdateIntake,
   memoryTelegramUpdateStore,
@@ -16,10 +15,17 @@ import {
   type TelegramUpdateStore,
 } from '../src/entrypoints/telegram';
 
+// `node:sqlite` exists in Node 22.5+ and in Bun from 1.4; a Bun that predates it
+// runs the rules on the other two stores instead of failing the file.
+const nodeSqlite = await import('node:sqlite').catch(() => undefined);
+
 const STORES: Readonly<Record<string, () => TelegramUpdateStore>> = {
   memory: memoryTelegramUpdateStore,
   'bun:sqlite': () => sqliteTelegramUpdateStore({ database: new Database(':memory:') }),
-  'node:sqlite': () => sqliteTelegramUpdateStore({ database: new DatabaseSync(':memory:') }),
+  ...(nodeSqlite && {
+    'node:sqlite': () =>
+      sqliteTelegramUpdateStore({ database: new nodeSqlite.DatabaseSync(':memory:') }),
+  }),
 };
 
 interface Message extends TelegramUpdateEnvelope {
