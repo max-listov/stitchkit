@@ -202,7 +202,7 @@ export async function toolchainFingerprint(): Promise<string> {
  * What the LANES talk to — the half a tree hash and a runtime version cannot see.
  *
  * `lint`, `check` and `test` read only the tree, so for the fast profile the
- * toolchain is the whole story. The heavy steps do not: the agent-store lane and
+ * toolchain is the whole story. The heavy steps do not: the Postgres stores lane and
  * both starter lanes talk to a PostgreSQL server, and the starter lanes drive
  * real browsers. Upgrade either and the tree is unchanged, the toolchain is
  * unchanged, the key is unchanged — and the memo would answer for a run that

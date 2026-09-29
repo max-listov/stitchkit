@@ -8,16 +8,23 @@
  * reads `error_code` and `parameters.retry_after` before it ever reads prose.
  */
 
+import { BOT_TOKEN_SECRET } from '../internal/secret-shapes';
 import { isRecord } from '../internal/typed';
 
 /**
- * The shape of a bot token: the bot's numeric id, a colon, the secret.
+ * The secret half of a bot token — what follows the bot's numeric id and the
+ * colon. The id stays readable: it is the bot's public user id, and the only
+ * thing in a masked line that tells which bot failed.
  *
- * For masking, not for validation — hand it to a logger's
- * `sensitiveUrlPatterns` and a token inside a URL or an error message is not
- * written to the journal.
+ * For masking, not for validation. `redact` and every logger built on it mask
+ * it already; `redactTelegramBotToken` masks it in a string of your own.
  */
-export const TELEGRAM_BOT_TOKEN_PATTERN = /\d{5,}:[A-Za-z0-9_-]{30,}/;
+export const TELEGRAM_BOT_TOKEN_PATTERN: RegExp = BOT_TOKEN_SECRET;
+
+/** Every bot token in `text` with its secret half masked: `123456:[redacted]`. */
+export function redactTelegramBotToken(text: string): string {
+  return text.replace(new RegExp(BOT_TOKEN_SECRET.source, 'g'), '[redacted]');
+}
 
 const DEFAULT_API_ROOT = 'https://api.telegram.org';
 

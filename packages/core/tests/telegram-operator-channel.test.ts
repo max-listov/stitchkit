@@ -162,7 +162,8 @@ describe('the operator channel masks secrets', () => {
     channel.post('paid with card 4111111111111111');
     await channel.drain();
     expect(sent.join(' ')).not.toContain(token);
-    expect(sent[0]).toBe('cannot read /srv/bot-api/[redacted]/videos/file_1.mp4');
+    // The bot's id stays: it says which bot, and it is not a secret.
+    expect(sent[0]).toBe('cannot read /srv/bot-api/123456789:[redacted]/videos/file_1.mp4');
     expect(sent.at(-1)).toBe('paid with [redacted]');
     expect(drops.join(' ')).not.toContain(token);
   });

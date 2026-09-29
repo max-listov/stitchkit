@@ -28,16 +28,21 @@ output, in pino's shape — numeric `level` (`debug` 20, `info` 30, `warn` 40,
 `error` 50), `time` in epoch milliseconds, `msg` — so `pino-pretty` reads it on
 a terminal and a supervisor matching `"level":50` sees errors. Unlike pino, an
 `Error` under *any* key is written with its name, message, stack and cause; an
-error logged as `{ error }` does not become `"error":{}`.
+error logged as `{ error }` does not become `"error":{}`, and its own fields —
+a `TelegramBotApiError`'s `error_code` and `parameters.retry_after` — are on the
+line beside them.
+
+A bot token is masked wherever it appears — a request URL in an error message,
+a local Bot API file path — with no configuration: `123456:[redacted]` keeps the
+bot's id, which is public and is what tells two bots apart in one journal. So is
+the password in an address and a query parameter named as a secret (`?token=`).
 
 ```ts
 import { createJsonLogger } from 'stitchkit/observability'
-import { TELEGRAM_BOT_TOKEN_PATTERN } from 'stitchkit/telegram'
 
 export const logger = createJsonLogger({
   level: env.LOG_LEVEL,
   fields: { service: 'my-bot' },
-  sensitiveUrlPatterns: [TELEGRAM_BOT_TOKEN_PATTERN],
 })
 
 logger.error('Application startup failed', { error })
@@ -53,10 +58,12 @@ query values inside any URL variable (`DATABASE_URL`), and each URL-encoded:
 import { createJsonLogger, secretValuesFromEnv } from 'stitchkit/observability'
 
 export const logger = createJsonLogger({
-  sensitiveUrlPatterns: [TELEGRAM_BOT_TOKEN_PATTERN],
   sensitiveValues: secretValuesFromEnv(process.env),
 })
 ```
+
+A string of your own — a message for a person, a report — masks bot tokens with
+`redactTelegramBotToken(text)` from `stitchkit/telegram`.
 
 A key added to the environment is masked from its first line; a URL's user name
 is left alone, since it names a role that appears in ordinary text.
@@ -114,7 +121,21 @@ const operators = createTelegramOperatorChannel<'errors'>({
 })
 ```
 
-Held-back messages reach `onDropped` as `repeated` or `over-budget`. What to post stays the bot's. On the way down, drain it within the grace period
+Held-back messages reach `onDropped` as `repeated` or `over-budget`.
+
+A bot that already sends its alerts itself — its own bot instance, its own retry
+— takes the window alone instead of switching the channel off with parameters:
+
+```ts
+import { createTelegramOperatorDedupe } from 'stitchkit/telegram'
+
+const admit = createTelegramOperatorDedupe<'errors'>({ windowMs: 10 * 60_000 })
+
+const verdict = admit(text, 'errors')
+if (verdict.send) await sendAlert(verdict.text) // the text carries the held-back counts
+```
+
+What to post stays the bot's. On the way down, drain it within the grace period
 and close it: `drain: (context) => operators.drain(context.signal)`,
 `close: () => operators.close()` in a resource.
 
@@ -235,6 +256,14 @@ itself be a secret — and says what to pass: set the takeover for one start and
 remove it. `checkTelegramWebhook` on a timer notices a webhook that moved
 elsewhere, which this process cannot see any other way.
 
+**Moving to it from a claim of your own.** A bot that tagged its webhook itself
+holds an address this one does not recognise, so the first claim is refused —
+`other-secret` when the address is the same, `owned-elsewhere` otherwise — and
+names its own host. Start once with `takeoverFrom` set to that host, then remove
+it. The tag is derived from the secret with a fixed context, so it is the same
+across stitchkit releases: that takeover is needed once per bot, not per
+upgrade. A secret rotation is a new owner, and takes a takeover too.
+
 **The update is recorded before Telegram is answered.** A handler that runs
 longer than Telegram waits — a large file from a local Bot API server — gets the
 same update again while it still works, and a process that answers and then
@@ -249,10 +278,55 @@ fix (a refused message, a blocked user) is abandoned; `maxAttempts` (5) ends
 the rest. Delivery is at least once: a handler that finished but could not be
 recorded as finished runs again.
 
+With grammY the handler is `bot.handleUpdate`, which wraps a middleware's error
+in a `BotError`; the intake unwraps it, so `retry`, `onFailure` and the error
+stored with the update are what the middleware threw — a `retry` that returns
+`false` for the bot's own terminal error sees that error.
+
 The store is an interface of six atomic steps (`TelegramUpdateStore`), so the
-bot's own database can hold it; `sqliteTelegramUpdateStore` takes a
-`bun:sqlite` or `node:sqlite` handle as it is, and `memoryTelegramUpdateStore`
-is for tests.
+bot's own database holds it:
+
+| Store | Takes |
+|---|---|
+| `sqliteTelegramUpdateStore` | a `bun:sqlite` `Database` or `node:sqlite` `DatabaseSync` as it is |
+| `postgresTelegramUpdateStore` | one `query(text, parameters)` over the client the bot already holds |
+| `memoryTelegramUpdateStore` | nothing — tests, or a bot that accepts losing unhandled updates to a restart |
+
+```ts
+import { postgresTelegramUpdateStore } from 'stitchkit/telegram'
+
+// Bun
+postgresTelegramUpdateStore({ query: (text, parameters) => sql.unsafe(text, [...parameters]) })
+// Prisma
+postgresTelegramUpdateStore({
+  query: (text, parameters) => prisma.$queryRawUnsafe(text, ...parameters),
+  createTable: false, // the migration below owns the table
+})
+// pg
+postgresTelegramUpdateStore({
+  query: (text, parameters) => pool.query(text, [...parameters]).then((result) => result.rows),
+})
+```
+
+Each rule is one conditional statement, so a claim is atomic across every
+process sharing the table. By default the table is created on first use; where
+migrations own the schema, `postgresTelegramUpdateStoreSchema(table)` is the
+statement to put in one.
+
+A store of your own — over an ORM, another database — is put through the same
+rules the shipped ones are, concurrent claims included:
+
+```ts
+import { checkTelegramUpdateStore } from 'stitchkit/telegram'
+
+test('our update store keeps the rules', async () => {
+  expect(await checkTelegramUpdateStore(() => ourStore(freshTable()))).toEqual([])
+})
+```
+
+A store that reads and then writes in two statements passes every test with one
+process and runs one update twice in production; the check races eight claims
+against each other to catch it.
 
 ## Files from a local Bot API server
 

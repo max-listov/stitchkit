@@ -165,6 +165,12 @@ export const STITCHKIT_EXEMPTIONS: readonly PublicationPrivacyExemption[] = [
       'A synthetic database URL: the test proves its password is collected for masking, encoded and decoded, and its user name is not.',
   },
   {
+    file: 'packages/core/tests/observability-secret-shapes.test.ts',
+    rule: 'credential embedded in a URL',
+    because:
+      'Synthetic addresses: the test proves a password inside one is masked by its shape while user, host and path stay, and that a path containing a colon and an at sign is not taken for one.',
+  },
+  {
     file: 'scripts/publication-privacy.ts',
     rule: 'agent or session routing metadata',
     because:

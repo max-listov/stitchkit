@@ -23,50 +23,16 @@
  * about a transport, the same kind of fact as a bearer token being well-formed.
  */
 
-import { z } from 'zod';
 import { digestsEqual, hmacSha256, toHex } from './crypto';
+import { parseTelegramUser, type TelegramUser } from './user';
 
 const encoder = new TextEncoder();
 
-/**
- * The Telegram user record, as our surface names things.
- *
- * Telegram's wire fields are `snake_case`; every other name this package
- * publishes is `camelCase`, and a surface that switches convention because of
- * where a value came from makes the caller remember which is which. The
- * untouched wire pairs stay available in `raw`.
- */
-const TelegramInitDataUserSchema = z
-  .object({
-    id: z.int(),
-    is_bot: z.boolean().optional(),
-    first_name: z.string(),
-    last_name: z.string().optional(),
-    username: z.string().optional(),
-    language_code: z.string().optional(),
-    is_premium: z.boolean().optional(),
-    allows_write_to_pm: z.boolean().optional(),
-    photo_url: z.string().optional(),
-  })
-  .transform((user) => ({
-    id: user.id,
-    firstName: user.first_name,
-    ...(user.is_bot !== undefined && { isBot: user.is_bot }),
-    ...(user.last_name !== undefined && { lastName: user.last_name }),
-    ...(user.username !== undefined && { username: user.username }),
-    ...(user.language_code !== undefined && { languageCode: user.language_code }),
-    ...(user.is_premium !== undefined && { isPremium: user.is_premium }),
-    ...(user.allows_write_to_pm !== undefined && { allowsWriteToPm: user.allows_write_to_pm }),
-    ...(user.photo_url !== undefined && { photoUrl: user.photo_url }),
-  }));
-
-export type TelegramInitDataUser = z.infer<typeof TelegramInitDataUserSchema>;
-
 export interface TelegramInitData {
   /** Absent when the Mini App was opened somewhere Telegram sends no user. */
-  user?: TelegramInitDataUser;
+  user?: TelegramUser;
   /** Whose chat the Mini App was opened from, when Telegram named one. */
-  receiver?: TelegramInitDataUser;
+  receiver?: TelegramUser;
   /** When Telegram signed this string. */
   authDate: Date;
   /** How old the signature was at verification time. */
@@ -126,13 +92,12 @@ export interface VerifyTelegramInitDataOptions {
   now?: () => number;
 }
 
-function optionalUser(
-  raw: Record<string, string>,
-  key: string,
-): TelegramInitDataUser | undefined {
+function optionalUser(raw: Record<string, string>, key: string): TelegramUser | undefined {
   const encoded = raw[key];
   if (encoded === undefined) return undefined;
-  return TelegramInitDataUserSchema.parse(JSON.parse(encoded));
+  const user = parseTelegramUser(JSON.parse(encoded));
+  if (user === undefined) throw new TypeError(`initData ${key} is not a Telegram user`);
+  return user;
 }
 
 /**
@@ -191,8 +156,8 @@ export async function verifyTelegramInitData(
     return { valid: false, reason: 'expired', ageSeconds };
   }
 
-  let user: TelegramInitDataUser | undefined;
-  let receiver: TelegramInitDataUser | undefined;
+  let user: TelegramUser | undefined;
+  let receiver: TelegramUser | undefined;
   try {
     user = optionalUser(signed, 'user');
     receiver = optionalUser(signed, 'receiver');

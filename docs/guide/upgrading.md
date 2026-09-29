@@ -1,5 +1,41 @@
 # Upgrading stitchkit
 
+## Released migration: 0.101.0
+
+### `TelegramInitDataUser` is `TelegramUser`
+
+**Who must act:** code that names the type `TelegramInitDataUser` from
+`stitchkit/telegram`. The record is the same; its name now says it is any
+Telegram user, since `parseTelegramUser(ctx.from)` returns it for a Bot API user
+too.
+
+```ts
+// Before
+import type { TelegramInitDataUser } from 'stitchkit/telegram'
+function ensureAccount(user: TelegramInitDataUser) {}
+// After
+import type { TelegramUser } from 'stitchkit/telegram'
+function ensureAccount(user: TelegramUser) {}
+```
+
+### `TELEGRAM_BOT_TOKEN_PATTERN` matches the secret half only
+
+**Who must act:** code that uses `TELEGRAM_BOT_TOKEN_PATTERN` to find or cut a
+whole token. It now matches what follows `<bot id>:`, so a masking replace keeps
+the bot's id — `123456:[redacted]`. Masking needs nothing any more: `redact` and
+every logger on it mask bot tokens by shape; remove the pattern from
+`sensitiveUrlPatterns`, and use `redactTelegramBotToken(text)` for a string of
+your own.
+
+```ts
+// Before
+createJsonLogger({ sensitiveUrlPatterns: [TELEGRAM_BOT_TOKEN_PATTERN] })
+text.replace(new RegExp(TELEGRAM_BOT_TOKEN_PATTERN.source, 'g'), '[redacted]')
+// After
+createJsonLogger({})
+redactTelegramBotToken(text)
+```
+
 ## Released migration: 0.100.0
 
 ### watch capacity and session/live/delivery adoption

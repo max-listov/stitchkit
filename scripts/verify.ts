@@ -30,7 +30,7 @@ export const VERIFY_STEPS = [
   'lint',
   'check',
   'test',
-  'test:agent-store-postgres',
+  'test:postgres-stores',
   'build',
   'smoke:next-ssr',
   'smoke:node',
@@ -44,7 +44,7 @@ export const VERIFY_STEPS = [
   // because it needed `pm2` on PATH. The supervisor is a pinned devDependency
   // now, so there is no prerequisite left to trade away — and the gap it left
   // fell on the release commit, the one commit whose red CI run cannot be
-  // repaired in place. The agent-store lane sat in that same gap until it made
+  // repaired in place. The Postgres stores lane sat in that same gap until it made
   // a release run red; this is the second and last member of that list.
   'supervised-lane',
 ] as const;
@@ -55,7 +55,7 @@ export const VERIFY_STEPS = [
  *
  * Everything past `test` in the full gate is work whose nature is parallel:
  * four packed starter runs (the target mode, two scaffold variants, two
- * browsers), two smokes, a consumer lane and the Postgres agent-store lane. CI
+ * browsers), two smokes, a consumer lane and the Postgres stores lane. CI
  * shards the same work — plus the four HEAD-mode runs this profile does not
  * carry — across ten runners and answers in about two and a half minutes; one
  * developer machine walks it in single file and takes several times longer to
@@ -337,7 +337,7 @@ async function releaseProfile(): Promise<VerifyProfile> {
   const lanes: string[] = [];
   if (targets.has('core')) {
     lanes.push(
-      'test:agent-store-postgres',
+      'test:postgres-stores',
       'smoke:next-ssr',
       'smoke:node',
       'consumer-lane',

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createTelegramOperatorChannel,
+  createTelegramOperatorDedupe,
   type TelegramOperatorDrop,
   telegramOperatorSender,
 } from '../src/entrypoints/telegram';
@@ -151,5 +152,25 @@ describe('operator channel dedupe', () => {
     plain.post('z'.repeat(5_000));
     await plain.drain();
     expect(Array.from(received[0] ?? '')).toHaveLength(4_096);
+  });
+});
+
+describe('the dedupe window on its own', () => {
+  test('decides for a sender of its own: what goes, with its counts, and what is held and why', () => {
+    let clock = 0;
+    const admit = createTelegramOperatorDedupe<'errors'>({
+      windowMs: 1_000,
+      maxPerWindow: 2,
+      now: () => clock,
+    });
+    expect(admit('db down 17', 'errors')).toEqual({ send: true, text: 'db down 17' });
+    expect(admit('db down 18', 'errors')).toEqual({ send: false, reason: 'repeated' });
+    expect(admit('disk full')).toEqual({ send: true, text: 'disk full' });
+    expect(admit('queue stuck')).toEqual({ send: false, reason: 'over-budget' });
+    clock = 1_000;
+    expect(admit('db down 19', 'errors')).toEqual({
+      send: true,
+      text: 'db down 19\n\n(+1 more like this)\n\n(+1 more messages over the limit)',
+    });
   });
 });

@@ -92,19 +92,40 @@ const BY_DESCRIPTION: readonly (readonly [RegExp, TelegramSendFailureReason])[] 
   ],
 ];
 
-/** Repeating the same send unchanged could work. */
-const RETRYABLE: ReadonlySet<TelegramSendFailureReason> = new Set([
-  'rate-limited',
-  'server-error',
-]);
+/**
+ * What each reason means for the next move. The table is the one place a
+ * reason is declared: adding one to the union without a row here is a type
+ * error, and the public list below is read from it.
+ */
+const TRAITS: {
+  readonly [Reason in TelegramSendFailureReason]: {
+    /** Repeating the same send unchanged could work. */
+    readonly retryable: boolean;
+    /** The recipient, not the request, is the reason nothing arrived. */
+    readonly recipientUnreachable: boolean;
+  };
+} = {
+  'blocked-by-user': { retryable: false, recipientUnreachable: true },
+  'user-deactivated': { retryable: false, recipientUnreachable: true },
+  'chat-not-found': { retryable: false, recipientUnreachable: true },
+  'not-started': { retryable: false, recipientUnreachable: true },
+  'rate-limited': { retryable: true, recipientUnreachable: false },
+  'message-invalid': { retryable: false, recipientUnreachable: false },
+  'server-error': { retryable: true, recipientUnreachable: false },
+  unknown: { retryable: false, recipientUnreachable: false },
+};
 
-/** The recipient, not the request, is the reason nothing arrived. */
-const UNREACHABLE: ReadonlySet<TelegramSendFailureReason> = new Set([
-  'blocked-by-user',
-  'user-deactivated',
-  'chat-not-found',
-  'not-started',
-]);
+function isSendFailureReason(value: string): value is TelegramSendFailureReason {
+  return Object.hasOwn(TRAITS, value);
+}
+
+/**
+ * Every reason, for a consumer that maps each one to its own code or text. A
+ * `Record<TelegramSendFailureReason, …>` beside it fails to compile when a
+ * release adds a reason, instead of falling through to a default at run time.
+ */
+export const TELEGRAM_SEND_FAILURE_REASONS: readonly TelegramSendFailureReason[] =
+  Object.keys(TRAITS).filter(isSendFailureReason);
 
 function numberAt(value: unknown, keys: readonly string[]): number | undefined {
   if (!isRecord(value)) return undefined;
@@ -174,8 +195,7 @@ export function classifyTelegramSendFailure(error: unknown): TelegramSendFailure
       return {
         reason,
         ...(status !== undefined && { status }),
-        retryable: RETRYABLE.has(reason),
-        recipientUnreachable: UNREACHABLE.has(reason),
+        ...TRAITS[reason],
         evidence: 'description',
       };
     }

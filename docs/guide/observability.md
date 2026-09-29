@@ -563,6 +563,18 @@ A payload goes into an audit row only after `sanitizePayload`:
   `tokenizer`) survive. This applies wherever a key exists — an object field and
   a `Map` entry alike, at any depth. A `Set` member has no key, so nothing there
   is masked by name;
+- **secrets are masked by their shape** in every string, whatever key holds
+  it — the secret half of a Telegram bot token (`123456:[redacted]`: the bot's
+  id stays, it tells two bots apart), the password in
+  `postgresql://user:password@host` (user, host and path stay), and the value
+  of a query parameter named as a secret (`?access_token=`, `?api-key=`,
+  `?key=`, `?sig=`). A URL in an error message or a request log line is the
+  usual way a token reaches a journal;
+- **an error keeps what it says about itself** — its own fields (`error_code`,
+  `parameters`, a provider's `status`) are written beside `name`, `message`,
+  `stack` and `cause`, masked by the same rules; a field holding a class
+  instance other than an error (grammY's `BotError.ctx`) is named, not written,
+  so one error cannot push its line past the bound and lose the stack;
 - **binary blobs** (`Uint8Array`, `Blob`, `FormData`) collapse to metadata —
   never the bytes;
 - the result is **capped** — anything over the byte limit becomes a preview.

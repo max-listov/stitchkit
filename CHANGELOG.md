@@ -15,6 +15,73 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.101.0] — 2026-09-29
+
+### ⚠️ Breaking changes
+
+- **`stitchkit/telegram`** — `TelegramInitDataUser` is `TelegramUser`. The same
+  camelCase record now also comes out of `parseTelegramUser(ctx.from)`, so its
+  name says any Telegram user. `import type { TelegramInitDataUser }` →
+  `import type { TelegramUser }`.
+- **`stitchkit/telegram`** — `TELEGRAM_BOT_TOKEN_PATTERN` matches the secret
+  half of a token only, after `<bot id>:`, so masking with it keeps the bot's id
+  (`123456:[redacted]`) — the only thing in a masked line that says which bot
+  failed. Masking no longer needs it at all: `redact` masks bot tokens by shape.
+  `sensitiveUrlPatterns: [TELEGRAM_BOT_TOKEN_PATTERN]` → nothing;
+  `text.replace(new RegExp(TELEGRAM_BOT_TOKEN_PATTERN.source, 'g'), …)` →
+  `redactTelegramBotToken(text)`. See ADR 0214 and the 0.101.0 migration in
+  `docs/guide/upgrading.md`.
+
+**Who must act:** code that names the type `TelegramInitDataUser` (rename the
+import), and code that uses `TELEGRAM_BOT_TOKEN_PATTERN` to find or cut a whole
+token. Code that only passes the pattern to a logger keeps working — and can
+drop it, since tokens are masked by shape.
+
+### Added
+
+- `stitchkit/telegram` — `postgresTelegramUpdateStore`: the webhook update store
+  in Postgres over one `query(text, parameters)` the application already has —
+  Bun `sql.unsafe`, Prisma `$queryRawUnsafe`, `pg` `pool.query` — each rule one
+  conditional statement with explicit casts, so a claim is atomic across
+  processes and a driver returning `bigint` as a string or a `bigint` reads the
+  same. `postgresTelegramUpdateStoreSchema(table)` is the table for a migration;
+  `createTable: false` leaves the schema to it.
+- `stitchkit/telegram` — `checkTelegramUpdateStore(make)`: every rule of
+  `TelegramUpdateStore` on a fresh store, eight claims raced against each other,
+  resolving with the violations. A store of one's own over an ORM is checked by
+  the rules the shipped memory, SQLite and Postgres stores pass.
+- `stitchkit/telegram` — `createTelegramOperatorDedupe`: the operator channel's
+  dedupe window alone, for a bot that sends alerts itself — `(text, topic?)` is
+  `{ send: true, text }` with the held-back counts, or `{ send: false, reason }`.
+- `stitchkit/telegram` — `parseTelegramUser`: grammY's `ctx.from`, a Bot API
+  `User` or a Mini App `user` as the one `TelegramUser` initData returns.
+- `stitchkit/telegram` — `TELEGRAM_SEND_FAILURE_REASONS`, every reason as a
+  list; the reasons' traits are one table, so a new reason without its traits
+  does not compile.
+- `stitchkit/telegram` — `redactTelegramBotToken(text)`.
+
+### Changed
+
+- `stitchkit/observability` — `redact`, and so every logger and audit sink,
+  masks secrets by shape in every string: the secret half of a bot token, the
+  password in `scheme://user:password@host`, and the value of a query parameter
+  named as a secret (`token`, `access_token`, `api-key`, `key`, `sig`, …). A URL
+  in an error message is the usual way a token reaches a journal, and no key
+  name marks it.
+- `stitchkit/observability` — an error keeps its own fields: a
+  `TelegramBotApiError`'s `error_code` and `parameters`, a provider's `status`,
+  written beside `name`, `message`, `stack` and `cause` and masked by the same
+  rules. A field holding a class instance other than an error — grammY's
+  `BotError.ctx` — is written as its class name, so one error cannot push its
+  line past the bound and lose the stack.
+
+### Fixed
+
+- `stitchkit/telegram` — the update intake unwraps grammY's `BotError`: a
+  `retry`, an `onFailure` and the error stored with the update saw the wrapper
+  ("Error in middleware: …") instead of what the middleware threw, so a retry
+  policy could not recognise the bot's own terminal error and retried it.
+
 ## [0.100.3] — 2026-09-29
 
 ### Added

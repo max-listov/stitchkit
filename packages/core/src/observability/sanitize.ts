@@ -3,6 +3,7 @@
  * cap size. An audit row must be safe to store and bounded in size.
  */
 import { isUnsafeKey } from '../internal/safe-json';
+import { maskSecretShapes } from '../internal/secret-shapes';
 import { isRecord } from '../internal/typed';
 
 /** A JSON-serialisable value — what a sanitised payload always reduces to. */
@@ -149,10 +150,15 @@ const DEFAULT_MAX_NODES = 20_000;
 const MASK = '[redacted]';
 
 /**
- * Masks every secret value and every match of every sensitive pattern in one
- * string. Values go longest first, so a secret containing another is masked whole.
+ * Masks every secret value, every match of every sensitive pattern and every
+ * secret recognised by its shape — the secret half of a bot token, a password
+ * in an address, a query parameter whose name is a secret — in one string.
+ * Values go longest first, so a secret containing another is masked whole.
  */
-function secretMasker(options: SanitizeOptions): (input: string) => string {
+function secretMasker(
+  options: SanitizeOptions,
+  isSecretName: (name: string) => boolean,
+): (input: string) => string {
   const values = [...(options.sensitiveValues ?? [])]
     .filter((value) => value !== '')
     .sort((left, right) => right.length - left.length);
@@ -170,8 +176,56 @@ function secretMasker(options: SanitizeOptions): (input: string) => string {
         // A consumer regexp must not turn diagnostics into application failure.
       }
     }
-    return output;
+    return maskSecretShapes(output, MASK, isSecretName);
   };
+}
+
+/** Written by the error branch itself; an own field of these names is not repeated. */
+const ERROR_CORE = new Set(['_type', 'name', 'message', 'stack', 'cause']);
+
+/**
+ * What an error says about itself — Telegram's `error_code` and `parameters`,
+ * a provider's status, the error it wraps — as opposed to the objects it holds
+ * on to. grammY's `BotError` carries the whole update context on `ctx`; written
+ * out, it would push the line past its bound and cost the stack. So a field
+ * that is a class instance other than an error is named, not written.
+ */
+function isErrorFact(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return typeof value !== 'function';
+  if (Array.isArray(value) || value instanceof Error || value instanceof Date) return true;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function kindOf(value: unknown): string {
+  if (typeof value === 'function') return 'function';
+  const maker = isRecord(value) ? value.constructor : undefined;
+  return typeof maker === 'function' && maker.name !== '' ? maker.name : 'object';
+}
+
+/** Whether a dot path matches one of `patterns`: `*` is one segment, `**` any suffix. */
+function pathMatcher(patterns: readonly string[]): (path: readonly string[]) => boolean {
+  const matchers = patterns.map((pattern) => pattern.split('.'));
+  const matches = (
+    matcher: readonly string[],
+    path: readonly string[],
+    patternIndex = 0,
+    pathIndex = 0,
+  ): boolean => {
+    if (patternIndex === matcher.length) return pathIndex === path.length;
+    const segment = matcher[patternIndex];
+    if (segment === '**') {
+      if (patternIndex + 1 === matcher.length) return true;
+      for (let next = pathIndex; next <= path.length; next += 1) {
+        if (matches(matcher, path, patternIndex + 1, next)) return true;
+      }
+      return false;
+    }
+    if (pathIndex === path.length || (segment !== '*' && segment !== path[pathIndex]))
+      return false;
+    return matches(matcher, path, patternIndex + 1, pathIndex + 1);
+  };
+  return (path) => matchers.some((matcher) => matches(matcher, path));
 }
 
 /**
@@ -196,33 +250,12 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
   const maxStringLength = options.maxStringLength ?? Number.POSITIVE_INFINITY;
   const maxCollectionLength = options.maxCollectionLength ?? Number.POSITIVE_INFINITY;
-  const pathMatchers = (options.sensitivePaths ?? []).map((pattern) => pattern.split('.'));
-  const matchesPath = (
-    matcher: readonly string[],
-    path: readonly string[],
-    patternIndex = 0,
-    pathIndex = 0,
-  ): boolean => {
-    if (patternIndex === matcher.length) return pathIndex === path.length;
-    const segment = matcher[patternIndex];
-    if (segment === '**') {
-      if (patternIndex + 1 === matcher.length) return true;
-      for (let next = pathIndex; next <= path.length; next += 1) {
-        if (matchesPath(matcher, path, patternIndex + 1, next)) return true;
-      }
-      return false;
-    }
-    if (pathIndex === path.length || (segment !== '*' && segment !== path[pathIndex]))
-      return false;
-    return matchesPath(matcher, path, patternIndex + 1, pathIndex + 1);
-  };
-  const isSensitivePath = (path: readonly string[]): boolean =>
-    pathMatchers.some((matcher) => matchesPath(matcher, path));
+  const isSensitivePath = pathMatcher(options.sensitivePaths ?? []);
   const stringBoundFor = (key: string | undefined): number => {
     const byKey = key === undefined ? undefined : options.maxStringLengthByKey?.[key];
     return byKey ?? maxStringLength;
   };
-  const mask = secretMasker(options);
+  const mask = secretMasker(options, isSensitive);
   const safeString = (input: string, key?: string): string => {
     const bound = stringBoundFor(key);
     const output = mask(input);
@@ -310,14 +343,34 @@ export function redact(value: unknown, options: SanitizeOptions = {}): JsonValue
           return '[unreadable]';
         }
       };
+      if (ancestors.has(input)) return '[circular]';
+      ancestors.add(input);
       const stack = property('stack');
       const cause = property('cause');
+      const own: { [key: string]: JsonValue } = {};
+      for (const key of Object.keys(input)) {
+        if (isUnsafeKey(key) || ERROR_CORE.has(key)) continue;
+        const childPath = [...path, key];
+        try {
+          const field: unknown = Reflect.get(input, key);
+          own[key] =
+            isSensitive(key) || isSensitivePath(childPath)
+              ? MASK
+              : isErrorFact(field)
+                ? walk(field, depth + 1, childPath)
+                : `[${kindOf(field)}]`;
+        } catch {
+          own[key] = '[unreadable]';
+        }
+      }
+      ancestors.delete(input);
       return {
         _type: 'error',
         name: safeString(String(property('name')), 'name'),
         message: safeString(String(property('message')), 'message'),
         ...(stack !== undefined && { stack: safeString(String(stack), 'stack') }),
         ...(cause !== undefined && { cause: walk(cause, depth + 1, [...path, 'cause']) }),
+        ...own,
       };
     }
 

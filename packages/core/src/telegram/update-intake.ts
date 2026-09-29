@@ -41,7 +41,11 @@ export type TelegramUpdateStoreStep = 'claim' | 'renew' | 'settle' | 'sweep';
 
 export interface TelegramUpdateIntakeConfig<TUpdate extends TelegramUpdateEnvelope> {
   readonly store: TelegramUpdateStore;
-  /** Handle one update — with grammY, `(update) => bot.handleUpdate(update)`. */
+  /**
+   * Handle one update — with grammY, `(update) => bot.handleUpdate(update)`.
+   * A grammY `BotError` is unwrapped: `retry`, `onFailure` and the stored
+   * error see what the middleware threw.
+   */
   readonly handle: (update: TUpdate) => unknown;
   /**
    * After a failed attempt: milliseconds until the next, or `false` to
@@ -128,6 +132,22 @@ function parsed(body: string): Record<string, unknown> | undefined {
   }
 }
 
+/**
+ * The handler's own error. grammY's `bot.handleUpdate` wraps whatever a
+ * middleware threw in a `BotError` — "Error in middleware: …", the original on
+ * `.error` — so a retry policy asking "is this my terminal error?" and the
+ * error recorded with the update would see the wrapper instead. Matched by
+ * shape: this module does not import grammY.
+ */
+function handlerError(error: unknown): unknown {
+  return error instanceof Error &&
+    error.name === 'BotError' &&
+    'ctx' in error &&
+    'error' in error
+    ? error.error
+    : error;
+}
+
 function positive(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new RangeError(`[stitchkit] telegram update intake: ${name} is a positive integer`);
@@ -195,7 +215,8 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
       // shape is the Bot API's, named by the caller's type argument.
       await config.handle(transportResult<TUpdate>(update));
       settlement = { state: 'completed', at: now() };
-    } catch (error) {
+    } catch (thrown) {
+      const error = handlerError(thrown);
       const delay = number >= maxAttempts ? false : retry(error, number);
       const message = error instanceof Error ? error.message : String(error);
       settlement =

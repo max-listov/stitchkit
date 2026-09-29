@@ -45,7 +45,7 @@ describe('CI evidence parity', () => {
 
   test('portable runtime gates and isolated package gates remain represented', () => {
     for (const command of [
-      'bun run test:agent-store-postgres',
+      'bun run test:postgres-stores',
       'bun run smoke:next-ssr',
       'bun run smoke:node',
       'bun run consumer-lane',

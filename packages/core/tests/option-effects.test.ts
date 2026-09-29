@@ -67,6 +67,7 @@ const COVERED: Record<string, string> = {
   ClaimTelegramWebhookConfig: 'entrypoints/telegram.ts',
   TelegramUpdateIntakeConfig: 'entrypoints/telegram.ts',
   SqliteTelegramUpdateStoreConfig: 'entrypoints/telegram.ts',
+  PostgresTelegramUpdateStoreConfig: 'entrypoints/telegram.ts',
   TelegramHtmlTruncateOptions: 'entrypoints/telegram/html.ts',
   GrammyBotResourcesConfig: 'entrypoints/application/grammy.ts',
   TelegramScreensConfig: 'entrypoints/telegram/screens.ts',

@@ -1,7 +1,7 @@
 /**
  * `stitchkit/telegram` update intake: recorded before Telegram is answered,
  * handled after, in chat order, and never lost to a restart or a slow handler.
- * The store rules are checked on every reference store alike.
+ * The store rules are in `telegram-update-store.test.ts`.
  */
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
@@ -14,19 +14,6 @@ import {
   type TelegramUpdateFailure,
   type TelegramUpdateStore,
 } from '../src/entrypoints/telegram';
-
-// `node:sqlite` exists in Node 22.5+ and in Bun from 1.4; a Bun that predates it
-// runs the rules on the other two stores instead of failing the file.
-const nodeSqlite = await import('node:sqlite').catch(() => undefined);
-
-const STORES: Readonly<Record<string, () => TelegramUpdateStore>> = {
-  memory: memoryTelegramUpdateStore,
-  'bun:sqlite': () => sqliteTelegramUpdateStore({ database: new Database(':memory:') }),
-  ...(nodeSqlite && {
-    'node:sqlite': () =>
-      sqliteTelegramUpdateStore({ database: new nodeSqlite.DatabaseSync(':memory:') }),
-  }),
-};
 
 interface Message extends TelegramUpdateEnvelope {
   readonly message: { readonly chat: { readonly id: number }; readonly text: string };
@@ -42,58 +29,6 @@ function gate() {
     open = resolve;
   });
   return { open, opened };
-}
-
-for (const [name, make] of Object.entries(STORES)) {
-  describe(`telegram update store rules: ${name}`, () => {
-    const claim = { maxAttempts: 2 };
-
-    test('one record per update; a live lease is not taken; a lapsed one is', async () => {
-      const store = make();
-      expect(await store.add({ updateId: 7, body: 'b', receivedAt: 0 })).toBe(true);
-      expect(await store.add({ updateId: 7, body: 'other', receivedAt: 1 })).toBe(false);
-      expect(await store.claim(7, { ...claim, now: 10, leaseUntil: 100 })).toBe(1);
-      expect(await store.claim(7, { ...claim, now: 50, leaseUntil: 150 })).toBeUndefined();
-      expect(await store.due({ now: 50, pendingBefore: 50, limit: 10 })).toEqual([]);
-      expect(await store.due({ now: 101, pendingBefore: 0, limit: 10 })).toEqual([
-        { updateId: 7, body: 'b' },
-      ]);
-      expect(await store.claim(7, { ...claim, now: 101, leaseUntil: 200 })).toBe(2);
-    });
-
-    test('only the attempt holding the update renews or settles it', async () => {
-      const store = make();
-      await store.add({ updateId: 1, body: 'b', receivedAt: 0 });
-      await store.claim(1, { ...claim, now: 0, leaseUntil: 10 });
-      await store.claim(1, { ...claim, now: 11, leaseUntil: 50 });
-      expect(await store.renew(1, 1, 500)).toBe(false);
-      expect(await store.renew(1, 2, 60)).toBe(true);
-      await store.settle(1, 1, { state: 'completed', at: 20 });
-      // Attempt 1 lost the lease: its "completed" did not land, attempt 2 still holds it.
-      expect(await store.due({ now: 61, pendingBefore: 0, limit: 10 })).toHaveLength(1);
-      await store.settle(1, 2, { state: 'completed', at: 30 });
-      expect(await store.due({ now: 1_000, pendingBefore: 1_000, limit: 10 })).toEqual([]);
-    });
-
-    test('a failed update is due at its retry; spent attempts abandon it; settled ones are pruned', async () => {
-      const store = make();
-      await store.add({ updateId: 2, body: 'b', receivedAt: 0 });
-      await store.add({ updateId: 1, body: 'a', receivedAt: 5 });
-      await store.claim(2, { ...claim, now: 0, leaseUntil: 10 });
-      await store.settle(2, 1, { state: 'failed', at: 1, retryAt: 30, error: 'x' });
-      expect(await store.due({ now: 29, pendingBefore: 0, limit: 10 })).toEqual([]);
-      expect(
-        (await store.due({ now: 30, pendingBefore: 5, limit: 10 })).map((row) => row.updateId),
-      ).toEqual([1, 2]);
-      await store.claim(2, { ...claim, now: 30, leaseUntil: 40 });
-      await store.settle(2, 2, { state: 'failed', at: 31, retryAt: 35, error: 'x' });
-      expect(await store.claim(2, { ...claim, now: 36, leaseUntil: 50 })).toBeUndefined();
-      expect(await store.due({ now: 100, pendingBefore: 0, limit: 10 })).toEqual([]);
-      expect(await store.prune(36)).toBe(0);
-      expect(await store.prune(37)).toBe(1);
-      expect(await store.add({ updateId: 2, body: 'b', receivedAt: 40 })).toBe(true);
-    });
-  });
 }
 
 describe('telegram update intake', () => {
@@ -183,6 +118,50 @@ describe('telegram update intake', () => {
       [1, true],
       [2, false],
     ]);
+    await intake.close();
+  });
+
+  test("grammY's BotError is unwrapped: retry, onFailure and the stored error see the handler's own", async () => {
+    class Terminal extends Error {}
+    /** What `bot.handleUpdate` throws: grammY's wrapper, the original on `.error`. */
+    class BotError extends Error {
+      constructor(
+        readonly error: unknown,
+        readonly ctx: object,
+      ) {
+        super(`Error in middleware: ${error instanceof Error ? error.message : ''}`);
+        this.name = 'BotError';
+      }
+    }
+    const seen: unknown[] = [];
+    const failures: TelegramUpdateFailure[] = [];
+    const settled: string[] = [];
+    const inner = memoryTelegramUpdateStore();
+    const store: TelegramUpdateStore = {
+      ...inner,
+      settle: async (updateId, attempt, settlement) => {
+        if (settlement.state !== 'completed') settled.push(settlement.error);
+        return inner.settle(updateId, attempt, settlement);
+      },
+    };
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      handle: () => {
+        throw new BotError(new Terminal('account is closed'), {});
+      },
+      retry: (error) => {
+        seen.push(error);
+        return error instanceof Terminal ? false : 10;
+      },
+      onFailure: (failure) => failures.push(failure),
+    });
+    await intake.start();
+    await intake.accept(body(1, 'x'));
+    await intake.idle();
+    expect(seen[0]).toBeInstanceOf(Terminal);
+    expect(failures[0]?.error).toBeInstanceOf(Terminal);
+    expect(failures[0]?.retrying).toBe(false);
+    expect(settled).toEqual(['account is closed']);
     await intake.close();
   });
 

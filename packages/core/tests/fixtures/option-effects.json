@@ -944,5 +944,16 @@
     "table": {
       "exempt": "only names the table; the store rules run against the default name in every store test"
     }
+  },
+  "PostgresTelegramUpdateStoreConfig": {
+    "query": {
+      "test": "keeps the rules, with bigint columns read back as strings"
+    },
+    "table": {
+      "test": "the schema for a migration is the table the store uses, and runs twice"
+    },
+    "createTable": {
+      "test": "without the table and without creating it, a store says so"
+    }
   }
 }

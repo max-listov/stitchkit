@@ -35,7 +35,7 @@
     "telegram-bot-template-lane": "cd packages/core && bun ../../scripts/package-build-lock.ts -- sh -c 'cd ../create-stitchkit/templates/telegram-bot && bun install --frozen-lockfile --ignore-scripts && bun run check && bun test && bun run build'",
     "starter-lane": "bun scripts/starter-lane.ts --mode=target --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=target --variant=repository --browser=all",
     "starter-head-lane": "bun scripts/starter-lane.ts --mode=head --variant=blank --browser=all && bun scripts/starter-lane.ts --mode=head --variant=repository --browser=all",
-    "test:agent-store-postgres": "bun scripts/agent-store-postgres-lane.ts",
+    "test:postgres-stores": "bun scripts/postgres-stores-lane.ts",
     "starter:dev": "cd packages/create-stitchkit/template && bun run dev",
     "agent-starter:dev": "cd packages/create-stitchkit/templates/agent && bun run dev",
     "update:starter": "bun scripts/update-starter.ts",

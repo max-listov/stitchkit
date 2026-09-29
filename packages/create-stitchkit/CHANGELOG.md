@@ -12,6 +12,12 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- The Telegram-bot template's journal no longer passes a token pattern: with
+  Stitchkit 0.101 every logger masks a bot token by shape and keeps the bot's
+  id (`123456:[redacted]`), and an error's own fields reach the line.
+
 ## [0.6.9] — 2026-09-29
 
 ### Changed

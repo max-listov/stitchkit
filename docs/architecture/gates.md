@@ -18,14 +18,14 @@ protocol in [`release-process.md`](./release-process.md).
 `bun scripts/verify.ts --release` is what a **release commit** runs, and `pre-push` reuses that
 exact-tree result. `verify` is the whole portable local gate and it runs **every portable gate CI
 runs**: the frozen-lockfile install every runner performs first, lint, typecheck, tests, the
-Postgres agent-store lane, build, the Next-SSR and Node smokes, the packed consumer lane, the packed
+Postgres stores lane (the agent store and the Telegram update store against a real server), build, the Next-SSR and Node smokes, the packed consumer lane, the packed
 starter lanes and the supervised PM2 lane. Its prerequisites are listed in
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md), and all of them arrive with `bun install` except a
 reachable PostgreSQL and the Playwright browsers.
 
 The only CI-only qualifier is work another kernel cannot execute: real macOS arm64/x64 builds and
-packed Bun/Node contained-files probes (ADR 0135). Two portable gaps used to be: the agent-store
-lane, until it turned a release run red, and the supervised lane, until the supervisor became a
+packed Bun/Node contained-files probes (ADR 0135). Two portable gaps used to be: the Postgres
+stores lane, until it turned a release run red, and the supervised lane, until the supervisor became a
 pinned devDependency instead of a global install. Both gaps fell on the release commit — the one
 commit whose red run cannot be repaired in place (see
 [Order inside a release](./release-process.md#order-inside-a-release)) — and

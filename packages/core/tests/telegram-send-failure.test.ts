@@ -7,7 +7,11 @@
  * The cases below are the ones that list gets wrong or cannot express.
  */
 import { describe, expect, test } from 'bun:test';
-import { classifyTelegramSendFailure } from '../src/entrypoints/telegram';
+import {
+  classifyTelegramSendFailure,
+  TELEGRAM_SEND_FAILURE_REASONS,
+  type TelegramSendFailureReason,
+} from '../src/entrypoints/telegram';
 
 /** A grammY error, in the shape it is thrown: code, prose and parameters. */
 function botApiError(
@@ -123,5 +127,35 @@ describe('a refused Telegram send is classified', () => {
     const cyclic: Record<string, unknown> = { error_code: 999 };
     cyclic.cause = cyclic;
     expect(classifyTelegramSendFailure(cyclic).reason).toBe('unknown');
+  });
+});
+
+describe('the reasons as a list', () => {
+  test('names every reason once, and a consumer table over them is exhaustive by type', () => {
+    // A release that adds a reason fails to compile here until the table has it.
+    const codes: Readonly<Record<TelegramSendFailureReason, string>> = {
+      'blocked-by-user': 'E_BLOCKED',
+      'user-deactivated': 'E_GONE',
+      'chat-not-found': 'E_CHAT',
+      'not-started': 'E_START',
+      'rate-limited': 'E_LIMIT',
+      'message-invalid': 'E_MESSAGE',
+      'server-error': 'E_TELEGRAM',
+      unknown: 'E_UNKNOWN',
+    };
+    expect(Object.keys(codes).sort()).toEqual([...TELEGRAM_SEND_FAILURE_REASONS].sort());
+    expect(new Set(TELEGRAM_SEND_FAILURE_REASONS).size).toBe(
+      TELEGRAM_SEND_FAILURE_REASONS.length,
+    );
+    expect(
+      classifyTelegramSendFailure({
+        error_code: 403,
+        description: 'Forbidden: bot was blocked by the user',
+      }),
+    ).toMatchObject({
+      reason: 'blocked-by-user',
+      retryable: false,
+      recipientUnreachable: true,
+    });
   });
 });

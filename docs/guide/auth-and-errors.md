@@ -337,6 +337,11 @@ Three things it does that a hand-written check usually does not:
 - `raw` keeps every signed pair, so a field Telegram adds after this release
   does not need a release to reach.
 
+The user arrives `camelCase` — `firstName`, `languageCode` — as `TelegramUser`.
+A bot meets the same person as grammY's `ctx.from`, in Telegram's `snake_case`;
+`parseTelegramUser(ctx.from)` gives the same `TelegramUser`, so one
+`ensureAccount(user)` serves the Mini App and the chat.
+
 `maxAgeSeconds` is optional and there is no default: only the application knows
 how long its own session is worth. Omitting it means the string never expires,
 which is a decision rather than an oversight.
@@ -365,6 +370,17 @@ helps; a message Telegram could not parse is *neither* — the recipient is fine
 and our payload is wrong, which is the case a list of substrings quietly counts
 against the user. An unrecognised refusal leaves the recipient reachable: losing
 a working subscriber forever costs more than one wasted send.
+
+`TELEGRAM_SEND_FAILURE_REASONS` lists every reason. A table keyed by
+`TelegramSendFailureReason` — error codes, the text a person reads — fails to
+compile when a release adds one, instead of falling through to a default:
+
+```ts
+const codes: Record<TelegramSendFailureReason, string> = {
+  'blocked-by-user': 'E_BLOCKED',
+  /* … every reason … */
+}
+```
 
 The rest of what a bot is assembled from — its resources, journal, operator
 channel, broadcasts and local Bot API files — is in [Telegram bots](telegram.md).
