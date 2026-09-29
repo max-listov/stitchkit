@@ -12,6 +12,11 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects pin `packageManager: bun@1.4.2`, the current Bun, in the
+  full-stack, agent and Telegram-bot templates.
+
 ## [0.6.8] — 2026-09-28
 
 ### Changed
