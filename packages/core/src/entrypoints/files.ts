@@ -18,6 +18,16 @@ export {
   type ManagedFileWriteOptions,
 } from '../files/boundary';
 export {
+  type ChunkSpool,
+  type ChunkSpoolAssembly,
+  type ChunkSpoolConfig,
+  type ChunkSpoolErrorCode,
+  type ChunkSpoolKey,
+  type ChunkSpoolOpen,
+  type ChunkSpoolPart,
+  createChunkSpool,
+} from '../files/chunk-spool';
+export {
   type WriteFileAtomicOptions,
   writeFileAtomic,
   writeFileAtomicSync,

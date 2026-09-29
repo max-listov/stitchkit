@@ -1,4 +1,11 @@
 export {
+  type ChunkedUploadConfig,
+  type ChunkedUploadPart,
+  type ChunkedUploadProgress,
+  type ChunkedUploadStart,
+  uploadInChunks,
+} from '../browser/chunked-upload';
+export {
   type ClientConfig,
   type ClientContract,
   type ClientFetch,

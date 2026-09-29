@@ -35,6 +35,9 @@ const REGISTRY = `${TESTS}/fixtures/option-effects.json`;
 /** Where each covered configuration type is exported from. */
 const COVERED: Record<string, string> = {
   SessionCredentialsConfig: 'entrypoints/index.ts',
+  ClientRequestOptions: 'entrypoints/contract.ts',
+  ChunkedUploadConfig: 'entrypoints/index.ts',
+  ChunkSpoolConfig: 'entrypoints/files.ts',
   ChangeSubscriptionConfig: 'entrypoints/application.ts',
   NotificationDeliveryConfig: 'entrypoints/application.ts',
   CacheBridgeConfig: 'entrypoints/react.ts',

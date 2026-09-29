@@ -5,6 +5,7 @@ import ky, {
   type KyInstance,
   type Options,
 } from 'ky';
+import type { UploadProgress } from '../contract/client-types';
 import type { ErrorEnvelope } from '../contract/errors';
 import { isRecord } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
@@ -18,6 +19,7 @@ import {
 } from './http-fetch';
 import { responseTraceId } from './request-id';
 import type { ClientFetch } from './transport';
+import { uploadProgressRoute, withUploadProgress } from './upload-progress';
 
 export type ApiEvent =
   | { type: 'unauthorized' }
@@ -220,6 +222,8 @@ export interface RequestOptions {
    * `Content-Disposition` (the download filename) lives.
    */
   responseType?: 'json' | 'blob' | 'response' | 'void';
+  /** Hear the request body leave; each transport retry counts again. */
+  onUploadProgress?: (progress: UploadProgress) => void;
 }
 
 /** The HTTP transport adapter `createClient` builds typed methods on. */
@@ -294,6 +298,16 @@ function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiErr
     responseTraceId(response),
     { cause: error },
   );
+}
+
+/** Ky's pre-read error body: parsed JSON, or text a server sent without a JSON type. */
+function errorBodyOf(data: unknown): unknown {
+  if (typeof data !== 'string') return data ?? null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -371,25 +385,26 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
               emit({ type: 'unauthorized' });
             }
           }
-          if (!response.ok) {
-            const body = await response
-              .clone()
-              .json()
-              .catch(() => null);
-            if (body) {
-              const parsed = parseError(body);
-              if (parsed) {
-                throw new ApiError(
-                  parsed.code,
-                  response.status,
-                  parsed.details,
-                  parsed.message,
-                  parsed.hint,
-                  responseTraceId(response),
-                );
-              }
-            }
-          }
+        },
+      ],
+      // The envelope becomes an `ApiError` only once Ky is done retrying:
+      // raised from `afterResponse`, it ended the request before Ky ever saw
+      // the status, so `retry.statusCodes` never fired against a stitchkit
+      // server — whose every failure is an envelope.
+      beforeError: [
+        ({ error }) => {
+          if (!isHTTPError(error)) return error;
+          const body = errorBodyOf(error.data);
+          const parsed = body === null ? null : parseError(body);
+          if (!parsed) return error;
+          return new ApiError(
+            parsed.code,
+            error.response.status,
+            parsed.details,
+            parsed.message,
+            parsed.hint,
+            responseTraceId(error.response),
+          );
         },
       ],
     },
@@ -405,9 +420,16 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.signal,
       options.timeout ?? config.timeout ?? 30_000,
     );
+    const transport = config.fetch ?? globalThis.fetch.bind(globalThis);
     const kyOptions: Options = {
       fetch: createRetryAwareFetch(
-        config.fetch ?? globalThis.fetch.bind(globalThis),
+        options.onUploadProgress
+          ? withUploadProgress(
+              transport,
+              options.onUploadProgress,
+              uploadProgressRoute(config.fetch !== undefined || config.unix !== undefined),
+            )
+          : transport,
         config.unix,
       ),
       timeout: false,

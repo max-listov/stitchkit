@@ -261,7 +261,7 @@ function createEndpointMethod<K extends string>(
         return settle(
           execute,
           readClientRequestArgs(args[0]),
-          readClientRequestOptions(args[1]),
+          readClientRequestOptions(endpoint, args[1]),
         );
       },
     });
@@ -271,7 +271,7 @@ function createEndpointMethod<K extends string>(
   return Object.assign(method, {
     withOptions: (...args: unknown[]) => {
       refuseExtraWithOptionsArguments(endpoint, args.length, 1);
-      return settle(execute, {}, readClientRequestOptions(args[0]));
+      return settle(execute, {}, readClientRequestOptions(endpoint, args[0]));
     },
   });
 }
@@ -349,14 +349,41 @@ function readClientRequestArgs(requestArgs: unknown): Record<string, unknown> {
   return requestArgs ?? {};
 }
 
-function readClientRequestOptions(value: unknown): ClientRequestOptions {
+function readClientRequestOptions(
+  endpoint: EndpointDef,
+  value: unknown,
+): ClientRequestOptions {
   if (!isRecord(value)) throw new TypeError('Client request options must be an object');
-  const signal = value.signal;
-  if (signal === undefined) return {};
-  if (!isAbortSignal(signal)) {
+  const { signal, onUploadProgress } = value;
+  if (signal !== undefined && !isAbortSignal(signal)) {
     throw new TypeError('Client request signal must be an AbortSignal');
   }
-  return { signal };
+  if (onUploadProgress === undefined) return signal === undefined ? {} : { signal };
+  if (typeof onUploadProgress !== 'function') {
+    throw new TypeError('Client request onUploadProgress must be a function');
+  }
+  if (!endpointSendsBody(endpoint)) {
+    throw new TypeError(
+      `${endpoint.method} ${endpoint.path}: onUploadProgress needs a request body — ` +
+        'a GET, HEAD or DELETE sends none, and a streaming endpoint keeps its response live, ' +
+        'which the XMLHttpRequest route would buffer.',
+    );
+  }
+  return {
+    ...(signal !== undefined && { signal }),
+    onUploadProgress: (progress) => {
+      onUploadProgress(progress);
+    },
+  };
+}
+
+function endpointSendsBody(endpoint: EndpointDef): boolean {
+  return (
+    endpoint.method !== 'GET' &&
+    endpoint.method !== 'HEAD' &&
+    endpoint.method !== 'DELETE' &&
+    !('stream' in endpoint && endpoint.stream)
+  );
 }
 
 function isAbortSignal(value: unknown): value is AbortSignal {

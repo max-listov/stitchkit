@@ -96,9 +96,29 @@ export type MultipartBufferedFiles<M> = M extends { files: infer F }
     }
   : never;
 
+/**
+ * How much of one request body has gone out. `sentBytes` counts bytes handed to
+ * the network, not bytes the server accepted; `totalBytes` is the encoded body
+ * length (for multipart, boundaries included). `attempt` starts at `1` and
+ * grows with every transport retry, which counts from `0` again.
+ */
+export interface UploadProgress {
+  readonly sentBytes: number;
+  readonly totalBytes: number;
+  readonly attempt: number;
+}
+
 /** Public per-call options accepted by every typed HTTP endpoint's `withOptions` method. */
 export interface ClientRequestOptions {
   signal?: AbortSignal;
+  /**
+   * Hear the request body leave: first `sentBytes: 0`, then growing values,
+   * last equal to `totalBytes`. Bun and Node stream the encoded body through
+   * the configured fetch; a browser without an injected fetch sends through
+   * `XMLHttpRequest`, the one portable source of upload events. Body methods
+   * only — a `GET`, `HEAD`, `DELETE` or streaming endpoint refuses it.
+   */
+  onUploadProgress?: (progress: UploadProgress) => void;
 }
 
 type ClientEndpointWithArgs<Args, Output> = {

@@ -15,6 +15,35 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.101.1] — 2026-09-29
+
+### Added
+
+- **`stitchkit`, `stitchkit/contract`** — `onUploadProgress` on
+  `withOptions` for every call with a body: `{ sentBytes, totalBytes, attempt }`,
+  first `0`, last `totalBytes`, counted again on a transport retry. Bun, Node,
+  an injected `fetch` and a unix socket count a streamed body as the transport
+  pulls it; a browser on its own fetch counts `XMLHttpRequest` upload events.
+  Without the option a request takes the path it always did. New type
+  `UploadProgress`. → ADR 0215.
+- **`stitchkit`** — `uploadInChunks`: a file larger than one request as
+  `init` → parts → `finalize` over three calls the application owns, with a
+  client-minted id, repeats of a part on a failure that may pass, `finalize`
+  never repeated, cancellation between parts and progress in file bytes.
+  → ADR 0216.
+- **`stitchkit/files`** — `createChunkSpool`: the server half — parts on disk
+  under an owner and upload id with size+sha256 receipts, idempotent `open` and
+  `put`, the first writer of a part winning across processes, ordered
+  `assemble`, `sweep`; refusals are 4xx `AppError`s. → ADR 0216.
+
+### Fixed
+
+- **`stitchkit`** — `createHttpClient`'s `retry.statusCodes` fires against a
+  stitchkit server. The error envelope was turned into an `ApiError` in
+  `afterResponse`, before Ky saw the status, so a configured `503` retry never
+  ran for any response carrying an envelope; it is now raised after the
+  retries.
+
 ## [0.101.0] — 2026-09-29
 
 ### ⚠️ Breaking changes

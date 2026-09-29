@@ -332,8 +332,8 @@ non-flat field in a `GET` input, and a missing or invalid multipart file. → AD
 0148.
 
 Abort and timeout do not emit `network_error` and are not retried. The same
-options work for query, JSON, multipart and raw-response calls. Stitchkit does
-not expose upload progress: Fetch has no portable upload-progress primitive.
+options work for query, JSON, multipart and raw-response calls. A body call
+also takes `onUploadProgress` — see [Upload progress](#upload-progress).
 
 An injected transport failure is normalized to `UNKNOWN_ERROR` while its exact
 object remains available as `ApiError.cause`. This is how a bounded adapter can
@@ -347,6 +347,51 @@ For an endpoint without contract arguments, pass only the options object:
 ```ts
 await api.health.withOptions({ signal: controller.signal })
 ```
+
+### Upload progress
+
+A call with a body can report it leaving:
+
+```ts
+await api.recordings.upload.withOptions(
+  { file, title: 'Take 3' },
+  {
+    signal,
+    onUploadProgress: ({ sentBytes, totalBytes, attempt }) => {
+      bar.value = sentBytes / totalBytes
+    },
+  },
+)
+```
+
+- `sentBytes` counts bytes of the encoded body handed to the network — not
+  bytes the server accepted. `totalBytes` is the encoded length, multipart
+  boundaries included. The first report is `0`, values only grow, and the last
+  one of an attempt equals `totalBytes`.
+- A transport retry (`HttpClientConfig.retry`) counts again from `0` under the
+  next `attempt`.
+- Without the option nothing changes: the request takes the path it always did.
+- A `GET`, `HEAD`, `DELETE` or streaming endpoint refuses the option with a
+  `TypeError` at the call — it has no body to count, or a live response the
+  browser route would buffer. A listener that throws does not fail the upload.
+
+Fetch has no upload event, so the count comes from one of two routes, chosen
+per call:
+
+| Where the client runs | Route | What counts |
+|---|---|---|
+| Bun, Node, SSR, an injected `fetch`, a unix socket | the body is encoded once and sent as a stream of 64 KiB pieces with an exact `content-length` | a piece counts when the transport pulls it |
+| a browser on its own fetch | `XMLHttpRequest`, with the same headers, credentials, errors, cancellation and timeout | `xhr.upload` progress events |
+
+The browser route exists because a streaming request body is not portable:
+Chromium sends one only over HTTP/2 and Safari not at all. Two consequences of
+XHR: `credentials: 'omit'` is refused (XHR cannot drop same-origin cookies),
+and the response is read whole before the call resolves. An injected `fetch`
+always takes the stream route — it owns the I/O, and a transport that buffers
+the stream before sending reports the whole body at once.
+
+A counted body is encoded in memory once. A file larger than one request
+belongs in [chunked uploads](#chunked-uploads), whose parts are sized for it.
 
 ### Injected delivery adapters
 
@@ -444,6 +489,116 @@ const tenantApi = createClients({ users, posts }, http, {
 Every method now requires `tenantId`, and the callback sees it as a `string`.
 The batch form delegates to the same single-contract client runtime, including
 HTTP exposure filtering, multipart, raw responses and output validation.
+
+## Chunked uploads
+
+A file larger than one request goes as three calls of the application's own
+contract — open, parts, finish — driven by `uploadInChunks` on the client and
+held by `createChunkSpool` (`stitchkit/files`) on the server. The contract stays
+the application's: its fields, its limits, what happens to the finished file.
+
+```ts
+// shared: one part size for both halves
+export const CHUNK_BYTES = 4 * 1024 * 1024
+
+// contract
+init: {
+  method: 'POST', path: '/uploads', desc: 'Open an upload',
+  input: z.object({ uploadId: z.string(), totalBytes: z.number(), chunkCount: z.number(), name: z.string() }),
+  output: z.object({ finished: Accepted.optional() }),
+},
+chunk: {
+  method: 'PUT', path: '/uploads/:uploadId/chunks/:index', desc: 'Send one part',
+  params: z.object({ uploadId: z.string(), index: z.coerce.number() }),
+  multipart: { files: { bytes: {} } },
+  output: z.object({ state: z.enum(['stored', 'repeated']) }),
+},
+finalize: {
+  method: 'POST', path: '/uploads/:uploadId/finalize', desc: 'Assemble the file',
+  params: z.object({ uploadId: z.string() }),
+  output: Accepted,
+},
+```
+
+```ts
+// server
+import { createChunkSpool } from 'stitchkit/files'
+
+const spool = createChunkSpool({
+  directory: env.UPLOAD_SPOOL_DIR,
+  chunkBytes: CHUNK_BYTES,
+  maxFileBytes: 1024 * 1024 * 1024,
+  meta: z.object({ name: z.string() }),
+})
+
+implement(contract, {
+  init: async ({ input, ctx }) => {
+    const done = await findFinished(input.uploadId) // the app's own record
+    if (done) return { finished: done }
+    await spool.open({ owner: ctx.user.id, ...input, meta: { name: input.name } })
+    return {}
+  },
+  chunk: async ({ params, files, ctx }) => ({
+    state: await spool.put({ owner: ctx.user.id, ...params, bytes: files.bytes }),
+  }),
+  finalize: async ({ params, ctx }) => {
+    const key = { owner: ctx.user.id, uploadId: params.uploadId }
+    const file = await spool.assemble(key) // file.stream(), file.chunkPaths, file.meta
+    const accepted = await store(file)
+    await spool.discard(key)
+    return accepted
+  },
+})
+```
+
+```ts
+// client — Bun, Node or a browser
+import { uploadInChunks } from 'stitchkit'
+
+const accepted = await uploadInChunks({
+  file,
+  chunkBytes: CHUNK_BYTES,
+  signal,
+  onProgress: ({ sentBytes, totalBytes }) => draw(sentBytes / totalBytes),
+  init: async (start, options) => {
+    const opened = await api.uploads.init.withOptions({ ...start, name: file.name }, options)
+    return opened.finished ? { finished: opened.finished } : undefined
+  },
+  chunk: (part, options) => api.uploads.chunk.withOptions(part, options),
+  finalize: (upload, options) => api.uploads.finalize.withOptions(upload, options),
+})
+```
+
+The rules the two halves share:
+
+- **The client mints the upload id** (default `crypto.randomUUID()`), so a
+  repeated `init` is the same upload. The spool keys it by `owner` too — the
+  same id from another owner is another upload.
+- **A part is idempotent.** The spool keeps a size+sha256 receipt per index:
+  the same bytes again answer `'repeated'`, other bytes `UPLOAD_CONFLICT`
+  (409). So the driver repeats `init` and a part on a failure that may pass — no
+  answer (network, timeout), `429`, `5xx` — up to `retries` times (default 3)
+  with a doubling pause from `retryDelayMs` (default 1 s). A refusal is final.
+- **`finalize` is never repeated.** After it the application owns the file and
+  the parts are gone; a lost answer is recovered by `init` returning
+  `{ finished }`, which the driver hands back without sending a byte.
+- **Cancellation is checked between parts**, so a cancelled upload never
+  reaches `finalize`.
+- **Every part but the last is exactly `chunkBytes`** and `chunkCount` must add
+  up; the spool refuses anything else with a 4xx `AppError`
+  (`ChunkSpoolErrorCode`), which a handler can let through as the client's
+  typed error.
+- **Progress counts file bytes**, inside a part too — the driver passes
+  `onUploadProgress` into the part call, so the [upload
+  progress](#upload-progress) route of the client applies. A repeated part
+  counts again from its start.
+- The first writer of a part wins across processes: its data file is named by
+  its hash and its receipt is published by an exclusive link. `sweep()` removes
+  uploads untouched for `staleAfterMs` (default 24 h); run it on a schedule.
+
+Part size is a latency decision: every part costs a round trip, so on a
+200 ms link a smaller part buys smoother progress at the price of a slower
+upload.
 
 ## Contract URL builders
 

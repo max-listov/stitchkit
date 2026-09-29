@@ -19,6 +19,7 @@ import {
   type RequestOptions,
 } from './http';
 import { responseTraceId } from './request-id';
+import { uploadProgressRoute, withUploadProgress } from './upload-progress';
 
 /** Merge an endpoint's timeout and response mode into request options. */
 function withTimeout(
@@ -223,7 +224,14 @@ export function createFetchExecutor<K extends string>(
           : hasBody
             ? JSON.stringify(plan.remainingArgs)
             : undefined;
-        const res = await executeFetch(url, {
+        const deliver = options?.onUploadProgress
+          ? withUploadProgress(
+              executeFetch,
+              options.onUploadProgress,
+              uploadProgressRoute(config.fetch !== undefined),
+            )
+          : executeFetch;
+        const res = await deliver(url, {
           method: endpoint.method,
           headers,
           credentials: config.credentials,

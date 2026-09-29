@@ -13,6 +13,7 @@ export type {
   TypedClient,
   TypedHttpClient,
   TypedUrlBuilder,
+  UploadProgress,
 } from '../contract/client-types';
 export {
   ALL_TRANSPORTS,

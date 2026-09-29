@@ -1,4 +1,43 @@
 {
+  "ChunkedUploadConfig": {
+    "file": { "test": "parts go in order and the server assembles the same file" },
+    "chunkBytes": { "test": "parts go in order and the server assembles the same file" },
+    "uploadId": {
+      "test": "a repeated init of a finished upload returns its result without a byte"
+    },
+    "signal": { "test": "a cancel between parts never reaches finalize" },
+    "retries": {
+      "test": "retries and retryDelayMs bound the repeats of one part and pace them"
+    },
+    "retryDelayMs": {
+      "test": "retries and retryDelayMs bound the repeats of one part and pace them"
+    },
+    "onProgress": { "test": "parts go in order and the server assembles the same file" },
+    "init": {
+      "test": "a repeated init of a finished upload returns its result without a byte"
+    },
+    "chunk": { "test": "a part lost to the network is repeated and the upload goes on" },
+    "finalize": { "test": "parts go in order and the server assembles the same file" }
+  },
+  "ChunkSpoolConfig": {
+    "directory": {
+      "test": "sweep removes an upload untouched past its age and keeps a fresh one"
+    },
+    "chunkBytes": {
+      "test": "a part before open, out of range or of the wrong size is refused"
+    },
+    "maxFileBytes": { "test": "a declaration that does not add up is refused" },
+    "meta": { "test": "assembly hands back the parsed meta and the parts in order" },
+    "staleAfterMs": {
+      "test": "sweep removes an upload untouched past its age and keeps a fresh one"
+    }
+  },
+  "ClientRequestOptions": {
+    "signal": { "test": "caller abort cancels GET, JSON, multipart and raw-response calls" },
+    "onUploadProgress": {
+      "test": "a 300 KB multipart body is counted to the length the server received"
+    }
+  },
   "ShutdownOptions": {
     "gracePeriodMs": {
       "test": "forwards the declared budgets and owns the abort signal"

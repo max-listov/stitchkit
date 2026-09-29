@@ -34,7 +34,10 @@ The browser-and-server entrypoint. Re-exports everything from
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
 | `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework and application-owned adapters |
-| `ClientRequestOptions` | _type_ | per-call `{ signal?: AbortSignal }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
+| `ClientRequestOptions` | _type_ | per-call `{ signal?, onUploadProgress? }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
+| `UploadProgress` | _type_ | `{ sentBytes, totalBytes, attempt }` heard by `onUploadProgress`: bytes of the encoded body handed to the network, first `0`, last `totalBytes`, counted again on each transport retry — [guide](../guide/client.md#upload-progress) |
+| `uploadInChunks` | function | send a file larger than one request as `init` → parts → `finalize` through three calls the app owns; client-minted id, repeats of a part on a failure that may pass, `finalize` never repeated, cancel checked between parts, progress in file bytes — [guide](../guide/client.md#chunked-uploads) |
+| `ChunkedUploadConfig` / `ChunkedUploadStart` / `ChunkedUploadPart` / `ChunkedUploadProgress` | _type_ | the driver's file, part size, retries and three calls; what `init` declares; one part; progress `{ sentBytes, totalBytes, index, chunkCount, attempt }` |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
@@ -47,7 +50,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `fetch` installs an explicit transport and is mutually exclusive with the legacy Bun-only `unix` option — [details](../guide/client.md#createhttpclient) |
 | `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
-| `RequestOptions` | _type_ | per-call options — params, timeout, response type |
+| `RequestOptions` | _type_ | per-call options — params, timeout, response type, `onUploadProgress` |
 | `HeaderProvider` | _type_ | static or per-request headers |
 | `ApiEvent` | _type_ | a client event — `unauthorized` / `network_error` / `logout` |
 | `ApiEventListener` | _type_ | an `ApiEvent` handler |
@@ -1891,6 +1894,9 @@ available from `stitchkit/contract`.
 | `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running |
 | `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time and nullable kernel process identity); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; an ownerless lock only after `ownerlessGraceMs` |
 | `ExclusiveLockError` | class | `LOCK_TIMEOUT` naming the resource and its holder, or `LOCK_ABORTED` with the signal's reason |
+| `createChunkSpool` | function | the server half of a chunked upload: parts on disk under `owner` + client-minted `uploadId`, each with a size+sha256 receipt; idempotent `open` and `put`, the first writer of a part wins across processes, `assemble` in order once every part is in, `sweep` of untouched uploads — [guide](../guide/client.md#chunked-uploads) |
+| `ChunkSpool` / `ChunkSpoolConfig` / `ChunkSpoolKey` / `ChunkSpoolOpen` / `ChunkSpoolPart` / `ChunkSpoolAssembly` | _type_ | the spool, its directory, part size, file limit, meta schema and age; an upload's key; its declaration; one part; the assembled parts with a concatenating `stream()` |
+| `ChunkSpoolErrorCode` | _type_ | the `AppError` codes a spool refuses with, each with its 4xx status: `UPLOAD_INVALID`, `UPLOAD_TOO_LARGE`, `UPLOAD_NOT_FOUND`, `UPLOAD_CONFLICT`, `UPLOAD_CHUNK_OUT_OF_RANGE`, `UPLOAD_CHUNK_SIZE`, `UPLOAD_INCOMPLETE` |
 
 ---
 
