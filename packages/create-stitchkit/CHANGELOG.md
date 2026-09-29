@@ -12,8 +12,13 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-09-29
+
 ### Changed
 
+- Generated projects track Stitchkit `^0.100.3`, which adds Telegram screens,
+  message markup, webhook ownership and durable update intake, and keyboard
+  layers for React.
 - Generated projects pin `packageManager: bun@1.4.2`, the current Bun, in the
   full-stack, agent and Telegram-bot templates.
 
