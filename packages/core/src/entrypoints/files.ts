@@ -18,6 +18,7 @@ export {
   type ManagedFileWriteOptions,
 } from '../files/boundary';
 export {
+  CHUNK_SPOOL_ERROR_CODES,
   type ChunkSpool,
   type ChunkSpoolAssembly,
   type ChunkSpoolConfig,
@@ -26,6 +27,7 @@ export {
   type ChunkSpoolOpen,
   type ChunkSpoolPart,
   createChunkSpool,
+  isChunkSpoolErrorCode,
 } from '../files/chunk-spool';
 export {
   type WriteFileAtomicOptions,

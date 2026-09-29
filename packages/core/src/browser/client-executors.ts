@@ -216,6 +216,10 @@ export function createFetchExecutor<K extends string>(
       Object.keys(plan.remainingArgs).length > 0;
 
     if (hasBody) headers['Content-Type'] = 'application/json';
+    // Chosen before the request so a refused route is the caller's TypeError.
+    const progressRoute = options?.onUploadProgress
+      ? uploadProgressRoute(config.fetch !== undefined)
+      : undefined;
 
     try {
       return await cancellation.run(async (signal) => {
@@ -224,13 +228,12 @@ export function createFetchExecutor<K extends string>(
           : hasBody
             ? JSON.stringify(plan.remainingArgs)
             : undefined;
-        const deliver = options?.onUploadProgress
-          ? withUploadProgress(
-              executeFetch,
-              options.onUploadProgress,
-              uploadProgressRoute(config.fetch !== undefined),
-            )
-          : executeFetch;
+        const deliver =
+          options?.onUploadProgress && progressRoute
+            ? withUploadProgress(executeFetch, options.onUploadProgress, {
+                route: progressRoute,
+              })
+            : executeFetch;
         const res = await deliver(url, {
           method: endpoint.method,
           headers,

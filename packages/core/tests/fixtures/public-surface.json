@@ -11,6 +11,7 @@
     "BindRealtimeClientOptions",
     "BodyHttpSuccessStatus",
     "BoundRealtimeClient",
+    "ChunkSource",
     "ChunkedUploadConfig",
     "ChunkedUploadPart",
     "ChunkedUploadProgress",
@@ -2101,6 +2102,7 @@
     "serializeSurfaceValue"
   ],
   "stitchkit/files": [
+    "CHUNK_SPOOL_ERROR_CODES",
     "ChunkSpool",
     "ChunkSpoolAssembly",
     "ChunkSpoolConfig",
@@ -2129,6 +2131,7 @@
     "WriteFileAtomicOptions",
     "createChunkSpool",
     "createManagedFileBoundary",
+    "isChunkSpoolErrorCode",
     "withExclusiveLock",
     "writeFileAtomic",
     "writeFileAtomicSync"

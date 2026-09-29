@@ -9,7 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { AppError } from '../src/contract/errors';
-import { createChunkSpool } from '../src/files/chunk-spool';
+import {
+  CHUNK_SPOOL_ERROR_CODES,
+  createChunkSpool,
+  isChunkSpoolErrorCode,
+} from '../src/files/chunk-spool';
 
 const root = mkdtempSync(join(tmpdir(), 'sk-spool-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -43,6 +47,30 @@ async function refusal(promise: Promise<unknown>): Promise<[string, number]> {
     throw new Error(`expected an AppError, got ${String(error)}`);
   return [error.code, error.status];
 }
+
+describe('error codes', () => {
+  test('every refusal code is listed and recognised; others are not', () => {
+    expect([...CHUNK_SPOOL_ERROR_CODES].sort()).toEqual([
+      'UPLOAD_CHUNK_OUT_OF_RANGE',
+      'UPLOAD_CHUNK_SIZE',
+      'UPLOAD_CONFLICT',
+      'UPLOAD_INCOMPLETE',
+      'UPLOAD_INVALID',
+      'UPLOAD_NOT_FOUND',
+      'UPLOAD_TOO_LARGE',
+    ]);
+    expect(Object.isFrozen(CHUNK_SPOOL_ERROR_CODES)).toBe(true);
+    expect(isChunkSpoolErrorCode('UPLOAD_CONFLICT')).toBe(true);
+    expect(isChunkSpoolErrorCode('NOT_FOUND')).toBe(false);
+    expect(isChunkSpoolErrorCode('toString')).toBe(false);
+  });
+
+  test('a real refusal carries a listed code', async () => {
+    const { spool } = makeSpool();
+    const [code] = await refusal(spool.put(part(0, 'abcd')));
+    expect(isChunkSpoolErrorCode(code)).toBe(true);
+  });
+});
 
 describe('open', () => {
   test('the same declaration again reopens; another one conflicts', async () => {

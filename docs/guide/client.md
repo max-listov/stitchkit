@@ -352,6 +352,11 @@ await api.health.withOptions({ signal: controller.signal })
 
 A call with a body can report it leaving:
 
+> **In a browser or React Native, do not give the client its own `fetch` for
+> a call you want counted.** Without one the count comes from
+> `XMLHttpRequest` upload events; with one the body is streamed to it, which a
+> browser may buffer (and report at once) and React Native refuses.
+
 ```ts
 await api.recordings.upload.withOptions(
   { file, title: 'Take 3' },
@@ -375,13 +380,14 @@ await api.recordings.upload.withOptions(
   `TypeError` at the call — it has no body to count, or a live response the
   browser route would buffer. A listener that throws does not fail the upload.
 
-Fetch has no upload event, so the count comes from one of two routes, chosen
+Fetch has no upload event, so the count comes from one of three routes, chosen
 per call:
 
 | Where the client runs | Route | What counts |
 |---|---|---|
 | Bun, Node, SSR, an injected `fetch`, a unix socket | the body is encoded once and sent as a stream of 64 KiB pieces with an exact `content-length` | a piece counts when the transport pulls it |
 | a browser on its own fetch | `XMLHttpRequest`, with the same headers, credentials, errors, cancellation and timeout | `xhr.upload` progress events |
+| React Native / Expo on its own fetch | the platform's `XMLHttpRequest`, handed the body as the client built it — the `FormData` itself, so a `{ uri, name, type }` file streams from disk; the same errors, cancellation and timeout | `xhr.upload` progress events; a `FormData`'s `totalBytes` comes with the first one |
 
 The browser route exists because a streaming request body is not portable:
 Chromium sends one only over HTTP/2 and Safari not at all. Two consequences of
@@ -390,7 +396,13 @@ and the response is read whole before the call resolves. An injected `fetch`
 always takes the stream route — it owns the I/O, and a transport that buffers
 the stream before sending reports the whole body at once.
 
-A counted body is encoded in memory once. A file larger than one request
+React Native is recognised by `navigator.product === 'ReactNative'`. Its
+credentials follow its own fetch: `include` and `omit` set `withCredentials`,
+anything else keeps the platform default. An injected `fetch` there is refused
+with a `TypeError` at the call: React Native cannot stream a request body, so
+there is nothing to count.
+
+Off React Native a counted body is encoded in memory once. A file larger than one request
 belongs in [chunked uploads](#chunked-uploads), whose parts are sized for it.
 
 ### Injected delivery adapters
@@ -552,7 +564,7 @@ implement(contract, {
 ```
 
 ```ts
-// client — Bun, Node or a browser
+// client — Bun, Node, a browser or React Native
 import { uploadInChunks } from 'stitchkit'
 
 const accepted = await uploadInChunks({
@@ -571,9 +583,15 @@ const accepted = await uploadInChunks({
 
 The rules the two halves share:
 
-- **The client mints the upload id** (default `crypto.randomUUID()`), so a
-  repeated `init` is the same upload. The spool keys it by `owner` too — the
-  same id from another owner is another upload.
+- **The client mints the upload id** (default `crypto.randomUUID()`, fresh per
+  call), so a repeated `init` is the same upload. The spool keys it by `owner`
+  too — the same id from another owner is another upload. To resume after the
+  app restarts instead of sending the file again, pass a stable `uploadId` —
+  the id of the app's own job or attempt.
+- **The file is anything with `size` and `slice(start, end)`** (`ChunkSource`).
+  A `Blob` is one; so is a platform file that is not a DOM `Blob`, such as an
+  Expo `File`, passed without a cast. A part's `bytes` is what `slice`
+  returns, so the part call hands it to the client as the multipart file.
 - **A part is idempotent.** The spool keeps a size+sha256 receipt per index:
   the same bytes again answer `'repeated'`, other bytes `UPLOAD_CONFLICT`
   (409). So the driver repeats `init` and a part on a failure that may pass — no
@@ -587,7 +605,9 @@ The rules the two halves share:
 - **Every part but the last is exactly `chunkBytes`** and `chunkCount` must add
   up; the spool refuses anything else with a 4xx `AppError`
   (`ChunkSpoolErrorCode`), which a handler can let through as the client's
-  typed error.
+  typed error. An application that maps error codes onto its own must map
+  these too — `isChunkSpoolErrorCode` / `CHUNK_SPOOL_ERROR_CODES` from
+  `stitchkit/files` — or a refusal reaches its client as an unknown 500.
 - **Progress counts file bytes**, inside a part too — the driver passes
   `onUploadProgress` into the part call, so the [upload
   progress](#upload-progress) route of the client applies. A repeated part

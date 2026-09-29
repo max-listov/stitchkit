@@ -40,17 +40,31 @@ export interface ChunkedUploadStart {
   readonly chunkCount: number;
 }
 
-export interface ChunkedUploadPart {
-  readonly uploadId: string;
-  readonly index: number;
-  readonly bytes: Blob;
+/**
+ * What the driver reads a file through: its size and a slice per part. A `Blob`
+ * is one; so is a platform file that is not a DOM `Blob` — an Expo `File`, a
+ * handle over a file on disk — and the part is whatever its `slice` returns.
+ */
+export interface ChunkSource<TPart = Blob> {
+  readonly size: number;
+  slice(start: number, end: number): TPart;
 }
 
-export interface ChunkedUploadConfig<TResult> {
-  readonly file: Blob;
+export interface ChunkedUploadPart<TPart = Blob> {
+  readonly uploadId: string;
+  readonly index: number;
+  /** The file's `slice(start, end)` for this part. */
+  readonly bytes: TPart;
+}
+
+export interface ChunkedUploadConfig<TResult, TPart = Blob> {
+  readonly file: ChunkSource<TPart>;
   /** Bytes per part; every part but the last is exactly this long. */
   readonly chunkBytes: number;
-  /** Default `crypto.randomUUID()`. Pass one to resume the same upload. */
+  /**
+   * Default `crypto.randomUUID()`, fresh per call. Pass a stable one — the id
+   * of the app's own job — to resume after a restart instead of sending again.
+   */
   readonly uploadId?: string;
   readonly signal?: AbortSignal;
   /** Repeats of one part (and of `init`) on a failure that may pass. Default 3. */
@@ -68,7 +82,10 @@ export interface ChunkedUploadConfig<TResult> {
     options: { signal?: AbortSignal },
   ) => Promise<undefined | { readonly finished: TResult }>;
   /** Send one part; pass `options` on to the client call as they are. */
-  readonly chunk: (part: ChunkedUploadPart, options: ClientRequestOptions) => Promise<unknown>;
+  readonly chunk: (
+    part: ChunkedUploadPart<TPart>,
+    options: ClientRequestOptions,
+  ) => Promise<unknown>;
   readonly finalize: (
     upload: { readonly uploadId: string },
     options: { signal?: AbortSignal },
@@ -90,12 +107,15 @@ export function isRetryableUploadFailure(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
-export async function uploadInChunks<TResult>(
-  config: ChunkedUploadConfig<TResult>,
+export async function uploadInChunks<TResult, TPart = Blob>(
+  config: ChunkedUploadConfig<TResult, TPart>,
 ): Promise<TResult> {
   const { file, chunkBytes, signal } = config;
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0) {
     throw new TypeError('uploadInChunks: chunkBytes must be a positive integer');
+  }
+  if (!Number.isSafeInteger(file.size) || file.size < 0) {
+    throw new TypeError('uploadInChunks: the file size must be a whole number of bytes');
   }
   if (file.size === 0) throw new TypeError('uploadInChunks: the file is empty');
   const totalBytes = file.size;
@@ -126,7 +146,9 @@ export async function uploadInChunks<TResult>(
   for (let index = 0; index < chunkCount; index += 1) {
     throwIfAborted(signal);
     const start = index * chunkBytes;
-    const bytes = file.slice(start, Math.min(totalBytes, start + chunkBytes));
+    const end = Math.min(totalBytes, start + chunkBytes);
+    const partBytes = end - start;
+    const bytes = file.slice(start, end);
     await repeating(
       (attempt) =>
         config.chunk(
@@ -134,12 +156,12 @@ export async function uploadInChunks<TResult>(
           {
             ...(signal && { signal }),
             onUploadProgress: (progress: UploadProgress) =>
-              report(start + fileShare(progress, bytes.size), index, attempt),
+              report(start + fileShare(progress, partBytes), index, attempt),
           },
         ),
       { retries, retryDelayMs, signal },
     );
-    report(start + bytes.size, index + 1, 1);
+    report(end, index + 1, 1);
   }
 
   throwIfAborted(signal);

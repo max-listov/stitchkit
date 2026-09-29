@@ -300,6 +300,11 @@ function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiErr
   );
 }
 
+/** The body Ky sends for `json`, as the React Native upload route must send it. */
+function jsonBodyOf(data: unknown): string | null {
+  return data === undefined ? null : JSON.stringify(data);
+}
+
 /** Ky's pre-read error body: parsed JSON, or text a server sent without a JSON type. */
 function errorBodyOf(data: unknown): unknown {
   if (typeof data !== 'string') return data ?? null;
@@ -424,11 +429,14 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     const kyOptions: Options = {
       fetch: createRetryAwareFetch(
         options.onUploadProgress
-          ? withUploadProgress(
-              transport,
-              options.onUploadProgress,
-              uploadProgressRoute(config.fetch !== undefined || config.unix !== undefined),
-            )
+          ? withUploadProgress(transport, options.onUploadProgress, {
+              route: uploadProgressRoute(
+                config.fetch !== undefined || config.unix !== undefined,
+              ),
+              // Ky hands its fetch a `Request`, from which React Native cannot
+              // read a `FormData` back; its route sends the body as built here.
+              nativeBody: data instanceof FormData ? data : jsonBodyOf(data),
+            })
           : transport,
         config.unix,
       ),

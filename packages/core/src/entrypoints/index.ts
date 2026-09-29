@@ -3,6 +3,7 @@ export {
   type ChunkedUploadPart,
   type ChunkedUploadProgress,
   type ChunkedUploadStart,
+  type ChunkSource,
   uploadInChunks,
 } from '../browser/chunked-upload';
 export {

@@ -57,6 +57,20 @@ const STATUS: { readonly [Code in ChunkSpoolErrorCode]: number } = {
   UPLOAD_INCOMPLETE: 409,
 };
 
+/**
+ * Whether an error code is one the spool refuses with. An application that
+ * maps error codes onto its own must map these too — an unmapped one would
+ * reach its client as an unknown 500 instead of the spool's 4xx.
+ */
+export function isChunkSpoolErrorCode(code: string): code is ChunkSpoolErrorCode {
+  return Object.hasOwn(STATUS, code);
+}
+
+/** Every code the spool refuses with. */
+export const CHUNK_SPOOL_ERROR_CODES: readonly ChunkSpoolErrorCode[] = Object.freeze(
+  Object.keys(STATUS).filter(isChunkSpoolErrorCode),
+);
+
 function refuse(
   code: ChunkSpoolErrorCode,
   message: string,
@@ -97,7 +111,7 @@ export interface ChunkSpoolAssembly<TMeta> {
   readonly meta: TMeta;
   readonly totalBytes: number;
   /** The parts on disk, in order; valid until `discard`. */
-  readonly chunkPaths: readonly string[];
+  readonly chunkPaths: string[];
   /** The whole file, part after part. */
   stream(): ReadableStream<Uint8Array>;
 }

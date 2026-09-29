@@ -344,4 +344,46 @@ describe('uploadInChunks over a stitchkit server with createChunkSpool', () => {
     expect(ApiError.is(failure) && failure.code).toBe('REQUEST_ABORTED');
     expect(sent).toEqual([0, 1]);
   });
+
+  test('a file that is not a Blob goes through its own size and slice', async () => {
+    const api = createClient(contract, { baseUrl });
+    const whole = new Uint8Array(await FILE.arrayBuffer());
+    // A platform file handle: a size and a slice, none of the Blob surface.
+    class DiskHandle {
+      readonly size = whole.byteLength;
+      readonly sliced: [number, number][] = [];
+      slice(start: number, end: number): Uint8Array<ArrayBuffer> {
+        this.sliced.push([start, end]);
+        return whole.slice(start, end);
+      }
+    }
+    const handle = new DiskHandle();
+    // @ts-expect-error — the handle is not a Blob, and needs no cast to be a source.
+    const notABlob: Blob = handle;
+    expect(notABlob instanceof Blob).toBe(false);
+    const events: ChunkedUploadProgress[] = [];
+    const result = await uploadInChunks({
+      file: handle,
+      chunkBytes: CHUNK_BYTES,
+      onProgress: (progress) => events.push(progress),
+      init: async (start, options) => {
+        await api.init.withOptions({ ...start, name: FILE.name }, options);
+        return undefined;
+      },
+      chunk: ({ uploadId, index, bytes }, options) =>
+        api.chunk.withOptions({ uploadId, index, bytes: new Blob([bytes]) }, options),
+      finalize: ({ uploadId }, options) => api.finalize.withOptions({ uploadId }, options),
+    });
+    expect(result).toEqual({ sha256: FILE_SHA, bytes: FILE.size });
+    expect(handle.sliced).toEqual([
+      [0, CHUNK_BYTES],
+      [CHUNK_BYTES, 2 * CHUNK_BYTES],
+      [2 * CHUNK_BYTES, 3 * CHUNK_BYTES],
+      [3 * CHUNK_BYTES, FILE.size],
+    ]);
+    expect(events.some((event) => event.sentBytes > 0 && event.sentBytes < CHUNK_BYTES)).toBe(
+      true,
+    );
+    expect(events.at(-1)).toMatchObject({ sentBytes: FILE.size, index: 4 });
+  });
 });

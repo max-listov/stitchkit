@@ -114,8 +114,9 @@ export interface ClientRequestOptions {
   /**
    * Hear the request body leave: first `sentBytes: 0`, then growing values,
    * last equal to `totalBytes`. Bun and Node stream the encoded body through
-   * the configured fetch; a browser without an injected fetch sends through
-   * `XMLHttpRequest`, the one portable source of upload events. Body methods
+   * the configured fetch; a browser or React Native without an injected fetch
+   * sends through `XMLHttpRequest`, the one portable source of upload events
+   * (React Native refuses an injected fetch here). Body methods
    * only — a `GET`, `HEAD`, `DELETE` or streaming endpoint refuses it.
    */
   onUploadProgress?: (progress: UploadProgress) => void;

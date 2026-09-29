@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.101.2] — 2026-09-29
+
+### Added
+
+- **`stitchkit`** — `onUploadProgress` in React Native and Expo: the body goes
+  to the platform's `XMLHttpRequest` as the client built it — the `FormData`
+  itself, so a `{ uri, name, type }` file still streams from disk — and its
+  upload events are the count. An injected `fetch` there is refused with a
+  `TypeError` at the call. → ADR 0217.
+- **`stitchkit`** — `uploadInChunks` takes any `ChunkSource` (`size` and
+  `slice(start, end)`), not only a DOM `Blob`: an Expo `File` passes without a
+  cast, and a part's `bytes` is what its `slice` returns. New type
+  `ChunkSource`. → ADR 0217.
+- **`stitchkit/files`** — `CHUNK_SPOOL_ERROR_CODES` and
+  `isChunkSpoolErrorCode`, so an application that maps error codes onto its
+  own recognises a spool refusal without its own list.
+
+### Changed
+
+- **`stitchkit/files`** — `ChunkSpoolAssembly.chunkPaths` is a `string[]`, a
+  fresh array per `assemble`, so it passes to an API that takes one.
+
 ## [0.101.1] — 2026-09-29
 
 ### Added

@@ -38,6 +38,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `UploadProgress` | _type_ | `{ sentBytes, totalBytes, attempt }` heard by `onUploadProgress`: bytes of the encoded body handed to the network, first `0`, last `totalBytes`, counted again on each transport retry — [guide](../guide/client.md#upload-progress) |
 | `uploadInChunks` | function | send a file larger than one request as `init` → parts → `finalize` through three calls the app owns; client-minted id, repeats of a part on a failure that may pass, `finalize` never repeated, cancel checked between parts, progress in file bytes — [guide](../guide/client.md#chunked-uploads) |
 | `ChunkedUploadConfig` / `ChunkedUploadStart` / `ChunkedUploadPart` / `ChunkedUploadProgress` | _type_ | the driver's file, part size, retries and three calls; what `init` declares; one part; progress `{ sentBytes, totalBytes, index, chunkCount, attempt }` |
+| `ChunkSource` | _type_ | what the driver reads a file through — `size` and `slice(start, end)`; a `Blob` is one, so is a platform file that is not (an Expo `File`), and a part's `bytes` is what its `slice` returns |
 | `ContractClientConfig` | _type_ | per-tenant / resource-scoped client config — dynamic `pathPrefix` + `stripPrefixKeys` ([guide](../guide/client.md#contractclientconfig--per-tenant--resource-scoped-clients)) |
 | `contractEndpointMatchers` | function | compile exact pathname matchers for selected HTTP contract operations and expected-401 policy |
 | `PathPrefixArgs` | _type_ | required string-valued keys exposed to a typed dynamic `pathPrefix` callback |
@@ -1897,6 +1898,7 @@ available from `stitchkit/contract`.
 | `createChunkSpool` | function | the server half of a chunked upload: parts on disk under `owner` + client-minted `uploadId`, each with a size+sha256 receipt; idempotent `open` and `put`, the first writer of a part wins across processes, `assemble` in order once every part is in, `sweep` of untouched uploads — [guide](../guide/client.md#chunked-uploads) |
 | `ChunkSpool` / `ChunkSpoolConfig` / `ChunkSpoolKey` / `ChunkSpoolOpen` / `ChunkSpoolPart` / `ChunkSpoolAssembly` | _type_ | the spool, its directory, part size, file limit, meta schema and age; an upload's key; its declaration; one part; the assembled parts with a concatenating `stream()` |
 | `ChunkSpoolErrorCode` | _type_ | the `AppError` codes a spool refuses with, each with its 4xx status: `UPLOAD_INVALID`, `UPLOAD_TOO_LARGE`, `UPLOAD_NOT_FOUND`, `UPLOAD_CONFLICT`, `UPLOAD_CHUNK_OUT_OF_RANGE`, `UPLOAD_CHUNK_SIZE`, `UPLOAD_INCOMPLETE` |
+| `CHUNK_SPOOL_ERROR_CODES` / `isChunkSpoolErrorCode` | const / function | every `ChunkSpoolErrorCode` as a frozen list, and the guard for one — map them onto the app's own error codes, or a spool refusal reaches its client as an unknown 500 |
 
 ---
 
