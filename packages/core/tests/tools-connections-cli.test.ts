@@ -16,6 +16,7 @@ import {
 } from '../src/entrypoints/tools/connections';
 import { isRecord } from '../src/internal/typed';
 import { createCli } from '../src/tools/cli/create-cli';
+import { unwrapMcpResult } from '../src/tools/connections/mcp-envelope';
 
 interface JsonRpcBody {
   jsonrpc: '2.0';
@@ -240,6 +241,53 @@ describe('discovered tools on the CLI surface', () => {
     expect(
       isRecord(emitted) && Array.isArray(emitted.content) ? emitted.content.length : 0,
     ).toBe(2);
+  });
+
+  test('an empty answer prints null and exits 0, never the _meta around it', async () => {
+    // A tool without an output contract answers with no parts; the envelope then
+    // carries only protocol metadata, which is not what the command returned.
+    const url = startMcp([ECHO], () => ({
+      _meta: { 'stitchkit/catalog': { digest: 'd1', tools: 237 } },
+      content: [],
+    }));
+    const discovered = await mountConnections([
+      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+    ]);
+    for (const argv of [
+      ['echo', '--value', 'x'],
+      ['echo', '--value', 'x', '--json'],
+    ]) {
+      expect(await runCli(discovered, argv)).toEqual({ out: 'null\n', err: '', code: 0 });
+    }
+    // A view over no answer is refused as a view, not computed over the envelope.
+    const counted = await runCli(discovered, ['echo', '--value', 'x', '--count-by', 'tools']);
+    expect(counted.code).toBe(2);
+    expect(counted.err).toContain('not one');
+    expect(counted.out).toBe('');
+  });
+
+  test('unwrapping no parts gives null, with or without _meta beside them', () => {
+    expect(
+      unwrapMcpResult({ _meta: { 'stitchkit/catalog': { tools: 1 } }, content: [] }),
+    ).toBe(null);
+    expect(unwrapMcpResult({ content: [] })).toBe(null);
+    // A structured answer still wins over an empty parts list.
+    expect(unwrapMcpResult({ content: [], structuredContent: { n: 1 } })).toEqual({ n: 1 });
+  });
+
+  test('a refusal with no parts fails upstream without relaying the envelope', async () => {
+    const url = startMcp([ECHO], () => ({
+      isError: true,
+      _meta: { 'stitchkit/catalog': { digest: 'd1', tools: 237 } },
+      content: [],
+    }));
+    const discovered = await mountConnections([
+      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+    ]);
+    const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
+    expect(code).toBe(1);
+    expect(err).toContain('UPSTREAM_TOOL_ERROR');
+    expect(err).not.toContain('stitchkit/catalog');
   });
 
   test('the agent mount still receives the envelope it needs', async () => {

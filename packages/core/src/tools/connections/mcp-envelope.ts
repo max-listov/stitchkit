@@ -12,6 +12,10 @@
  * So the CLI unwraps, and only the CLI. The order is the server's own order of
  * preference: `structuredContent` is the answer when the server sent one; a lone
  * text part is the answer when it parses as JSON, and its text when it does not.
+ * No parts at all is no answer, and says so as JSON: `null`. The envelope around
+ * an empty `content` carries only protocol metadata, and `_meta` is never an
+ * answer. Not `undefined`: a discovered tool declares an output, and an absent
+ * value there is a broken handler, not an empty one.
  * Anything else — several parts, an image, audio — is passed through whole,
  * because picking one part out of many would be inventing an answer.
  */
@@ -24,6 +28,7 @@ export function unwrapMcpResult(result: unknown): unknown {
   if (!isRecord(result)) return result;
   if (result.structuredContent !== undefined) return result.structuredContent;
   if (!Array.isArray(result.content)) return result;
+  if (result.content.length === 0) return null;
   const only = result.content.length === 1 ? result.content[0] : undefined;
   if (!isRecord(only) || only.type !== 'text' || typeof only.text !== 'string') return result;
   try {

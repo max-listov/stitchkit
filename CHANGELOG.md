@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.101.3] — 2026-09-29
+
+### Fixed
+
+- **`stitchkit/tools/connections`** — a discovered MCP command whose tool
+  answers with no content parts (a tool without an output contract) prints
+  `null` on the CLI and exits `0`. It printed the whole envelope — the
+  server's `_meta` and an empty `content` — as if that were the answer; a
+  failed call with no parts now fails as `UPSTREAM_TOOL_ERROR` without
+  relaying that envelope either.
+
 ## [0.101.2] — 2026-09-29
 
 ### Added

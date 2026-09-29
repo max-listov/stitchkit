@@ -898,9 +898,11 @@ kind, because the handler's value is what gets printed, piped and aggregated:
 handed the envelope, `--count-by status` groups the *content parts* and answers
 `no record carries the field "status" — available: text, type`. So the CLI
 transport unwraps, and only it: `structuredContent` when the server sent one, a
-lone text part when it parses as JSON, its text when it does not. Several parts,
-an image or audio pass through whole — picking one of many would be inventing an
-answer.
+lone text part when it parses as JSON, its text when it does not, and `null` when
+there are no parts at all — a tool without an output contract answers that way,
+and the `_meta` beside an empty `content` is protocol metadata, never the answer.
+Several parts, an image or audio pass through whole — picking one of many would
+be inventing an answer.
 
 
 ## Auth parity
