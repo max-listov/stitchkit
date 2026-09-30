@@ -18,3 +18,7 @@
  * → ADR 0156.
  */
 export { createDiagnosticJournal } from '../../application/diagnostic-journal';
+export {
+  type DiagnosticJournalReaderConfig,
+  readDiagnosticJournal,
+} from '../../application/diagnostic-journal-reader';

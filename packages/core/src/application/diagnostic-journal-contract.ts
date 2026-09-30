@@ -1,8 +1,14 @@
 import { z } from 'zod';
 import type { ExclusiveLockDiagnosis, ExclusiveLockOwner } from '../internal/exclusive-lock';
 import { isRecord } from '../internal/typed';
+import { DiagnosticJournalRecoveryStatusSchema } from './diagnostic-journal-read-contract';
 
-const PositiveSafeIntegerSchema = z.number().int().positive().safe();
+export {
+  type DiagnosticJournalFrame,
+  DiagnosticJournalFrameSchema,
+} from './diagnostic-journal-frame';
+
+const PositiveSafeIntegerSchema = z.number().int().positive();
 const FileModeSchema = z.number().int().min(0).max(0o777);
 
 export const DiagnosticJournalLimitsSchema = z
@@ -79,6 +85,8 @@ export const DiagnosticJournalStatusSchema = z
     partialTails: z.number().int().nonnegative(),
     currentFileBytes: z.number().int().nonnegative(),
     retainedFiles: z.number().int().nonnegative(),
+    /** Present when startup observed damaged evidence; reconstructed on every open. */
+    recovery: DiagnosticJournalRecoveryStatusSchema.optional(),
     lastAcceptedSequence: z.number().int().positive().optional(),
     lastWrittenSequence: z.number().int().positive().optional(),
     lastSettledSequence: z.number().int().positive().optional(),
@@ -136,17 +144,6 @@ export const DiagnosticJournalCloseResultSchema = z
   .strict()
   .readonly();
 export type DiagnosticJournalCloseResult = z.infer<typeof DiagnosticJournalCloseResultSchema>;
-
-export const DiagnosticJournalFrameSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    epoch: z.uuid(),
-    sequence: z.number().int().positive(),
-    event: z.json(),
-  })
-  .strict()
-  .readonly();
-export type DiagnosticJournalFrame = z.infer<typeof DiagnosticJournalFrameSchema>;
 
 export interface DiagnosticJournalWaitOptions {
   readonly signal?: AbortSignal;

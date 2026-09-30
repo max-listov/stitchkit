@@ -7,12 +7,18 @@ import type {
   DiagnosticJournalLockPolicy,
 } from './diagnostic-journal-contract';
 import { acquireDiagnosticJournalLock } from './diagnostic-journal-lock';
+import {
+  DiagnosticJournalRecoveryError,
+  type DiagnosticJournalRecoveryStatus,
+} from './diagnostic-journal-read-contract';
+import { inspectDiagnosticJournalRecovery } from './diagnostic-journal-recovery';
 
 export interface DiagnosticJournalStorageSnapshot {
   readonly currentFileBytes: number;
   readonly retainedFiles: number;
   readonly rotations: number;
   readonly partialTails: number;
+  readonly recovery?: DiagnosticJournalRecoveryStatus;
 }
 
 export interface DiagnosticJournalStorageAppendResult
@@ -112,6 +118,7 @@ export async function createRotatingDiagnosticJournalStorage(
   let retainedFiles = 1;
   let rotations = 0;
   let partialTails = 0;
+  let recovery: DiagnosticJournalRecoveryStatus | undefined;
   let closed = false;
 
   const openCurrent = async (): Promise<void> => {
@@ -160,17 +167,19 @@ export async function createRotatingDiagnosticJournalStorage(
   try {
     const names = await readdir(parent);
     const prefix = `${basename(journalPath)}.`;
+    const expiredGenerations: string[] = [];
     let existingGenerations = 0;
     for (const name of names) {
       const index = generationIndex(name, prefix);
       if (index === undefined) continue;
+      const path = resolve(parent, name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isFile()) {
+        throw new Error('Diagnostic journal generations must be regular files');
+      }
       if (index >= config.maxFiles) {
-        await removeIfPresent(resolve(parent, name));
+        expiredGenerations.push(path);
       } else {
-        const info = await lstat(resolve(parent, name));
-        if (info.isSymbolicLink() || !info.isFile()) {
-          throw new Error('Diagnostic journal generations must be regular files');
-        }
         existingGenerations += 1;
       }
     }
@@ -180,10 +189,30 @@ export async function createRotatingDiagnosticJournalStorage(
       const tail = new Uint8Array(1);
       const read = await handle?.read(tail, 0, 1, currentFileBytes - 1);
       if (read?.bytesRead === 1 && tail[0] !== 10) {
+        if (config.maxFiles === 1) {
+          throw new DiagnosticJournalRecoveryError(
+            await inspectDiagnosticJournalRecovery([journalPath], config.maxFileBytes),
+          );
+        }
         partialTails += 1;
         await rotate();
       }
     }
+    // Refuse destructive single-file recovery before applying ordinary retention.
+    for (const path of expiredGenerations) await removeIfPresent(path);
+    const paths: { readonly index: number; readonly path: string }[] = [];
+    for (const name of await readdir(parent)) {
+      const index = generationIndex(name, prefix);
+      if (index !== undefined && index < config.maxFiles) {
+        paths.push({ index, path: resolve(parent, name) });
+      }
+    }
+    paths.sort((left, right) => right.index - left.index);
+    const inspected = await inspectDiagnosticJournalRecovery(
+      [...paths.map((file) => file.path), journalPath],
+      config.maxFileBytes,
+    );
+    if (inspected.anomalies > 0) recovery = inspected;
   } catch (error) {
     await handle?.close().catch(() => undefined);
     await lock.release().catch(() => undefined);
@@ -195,6 +224,7 @@ export async function createRotatingDiagnosticJournalStorage(
     retainedFiles,
     rotations,
     partialTails,
+    ...(recovery && { recovery }),
   });
 
   return {

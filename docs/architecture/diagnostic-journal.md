@@ -1,15 +1,16 @@
 ---
 title: Bounded diagnostic journal architecture
-description: Current schema, admission, ordering, file ownership, rotation and truthful settlement contract.
+description: Current schema, admission, ordering, file ownership, rotation, bounded reading and explicit recovery observations.
 type: architecture
 status: active
 created: 2026-08-30
-updated: 2026-08-30
+updated: 2026-09-30 17:41 +07:00
 ---
 
 # Bounded diagnostic journal architecture
 
 `createDiagnosticJournal()` is one optional process-local metadata sink in
+`stitchkit/application/diagnostic-journal`. Its pure schemas stay in
 `stitchkit/application`. It is deliberately smaller than a log platform and weaker than a durable
 store.
 
@@ -71,11 +72,39 @@ manager. A pre-existing complete active file may initially exceed the configured
 rotated before the next append. Unexpected unrelated files are untouched.
 
 Rotation happens before a frame that would exceed `maxFileBytes`. A frame larger than one file is
-refused before admission. A non-empty startup tail without a newline is not parsed or repaired: it
-is rotated intact, `partialTails` increments and the fresh process epoch begins in a new file.
+refused before admission. A non-empty startup tail without a newline is rotated intact,
+`partialTails` increments and the fresh process epoch begins in a new file. The usual finite
+retention policy still evicts the oldest generation when its slots are full. With `maxFiles: 1`,
+startup instead throws `DiagnosticJournalRecoveryError`, without deleting active or archived
+evidence, and releases the lock: preserving the torn file requires at least two slots.
 
-The `.lock` is exclusive ownership, not a crash lease. Abrupt death can leave it behind; an
-operator removes it only after proving the old process is gone.
+After acquiring the lock and rotating a torn active tail, startup uses the shared reader to
+inspect all retained generations and the active file. It validates the version-1 frame and JSON
+payload, without imposing today's event schema on historical payloads. If it finds damage,
+`getStatus().recovery` records counts plus the first and last anomaly, retaining constant-size
+diagnostics. This is a startup observation, not a continuous scan. Preserved bytes let another
+start reconstruct the diagnosis. It does not recurse through this journal's writer.
+
+The `.lock` is exclusive ownership, not a crash lease. Abrupt death can leave it behind. The
+default policy refuses it; `reclaim-stale` requires machine/process liveness evidence, as described
+in the guide. Inspection and recovery failures close the file and release an acquired lock.
+
+## Bounded snapshot reader
+
+`readDiagnosticJournal({ paths, eventSchema, maxLineBytes, signal? })` lives in the filesystem
+leaf. The caller chooses normalized absolute paths and their order, including which retained
+generations exist. Each file is opened without following a final symlink, checked as a regular
+file, and read only through its size at open. Later appends are outside that file's snapshot.
+Missing paths, denied access, unsafe file types and mid-read truncation throw; they never become
+row anomalies. This is a reader of operator-owned files, not a lock against a concurrent rotator.
+
+One 64 KiB chunk and at most `maxLineBytes` of a line body are retained. An oversized row drops
+its buffer, counts bytes through LF/EOF, emits an anomaly, and continues with the next row.
+Valid frames are validated once through the caller's event schema, preserving its output type.
+Anomalies identify NUL, invalid UTF-8/JSON/frame/event, oversized rows and unterminated tails.
+They include zero-based byte offset, one-based line, tail/interior position, termination and
+skipped bytes including LF. A valid frame without LF emits a warning with zero skipped bytes
+and then its frame. Cancellation, early iterator return and failures close the open handle.
 
 ## Settlement and failure truth
 
@@ -90,6 +119,6 @@ frames as failed, drains their retained bytes and refuses later submissions. Clo
 terminal. `onFailure` receives the internal cause out of band; its own rejection is isolated and is
 never written back into this journal.
 
-There is intentionally no replay, reader, remote upload, exactly-once claim, provider payload
+There is intentionally no managed replay, remote upload, exactly-once claim, provider payload
 capture or durable receipt. Applications needing any of those use an application-owned store or
 deployment log pipeline.

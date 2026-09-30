@@ -715,9 +715,13 @@ cutovers are covered by the executable
 | `DiagnosticJournalRefusalReasonSchema` / `DiagnosticJournalRefusalReason` | schema / _type_ | `closed \| failed \| invalid \| oversized \| item-capacity \| byte-capacity` |
 | `DiagnosticJournalFailurePhaseSchema` / `DiagnosticJournalFailurePhase` | schema / _type_ | internal `write \| rotation \| close` failure phase exposed only to status and the isolated observer |
 | `DiagnosticJournalWaitOptions` / `DiagnosticJournalFailure` | _type_ | caller wait signal/timeout and isolated internal failure callback record |
+| `DiagnosticJournalAnomalySchema` / `DiagnosticJournalAnomaly` | schema / _type_ | corrupt-row reason, file, zero-based byte offset, one-based line, tail/interior position and skipped bytes |
+| `createDiagnosticJournalReadResultSchema` / `DiagnosticJournalReadResult` | function / _type_ | owner-schema frame output or explicit anomaly; retains transformed event output types |
+| `DiagnosticJournalRecoveryStatusSchema` / `DiagnosticJournalRecoveryStatus` | schema / _type_ | bounded startup inspection counts and first/last anomaly locations |
+| `DiagnosticJournalRecoveryError` | class | torn single-file startup refusal carrying recovery observations, preserving evidence and releasing its lock |
 
 `accepted` is bounded in-memory admission and `written` is completed append, not `fsync` or durable
-delivery. The journal has no reader/replay/upload API. See the
+delivery. Its filesystem reader is in the diagnostic-journal leaf; there is no managed replay/upload API. See the
 [guide](../guide/application-kernel.md#bounded-local-diagnostic-journal),
 [architecture](../architecture/diagnostic-journal.md) and [ADR
 0134](../decisions/0134-diagnostic-journal-is-bounded-local-evidence.md).
@@ -892,6 +896,8 @@ snapshots; the adapter owns no SDK lifecycle, polling or delta state.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createDiagnosticJournal` | function | the bounded local journal: a file lock, a spawn to diagnose a stale one, and framed writes |
+| `readDiagnosticJournal` | function | bounded async stream of validated frames and explicit anomalies from finite snapshots of caller-selected files; I/O failures throw |
+| `DiagnosticJournalReaderConfig` | _type_ | normalized absolute `paths`, owner `eventSchema`, positive safe-integer `maxLineBytes` and optional cancellation `signal` |
 
 Its own entrypoint because of what it reaches — `node:child_process`,
 `node:fs`, `node:os`, `node:util` — with `promisify(execFile)` evaluated while

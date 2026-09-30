@@ -15,6 +15,49 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.0] — 2026-09-30
+
+### ⚠️ Breaking changes
+
+- `stitchkit/application/diagnostic-journal` — **torn startup with `maxFiles: 1`
+  now throws `DiagnosticJournalRecoveryError` before deleting any evidence**.
+  Previously startup discarded the active file and continued. To preserve it,
+  `limits: { ...limits, maxFiles: 1 }` → `limits: { ...limits, maxFiles: 2 }`.
+  The acquired lock is released on refusal. → ADR 0219.
+- `stitchkit/application/diagnostic-journal` — **startup inspects retained files
+  and throws on inspection I/O failures**, instead of accepting unreadable
+  archives unchecked. Unreadable archive + successful startup → explicit
+  startup failure; restore the writer's read access before opening the journal.
+  Corrupt rows themselves are reported through recovery status. → ADR 0219.
+
+**Who must act:** operators using single-file retention with a potentially torn
+active file, or retaining archives the writer cannot read. Configure at least two
+slots for tail recovery and ensure read access to retained generations.
+
+### Added
+
+- `stitchkit/application/diagnostic-journal` — `readDiagnosticJournal` streams
+  finite file snapshots through an owner `eventSchema`, retaining at most
+  `maxLineBytes` of a row plus a fixed read chunk. It yields valid frames and
+  explicit anomalies with file, byte offset, line, reason and skipped-byte count;
+  filesystem errors throw separately. Complete frames without a final LF remain
+  readable with a tail warning. Symlinks and non-regular paths are refused.
+- `stitchkit/application` — schema-backed anomaly/read-result/recovery contracts
+  and `DiagnosticJournalRecoveryError`. Reviewed surface budgets increase by
+  seven pure exports here and two reader exports in the filesystem leaf. → ADR 0219.
+
+### Fixed
+
+- Diagnostic journal startup inspects active and retained generations under the
+  exclusive lock. `getStatus().recovery` reports bounded startup observations of
+  damaged rows; another start reconstructs them from the preserved files. A torn
+  active file still rotates intact under the configured retention policy.
+  With `maxFiles: 1`, startup throws `DiagnosticJournalRecoveryError` before
+  deleting active or archived evidence and releases the lock. Configure at least
+  two files to retain the torn file during recovery.
+- Diagnostic journal integer schemas use Zod's `.int()` without deprecated
+  `.safe()`; values outside the safe integer range remain rejected.
+
 ## [0.102.0] — 2026-09-30
 
 ### ⚠️ Breaking changes

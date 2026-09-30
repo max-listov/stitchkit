@@ -1809,6 +1809,8 @@
     "DecisionTraceEntry",
     "DecisionUndecidedError",
     "DiagnosticJournal",
+    "DiagnosticJournalAnomaly",
+    "DiagnosticJournalAnomalySchema",
     "DiagnosticJournalCloseResult",
     "DiagnosticJournalCloseResultSchema",
     "DiagnosticJournalConfig",
@@ -1822,6 +1824,10 @@
     "DiagnosticJournalLockDiagnosis",
     "DiagnosticJournalLockPolicy",
     "DiagnosticJournalLockPolicySchema",
+    "DiagnosticJournalReadResult",
+    "DiagnosticJournalRecoveryError",
+    "DiagnosticJournalRecoveryStatus",
+    "DiagnosticJournalRecoveryStatusSchema",
     "DiagnosticJournalRefusalReason",
     "DiagnosticJournalRefusalReasonSchema",
     "DiagnosticJournalState",
@@ -1954,6 +1960,7 @@
     "createBoundedChannel",
     "createCreditWindow",
     "createDecisionPipeline",
+    "createDiagnosticJournalReadResultSchema",
     "createManagedSchedule",
     "createNotificationOutbox",
     "createProcessLifecycleLedger",
@@ -2000,7 +2007,11 @@
     "ApplicationTelemetryMeter",
     "createApplicationOpenTelemetry"
   ],
-  "stitchkit/application/diagnostic-journal": ["createDiagnosticJournal"],
+  "stitchkit/application/diagnostic-journal": [
+    "DiagnosticJournalReaderConfig",
+    "createDiagnosticJournal",
+    "readDiagnosticJournal"
+  ],
   "stitchkit/application/directory-inbox": ["createDirectoryInbox"],
   "stitchkit/application/schemas": [
     "ApplicationAdmissionSnapshot",

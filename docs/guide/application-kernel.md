@@ -4,7 +4,7 @@ description: Compose process-local resources, schedules, readiness, drain and op
 type: architecture
 status: active
 created: 2026-08-23
-updated: 2026-09-04 14:11 +07:00
+updated: 2026-09-30 17:41 +07:00
 ---
 
 # Managed application kernel
@@ -651,9 +651,46 @@ short-lived reclaim guard.
 
 `flush()` means every accepted append through that call's boundary settled. It is not `fsync`, a
 durable receipt, exactly-once execution or remote delivery. Timeout/cancellation bound only the
-waiter; the writer retains physical capacity until settlement. There is no reader or upload API.
-Use a durable application store or deployment-owned log collector when restart recovery, replay or
+waiter; the writer retains physical capacity until settlement. There is no upload or managed replay API.
+Use a durable application store or deployment-owned log collector when durable restart recovery, replay or
 aggregation is required. → [ADR 0134](../decisions/0134-diagnostic-journal-is-bounded-local-evidence.md).
+
+For finite inspection, use the shared reader with an explicit oldest-to-newest list of existing
+files. Keep anomaly reporting outside the journal being inspected:
+
+```ts
+import { readDiagnosticJournal } from 'stitchkit/application/diagnostic-journal'
+import { z } from 'zod'
+
+const eventSchema = z.object({
+  kind: z.enum(['resource_failed', 'recovery_started']),
+  resource: z.string().max(80),
+}).strict()
+
+for await (const row of readDiagnosticJournal({
+  paths: ['/var/lib/example/diagnostic.jsonl.1', '/var/lib/example/diagnostic.jsonl'],
+  eventSchema,
+  maxLineBytes: 4 * 1024,
+})) {
+  if (row.type === 'anomaly') internalLogger.warn(row.anomaly)
+  else inspectEvent(row.frame.event)
+}
+```
+
+The reader bounds memory by line size plus a fixed chunk, skips oversized/damaged rows with
+explicit anomalies, and still returns valid rows before and after them. `offset` is zero-based
+bytes; `line` is one-based. `position` distinguishes the file's tail from interior damage.
+A valid frame lacking its final LF yields a warning with `skippedBytes: 0` and its frame.
+Each file's size is captured at open; concurrent appends are excluded. Missing files, permissions,
+symlinks, non-regular files and mid-read truncation throw rather than masquerading as bad data.
+The caller owns file selection and coordination with an active rotator.
+
+Writer startup inspects retained and active files under its lock. On damage,
+`journal.getStatus().recovery` contains counts and first/last anomaly locations, reconstructed
+again on restart from the preserved bytes. This describes startup observations, not live
+continuous inspection. `maxFiles: 1` cannot preserve a torn active file by rotation and throws
+`DiagnosticJournalRecoveryError` before removing any evidence; configure at least two slots.
+Normal rotation retains the existing finite eviction policy. → [ADR 0219](../decisions/0219-journal-damage-is-data-and-io-failure-is-failure.md).
 
 Shutdown performs one phase barrier at a time: stop admission everywhere,
 cancel future schedules, drain admitted work, then close in reverse stable

@@ -195,6 +195,20 @@
       "test": "reclaims a lock recorded under a name this machine no longer carries"
     }
   },
+  "DiagnosticJournalReaderConfig": {
+    "paths": {
+      "test": "retained NUL tails and interior damage preserve every valid frame with exact locations"
+    },
+    "eventSchema": {
+      "test": "UTF-8, JSON, frame and event refusals are distinct from an intact frame without LF"
+    },
+    "maxLineBytes": {
+      "test": "oversized rows spanning chunks do not enter the line buffer or hide the next frame"
+    },
+    "signal": {
+      "test": "a mid-read truncation is an I/O failure; cancellation and early return close the handle"
+    }
+  },
   "CreditAcquireWaitOptions": {
     "signal": {
       "test": "an aborted signal ends the wait, before and during it"

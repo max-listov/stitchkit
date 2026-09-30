@@ -94,6 +94,15 @@ export {
   readDiagnosticJournalLockDiagnosis,
 } from '../application/diagnostic-journal-contract';
 export {
+  createDiagnosticJournalReadResultSchema,
+  type DiagnosticJournalAnomaly,
+  DiagnosticJournalAnomalySchema,
+  type DiagnosticJournalReadResult,
+  DiagnosticJournalRecoveryError,
+  type DiagnosticJournalRecoveryStatus,
+  DiagnosticJournalRecoveryStatusSchema,
+} from '../application/diagnostic-journal-read-contract';
+export {
   type DirectoryInbox,
   type DirectoryInboxConfig,
   type DirectoryInboxDelivery,

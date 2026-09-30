@@ -210,6 +210,7 @@ export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
       partialTails: file.partialTails,
       currentFileBytes: file.currentFileBytes,
       retainedFiles: file.retainedFiles,
+      ...(file.recovery && { recovery: file.recovery }),
       ...(lastAcceptedSequence > 0 && { lastAcceptedSequence }),
       ...(lastWrittenSequence > 0 && { lastWrittenSequence }),
       ...(lastSettledSequence > 0 && { lastSettledSequence }),

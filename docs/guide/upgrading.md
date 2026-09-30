@@ -1,5 +1,34 @@
 # Upgrading stitchkit
 
+## Released migration: 0.103.0
+
+### Diagnostic journal startup preserves torn evidence and inspects archives
+
+**Who must act:** operators using `maxFiles: 1` who can encounter a torn active
+file, or whose retained files are unreadable by the writer. Clean single-file
+journals continue to work; successful startup now requires read access to every
+retained generation.
+
+```ts
+import { createDiagnosticJournal } from 'stitchkit/application/diagnostic-journal'
+
+// Before: a torn active file could be discarded during startup.
+await createDiagnosticJournal({ ...config, limits: { ...config.limits, maxFiles: 1 } })
+// After: retain the torn file while the fresh writer starts in a new active file.
+await createDiagnosticJournal({ ...config, limits: { ...config.limits, maxFiles: 2 } })
+```
+
+With single-file retention, a torn active file throws `DiagnosticJournalRecoveryError`
+from `stitchkit/application`, carrying `recovery` observations and releasing its lock
+without deleting evidence. Inspection I/O errors also fail startup and release the
+lock; restore filesystem access rather than treating that failure as a bad JSON row.
+Normal rotation retains the configured finite eviction policy.
+
+For archive inspection, replace ad hoc line parsing with `readDiagnosticJournal`
+from the same filesystem leaf. Handle its `frame | anomaly` stream explicitly;
+missing files, permissions and unsafe paths still throw. See the
+[journal guide](application-kernel.md#bounded-local-diagnostic-journal).
+
 ## Released migration: 0.102.0
 
 ### `view_file` receives an array, not an array encoded as text

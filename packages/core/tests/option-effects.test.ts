@@ -51,6 +51,7 @@ const COVERED: Record<string, string> = {
   EventBusOptions: 'entrypoints/server.ts',
   ManagedServerResourceConfig: 'entrypoints/application.ts',
   DiagnosticJournalConfig: 'entrypoints/application.ts',
+  DiagnosticJournalReaderConfig: 'entrypoints/application/diagnostic-journal.ts',
   CreditAcquireWaitOptions: 'entrypoints/application.ts',
   RevisionSignalConfig: 'entrypoints/application.ts',
   RevisionSignalWaitOptions: 'entrypoints/application.ts',
