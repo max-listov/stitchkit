@@ -312,8 +312,8 @@ describe('published headless Agent harness', () => {
     expect(
       await observer.request({
         schemaVersion: 1,
-        requestId: 'parallel-detach',
-        operation: 'detach',
+        requestId: 'parallel-snapshot',
+        operation: 'snapshot',
         conversationId: 'attach-race',
       }),
     ).toMatchObject({ outcome: 'error', error: { code: 'ATTACH_IN_PROGRESS' } });

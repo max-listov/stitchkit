@@ -5,6 +5,7 @@ export {
   createReplayAgentProvider,
   defineAgentFaultPlan,
 } from '../../agent-runtime/fault-bench';
+export { inspectAgentRun } from '../../agent-runtime/run-assertions';
 export {
   type AgentStoreConformanceConfig,
   type AgentStoreConformanceContext,

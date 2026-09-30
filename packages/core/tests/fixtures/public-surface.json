@@ -1524,6 +1524,7 @@
     "createFaultProviderServer",
     "createReplayAgentProvider",
     "defineAgentFaultPlan",
+    "inspectAgentRun",
     "runAgentStoreConformance"
   ],
   "stitchkit/agent-runtime/harness": [
@@ -1576,6 +1577,9 @@
     "AgentAssistantPlaceholder",
     "AgentAssistantPlaceholderSchema",
     "AgentAttemptResetEventSchema",
+    "AgentBrowserCommand",
+    "AgentBrowserRequest",
+    "AgentBrowserRequestSchema",
     "AgentCheckpointEventSchema",
     "AgentControlDelivery",
     "AgentControlDeliverySchema",
@@ -1585,6 +1589,9 @@
     "AgentControlResponse",
     "AgentControlResponseSchema",
     "AgentControlView",
+    "AgentController",
+    "AgentControllerConfig",
+    "AgentControllerState",
     "AgentConversationView",
     "AgentCostValueSchema",
     "AgentFilePartSchema",
@@ -1649,8 +1656,10 @@
     "AgentUsageValueSchema",
     "advanceAgentMultiSessionCursor",
     "advanceAgentRuntimeEventCursor",
+    "agentControlRealtimeContract",
     "agentDurableEventId",
     "createAgentControlView",
+    "createAgentController",
     "reduceAgentControlEvent",
     "reduceAgentControlSnapshot",
     "runStateForTerminalReason"
@@ -2629,5 +2638,14 @@
     "createBubblewrapSandboxBackend",
     "createSandboxCodingTools",
     "createSandboxSession"
+  ],
+  "stitchkit/agent-runtime/react": ["useAgent"],
+  "stitchkit/agent-runtime/realtime": [
+    "AgentHarnessRealtimeConfig",
+    "bindAgentHarnessRealtime"
+  ],
+  "stitchkit/agent-runtime/harness-tools": [
+    "AgentHarnessToolsConfig",
+    "createAgentHarnessTools"
   ]
 }

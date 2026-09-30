@@ -92,6 +92,9 @@ const COVERED: Record<string, string> = {
   ExclusiveLockOptions: 'entrypoints/files.ts',
   WriteFileAtomicOptions: 'entrypoints/files.ts',
   EffectRunOptions: 'entrypoints/tools.ts',
+  AgentControllerConfig: 'entrypoints/agent-runtime/browser.ts',
+  AgentHarnessToolsConfig: 'entrypoints/agent-runtime/harness-tools.ts',
+  AgentHarnessRealtimeConfig: 'entrypoints/agent-runtime/realtime.ts',
 };
 
 const EntrySchema = z.union([

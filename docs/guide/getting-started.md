@@ -70,7 +70,10 @@ own, recorded as an ADR.
 | `stitchkit/agent-runtime/harness` | server | evolving | resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
 | `stitchkit/agent-runtime/coding-tools` | server (Bun or Node) | evolving | bounded host-authorized direct file and shell tools; a root boundary, not an OS sandbox |
 | `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
-| `stitchkit/agent-runtime/browser` | browser + server | evolving | canonical agent records, events and reconnect cursor without execution or sinks |
+| `stitchkit/agent-runtime/browser` | browser + server | evolving | canonical agent records, events, reconnect cursor and optional conversation controller |
+| `stitchkit/agent-runtime/harness-tools` | server | evolving | full mountAgent configuration with the current run fence |
+| `stitchkit/agent-runtime/react` | browser + server | evolving | React subscription to an application-owned agent controller |
+| `stitchkit/agent-runtime/realtime` | server (Bun or Node) | evolving | authorized agent control over the existing Socket.IO server |
 | `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit-tui` | terminal (Bun) | evolving | optional official OpenTUI host over a caller-composed headless runtime |
@@ -180,6 +183,7 @@ map — feature → packages:
 | MCP / agent adapters (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
 | Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
 | Headless Agent harness (`stitchkit/agent-runtime/harness`) | `ai` |
+| Harness tools (`stitchkit/agent-runtime/harness-tools`) | `ai` `@modelcontextprotocol/server` (tool declarations) |
 | Agent coding tools (`stitchkit/agent-runtime/coding-tools`) | — |
 | OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
 | SQLite agent store (`stitchkit/agent-runtime/sqlite/bun` or `/node`) | — (runtime built-in) |

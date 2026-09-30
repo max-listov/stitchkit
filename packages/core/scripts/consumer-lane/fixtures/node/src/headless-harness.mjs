@@ -11,8 +11,9 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
+import { createAgentHarnessTools } from 'stitchkit/agent-runtime/harness-tools';
 import { AppError } from 'stitchkit/contract';
-import { defineRuntimeTool, mountAgent } from 'stitchkit/tools';
+import { defineRuntimeTool } from 'stitchkit/tools';
 import { z } from 'zod';
 import './approval-chronology.mjs';
 
@@ -242,11 +243,10 @@ try {
       providerOverhead: { provenance: 'unavailable' },
     }),
     estimateResourceTokens: () => ({ value: 4, provenance: 'measured' }),
-    tools: (context) =>
-      mountAgent([], {
-        runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
-        lifecycle: context.toolFenceLifecycle,
-      }),
+    tools: createAgentHarnessTools(() => ({
+      services: [],
+      runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
+    })),
     loop: {
       toolApproval: { edit_file: 'user-approval' },
       toolApprovalSecret: 'packed-approval-secret',

@@ -1,23 +1,35 @@
 {
   "ChunkedUploadConfig": {
-    "file": { "test": "parts go in order and the server assembles the same file" },
-    "chunkBytes": { "test": "parts go in order and the server assembles the same file" },
+    "file": {
+      "test": "parts go in order and the server assembles the same file"
+    },
+    "chunkBytes": {
+      "test": "parts go in order and the server assembles the same file"
+    },
     "uploadId": {
       "test": "a repeated init of a finished upload returns its result without a byte"
     },
-    "signal": { "test": "a cancel between parts never reaches finalize" },
+    "signal": {
+      "test": "a cancel between parts never reaches finalize"
+    },
     "retries": {
       "test": "retries and retryDelayMs bound the repeats of one part and pace them"
     },
     "retryDelayMs": {
       "test": "retries and retryDelayMs bound the repeats of one part and pace them"
     },
-    "onProgress": { "test": "parts go in order and the server assembles the same file" },
+    "onProgress": {
+      "test": "parts go in order and the server assembles the same file"
+    },
     "init": {
       "test": "a repeated init of a finished upload returns its result without a byte"
     },
-    "chunk": { "test": "a part lost to the network is repeated and the upload goes on" },
-    "finalize": { "test": "parts go in order and the server assembles the same file" }
+    "chunk": {
+      "test": "a part lost to the network is repeated and the upload goes on"
+    },
+    "finalize": {
+      "test": "parts go in order and the server assembles the same file"
+    }
   },
   "ChunkSpoolConfig": {
     "directory": {
@@ -26,14 +38,20 @@
     "chunkBytes": {
       "test": "a part before open, out of range or of the wrong size is refused"
     },
-    "maxFileBytes": { "test": "a declaration that does not add up is refused" },
-    "meta": { "test": "assembly hands back the parsed meta and the parts in order" },
+    "maxFileBytes": {
+      "test": "a declaration that does not add up is refused"
+    },
+    "meta": {
+      "test": "assembly hands back the parsed meta and the parts in order"
+    },
     "staleAfterMs": {
       "test": "sweep removes an upload untouched past its age and keeps a fresh one"
     }
   },
   "ClientRequestOptions": {
-    "signal": { "test": "caller abort cancels GET, JSON, multipart and raw-response calls" },
+    "signal": {
+      "test": "caller abort cancels GET, JSON, multipart and raw-response calls"
+    },
     "onUploadProgress": {
       "test": "a 300 KB multipart body is counted to the length the server received"
     }
@@ -1007,6 +1025,87 @@
     },
     "createTable": {
       "test": "without the table and without creating it, a store says so"
+    }
+  },
+  "AgentControllerConfig": {
+    "transport": {
+      "test": "real realtime path authorizes each conversation, preserves leases, reconnects and leaves harness alive"
+    },
+    "conversationId": {
+      "test": "real realtime path authorizes each conversation, preserves leases, reconnects and leaves harness alive"
+    },
+    "access": {
+      "test": "real realtime path authorizes each conversation, preserves leases, reconnects and leaves harness alive"
+    },
+    "maxBufferedEvents": {
+      "test": "controller fences old acknowledgements, bounds event count and bytes, and keeps shared transport ownership"
+    },
+    "maxBufferedBytes": {
+      "test": "controller fences old acknowledgements, bounds event count and bytes, and keeps shared transport ownership"
+    },
+    "timeoutMs": {
+      "test": "controller rejects excess requests before sending and validates finite configuration"
+    },
+    "maxPendingRequests": {
+      "test": "controller rejects excess requests before sending and validates finite configuration"
+    }
+  },
+  "AgentHarnessRealtimeConfig": {
+    "authorize": {
+      "test": "denied conversation leaves an authorized view on the shared socket usable and observer cannot mutate"
+    },
+    "onError": {
+      "test": "server bounds pending requests and authorization time while error observer cannot prevent safe rejection"
+    },
+    "authorizationTimeoutMs": {
+      "test": "server bounds pending requests and authorization time while error observer cannot prevent safe rejection"
+    },
+    "maxPendingRequests": {
+      "test": "server bounds pending requests and authorization time while error observer cannot prevent safe rejection"
+    },
+    "maxPendingEvents": {
+      "test": "signals control resync on bounded-delivery overflow without blocking a run"
+    },
+    "maxPendingAttachments": {
+      "test": "attaches before snapshot settlement so a concurrent Agent event is not missed"
+    }
+  },
+  "AgentHarnessToolsConfig": {
+    "services": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "context": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "runtimeTools": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "hooks": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "lifecycle": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "onOutputStrip": {
+      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "registry": {
+      "test": "mountAgent accepts the registry and refuses two surface declarations"
+    },
+    "durability": {
+      "test": "a declared factory puts step into the handler context"
+    },
+    "extend": {
+      "test": "ToolExtend owns required, default, coerce and refine semantics exactly once"
+    },
+    "flattenUnionInput": {
+      "test": "agent parses params and nested flattened transforms once"
+    },
+    "coerceJsonArgs": {
+      "exempt": "Unchanged inherited AgentMountConfig option forwarded as part of the complete configuration to the existing mountAgent owner; no separate coercion policy."
+    },
+    "errorHint": {
+      "exempt": "Unchanged inherited AgentMountConfig option forwarded to the existing mountAgent owner; composition introduces no separate error formatting policy."
     }
   }
 }

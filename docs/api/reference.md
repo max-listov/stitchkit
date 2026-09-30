@@ -1239,6 +1239,11 @@ Credential-free provider and concurrency fixtures for Bun and Node tests.
 | `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), cleanup?(context) }` — the factory the contract runs against, plus a teardown that runs once whether the scenario passed or failed |
 | `AgentStoreConformanceContext` | _type_ | `{ conversationIds }` — every conversation the scenario will mutate, handed over **before** the first mutation so an adapter can provision application-owned parent rows; a zero-argument factory stays valid |
 
+`inspectAgentRun` takes `(snapshot, runId)` and returns `completed()`, `calledTool(name)`,
+`notCalledTool(name)` and `toolSucceeded(name)` assertions over durable evidence for
+that exact run. Completion requires terminal reason `success`, not `policy_stop` or
+`provider_stop`, and no pending approval. Successful tools require matching call/result IDs.
+
 ## `stitchkit/agent-runtime/harness`
 
 Server-only evolving facade over the canonical Agent runtime. It requires the optional `ai` peer
@@ -1335,6 +1340,31 @@ Use this entrypoint from client components and shared DTO packages. The full
 `stitchkit/agent-runtime` entrypoint remains server-only.
 
 ---
+
+### Browser control composition
+
+`AgentBrowserRequestSchema` / `AgentBrowserRequest` derive from the trusted control
+protocol but exclude runtime `context`. Submit permits only strict text/file parts;
+file ownership and metadata policy are checked by server authorization. The shared
+`agentControlRealtimeContract` owns `agent:control` acknowledgements and `agent:delivery`.
+
+`createAgentController` / `AgentControllerConfig` take an existing Stitchkit
+realtime `transport`, `conversationId`, `access` (`observe` or `control`), optional
+`timeoutMs` (10000), `maxBufferedEvents` (256), `maxBufferedBytes` (1048576) and
+`maxPendingRequests` (32). All bounds are positive safe integers. One controller owns one
+attachment per conversation on that transport; share the controller between views.
+
+`AgentController` exposes stable `subscribe`, `getSnapshot`, `request(command)` and async
+`close`. `AgentBrowserCommand` uses the canonical operations, without request/conversation identity;
+`submit` requires a caller-owned idempotency key. Unknown-outcome mutations are never
+replayed automatically. `AgentControllerState` distinguishes connecting, ready,
+disconnected, error and closed and retains the canonical full `view` plus safe error
+code/message. Errors in automatic attach/refresh appear there. Reconnect attaches again
+and reads a snapshot; snapshot gaps coalesce, stale generations cannot overwrite state,
+and buffers/queues are bounded. Overflow or failed refresh is visible and requires
+explicit recovery. Closing detaches without closing the shared transport or remote run.
+
+See [agent composition](../guide/agent-composition.md) for a complete wiring example.
 
 ## `stitchkit/agent-runtime/openrouter`
 
@@ -2401,3 +2431,37 @@ Its types are `BubblewrapSandboxConfig`, `SandboxBackend`, `SandboxCommand`,
 `SandboxPrewarmInput`, `SandboxProcess`, `SandboxRunOptions`, `SandboxSession`,
 and `SandboxState`. The [sandbox guide](../guide/sandbox.md) specifies lifecycle,
 network enforcement, gateway credentials and platform/resource boundaries.
+
+## `stitchkit/agent-runtime/realtime`
+
+Optional evolving Socket.IO server binding. `bindAgentHarnessRealtime` takes `(harness, socket, config)` and returns `close()` for its subscriptions and control connections, without closing
+socket or harness. `AgentHarnessRealtimeConfig` requires `authorize({ identity, request,
+signal })`: return `{ context }` after verifying the session principal, conversation,
+operation, files and metadata, or `null`. Identity is `socket.data` from the application's
+verified handshake. Every request and event delivery is authorized. Observe access does
+not grant mutation; controller leases and approval policy still belong to the harness.
+
+`maxPendingEvents` and `maxPendingAttachments` forward to the canonical control server;
+`maxPendingRequests` bounds in-flight authorization/control requests per socket (32);
+`authorizationTimeoutMs` bounds each authorization (10000 ms). Honor its AbortSignal.
+`onError` receives internal errors; peers receive generic denials. Revoking a conversation
+releases only its attachment. Event overflow closes the socket; explicitly reconnect the
+application transport. A transport's Engine.IO payload limit remains application-owned.
+
+## `stitchkit/agent-runtime/react`
+
+Optional evolving React peer leaf. `useAgent` takes a controller and subscribes through
+`useSyncExternalStore`, returning the same `AgentControllerState` as `getSnapshot()`.
+Create and close the controller at application/session scope. Multiple components can
+observe it; StrictMode and unmount release only the component's own subscription.
+
+## `stitchkit/agent-runtime/harness-tools`
+
+Optional evolving composition of the full `mountAgent` configuration with the runtime
+fence. Its runtime peer is `ai`; its full tool presenter declarations also require
+`@modelcontextprotocol/server`, as `stitchkit/tools` does. The base harness retains its
+AI-only peer boundary. Existing custom tool callbacks need no new import.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createAgentHarnessTools` / `AgentHarnessToolsConfig` | function / _type_ | async per-run full mount configuration (`services` plus all `AgentMountConfig` options); composes application lifecycle then runtime fence exactly once |

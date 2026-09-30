@@ -51,6 +51,11 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   {
+    subpath: './agent-runtime/harness-tools',
+    source: 'src/entrypoints/agent-runtime/harness-tools.ts',
+    browser: false,
+  },
+  {
     subpath: './agent-runtime/coding-tools',
     source: 'src/entrypoints/agent-runtime/coding-tools.ts',
     browser: false,
@@ -59,6 +64,16 @@ export const ENTRYPOINTS = [
     subpath: './agent-runtime/browser',
     source: 'src/entrypoints/agent-runtime/browser.ts',
     browser: true,
+  },
+  {
+    subpath: './agent-runtime/react',
+    source: 'src/entrypoints/agent-runtime/react.ts',
+    browser: true,
+  },
+  {
+    subpath: './agent-runtime/realtime',
+    source: 'src/entrypoints/agent-runtime/realtime.ts',
+    browser: false,
   },
   {
     subpath: './agent-runtime/openrouter',

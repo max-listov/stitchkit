@@ -90,19 +90,69 @@ async function runControlledOperation<CONTEXT>(
   });
 }
 
+function controlFailure(
+  requestId: string,
+  code: string,
+  message: string,
+): AgentControlResponse {
+  return AgentControlResponseSchema.parse({
+    schemaVersion: 1,
+    requestId,
+    outcome: 'error',
+    error: { code, message },
+  });
+}
+
+function attachmentLimit(config: AgentHarnessControlServerConfig): number {
+  const limit = config.maxPendingAttachments ?? 32;
+  if (!Number.isSafeInteger(limit) || limit <= 0)
+    throw new TypeError('maxPendingAttachments must be a positive safe integer');
+  return limit;
+}
+
+function connectionState(
+  config: AgentHarnessControlServerConfig,
+  {
+    deliver,
+    onOverflow,
+  }: Pick<Parameters<AgentHarnessControlServer['connect']>[0], 'deliver' | 'onOverflow'>,
+  disconnect: () => void,
+) {
+  const state = {
+    attached: new Map<string, 'observe' | 'control'>(),
+    pendingAttachments: new Set<string>(),
+    cancelledAttachments: new Set<string>(),
+    overflowed: false,
+    sink: createAgentRuntimeEventSink({
+      write: (event) => deliver({ schemaVersion: 1, type: 'event', event }),
+      maxPending: config.maxPendingEvents ?? 128,
+      onDrop: ({ event }) => {
+        if (state.overflowed) return;
+        state.overflowed = true;
+        onOverflow({
+          schemaVersion: 1,
+          type: 'resync-required',
+          conversationId: event.conversationId,
+          reason: 'overflow',
+        });
+        disconnect();
+      },
+    }),
+  };
+  return state;
+}
+
 export function createAgentHarnessControlServer<CONTEXT>(
   harness: HeadlessAgentHarness<CONTEXT>,
   config: AgentHarnessControlServerConfig = {},
 ): AgentHarnessControlServer {
-  const maxPendingAttachments = config.maxPendingAttachments ?? 32;
-  if (!Number.isSafeInteger(maxPendingAttachments) || maxPendingAttachments <= 0) {
-    throw new TypeError('maxPendingAttachments must be a positive safe integer');
-  }
+  const maxPendingAttachments = attachmentLimit(config);
   const connections = new Map<
     string,
     {
       attached: Map<string, 'observe' | 'control'>;
       pendingAttachments: Set<string>;
+      cancelledAttachments: Set<string>;
       sink: AgentRuntimeEventSink;
       overflowed: boolean;
     }
@@ -133,37 +183,13 @@ export function createAgentHarnessControlServer<CONTEXT>(
       if (closed) throw new Error('Agent harness control server is closed');
       if (connections.has(id))
         throw new Error('Agent harness control connection id is duplicate');
-      const state = {
-        attached: new Map<string, 'observe' | 'control'>(),
-        pendingAttachments: new Set<string>(),
-        overflowed: false,
-        sink: createAgentRuntimeEventSink({
-          write: (event) => deliver({ schemaVersion: 1, type: 'event', event }),
-          maxPending: config.maxPendingEvents ?? 128,
-          onDrop: ({ event }) => {
-            if (state.overflowed) return;
-            state.overflowed = true;
-            onOverflow({
-              schemaVersion: 1,
-              type: 'resync-required',
-              conversationId: event.conversationId,
-              reason: 'overflow',
-            });
-            detach(id);
-          },
-        }),
-      };
+      const state = connectionState(config, { deliver, onOverflow }, () => detach(id));
       connections.set(id, state);
       return {
         async request(raw) {
           const request = AgentControlRequestSchema.parse(raw);
-          const fail = (code: string, message: string): AgentControlResponse =>
-            AgentControlResponseSchema.parse({
-              schemaVersion: 1,
-              requestId: request.requestId,
-              outcome: 'error',
-              error: { code, message },
-            });
+          const fail = (code: string, message: string) =>
+            controlFailure(request.requestId, code, message);
           if (closed || connections.get(id) !== state)
             return fail('CONNECTION_CLOSED', 'Connection is closed');
           try {
@@ -200,7 +226,10 @@ export function createAgentHarnessControlServer<CONTEXT>(
               try {
                 snapshot = await harness.snapshot(request.conversationId);
               } catch (error) {
-                if (connections.get(id) === state) {
+                if (
+                  connections.get(id) === state &&
+                  !state.cancelledAttachments.delete(request.conversationId)
+                ) {
                   if (previousAccess)
                     state.attached.set(request.conversationId, previousAccess);
                   else state.attached.delete(request.conversationId);
@@ -225,6 +254,12 @@ export function createAgentHarnessControlServer<CONTEXT>(
               if (closed || connections.get(id) !== state) {
                 return fail('CONNECTION_CLOSED', 'Connection is closed');
               }
+              if (state.cancelledAttachments.delete(request.conversationId)) {
+                return fail(
+                  'ATTACH_CANCELLED',
+                  'Attachment was detached while its snapshot was pending',
+                );
+              }
               state.attached.set(request.conversationId, request.access);
               if (
                 request.access === 'observe' &&
@@ -239,13 +274,10 @@ export function createAgentHarnessControlServer<CONTEXT>(
                 snapshot,
               });
             }
-            if (state.pendingAttachments.has(request.conversationId)) {
-              return fail(
-                'ATTACH_IN_PROGRESS',
-                'Wait for the current attachment request to settle',
-              );
-            }
             if (request.operation === 'detach') {
+              if (state.pendingAttachments.has(request.conversationId)) {
+                state.cancelledAttachments.add(request.conversationId);
+              }
               if (controllers.get(request.conversationId) === id)
                 controllers.delete(request.conversationId);
               state.attached.delete(request.conversationId);
@@ -254,6 +286,12 @@ export function createAgentHarnessControlServer<CONTEXT>(
                 requestId: request.requestId,
                 outcome: 'ok',
               });
+            }
+            if (state.pendingAttachments.has(request.conversationId)) {
+              return fail(
+                'ATTACH_IN_PROGRESS',
+                'Wait for the current attachment request to settle',
+              );
             }
             if (!state.attached.has(request.conversationId))
               return fail('NOT_ATTACHED', 'Attach before requesting conversation state');

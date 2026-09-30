@@ -15,6 +15,27 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.1] — 2026-09-30
+
+### Added
+
+- Agent composition over existing owners: `createAgentHarnessTools` in the optional
+  `stitchkit/agent-runtime/harness-tools` leaf keeps the full mount
+  configuration and adds the run fence; `createAgentController` handles one conversation
+  over the existing realtime client. `useAgent` observes that controller from the optional
+  `stitchkit/agent-runtime/react` leaf. `bindAgentHarnessRealtime` in the optional
+  `stitchkit/agent-runtime/realtime` leaf derives context from server authorization and
+  refuses forged tool evidence. Custom callbacks and resource allowlists remain intact.
+- `inspectAgentRun` in `stitchkit/agent-runtime/testing` checks exact-run calls, successful
+  tool results and successful terminal output. Policy stops and pending approvals fail
+  completion assertions. Public surface budgets grow only for these composition owners.
+  See ADR 0220 and the [composition guide](docs/guide/agent-composition.md).
+
+### Fixed
+
+- Detaching while an agent-control attachment snapshot is pending cancels the attachment
+  and releases its lease, so closing a browser view cannot retain conversation control.
+
 ## [0.103.0] — 2026-09-30
 
 ### ⚠️ Breaking changes

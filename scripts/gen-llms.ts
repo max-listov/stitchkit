@@ -77,6 +77,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'optional durable history, prompt/model composition, stream loop, coordination, fencing and events',
   ],
   [
+    'agent-composition.md',
+    'Agent composition',
+    'tool factories, authorized realtime control, shared React views and exact-run behavior checks',
+  ],
+  [
     'application-kernel.md',
     'Managed application kernel',
     'process-local resources, readiness, admission, schedules, projections and optional provider adapters',
@@ -212,6 +217,16 @@ export const GUIDE_SLICES: GuideMap = {
     primary: './tools',
     also: ['./tools/contract', './tools/invoker', './tools/connections', './remote'],
   },
+  'agent-composition.md': {
+    primary: './agent-runtime/harness',
+    also: [
+      './agent-runtime/browser',
+      './agent-runtime/harness-tools',
+      './agent-runtime/react',
+      './agent-runtime/realtime',
+      './agent-runtime/testing',
+    ],
+  },
   'agent-runtime.md': {
     primary: './agent-runtime',
     also: [
@@ -219,6 +234,9 @@ export const GUIDE_SLICES: GuideMap = {
       './agent-runtime/harness',
       './agent-runtime/coding-tools',
       './agent-runtime/browser',
+      './agent-runtime/harness-tools',
+      './agent-runtime/react',
+      './agent-runtime/realtime',
       './agent-runtime/openrouter',
       './agent-runtime/sqlite/bun',
       './agent-runtime/sqlite/node',

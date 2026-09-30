@@ -82,7 +82,16 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'server',
     'tools',
   ],
-  'agent-runtime': ['contract', 'durability', 'internal', 'observability', 'server', 'tools'],
+  'agent-runtime': [
+    'browser',
+    'contract',
+    'durability',
+    'internal',
+    'observability',
+    'realtime',
+    'server',
+    'tools',
+  ],
 };
 
 const entryFiles = new Set([

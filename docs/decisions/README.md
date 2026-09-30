@@ -249,6 +249,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0217](0217-react-native-uploads-a-file-as-the-platform-holds-it.md) | React Native uploads a file as the platform holds it | Accepted — in React Native `onUploadProgress` hands the platform XHR the body as built (the `FormData` itself) and counts its upload events; an injected fetch there is refused; `uploadInChunks` reads any `ChunkSource` (`size` + `slice`), not only a DOM `Blob` | I4, I8, I10 |
 | [0218](0218-view-file-rejects-a-list-encoded-as-text.md) | view_file отвергает список, записанный текстом | Active — общая схема paths отвергает JSON-массив в строке до IO с подсказкой; общий string-union coercion сохраняется; локальный отказ называет переданный путь и расширение | I2, I3, I8, I13 |
 | [0219](0219-journal-damage-is-data-and-io-failure-is-failure.md) | Повреждение journal — данные, отказ IO — ошибка | Active — общий bounded snapshot reader выдаёт frames и явные anomalies; startup восстанавливает bounded recovery status из сохранённых файлов, без рекурсивного logging | I3, I8, I10, I13 |
+| [0220](0220-compose-existing-agent-owners.md) | Compose existing agent owners | Active — optional tool, realtime, browser and React composition preserves canonical runtime ownership and exact-run evidence | I1, I2, I7, I8, I9, I10, I12, I15 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
