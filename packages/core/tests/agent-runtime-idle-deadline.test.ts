@@ -18,6 +18,8 @@ function fixture(
   override?: MockLanguageModelV4,
 ) {
   let calls = 0;
+  // This fixture measures preparation/tool waits. Its ready provider chunks must not
+  // add timer scheduling delays that can exhaust the 20ms provider silence budget.
   const model =
     override ??
     new MockLanguageModelV4({
@@ -25,6 +27,8 @@ function fixture(
         stream:
           ++calls === 1
             ? simulateReadableStream({
+                initialDelayInMs: null,
+                chunkDelayInMs: null,
                 chunks: [
                   { type: 'tool-call', toolCallId: 'child', toolName: 'wait', input: '{}' },
                   {
@@ -35,6 +39,8 @@ function fixture(
                 ],
               })
             : simulateReadableStream({
+                initialDelayInMs: null,
+                chunkDelayInMs: null,
                 chunks: [
                   { type: 'text-start', id: 'a' },
                   { type: 'text-delta', id: 'a', delta: 'done' },
