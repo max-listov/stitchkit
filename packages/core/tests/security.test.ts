@@ -213,7 +213,9 @@ describe('resolveMedia — local-file sandbox', () => {
 
   test('refuses a non-media file even inside the sandbox', async () => {
     // The ggk_ key lives in a config.json — a media-only allowlist blocks it.
-    await expect(resolveMedia('secret.json', { files })).rejects.toThrow(/non-media/);
+    await expect(resolveMedia('secret.json', { files })).rejects.toThrow(
+      /not a media extension/,
+    );
   });
 
   test('refuses a path escaping the sandbox', async () => {

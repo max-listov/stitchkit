@@ -1,5 +1,30 @@
 # Upgrading stitchkit
 
+## Released migration: 0.102.0
+
+### `view_file` receives an array, not an array encoded as text
+
+**Who must act:** callers sending `paths` as a JSON-encoded array string, or
+matching the former media-extension refusal for that input. Managed MCP,
+Agent and CLI surfaces now reject it as `VALIDATION_ERROR` before IO; raw MCP
+reports an input-validation error. Correct single paths and arrays need no change.
+
+```ts
+// Before
+{ paths: '["image.png"]' }
+// After
+{ paths: ['image.png'] }
+// One file may also be a string
+{ paths: 'image.png' }
+```
+
+The same rule applies to an array element containing another encoded array.
+Do not change generic string-union coercion: path strings remain strings.
+A legitimate filename such as `[preview].PNG` is still accepted. Local
+unsupported-extension errors now include the caller's path and extension;
+match the error code rather than the former generic message.
+
+
 ## Released migration: 0.101.0
 
 ### `TelegramInitDataUser` is `TelegramUser`

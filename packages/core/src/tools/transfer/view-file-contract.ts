@@ -59,8 +59,24 @@ export const ViewFileOutputSchema = z.object({
 
 export type ViewFileOutput = z.infer<typeof ViewFileOutputSchema>;
 
+/** A list encoded inside a string is an argument-shape error, not a file name. */
+function isTextList(value: string): boolean {
+  if (!value.trimStart().startsWith('[')) return false;
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+}
+
+const MediaPathSchema = z.string().refine((value) => !isTextList(value), {
+  message: 'paths is a list written as text — pass an array of paths or one path',
+});
+
 export const ViewFileInputSchema = z.object({
   paths: z
-    .union([z.string(), z.array(z.string()).max(MAX_VIEW_FILES)])
-    .describe('Media URL(s) or file path(s) to view'),
+    .union([MediaPathSchema, z.array(MediaPathSchema).max(MAX_VIEW_FILES)])
+    .describe(
+      'One media URL or file path, or an array of them. Pass the array itself, not JSON written as text.',
+    ),
 });

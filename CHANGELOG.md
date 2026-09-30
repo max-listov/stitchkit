@@ -15,6 +15,27 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.102.0] — 2026-09-30
+
+### ⚠️ Breaking changes
+
+- `stitchkit/tools`, `stitchkit/tools/contract`, `stitchkit/cli` — **`view_file`
+  rejects JSON arrays encoded inside a `paths` string during input validation**,
+  before file or network access, with a hint to pass an array or one path.
+  Previously the text was accepted as one filename and failed with a misleading
+  media-extension refusal. `paths: '["image.png"]'` → `paths: ['image.png']`.
+  An encoded array inside an array element is refused too. Managed surfaces
+  return `VALIDATION_ERROR`; raw MCP reports an input-validation error. → ADR 0218.
+
+**Who must act:** callers that serialize the `paths` array into a string, or
+branch on the former media-extension error for that input. Pass a real array
+(or a single path string) and handle the validation error.
+
+### Fixed
+
+- `stitchkit/tools` — a local non-media extension refusal identifies the
+  caller's path and the extension it saw, without reading the file.
+
 ## [0.101.3] — 2026-09-29
 
 ### Fixed

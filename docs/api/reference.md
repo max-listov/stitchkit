@@ -1602,7 +1602,7 @@ payload.
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source, mcp? }` plus whatever the mount's `context` added |
 | `ViewFileOptions` | _type_ | shared URL/managed-file-boundary policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
 | `ViewFileOutput` | _type_ | neutral managed batch result with multimodal `content` and per-item `errors` |
-| `ViewFileInputSchema` | constant | fixed one-or-many media path/URL input schema |
+| `ViewFileInputSchema` | constant | one media path/URL or an array of at most 20; rejects a JSON array written as text, including in array items, before IO |
 | `ViewFileOutputSchema` | constant | Zod schema for the neutral managed view-file batch result |
 | `ViewFileErrorSchema` | constant | Zod schema for one structured per-item view failure |
 | `McpAnnotations` | _type_ | MCP annotations on a media result |

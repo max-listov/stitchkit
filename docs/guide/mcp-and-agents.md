@@ -1303,6 +1303,15 @@ multimodal content beside structured per-item `errors`, and charges every item
 to one total 20 MB batch budget. Its MCP and Agent presenters are built in;
 remote fetch cancellation follows the active call signal.
 
+`paths` is one path/URL string or an actual array of strings (at most 20).
+Pass `{ paths: ['image.png'] }`, not `{ paths: '["image.png"]' }`: a JSON
+array written as text fails input validation before any file or network access,
+with the hint `paths is a list written as text — pass an array of paths or one
+path`. The same rule applies to array items and the raw `mountViewFile` input.
+Ordinary file names containing brackets, such as `[preview].png`, remain valid.
+A local file with an unsupported extension is refused before reading; its
+per-item error identifies the caller's path and the extension it saw.
+
 The older `mountWait`, `mountDownload`, `mountUpload` and `mountViewFile`
 functions remain
 intentional raw MCP adapters with their text-envelope behavior. Use them under

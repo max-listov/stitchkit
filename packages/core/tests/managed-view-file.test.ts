@@ -12,7 +12,13 @@ import {
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { defineViewFileTool } from '../src/tools/transfer/define-view-file-tool';
-import { mountViewFile, runViewFileOperation } from '../src/tools/transfer/view-file';
+import {
+  mountViewFile,
+  resolveMedia,
+  runViewFileOperation,
+  ViewFileInputSchema,
+  ViewFileOutputSchema,
+} from '../src/tools/transfer/view-file';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -29,6 +35,7 @@ describe('managed view_file definition', () => {
     root = await mkdtemp(join(tmpdir(), 'sk-managed-view-'));
     await mkdir(join(root, 'nested'));
     await writeFile(join(root, 'nested', 'pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await writeFile(join(root, '[preview].PNG'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(join(root, 'secret.json'), '{"secret":true}');
     files = await createManagedFileBoundary({ root });
   });
@@ -74,11 +81,16 @@ describe('managed view_file definition', () => {
       { type: 'text', text: '[image] image/png, 0KB' },
       {
         type: 'text',
-        text: '[secret.json] Error: refusing to read a non-media file',
+        text: '[secret.json] Error: refusing to read "secret.json" — ".json" is not a media extension',
       },
     ]);
     expect(mcp.structuredContent).toMatchObject({
-      errors: [{ path: 'secret.json', message: 'refusing to read a non-media file' }],
+      errors: [
+        {
+          path: 'secret.json',
+          message: 'refusing to read "secret.json" — ".json" is not a media extension',
+        },
+      ],
     });
 
     const agentTools = mountAgent([], {
@@ -135,9 +147,115 @@ describe('managed view_file definition', () => {
     );
     expect(result.content).toContainEqual({
       type: 'text',
-      text: '[secret.json] Error: refusing to read a non-media file',
+      text: '[secret.json] Error: refusing to read "secret.json" — ".json" is not a media extension',
     });
     await client.close();
+  });
+
+  test('JSON lists written as text fail validation before managed MCP/Agent IO', async () => {
+    const definition = defineViewFileTool({
+      description: 'Inspect protected media',
+      identity: { serviceName: 'media', action: 'view' },
+      files,
+    });
+    const client = await connect(
+      buildMcpServer(
+        {
+          serverInfo: { name: 'view-input', version: '1' },
+          services: [],
+          runtimeTools: [definition],
+        },
+        undefined,
+      ),
+    );
+    const execute = mountAgent([], { runtimeTools: [definition] }).view_file?.execute;
+    if (!execute) throw new Error('expected executable managed view_file');
+    const read = spyOn(files, 'read');
+    const fetchMock = spyOn(globalThis, 'fetch');
+    const hint = 'paths is a list written as text — pass an array of paths or one path';
+    try {
+      for (const paths of [
+        '["nested/pic.png"]',
+        '  ["https://example.com/pic.png"]\n',
+        '["nested/pic.png", "nested/pic.png"]',
+        '[]',
+        ['["nested/pic.png"]'],
+      ]) {
+        const input = { paths };
+        const parsed = ViewFileInputSchema.safeParse(input);
+        expect(parsed.success).toBe(false);
+        if (parsed.success) throw new Error('expected a validation error');
+        expect(parsed.error.issues).toContainEqual(expect.objectContaining({ message: hint }));
+        const mcp = await client.callTool({ name: 'view_file', arguments: input });
+        expect(mcp.isError).toBe(true);
+        expect(JSON.stringify(mcp)).toContain('VALIDATION_ERROR');
+        expect(JSON.stringify(mcp)).toContain(hint);
+        await expect(
+          execute(input, { toolCallId: 'invalid', messages: [], context: undefined }),
+        ).rejects.toMatchObject({ output: { error: 'VALIDATION_ERROR' } });
+      }
+      expect(read).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      for (const paths of ['nested/pic.png', ['nested/pic.png', '[preview].PNG']]) {
+        const input = { paths };
+        const images = Array.isArray(paths) ? paths.length : 1;
+        const mcp = await client.callTool({ name: 'view_file', arguments: input });
+        expect(mcp.isError).not.toBe(true);
+        expect(mcp.content.filter((part) => part.type === 'image')).toHaveLength(images);
+        const agent = ViewFileOutputSchema.parse(
+          await execute(input, { toolCallId: 'valid', messages: [], context: undefined }),
+        );
+        expect(agent.errors).toEqual([]);
+        expect(agent.content.filter((part) => part.type === 'image')).toHaveLength(images);
+      }
+    } finally {
+      read.mockRestore();
+      fetchMock.mockRestore();
+      await client.close();
+    }
+  });
+
+  test('raw MCP refuses a text list and reads one path or a real array', async () => {
+    const server = new McpServer({ name: 'raw-view-input', version: '1' });
+    mountViewFile(server, { files });
+    const client = await connect(server);
+    const read = spyOn(files, 'read');
+    try {
+      const rejected = await client.callTool({
+        name: 'view_file',
+        arguments: { paths: '["nested/pic.png"]' },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain('paths is a list written as text');
+      expect(read).not.toHaveBeenCalled();
+      for (const paths of ['nested/pic.png', ['nested/pic.png', '[preview].PNG']]) {
+        const accepted = await client.callTool({ name: 'view_file', arguments: { paths } });
+        expect(accepted.isError).not.toBe(true);
+        expect(accepted.content.filter((part) => part.type === 'image')).toHaveLength(
+          Array.isArray(paths) ? paths.length : 1,
+        );
+      }
+    } finally {
+      read.mockRestore();
+      await client.close();
+    }
+  });
+
+  test('local extension refusal identifies caller input without reading the file', async () => {
+    const read = spyOn(files, 'read');
+    try {
+      for (const path of ['secret.json', 'missing', '["nested/pic.png"]']) {
+        const extension =
+          path === 'secret.json' ? '.json' : path === 'missing' ? '' : '.png"]';
+        await expect(resolveMedia(path, { files })).rejects.toMatchObject({
+          code: 'FILE_INSPECTION_REJECTED',
+          message: `refusing to read ${JSON.stringify(path)} — ${JSON.stringify(extension)} is not a media extension`,
+        });
+      }
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test('a batch shares one total inline byte budget', async () => {

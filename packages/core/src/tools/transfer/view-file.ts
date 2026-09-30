@@ -88,7 +88,8 @@ async function fetchSource(
   options: ViewFileOperationOptions,
   maxBytes: number,
 ): Promise<FetchedSource> {
-  const extMime = EXT_MIME[extname(pathOrUrl).toLowerCase()];
+  const extension = extname(pathOrUrl);
+  const extMime = EXT_MIME[extension.toLowerCase()];
 
   if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
     const url = new URL(pathOrUrl);
@@ -133,7 +134,11 @@ async function fetchSource(
   // that happens to sit inside the sandbox. A path with no known media
   // extension is refused before it is touched.
   if (!extMime) {
-    throw new AppError('FILE_INSPECTION_REJECTED', 'refusing to read a non-media file', 422);
+    throw new AppError(
+      'FILE_INSPECTION_REJECTED',
+      `refusing to read ${JSON.stringify(pathOrUrl)} — ${JSON.stringify(extension)} is not a media extension`,
+      422,
+    );
   }
   try {
     const source = await options.files.read(pathOrUrl, {
