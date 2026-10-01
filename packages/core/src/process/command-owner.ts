@@ -62,10 +62,17 @@ export function startNativeCommand(
   });
   // Observe each owned handle before teardown. Some runtimes do not emit the
   // aggregate child close after an exited leader's inherited pipes are destroyed.
+  const pendingHandles = new Set(['leader', 'stdin', 'stdout', 'stderr']);
   const released = Promise.all([
-    leader,
-    ...[child.stdin, child.stdout, child.stderr].map(
-      (stream) => new Promise<void>((resolve) => stream.once('close', resolve)),
+    leader.then(() => pendingHandles.delete('leader')),
+    ...(['stdin', 'stdout', 'stderr'] as const).map(
+      (name) =>
+        new Promise<void>((resolve) =>
+          child[name].once('close', () => {
+            pendingHandles.delete(name);
+            resolve();
+          }),
+        ),
     ),
   ]);
   const closed = new Promise<{ exitCode: number | null; signal: string | null }>((resolve) => {
@@ -123,9 +130,18 @@ export function startNativeCommand(
       child.stderr.destroy();
       const cleanup = await Promise.allSettled([
         settle({ kind: 'error', cause: error }),
-        stopCommandGroup(child.pid, options.killGraceMs).then(() =>
-          waitForCommandClose(released, options.cleanupTimeoutMs),
-        ),
+        stopCommandGroup(child.pid, options.killGraceMs).then(async () => {
+          try {
+            await waitForCommandClose(released, options.cleanupTimeoutMs);
+          } catch (cause) {
+            throw new Error(
+              `Command handles remained open: ${[...pendingHandles].join(', ')}`,
+              {
+                cause,
+              },
+            );
+          }
+        }),
       ]);
       const failures = cleanup.flatMap((item) =>
         item.status === 'rejected' && item.reason !== error ? [item.reason] : [],

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, open, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 import {
   AtomicFilePublicationError,
   withExclusiveLock,
@@ -134,7 +135,11 @@ try {
   await rm(member);
   await assert.rejects(
     runNativeCommand({ executable: process.execPath, args: ['-e', launcher], timeoutMs: 150 }),
-    { code: 'COMMAND_LIMIT' },
+    (error) => {
+      if (error.code !== 'COMMAND_LIMIT') console.error(inspect(error, { depth: 8 }));
+      assert.equal(error.code, 'COMMAND_LIMIT');
+      return true;
+    },
   );
   await verifySharedUID('stitchkit/files');
   console.log('packed native owners: ok');
