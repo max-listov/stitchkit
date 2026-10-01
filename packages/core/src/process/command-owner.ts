@@ -60,6 +60,14 @@ export function startNativeCommand(
     child.once('exit', (exitCode, signal) => resolve({ kind: 'exit', exitCode, signal }));
     child.once('error', (cause) => resolve({ kind: 'error', cause }));
   });
+  // Observe each owned handle before teardown. Some runtimes do not emit the
+  // aggregate child close after an exited leader's inherited pipes are destroyed.
+  const released = Promise.all([
+    leader,
+    ...[child.stdin, child.stdout, child.stderr].map(
+      (stream) => new Promise<void>((resolve) => stream.once('close', resolve)),
+    ),
+  ]);
   const closed = new Promise<{ exitCode: number | null; signal: string | null }>((resolve) => {
     child.once('error', (error) => {
       spawnFailure = new NativeCommandError('COMMAND_UNAVAILABLE', 'Command could not start', {
@@ -116,7 +124,7 @@ export function startNativeCommand(
       const cleanup = await Promise.allSettled([
         settle({ kind: 'error', cause: error }),
         stopCommandGroup(child.pid, options.killGraceMs).then(() =>
-          waitForCommandClose(closed, options.cleanupTimeoutMs),
+          waitForCommandClose(released, options.cleanupTimeoutMs),
         ),
       ]);
       const failures = cleanup.flatMap((item) =>

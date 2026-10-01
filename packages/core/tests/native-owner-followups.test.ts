@@ -200,6 +200,22 @@ test('leader settlement runs once for nonzero, unavailable, sink failure and abo
   });
 });
 
+test('cleanup observes native leader and pipe closure when aggregate child close is unavailable', async () => {
+  const entry = join(import.meta.dir, '../src/entrypoints/process.ts');
+  const code = `import{ChildProcess}from'node:child_process';const emit=ChildProcess.prototype.emit;let suppressed=0;ChildProcess.prototype.emit=function(event,...args){if(event==='close'){suppressed++;return false}return emit.call(this,event,...args)};const{runNativeCommand}=await import(${JSON.stringify(entry)});try{await runNativeCommand({executable:process.execPath,args:['-e','setInterval(()=>{},20)'],timeoutMs:30,cleanupTimeoutMs:100});throw Error('must fail')}catch(error){if(error.code!=='COMMAND_LIMIT')throw error}if(!suppressed)throw Error('negative control did not suppress child close');console.log('individual handles released: ok');`;
+  const child = Bun.spawn([process.execPath, '-e', code], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [exit, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (exit !== 0) throw new Error(stderr);
+  expect(stdout).toContain('individual handles released: ok');
+});
+
 test('hanging leader settlement is cancellable and signal-only execution has no cleanup execution deadline', async () => {
   let calls = 0;
   const controller = new AbortController();
