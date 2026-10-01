@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.3] — 2026-10-01
+
+### Fixed
+
+- CLI help displays schema numeric bounds, string lengths and array item counts for
+  contract, runtime and native commands, and application options. Alternative schemas
+  keep their bounds in separate branches; argument validation is unchanged.
+
 ## [0.103.2] — 2026-10-01
 
 ### Fixed

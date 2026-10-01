@@ -486,6 +486,12 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const helpOutput = step(`node: CLI help limits (${runtime})`, () =>
+          run(runtime, ['src/cli-help-limits.mjs'], dir),
+        );
+        if (!helpOutput.includes('packed CLI help limits: ok')) {
+          throw new Error(`Missing ${runtime} CLI help limit proof`);
+        }
         const annotationOutput = step(`node: union annotations (${runtime})`, () =>
           run(runtime, ['src/union-annotations.mjs'], dir),
         );

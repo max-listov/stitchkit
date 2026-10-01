@@ -1,3 +1,4 @@
+import { isRecord } from '../../internal/typed';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
 import { describeSchemaFields } from './args-fields';
 import type { CliCommandPresentation } from './policy';
@@ -27,6 +28,52 @@ function typeLabel(schema: Record<string, unknown>): string {
   return 'value';
 }
 
+/** Bounds belong to this value; item/property constraints describe a different value. */
+function constraintLabel(schema: Record<string, unknown>): string {
+  const limits: string[] = [];
+  // Both emitted dialects (draft-07 and 2020-12) use numeric exclusive bounds,
+  // not the boolean modifiers of draft-04. A zero bound is still a bound.
+  const bounds: readonly (readonly [string, string])[] = [
+    ['minimum', '>='],
+    ['exclusiveMinimum', '>'],
+    ['maximum', '<='],
+    ['exclusiveMaximum', '<'],
+    ['minLength', 'length >='],
+    ['maxLength', 'length <='],
+    ['minItems', 'items >='],
+    ['maxItems', 'items <='],
+  ];
+  for (const [keyword, label] of bounds) {
+    const bound = schema[keyword];
+    if (typeof bound === 'number') limits.push(`${label}${bound}`);
+  }
+  const compositions: readonly (readonly [string, string, string])[] = [
+    ['anyOf', 'any of', ' | '],
+    ['oneOf', 'one of', ' | '],
+    ['allOf', 'all of', ' & '],
+  ];
+  for (const [keyword, label, separator] of compositions) {
+    const members = schema[keyword];
+    if (!Array.isArray(members)) continue;
+    const branches = members.map((member) => {
+      const constraints = isRecord(member) ? constraintLabel(member) : '';
+      const type = isRecord(member)
+        ? typeLabel(member)
+        : member === false
+          ? 'no value'
+          : 'any value';
+      return { constraints, text: `${type}${constraints}` };
+    });
+    if (branches.every((branch) => branch.constraints === '')) continue;
+    limits.push(`${label}: ${branches.map((branch) => branch.text).join(separator)}`);
+  }
+  return limits.length === 0 ? '' : ` [${limits.join(', ')}]`;
+}
+
+function fieldTypeLabel(schema: Record<string, unknown>): string {
+  return `<${typeLabel(schema)}>${constraintLabel(schema)}`;
+}
+
 function padRight(text: string, width: number): string {
   return text.length >= width ? text : text + ' '.repeat(width - text.length);
 }
@@ -49,7 +96,7 @@ function summarize(desc: string): string {
 function applicationOptionLines(fields: readonly JsonSchemaField[]): string[] {
   if (fields.length === 0) return [];
   const labels = new Map(
-    fields.map((field) => [field.name, `--${field.name} <${typeLabel(field.schema)}>`]),
+    fields.map((field) => [field.name, `--${field.name} ${fieldTypeLabel(field.schema)}`]),
   );
   const width = Math.max(...fields.map((field) => labels.get(field.name)?.length ?? 0));
   return [
@@ -184,7 +231,7 @@ export function renderCommandHelp(
       const req = f.required ? ' (required)' : '';
       const desc = f.description ? ` — ${f.description}` : '';
       const label = labels.get(f.name) ?? `--${f.name}`;
-      lines.push(`  ${padRight(label, width)}  <${typeLabel(f.schema)}>${req}${desc}`);
+      lines.push(`  ${padRight(label, width)}  ${fieldTypeLabel(f.schema)}${req}${desc}`);
     }
     const flag = [...kinds].find(([, info]) => info.kind === 'boolean')?.[0];
     if (flag !== undefined) {

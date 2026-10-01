@@ -414,6 +414,19 @@ the argv parser. For example, a required `action` and optional `profile` render 
 Declared aliases render beside their canonical options, for example
 `-n, --lines`.
 
+The argument table and `Application options:` show bounds from their JSON Schema,
+for example `<integer> [>=1, <=50]`, `<string> [length >=1, length <=12]`, and
+`<value…> [items >=2, items <=4]`. Numeric `>` and `<` are exclusive, while `>=`
+and `<=` include the endpoint; a zero limit is displayed too. Unbounded fields
+keep just their type and description. Bounds on an array's items are not bounds
+on the array itself.
+
+Composed schemas retain their meaning: `any of:` and `one of:` separate
+alternative branches with `|`, while `all of:` joins constraints with `&`.
+For example, a nullable bounded string renders
+`<value> [any of: string [length >=1] | null]`. These labels describe the input;
+the same contract schema still validates the call.
+
 ## `--wait` — background-friendly generation
 
 `--wait` polls an async result until it is done. It is generic — the core knows
