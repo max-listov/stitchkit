@@ -6,7 +6,7 @@ import { probeLiveness } from '../src/internal/process-identity';
 import {
   linuxProcessStart,
   type ProcessInstance,
-  probeProcessOwner,
+  probeProcessOwnerWith,
   readProcessInstance,
 } from '../src/internal/process-instance';
 
@@ -73,17 +73,21 @@ test('unknown evidence never proves death; a boot mismatch does not depend on PI
   };
   const read = async (pid: number) => (pid === process.pid ? identity : null);
   expect(
-    await probeProcessOwner(42, { ...identity, bootId: 'old-boot' }, { read, liveness }),
+    await probeProcessOwnerWith(42, { ...identity, bootId: 'old-boot' }, { read, liveness }),
   ).toEqual({ liveness: 'gone', identity: 'different-boot' });
   expect(probes).toBe(0);
-  expect((await probeProcessOwner(42, identity, { read, liveness })).liveness).toBe(
+  expect((await probeProcessOwnerWith(42, identity, { read, liveness })).liveness).toBe(
     'not-probed',
   );
   expect(
-    (await probeProcessOwner(42, identity, { read: async () => null, liveness })).liveness,
+    (await probeProcessOwnerWith(42, identity, { read: async () => null, liveness })).liveness,
   ).toBe('not-probed');
-  expect((await probeProcessOwner(42, null, { read, liveness })).liveness).toBe('not-probed');
-  expect((await probeProcessOwner(42, undefined, { read, liveness })).identity).toBe('legacy');
+  expect((await probeProcessOwnerWith(42, null, { read, liveness })).liveness).toBe(
+    'not-probed',
+  );
+  expect((await probeProcessOwnerWith(42, undefined, { read, liveness })).identity).toBe(
+    'legacy',
+  );
 });
 
 test('EPERM and an unreadable process identity refuse; ESRCH is the distinct absence case', async () => {
@@ -97,11 +101,11 @@ test('EPERM and an unreadable process identity refuse; ESRCH is the distinct abs
     });
   const read = async (pid: number) => (pid === process.pid ? identity : null);
   expect(await denied(42)).toBe('alive');
-  expect(await probeProcessOwner(42, identity, { read, liveness: denied })).toEqual({
+  expect(await probeProcessOwnerWith(42, identity, { read, liveness: denied })).toMatchObject({
     liveness: 'not-probed',
     identity: 'unavailable',
   });
-  expect(await probeProcessOwner(42, identity, { read, liveness: absent })).toEqual({
+  expect(await probeProcessOwnerWith(42, identity, { read, liveness: absent })).toEqual({
     liveness: 'gone',
     identity: 'pid-gone',
   });

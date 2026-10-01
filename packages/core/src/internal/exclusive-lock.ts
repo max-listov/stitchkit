@@ -53,6 +53,7 @@ export interface ExclusiveLockDiagnosis {
   readonly liveness: 'alive' | 'gone' | 'not-probed';
   readonly identity?: ProcessOwnerEvidence['identity'];
   readonly owner: ExclusiveLockOwner | null;
+  readonly cause?: unknown;
 }
 
 /** A lock this process holds. */
@@ -74,7 +75,7 @@ export interface ExclusiveLockAttemptOptions {
    * How old a lock with no readable owner must be before it is taken. Absent,
    * an ownerless lock is never taken — it may predate owner records.
    */
-  readonly ownerlessGraceMs?: number;
+  readonly ownerlessGraceMs?: number | null;
 }
 
 export type ExclusiveLockAttempt =
@@ -136,7 +137,10 @@ interface LockFileState {
   readonly mtimeMs: number;
 }
 
-async function readLockFile(path: string): Promise<LockFileState | undefined> {
+async function readLockFile(
+  path: string,
+  onFailure?: (cause: unknown) => void,
+): Promise<LockFileState | undefined> {
   let handle: FileHandle | undefined;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -146,7 +150,8 @@ async function readLockFile(path: string): Promise<LockFileState | undefined> {
       ino: info.ino,
       mtimeMs: info.mtimeMs,
     };
-  } catch {
+  } catch (cause) {
+    if (!isCode(cause, 'ENOENT')) onFailure?.(cause);
     return undefined;
   } finally {
     await handle?.close().catch(() => undefined);
@@ -180,15 +185,18 @@ async function createOwned(
     acquiredAt: new Date().toISOString(),
     ...(identity !== null && { machine: identity }),
   };
-  let ino: number;
+  let ino: number | undefined;
   try {
-    await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
     ino = (await handle.stat()).ino;
+    // The creator owns this descriptor; umask must not silently drop shared-reader rights.
+    await handle.chmod(options.mode);
+    await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
   } catch (error) {
     await handle.close().catch(() => undefined);
-    await unlink(path).catch(() => undefined);
+    if (ino !== undefined) await unlinkIfSame(path, ino).catch(() => undefined);
     throw error;
   }
+  const ownedInode = ino;
   let released = false;
   return {
     path,
@@ -202,7 +210,7 @@ async function createOwned(
       } finally {
         // A lock reclaimed from under this holder belongs to someone else now;
         // removing it by name would hand the resource to a third process.
-        await unlinkIfSame(path, ino);
+        await unlinkIfSame(path, ownedInode);
       }
     },
   };
@@ -211,10 +219,10 @@ async function createOwned(
 function reclaimable(
   state: LockFileState,
   diagnosis: ExclusiveLockDiagnosis,
-  graceMs: number | undefined,
+  graceMs: number | null | undefined,
 ): boolean {
   if (state.owner) return diagnosis.liveness === 'gone';
-  return graceMs !== undefined && Date.now() - state.mtimeMs >= graceMs;
+  return typeof graceMs === 'number' && Date.now() - state.mtimeMs >= graceMs;
 }
 
 /**
@@ -237,7 +245,13 @@ async function reclaimUnderGuard(
     const stale = await readLockFile(guardPath);
     if (stale) {
       const verdict = await diagnose(stale.owner, options.machineIdentity);
-      if (reclaimable(stale, verdict, options.ownerlessGraceMs ?? 5_000)) {
+      if (
+        reclaimable(
+          stale,
+          verdict,
+          options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
+        )
+      ) {
         await unlinkIfSame(guardPath, stale.ino);
       }
     }
@@ -277,8 +291,14 @@ export async function attemptExclusiveLock(
   } catch (error) {
     if (!isCode(error, 'EEXIST')) throw error;
     if (!options.reclaim) return { error };
-    const state = await readLockFile(path);
-    const diagnosis = await diagnose(state?.owner, options.machineIdentity);
+    let readFailure: unknown;
+    const state = await readLockFile(path, (cause) => {
+      readFailure = cause;
+    });
+    const diagnosis = {
+      ...(await diagnose(state?.owner, options.machineIdentity)),
+      ...(readFailure !== undefined && { cause: readFailure }),
+    };
     if (!state || !reclaimable(state, diagnosis, options.ownerlessGraceMs)) {
       return { error, diagnosis };
     }

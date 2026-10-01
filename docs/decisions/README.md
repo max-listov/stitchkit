@@ -256,6 +256,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0223](0223-release-candidate-tests-are-ci-evidence.md) | Unit tests кандидата проверяет обязательный CI | Active — candidate выполняет structural preflight; полный exact-SHA CI содержит tests и разрешает публикацию, fast attestation не подменяется | P |
 
 | [0224](0224-native-primitives-have-one-owner.md) | Общие IO primitives имеют одного владельца | Active — native boundaries, historical bytes и recipient authority объявлены явно | I8, I10, I12, I15 |
+| [0225](0225-native-libraries-separate-install-and-import-closure.md) | Native libraries separate install and import closure | Active — public imports and reachable declarations may be bundled once with Zod external; build-time package installation and runtime installation are qualified separately | I7, I8, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

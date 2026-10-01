@@ -24,7 +24,7 @@ export interface ExclusiveLockOptions {
   timeoutMs?: number;
   /** Stops the wait; an abort while waiting rejects at once with its reason as the cause. */
   signal?: AbortSignal;
-  /** Permission bits of the lock file. Default `0o600`. */
+  /** Exact permission bits, independent of umask. Default `0o600`. Shared readers need a common group and traversable parents. */
   mode?: number;
   /**
    * This machine's identity, for a platform that offers none (`/etc/machine-id`
@@ -35,9 +35,10 @@ export interface ExclusiveLockOptions {
   /**
    * How old a lock with no readable owner must be before it is taken — the one
    * case where time decides, left by a process that died between creating the
-   * file and recording itself. Default 5 000.
+   * file and recording itself. Default 5 000; `null` disables age-based reclaim,
+   * including abandoned ownerless reclaim guards.
    */
-  ownerlessGraceMs?: number;
+  ownerlessGraceMs?: number | null;
 }
 
 /** The lock `run` executes under. */
@@ -119,11 +120,15 @@ export async function withExclusiveLock<T>(
 ): Promise<T> {
   const label = options.label ?? path;
   const timeoutMs = nonNegative('timeoutMs', options.timeoutMs, DEFAULT_TIMEOUT_MS);
-  const ownerlessGraceMs = nonNegative(
-    'ownerlessGraceMs',
-    options.ownerlessGraceMs,
-    DEFAULT_OWNERLESS_GRACE_MS,
-  );
+  const ownerlessGraceMs =
+    options.ownerlessGraceMs === null
+      ? null
+      : nonNegative('ownerlessGraceMs', options.ownerlessGraceMs, DEFAULT_OWNERLESS_GRACE_MS);
+  const mode = options.mode ?? 0o600;
+  if (!Number.isInteger(mode) || mode < 0 || mode > 0o777)
+    throw new RangeError(
+      '[stitchkit] withExclusiveLock: mode must be permission bits from 0000 to 0777',
+    );
   const { signal } = options;
   const deadline = performance.now() + timeoutMs;
   let delay = FIRST_RETRY_MS;
@@ -138,7 +143,7 @@ export async function withExclusiveLock<T>(
       );
     }
     const attempt = await attemptExclusiveLock(path, {
-      mode: options.mode ?? 0o600,
+      mode,
       reclaim: true,
       ownerlessGraceMs,
       ...(options.machineIdentity !== undefined && {
@@ -165,7 +170,7 @@ export async function withExclusiveLock<T>(
         label,
         holder,
         `[stitchkit] the lock on "${label}" is held by ${describeHolder(holder)}${describeEvidence(attempt.diagnosis)}; gave up after ${timeoutMs} ms`,
-        { cause: attempt.error },
+        { cause: attempt.diagnosis?.cause ?? attempt.error },
       );
     }
     // Jittered, so waiters released by one holder do not all retry together.

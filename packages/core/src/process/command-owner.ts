@@ -6,8 +6,10 @@ import {
   type NativeCommandOptions,
   NativeCommandOptionsSchema,
   type NativeCommandResult,
+  type NativeCommandSettlement,
 } from './contract';
 import { commandCleanupError, stopCommandGroup, waitForCommandClose } from './group';
+import { createLeaderSettlement } from './leader-settlement';
 
 /** One-shot native execution; sandbox policy/admission is composed above this owner. */
 export function startNativeCommand(
@@ -53,6 +55,11 @@ export function startNativeCommand(
   let total = 0;
   let finished = false;
   let spawnFailure: unknown;
+  const settle = createLeaderSettlement(options, controller.signal);
+  const leader = new Promise<NativeCommandSettlement>((resolve) => {
+    child.once('exit', (exitCode, signal) => resolve({ kind: 'exit', exitCode, signal }));
+    child.once('error', (cause) => resolve({ kind: 'error', cause }));
+  });
   const closed = new Promise<{ exitCode: number | null; signal: string | null }>((resolve) => {
     child.once('error', (error) => {
       spawnFailure = new NativeCommandError('COMMAND_UNAVAILABLE', 'Command could not start', {
@@ -97,7 +104,7 @@ export function startNativeCommand(
         drain(child.stdout, 'stdout', stdout),
         drain(child.stderr, 'stderr', stderr),
       ]);
-      await raceAbort(drains, controller.signal);
+      await raceAbort(Promise.all([drains, leader.then(settle)]), controller.signal);
       const status = await raceAbort(closed, controller.signal);
       if (spawnFailure !== undefined) throw spawnFailure;
       return { ...status, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
@@ -106,12 +113,18 @@ export function startNativeCommand(
       child.stdin.destroy();
       child.stdout.destroy();
       child.stderr.destroy();
-      try {
-        await stopCommandGroup(child.pid, options.killGraceMs);
-        await waitForCommandClose(closed, options.cleanupTimeoutMs);
-      } catch (cleanup) {
+      const cleanup = await Promise.allSettled([
+        settle({ kind: 'error', cause: error }),
+        stopCommandGroup(child.pid, options.killGraceMs).then(() =>
+          waitForCommandClose(closed, options.cleanupTimeoutMs),
+        ),
+      ]);
+      const failures = cleanup.flatMap((item) =>
+        item.status === 'rejected' && item.reason !== error ? [item.reason] : [],
+      );
+      if (failures.length) {
         throw commandCleanupError(
-          new AggregateError([error, cleanup], 'Command failed and cleanup failed'),
+          new AggregateError([error, ...failures], 'Command failed and cleanup failed'),
         );
       }
       throw error;

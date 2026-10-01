@@ -4,12 +4,16 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-01 21:31 +07:00
+updated: 2026-10-02 00:08 +07:00
 participants:
   - role: authored
     harness: Codex
     model: GPT-6
     at: 2026-10-01 20:44 +07:00
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-02 00:08 +07:00
 ---
 
 # Native IO
@@ -139,3 +143,62 @@ shell policy, command admission, логирование, redaction, bytes→text
 Длительные signal-only команды остаются streaming; bounded tar/capture получают свои явные limits.
 Импорт leaf не делает установку всего npm package маленькой; выбирайте dependency после измерения
 packed размера и dependency closure.
+## Resource-scoped launchers and shared owners
+
+`onLeaderSettled(event, signal)` observes leader exit before inherited stdout/stderr pipes
+close. A resource owner can stop its external scope there, allowing pipe drain to complete.
+The callback runs once: `event.kind === 'exit'` carries observed `exitCode`/`signal`; a terminal
+failure uses `kind: 'error'` and preserves its cause. Unavailable executables, output sink
+failure and caller cancellation settle through the same owner. `cleanupTimeoutMs` bounds
+the callback after settlement starts; it never becomes a deadline for signal-only execution.
+Honor the settlement signal; arbitrary user promises cannot be forcibly cancelled.
+
+```ts
+await runNativeCommand({
+  executable: launcher,
+  args,
+  signal: scope.signal,
+  onOutput: (bytes, channel, signal) => scope.write(bytes, channel, signal),
+  onLeaderSettled: (event, signal) => scope.settle(event, signal),
+});
+```
+
+`observeProcessInstance(pid)` returns `observed` with a `ProcessInstance`, or `unavailable`
+with its cause. `probeProcessOwner(pid, recorded)` compares that evidence on the machine the
+caller established: `matched`, `different-boot`, `reused-pid`, `pid-gone`, `legacy` or
+`unavailable`. Missing/partial/denied evidence is not death. Supervisor tree fencing remains
+the caller's job; a PID lifetime is not proof that its whole workload stopped.
+
+An exclusive lock applies exact requested permissions through its creating descriptor,
+independent of umask. Default `0600` stays private. Shared `0640` requires a common group and
+traversable directories; another UID also needs directory write permission to reclaim a
+proven-dead owner's file. Set `ownerlessGraceMs: null` to refuse every age-only reclaim,
+including ownerless reclaim guards. The default remains 5000 ms for existing clients.
+
+## Libraries with a Zod-only runtime
+
+Public leaves keep optional peers out of their import closure. Installing `stitchkit` still
+installs the complete package and ky; selective imports alone do not avoid that installation.
+A library can use Stitchkit as a build dependency, bundle its selected public native imports,
+keep Zod external, and publish the resulting implementation with its library artifact.
+
+```ts
+// The library's build entry; all mechanisms remain owned by Stitchkit.
+export { canonicalJson } from 'stitchkit/primitives';
+export { writeFileAtomic, withExclusiveLock } from 'stitchkit/files';
+export { observeProcessInstance, probeProcessOwner, runNativeCommand } from 'stitchkit/process';
+```
+
+Bundle for Node-compatible execution with Zod external. Publish declarations from the same
+version: carry their reachable relative `.d.ts` closure, rather than emitting references to
+`stitchkit` that force clients to install it for types. A library exposing its own DTOs may
+instead emit declarations for only that DTO contract. Keep the library's manifest at runtime
+`dependencies: {}` and `peerDependencies: { zod: ... }` when that is its declared promise.
+
+Darwin consumers need the published native binaries at the bundled loader's relative native
+directory. A JS-only bundle is not portable evidence. Qualify the packed library outside its
+build tree in Bun and Node, test its declarations, and check that importing an unbundled
+Stitchkit leaf fails there. A separate schema-only entry must not import the native entry.
+
+This delivery removes a runtime kernel installation; it does not remove the build-time
+Stitchkit installation or create an independent lightweight npm package.

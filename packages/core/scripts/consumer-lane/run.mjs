@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
 import { runSelfContainedSocketClientProof } from './self-contained-socket-client.mjs';
@@ -183,6 +184,14 @@ try {
       }
     }
     if (name === 'node') {
+      for (const runtime of ['bun', 'node']) {
+        const proof = step(`node: native owners (${runtime})`, () =>
+          run(runtime, ['src/native-owners.mjs'], dir),
+        );
+        if (!proof.includes('packed native owners: ok'))
+          throw new Error(`Missing ${runtime} native owners proof`);
+      }
+      step('neutral library install and types', () => qualifyNeutralLibrary(dir));
       for (const runtime of ['bun', 'node']) {
         const effect = step(`node: effect lease (${runtime})`, () =>
           run(runtime, ['src/effect-lease.mjs'], dir),

@@ -311,13 +311,17 @@ static napi_value process_identity(napi_env env, napi_callback_info info) {
   char boot[128] = {0};
   size_t boot_size = sizeof(boot);
   struct rusage_info_v0 usage = {0};
-  if (sysctlbyname("kern.bootsessionuuid", boot, &boot_size, NULL, 0) != 0 ||
-      boot_size == 0 || boot_size > sizeof(boot) || boot[sizeof(boot) - 1] != 0 ||
-      proc_pid_rusage(pid, RUSAGE_INFO_V0, (rusage_info_t *)&usage) != 0 ||
-      usage.ri_proc_start_abstime == 0) {
-    napi_value absent;
-    napi_get_null(env, &absent);
-    return absent;
+  if (sysctlbyname("kern.bootsessionuuid", boot, &boot_size, NULL, 0) != 0)
+    return fail(env, "sysctl kern.bootsessionuuid");
+  if (boot_size == 0 || boot_size > sizeof(boot) || boot[sizeof(boot) - 1] != 0) {
+    napi_throw_error(env, "EINVAL", "Incomplete process boot identity");
+    return NULL;
+  }
+  if (proc_pid_rusage(pid, RUSAGE_INFO_V0, (rusage_info_t *)&usage) != 0)
+    return fail(env, "proc_pid_rusage");
+  if (usage.ri_proc_start_abstime == 0) {
+    napi_throw_error(env, "EINVAL", "Incomplete process start identity");
+    return NULL;
   }
   char start[32];
   snprintf(start, sizeof(start), "%" PRIu64, usage.ri_proc_start_abstime);

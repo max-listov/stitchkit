@@ -466,13 +466,13 @@
       "test": "an abort stops the wait at once, not at the deadline"
     },
     "mode": {
-      "test": "the lock file carries the mode asked for"
+      "test": "exact lock mode survives restrictive umask and null refuses ownerless locks and guards"
     },
     "machineIdentity": {
       "test": "a dead pid recorded by another machine is not ours to judge"
     },
     "ownerlessGraceMs": {
-      "test": "an ownerless lock is taken once it is older than the grace period set"
+      "test": "exact lock mode survives restrictive umask and null refuses ownerless locks and guards"
     }
   },
   "WriteFileAtomicOptions": {
@@ -1187,6 +1187,9 @@
     },
     "cleanupTimeoutMs": {
       "test": "command grace and cleanup options control their native budgets"
+    },
+    "onLeaderSettled": {
+      "test": "observed leader exit settles external scope before inherited pipe drain; no hook reaches declared deadline"
     }
   }
 }

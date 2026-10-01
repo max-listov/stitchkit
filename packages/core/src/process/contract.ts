@@ -1,5 +1,15 @@
 import { z } from 'zod';
 
+const NativeCommandSettlementSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('exit'),
+    exitCode: z.number().int().nullable(),
+    signal: z.string().nullable(),
+  }),
+  z.object({ kind: z.literal('error'), cause: z.unknown() }),
+]);
+export type NativeCommandSettlement = z.infer<typeof NativeCommandSettlementSchema>;
+
 export const NativeCommandOptionsSchema = z
   .strictObject({
     executable: z.string().min(1),
@@ -25,6 +35,12 @@ export const NativeCommandOptionsSchema = z
           signal: AbortSignal,
         ) => void | Promise<void>
       >((v) => typeof v === 'function')
+      .optional(),
+    // Observed leader exit precedes inherited-pipe drain. Failure also settles once.
+    onLeaderSettled: z
+      .custom<(event: NativeCommandSettlement, signal: AbortSignal) => void | Promise<void>>(
+        (v) => typeof v === 'function',
+      )
       .optional(),
     killGraceMs: z.number().int().nonnegative().max(10_000).default(100),
     cleanupTimeoutMs: z.number().int().positive().max(30_000).default(2000),

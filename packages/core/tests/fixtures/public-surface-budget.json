@@ -1,5 +1,5 @@
 {
-  "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. \u2192 ADR 0198, docs/PRINCIPLES.md I8.",
+  "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
     "stitchkit": 230,
     "stitchkit/agent-runtime": 364,
@@ -47,7 +47,7 @@
     "stitchkit/tools/invoker": 4,
     "stitchkit/tracking": 77,
     "stitchkit/tracking/server": 26,
-    "stitchkit/process": 4
+    "stitchkit/process": 11
   },
   "overlaps": [
     {
@@ -554,7 +554,7 @@
     {
       "entrypoint": "stitchkit/tools",
       "names": ["MountableTool", "ToolOperation"],
-      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<\u2026>."
+      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<…>."
     },
     {
       "entrypoint": "stitchkit/tools",

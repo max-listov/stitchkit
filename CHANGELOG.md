@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.10] - 2026-10-01
+
+### Added
+
+- `stitchkit/process`: `onLeaderSettled` observes launcher exit before inherited-pipe drain and settles resource scopes once on terminal failure; callbacks have bounded cancellation and preserve initial causes. Public process identity observation/probing preserves unavailable evidence and its cause from the existing Linux/Darwin owner.
+- `stitchkit/files`: `ownerlessGraceMs: null` explicitly refuses age-based reclaim of unknown locks and guards; exact requested lock permissions survive restrictive umask, and failed descriptor setup cannot remove a replacement inode.
+- Document and qualify neutral library bundling from public imports and published declarations with Zod as its only runtime peer; full-kernel install remains a build-time choice.
+
 ## [0.103.9] - 2026-10-01
 
 ### Added
