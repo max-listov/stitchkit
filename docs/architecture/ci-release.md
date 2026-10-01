@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-01 16:06 +07:00
+updated: 2026-10-01 16:40 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -71,8 +71,9 @@ platform-specific. Artifact assembly is the sole consumer of both validated nati
 
 ## Local gate
 
-`bun run verify` remains the exhaustive portable diagnostic gate. Ordinary pushes and release
-candidates on `release/X.Y.Z` use `verify:fast`; complete selected CI authorises publication.
+`bun run verify` remains the exhaustive portable diagnostic gate. Release
+candidates on `release/X.Y.Z` use structural lockfile/lint/types checks; complete selected
+CI, including all unit tests, authorises publication. Ordinary pushes use `verify:fast`.
 Only a direct unproven master release runs `bun scripts/verify.ts --release --if-changed` locally.
 Its structural checks include the frozen-lockfile install, then build and bounded heavy lanes.
 The green memo keys heavy evidence by tree, runtime and lane environment. A successful full or

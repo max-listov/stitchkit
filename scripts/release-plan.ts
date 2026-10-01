@@ -75,6 +75,8 @@ export interface PrePushPlan {
    * minutes locally buys nothing.
    */
   defaultBranchHeads: string[];
+  /** Every pushed branch ref belongs to the CI-enabled release namespace. */
+  releaseBranchesOnly: boolean;
 }
 
 function preOneMinor(version: string): number | null {
@@ -392,6 +394,7 @@ export function classifyPrePush(input: string): PrePushPlan {
   const releaseTags = new Map<string, string>();
   const branchHeads = new Set<string>();
   const defaultBranchHeads = new Set<string>();
+  let releaseBranchesOnly = true;
   for (const line of input.split('\n')) {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4) continue;
@@ -404,6 +407,7 @@ export function classifyPrePush(input: string): PrePushPlan {
     if (remoteRef.startsWith('refs/heads/')) {
       verify = true;
       branchHeads.add(localSha);
+      if (!remoteRef.startsWith('refs/heads/release/')) releaseBranchesOnly = false;
       if (DEFAULT_BRANCH_REFS.some((ref) => ref === remoteRef)) {
         defaultBranchHeads.add(localSha);
       }
@@ -426,6 +430,7 @@ export function classifyPrePush(input: string): PrePushPlan {
     releaseTags: [...releaseTags].map(([tag, sha]) => ({ tag, sha })),
     branchHeads: [...branchHeads],
     defaultBranchHeads: [...defaultBranchHeads],
+    releaseBranchesOnly: verify && releaseBranchesOnly,
   };
 }
 
@@ -440,24 +445,13 @@ export function isReleaseCommitSubject(subject: string): boolean {
 }
 
 /** What the local gate runs for one push. */
-export type LocalGateProfile = 'none' | 'fast' | 'full';
+export type LocalGateProfile = 'none' | 'fast' | 'full' | 'candidate';
 
 /**
- * Which local gate a push earns — and the reasoning is entirely about what a
- * RED CI run costs on the commit being pushed.
- *
- * For an ordinary commit it costs two and a half minutes and a follow-up push.
- * For a release commit it cannot be paid at all: `assert-subject` requires the
- * tag to sit on a `release(...)` commit and `assert-head` requires that commit
- * to be the branch head, so a red run on a pushed release commit is repaired
- * only by making a NEW release commit. That asymmetry, not a general distrust
- * of CI, is what the expensive local gate buys — so it runs exactly where the
- * asymmetry is.
- *
- * The fast profile is not a weaker copy of CI. It is the part that is genuinely
- * faster to learn locally: lint, types and unit tests answer in well under a
- * minute, where the packed lanes are parallel by nature and slower here than on
- * ten runners. → `AGENTS.md`, "What runs where".
+ * Unproven default-branch releases retain the full gate. A release candidate
+ * pays structural preflight; the same unit tests and every selected evidence
+ * lane must pass in exact-SHA push CI before master/tag. Ordinary or mixed
+ * branch pushes keep fast checks, and metadata/privacy always run first.
  */
 export function localGateProfile(
   plan: PrePushPlan,
@@ -467,7 +461,12 @@ export function localGateProfile(
   const landsOnDefaultBranch = releaseCommitShas.some((sha) =>
     plan.defaultBranchHeads.includes(sha),
   );
-  return landsOnDefaultBranch ? 'full' : 'fast';
+  if (landsOnDefaultBranch) return 'full';
+  const onlyReleaseCandidates =
+    plan.releaseBranchesOnly &&
+    plan.branchHeads.length > 0 &&
+    plan.branchHeads.every((sha) => releaseCommitShas.includes(sha));
+  return onlyReleaseCandidates ? 'candidate' : 'fast';
 }
 
 /** Fail unless the tag points at the current release head of the default branch. */
@@ -1259,6 +1258,12 @@ async function main(): Promise<void> {
     // a local refusal is a refusal. A third of a second, every time, is the
     // whole cost of never needing that distinction again.
     await run(['bun', 'scripts/check-publication-privacy.ts']);
+    if (profile === 'candidate') {
+      process.stderr.write(
+        '[gate] release candidate: lockfile, lint and types run here; full exact-SHA CI must pass every unit test and selected lane before master/tag.\n',
+      );
+      await run(['bun', 'scripts/verify.ts', '--candidate', '--if-changed']);
+    }
     if (profile === 'fast') {
       process.stderr.write(
         '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',

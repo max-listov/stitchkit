@@ -253,6 +253,8 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0221](0221-flat-field-explanations-retain-branch-meaning.md) | Flat field explanations retain branch meaning | Active — descriptions and applicability retain discriminator labels independently of structural joins | I1, I3, I8 |
 | [0222](0222-release-evidence-is-paid-once.md) | Кандидат релиза платит за доказательство один раз | Active — полный exact-SHA CI разрешает публикацию; fast subset имеет отдельную attestation, core prepack собирает input один раз | P |
 
+| [0223](0223-release-candidate-tests-are-ci-evidence.md) | Unit tests кандидата проверяет обязательный CI | Active — candidate выполняет structural preflight; полный exact-SHA CI содержит tests и разрешает публикацию, fast attestation не подменяется | P |
+
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
 later ADR, kept for history · _Rejected_ — considered, deliberately not done.

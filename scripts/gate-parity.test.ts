@@ -32,6 +32,9 @@ describe('local gate vocabulary', () => {
   test('full local verification retains every portable evidence lane', () => {
     for (const step of VERIFY_STEPS) expect(PACKAGE.scripts?.[step]).toBeDefined();
     expect(PROFILES.fast.usesLaneEnvironment).toBe(false);
+    expect(PROFILES.candidate.steps).toEqual(['lockfile', 'lint', 'check']);
+    expect(PROFILES.fast.steps).toContain('test');
+    expect(PROFILES.candidate.usesLaneEnvironment).toBe(false);
     expect(PROFILES.full.usesLaneEnvironment).toBe(true);
   });
 });
@@ -86,6 +89,8 @@ describe('CI evidence parity', () => {
     // release branch produces no evidence and the local gate is the only gate.
     expect(CI).toContain("branches: [master, main, 'release/**']");
     expect(PLAN).toContain('ciAlreadyAnsweredFor');
+    expect(CI).toContain('bun --filter stitchkit test');
+    expect(CI).toContain('bun test scripts');
   });
 
   test('real Darwin qualification is packed and deliberately narrow', () => {

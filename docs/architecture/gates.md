@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-01 16:20 +07:00
+updated: 2026-10-01 16:40 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -15,7 +15,7 @@ protocol in [`release-process.md`](./release-process.md).
 
 ## `verify` is every portable gate CI runs
 
-Release candidates use `verify:fast` on `release/X.Y.Z`, followed by the complete selected CI
+Release candidates use the structural candidate profile on `release/X.Y.Z`, followed by the complete selected CI
 for the exact SHA. `bun scripts/verify.ts --release` protects a direct unproven master release. `verify` is the whole portable local gate and it runs **every portable gate CI
 runs**: the frozen-lockfile install every runner performs first, lint, typecheck, tests, the
 Postgres stores lane (the agent store and the Telegram update store against a real server), build, the Next-SSR and Node smokes, the packed consumer lane, the packed
@@ -53,7 +53,7 @@ would cost on the commit being pushed:
 | Push | Local gate | Why |
 | --- | --- | --- |
 | ordinary branch push | `lockfile`, `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| `release(...)` commit to a **`release/**`** branch | metadata, then the same fast half | nothing is published; CI gates that exact SHA before master sees it |
+| `release(...)` commit to a **`release/**`** branch | metadata, then lockfile/lint/types | nothing is published; CI gates that exact SHA before master sees it |
 | `release(...)` commit **to master** with no green run for its SHA | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
 | `release(...)` commit to master that CI already passed | metadata only | the fast-forward publishes a tree CI has answered for on this exact SHA |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
@@ -91,7 +91,7 @@ rather than in the sequence of statements around it.
 
 ## The green memo
 
-All profiles — fast, full, packed HEAD and each exact release target set — remember the last green
+All profiles — candidate, fast, full, packed HEAD and each exact release target set — remember the last green
 run **by what they actually checked** (`scripts/gate-memo.ts`): an unchanged tree is not gated
 twice, any edit to any file runs it again, and a skip always prints which run answers for it. A
 green full or selected release run writes a separate fast-subset attestation only if every fast
@@ -126,3 +126,16 @@ the separately certified fast record uses the runtime fingerprint those portable
 checks actually depend on. An incomplete subset does not certify fast. A changed
 tree or runtime invalidates the fast record, and a changed lane environment still
 invalidates heavy evidence. This preserves each gate's inputs when proof is reused.
+
+
+## Candidate structural preflight
+
+`bun scripts/verify.ts --candidate` runs lockfile, lint and types. Only release
+commit tips pushed to the remote `release/**` namespace receive this profile;
+an ordinary commit, unrelated topic branch or mixed ordinary push keeps fast
+checks. An unproven default-branch release retains the full local gate.
+
+Unit tests run in the mandatory exact-SHA push CI before any master/tag/npm.
+Candidate evidence has its own gate identity and cannot certify `verify:fast`,
+which includes tests. Full and fast diagnostic commands retain all their steps.
+Privacy and metadata are never skipped; failed or mismatched CI blocks publication.

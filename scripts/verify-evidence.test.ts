@@ -67,6 +67,7 @@ test('every selected release target certifies fast only after every fast step is
 test('a HEAD-only gate and a profile missing lockfile cannot certify fast', async () => {
   for (const profile of [
     PROFILES.head,
+    PROFILES.candidate,
     {
       gate: 'verify:release:incomplete',
       steps: ['lint', 'check', 'test', 'build'],

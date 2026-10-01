@@ -255,20 +255,24 @@ async function main(): Promise<void> {
     ? await releaseProfile(root)
     : flags.has('--head')
       ? PROFILES.head
-      : flags.has('--fast')
-        ? PROFILES.fast
-        : PROFILES.full;
+      : flags.has('--candidate')
+        ? PROFILES.candidate
+        : flags.has('--fast')
+          ? PROFILES.fast
+          : PROFILES.full;
   const known = new Set<string>(VERIFY_FLAGS);
   const unknown = args.filter((argument) => !known.has(argument));
   if (unknown.length > 0) {
     throw new Error(
-      `Usage: verify.ts [--fast|--head] [--if-changed] (got ${unknown.join(' ')})`,
+      `Usage: verify.ts [--fast|--head|--release|--candidate] [--if-changed] (got ${unknown.join(' ')})`,
     );
   }
   // Checked, not resolved by precedence: two profiles asked for at once is a
   // caller that does not know which gate it wants, and quietly running one of
   // them tells nobody.
-  const selectedProfiles = ['--fast', '--head', '--release'].filter((flag) => flags.has(flag));
+  const selectedProfiles = ['--fast', '--head', '--release', '--candidate'].filter((flag) =>
+    flags.has(flag),
+  );
   if (selectedProfiles.length > 1) {
     throw new Error(
       `verify.ts: ${selectedProfiles.join(' and ')} select different gates; pass one`,

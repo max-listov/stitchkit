@@ -54,7 +54,7 @@ be arranged by hand: a reachable **PostgreSQL** named by
 devDependency, so `bun install` is all it takes. `bun run verify:fast` needs
 none of them.
 
-A release candidate on `release/X.Y.Z` runs the fast gate at push. Complete selected
+A release candidate on `release/X.Y.Z` runs lockfile/lint/types at push. Complete selected
 CI must pass for that exact SHA before master and tag. A direct unproven master
 release requires `bun scripts/verify.ts --release`; this profile includes every
 fast check and the selected heavy lanes. Successful full/release gates separately
@@ -207,7 +207,7 @@ root `prepare` script):
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
   tag first, then picks the local gate by what a red CI run would cost on the
-  commit being pushed: `verify:fast` for ordinary and release-candidate branches,
+  commit being pushed: `verify:fast` for ordinary branches, structural candidate checks for release branches,
   the package-aware `verify --release` DAG for an unproven master release,
   metadata only for a master fast-forward already proved by exact-SHA CI, and
   nothing further for a tag-only push. The table and the reasoning are

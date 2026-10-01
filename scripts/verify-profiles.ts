@@ -23,7 +23,13 @@ export const VERIFY_GATE = 'verify';
 export const FAST_GATE = 'verify:fast';
 export const HEAD_STEPS = ['starter-head-lane'] as const;
 export const HEAD_GATE = 'verify:head';
-export const VERIFY_FLAGS = ['--if-changed', '--fast', '--head', '--release'] as const;
+export const VERIFY_FLAGS = [
+  '--if-changed',
+  '--fast',
+  '--head',
+  '--release',
+  '--candidate',
+] as const;
 
 export interface VerifyProfile {
   gate: string;
@@ -31,8 +37,13 @@ export interface VerifyProfile {
   usesLaneEnvironment: boolean;
 }
 
-export const PROFILES: Record<'full' | 'fast' | 'head', VerifyProfile> = {
+export const PROFILES: Record<'full' | 'fast' | 'head' | 'candidate', VerifyProfile> = {
   full: { gate: VERIFY_GATE, steps: VERIFY_STEPS, usesLaneEnvironment: true },
+  candidate: {
+    gate: 'verify:candidate',
+    steps: ['lockfile', 'lint', 'check'],
+    usesLaneEnvironment: false,
+  },
   fast: { gate: FAST_GATE, steps: FAST_STEPS, usesLaneEnvironment: false },
   head: { gate: HEAD_GATE, steps: HEAD_STEPS, usesLaneEnvironment: true },
 };

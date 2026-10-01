@@ -15,6 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.7] - 2026-10-01
+
+### Fixed
+
+- Release candidates run structural preflight locally; every unit test and selected evidence lane still must pass in exact-SHA push CI before publication. Ordinary pushes retain fast checks.
+
 ## [0.103.6] - 2026-10-01
 
 ### Fixed
