@@ -1805,7 +1805,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolSurfaceDefinition` | _type_ | shared object-shaped `{ services?, runtimeTools? }` introspection surface |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
-| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; divergent fields retain every provable base kind in a deterministic `type` array, and the projection never executes validation |
+| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |

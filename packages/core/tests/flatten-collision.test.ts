@@ -4,6 +4,12 @@ import { isRecord } from '../src/internal/typed';
 import { toJsonSchema } from '../src/json-schema/json-schema';
 import { flattenToolJsonSchema } from '../src/tools/schema/flatten';
 import { findUntypedProperties } from '../src/tools/schema/untyped-properties';
+import {
+  annotatedPart,
+  annotatedParts,
+  manyDescription,
+  oneDescription,
+} from './fixtures/union-annotations';
 
 function properties(schema: Record<string, unknown>): Record<string, unknown> {
   const value = schema.properties;
@@ -20,6 +26,124 @@ function flatten(schema: z.ZodType): Record<string, unknown> {
 }
 
 describe('conservative discriminated-union join', () => {
+  test('retains branch descriptions for optional object and required array', () => {
+    const value = field(flatten(annotatedPart), 'value');
+    expect(value.description).toContain(`When kind = single: ${oneDescription}`);
+    expect(value.description).toContain(`When kind = group: ${manyDescription}`);
+    expect(value).toMatchObject({
+      anyOf: [
+        {
+          type: 'array',
+          minItems: 2,
+          maxItems: 10,
+          items: { properties: { id: { type: 'string', minLength: 1 } } },
+        },
+        { type: 'object', properties: { id: { type: 'string', minLength: 1 } } },
+      ],
+    });
+  });
+
+  test('availability includes optional branches and excludes absent fields', () => {
+    const value = field(flatten(annotatedPart), 'value');
+    expect(value.description).toContain('Available if kind = group | single');
+    expect(value.description).toContain('Required if kind = group');
+    expect(value.description).not.toContain('marker');
+  });
+
+  test('branch reordering produces the same annotated projection', () => {
+    const [single, group, marker] = annotatedParts;
+    expect(flatten(z.discriminatedUnion('kind', [marker, group, single]))).toEqual(
+      flatten(annotatedPart),
+    );
+  });
+
+  test('shared descriptions appear once and required everywhere stays required', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('a'), value: z.string().describe('SHARED') }),
+        z.object({ kind: z.literal('b'), value: z.string().describe('SHARED') }),
+      ]),
+    );
+    expect(field(schema, 'value').description).toBe('SHARED');
+    expect(schema.required).toEqual(['kind', 'value']);
+  });
+
+  test('missing descriptions remain absent or scoped only to described labels', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.enum(['a', 'alias']),
+          value: z.string().describe('ONLY_A'),
+          plain: z.string(),
+        }),
+        z.object({ kind: z.literal('b'), value: z.string(), plain: z.string() }),
+      ]),
+    );
+    expect(field(schema, 'value').description).toBe('When kind = a | alias: ONLY_A');
+    expect(field(schema, 'plain').description).toBeUndefined();
+  });
+
+  test('optional everywhere and nullable descriptions keep their branch applicability', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.enum(['a', 'alias']),
+          value: z.string().nullable().optional().describe('A_NULLABLE'),
+        }),
+        z.object({
+          kind: z.literal('b'),
+          value: z.string().nullable().optional().describe('B_NULLABLE'),
+        }),
+      ]),
+    );
+    const value = field(schema, 'value');
+    expect(schema.required).toEqual(['kind']);
+    expect(value.type).toEqual(['string', 'null']);
+    expect(value.description).toBe(
+      'When kind = a | alias: A_NULLABLE When kind = b: B_NULLABLE Available if kind = a | alias | b.',
+    );
+    expect(value.description).not.toContain('Required if');
+  });
+
+  test('nullable field descriptions retain their outer branch scope', () => {
+    const schema = flatten(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('a'),
+          value: z.string().describe('INNER').nullable().describe('OUTER_A'),
+        }),
+        z.object({
+          kind: z.literal('b'),
+          value: z.string().describe('INNER').nullable().describe('OUTER_B'),
+        }),
+      ]),
+    );
+    expect(field(schema, 'value').description).toBe(
+      'When kind = a: OUTER_A When kind = b: OUTER_B',
+    );
+    expect(field(schema, 'value').type).toEqual(['string', 'null']);
+  });
+
+  test('structural dedup retains distinct meanings for identical schemas', () => {
+    const value = field(
+      flatten(
+        z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('first'), value: z.string().describe('FIRST_MEANING') }),
+          z.object({
+            kind: z.literal('second'),
+            value: z.string().describe('SECOND_MEANING'),
+          }),
+        ]),
+      ),
+      'value',
+    );
+    expect(value.type).toBe('string');
+    expect(value.anyOf).toBeUndefined();
+    expect(value.description).toBe(
+      'When kind = first: FIRST_MEANING When kind = second: SECOND_MEANING',
+    );
+  });
+
   test('keeps common types and drops branch-only constraints', () => {
     const schema = flatten(
       z.discriminatedUnion('op', [

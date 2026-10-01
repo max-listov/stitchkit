@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.2] — 2026-10-01
+
+### Fixed
+
+- Flattened tool schemas retain distinct field descriptions with their discriminator
+  labels, and advertise both availability and conditional requiredness. Structural
+  deduplication keeps explanations separate from validation constraints; MCP, agent
+  tools and manifests share the same projection. Runtime Zod validation is unchanged.
+
 ## [0.103.1] — 2026-09-30
 
 ### Added

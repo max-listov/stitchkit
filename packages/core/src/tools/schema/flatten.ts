@@ -109,12 +109,14 @@ function flattenNode(node: ToolPresentationSchema): ToolPresentationSchema {
     });
   }
   const properties: ToolPresentationSchema = {
-    [discriminator.key]: mergePropertySchemas(discriminatorProperties),
+    [discriminator.key]: mergePropertySchemas(discriminatorProperties, discriminator.key),
   };
   const required = [discriminator.key];
 
-  for (const [key, entries] of perKey) {
-    let merged = mergePropertySchemas(entries);
+  for (const [key, entries] of [...perKey].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    let merged = mergePropertySchemas(entries, discriminator.key);
     const requiredEverywhere =
       entries.length === variants.length && entries.every((entry) => entry.required);
     if (requiredEverywhere) {
@@ -124,12 +126,16 @@ function flattenNode(node: ToolPresentationSchema): ToolPresentationSchema {
         .filter((entry) => entry.required)
         .flatMap((entry) => entry.labels);
       const presentLabels = entries.flatMap((entry) => entry.labels);
-      const labels = requiredLabels.length > 0 ? requiredLabels : presentLabels;
-      const verb = requiredLabels.length > 0 ? 'Required' : 'Available';
       merged = appendHint(
         merged,
-        `${verb} if ${discriminator.key} = ${[...new Set(labels)].join(' | ')}`,
+        `Available if ${discriminator.key} = ${[...new Set(presentLabels)].sort().join(' | ')}.`,
       );
+      if (requiredLabels.length > 0) {
+        merged = appendHint(
+          merged,
+          `Required if ${discriminator.key} = ${[...new Set(requiredLabels)].sort().join(' | ')}`,
+        );
+      }
     }
     properties[key] = merged;
   }

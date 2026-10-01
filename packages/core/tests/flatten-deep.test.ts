@@ -6,6 +6,7 @@ import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools } from '../src/tools/mount';
 import { flattenToolJsonSchema } from '../src/tools/schema/flatten';
 import { buildToolPresentationSchema } from '../src/tools/schema/presentation';
+import { annotatedInput, manyDescription, oneDescription } from './fixtures/union-annotations';
 
 function hasUnionKeyword(node: unknown): boolean {
   if (Array.isArray(node)) return node.some(hasUnionKeyword);
@@ -48,6 +49,58 @@ const divergentContract = defineContract(
 const divergentService = implement(divergentContract, { create: () => undefined });
 
 describe('presentation flattening walks the JSON Schema graph', () => {
+  test('every nested tool surface retains branch meaning and optional availability', () => {
+    const service = implement(
+      defineContract(
+        { prefix: 'annotation' },
+        {
+          create: { method: 'POST', path: '/', desc: 'Create', input: annotatedInput },
+        },
+      ),
+      { create: () => undefined },
+    );
+    const before = JSON.stringify(z.toJSONSchema(annotatedInput, { io: 'input' }));
+    const [mcp] = collectTools(service, 'MCP', { flattenUnionInput: true });
+    const [agent] = collectTools(service, 'AGENT', { flattenUnionInput: true });
+    const [manifest] = buildToolManifest({
+      services: [service],
+      transport: 'AGENT',
+      flattenUnionInput: true,
+    });
+    if (!mcp || !agent || !manifest) throw new Error('expected all projections');
+    for (const schema of [
+      mcp.presentationSchema,
+      agent.presentationSchema,
+      manifest.inputSchema,
+    ]) {
+      const text = JSON.stringify(schema);
+      expect(text).toContain(`When kind = single: ${oneDescription}`);
+      expect(text).toContain(`When kind = group: ${manyDescription}`);
+      expect(text).toContain('Available if kind = group | single');
+      expect(text).toContain('Required if kind = group');
+      expectDeepFrozen(schema);
+    }
+    expect(mcp.presentationSchema).toEqual(agent.presentationSchema);
+    expect(manifest.inputSchema).toEqual(agent.presentationSchema);
+    expect(JSON.stringify(z.toJSONSchema(annotatedInput, { io: 'input' }))).toBe(before);
+    const [exact] = collectTools(service, 'AGENT', { flattenUnionInput: false });
+    if (!exact) throw new Error('expected exact projection');
+    expect(JSON.stringify(exact.presentationSchema)).toContain(oneDescription);
+    expect(JSON.stringify(exact.presentationSchema)).toContain(manyDescription);
+    expect(JSON.stringify(exact.presentationSchema)).not.toContain('Available if');
+    for (const part of [
+      { kind: 'single' },
+      { kind: 'single', value: { id: 'a' } },
+      { kind: 'group', value: [{ id: 'a' }, { id: 'b' }] },
+    ]) {
+      expect(annotatedInput.safeParse({ content: { parts: [part] } }).success).toBe(true);
+    }
+    expect(
+      annotatedInput.safeParse({
+        content: { parts: [{ kind: 'group', value: [{ id: 'a' }] }] },
+      }).success,
+    ).toBe(false);
+  });
   test('nested discriminated unions stay intact by default', () => {
     const [tool] = collectTools(service, 'AGENT');
     if (!tool) throw new Error('expected tool');
@@ -144,3 +197,9 @@ describe('presentation flattening walks the JSON Schema graph', () => {
     expect(text).not.toContain('"$ref":"#"');
   });
 });
+
+function expectDeepFrozen(value: unknown): void {
+  if (typeof value !== 'object' || value === null) return;
+  expect(Object.isFrozen(value)).toBe(true);
+  for (const child of Object.values(value)) expectDeepFrozen(child);
+}

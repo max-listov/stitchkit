@@ -217,7 +217,41 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
   return types.length > 0 ? { type: types } : {};
 }
 
-export function mergePropertySchemas(properties: VariantProperty[]): ToolPresentationSchema {
+/** Descriptions are semantic annotations; structural dedup must not select their meaning. */
+function describeVariants(
+  properties: VariantProperty[],
+  discriminator: string,
+): string | undefined {
+  const groups = new Map<string, string[]>();
+  for (const { schema, labels } of properties) {
+    if (typeof schema.description !== 'string') continue;
+    const group = groups.get(schema.description) ?? [];
+    group.push(...labels);
+    groups.set(schema.description, group);
+  }
+  if (groups.size === 0) return undefined;
+  if (
+    groups.size === 1 &&
+    properties.every(({ schema }) => typeof schema.description === 'string')
+  ) {
+    return groups.keys().next().value;
+  }
+  return [...groups]
+    .map(([description, labels]) => ({
+      description,
+      labels: [...new Set(labels)].sort().join(' | '),
+    }))
+    .sort((left, right) =>
+      left.labels < right.labels ? -1 : left.labels > right.labels ? 1 : 0,
+    )
+    .map(({ description, labels }) => `When ${discriminator} = ${labels}: ${description}`)
+    .join(' ');
+}
+
+export function mergePropertySchemas(
+  properties: VariantProperty[],
+  discriminator: string,
+): ToolPresentationSchema {
   const schemas = properties.map((property) => nullableProjection(property.schema));
   const structural = schemas.map(withoutAnnotations);
   const [first] = structural;
@@ -233,16 +267,21 @@ export function mergePropertySchemas(properties: VariantProperty[]): ToolPresent
     const values = schemas.map(stringValues);
     const allStrings = values.every((value) => value !== null);
     merged = allStrings
-      ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))] }
+      ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))].sort() }
       : commonBaseType(structural);
   }
-  const descriptions = [
-    ...new Set(
-      schemas
-        .map((schema) => schema.description)
-        .filter((value): value is string => typeof value === 'string'),
-    ),
-  ];
-  if (descriptions.length === 1) merged.description = descriptions[0];
+  const description = describeVariants(
+    properties.map((property, index) => ({
+      ...property,
+      // The outer annotation describes the field, including null; a nullable
+      // projection's value annotation describes only the non-null alternative.
+      schema:
+        typeof property.schema.description === 'string'
+          ? property.schema
+          : (schemas[index] ?? property.schema),
+    })),
+    discriminator,
+  );
+  if (description !== undefined) merged.description = description;
   return merged;
 }

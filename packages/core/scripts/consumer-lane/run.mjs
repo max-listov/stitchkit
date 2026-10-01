@@ -486,6 +486,12 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
+        const annotationOutput = step(`node: union annotations (${runtime})`, () =>
+          run(runtime, ['src/union-annotations.mjs'], dir),
+        );
+        if (!annotationOutput.includes('packed union annotations: ok')) {
+          throw new Error(`Missing ${runtime} union annotation proof`);
+        }
         const purgeOutput = step(`node: conversation purge (${runtime})`, () =>
           run(runtime, ['src/conversation-purge.mjs'], dir),
         );

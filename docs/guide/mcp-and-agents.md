@@ -699,7 +699,25 @@ Capable models (Claude, Gemini, GPT) handle that; weaker / cheaper ones can drop
 the field or mangle its strings. Set `flattenUnionInput: true` (on
 `createMcpHandler` / `mountMcp` / `mountAgent`) to advertise each discriminated
 union as a **single flat object** instead — the discriminator becomes an enum and
-each variant's fields become optional with a `Required if <disc> = …` hint.
+each field required by every variant stays required. Other fields become optional
+with `Available if <disc> = …` and, where applicable, `Required if <disc> = …` hints.
+
+**Branch explanations keep their meaning.** A shared description appears once;
+different descriptions are grouped by text and qualified with `When <disc> = …:`.
+A branch without a description does not inherit another branch's explanation.
+For example, an optional object `value` in `single` and a required array `value`
+in `group` advertise:
+
+```text
+When kind = group: Two to ten references.
+When kind = single: One reference.
+Available if kind = group | single. Required if kind = group
+```
+
+A third branch without `value` is absent from those labels. The object and array
+retain their separate shapes; the array's minimum length does not apply to the object.
+Discriminator values, branch explanation labels and joined property order are
+deterministic under branch reordering. → ADR [0221](../decisions/0221-flat-field-explanations-retain-branch-meaning.md).
 
 **A field several variants declare keeps its type.** Flattening puts every
 variant's fields side by side, so a key two variants share has to be advertised
