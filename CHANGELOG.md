@@ -15,6 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.8] - 2026-10-01
+
+### Fixed
+
+- Clarify core prepack build ownership in release assembly to prevent restoring a duplicate build.
+
 ## [0.103.7] - 2026-10-01
 
 ### Fixed
