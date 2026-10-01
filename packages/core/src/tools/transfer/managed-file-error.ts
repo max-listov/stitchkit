@@ -12,12 +12,22 @@ const SAFE_MANAGED_FILE_MESSAGES = {
   FILE_INSPECTION_REJECTED: 'Managed file rejected by inspection',
   FILE_TOO_LARGE: 'Managed file exceeds the configured size limit',
   FILE_EXISTS: 'Managed file already exists',
+  FILE_UNSAFE_LINK: 'Managed file link policy rejected',
+  FILE_CHANGED: 'Managed file changed during read',
+  FILE_UNSUPPORTED: 'Managed file capability unavailable',
 } satisfies Record<SafeManagedFileErrorCode, string>;
 
 /** Convert only caller-safe managed failures; unexpected IO retains its raw identity. */
 export function managedFileAppError(error: unknown): AppError | null {
   if (!(error instanceof ManagedFileError)) return null;
   switch (error.code) {
+    case 'FILE_UNSAFE_LINK':
+      return new AppError('FORBIDDEN', SAFE_MANAGED_FILE_MESSAGES[error.code], 403);
+    case 'FILE_CHANGED':
+      return new AppError('CONFLICT', SAFE_MANAGED_FILE_MESSAGES[error.code], 409);
+    case 'FILE_UNSUPPORTED':
+      return new AppError('NOT_IMPLEMENTED', SAFE_MANAGED_FILE_MESSAGES[error.code], 501);
+
     case 'FILE_INVALID_PATH':
     case 'FILE_OUTSIDE_ROOT':
     case 'FILE_NOT_FOUND':

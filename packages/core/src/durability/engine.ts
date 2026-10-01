@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { raceAbort } from '../internal/abort-race';
 import {
   DURABILITY_EVENT_EVENT_KIND,
   DURABILITY_STEP_EVENT_KIND,
@@ -173,7 +174,16 @@ export function createLocalStepDurability(
     if (existing) {
       // Same boundary as `step`: the registry is keyed by the durable key, so
       // a second caller in this process shares the first one's single `run`.
-      return detachedResult<EffectOutcome<P>>(existing);
+      const signals = [options.signal, runOptions?.signal].filter(
+        (signal): signal is AbortSignal => signal !== undefined,
+      );
+      const result = detachedResult<EffectOutcome<P>>(existing);
+      if (signals.length === 0) return result;
+      const signal = AbortSignal.any(signals);
+      return raceAbort(result, signal).catch((error: unknown) => {
+        if (signal.aborted) throw new StepAbortedError(name);
+        throw error;
+      });
     }
     const pending = executeEffect<P>(
       { store, conversationId, runId, signal: options.signal, readLedger },

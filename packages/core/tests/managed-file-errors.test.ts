@@ -8,7 +8,13 @@ import {
 
 type SafeManagedFileErrorCode = Exclude<ManagedFileErrorCode, 'FILE_IO_ERROR'>;
 
-const safeCases: Array<{ code: SafeManagedFileErrorCode; status: number }> = [
+const safeCases: Array<{
+  code: Exclude<
+    SafeManagedFileErrorCode,
+    'FILE_UNSAFE_LINK' | 'FILE_CHANGED' | 'FILE_UNSUPPORTED'
+  >;
+  status: number;
+}> = [
   { code: 'FILE_INVALID_PATH', status: 400 },
   { code: 'FILE_OUTSIDE_ROOT', status: 400 },
   { code: 'FILE_NOT_FOUND', status: 404 },
@@ -53,4 +59,18 @@ describe('managed file tool errors', () => {
       log.mockRestore();
     }
   });
+});
+
+test('opt-in strict file errors map to existing wire codes without expanding codeMap', () => {
+  for (const [native, wire, status] of [
+    ['FILE_UNSAFE_LINK', 'FORBIDDEN', 403],
+    ['FILE_CHANGED', 'CONFLICT', 409],
+    ['FILE_UNSUPPORTED', 'NOT_IMPLEMENTED', 501],
+  ] as const) {
+    expect(managedFileAppError(new ManagedFileError(native, 'private cause'))).toMatchObject({
+      code: wire,
+      status,
+    });
+    expect(native in STITCH_ERROR_STATUS).toBe(false);
+  }
 });

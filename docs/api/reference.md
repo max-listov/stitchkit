@@ -362,6 +362,12 @@ schedules, transports and file generation remain application-owned.
 
 ---
 
+| Export | Kind | Purpose |
+|---|---|---|
+| `canonicalJson` | function | bounded plain JSON, UTF-16 key sort, optional object members omitted |
+| `CanonicalJsonOptions` | type | inferred depth/node/UTF-8 bytes limits |
+
+
 ## `stitchkit/server`
 
 Server-only. Builds and runs the HTTP server, and carries the server primitives.
@@ -1938,6 +1944,12 @@ available from `stitchkit/contract`.
 
 ---
 
+| Export | Kind | Purpose |
+|---|---|---|
+| `AtomicFilePublicationError` | class | published=true with cleanup/directory-sync/directory-close phase |
+| `FileObservation` | type | observed descriptor dev/ino/size/nlink/mtimeMs/ctimeMs |
+
+
 ## `stitchkit/telegram`
 
 Peer-free server-only Telegram platform primitives — the Bot API's own
@@ -2465,3 +2477,15 @@ AI-only peer boundary. Existing custom tool callbacks need no new import.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAgentHarnessTools` / `AgentHarnessToolsConfig` | function / _type_ | async per-run full mount configuration (`services` plus all `AgentMountConfig` options); composes application lifecycle then runtime fence exactly once |
+
+
+## `stitchkit/process`
+
+Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/native-io.md).
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `runNativeCommand` | function | caller-lifetime streaming or explicitly bounded binary capture |
+| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink and finite cleanup limits |
+| `NativeCommandResult` | type | observed nullable exit code/signal and captured stdout/stderr bytes |
+| `NativeCommandError` | class | COMMAND_LIMIT, COMMAND_UNAVAILABLE or COMMAND_CLEANUP with internal cause |

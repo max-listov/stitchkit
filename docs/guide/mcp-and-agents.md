@@ -394,6 +394,10 @@ where both exist the runtime's wins, because the run is recorded in its ledger.
 
 #### An effect in another system — `effect`, at most once
 
+Standalone callers must hold an application-owned exclusive execution lease for the conversation/run
+through the whole effect call. Sharing a ledger or separate ledger adapters is not an atomic claim;
+the runtime supplies its run lease. Process-local coalescing only covers the same ledger object.
+
 `step` records its result **after** the body, so a body cut short by a crash
 runs again. For sending a message or starting a turn at a provider, a repeat is
 worse than a loss. The engine's `effect` records the intent **before** it runs:
@@ -415,6 +419,20 @@ throws, or a `reconcile` that throws or overruns `reconcileTimeoutMs` (default
 30 s), rejects with `EffectUnresolvedError` and leaves the intent for the next
 call. The proof is JSON of at most 64 KiB — the identity the recipient assigned,
 not a payload. → [ADR 0200](../decisions/0200-an-effect-is-recorded-before-it-runs.md)
+
+Caller abort during reconcile releases the wait with `StepAbortedError`, leaves the intent and ignores
+a late result. A coalesced caller can cancel its own await without cancelling the shared owner;
+the first caller owns reconciliation handlers/deadline. `reconcileTimeoutMs` cannot exceed the native
+timer range (2147483647 ms). It does not turn cancellation into proof of absence. Neither `null` nor an absence digest
+proves that an earlier recipient request cannot complete later. Safe retries require recipient-side
+idempotency or a verified fence. See [ADR 0224](../decisions/0224-native-primitives-have-one-owner.md).
+
+Ledger reads are paged at 10 000 and incremental in one engine; a fresh engine replays the conversation
+and retains its durable keys. This is not a bounded outstanding index/direct terminal receipt store.
+For application delivery, `defineDomainEventDelivery` in `stitchkit/primitives` composes a caller-owned
+atomic outbox claim with delivered/retryable/terminal/unknown states, bounded dispatch count (default
+100). Storage retention, per-key lookup, recipient proof and transactions remain in that adapter;
+it is not an automatic cutover for a different reconciliation protocol.
 
 ### Typed MCP call metadata
 

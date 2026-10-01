@@ -138,8 +138,9 @@ export type EffectOutcome<P> =
 export interface EffectHandlers<P> {
   /**
    * Perform the effect, once, and return what the recipient named it — a
-   * message id, a turn id. Called at most once per name, across every process
-   * that shares the ledger.
+   * message id, a turn id. Called at most once per name while a caller-owned exclusive execution lease
+   * fences this conversation/run. Sharing a ledger alone is not an atomic claim;
+   * standalone callers must provide that lease across processes/port objects.
    */
   run(): P | Promise<P>;
   /**

@@ -4,6 +4,7 @@ export {
   type ManagedFileRef,
   ManagedFileRefSchema,
 } from '../contract/file-ref';
+export type { FileObservation } from '../files/boundary';
 export {
   createManagedFileBoundary,
   type ManagedFileBoundary,
@@ -34,6 +35,8 @@ export {
   writeFileAtomic,
   writeFileAtomicSync,
 } from '../internal/atomic-file';
+
+export { AtomicFilePublicationError } from '../internal/atomic-publication';
 export {
   type ExclusiveLock,
   ExclusiveLockError,

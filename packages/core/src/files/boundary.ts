@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, mkdir, open, realpath, rename, stat, unlink } from 'node:fs/promises';
+import { mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { ManagedFilePathSchema, type ManagedFileRef } from '../contract/file-ref';
+import { AtomicFilePublicationError, publishAtomicFile } from '../internal/atomic-publication';
 import { isWithinDir } from '../internal/within-dir';
-import { inspectedRef, inspectFile, readHandle, writeSource } from './file-io';
+import { inspectedRef, inspectFile, writeSource } from './file-io';
+
+import { readManagedDescriptor } from './read';
 
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_INSPECTION_BYTES = 64 * 1024;
@@ -28,6 +31,9 @@ export type ManagedFileErrorCode =
   | 'FILE_TOO_LARGE'
   | 'FILE_EXISTS'
   | 'FILE_INSPECTION_REJECTED'
+  | 'FILE_UNSAFE_LINK'
+  | 'FILE_CHANGED'
+  | 'FILE_UNSUPPORTED'
   | 'FILE_IO_ERROR';
 
 export class ManagedFileError extends Error {
@@ -70,6 +76,14 @@ export interface ManagedFileBoundaryConfig {
 }
 
 export interface ManagedFileReadOptions {
+  /** Include descriptor metadata in the result; default false keeps transport sources unchanged. */
+  observe?: boolean;
+  /** Refuse a symlink at the requested leaf. Ancestors remain trusted. */
+  rejectSymlinks?: boolean;
+  /** Require descriptor nlink===1; transient publication links are also refused. */
+  singleLink?: boolean;
+  /** Compare descriptor metadata around byte read; not a hostile-writer snapshot. */
+  stable?: boolean;
   maxBytes?: number;
   signal?: AbortSignal;
 }
@@ -83,9 +97,20 @@ export interface ManagedFileWriteOptions {
   signal?: AbortSignal;
 }
 
+export interface FileObservation {
+  dev: number;
+  ino: number;
+  size: number;
+  nlink: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
 export interface ManagedFileSource {
   ref: ManagedFileRef;
   bytes: Uint8Array;
+  /** Included by createManagedFileBoundary when observe is true; custom sources may omit it. */
+  observation?: FileObservation;
 }
 
 export interface ManagedFileBoundary {
@@ -244,49 +269,42 @@ export async function createManagedFileBoundary(
     async read(path, options = {}) {
       const resolved = targetFor(path);
       options.signal?.throwIfAborted();
-      const realTarget = await realpathOrNull(
-        resolved.target,
-        'failed to resolve managed file',
-      );
-      if (realTarget === null) {
-        throw new ManagedFileError('FILE_NOT_FOUND', 'managed file not found');
-      }
-      if (!isWithinDir(root, realTarget)) {
-        throw new ManagedFileError(
-          'FILE_OUTSIDE_ROOT',
-          'managed-file path escapes its boundary',
+      let readTarget: string;
+      if (options.rejectSymlinks) {
+        // Resolve only the trusted parent. Resolving the leaf first would turn a
+        // dangling symlink into false absence, or follow a loop before nofollow admission.
+        const parent = await existingParent(root, resolved.target);
+        readTarget = resolve(parent, basename(resolved.target));
+      } else {
+        const realTarget = await realpathOrNull(
+          resolved.target,
+          'failed to resolve managed file',
         );
+        if (realTarget === null)
+          throw new ManagedFileError('FILE_NOT_FOUND', 'managed file not found');
+        if (!isWithinDir(root, realTarget))
+          throw new ManagedFileError(
+            'FILE_OUTSIDE_ROOT',
+            'managed-file path escapes its boundary',
+          );
+        readTarget = realTarget;
       }
       const maxBytes = positiveLimit(options.maxBytes, maxReadBytes, 'maxBytes');
-      let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        handle = await open(realTarget, constants.O_RDONLY | noFollow());
-        const info = await handle.stat();
-        if (!info.isFile()) {
-          throw new ManagedFileError('FILE_NOT_REGULAR', 'managed path is not a regular file');
-        }
-        const bytes = await readHandle(handle, maxBytes, options.signal);
-        const inspection = await inspectFile(
-          config.inspect,
-          {
-            prefix: bytes.slice(0, inspectionBytes),
-            name: basename(resolved.path),
-          },
-          inspectionTimeoutMs,
-          options.signal,
-        );
-        return {
-          ref: inspectedRef(resolved.path, bytes.byteLength, inspection),
-          bytes,
-        };
+        return await readManagedDescriptor(readTarget, resolved.path, maxBytes, options, {
+          inspect: config.inspect,
+          bytes: inspectionBytes,
+          timeoutMs: inspectionTimeoutMs,
+        });
       } catch (error) {
-        if (options.signal?.aborted && error === options.signal.reason) throw error;
-        if (errorCode(error) === 'ENOENT') {
+        if (options.signal?.aborted) throw options.signal.reason;
+        if (errorCode(error) === 'ELOOP')
+          throw new ManagedFileError('FILE_UNSAFE_LINK', 'managed file leaf is a symlink', {
+            cause: error,
+          });
+        if (errorCode(error) === 'ENOENT')
           throw new ManagedFileError('FILE_NOT_FOUND', 'managed file not found');
-        }
         throw ioError('failed to read managed file', error);
-      } finally {
-        await handle?.close().catch(() => undefined);
       }
     },
 
@@ -330,19 +348,22 @@ export async function createManagedFileBoundary(
 
         options.signal?.throwIfAborted();
 
-        if (options.replace) {
-          await rename(temporary, resolved.target);
+        try {
+          await publishAtomicFile(
+            temporary,
+            resolved.target,
+            options.replace ?? false,
+            options.durable ?? false,
+          );
           committed = true;
-        } else {
-          try {
-            await link(temporary, resolved.target);
+        } catch (error) {
+          if (error instanceof AtomicFilePublicationError) {
             committed = true;
-          } catch (error) {
-            if (errorCode(error) === 'EEXIST') {
-              throw new ManagedFileError('FILE_EXISTS', 'managed file already exists');
-            }
             throw error;
           }
+          if (errorCode(error) === 'EEXIST')
+            throw new ManagedFileError('FILE_EXISTS', 'managed file already exists');
+          throw error;
         }
 
         return inspectedRef(resolved.path, size, inspection, {
@@ -350,6 +371,7 @@ export async function createManagedFileBoundary(
           name: options.name,
         });
       } catch (error) {
+        if (error instanceof AtomicFilePublicationError) throw error;
         if (options.signal?.aborted && error === options.signal.reason) throw error;
         throw ioError('failed to write managed file', error);
       } finally {

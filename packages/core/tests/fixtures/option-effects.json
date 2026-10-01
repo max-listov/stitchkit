@@ -478,6 +478,12 @@
   "WriteFileAtomicOptions": {
     "mode": {
       "test": "the mode is the one asked for, not what the umask leaves of it"
+    },
+    "replace": {
+      "test": "concurrent atomic create admits exactly one complete writer"
+    },
+    "durability": {
+      "test": "directory durability option syncs after publish and default leaves directory untouched"
     }
   },
   "EffectRunOptions": {
@@ -1106,6 +1112,81 @@
     },
     "errorHint": {
       "exempt": "Unchanged inherited AgentMountConfig option forwarded to the existing mountAgent owner; composition introduces no separate error formatting policy."
+    }
+  },
+  "CanonicalJsonOptions": {
+    "maxDepth": {
+      "test": "canonical JSON depth, nodes and UTF-8 bytes limits change admission"
+    },
+    "maxNodes": {
+      "test": "canonical JSON depth, nodes and UTF-8 bytes limits change admission"
+    },
+    "maxBytes": {
+      "test": "canonical JSON depth, nodes and UTF-8 bytes limits change admission"
+    }
+  },
+  "ManagedFileReadOptions": {
+    "observe": {
+      "test": "strict link options refuse symlink and descriptor hardlink while defaults accept them"
+    },
+    "rejectSymlinks": {
+      "test": "strict link options refuse symlink and descriptor hardlink while defaults accept them"
+    },
+    "singleLink": {
+      "test": "strict link options refuse symlink and descriptor hardlink while defaults accept them"
+    },
+    "stable": {
+      "test": "descriptor stability option detects change and closes handle (${stable})"
+    },
+    "maxBytes": {
+      "test": "enforces the cap while reading the opened handle, not only from metadata"
+    },
+    "signal": {
+      "test": "abort and IO failure close descriptors and preserve native cause"
+    }
+  },
+  "NativeCommandOptions": {
+    "executable": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "args": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "cwd": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "env": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "stdin": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "maxStdinBytes": {
+      "test": "command cwd args environment and bounded stdin are applied"
+    },
+    "envPolicy": {
+      "test": "declared-only missing env stays empty and ambient is explicit"
+    },
+    "capture": {
+      "test": "native capture preserves raw bytes and counts actual combined bytes"
+    },
+    "maxOutputBytes": {
+      "test": "native capture preserves raw bytes and counts actual combined bytes"
+    },
+    "signal": {
+      "test": "pre-spawn abort creates no command and deadlines bound a live command"
+    },
+    "timeoutMs": {
+      "test": "pre-spawn abort creates no command and deadlines bound a live command"
+    },
+    "onOutput": {
+      "test": "native streaming fully drains multi-megabyte output per channel before completion"
+    },
+    "killGraceMs": {
+      "test": "command grace and cleanup options control their native budgets"
+    },
+    "cleanupTimeoutMs": {
+      "test": "command grace and cleanup options control their native budgets"
     }
   }
 }

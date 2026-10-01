@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.9] - 2026-10-01
+
+### Added
+
+- `stitchkit/files`: atomic create without replacement, explicit file/directory durability, publication-aware errors and opt-in strict descriptor reads with observed metadata.
+- `stitchkit/primitives`: bounded production `canonicalJson` preserving historical UTF-16 sorted bytes. Public surface ceiling grows by two names for the serializer and inferred options; files grows by the publication error and metadata type.
+- `stitchkit/process`: evolving POSIX Node/Bun one-shot command leaf with binary sinks, bounded capture, explicit environment policy and cancellation independent of the agent runtime (four public names; ADR 0224).
+
+### Fixed
+
+- Effect reconciliation releases caller waits on cancellation and ignores late results, including independently cancelled coalesced observers; document the external execution lease required across processes. Historical sticky uncertain remains unchanged; automatic absence-based retries require recipient authority.
+- Managed reads preserve the primary error when descriptor cleanup also fails. Native command and reconciliation deadlines refuse timer overflow instead of silently firing after 1 ms.
+
 ## [0.103.8] - 2026-10-01
 
 ### Fixed

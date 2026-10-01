@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.103.8",
+  "version": "0.103.9",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -233,6 +233,10 @@
     "./agent-runtime/harness-tools": {
       "types": "./dist/entrypoints/agent-runtime/harness-tools.d.ts",
       "import": "./dist/entrypoints/agent-runtime/harness-tools.js"
+    },
+    "./process": {
+      "types": "./dist/entrypoints/process.d.ts",
+      "import": "./dist/entrypoints/process.js"
     }
   },
   "publishConfig": {

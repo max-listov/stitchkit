@@ -592,6 +592,33 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'canonical-json',
+    subpath: './primitives',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: `import { canonicalJson } from 'stitchkit/primitives';
+const value = {'2':2,'10':10,'':'bmp','𐀀':'pair', optional:undefined,nested:[true,null]};
+if (canonicalJson(value) !== '{"10":10,"2":2,"nested":[true,null],"𐀀":"pair","":"bmp"}') throw new Error('canonical JSON bytes');
+let refused=false;try {canonicalJson([undefined]);}catch(error){refused=error instanceof TypeError;}
+if(!refused) throw new Error('canonical JSON refusal');
+console.log('canonical JSON browser: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'process',
+    subpath: './process',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/process', 'runNativeCommand'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'files',
     subpath: './files',
     fixture: 'minimal',

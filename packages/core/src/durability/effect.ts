@@ -9,6 +9,7 @@
  * permission reply, so a lost acknowledgement sent the reply twice.
  */
 import type { z } from 'zod';
+import { raceAbort } from '../internal/abort-race';
 import {
   DURABILITY_EFFECT_EVENT_KIND,
   type EffectHandlers,
@@ -78,32 +79,37 @@ async function reconcile<P extends Proof>(
   name: string,
   handlers: EffectHandlers<P>,
   timeoutMs: number,
+  outerSignal?: AbortSignal,
 ): Promise<EffectOutcome<P>> {
+  const caller = [context.signal, outerSignal].filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => {
-      controller.abort(new Error(`reconcile did not finish within ${timeoutMs} ms`));
-      resolve('timeout');
-    }, timeoutMs);
-  });
-  let found: P | null | 'timeout';
+  const timeout = setTimeout(
+    () => controller.abort(new Error(`reconcile did not finish within ${timeoutMs} ms`)),
+    timeoutMs,
+  );
+  const signal = AbortSignal.any([...caller, controller.signal]);
+  let found: P | null;
   try {
-    found = await Promise.race([
-      Promise.resolve().then(() => handlers.reconcile(controller.signal)),
-      deadline,
-    ]);
+    found = await raceAbort(
+      Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return handlers.reconcile(signal);
+      }),
+      signal,
+    );
+    signal.throwIfAborted();
   } catch (cause) {
-    throw new EffectUnresolvedError(name, 'reconcile-failed', { cause });
+    if (caller.some((signal) => signal.aborted)) throw new StepAbortedError(name);
+    throw new EffectUnresolvedError(
+      name,
+      controller.signal.aborted ? 'reconcile-timeout' : 'reconcile-failed',
+      { cause },
+    );
   } finally {
-    clearTimeout(timer);
-  }
-  // Could not ask is not "not there": an overrun leaves the intent to be
-  // reconciled again rather than recording an answer nobody gave.
-  if (found === 'timeout') {
-    throw new EffectUnresolvedError(name, 'reconcile-timeout', {
-      cause: controller.signal.reason,
-    });
+    clearTimeout(timeout);
+    controller.abort(new Error('Reconciliation completed'));
   }
   if (found === null) {
     await append(context, { phase: 'uncertain' }, name);
@@ -121,9 +127,9 @@ export async function executeEffect<P extends Proof>(
   options: EffectRunOptions | undefined,
 ): Promise<EffectOutcome<P>> {
   const timeoutMs = options?.reconcileTimeoutMs ?? DEFAULT_RECONCILE_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
     throw new TypeError(
-      `reconcileTimeoutMs must be a positive finite number, got ${timeoutMs}`,
+      `reconcileTimeoutMs must be a positive finite number at most 2147483647, got ${timeoutMs}`,
     );
   }
   const key = effectKey(context.conversationId, context.runId, name);
@@ -133,7 +139,7 @@ export async function executeEffect<P extends Proof>(
     return outcomeOf<P>(JSON.stringify(recorded.proof));
   }
   if (options?.signal?.aborted || context.signal?.aborted) throw new StepAbortedError(name);
-  if (recorded) return reconcile(context, name, handlers, timeoutMs);
+  if (recorded) return reconcile(context, name, handlers, timeoutMs, options?.signal);
 
   await append(context, { phase: 'intent' }, name);
   let proof: P;

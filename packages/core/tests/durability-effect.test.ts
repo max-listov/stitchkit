@@ -239,3 +239,176 @@ describe('durability.effect', () => {
     expect((error as EffectUnresolvedError).reason).toBe('proof-rejected');
   });
 });
+
+test('caller abort releases a noncooperative reconcile and ignores its late accepted result', async () => {
+  const store = ledger();
+  await expect(
+    engine(store).effect('reply', {
+      run: () => {
+        throw new Error('lost acknowledgement');
+      },
+      reconcile: () => null,
+    }),
+  ).rejects.toBeInstanceOf(EffectUnresolvedError);
+  const controller = new AbortController();
+  let release!: (proof: { id: string }) => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<{ id: string }>((resolve) => {
+    release = resolve;
+  });
+  const pending = engine(store).effect(
+    'reply',
+    {
+      run: () => ({ id: 'must-not-run' }),
+      reconcile: () => {
+        entered();
+        return held;
+      },
+    },
+    { signal: controller.signal, reconcileTimeoutMs: 1000 },
+  );
+  await started;
+  controller.abort(new Error('caller cancelled'));
+  await expect(pending).rejects.toMatchObject({ name: 'StepAbortedError' });
+  const count = store.rows.length;
+  release({ id: 'late' });
+  await new Promise((r) => setTimeout(r, 5));
+  expect(store.rows).toHaveLength(count);
+  const recovered = await engine(store).effect('reply', {
+    run: () => ({ id: 'must-not-run' }),
+    reconcile: () => ({ id: 'recipient-proof' }),
+  });
+  expect(recovered).toEqual({ outcome: 'accepted', proof: { id: 'recipient-proof' } });
+});
+
+test('distinct ledger adapters need an external execution lease, shared rows alone do not claim', async () => {
+  const store = ledger();
+  const adapter = () => ({ appendEvent: store.appendEvent, readEvents: store.readEvents });
+  let runs = 0;
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const handlers = {
+    run: async () => {
+      runs++;
+      if (runs === 2) release();
+      await barrier;
+      return { id: `proof-${runs}` };
+    },
+    reconcile: () => null,
+  };
+  await Promise.all([
+    engine(adapter()).effect('reply', handlers),
+    engine(adapter()).effect('reply', handlers),
+  ]);
+  expect(runs).toBe(2); // Negative control of the documented lease precondition, not exactly-once evidence.
+});
+
+test('a coalesced effect caller can abort its wait without cancelling the reconcile owner', async () => {
+  for (const signalSource of ['engine', 'call']) {
+    const store = ledger();
+    await expect(
+      engine(store).effect('reply', {
+        run: () => {
+          throw new Error('lost acknowledgement');
+        },
+        reconcile: () => null,
+      }),
+    ).rejects.toMatchObject({ name: 'EffectUnresolvedError' });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: (value: { id: string }) => void;
+    const held = new Promise<{ id: string }>((resolve) => {
+      release = resolve;
+    });
+    const handlers = {
+      run: () => ({ id: 'must-not-run' }),
+      reconcile: () => {
+        started();
+        return held;
+      },
+    };
+    const owner = engine(store).effect('reply', handlers);
+    await entered;
+    const controller = new AbortController();
+    const follower = engine(
+      store,
+      signalSource === 'engine' ? controller.signal : undefined,
+    ).effect(
+      'reply',
+      handlers,
+      signalSource === 'call' ? { signal: controller.signal } : undefined,
+    );
+    controller.abort(new Error('follower cancelled'));
+    await expect(follower).rejects.toMatchObject({ name: 'StepAbortedError' });
+    expect(store.rows).toHaveLength(1);
+    release({ id: 'recipient-proof' });
+    await expect(owner).resolves.toEqual({
+      outcome: 'accepted',
+      proof: { id: 'recipient-proof' },
+    });
+    expect(store.rows).toHaveLength(2);
+    await expect(follower).rejects.toMatchObject({ name: 'StepAbortedError' });
+  }
+});
+
+test('reconciliation refuses timer overflow and accepts the native timer ceiling', async () => {
+  const store = ledger();
+  const handlers = {
+    run: () => {
+      throw new Error('lost ack');
+    },
+    reconcile: () => ({ id: 'proof' }),
+  };
+  await expect(engine(store).effect('reply', handlers)).rejects.toMatchObject({
+    name: 'EffectUnresolvedError',
+  });
+  await expect(
+    engine(store).effect('reply', handlers, { reconcileTimeoutMs: 2_147_483_648 }),
+  ).rejects.toThrow('at most 2147483647');
+  await expect(
+    engine(store).effect('reply', handlers, { reconcileTimeoutMs: 2_147_483_647 }),
+  ).resolves.toEqual({ outcome: 'accepted', proof: { id: 'proof' } });
+});
+
+test('effect replay is paged and incremental but retained keys scale with history', async () => {
+  const { readDurabilityLedger } = await import('../src/durability/ledger');
+  const rows: AgentStoreEventEnvelope[] = Array.from({ length: 1000 }, (_, n) => ({
+    schemaVersion: 1,
+    eventId: `e${n + 1}`,
+    seq: n + 1,
+    conversationId: 'c',
+    occurredAt: new Date().toISOString(),
+    kind: 'durability/effect',
+    payload: { runId: 'r', effectName: `effect-${n}`, phase: 'intent' },
+  }));
+  const calls: Array<{ fromSeq?: number; limit?: number }> = [];
+  const store: StepDurabilityLedger = {
+    appendEvent: async () => {
+      throw new Error('read-only fixture');
+    },
+    readEvents: async (input) => {
+      calls.push(input);
+      return { items: rows.filter((row) => row.seq >= (input.fromSeq ?? 1)) };
+    },
+  };
+  const view = {
+    steps: new Map(),
+    effects: new Map(),
+    parks: new Map(),
+    deliveries: new Map(),
+    nextSeq: 1,
+  };
+  await readDurabilityLedger(store, 'c', view);
+  expect(view.effects.size).toBe(1000);
+  expect(calls[0]?.limit).toBe(10_000);
+  await readDurabilityLedger(store, 'c', view);
+  expect(calls[1]?.fromSeq).toBe(1001);
+  expect(view.effects.size).toBe(1000);
+});

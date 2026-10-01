@@ -87,27 +87,38 @@ export function inspectedRef(
 }
 
 export async function readHandle(
-  handle: Awaited<ReturnType<typeof open>>,
+  handle: {
+    read(buffer: Uint8Array, offset: number, length: number): Promise<{ bytesRead: number }>;
+  },
   maxBytes: number,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    signal?.throwIfAborted();
+  let ended = false;
+  while (!ended) {
     const capacity = Math.min(64 * 1024, maxBytes + 1 - total);
-    if (capacity <= 0) {
+    if (capacity <= 0)
       throw new ManagedFileError('FILE_TOO_LARGE', `file exceeds the ${maxBytes}-byte cap`);
-    }
     const chunk = new Uint8Array(capacity);
-    const { bytesRead } = await handle.read(chunk, 0, capacity);
-    if (bytesRead === 0) break;
-    total += bytesRead;
-    if (total > maxBytes) {
-      throw new ManagedFileError('FILE_TOO_LARGE', `file exceeds the ${maxBytes}-byte cap`);
+    let filled = 0;
+    // A short read reuses the block. Retaining a 64-KiB allocation per single
+    // byte read would turn a byte cap into a much larger hidden memory cap.
+    while (filled < capacity) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(chunk, filled, capacity - filled);
+      if (bytesRead === 0) {
+        ended = true;
+        break;
+      }
+      filled += bytesRead;
+      total += bytesRead;
+      if (total > maxBytes)
+        throw new ManagedFileError('FILE_TOO_LARGE', `file exceeds the ${maxBytes}-byte cap`);
     }
-    chunks.push(chunk.subarray(0, bytesRead));
+    if (filled > 0) chunks.push(chunk.subarray(0, filled));
   }
+  signal?.throwIfAborted();
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {

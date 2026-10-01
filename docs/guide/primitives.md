@@ -4,7 +4,7 @@ description: Declare lifecycle, access, exact values, audit, delivery and export
 type: guide
 status: active
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-10-01 21:03 +07:00
 ---
 
 # Generic application primitives
@@ -96,3 +96,28 @@ A small result can be `ready` with a `ManagedFileRef`; a larger result can be `p
 of the application's existing async operation. The input, scope, metadata and tool identity do not
 change. The application creates bytes and owns operation persistence; the managed-file boundary
 streams them.
+
+## Canonical JSON
+
+```ts
+import { canonicalJson } from 'stitchkit/primitives'
+
+const bytes = canonicalJson({ '2': 'two', '10': 'ten', optional: undefined, nested: [1, null] }, {
+  maxDepth: 20, maxNodes: 10_000, maxBytes: 64 * 1024,
+})
+// {"10":"ten","2":"two","nested":[1,null]}
+// Native crypto or browser WebCrypto hashes these same UTF-8 bytes.
+```
+
+`canonicalJson` использует единый serializer исторических digest: object keys в UTF-16 code-unit
+order, включая integer-like keys; array order сохраняется. Optional object members с undefined
+опускаются. Top-level/array undefined, sparse arrays, functions/symbols/BigInt, non-finite numbers,
+negative zero, cycles, user prototypes, accessors, non-enumerable/symbol members отказаны до
+serialization. Приложение валидирует свою schema первым; canonical boundary не заменяет её.
+
+Defaults: depth 100 (maximum 100), nodes 100 000, UTF-8 bytes 1 MiB. Превышение или не-JSON data —
+TypeError; неверные options — Zod validation error. Это browser-safe leaf без Node/Bun/crypto,
+agent-runtime/testing или optional peers. Native и browser используют один algorithm; hashing
+остаётся platform adapter. Переносите только serializer recursion, сохраняя proof schemas и
+verification boundary. Существующие внутренние historical normalization/digest fixtures не меняются;
+новый public boundary сознательно отказывает неоднозначным values вместо фиктивной совместимости.

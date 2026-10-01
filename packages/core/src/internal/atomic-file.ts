@@ -22,17 +22,10 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import {
-  closeSync,
-  fchmodSync,
-  fsyncSync,
-  openSync,
-  renameSync,
-  unlinkSync,
-  writeSync,
-} from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { closeSync, fchmodSync, fsyncSync, openSync, unlinkSync, writeSync } from 'node:fs';
+import { open, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { publishAtomicFile, publishAtomicFileSync } from './atomic-publication';
 
 /** Options of {@link writeFileAtomic} and {@link writeFileAtomicSync}. */
 export interface WriteFileAtomicOptions {
@@ -43,6 +36,10 @@ export interface WriteFileAtomicOptions {
    * caller states, never one a default makes for them.
    */
   mode?: number;
+  /** Replace by default; false atomically refuses any existing file or link. */
+  replace?: boolean;
+  /** Default file: fsync bytes. directory also syncs the parent after publication. */
+  durability?: 'none' | 'file' | 'directory';
 }
 
 const DEFAULT_MODE = 0o600;
@@ -58,30 +55,79 @@ function bytesOf(data: Uint8Array | string): Uint8Array {
 /**
  * Write `data` to `target` atomically: a reader sees the old contents or the
  * new ones, never part of either, and the new file has `mode` from its first
- * visible moment. A failed write leaves the target untouched and no staging
- * file behind.
+ * visible moment. A failure before publication leaves the target untouched. Directory-sync or
+ * staging-link cleanup failure after publication throws AtomicFilePublicationError
+ * with published=true; do not blindly repeat an external action.
  */
 export async function writeFileAtomic(
   target: string,
   data: Uint8Array | string,
   options: WriteFileAtomicOptions = {},
 ): Promise<void> {
+  return writeAtomicFileData(target, data, options);
+}
+
+interface AtomicFileWriteIO {
+  open(
+    path: string,
+    flags: 'wx',
+    mode: number,
+  ): Promise<{
+    writeFile(bytes: Uint8Array): Promise<void>;
+    chmod(mode: number): Promise<void>;
+    sync(): Promise<void>;
+    close(): Promise<void>;
+  }>;
+  unlink(path: string): Promise<void>;
+  publish(
+    staged: string,
+    target: string,
+    replace: boolean,
+    directorySync: boolean,
+  ): Promise<void>;
+}
+
+/** Internal syscall seam for publication-order and precommit fault controls. */
+export async function writeAtomicFileData(
+  target: string,
+  data: Uint8Array | string,
+  options: WriteFileAtomicOptions,
+  io: AtomicFileWriteIO = { open, unlink, publish: publishAtomicFile },
+): Promise<void> {
   const mode = options.mode ?? DEFAULT_MODE;
   const staged = stagingPath(target);
   // `wx` — create, fail if the path exists at all. The descriptor is then the
   // file this call made, so the chmod and the write cannot be redirected.
-  const handle = await open(staged, 'wx', mode);
+  const handle = await io.open(staged, 'wx', mode);
   try {
+    let failed = false;
+    let failure: unknown;
     try {
       await handle.writeFile(bytesOf(data));
       await handle.chmod(mode);
-      await handle.sync();
+      if (options.durability !== 'none') await handle.sync();
+    } catch (error) {
+      failed = true;
+      failure = error;
     } finally {
-      await handle.close();
+      try {
+        await handle.close();
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
     }
-    await rename(staged, target);
+    if (failed) throw failure;
+    await io.publish(
+      staged,
+      target,
+      options.replace ?? true,
+      options.durability === 'directory',
+    );
   } catch (error) {
-    await unlink(staged).catch(() => undefined);
+    await io.unlink(staged).catch(() => undefined);
     throw error;
   }
 }
@@ -97,21 +143,41 @@ export function writeFileAtomicSync(
   const staged = stagingPath(target);
   const handle = openSync(staged, 'wx', mode);
   try {
+    let failed = false;
+    let failure: unknown;
     try {
       // `writeSync` may write fewer bytes than asked; a single call would
       // silently truncate a large file and still rename it into place.
       for (let offset = 0; offset < bytes.byteLength; ) {
-        offset += writeSync(handle, bytes, offset, bytes.byteLength - offset);
+        const written = writeSync(handle, bytes, offset, bytes.byteLength - offset);
+        if (written === 0) throw new Error('zero-byte atomic-file write');
+        offset += written;
       }
       // The mode passed to `open` is masked by the process umask; the explicit
       // fchmod on the open descriptor is what makes an executable executable on
       // a machine with a strict umask, and it cannot follow a link.
       fchmodSync(handle, mode);
-      fsyncSync(handle);
+      if (options.durability !== 'none') fsyncSync(handle);
+    } catch (error) {
+      failed = true;
+      failure = error;
     } finally {
-      closeSync(handle);
+      try {
+        closeSync(handle);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
     }
-    renameSync(staged, target);
+    if (failed) throw failure;
+    publishAtomicFileSync(
+      staged,
+      target,
+      options.replace ?? true,
+      options.durability === 'directory',
+    );
   } catch (error) {
     try {
       unlinkSync(staged);

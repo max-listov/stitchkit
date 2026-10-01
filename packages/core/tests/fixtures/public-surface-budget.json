@@ -23,7 +23,7 @@
     "stitchkit/cli": 86,
     "stitchkit/contract": 106,
     "stitchkit/declaration": 30,
-    "stitchkit/files": 33,
+    "stitchkit/files": 35,
     "stitchkit/geo": 11,
     "stitchkit/google": 11,
     "stitchkit/live": 42,
@@ -31,7 +31,7 @@
     "stitchkit/oauth": 12,
     "stitchkit/voice": 6,
     "stitchkit/observability": 67,
-    "stitchkit/primitives": 71,
+    "stitchkit/primitives": 73,
     "stitchkit/react": 30,
     "stitchkit/react/keyboard": 17,
     "stitchkit/release": 17,
@@ -46,7 +46,8 @@
     "stitchkit/tools/contract": 15,
     "stitchkit/tools/invoker": 4,
     "stitchkit/tracking": 77,
-    "stitchkit/tracking/server": 26
+    "stitchkit/tracking/server": 26,
+    "stitchkit/process": 4
   },
   "overlaps": [
     {

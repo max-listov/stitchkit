@@ -173,8 +173,22 @@ try {
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
+    if (name === 'minimal') {
+      for (const runtime of ['bun', 'node']) {
+        const proof = step(`minimal: native primitives (${runtime})`, () =>
+          run(runtime, ['src/native-primitives.mjs'], dir),
+        );
+        if (!proof.includes('packed native primitives: ok'))
+          throw new Error(`Missing ${runtime} native primitives proof`);
+      }
+    }
     if (name === 'node') {
       for (const runtime of ['bun', 'node']) {
+        const effect = step(`node: effect lease (${runtime})`, () =>
+          run(runtime, ['src/effect-lease.mjs'], dir),
+        );
+        if (!effect.includes('packed effect external lease two-process: ok'))
+          throw new Error(`Missing ${runtime} effect lease proof`);
         const proof = step(`node: process-owned lock (${runtime})`, () =>
           run(runtime, ['src/exclusive-lock.mjs'], dir),
         );
@@ -663,6 +677,9 @@ try {
   console.log(
     `[consumer-lane] ${total} ms  (${timings.map(([l, ms]) => `${l} ${ms}`).join(', ')})`,
   );
+} catch (error) {
+  failed = true;
+  throw error;
 } finally {
   if (failed) console.error(`[consumer-lane] workdir kept for inspection: ${workdir}`);
   else rmSync(workdir, { recursive: true, force: true });

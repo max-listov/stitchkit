@@ -92,6 +92,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'Linux Bubblewrap sessions, durable workspace reconnect, network policy and host credential brokering',
   ],
   [
+    'native-io.md',
+    'Native IO',
+    'finite commands, durable atomic publication and strict trusted-root file reads',
+  ],
+  [
     'primitives.md',
     'Generic application primitives',
     'lifecycle transitions, owner scope, permissions, exact money and quantities, deadlines, audit, delivery and exports — declared, not persisted',
@@ -254,6 +259,7 @@ export const GUIDE_SLICES: GuideMap = {
     ],
   },
   'sandbox.md': { primary: './agent-runtime/sandbox' },
+  'native-io.md': { primary: './process', also: ['./files'] },
   'primitives.md': { primary: './primitives' },
   'application-migration-recipes.md': { primary: './application' },
   'cli.md': { primary: './cli' },
