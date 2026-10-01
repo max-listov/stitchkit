@@ -15,6 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.5] - 2026-10-01
+
+### Fixed
+
+- Clarify release delivery checks: ordinary registry visibility, matching artifact bytes and fresh installed Bun/Node consumers.
+
 ## [0.103.4] - 2026-10-01
 
 ### Fixed

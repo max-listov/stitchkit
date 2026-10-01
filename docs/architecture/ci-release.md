@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-01 15:43 +07:00
+updated: 2026-10-01 16:06 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -97,3 +97,14 @@ The tag workflow:
 Workflow permissions default to `contents: read`. OIDC `id-token: write` exists only in the
 protected `npm-production` publication job. Every third-party action is pinned to a full commit
 SHA. Superseded branch/PR runs are cancellable; tag publication is not.
+
+
+## Delivery verification
+
+A successful publish command confirms upload acceptance. Delivery also requires the
+exact version and intended dist-tag in ordinary registry metadata, a downloadable
+ordinary tarball with bytes matching the successful CI artifact, and a fresh installed
+consumer that runs under both Bun and Node. Registry visibility may lag upload
+acceptance; polling has a bounded deadline and a missing version remains pending.
+Record registry publication and installed-consumer completion separately from command
+start, so release measurements include external visibility waits and delivery checks.
