@@ -10,116 +10,23 @@ import {
   readGreenGates,
   toolchainFingerprint,
   worktreeTreeHash,
-  writeGreenGate,
 } from './gate-memo';
-import { readReleaseTrain } from './release-train';
-
-/**
- * The whole repository gate, in order, as one list.
- *
- * It used to be a `&&` chain inside `package.json`. Moving it here costs
- * nothing and buys two things the chain could not have: the gate can say which
- * step it is on, and it can decide — once, on evidence — whether this exact
- * tree has already been through it.
- */
-export const VERIFY_STEPS = [
-  // The one CI step every runner performs before anything else, and the one
-  // this gate did not: a manifest edited without its lockfile passed every
-  // local step and turned the first CI run of a release red at `bun install`.
-  'lockfile',
-  'lint',
-  'check',
-  'test',
-  'test:postgres-stores',
-  'build',
-  'smoke:next-ssr',
-  'smoke:node',
-  'consumer-lane',
-  'tui-packed-lane',
-  'agent-template-lane',
-  'telegram-bot-template-lane',
-  'generated-templates-lane',
-  'starter-lane',
-  // The supervised lane used to be the one gate CI ran and `verify` did not,
-  // because it needed `pm2` on PATH. The supervisor is a pinned devDependency
-  // now, so there is no prerequisite left to trade away — and the gap it left
-  // fell on the release commit, the one commit whose red CI run cannot be
-  // repaired in place. The Postgres stores lane sat in that same gap until it made
-  // a release run red; this is the second and last member of that list.
-  'supervised-lane',
-] as const;
-
-/**
- * What an ordinary push runs locally — the part that is genuinely faster to
- * learn here than from CI.
- *
- * Everything past `test` in the full gate is work whose nature is parallel:
- * four packed starter runs (the target mode, two scaffold variants, two
- * browsers), two smokes, a consumer lane and the Postgres stores lane. CI
- * shards the same work — plus the four HEAD-mode runs this profile does not
- * carry — across ten runners and answers in about two and a half minutes; one
- * developer machine walks it in single file and takes several times longer to
- * reach the same answer. Duplicating that is not caution, it is a slower copy.
- * → `AGENTS.md`, "What runs where".
- */
-export const FAST_STEPS = ['lockfile', 'lint', 'check', 'test'] as const;
-
-/** The name each gate is remembered under. */
-export const VERIFY_GATE = 'verify';
-export const FAST_GATE = 'verify:fast';
-
-export interface VerifyProfile {
-  gate: string;
-  steps: readonly string[];
-  /**
-   * Whether this profile's steps talk to anything outside the tree. The fast
-   * profile reads only files, so a tree hash and a runtime version say
-   * everything about it; the heavy ones drive a PostgreSQL server and real
-   * browsers, and neither is visible in either.
-   */
-  usesLaneEnvironment: boolean;
-  /**
-   * Other gates whose green record also answers for this one. The full gate
-   * runs every fast step, so a green `verify` is a green `verify:fast` — and a
-   * memo that did not know it would re-run work it had just watched succeed.
-   */
-  satisfiedBy: readonly string[];
-}
-
-/**
- * The packed HEAD lane, which `verify` deliberately does not carry.
- *
- * It belongs to the release path only — `verify` runs the TARGET lane, against
- * the published framework — but it is the single most expensive thing a release
- * push does, so it needs a memo of its own or the saving stops exactly where it
- * would matter most.
- */
-export const HEAD_STEPS = ['starter-head-lane'] as const;
-export const HEAD_GATE = 'verify:head';
-
-/** Every flag this script accepts — the list `pre-push` is held against. */
-export const VERIFY_FLAGS = ['--if-changed', '--fast', '--head', '--release'] as const;
-
-export const PROFILES: Record<'full' | 'fast' | 'head', VerifyProfile> = {
-  full: { gate: VERIFY_GATE, steps: VERIFY_STEPS, satisfiedBy: [], usesLaneEnvironment: true },
-  fast: {
-    gate: FAST_GATE,
-    steps: FAST_STEPS,
-    satisfiedBy: [VERIFY_GATE],
-    usesLaneEnvironment: false,
-  },
-  head: { gate: HEAD_GATE, steps: HEAD_STEPS, satisfiedBy: [], usesLaneEnvironment: true },
-};
+import { saveGreenEvidence } from './verify-evidence';
+import { PROFILES, releaseProfile, VERIFY_FLAGS, type VerifyProfile } from './verify-profiles';
 
 const root = join(import.meta.dir, '..');
 
 async function runStep(step: string): Promise<void> {
+  const started = performance.now();
   const child = Bun.spawn(['bun', 'run', step], {
     cwd: root,
     stdout: 'inherit',
     stderr: 'inherit',
   });
   const code = await child.exited;
+  process.stderr.write(
+    `[gate] ${step}: ${((performance.now() - started) / 1000).toFixed(3)}s, exit ${code}\n`,
+  );
   if (code !== 0) throw new Error(`verify: \`bun run ${step}\` exited with ${code}`);
 }
 
@@ -331,52 +238,13 @@ export async function runBounded(
   await Promise.all(workers);
 }
 
-async function releaseProfile(): Promise<VerifyProfile> {
-  const train = await readReleaseTrain(root);
-  const targets = new Set(train.releases.map((release) => release.target));
-  const lanes: string[] = [];
-  if (targets.has('core')) {
-    lanes.push(
-      'test:postgres-stores',
-      'smoke:next-ssr',
-      'smoke:node',
-      'consumer-lane',
-      'starter-head-lane',
-      'supervised-lane',
-    );
-  }
-  if (targets.has('tui')) lanes.push('tui-packed-lane');
-  if (targets.has('create-stitchkit'))
-    lanes.push(
-      'agent-template-lane',
-      'telegram-bot-template-lane',
-      'generated-templates-lane',
-      'starter-lane',
-      'supervised-lane',
-    );
-  const uniqueLanes = [...new Set(lanes)];
-  const targetKey = train.releases
-    .map((release) => release.target)
-    .sort()
-    .join('+');
-  return {
-    gate: `verify:release:${targetKey}`,
-    steps: ['lint', 'check', 'test', 'build', ...uniqueLanes],
-    satisfiedBy: [],
-    usesLaneEnvironment: uniqueLanes.length > 0,
-  };
-}
-
 async function greenRecordFor(
   profile: VerifyProfile,
   key: string,
   memo: string,
 ): Promise<{ gate: string; record: GreenGateRecord } | undefined> {
-  for (const gate of [profile.gate, ...profile.satisfiedBy]) {
-    const record = findGreenGate(await readGreenGates(gate, memo), key);
-    if (record) return { gate, record };
-  }
-  return undefined;
+  const record = findGreenGate(await readGreenGates(profile.gate, memo), key);
+  return record ? { gate: profile.gate, record } : undefined;
 }
 
 async function main(): Promise<void> {
@@ -384,7 +252,7 @@ async function main(): Promise<void> {
   const ifChanged = args.includes('--if-changed');
   const flags = new Set(args);
   const profile = flags.has('--release')
-    ? await releaseProfile()
+    ? await releaseProfile(root)
     : flags.has('--head')
       ? PROFILES.head
       : flags.has('--fast')
@@ -408,9 +276,10 @@ async function main(): Promise<void> {
   }
 
   const memo = gateMemoPath();
+  const runtimeToolchain = await toolchainFingerprint();
   const toolchain = profile.usesLaneEnvironment
-    ? `${await toolchainFingerprint()} ${await laneEnvironmentFingerprint()}`
-    : await toolchainFingerprint();
+    ? `${runtimeToolchain} ${await laneEnvironmentFingerprint()}`
+    : runtimeToolchain;
   const before = await worktreeTreeHash(root);
   const key = greenGateKey({ tree: before, toolchain });
 
@@ -453,9 +322,10 @@ async function main(): Promise<void> {
   // The record is of the tree the run STARTED from — the input it actually
   // checked. If a step regenerated a committed artifact the tree has moved on,
   // and the memo deliberately will not answer for where it moved to.
-  await writeGreenGate(
-    profile.gate,
+  await saveGreenEvidence(
+    profile,
     { tree: before, toolchain, at: new Date().toISOString(), commit: await headCommit(root) },
+    runtimeToolchain,
     memo,
   );
   const after = await worktreeTreeHash(root);

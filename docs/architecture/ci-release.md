@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-08-30
+updated: 2026-10-01 15:43 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -71,11 +71,13 @@ platform-specific. Artifact assembly is the sole consumer of both validated nati
 
 ## Local gate
 
-`bun run verify` remains the exhaustive portable gate. Ordinary pushes use `verify:fast`. A release
-push uses `bun scripts/verify.ts --release --if-changed`: structural steps and build run once, then
-independent selected heavy lanes execute with maximum concurrency two. The green memo is keyed by
-the exact working-tree hash, toolchain, lane environment and selected target set, so pre-push reuses
-the one final run and any edit invalidates it.
+`bun run verify` remains the exhaustive portable diagnostic gate. Ordinary pushes and release
+candidates on `release/X.Y.Z` use `verify:fast`; complete selected CI authorises publication.
+Only a direct unproven master release runs `bun scripts/verify.ts --release --if-changed` locally.
+Its structural checks include the frozen-lockfile install, then build and bounded heavy lanes.
+The green memo keys heavy evidence by tree, runtime and lane environment. A successful full or
+release gate separately certifies its complete fast subset by tree/runtime; any source edit
+invalidates both. Core artifact assembly delegates the single build to package prepack.
 
 Template unit tests are not run again at root after the generated starter lane has executed the
 same tests from the packed scaffold. Authored template type checks remain separate because they

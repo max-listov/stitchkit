@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify';
+import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify-profiles';
 
 const CI = readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8');
 const PLAN = readFileSync(join(import.meta.dir, 'release-plan.ts'), 'utf8');

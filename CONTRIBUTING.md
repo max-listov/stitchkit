@@ -54,12 +54,13 @@ be arranged by hand: a reachable **PostgreSQL** named by
 devDependency, so `bun install` is all it takes. `bun run verify:fast` needs
 none of them.
 
-Before a **release commit**, run `bun scripts/verify.ts --release`. It reads
-`release-train.json`, runs structural steps once and schedules only the selected
-heavy lanes with concurrency two. `pre-push` repeats the same command with
-`--if-changed`, so the exact-tree memo makes that second invocation a named
-skip. Ordinary changes still use `verify:fast`; scheduled/manual CI owns the
-complete package and starter-mode cross-product.
+A release candidate on `release/X.Y.Z` runs the fast gate at push. Complete selected
+CI must pass for that exact SHA before master and tag. A direct unproven master
+release requires `bun scripts/verify.ts --release`; this profile includes every
+fast check and the selected heavy lanes. Successful full/release gates separately
+certify the fast subset by tree/runtime, while heavy evidence retains its lane
+environment key. Scheduled/manual CI owns the complete package and starter-mode
+cross-product.
 
 The gate remembers its last green run by working-tree content, so a push whose
 tree is unchanged is not gated twice; any edit to any file runs it again, and a
@@ -206,8 +207,9 @@ root `prepare` script):
   quoted, not produced.
 - **`pre-push`** — runs the release metadata preflight for every pushed release
   tag first, then picks the local gate by what a red CI run would cost on the
-  commit being pushed: `verify:fast` for an ordinary branch push, the
-  package-aware `verify --release` DAG for a pushed `release(...)` commit, and
+  commit being pushed: `verify:fast` for ordinary and release-candidate branches,
+  the package-aware `verify --release` DAG for an unproven master release,
+  metadata only for a master fast-forward already proved by exact-SHA CI, and
   nothing further for a tag-only push. The table and the reasoning are
   in [`AGENTS.md`](./AGENTS.md#what-runs-where). The preflight checks the
   package version, the release notes, the calibre (a `### ⚠️ Breaking changes`

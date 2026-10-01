@@ -88,8 +88,9 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   newlines in bodies (`commit-msg` refuses a literal `\n`). → [CONTRIBUTING](./CONTRIBUTING.md#git-hooks)
 - A release commit is `release(<scope>): … in X.Y.Z`, scope `train`, `core`, `starter` or `tui`; the old
   `release: 0.4.0` form no longer passes. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
-- Before a **release commit** run `bun scripts/verify.ts --release`; `pre-push` reuses that exact-tree
-  result. → [gates](./docs/architecture/gates.md)
+- Push a release candidate to `release/X.Y.Z`: `pre-push` runs `verify:fast`; the full selected
+  CI must pass for its exact SHA before master/tag. A direct unproven master release requires
+  `bun scripts/verify.ts --release`. → [gates](./docs/architecture/gates.md)
 
 ### What runs where
 

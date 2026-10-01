@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-10-01 15:43 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -15,8 +15,8 @@ protocol in [`release-process.md`](./release-process.md).
 
 ## `verify` is every portable gate CI runs
 
-`bun scripts/verify.ts --release` is what a **release commit** runs, and `pre-push` reuses that
-exact-tree result. `verify` is the whole portable local gate and it runs **every portable gate CI
+Release candidates use `verify:fast` on `release/X.Y.Z`, followed by the complete selected CI
+for the exact SHA. `bun scripts/verify.ts --release` protects a direct unproven master release. `verify` is the whole portable local gate and it runs **every portable gate CI
 runs**: the frozen-lockfile install every runner performs first, lint, typecheck, tests, the
 Postgres stores lane (the agent store and the Telegram update store against a real server), build, the Next-SSR and Node smokes, the packed consumer lane, the packed
 starter lanes and the supervised PM2 lane. Its prerequisites are listed in
@@ -94,7 +94,9 @@ rather than in the sequence of statements around it.
 All profiles — fast, full, packed HEAD and each exact release target set — remember the last green
 run **by what they actually checked** (`scripts/gate-memo.ts`): an unchanged tree is not gated
 twice, any edit to any file runs it again, and a skip always prints which run answers for it. A
-green full run also satisfies the fast profile, because it ran every fast step.
+green full or selected release run writes a separate fast-subset attestation only if every fast
+step, including the frozen-lockfile install, ran successfully. The fast attestation carries the
+runtime fingerprint; heavy evidence retains its PostgreSQL/browser fingerprint.
 
 The key is the working-tree hash plus the toolchain — never a commit, a branch or a clock — and for
 the two profiles that run lanes it also carries what those lanes talk to: the PostgreSQL server

@@ -43,7 +43,7 @@ for (const release of train.releases) {
         throw new Error(`core release is missing validated Darwin ${architecture} binary`);
       }
     }
-    await run(['bun', '--filter', 'stitchkit', 'build']);
+    // Core prepack builds and checks the publication input exactly once.
   } else if (release.target === 'tui') {
     await run(['bun', '--filter', 'stitchkit', 'build']);
     await run(['bun', '--filter', 'stitchkit-tui', 'build']);
