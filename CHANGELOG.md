@@ -15,6 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.6] - 2026-10-01
+
+### Fixed
+
+- Document fast-gate attestation boundaries and retained lane-environment checks for release verification.
+
 ## [0.103.5] - 2026-10-01
 
 ### Fixed

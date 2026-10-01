@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-01 15:43 +07:00
+updated: 2026-10-01 16:20 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -115,3 +115,14 @@ substitute for it.
 
 ADR 0011 describes an earlier arrangement in which every push ran the whole gate. It is a
 historical record and is not edited; this page and `AGENTS.md` are the live answer.
+
+
+## Fast-subset attestation
+
+A green full or selected release profile can certify `verify:fast` only when every
+fast step completed successfully, including the frozen-lockfile install. Its own
+heavy gate record retains the PostgreSQL and browser environment fingerprint;
+the separately certified fast record uses the runtime fingerprint those portable
+checks actually depend on. An incomplete subset does not certify fast. A changed
+tree or runtime invalidates the fast record, and a changed lane environment still
+invalidates heavy evidence. This preserves each gate's inputs when proof is reused.
