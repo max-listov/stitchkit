@@ -130,18 +130,20 @@ export function startNativeCommand(
       child.stderr.destroy();
       const cleanup = await Promise.allSettled([
         settle({ kind: 'error', cause: error }),
-        stopCommandGroup(child.pid, options.killGraceMs).then(async () => {
-          try {
-            await waitForCommandClose(released, options.cleanupTimeoutMs);
-          } catch (cause) {
-            throw new Error(
-              `Command handles remained open: ${[...pendingHandles].join(', ')}`,
-              {
-                cause,
-              },
-            );
-          }
-        }),
+        stopCommandGroup(child.pid, options.killGraceMs, options.cleanupTimeoutMs).then(
+          async () => {
+            try {
+              await waitForCommandClose(released, options.cleanupTimeoutMs);
+            } catch (cause) {
+              throw new Error(
+                `Command handles remained open: ${[...pendingHandles].join(', ')}`,
+                {
+                  cause,
+                },
+              );
+            }
+          },
+        ),
       ]);
       const failures = cleanup.flatMap((item) =>
         item.status === 'rejected' && item.reason !== error ? [item.reason] : [],

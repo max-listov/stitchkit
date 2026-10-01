@@ -4,7 +4,7 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-02 00:08 +07:00
+updated: 2026-10-02 00:37 +07:00
 participants:
   - role: authored
     harness: Codex
@@ -129,6 +129,10 @@ callbacks owner не запускает. Normal completion ждёт всех byt
 
 Cleanup: POSIX process group, TERM, `killGraceMs` (default 100, maximum 10 000), затем KILL;
 `cleanupTimeoutMs` (default 2000, maximum 30 000) ограничивает ожидание close после сигналов.
+На Darwin временный `EPERM` при сигнале группе может означать zombies, ещё не убранные
+OS reaper. Повтор ограничен `cleanupTimeoutMs`; успех требует доставленного сигнала или
+`ESRCH`, постоянный отказ сохраняется в cause. Закрытие каждого owned pipe и выход leader
+наблюдаются отдельно, включая отсутствие общего `child.close` при teardown.
 Сохраняется caller/sink причина; failure cleanup — `NativeCommandError` с `COMMAND_CLEANUP` и
 AggregateError cause. Даже вышедший parent не исключает helper, удерживающий pipe. Windows
 отказывает с `COMMAND_UNAVAILABLE`; потомок, самостоятельно покинувший группу через setsid,
@@ -174,6 +178,9 @@ independent of umask. Default `0600` stays private. Shared `0640` requires a com
 traversable directories; another UID also needs directory write permission to reclaim a
 proven-dead owner's file. Set `ownerlessGraceMs: null` to refuse every age-only reclaim,
 including ownerless reclaim guards. The default remains 5000 ms for existing clients.
+Восстановление stale reclaim guard использует тот же lock owner и следующий guard:
+проверка inode и удаление выполняются под ним. Конкурирующий writer не обходит guard,
+пока прежнее удаление приостановлено; live и unknown lifetime evidence остаются отказом.
 
 ## Libraries with a Zod-only runtime
 

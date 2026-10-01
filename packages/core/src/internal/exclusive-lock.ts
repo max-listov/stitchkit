@@ -234,29 +234,16 @@ async function reclaimUnderGuard(
   options: ExclusiveLockAttemptOptions,
 ): Promise<HeldExclusiveLock | 'refused' | undefined> {
   const guardPath = `${path}.reclaim`;
-  let guard: HeldExclusiveLock;
-  try {
-    guard = await createOwned(guardPath, options, false);
-  } catch (error) {
-    if (!isCode(error, 'EEXIST')) throw error;
-    // A guard is held for two file operations. One that is still here and
-    // whose owner is provably gone was abandoned mid-reclaim; clear it so the
-    // next attempt can proceed. It is never taken over directly.
-    const stale = await readLockFile(guardPath);
-    if (stale) {
-      const verdict = await diagnose(stale.owner, options.machineIdentity);
-      if (
-        reclaimable(
-          stale,
-          verdict,
-          options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
-        )
-      ) {
-        await unlinkIfSame(guardPath, stale.ino);
-      }
-    }
-    return undefined;
-  }
+  // A stale guard requires the same serialized recovery as a stale lock.
+  // Checking its inode and then unlinking without a guard leaves a syscall
+  // race in which another reclaimer's newly created guard can be removed.
+  const acquired = await attemptExclusiveLock(guardPath, {
+    ...options,
+    ownerlessGraceMs:
+      options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
+  });
+  if (!('held' in acquired)) return undefined;
+  const guard = acquired.held;
   try {
     // Re-read under the guard: the lock seen before it may have been reclaimed
     // and re-taken by the previous guard holder, and that one is alive.
