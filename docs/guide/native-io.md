@@ -4,7 +4,7 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-02 00:37 +07:00
+updated: 2026-10-02 16:28 +07:00
 participants:
   - role: authored
     harness: Codex
@@ -120,6 +120,32 @@ await runNativeCommand({
 означает пустой environment; `ambient` явно разрешает наследование. Cwd/executable policy остаётся
 приложению; этот primitive запускает native executable и сам не создаёт shell.
 
+Машинная классификация limit error использует `NativeCommandError.reason`: `deadline` при
+истечении собственного `timeoutMs`, `output-budget` при превышении суммарных bytes stdout+stderr
+в capture или streaming. Оба случая сохраняют `code: 'COMMAND_LIMIT'`; `message` служит
+диагностике, не протоколу. У `COMMAND_UNAVAILABLE` и `COMMAND_CLEANUP` reason отсутствует;
+caller abort и sink failure сохраняют исходную ошибку. При cleanup failure первоначальный
+limit вместе с reason остаётся внутри `AggregateError` cause.
+
+```ts
+import { NativeCommandError } from 'stitchkit/process'
+
+try {
+  await runNativeCommand({ executable: '/usr/bin/git', args: ['status'], timeoutMs: 5000 })
+} catch (error) {
+  if (error instanceof NativeCommandError && error.code === 'COMMAND_LIMIT') {
+    if (error.reason === 'deadline') console.error('Command timed out')
+    if (error.reason === 'output-budget') console.error('Command produced too many bytes')
+  }
+  throw error
+}
+```
+
+Конструктор сохраняет вызов `new NativeCommandError(code, message, { cause })` и принимает
+`{ cause, reason: 'deadline' | 'output-budget' }` только для `COMMAND_LIMIT`. Owner всегда
+заполняет reason для собственных limits. Созданная вызывающей стороной ошибка без reason
+не получает выдуманную причину из текста; её reason остаётся `undefined`.
+
 Вывод читается с backpressure отдельно для stdout/stderr: один выполняющийся sink на канал плюс
 bounded native Readable buffer; накопления всей истории при streaming нет. Callback получает
 lifetime signal. Abort освобождает ожидание даже игнорирующего signal callback, но не способен
@@ -153,7 +179,11 @@ packed размера и dependency closure.
 close. A resource owner can stop its external scope there, allowing pipe drain to complete.
 The callback runs once: `event.kind === 'exit'` carries observed `exitCode`/`signal`; a terminal
 failure uses `kind: 'error'` and preserves its cause. Unavailable executables, output sink
-failure and caller cancellation settle through the same owner. `cleanupTimeoutMs` bounds
+failure and caller cancellation settle through the same owner. Synchronous native launch
+failures such as `E2BIG` also return a rejected result after this bounded settlement;
+schema-invalid and already-aborted inputs refuse before native ownership and do not invoke
+the hook. A failing hook preserves both the initial launch error and cleanup cause.
+`cleanupTimeoutMs` bounds
 the callback after settlement starts; it never becomes a deadline for signal-only execution.
 Honor the settlement signal; arbitrary user promises cannot be forcibly cancelled.
 
@@ -172,6 +202,14 @@ with its cause. `probeProcessOwner(pid, recorded)` compares that evidence on the
 caller established: `matched`, `different-boot`, `reused-pid`, `pid-gone`, `legacy` or
 `unavailable`. Missing/partial/denied evidence is not death. Supervisor tree fencing remains
 the caller's job; a PID lifetime is not proof that its whole workload stopped.
+
+Exclusive acquisition checks cancellation again before invoking the protected callback;
+an aborted acquisition releases its newly owned lock without starting the callback.
+Existing lock and reclaim-guard records are opened with nonblocking/no-follow flags,
+must be regular files with one link, and are capped at 16 KiB. Descriptor metadata must
+remain stable during the read. Unsafe records are not evidence of absence or permission
+to reclaim. This bounds local record reads; it does not make a hung remote-filesystem
+syscall interruptible or provide a snapshot against a hostile writer.
 
 An exclusive lock applies exact requested permissions through its creating descriptor,
 independent of umask. Default `0600` stays private. Shared `0640` requires a common group and

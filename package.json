@@ -44,7 +44,7 @@
     "release:tui": "bun scripts/release-plan.ts release tui",
     "release:check": "bun scripts/release-plan.ts check",
     "release:train": "bun scripts/release-plan.ts release train",
-    "sync:readme": "cp README.md packages/core/README.md && bun run gen:llms",
+    "sync:readme": "bun scripts/sync-package-readme.ts && bun run gen:llms",
     "test:template": "cd packages/create-stitchkit/template && bun test scripts",
     "test:agent-template": "cd packages/create-stitchkit/templates/agent && bun test",
     "test:telegram-bot-template": "cd packages/create-stitchkit/templates/telegram-bot && bun test",

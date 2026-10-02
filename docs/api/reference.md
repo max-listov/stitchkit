@@ -2488,9 +2488,9 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | `runNativeCommand` | function | caller-lifetime streaming or explicitly bounded binary capture |
 | `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink and finite cleanup limits |
 | `NativeCommandResult` | type | observed nullable exit code/signal and captured stdout/stderr bytes |
-| `NativeCommandError` | class | COMMAND_LIMIT, COMMAND_UNAVAILABLE or COMMAND_CLEANUP with internal cause |
+| `NativeCommandError` | class | COMMAND_LIMIT with machine reason `deadline` or `output-budget`; COMMAND_UNAVAILABLE / COMMAND_CLEANUP have no limit reason. Preserves internal cause and existing constructor; caller-created limits without supplied reason remain unclassified |
 
-| `NativeCommandSettlement` | type | observed leader `exit` or terminal `error`; `onLeaderSettled` runs once before drain, bounded by cleanupTimeoutMs, with a cancellable settlement signal |
+| `NativeCommandSettlement` | type | observed leader `exit` or terminal `error`, including synchronous native launch failure; `onLeaderSettled` runs once before drain, bounded by cleanupTimeoutMs, with a cancellable settlement signal; schema/pre-abort refusal creates no settlement obligation |
 | `observeProcessInstance` / `ProcessInstanceObservation` | function / type | Linux/Darwin lifetime observation; observed identity or unavailable with its original cause, never guessed absence |
 | `ProcessInstanceSchema` / `ProcessInstance` | schema / type | platform, boot ID, namespace and process start identity from the shared native reader |
 | `probeProcessOwner` / `ProcessOwnerEvidence` | function / type | compare lifetimes on one caller-established machine; matched, boot change, reused PID, gone, legacy or unavailable with cause |

@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.11] - 2026-10-02
+
+### Added
+
+- `stitchkit/process`: native command limit errors expose a typed `reason` (`deadline` or `output-budget`) independent of their message; existing codes, causes, cancellation and cleanup guarantees are preserved.
+
+### Fixed
+
+- `stitchkit/files`: cancellation after acquiring an exclusive lock refuses the callback and releases ownership. Lock and reclaim-guard records use bounded descriptor reads and refuse FIFO, nonregular, linked, oversized or changing records.
+- `stitchkit/process`: synchronous native launch failures settle external resources once before rejecting, with bounded cleanup and the original syscall cause.
+- `stitchkit/agent-runtime`: coding commands share the native execution owner while retaining forced descendant cleanup, structural sandbox launchers, bounded artifacts and UTF-8 previews.
+- Local gate evidence is saved only for stable inputs, including content changed and restored during a run. PostgreSQL fingerprint probes have finite budgets and distinguish URI connection overrides; unknown external inputs cannot authorize heavy memo reuse. Heavy concurrency accounts for visible cgroup memory limits.
+
 ## [0.103.10] - 2026-10-01
 
 ### Added

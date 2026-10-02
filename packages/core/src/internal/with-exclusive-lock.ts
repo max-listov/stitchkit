@@ -145,6 +145,7 @@ export async function withExclusiveLock<T>(
     const attempt = await attemptExclusiveLock(path, {
       mode,
       reclaim: true,
+      signal,
       ownerlessGraceMs,
       ...(options.machineIdentity !== undefined && {
         machineIdentity: options.machineIdentity,
@@ -154,6 +155,15 @@ export async function withExclusiveLock<T>(
       const { held } = attempt;
       let result: T;
       try {
+        if (signal?.aborted) {
+          throw new ExclusiveLockError(
+            'LOCK_ABORTED',
+            label,
+            null,
+            `[stitchkit] waiting for the lock on "${label}" was cancelled`,
+            { cause: signal.reason },
+          );
+        }
         result = await run({ path: held.path, owner: held.owner, reclaimed: held.reclaimed });
       } catch (error) {
         await held.release().catch(() => undefined);
@@ -162,6 +172,7 @@ export async function withExclusiveLock<T>(
       await held.release();
       return result;
     }
+    if (signal?.aborted) continue;
     const remaining = deadline - performance.now();
     if (remaining <= 0) {
       const holder = attempt.diagnosis?.owner ?? null;

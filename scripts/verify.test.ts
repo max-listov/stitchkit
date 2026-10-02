@@ -158,9 +158,9 @@ test('memory decides only when nobody has', () => {
   expect(chooseHeavyConcurrency('', () => 512).concurrency).toBe(2);
 });
 
-test('a host that cannot be measured keeps the historical default and says so', () => {
+test('a host that cannot be measured uses one heavy lane and says so', () => {
   const choice = chooseHeavyConcurrency('', () => undefined);
-  expect(choice.concurrency).toBe(2);
+  expect(choice.concurrency).toBe(1);
   expect(choice.because).toContain('could not be read');
 });
 

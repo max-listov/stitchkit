@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-01 16:40 +07:00
+updated: 2026-10-02 17:09 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -54,7 +54,7 @@ would cost on the commit being pushed:
 | --- | --- | --- |
 | ordinary branch push | `lockfile`, `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
 | `release(...)` commit to a **`release/**`** branch | metadata, then lockfile/lint/types | nothing is published; CI gates that exact SHA before master sees it |
-| `release(...)` commit **to master** with no green run for its SHA | metadata, then `verify --release` for the selected train (heavy concurrency measured from available memory, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
+| `release(...)` commit **to master** with no green run for its SHA | metadata, then `verify --release` for the selected train (heavy concurrency measured from host and cgroup headroom, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
 | `release(...)` commit to master that CI already passed | metadata only | the fast-forward publishes a tree CI has answered for on this exact SHA |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
 
@@ -100,13 +100,25 @@ runtime fingerprint; heavy evidence retains its PostgreSQL/browser fingerprint.
 
 The key is the working-tree hash plus the toolchain — never a commit, a branch or a clock — and for
 the two profiles that run lanes it also carries what those lanes talk to: the PostgreSQL server
-version and the installed browser set. Neither is visible in a tree or a runtime version, so
+version, a credential-free digest of its connection coordinates, and the installed browser set. Neither is visible in a tree or a runtime version, so
 without them a database upgrade would leave the memo answering for a run that happened under
-different conditions. Anything that cannot be measured becomes a marker of its own, so the failure
-mode is a redundant full run rather than a skip. The supervisor needs no entry: it is a pinned
+different conditions. PostgreSQL probes have a finite execution/output/cleanup budget.
+Unreachable or unmeasurable databases and absent browser installations cannot authorize
+heavy memo reuse. Successful portable checks can still certify the fast subset.
+The fingerprint does not attest every database permission/configuration or browser binary byte;
+those behaviors remain checked by the lanes. The supervisor needs no entry: it is a pinned
 devDependency, so it is already in the tree. The record lives in the machine's cache, never in the
 repository, and the tree hash is taken through a scratch `GIT_INDEX_FILE`, so the gate never writes
 to the index.
+
+Reusable evidence is written only after checking the final content hash and input generation.
+Inode change times detect content changed and restored within the run; input-directory
+observers detect transient creation/removal using Git's ignore policy. Ignored build output
+churn does not invalidate evidence. A mixed run saves no green record and removes matching
+prior attestations, including its fast subset. Generated tracked declarations and the package
+README are written only when their bytes differ, so regeneration and prepack synchronization
+of unchanged inputs preserve reusable proof.
+This is a local reuse decision; exact-SHA push CI remains the publication authority.
 
 ## CI is the only authority for publication
 
@@ -139,3 +151,5 @@ Unit tests run in the mandatory exact-SHA push CI before any master/tag/npm.
 Candidate evidence has its own gate identity and cannot certify `verify:fast`,
 which includes tests. Full and fast diagnostic commands retain all their steps.
 Privacy and metadata are never skipped; failed or mismatched CI blocks publication.
+
+On Linux, the runner bounds affordable heavy concurrency by the smallest visible cgroup v2 ancestor `memory.max - memory.current`, as well as host memory and exhausted-swap headroom. Host RAM alone cannot authorize allocations beyond a session or parent slice limit. Confirmed unlimited, unsupported and unavailable cgroup budgets are distinguished from measured zero. An unreadable visible limit keeps the effective budget unknown and selects one heavy lane; an explicit concurrency override retains its documented precedence. This admission estimate does not reserve RAM against other processes.

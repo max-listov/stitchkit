@@ -21,10 +21,10 @@
  * journal's refusal policy and the reasons it attaches to a refusal are the
  * same code paths as the public lock's.
  */
-import { constants } from 'node:fs';
 import { lstat, open, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { z } from 'zod';
+import { readLockRecord } from './exclusive-lock-read';
 import { machineIdentity } from './process-identity';
 import {
   ProcessInstanceSchema,
@@ -33,8 +33,6 @@ import {
   readProcessInstance,
 } from './process-instance';
 import { isRecord } from './typed';
-
-type FileHandle = Awaited<ReturnType<typeof open>>;
 
 /** Who holds a lock, as its file records it. */
 const ExclusiveLockOwnerSchema = z.object({
@@ -67,6 +65,7 @@ export interface HeldExclusiveLock {
 }
 
 export interface ExclusiveLockAttemptOptions {
+  readonly signal?: AbortSignal;
   readonly mode: number;
   /** Take a lock whose owner is provably gone. `false` refuses every present lock. */
   readonly reclaim: boolean;
@@ -134,34 +133,35 @@ interface LockFileState {
   readonly owner: ExclusiveLockOwner | undefined;
   /** Identity of the file read, so a removal can check it is still the same file. */
   readonly ino: number;
+  readonly dev: number;
   readonly mtimeMs: number;
 }
 
 async function readLockFile(
   path: string,
   onFailure?: (cause: unknown) => void,
+  signal?: AbortSignal,
 ): Promise<LockFileState | undefined> {
-  let handle: FileHandle | undefined;
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const info = await handle.stat();
+    const record = await readLockRecord(path, undefined, signal);
     return {
-      owner: readOwner(await handle.readFile('utf8')),
-      ino: info.ino,
-      mtimeMs: info.mtimeMs,
+      owner: readOwner(record.text),
+      ino: record.info.ino,
+      dev: record.info.dev,
+      mtimeMs: record.info.mtimeMs,
     };
   } catch (cause) {
     if (!isCode(cause, 'ENOENT')) onFailure?.(cause);
     return undefined;
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 }
 
 /** Remove `path` only while it is still the file that was read as `ino`. */
-async function unlinkIfSame(path: string, ino: number): Promise<void> {
+async function unlinkIfSame(path: string, ino: number, dev: number): Promise<void> {
   try {
-    if ((await lstat(path)).ino !== ino) return;
+    const current = await lstat(path);
+    if (current.ino !== ino || current.dev !== dev || !current.isFile() || current.nlink !== 1)
+      return;
     await unlink(path);
   } catch (error) {
     if (!isCode(error, 'ENOENT')) throw error;
@@ -186,17 +186,22 @@ async function createOwned(
     ...(identity !== null && { machine: identity }),
   };
   let ino: number | undefined;
+  let dev: number | undefined;
   try {
-    ino = (await handle.stat()).ino;
+    const info = await handle.stat();
+    ino = info.ino;
+    dev = info.dev;
     // The creator owns this descriptor; umask must not silently drop shared-reader rights.
     await handle.chmod(options.mode);
     await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
   } catch (error) {
     await handle.close().catch(() => undefined);
-    if (ino !== undefined) await unlinkIfSame(path, ino).catch(() => undefined);
+    if (ino !== undefined && dev !== undefined)
+      await unlinkIfSame(path, ino, dev).catch(() => undefined);
     throw error;
   }
   const ownedInode = ino;
+  const ownedDevice = dev;
   let released = false;
   return {
     path,
@@ -210,7 +215,7 @@ async function createOwned(
       } finally {
         // A lock reclaimed from under this holder belongs to someone else now;
         // removing it by name would hand the resource to a third process.
-        await unlinkIfSame(path, ownedInode);
+        await unlinkIfSame(path, ownedInode, ownedDevice);
       }
     },
   };
@@ -247,11 +252,20 @@ async function reclaimUnderGuard(
   try {
     // Re-read under the guard: the lock seen before it may have been reclaimed
     // and re-taken by the previous guard holder, and that one is alive.
-    const state = await readLockFile(path);
+    let unsafe = false;
+    const state = await readLockFile(
+      path,
+      () => {
+        unsafe = true;
+      },
+      options.signal,
+    );
+    if (unsafe) return 'refused';
     if (state) {
       const diagnosis = await diagnose(state.owner, options.machineIdentity);
+      if (options.signal?.aborted) return 'refused';
       if (!reclaimable(state, diagnosis, options.ownerlessGraceMs)) return 'refused';
-      await unlinkIfSame(path, state.ino);
+      await unlinkIfSame(path, state.ino, state.dev);
     }
     // An ordinary acquirer never unlinks, but it may create the file between
     // that unlink and this create; it then holds the lock, and this refuses.
@@ -279,13 +293,18 @@ export async function attemptExclusiveLock(
     if (!isCode(error, 'EEXIST')) throw error;
     if (!options.reclaim) return { error };
     let readFailure: unknown;
-    const state = await readLockFile(path, (cause) => {
-      readFailure = cause;
-    });
+    const state = await readLockFile(
+      path,
+      (cause) => {
+        readFailure = cause;
+      },
+      options.signal,
+    );
     const diagnosis = {
       ...(await diagnose(state?.owner, options.machineIdentity)),
       ...(readFailure !== undefined && { cause: readFailure }),
     };
+    if (options.signal?.aborted) return { error, diagnosis };
     if (!state || !reclaimable(state, diagnosis, options.ownerlessGraceMs)) {
       return { error, diagnosis };
     }

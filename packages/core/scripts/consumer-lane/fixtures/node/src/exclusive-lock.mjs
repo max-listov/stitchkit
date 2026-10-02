@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { withExclusiveLock } from 'stitchkit/files';
+import { verifyExclusiveLockBoundaries } from './exclusive-lock-boundaries.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-packed-lock-'));
 const lockPath = path.join(root, 'owner.lock');
@@ -38,6 +39,7 @@ try {
     withExclusiveLock(lockPath, () => undefined, options),
     /gave up/,
   );
+  verifyExclusiveLockBoundaries();
   console.log('packed exclusive lock process identity: ok');
 } finally {
   await rm(root, { recursive: true, force: true });

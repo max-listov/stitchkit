@@ -1,4 +1,9 @@
-import { type GreenGateRecord, writeGreenGate } from './gate-memo';
+import {
+  forgetGreenGate,
+  type GreenGateRecord,
+  greenGateKey,
+  writeGreenGate,
+} from './gate-memo';
 import { FAST_GATE, FAST_STEPS, type VerifyProfile } from './verify-profiles';
 
 /** Save only successfully completed coverage, keyed by the inputs each gate reads. */
@@ -13,5 +18,22 @@ export async function saveGreenEvidence(
     // Portable checks do not depend on PostgreSQL or installed browser versions.
     // A separate attestation avoids weakening heavy gates' environment keys.
     await writeGreenGate(FAST_GATE, { ...record, toolchain: runtimeToolchain }, memo);
+  }
+}
+
+/** A mixed run supplies no reusable attestation, including the fast subset. */
+export async function invalidateGreenEvidence(
+  profile: VerifyProfile,
+  record: GreenGateRecord,
+  runtimeToolchain: string,
+  memo: string,
+): Promise<void> {
+  await forgetGreenGate(profile.gate, greenGateKey(record), memo);
+  if (profile.gate !== FAST_GATE && FAST_STEPS.every((step) => profile.steps.includes(step))) {
+    await forgetGreenGate(
+      FAST_GATE,
+      greenGateKey({ ...record, toolchain: runtimeToolchain }),
+      memo,
+    );
   }
 }

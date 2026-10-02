@@ -1,6 +1,27 @@
 import { raceAbort } from '../internal/abort-race';
 import { NativeCommandError } from './contract';
 
+/** Chain native-sized timers; internal callers retain their declared safe-integer deadline. */
+export function createCommandDeadline(timeoutMs: number, reason: unknown) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
+    throw new RangeError('Command deadline must be a positive safe integer');
+  const controller = new AbortController();
+  const deadline = performance.now() + timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = () => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) controller.abort(reason);
+    else timer = setTimeout(schedule, Math.min(remaining, 2_147_483_647));
+  };
+  schedule();
+  return {
+    signal: controller.signal,
+    cancel() {
+      if (timer !== undefined) clearTimeout(timer);
+    },
+  };
+}
+
 function deniedOnDarwin(error: unknown): boolean {
   return (
     process.platform === 'darwin' &&
@@ -54,8 +75,13 @@ export async function stopCommandGroup(
   pid: number | undefined,
   graceMs: number,
   cleanupTimeoutMs = 2000,
+  force = false,
 ): Promise<void> {
   const deadline = Date.now() + graceMs + cleanupTimeoutMs;
+  if (force) {
+    await signalUntilSettled(pid, 'SIGKILL', deadline);
+    return;
+  }
   await signalUntilSettled(pid, 'SIGTERM', deadline);
   const until = Date.now() + graceMs;
   while (Date.now() < until && exists(pid))
@@ -72,5 +98,9 @@ export function commandCleanupError(cause: unknown): NativeCommandError {
 }
 
 export function waitForCommandClose<T>(closed: Promise<T>, timeoutMs: number): Promise<T> {
-  return raceAbort(closed, AbortSignal.timeout(timeoutMs));
+  const deadline = createCommandDeadline(
+    timeoutMs,
+    new DOMException('Command settlement timed out', 'TimeoutError'),
+  );
+  return raceAbort(closed, deadline.signal).finally(() => deadline.cancel());
 }

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findGreenGate, greenGateKey, readGreenGates } from './gate-memo';
-import { saveGreenEvidence } from './verify-evidence';
+import { invalidateGreenEvidence, saveGreenEvidence } from './verify-evidence';
 import { FAST_GATE, FAST_STEPS, PROFILES, releaseProfile } from './verify-profiles';
 
 const roots: string[] = [];
@@ -22,6 +22,18 @@ const record = {
   commit: 'before-commit',
 };
 const runtime = 'bun:1 node:24';
+
+test('rejecting a mixed run revokes its matching full and fast attestations, keeping unrelated history', async () => {
+  const memo = join(await directory(), 'memo.json');
+  await saveGreenEvidence(PROFILES.full, { ...record, tree: 'unrelated-tree' }, runtime, memo);
+  await saveGreenEvidence(PROFILES.full, record, runtime, memo);
+  await invalidateGreenEvidence(PROFILES.full, record, runtime, memo);
+  for (const gate of [PROFILES.full.gate, FAST_GATE]) {
+    const history = await readGreenGates(gate, memo);
+    expect(history).toHaveLength(1);
+    expect(history[0]?.tree).toBe('unrelated-tree');
+  }
+});
 
 test('a full gate certifies the fast subset without weakening its heavy environment key', async () => {
   const memo = join(await directory(), 'memo.json');

@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-09-28 13:25 +07:00
+updated: 2026-10-02 16:28 +07:00
 ---
 
 # Agent application runtime architecture
@@ -29,6 +29,8 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 | Resource discovery and containment | Stitchkit optional leaf | explicit roots, shared contained walker and bounded lazy reads |
 | Resource trust, root IDs and precedence | application/host | declared roots and provenance policy |
 | Coding-tool authorization and concrete limits | application/host | `agent-runtime/coding-tools` configuration |
+| Native command launch, drain, cancellation and settlement | neutral Stitchkit owner | `process/command-owner.ts`; structural host launchers use its internal transport adapter |
+| Coding command previews, artifacts and descendant policy | agent-runtime | `coding-shell-process.ts` composes the neutral owner; sandbox admission tracks its shutdown barrier |
 | Control protocol, leases and pure view projection | Stitchkit optional leaf | harness and browser-safe schemas/reducer |
 | Process placement, restart, control transport/authentication and OS isolation | external supervisor | outside Stitchkit |
 | External effect idempotency | application | stable run/call identity and business transaction |

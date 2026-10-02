@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { runNativeCommand } from '../packages/core/src/process/command';
 
 /**
  * One green run of one gate, remembered by what it actually checked.
@@ -104,10 +106,10 @@ export async function readGreenGates(gate: string, path: string): Promise<GreenG
   }
 }
 
-export async function writeGreenGate(
+async function updateGreenGate(
   gate: string,
-  record: GreenGateRecord,
   path: string,
+  update: (history: GreenGateRecord[]) => GreenGateRecord[],
 ): Promise<void> {
   let document: Record<string, unknown> = {};
   try {
@@ -121,9 +123,23 @@ export async function writeGreenGate(
     typeof gates === 'object' && gates !== null ? { ...gates } : {};
   const previous: unknown = Reflect.get(existing, gate);
   const history = Array.isArray(previous) ? previous.filter(isRecord) : [];
-  Reflect.set(existing, gate, rememberGreenGate(history, record));
+  Reflect.set(existing, gate, update(history));
   await mkdir(join(path, '..'), { recursive: true });
   await writeFile(path, `${JSON.stringify({ ...document, gates: existing }, null, 2)}\n`);
+}
+
+export function writeGreenGate(
+  gate: string,
+  record: GreenGateRecord,
+  path: string,
+): Promise<void> {
+  return updateGreenGate(gate, path, (history) => rememberGreenGate(history, record));
+}
+
+export function forgetGreenGate(gate: string, key: string, path: string): Promise<void> {
+  return updateGreenGate(gate, path, (history) =>
+    history.filter((record) => greenGateKey(record) !== key),
+  );
 }
 
 async function git(
@@ -208,10 +224,9 @@ export async function toolchainFingerprint(): Promise<string> {
  * unchanged, the key is unchanged — and the memo would answer for a run that
  * happened under different conditions.
  *
- * Deliberately cheap and deliberately fail-safe. Anything that cannot be
- * measured becomes a marker of its own, so an unreachable database produces a
- * DIFFERENT key rather than the same one: the failure mode is a redundant full
- * run, never a skip that should not have happened.
+ * Connection identity and measured server version are included without exposing
+ * credentials. This does not attest all database permissions/configuration or browser
+ * binary bytes; their actual behavior remains part of the executed lanes.
  *
  * The supervisor needs no entry here: it is a pinned devDependency, so it lives
  * in the lockfile, and the lockfile is part of the tree.
@@ -222,6 +237,11 @@ export async function laneEnvironmentFingerprint(
   return `${await postgresFingerprint(environment)} ${await browserFingerprint(environment)}`;
 }
 
+/** An unknown external input is a diagnostic marker, never permission to reuse a heavy run. */
+export function laneEnvironmentIsReusable(fingerprint: string): boolean {
+  return !/pg:(?:unreachable|unmeasurable|unknown)|browsers:(?:absent|none)/.test(fingerprint);
+}
+
 /**
  * Asked the same two ways the lanes ask.
  *
@@ -230,22 +250,60 @@ export async function laneEnvironmentFingerprint(
  * only the first would have read `pg:unset` for ever on a machine that uses the
  * second — a constant, which is the same as not measuring at all.
  */
-async function postgresFingerprint(
+export async function postgresFingerprint(
   environment: Record<string, string | undefined>,
+  timeoutMs = 1000,
 ): Promise<string> {
   const url = environment.STARTER_TEST_DATABASE_ADMIN_URL?.trim();
   const command = url
     ? ['psql', url, '-tAc', 'select version()']
     : ['sudo', '-n', '-u', 'postgres', 'psql', '-tAc', 'select version()'];
+  const connection = postgresConnectionFingerprint(url);
   try {
-    const child = Bun.spawn(command, { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' });
-    const text = (await new Response(child.stdout).text()).trim();
-    if ((await child.exited) !== 0 || !text) return 'pg:unreachable';
+    const [executable, ...args] = command;
+    if (!executable) throw new Error('Missing fingerprint executable');
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(environment))
+      if (value !== undefined) env[name] = value;
+    const result = await runNativeCommand({
+      executable,
+      args,
+      envPolicy: 'ambient',
+      env,
+      timeoutMs,
+      killGraceMs: 0,
+      cleanupTimeoutMs: 500,
+      capture: true,
+      maxOutputBytes: 16 * 1024,
+    });
+    const text = new TextDecoder().decode(result.stdout).trim();
+    if (result.exitCode !== 0 || !text) return `pg:unreachable:${connection}`;
     // The server version only — the rest of the banner carries a build string
     // that moves without the behaviour moving.
-    return `pg:${/PostgreSQL (\S+)/.exec(text)?.[1] ?? 'unknown'}`;
+    return `pg:${/PostgreSQL (\S+)/.exec(text)?.[1] ?? 'unknown'}:${connection}`;
   } catch {
-    return 'pg:unmeasurable';
+    return `pg:unmeasurable:${connection}`;
+  }
+}
+
+/** Safe connection coordinates, never a password or a raw private endpoint. */
+export function postgresConnectionFingerprint(url: string | undefined): string {
+  if (!url) return 'local-socket';
+  try {
+    const parsed = new URL(url);
+    const coordinates = [
+      parsed.protocol,
+      parsed.hostname,
+      parsed.port,
+      parsed.pathname,
+      parsed.username,
+      // libpq URI parameters can override host/port/user/database and select services.
+      // Hash their ordered values too; credentials never become a reusable identity.
+      [...parsed.searchParams].filter(([name]) => name !== 'password'),
+    ];
+    return createHash('sha256').update(JSON.stringify(coordinates)).digest('hex');
+  } catch {
+    return 'invalid-connection';
   }
 }
 

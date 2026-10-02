@@ -66,13 +66,34 @@ const NativeCommandResultSchema = z.object({
 });
 export type NativeCommandResult = z.infer<typeof NativeCommandResultSchema>;
 
+const NativeCommandLimitReasonSchema = z.enum(['deadline', 'output-budget']);
+
 export class NativeCommandError extends Error {
+  /** Observed owner limit; absent on non-limit and caller-constructed errors without evidence. */
+  public readonly reason: z.infer<typeof NativeCommandLimitReasonSchema> | undefined;
+
+  constructor(
+    code: 'COMMAND_LIMIT',
+    message: string,
+    options?: ErrorOptions & { reason?: z.infer<typeof NativeCommandLimitReasonSchema> },
+  );
+  constructor(
+    code: 'COMMAND_LIMIT' | 'COMMAND_UNAVAILABLE' | 'COMMAND_CLEANUP',
+    message: string,
+    options?: ErrorOptions & { reason?: never },
+  );
   constructor(
     public readonly code: 'COMMAND_LIMIT' | 'COMMAND_UNAVAILABLE' | 'COMMAND_CLEANUP',
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { reason?: z.infer<typeof NativeCommandLimitReasonSchema> },
   ) {
     super(message, options);
+    if (options?.reason !== undefined && code !== 'COMMAND_LIMIT')
+      throw new TypeError('Only COMMAND_LIMIT accepts a limit reason');
+    this.reason =
+      options?.reason === undefined
+        ? undefined
+        : NativeCommandLimitReasonSchema.parse(options.reason);
     this.name = 'NativeCommandError';
   }
 }

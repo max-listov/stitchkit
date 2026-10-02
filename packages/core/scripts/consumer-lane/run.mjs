@@ -28,6 +28,11 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  declarationProofArguments,
+  installedConsumerProofs,
+  runInstalledConsumerProofs,
+} from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
@@ -174,36 +179,36 @@ try {
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
-    if (name === 'minimal') {
-      for (const runtime of ['bun', 'node']) {
-        const proof = step(`minimal: native primitives (${runtime})`, () =>
-          run(runtime, ['src/native-primitives.mjs'], dir),
-        );
-        if (!proof.includes('packed native primitives: ok'))
-          throw new Error(`Missing ${runtime} native primitives proof`);
+    if (name === 'minimal' || name === 'node') {
+      if (containedFilesOnly) {
+        for (const proof of installedConsumerProofs.filter(
+          (proof) => proof.fixture !== name,
+        )) {
+          for (const file of [proof.entry, ...proof.files])
+            cpSync(join(here, 'fixtures', proof.fixture, 'src', file), join(dir, 'src', file));
+        }
       }
-    }
-    if (name === 'node') {
-      for (const runtime of ['bun', 'node']) {
-        const proof = step(`node: native owners (${runtime})`, () =>
-          run(runtime, ['src/native-owners.mjs'], dir),
-        );
-        if (!proof.includes('packed native owners: ok'))
-          throw new Error(`Missing ${runtime} native owners proof`);
-      }
-      step('neutral library install and types', () => qualifyNeutralLibrary(dir));
-      for (const runtime of ['bun', 'node']) {
-        const effect = step(`node: effect lease (${runtime})`, () =>
-          run(runtime, ['src/effect-lease.mjs'], dir),
-        );
-        if (!effect.includes('packed effect external lease two-process: ok'))
-          throw new Error(`Missing ${runtime} effect lease proof`);
-        const proof = step(`node: process-owned lock (${runtime})`, () =>
-          run(runtime, ['src/exclusive-lock.mjs'], dir),
-        );
-        if (!proof.includes('packed exclusive lock process identity: ok'))
-          throw new Error(`Missing ${runtime} process-owned lock proof`);
-      }
+      await runInstalledConsumerProofs({
+        fixture: containedFilesOnly ? undefined : name,
+        platform: process.platform,
+        run: async (proof, runtime) =>
+          step(`${name}: ${proof.id} (${runtime})`, () =>
+            runtime === 'types'
+              ? run(
+                  'bun',
+                  [
+                    join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
+                    ...declarationProofArguments(`src/${proof.entry}`),
+                  ],
+                  dir,
+                )
+              : run(runtime, [`src/${proof.entry}`], dir),
+          ),
+        verdict: (proof, runtime, state) =>
+          console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
+      });
+      if (name === 'node')
+        step('neutral library install and types', () => qualifyNeutralLibrary(dir));
     }
 
     if (containedFilesOnly) {
@@ -509,12 +514,6 @@ try {
         );
       }
       for (const runtime of ['bun', 'node']) {
-        const helpOutput = step(`node: CLI help limits (${runtime})`, () =>
-          run(runtime, ['src/cli-help-limits.mjs'], dir),
-        );
-        if (!helpOutput.includes('packed CLI help limits: ok')) {
-          throw new Error(`Missing ${runtime} CLI help limit proof`);
-        }
         const annotationOutput = step(`node: union annotations (${runtime})`, () =>
           run(runtime, ['src/union-annotations.mjs'], dir),
         );

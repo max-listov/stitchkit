@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { type CgroupMemoryBudget, cgroupMemoryBudget } from './gate-cgroup-memory';
+import { watchWorktreeInputs, worktreeInputGeneration } from './gate-input-generation';
 import {
   findGreenGate,
   type GreenGateRecord,
@@ -7,12 +9,19 @@ import {
   greenGateKey,
   headCommit,
   laneEnvironmentFingerprint,
+  laneEnvironmentIsReusable,
   readGreenGates,
   toolchainFingerprint,
   worktreeTreeHash,
 } from './gate-memo';
-import { saveGreenEvidence } from './verify-evidence';
-import { PROFILES, releaseProfile, VERIFY_FLAGS, type VerifyProfile } from './verify-profiles';
+import { invalidateGreenEvidence, saveGreenEvidence } from './verify-evidence';
+import {
+  FAST_STEPS,
+  PROFILES,
+  releaseProfile,
+  VERIFY_FLAGS,
+  type VerifyProfile,
+} from './verify-profiles';
 
 const root = join(import.meta.dir, '..');
 
@@ -48,7 +57,7 @@ export const MAX_HEAVY_CONCURRENCY = 2;
  *
  * Three outcomes, not two. `/proc/meminfo` does not exist on macOS and may be
  * unreadable in a container, and "could not measure" must not arrive looking
- * like a measurement — it keeps the historical default and says so.
+ * like a measurement — the scheduler uses one lane and says so.
  */
 export function availableMemoryGib(meminfo?: string): number | undefined {
   let text = meminfo;
@@ -94,6 +103,16 @@ export function availableMemoryGib(meminfo?: string): number | undefined {
  */
 export const SWAP_EXHAUSTED_FRACTION = 0.05;
 
+/** Host headroom cannot authorize memory that the execution cgroup denies. */
+export function availableGateMemoryGib(
+  host = availableMemoryGib(),
+  cgroup: CgroupMemoryBudget = cgroupMemoryBudget(),
+): number | undefined {
+  if (cgroup.kind === 'unavailable') return undefined;
+  if (cgroup.kind !== 'bounded') return host;
+  return host === undefined ? cgroup.availableGib : Math.min(host, cgroup.availableGib);
+}
+
 export interface HeavyConcurrencyChoice {
   readonly concurrency: number;
   /** Why this number — the line the gate prints, so the choice is never silent. */
@@ -125,7 +144,7 @@ export function chooseHeavyConcurrency(
   // `undefined` and the default fires for both — so the unmeasurable branch was
   // unreachable from a test, and would have been unreachable from any caller
   // that wanted to state it. The test asking for that branch is what found it.
-  measure: () => number | undefined = availableMemoryGib,
+  measure: () => number | undefined = availableGateMemoryGib,
 ): HeavyConcurrencyChoice {
   if (raw !== undefined && raw !== '') {
     const parsed = Number(raw);
@@ -137,8 +156,8 @@ export function chooseHeavyConcurrency(
   const available = measure();
   if (available === undefined) {
     return {
-      concurrency: MAX_HEAVY_CONCURRENCY,
-      because: 'available memory could not be read, keeping the default',
+      concurrency: 1,
+      because: 'available memory could not be read, using one heavy lane',
     };
   }
   const affordable = Math.floor(available / HEAVY_LANE_MEMORY_GIB);
@@ -155,7 +174,7 @@ export function chooseHeavyConcurrency(
  * which is not the same fact as "there was plenty" and must not print like it.
  */
 export function startMemoryFloor(
-  measure: () => number | undefined = availableMemoryGib,
+  measure: () => number | undefined = availableGateMemoryGib,
   everyMs = 2_000,
 ): () => number | undefined {
   let floor = measure();
@@ -174,7 +193,7 @@ export function startMemoryFloor(
 /** The number alone, for callers that do not print the reason. */
 export function heavyConcurrency(
   raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
-  measure: () => number | undefined = availableMemoryGib,
+  measure: () => number | undefined = availableGateMemoryGib,
 ): number {
   return chooseHeavyConcurrency(raw, measure).concurrency;
 }
@@ -281,65 +300,95 @@ async function main(): Promise<void> {
 
   const memo = gateMemoPath();
   const runtimeToolchain = await toolchainFingerprint();
-  const toolchain = profile.usesLaneEnvironment
-    ? `${runtimeToolchain} ${await laneEnvironmentFingerprint()}`
-    : runtimeToolchain;
-  const before = await worktreeTreeHash(root);
-  const key = greenGateKey({ tree: before, toolchain });
+  const laneEnvironment = profile.usesLaneEnvironment
+    ? await laneEnvironmentFingerprint()
+    : undefined;
+  const reusableEnvironment =
+    laneEnvironment === undefined || laneEnvironmentIsReusable(laneEnvironment);
+  const toolchain =
+    laneEnvironment === undefined
+      ? runtimeToolchain
+      : `${runtimeToolchain} ${laneEnvironment}`;
+  const guard = await watchWorktreeInputs(root);
+  try {
+    const before = await worktreeTreeHash(root);
+    const generation = await worktreeInputGeneration(root);
+    const key = greenGateKey({ tree: before, toolchain });
 
-  if (ifChanged) {
-    const green = await greenRecordFor(profile, key, memo);
-    if (green) {
-      // Named, never silent. A gate that skips without saying so is
-      // indistinguishable from a gate that is not there, and the whole value of
-      // the memo is that a reader can check the claim.
+    if (ifChanged && reusableEnvironment) {
+      const green = await greenRecordFor(profile, key, memo);
+      if (green && !(await guard.finish())) {
+        // Named, never silent. A gate that skips without saying so is
+        // indistinguishable from a gate that is not there, and the whole value of
+        // the memo is that a reader can check the claim.
+        process.stderr.write(
+          `[gate] skipping ${profile.steps.join(', ')}: this exact working tree ${before.slice(0, 12)} passed \`${green.gate}\` at ${green.record.at} on ${green.record.toolchain} (HEAD was ${green.record.commit}). Any edit to any file runs it again.\n`,
+        );
+        return;
+      }
+    }
+
+    const buildIndex = profile.steps.indexOf('build');
+    const sequential =
+      buildIndex === -1 ? profile.steps : profile.steps.slice(0, buildIndex + 1);
+    const heavy = buildIndex === -1 ? [] : profile.steps.slice(buildIndex + 1);
+    for (const step of sequential) {
+      process.stderr.write(`[gate] ${step}\n`);
+      await runStep(step);
+    }
+    // Measured, not asserted. The heavy lanes build Next twice, drive real
+    // browsers and run a supervisor; two of them at once on a host that cannot
+    // hold both get timeouts rather than results. `VERIFY_HEAVY_CONCURRENCY`
+    // still wins — the host is asked only when nobody has answered.
+    if (heavy.length > 0) {
+      const choice = chooseHeavyConcurrency();
       process.stderr.write(
-        `[gate] skipping ${profile.steps.join(', ')}: this exact working tree ${before.slice(0, 12)} passed \`${green.gate}\` at ${green.record.at} on ${green.record.toolchain} (HEAD was ${green.record.commit}). Any edit to any file runs it again.\n`,
+        `[gate] heavy lanes: ${choice.concurrency} at a time (${choice.because})\n`,
+      );
+      await runBounded(heavy, choice.concurrency, async (step) => {
+        process.stderr.write(`[gate] ${step}\n`);
+        await runStep(step);
+      });
+    }
+
+    const after = await worktreeTreeHash(root);
+    const changed =
+      after !== before ||
+      generation !== (await worktreeInputGeneration(root)) ||
+      (await guard.finish());
+    const record = {
+      tree: before,
+      toolchain,
+      at: new Date().toISOString(),
+      commit: await headCommit(root),
+    };
+    if (changed) {
+      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
+      process.stderr.write(
+        `[gate] ${profile.gate} completed, but its inputs changed during the run (${before.slice(0, 12)} to ${after.slice(0, 12)}); no reusable green memo was saved.\n`,
       );
       return;
     }
+    if (!reusableEnvironment) {
+      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
+      if (FAST_STEPS.every((step) => profile.steps.includes(step))) {
+        await saveGreenEvidence(
+          PROFILES.fast,
+          { ...record, toolchain: runtimeToolchain },
+          runtimeToolchain,
+          memo,
+        );
+      }
+      process.stderr.write(
+        `[gate] ${profile.gate} completed; external inputs were not fully measurable, no heavy memo saved.\n`,
+      );
+      return;
+    }
+    await saveGreenEvidence(profile, record, runtimeToolchain, memo);
+    process.stderr.write(`[gate] ${profile.gate} green for tree ${before.slice(0, 12)}.\n`);
+  } finally {
+    await guard.finish();
   }
-
-  const buildIndex = profile.steps.indexOf('build');
-  const sequential =
-    buildIndex === -1 ? profile.steps : profile.steps.slice(0, buildIndex + 1);
-  const heavy = buildIndex === -1 ? [] : profile.steps.slice(buildIndex + 1);
-  for (const step of sequential) {
-    process.stderr.write(`[gate] ${step}\n`);
-    await runStep(step);
-  }
-  // Measured, not asserted. The heavy lanes build Next twice, drive real
-  // browsers and run a supervisor; two of them at once on a host that cannot
-  // hold both get timeouts rather than results. `VERIFY_HEAVY_CONCURRENCY`
-  // still wins — the host is asked only when nobody has answered.
-  if (heavy.length > 0) {
-    const choice = chooseHeavyConcurrency();
-    process.stderr.write(
-      `[gate] heavy lanes: ${choice.concurrency} at a time (${choice.because})\n`,
-    );
-    await runBounded(heavy, choice.concurrency, async (step) => {
-      process.stderr.write(`[gate] ${step}\n`);
-      await runStep(step);
-    });
-  }
-
-  // The record is of the tree the run STARTED from — the input it actually
-  // checked. If a step regenerated a committed artifact the tree has moved on,
-  // and the memo deliberately will not answer for where it moved to.
-  await saveGreenEvidence(
-    profile,
-    { tree: before, toolchain, at: new Date().toISOString(), commit: await headCommit(root) },
-    runtimeToolchain,
-    memo,
-  );
-  const after = await worktreeTreeHash(root);
-  if (after !== before) {
-    process.stderr.write(
-      `[gate] ${profile.gate} green, and the run itself changed the tree (${before.slice(0, 12)} to ${after.slice(0, 12)}) — commit or revert what it produced; the memo answers only for the tree the run started from.\n`,
-    );
-    return;
-  }
-  process.stderr.write(`[gate] ${profile.gate} green for tree ${before.slice(0, 12)}.\n`);
 }
 
 if (import.meta.main) {

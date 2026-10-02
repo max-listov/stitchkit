@@ -1,94 +1,107 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
-import type { Readable } from 'node:stream';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { raceAbort } from '../internal/abort-race';
 import {
   NativeCommandError,
   type NativeCommandOptions,
   NativeCommandOptionsSchema,
   type NativeCommandResult,
-  type NativeCommandSettlement,
 } from './contract';
-import { commandCleanupError, stopCommandGroup, waitForCommandClose } from './group';
-import { createLeaderSettlement } from './leader-settlement';
+import {
+  commandCleanupError,
+  createCommandDeadline,
+  stopCommandGroup,
+  waitForCommandClose,
+} from './group';
+import {
+  launchNativeCommand,
+  type NativeCommandLaunchDriver,
+  nativeCommandBudgets,
+  registerNativeCommandOwner,
+} from './launch';
+import { createLeaderCloseDeadline, createLeaderSettlement } from './leader-settlement';
+import { failedCommandStart } from './start-failure';
 
 /** One-shot native execution; sandbox policy/admission is composed above this owner. */
 export function startNativeCommand(
   input: NativeCommandOptions,
   onSpawn?: (child: ChildProcessWithoutNullStreams) => void,
+  driver?: NativeCommandLaunchDriver,
 ) {
   const options = NativeCommandOptionsSchema.parse(input);
   options.signal?.throwIfAborted();
-  if (process.platform === 'win32')
+  if (process.platform === 'win32' && driver?.group !== false)
     throw new NativeCommandError('COMMAND_UNAVAILABLE', 'POSIX process groups are required');
+  const { cleanupTimeoutMs, timeoutMs } = nativeCommandBudgets(options, driver);
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
-  const timer =
-    options.timeoutMs === undefined
+  const deadline =
+    timeoutMs === undefined
       ? undefined
-      : setTimeout(
-          () =>
-            controller.abort(
-              new NativeCommandError('COMMAND_LIMIT', 'Command deadline exceeded'),
-            ),
-          options.timeoutMs,
+      : createCommandDeadline(
+          timeoutMs,
+          new NativeCommandError('COMMAND_LIMIT', 'Command deadline exceeded', {
+            reason: 'deadline',
+          }),
         );
-  let child: ChildProcessWithoutNullStreams;
+  const expired = () => controller.abort(deadline?.signal.reason);
+  if (deadline?.signal.aborted) expired();
+  else deadline?.signal.addEventListener('abort', expired, { once: true });
+  const settle = createLeaderSettlement({ ...options, cleanupTimeoutMs }, controller.signal);
+  let spawnFailure: unknown;
+  let launched: ReturnType<typeof launchNativeCommand>;
   try {
-    child = spawn(options.executable, options.args, {
-      cwd: options.cwd,
-      env:
-        options.envPolicy === 'ambient'
-          ? { ...process.env, ...options.env }
-          : (options.env ?? {}),
-      detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    launched = launchNativeCommand(
+      options,
+      driver,
+      onSpawn,
+      (error) => {
+        spawnFailure = new NativeCommandError(
+          'COMMAND_UNAVAILABLE',
+          'Command could not start',
+          {
+            cause: error,
+          },
+        );
+        controller.abort(spawnFailure);
+      },
+      (error) => controller.abort(error),
+    );
   } catch (cause) {
-    if (timer !== undefined) clearTimeout(timer);
+    deadline?.cancel();
+    deadline?.signal.removeEventListener('abort', expired);
     options.signal?.removeEventListener('abort', abort);
-    throw new NativeCommandError('COMMAND_UNAVAILABLE', 'Command could not start', { cause });
+    controller.abort(cause);
+    return failedCommandStart(cause, settle);
   }
   const stdout: Uint8Array[] = [];
   const stderr: Uint8Array[] = [];
   let total = 0;
   let finished = false;
-  let spawnFailure: unknown;
-  const settle = createLeaderSettlement(options, controller.signal);
-  const leader = new Promise<NativeCommandSettlement>((resolve) => {
-    child.once('exit', (exitCode, signal) => resolve({ kind: 'exit', exitCode, signal }));
-    child.once('error', (cause) => resolve({ kind: 'error', cause }));
-  });
-  // Observe each owned handle before teardown. Some runtimes do not emit the
-  // aggregate child close after an exited leader's inherited pipes are destroyed.
-  const pendingHandles = new Set(['leader', 'stdin', 'stdout', 'stderr']);
-  const released = Promise.all([
-    leader.then(() => pendingHandles.delete('leader')),
-    ...(['stdin', 'stdout', 'stderr'] as const).map(
-      (name) =>
-        new Promise<void>((resolve) =>
-          child[name].once('close', () => {
-            pendingHandles.delete(name);
-            resolve();
-          }),
-        ),
-    ),
-  ]);
-  const closed = new Promise<{ exitCode: number | null; signal: string | null }>((resolve) => {
-    child.once('error', (error) => {
-      spawnFailure = new NativeCommandError('COMMAND_UNAVAILABLE', 'Command could not start', {
-        cause: error,
-      });
-      controller.abort(spawnFailure);
-    });
-    child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
-  });
-  child.stdin.on('error', (error) => {
-    if (!('code' in error && error.code === 'EPIPE')) controller.abort(error);
-  });
+  const {
+    child,
+    stdout: output,
+    stderr: errorOutput,
+    leader,
+    closed,
+    released,
+    pendingHandles,
+  } = launched;
+  const cancelCloseDeadline = createLeaderCloseDeadline(
+    leader,
+    driver?.closeTimeoutMs,
+    controller,
+  );
+  const signalOwned = (force = driver?.force) =>
+    driver?.group === false || (driver?.launch && child.pid === undefined)
+      ? Promise.resolve().then(() => {
+          if (child.exitCode === null && child.signalCode === null && !child.kill('SIGKILL'))
+            throw new Error('Command leader termination was refused');
+        })
+      : stopCommandGroup(child.pid, options.killGraceMs, cleanupTimeoutMs, force);
   const drain = async (
-    stream: Readable,
+    stream: AsyncIterable<Uint8Array>,
     channel: 'stdout' | 'stderr',
     captured: Uint8Array[],
   ) => {
@@ -99,7 +112,9 @@ export function startNativeCommand(
         throw new TypeError('Expected binary command output');
       total += chunk.byteLength;
       if (options.maxOutputBytes !== undefined && total > options.maxOutputBytes)
-        throw new NativeCommandError('COMMAND_LIMIT', 'Command output budget exceeded');
+        throw new NativeCommandError('COMMAND_LIMIT', 'Command output budget exceeded', {
+          reason: 'output-budget',
+        });
       if (options.capture) captured.push(Uint8Array.from(chunk));
       if (options.onOutput)
         await raceAbort(
@@ -113,11 +128,10 @@ export function startNativeCommand(
   };
   const result = (async (): Promise<NativeCommandResult> => {
     try {
-      onSpawn?.(child);
-      child.stdin.end(options.stdin);
+      launched.start();
       const drains = Promise.all([
-        drain(child.stdout, 'stdout', stdout),
-        drain(child.stderr, 'stderr', stderr),
+        drain(output, 'stdout', stdout),
+        drain(errorOutput, 'stderr', stderr),
       ]);
       await raceAbort(Promise.all([drains, leader.then(settle)]), controller.signal);
       const status = await raceAbort(closed, controller.signal);
@@ -125,25 +139,21 @@ export function startNativeCommand(
       return { ...status, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
     } catch (error) {
       controller.abort(error);
-      child.stdin.destroy();
-      child.stdout.destroy();
-      child.stderr.destroy();
       const cleanup = await Promise.allSettled([
         settle({ kind: 'error', cause: error }),
-        stopCommandGroup(child.pid, options.killGraceMs, options.cleanupTimeoutMs).then(
-          async () => {
-            try {
-              await waitForCommandClose(released, options.cleanupTimeoutMs);
-            } catch (cause) {
-              throw new Error(
-                `Command handles remained open: ${[...pendingHandles].join(', ')}`,
-                {
-                  cause,
-                },
-              );
-            }
-          },
-        ),
+        Promise.resolve().then(() => launched.destroy()),
+        signalOwned().then(async () => {
+          try {
+            await waitForCommandClose(released, cleanupTimeoutMs);
+          } catch (cause) {
+            throw new Error(
+              `Command handles remained open: ${[...pendingHandles].join(', ')}`,
+              {
+                cause,
+              },
+            );
+          }
+        }),
       ]);
       const failures = cleanup.flatMap((item) =>
         item.status === 'rejected' && item.reason !== error ? [item.reason] : [],
@@ -156,21 +166,54 @@ export function startNativeCommand(
       throw error;
     } finally {
       finished = true;
-      if (timer !== undefined) clearTimeout(timer);
+      cancelCloseDeadline();
+      deadline?.cancel();
+      deadline?.signal.removeEventListener('abort', expired);
       options.signal?.removeEventListener('abort', abort);
       // Releases the sink lifetime also after a successful complete drain.
       controller.abort(new Error('Command completed'));
     }
   })();
   void result.catch(() => undefined);
-  return {
+  const owner = {
     result,
+    async terminate() {
+      let refused = false;
+      let refusal: unknown;
+      if (!finished) {
+        try {
+          await signalOwned(true);
+        } catch (error) {
+          refused = true;
+          refusal = error;
+          controller.abort(error);
+        }
+        try {
+          await waitForCommandClose(result, cleanupTimeoutMs);
+        } catch (error) {
+          if (!finished) controller.abort(error);
+        }
+      }
+      await result.then(
+        () => undefined,
+        (error) => {
+          if (error instanceof NativeCommandError && error.code === 'COMMAND_CLEANUP')
+            throw error;
+        },
+      );
+      if (refused) throw commandCleanupError(refusal);
+    },
     async stop() {
       if (!finished) controller.abort(new DOMException('Command stopped', 'AbortError'));
       await result.then(
         () => undefined,
-        () => undefined,
+        (error) => {
+          if (error instanceof NativeCommandError && error.code === 'COMMAND_CLEANUP')
+            throw error;
+        },
       );
     },
   };
+  registerNativeCommandOwner(child, owner);
+  return owner;
 }

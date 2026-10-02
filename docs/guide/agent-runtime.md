@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-09-28 18:39 +07:00
+updated: 2026-10-02 16:28 +07:00
 ---
 
 # Agent application runtime
@@ -360,6 +360,12 @@ portable Windows child-process API cannot kill a complete descendant tree withou
 second host executable, so Windows kills the direct child, destroys retained pipes at the grace
 deadline and makes no descendant-cleanup claim. A signal already aborted before execution returns
 `cancelled` without spawning.
+
+Coding commands compose the shared native execution owner. Artifact retention and UTF-8
+previews remain coding-tool policy; normal leader exit still forcibly stops remaining POSIX
+group members before draining. A structural sandbox launcher uses the same settlement owner
+with a finite output queue. Sandbox shutdown waits for actual owned completion and surfaces
+cleanup refusal rather than treating it as successful teardown.
 
 One `createAgentHarnessFileResources` instance represents one immutable discovery generation:
 concurrent and repeated `load()` calls share it, so a direct resource read cannot cross into a

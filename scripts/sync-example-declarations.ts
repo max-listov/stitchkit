@@ -50,7 +50,16 @@ export async function renderExampleDeclaration(example: string): Promise<string>
 
 if (import.meta.main) {
   for (const example of EXAMPLES) {
-    await writeFile(declarationPath(example), await renderExampleDeclaration(example));
-    console.log(`Wrote ${declarationPath(example)}`);
+    const file = declarationPath(example);
+    const rendered = await renderExampleDeclaration(example);
+    const previous = await readFile(file, 'utf8').catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        return undefined;
+      throw error;
+    });
+    if (previous !== rendered) {
+      await writeFile(file, rendered);
+      console.log(`Wrote ${file}`);
+    }
   }
 }

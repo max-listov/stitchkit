@@ -275,16 +275,16 @@ test('command grace and cleanup options control their native budgets', async () 
   expect(performance.now() - began).toBeGreaterThanOrEqual(65);
 });
 
-test('synchronous spawn failure releases the caller listener and deadline', () => {
+test('synchronous spawn failure releases the caller listener and deadline', async () => {
   const controller = new AbortController();
-  expect(() =>
+  await expect(
     runNativeCommand({
       executable: NODE,
       args: ['\u0000'],
       signal: controller.signal,
       timeoutMs: 1000,
     }),
-  ).toThrow('Command could not start');
+  ).rejects.toThrow('Command could not start');
   expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
 });
 
