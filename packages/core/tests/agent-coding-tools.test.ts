@@ -25,7 +25,28 @@ function executable(tools: ToolSet, name: string) {
   return execute;
 }
 
+function descendantPid(value: string): number {
+  const text = value.trim();
+  const pid = Number(text);
+  if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(pid))
+    throw new Error('Expected a positive descendant PID');
+  return pid;
+}
+
+async function waitForDescendant(file: string): Promise<number> {
+  const deadline = performance.now() + 500;
+  do {
+    if (existsSync(file)) {
+      const text = await readFile(file, 'utf8');
+      if (text.trim()) return descendantPid(text);
+    }
+    await Bun.sleep(10);
+  } while (performance.now() < deadline);
+  throw new Error('Descendant readiness was not observed');
+}
+
 async function expectProcessGone(pid: number): Promise<void> {
+  descendantPid(String(pid));
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
       process.kill(pid, 0);
@@ -999,6 +1020,12 @@ describe('host-authorized Agent coding tools', () => {
   });
 
   if (process.platform !== 'win32') {
+    test('descendant readiness rejects missing, zero and invalid PIDs', () => {
+      for (const value of ['', ' ', '0', '-1', 'not-a-pid', '9007199254740992'])
+        expect(() => descendantPid(value)).toThrow('Expected a positive descendant PID');
+      expect(descendantPid('42\n')).toBe(42);
+    });
+
     test('kills owned descendants and bounds retained pipes on exit, timeout, abort and output limit', async () => {
       const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-process-group-'));
       roots.push(root);
@@ -1009,30 +1036,43 @@ describe('host-authorized Agent coding tools', () => {
           executables: { bash: '/bin/bash' },
           limits: {
             maxShellOutputBytes: 64,
-            shellTimeoutMs: 40,
+            // The descendant must become ready before the execution deadline;
+            // process launch scheduling is part of that deadline's budget.
+            shellTimeoutMs: 1_000,
             shellTerminationGraceMs: 80,
           },
         }),
       });
       const options = { toolCallId: 'process-group', messages: [], context: undefined };
+      const timeoutMarker = path.join(root, 'timeout.pid');
 
       const startedAt = performance.now();
-      const timedOut = ShellOutputSchema.parse(
-        await executable(tools, 'run_command')(
-          { executable: 'bash', args: ['-c', 'sleep 10 & echo $!; wait'] },
-          options,
-        ),
+      const timeoutResult = executable(tools, 'run_command')(
+        {
+          executable: 'bash',
+          args: [
+            '-c',
+            'sleep 0.12; sleep 10 & printf "%s\\n" "$!" > "$1"; wait',
+            '--',
+            timeoutMarker,
+          ],
+        },
+        options,
       );
-      expect(performance.now() - startedAt).toBeLessThan(500);
+      const timeoutPid = await waitForDescendant(timeoutMarker);
+      process.kill(timeoutPid, 0);
+      const timedOut = ShellOutputSchema.parse(await timeoutResult);
+      expect(performance.now() - startedAt).toBeLessThan(1_500);
       expect(timedOut).toMatchObject({ executable: 'bash', outcome: 'timeout' });
-      const timeoutPid = Number(timedOut.stdout.trim());
-      expect(Number.isSafeInteger(timeoutPid)).toBeTrue();
       await expectProcessGone(timeoutPid);
 
       const controller = new AbortController();
-      const abortStartedAt = performance.now();
+      const abortMarker = path.join(root, 'abort.pid');
       const cancelled = executable(tools, 'run_command')(
-        { executable: 'bash', args: ['-c', 'sleep 10 & echo $!; wait'] },
+        {
+          executable: 'bash',
+          args: ['-c', 'sleep 10 & printf "%s\\n" "$!" > "$1"; wait', '--', abortMarker],
+        },
         {
           toolCallId: 'process-group-abort',
           messages: [],
@@ -1040,25 +1080,29 @@ describe('host-authorized Agent coding tools', () => {
           abortSignal: controller.signal,
         },
       );
-      setTimeout(() => controller.abort(), 20);
+      const cancelledPid = await waitForDescendant(abortMarker);
+      process.kill(cancelledPid, 0);
+      const abortStartedAt = performance.now();
+      controller.abort();
       const cancelledResult = ShellOutputSchema.parse(await cancelled);
       expect(performance.now() - abortStartedAt).toBeLessThan(500);
       expect(cancelledResult).toMatchObject({ executable: 'bash', outcome: 'cancelled' });
-      const cancelledPid = Number(cancelledResult.stdout.trim());
-      expect(Number.isSafeInteger(cancelledPid)).toBeTrue();
       await expectProcessGone(cancelledPid);
 
       const exitedAt = performance.now();
+      const exitMarker = path.join(root, 'exit.pid');
       const exited = ShellOutputSchema.parse(
         await executable(tools, 'run_command')(
-          { executable: 'bash', args: ['-c', 'sleep 10 & echo $!'] },
+          {
+            executable: 'bash',
+            args: ['-c', 'sleep 10 & printf "%s\\n" "$!" > "$1"', '--', exitMarker],
+          },
           options,
         ),
       );
       expect(performance.now() - exitedAt).toBeLessThan(500);
       expect(exited).toMatchObject({ executable: 'bash', outcome: 'exited', exitCode: 0 });
-      const exitedPid = Number(exited.stdout.trim());
-      expect(Number.isSafeInteger(exitedPid)).toBeTrue();
+      const exitedPid = await waitForDescendant(exitMarker);
       await expectProcessGone(exitedPid);
 
       const limitedTools = mountAgent([], {
@@ -1074,14 +1118,24 @@ describe('host-authorized Agent coding tools', () => {
         }),
       });
       const limitedAt = performance.now();
+      const limitedMarker = path.join(root, 'output-limit.pid');
       const limited = ShellOutputSchema.parse(
         await executable(limitedTools, 'run_command')(
-          { executable: 'bash', args: ['-c', 'printf 12345; sleep 10 & wait'] },
+          {
+            executable: 'bash',
+            args: [
+              '-c',
+              'sleep 10 & printf "%s\\n" "$!" > "$1"; printf 12345; wait',
+              '--',
+              limitedMarker,
+            ],
+          },
           options,
         ),
       );
       expect(performance.now() - limitedAt).toBeLessThan(500);
       expect(limited).toMatchObject({ executable: 'bash', outcome: 'output-limit' });
+      await expectProcessGone(await waitForDescendant(limitedMarker));
     });
   }
 
