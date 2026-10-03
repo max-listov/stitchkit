@@ -83,7 +83,7 @@ test('a HEAD-only gate and a profile missing lockfile cannot certify fast', asyn
     {
       gate: 'verify:release:incomplete',
       steps: ['lint', 'check', 'test', 'build'],
-      usesLaneEnvironment: true,
+      requiredLaneInputs: [],
     },
   ]) {
     const memo = join(await directory(), 'memo.json');

@@ -13,7 +13,6 @@ import {
   probeProcessOwner,
   runNativeCommand,
 } from 'stitchkit/process';
-import { verifySharedUID } from './native-owner-uid.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'packed-native-owners-'));
 const old = process.umask(0o077);
@@ -141,7 +140,6 @@ try {
       return true;
     },
   );
-  await verifySharedUID('stitchkit/files');
   console.log('packed native owners: ok');
 } finally {
   process.umask(old);

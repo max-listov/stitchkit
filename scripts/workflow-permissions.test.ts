@@ -82,15 +82,17 @@ describe('target-aware CI graph', () => {
   test('the browser and Bun runtime remain immutable and lock-aligned', () => {
     const starter = section('starter', 'artifacts');
     expect(starter).toContain(
-      'v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e',
+      'v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27',
     );
     expect(starter).toContain('BUN_VERSION: 1.4.2');
     expect(starter).toContain('sha512sum --check');
     expect(starter).not.toContain('oven-sh/setup-bun');
   });
 
-  test('one final job makes skipped lanes acceptable but failures fatal', () => {
-    expect(section('result')).toContain("grep -Eq 'failure|cancelled'");
+  test('one named evidence predicate distinguishes deliberate skips from missing proof', () => {
+    expect(section('result')).toContain('bun scripts/ci-evidence.ts result');
+    expect(section('artifacts', 'result')).toContain('bun scripts/ci-evidence.ts assembly');
+    expect(section('result')).toContain('toJSON(needs)');
     expect(section('result')).toContain('if: always()');
   });
 

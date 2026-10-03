@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.12] - 2026-10-03
+
+### Fixed
+
+- `stitchkit/primitives`: bounded canonical JSON serializes one admitted snapshot, preserving
+  historical key order and undefined handling while refusing unstable Proxy reads and oversized
+  escaped UTF-8 output before unbounded encoding. Durable JSON predicates avoid copying or encoding.
+- `stitchkit/process`: post-spawn launch failures retain cleanup ownership; process-group cleanup
+  uses proven ownership and monotonic deadlines. Exclusive-lock stale guards have bounded depth.
+- Direct sandbox launchers retain process-group cleanup through leader settlement.
+- Release tooling requires every selected evidence job and remote exact-SHA push CI before tags;
+  CI covers the complete affected tree independently of which packages are published, preserving
+  package paths across renames and Unicode or control characters in filenames.
+- Gate reuse includes tracked inputs matched by ignore rules, fingerprints only selected external
+  inputs, rechecks them after execution and serializes memo mutations. Memory admission reads exact
+  v1/v2 controller paths, including colons and trailing spaces; registry polling
+  bounds requests, bodies and waits with one elapsed deadline.
+
+
 ## [0.103.11] - 2026-10-02
 
 ### Added

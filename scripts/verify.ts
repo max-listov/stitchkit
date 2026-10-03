@@ -144,7 +144,7 @@ export function chooseHeavyConcurrency(
   // `undefined` and the default fires for both — so the unmeasurable branch was
   // unreachable from a test, and would have been unreachable from any caller
   // that wanted to state it. The test asking for that branch is what found it.
-  measure: () => number | undefined = availableGateMemoryGib,
+  measure?: () => number | undefined,
 ): HeavyConcurrencyChoice {
   if (raw !== undefined && raw !== '') {
     const parsed = Number(raw);
@@ -153,18 +153,20 @@ export function chooseHeavyConcurrency(
     }
     return { concurrency: parsed, because: `VERIFY_HEAVY_CONCURRENCY=${raw}` };
   }
-  const available = measure();
+  const budget = measure ? undefined : cgroupMemoryBudget();
+  const available = measure ? measure() : availableGateMemoryGib(availableMemoryGib(), budget);
+  const source = budget ? ` (cgroup ${budget.kind})` : '';
   if (available === undefined) {
     return {
       concurrency: 1,
-      because: 'available memory could not be read, using one heavy lane',
+      because: `available memory could not be read${source}, using one heavy lane`,
     };
   }
   const affordable = Math.floor(available / HEAVY_LANE_MEMORY_GIB);
   const concurrency = Math.min(MAX_HEAVY_CONCURRENCY, Math.max(1, affordable));
   return {
     concurrency,
-    because: `${available.toFixed(1)} GiB affordable, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
+    because: `${available.toFixed(1)} GiB affordable${source}, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
   };
 }
 
@@ -300,9 +302,10 @@ async function main(): Promise<void> {
 
   const memo = gateMemoPath();
   const runtimeToolchain = await toolchainFingerprint();
-  const laneEnvironment = profile.usesLaneEnvironment
-    ? await laneEnvironmentFingerprint()
-    : undefined;
+  const laneEnvironment =
+    profile.requiredLaneInputs.length > 0
+      ? await laneEnvironmentFingerprint(Bun.env, profile.requiredLaneInputs)
+      : undefined;
   const reusableEnvironment =
     laneEnvironment === undefined || laneEnvironmentIsReusable(laneEnvironment);
   const toolchain =
@@ -315,7 +318,8 @@ async function main(): Promise<void> {
     const generation = await worktreeInputGeneration(root);
     const key = greenGateKey({ tree: before, toolchain });
 
-    if (ifChanged && reusableEnvironment) {
+    const reusableInputs = !generation.startsWith('unattested-symlinks:');
+    if (ifChanged && reusableEnvironment && reusableInputs) {
       const green = await greenRecordFor(profile, key, memo);
       if (green && !(await guard.finish())) {
         // Named, never silent. A gate that skips without saying so is
@@ -351,6 +355,10 @@ async function main(): Promise<void> {
       });
     }
 
+    const environmentAfter =
+      laneEnvironment === undefined
+        ? undefined
+        : await laneEnvironmentFingerprint(Bun.env, profile.requiredLaneInputs);
     const after = await worktreeTreeHash(root);
     const changed =
       after !== before ||
@@ -369,7 +377,18 @@ async function main(): Promise<void> {
       );
       return;
     }
-    if (!reusableEnvironment) {
+    if (!reusableInputs) {
+      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
+      process.stderr.write(
+        `[gate] ${profile.gate} completed; symlink targets are not attested by the Git tree, no reusable memo saved.\n`,
+      );
+      return;
+    }
+    if (
+      !reusableEnvironment ||
+      environmentAfter !== laneEnvironment ||
+      (environmentAfter !== undefined && !laneEnvironmentIsReusable(environmentAfter))
+    ) {
       await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
       if (FAST_STEPS.every((step) => profile.steps.includes(step))) {
         await saveGreenEvidence(
@@ -380,7 +399,7 @@ async function main(): Promise<void> {
         );
       }
       process.stderr.write(
-        `[gate] ${profile.gate} completed; external inputs were not fully measurable, no heavy memo saved.\n`,
+        `[gate] ${profile.gate} completed; external inputs changed or were not fully measurable, no heavy memo saved.\n`,
       );
       return;
     }

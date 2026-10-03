@@ -137,6 +137,14 @@ interface LockFileState {
   readonly mtimeMs: number;
 }
 
+// Each level appends a guard and repeats identity/record IO. Ordinary recovery needs
+// one level; a finite chain also refuses before pathological names or unbounded IO.
+const MAX_RECLAIM_DEPTH = 16;
+interface ReclaimRefusal {
+  readonly refused: true;
+  readonly cause?: unknown;
+}
+
 async function readLockFile(
   path: string,
   onFailure?: (cause: unknown) => void,
@@ -232,45 +240,67 @@ function reclaimable(
 
 /**
  * Take the reclaim guard, re-read the lock under it, and replace the lock only
- * if it is still the dead one. `undefined` means someone else is reclaiming.
+ * if it is still the dead one. A refusal preserves its recovery cause.
  */
 async function reclaimUnderGuard(
   path: string,
   options: ExclusiveLockAttemptOptions,
-): Promise<HeldExclusiveLock | 'refused' | undefined> {
+  depth: number,
+): Promise<HeldExclusiveLock | ReclaimRefusal> {
   const guardPath = `${path}.reclaim`;
+  if (depth >= MAX_RECLAIM_DEPTH)
+    return {
+      refused: true,
+      cause: new Error(
+        `Exclusive lock reclaim guard recovery depth exceeds ${MAX_RECLAIM_DEPTH}`,
+      ),
+    };
   // A stale guard requires the same serialized recovery as a stale lock.
   // Checking its inode and then unlinking without a guard leaves a syscall
   // race in which another reclaimer's newly created guard can be removed.
-  const acquired = await attemptExclusiveLock(guardPath, {
-    ...options,
-    ownerlessGraceMs:
-      options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
-  });
-  if (!('held' in acquired)) return undefined;
+  let acquired: ExclusiveLockAttempt;
+  try {
+    acquired = await attemptExclusiveLock(
+      guardPath,
+      {
+        ...options,
+        ownerlessGraceMs:
+          options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
+      },
+      depth + 1,
+    );
+  } catch (cause) {
+    // Only a generated guard's name refusal belongs to recovery diagnosis.
+    // IO refusal for the caller's original path retains its ordinary native error.
+    if (!isCode(cause, 'ENAMETOOLONG')) throw cause;
+    return { refused: true, cause };
+  }
+  if (!('held' in acquired))
+    return { refused: true, cause: acquired.diagnosis?.cause ?? acquired.error };
   const guard = acquired.held;
   try {
     // Re-read under the guard: the lock seen before it may have been reclaimed
     // and re-taken by the previous guard holder, and that one is alive.
-    let unsafe = false;
+    let readFailure: unknown;
     const state = await readLockFile(
       path,
-      () => {
-        unsafe = true;
+      (cause) => {
+        readFailure = cause;
       },
       options.signal,
     );
-    if (unsafe) return 'refused';
+    if (readFailure !== undefined) return { refused: true, cause: readFailure };
     if (state) {
       const diagnosis = await diagnose(state.owner, options.machineIdentity);
-      if (options.signal?.aborted) return 'refused';
-      if (!reclaimable(state, diagnosis, options.ownerlessGraceMs)) return 'refused';
+      if (options.signal?.aborted) return { refused: true };
+      if (!reclaimable(state, diagnosis, options.ownerlessGraceMs))
+        return { refused: true, cause: diagnosis.cause };
       await unlinkIfSame(path, state.ino, state.dev);
     }
     // An ordinary acquirer never unlinks, but it may create the file between
     // that unlink and this create; it then holds the lock, and this refuses.
     return await createOwned(path, options, state !== undefined).catch((error: unknown) => {
-      if (isCode(error, 'EEXIST')) return 'refused' as const;
+      if (isCode(error, 'EEXIST')) return { refused: true, cause: error };
       throw error;
     });
   } finally {
@@ -286,6 +316,7 @@ async function reclaimUnderGuard(
 export async function attemptExclusiveLock(
   path: string,
   options: ExclusiveLockAttemptOptions,
+  depth = 0,
 ): Promise<ExclusiveLockAttempt> {
   try {
     return { held: await createOwned(path, options, false) };
@@ -308,9 +339,15 @@ export async function attemptExclusiveLock(
     if (!state || !reclaimable(state, diagnosis, options.ownerlessGraceMs)) {
       return { error, diagnosis };
     }
-    const reclaimed = await reclaimUnderGuard(path, options);
-    if (reclaimed !== undefined && reclaimed !== 'refused') return { held: reclaimed };
-    return { error, diagnosis };
+    const reclaimed = await reclaimUnderGuard(path, options, depth);
+    if (!('refused' in reclaimed)) return { held: reclaimed };
+    return {
+      error,
+      diagnosis: {
+        ...diagnosis,
+        ...(reclaimed.cause !== undefined && { cause: reclaimed.cause }),
+      },
+    };
   }
 }
 

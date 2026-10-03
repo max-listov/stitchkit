@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { runNativeCommand } from '../packages/core/src/process/command';
+import { writeFileAtomic } from '../packages/core/src/internal/atomic-file';
+import { withExclusiveLock } from '../packages/core/src/internal/with-exclusive-lock';
 
 /**
  * One green run of one gate, remembered by what it actually checked.
@@ -111,21 +111,38 @@ async function updateGreenGate(
   path: string,
   update: (history: GreenGateRecord[]) => GreenGateRecord[],
 ): Promise<void> {
-  let document: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (typeof parsed === 'object' && parsed !== null) document = { ...parsed };
-  } catch {
-    // No memo yet, or one this version cannot read. Either way it is rewritten.
-  }
-  const gates = Reflect.get(document, 'gates');
-  const existing: Record<string, unknown> =
-    typeof gates === 'object' && gates !== null ? { ...gates } : {};
-  const previous: unknown = Reflect.get(existing, gate);
-  const history = Array.isArray(previous) ? previous.filter(isRecord) : [];
-  Reflect.set(existing, gate, update(history));
   await mkdir(join(path, '..'), { recursive: true });
-  await writeFile(path, `${JSON.stringify({ ...document, gates: existing }, null, 2)}\n`);
+  await withExclusiveLock(
+    `${path}.lock`,
+    async () => {
+      let document: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+        if (typeof parsed === 'object' && parsed !== null) document = { ...parsed };
+      } catch (error) {
+        if (
+          !(error instanceof SyntaxError) &&
+          !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        )
+          throw error;
+        // Missing or malformed cache is a miss; an IO refusal cannot discard history.
+      }
+      const gates = Reflect.get(document, 'gates');
+      const existing: Record<string, unknown> =
+        typeof gates === 'object' && gates !== null ? { ...gates } : {};
+      const previous: unknown = Reflect.get(existing, gate);
+      const history = Array.isArray(previous) ? previous.filter(isRecord) : [];
+      Reflect.set(existing, gate, update(history));
+      await writeFileAtomic(
+        path,
+        `${JSON.stringify({ ...document, gates: existing }, null, 2)}\n`,
+        { durability: 'none' },
+      );
+    },
+    // An empty owner record is unknown, even when old: a live creator can pause
+    // before recording itself. Cache RMW must never overlap on an age-only guess.
+    { label: 'green gate memo', ownerlessGraceMs: null },
+  );
 }
 
 export function writeGreenGate(
@@ -146,20 +163,24 @@ async function git(
   root: string,
   args: string[],
   env?: Record<string, string>,
+  input?: string,
 ): Promise<string> {
   const child = Bun.spawn(['git', ...args], {
     cwd: root,
     env: env ? { ...Bun.env, ...env } : Bun.env,
+    stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input),
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const text = await new Response(child.stdout).text();
-  const code = await child.exited;
+  const [text, reason, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
   if (code !== 0) {
-    const reason = await new Response(child.stderr).text();
     throw new Error(`git ${args[0] ?? ''} exited with ${code}: ${reason.trim()}`);
   }
-  return text.trim();
+  return text;
 }
 
 /**
@@ -170,9 +191,9 @@ async function git(
  * the set of changes they reviewed and chose, and a tool has no business
  * writing to it, not even transiently. `GIT_INDEX_FILE` points the same
  * plumbing at a scratch file instead, so the answer is exactly as good and the
- * owner's staging area is never opened. Ignored paths are excluded by `git add`
- * itself, which is the right rule: a build output does not change what the gate
- * checked.
+ * owner's staging area is read only for tracked names and is never written.
+ * Tracked inputs count even when matched by ignore rules; untracked ignored
+ * build output does not change what the gate checked.
  */
 export async function worktreeTreeHash(root: string): Promise<string> {
   const scratch = join(
@@ -180,8 +201,16 @@ export async function worktreeTreeHash(root: string): Promise<string> {
     `stitchkit-gate-index-${process.pid}-${Bun.nanoseconds().toString(36)}`,
   );
   try {
+    const tracked = await git(root, ['ls-files', '--cached', '-z']);
     await git(root, ['add', '--all', '.'], { GIT_INDEX_FILE: scratch });
-    return await git(root, ['write-tree'], { GIT_INDEX_FILE: scratch });
+    if (tracked)
+      await git(
+        root,
+        ['update-index', '--add', '--remove', '-z', '--stdin'],
+        { GIT_INDEX_FILE: scratch },
+        tracked,
+      );
+    return (await git(root, ['write-tree'], { GIT_INDEX_FILE: scratch })).trim();
   } finally {
     await Bun.file(scratch)
       .delete()
@@ -192,7 +221,7 @@ export async function worktreeTreeHash(root: string): Promise<string> {
 /** HEAD, for the human line a skip prints. A repository without one is not an error. */
 export async function headCommit(root: string): Promise<string> {
   try {
-    return await git(root, ['rev-parse', '--short', 'HEAD']);
+    return (await git(root, ['rev-parse', '--short', 'HEAD'])).trim();
   } catch {
     return '(no commit)';
   }
@@ -214,109 +243,9 @@ export async function toolchainFingerprint(): Promise<string> {
   return `bun:${Bun.version} ${node} ${process.platform}/${process.arch}`;
 }
 
-/**
- * What the LANES talk to — the half a tree hash and a runtime version cannot see.
- *
- * `lint`, `check` and `test` read only the tree, so for the fast profile the
- * toolchain is the whole story. The heavy steps do not: the Postgres stores lane and
- * both starter lanes talk to a PostgreSQL server, and the starter lanes drive
- * real browsers. Upgrade either and the tree is unchanged, the toolchain is
- * unchanged, the key is unchanged — and the memo would answer for a run that
- * happened under different conditions.
- *
- * Connection identity and measured server version are included without exposing
- * credentials. This does not attest all database permissions/configuration or browser
- * binary bytes; their actual behavior remains part of the executed lanes.
- *
- * The supervisor needs no entry here: it is a pinned devDependency, so it lives
- * in the lockfile, and the lockfile is part of the tree.
- */
-export async function laneEnvironmentFingerprint(
-  environment: Record<string, string | undefined> = Bun.env,
-): Promise<string> {
-  return `${await postgresFingerprint(environment)} ${await browserFingerprint(environment)}`;
-}
-
-/** An unknown external input is a diagnostic marker, never permission to reuse a heavy run. */
-export function laneEnvironmentIsReusable(fingerprint: string): boolean {
-  return !/pg:(?:unreachable|unmeasurable|unknown)|browsers:(?:absent|none)/.test(fingerprint);
-}
-
-/**
- * Asked the same two ways the lanes ask.
- *
- * `starter-database.ts` uses `STARTER_TEST_DATABASE_ADMIN_URL` when it is set
- * and falls back to a local `sudo -u postgres` socket otherwise. Fingerprinting
- * only the first would have read `pg:unset` for ever on a machine that uses the
- * second — a constant, which is the same as not measuring at all.
- */
-export async function postgresFingerprint(
-  environment: Record<string, string | undefined>,
-  timeoutMs = 1000,
-): Promise<string> {
-  const url = environment.STARTER_TEST_DATABASE_ADMIN_URL?.trim();
-  const command = url
-    ? ['psql', url, '-tAc', 'select version()']
-    : ['sudo', '-n', '-u', 'postgres', 'psql', '-tAc', 'select version()'];
-  const connection = postgresConnectionFingerprint(url);
-  try {
-    const [executable, ...args] = command;
-    if (!executable) throw new Error('Missing fingerprint executable');
-    const env: Record<string, string> = {};
-    for (const [name, value] of Object.entries(environment))
-      if (value !== undefined) env[name] = value;
-    const result = await runNativeCommand({
-      executable,
-      args,
-      envPolicy: 'ambient',
-      env,
-      timeoutMs,
-      killGraceMs: 0,
-      cleanupTimeoutMs: 500,
-      capture: true,
-      maxOutputBytes: 16 * 1024,
-    });
-    const text = new TextDecoder().decode(result.stdout).trim();
-    if (result.exitCode !== 0 || !text) return `pg:unreachable:${connection}`;
-    // The server version only — the rest of the banner carries a build string
-    // that moves without the behaviour moving.
-    return `pg:${/PostgreSQL (\S+)/.exec(text)?.[1] ?? 'unknown'}:${connection}`;
-  } catch {
-    return `pg:unmeasurable:${connection}`;
-  }
-}
-
-/** Safe connection coordinates, never a password or a raw private endpoint. */
-export function postgresConnectionFingerprint(url: string | undefined): string {
-  if (!url) return 'local-socket';
-  try {
-    const parsed = new URL(url);
-    const coordinates = [
-      parsed.protocol,
-      parsed.hostname,
-      parsed.port,
-      parsed.pathname,
-      parsed.username,
-      // libpq URI parameters can override host/port/user/database and select services.
-      // Hash their ordered values too; credentials never become a reusable identity.
-      [...parsed.searchParams].filter(([name]) => name !== 'password'),
-    ];
-    return createHash('sha256').update(JSON.stringify(coordinates)).digest('hex');
-  } catch {
-    return 'invalid-connection';
-  }
-}
-
-async function browserFingerprint(
-  environment: Record<string, string | undefined>,
-): Promise<string> {
-  const root =
-    environment.PLAYWRIGHT_BROWSERS_PATH?.trim() || join(homedir(), '.cache', 'ms-playwright');
-  try {
-    const { readdir } = await import('node:fs/promises');
-    const entries = (await readdir(root)).filter((name) => !name.startsWith('.')).sort();
-    return entries.length === 0 ? 'browsers:none' : `browsers:${entries.join(',')}`;
-  } catch {
-    return 'browsers:absent';
-  }
-}
+export {
+  laneEnvironmentFingerprint,
+  laneEnvironmentIsReusable,
+  postgresConnectionFingerprint,
+  postgresFingerprint,
+} from './gate-lane-environment';

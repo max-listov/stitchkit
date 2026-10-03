@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   publish:
+    # 10 minutes publish + 31 minutes registry wait + 4 minutes metadata/artifacts/release.
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     environment: npm-production
     permissions:
@@ -70,6 +72,7 @@ jobs:
           run-id: ${{ steps.ci.outputs.run-id }}
 
       - name: Publish the validated tarball
+        timeout-minutes: 10
         run: |
           PACKAGE="$(jq -r .packageName "$RUNNER_TEMP/release-plan.json")"
           VERSION="$(jq -r .version "$RUNNER_TEMP/release-plan.json")"
@@ -93,6 +96,13 @@ jobs:
             # as a GitHub owner/repo shorthand.
             npm publish "./$TARBALL" --provenance --access public
           fi
+
+      - name: Wait for the exact published version in the public registry
+        # The owner has a 30-minute elapsed deadline; one minute permits diagnostic shutdown.
+        timeout-minutes: 31
+        run: |
+          PACKAGE="$(jq -r .packageName "$RUNNER_TEMP/release-plan.json")"
+          VERSION="$(jq -r .version "$RUNNER_TEMP/release-plan.json")"
           bun scripts/wait-for-npm-publication.ts "$PACKAGE" "$VERSION"
 
       - name: Create the GitHub release from the validated changelog entry

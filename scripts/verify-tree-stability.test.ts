@@ -19,12 +19,13 @@ test('the actual runner never certifies a mixed tree, including mutation then re
       await mkdir(root);
       await cp(import.meta.dir, join(root, 'scripts'), { recursive: true });
       await mkdir(join(root, 'packages/core'), { recursive: true });
-      await symlink(
+      await cp(
         join(import.meta.dir, '../packages/core/src'),
         join(root, 'packages/core/src'),
+        { recursive: true },
       );
       await symlink(join(import.meta.dir, '../node_modules'), join(root, 'node_modules'));
-      await writeFile(join(root, '.gitignore'), 'node_modules/\n.runs\ndist/\n');
+      await writeFile(join(root, '.gitignore'), 'node_modules\n.runs\ndist/\n');
       await writeFile(join(root, '.runs'), '');
       await writeFile(join(root, 'input.txt'), 'original');
       await writeFile(

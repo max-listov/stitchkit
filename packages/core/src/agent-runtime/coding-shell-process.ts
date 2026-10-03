@@ -3,6 +3,7 @@ import { startNativeCommand } from '../process/command-owner';
 import { NativeCommandError } from '../process/contract';
 import { stopCommandGroup } from '../process/group';
 import type { NativeCommandLaunchedProcess } from '../process/launch';
+import { ownsCommandGroup } from '../process/owned-child';
 import { type AgentCodingToolConfig, ShellOutputSchema } from './coding-tool-contract';
 import { utf8AlignedEnd, utf8AlignedStart } from './coding-tool-utf8';
 import type { AgentProcessSandbox } from './sandbox';
@@ -124,7 +125,7 @@ export async function runCodingShell(input: {
         exitCode = event.exitCode;
         signal = event.signal;
         // Coding commands own descendants after leader exit; generic commands choose their own policy.
-        if (process.platform !== 'win32')
+        if (process.platform !== 'win32' && child && ownsCommandGroup(child))
           await stopCommandGroup(child?.pid, 0, input.terminationGraceMs, true);
       },
     },

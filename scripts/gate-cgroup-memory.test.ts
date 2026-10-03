@@ -7,6 +7,7 @@ function reader(membership: string, mountRoot = '/', mountPoint = '/sys/fs/cgrou
   const files: Record<string, string> = {
     '/proc/self/cgroup': `0::${membership}\n`,
     '/proc/self/mountinfo': `23 1 0:23 ${mountRoot} ${mountPoint} rw - cgroup2 cgroup rw\n`,
+    [`${mountPoint}/cgroup.controllers`]: 'memory cpu',
   };
   return {
     files,
@@ -59,6 +60,64 @@ test('unlimited, unavailable and malformed controls are unknown, never a measure
   expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'unavailable' });
 });
 
+test('hybrid selects its v1 memory controller rather than an unrelated unified mount', () => {
+  const fixture = reader('/');
+  fixture.files['/proc/self/cgroup'] = '0::/\n5:cpu,memory:/tenant/child\n';
+  fixture.files['/proc/self/mountinfo'] +=
+    '24 1 0:24 /tenant /v1\\040memory rw - cgroup cgroup rw,cpu,memory\n';
+  fixture.files['/v1 memory/child/memory.limit_in_bytes'] = String(8 * GIB);
+  fixture.files['/v1 memory/child/memory.usage_in_bytes'] = String(GIB);
+  fixture.files['/v1 memory/memory.limit_in_bytes'] = String(4 * GIB);
+  fixture.files['/v1 memory/memory.usage_in_bytes'] = String(3 * GIB);
+  fixture.files['/v1 memory/memory.use_hierarchy'] = '1';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 1 });
+  fixture.files['/v1 memory/memory.use_hierarchy'] = '0';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 7 });
+});
+
+test('missing memory controller is unknown even at the unified root', () => {
+  const fixture = reader('/');
+  fixture.files['/sys/fs/cgroup/cgroup.controllers'] = 'cpu io';
+  const budget = cgroupMemoryBudget(fixture.read);
+  expect(budget).toEqual({ kind: 'unavailable' });
+  expect(availableGateMemoryGib(64, budget)).toBeUndefined();
+});
+
+test('pure v1 sentinel, exact bigint headroom, exhaustion and unreadable controls are distinguished', () => {
+  const fixture = reader('/');
+  fixture.files['/proc/self/cgroup'] = '5:memory:/\n';
+  fixture.files['/proc/self/mountinfo'] = '24 1 0:24 / /v1 rw - cgroup cgroup rw,memory\n';
+  fixture.files['/v1/memory.limit_in_bytes'] = '9223372036854771712';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'unlimited' });
+  fixture.files['/v1/memory.limit_in_bytes'] = '9007199254740993';
+  fixture.files['/v1/memory.usage_in_bytes'] = '9007199254740992';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 1 / GIB });
+  fixture.files['/v1/memory.usage_in_bytes'] = '9007199254740994';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 0 });
+  fixture.files['/v1/memory.limit_in_bytes'] = 'garbage';
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'unavailable' });
+  expect(
+    cgroupMemoryBudget(() => {
+      throw Object.assign(new Error('Denied'), { code: 'EACCES' });
+    }),
+  ).toEqual({ kind: 'unavailable' });
+  expect(
+    cgroupMemoryBudget(() => {
+      throw new Error('Must not read proc');
+    }, 'darwin'),
+  ).toEqual({ kind: 'unsupported' });
+});
+
+test('an unrelated mount does not hide the most specific visible memory mount', () => {
+  const fixture = reader('/tenant/child');
+  fixture.files['/proc/self/mountinfo'] +=
+    '24 1 0:24 /tenant /specific rw - cgroup2 cgroup rw\n';
+  fixture.files['/specific/child/memory.max'] = 'max';
+  fixture.files['/specific/memory.max'] = String(3 * GIB);
+  fixture.files['/specific/memory.current'] = String(GIB);
+  expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 2 });
+});
+
 test('an unreadable mount boundary cannot certify the visible child headroom', () => {
   const fixture = reader('/tenant/child', '/tenant', '/cg');
   fixture.files['/cg/child/memory.max'] = String(8 * GIB);
@@ -76,4 +135,39 @@ test('an unreadable mount boundary cannot certify the visible child headroom', (
   fixture.files['/cg/memory.max'] = String(4 * GIB);
   fixture.files['/cg/memory.current'] = String(2 * GIB);
   expect(cgroupMemoryBudget(fixture.read)).toEqual({ kind: 'bounded', availableGib: 2 });
+});
+
+test('v2, v1 and hybrid controllers retain colons and trailing spaces in the exact membership', () => {
+  for (const mode of ['v2', 'v1', 'hybrid']) {
+    for (const membership of ['/job', '/job:isolated', '/job  ']) {
+      const fixture = reader(membership);
+      const legacy = mode !== 'v2';
+      const mount = legacy ? '/legacy' : '/sys/fs/cgroup';
+      if (legacy) {
+        fixture.files['/proc/self/cgroup'] =
+          `${mode === 'hybrid' ? '0::/unrelated\n' : ''}5:cpu,memory:${membership}\n`;
+        fixture.files['/proc/self/mountinfo'] +=
+          '24 1 0:24 / /legacy rw - cgroup cgroup rw,cpu,memory\n';
+        fixture.files['/legacy/memory.limit_in_bytes'] = '9223372036854771712';
+        fixture.files['/legacy/memory.use_hierarchy'] = '1';
+      } else fixture.files['/sys/fs/cgroup/memory.max'] = 'max';
+      const maximum = legacy ? 'memory.limit_in_bytes' : 'memory.max';
+      const current = legacy ? 'memory.usage_in_bytes' : 'memory.current';
+      fixture.files[`${mount}/job/${maximum}`] = String(10 * GIB);
+      fixture.files[`${mount}/job/${current}`] = String(GIB);
+      if (membership !== '/job') {
+        fixture.files[`${mount}${membership}/${maximum}`] = String(2 * GIB);
+        fixture.files[`${mount}${membership}/${current}`] = String(GIB);
+      }
+      const budget = cgroupMemoryBudget(fixture.read);
+      expect(budget).toEqual({
+        kind: 'bounded',
+        availableGib: membership === '/job' ? 9 : 1,
+      });
+      const available = availableGateMemoryGib(20, budget);
+      expect(chooseHeavyConcurrency('', () => available).concurrency).toBe(
+        membership === '/job' ? 2 : 1,
+      );
+    }
+  }
 });

@@ -4,7 +4,12 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-01 16:40 +07:00
+updated: 2026-10-03 13:36 +07:00
+participants:
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-03 13:36 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -24,7 +29,7 @@ selected by the manifest points at that same branch head and consumes the same C
   "schemaVersion": 1,
   "releases": [
     { "target": "core", "version": "0.71.0" },
-    { "target": "stitchkit-tui", "version": "0.1.3" }
+    { "target": "tui", "version": "0.1.3" }
   ]
 }
 ```
@@ -40,12 +45,17 @@ incompatible, so the train is refused and the starter goes in the next one, afte
 `bun run update:starter`. The check reads `release-train.json` and the template manifest, never the
 registry, so it returns the same verdict on every attempt at one commit.
 `bun run release:train` creates and pushes all selected tags after the exact-SHA push CI is green.
-Single-package legacy commands remain valid, but a coordinated release never needs bookkeeping
+Every selected package is validated before the first tag; both train and single-package
+commands require remote green push CI for the full SHA before any tag mutation. API refusal
+is a refusal, and local memo evidence is insufficient. Single-package legacy commands remain valid, but a coordinated release never needs bookkeeping
 commits between tags.
 
 ## Target-aware CI graph
 
-`scripts/ci-plan.ts` maps either the release train or ordinary changed paths to named evidence.
+`scripts/ci-plan.ts` maps the union of release targets, changed package paths and shared inputs to named evidence.
+The complete push range is checked; a new branch selects from the complete tree. Publication
+remains limited to the train. Shared scripts, workflows, hooks and root dependency inputs
+select every package, while train metadata alone preserves package selection.
 Every job starts after the small planner, not after another platform:
 
 | Job | Runs when | Guarantee |
@@ -109,3 +119,11 @@ consumer that runs under both Bun and Node. Registry visibility may lag upload
 acceptance; polling has a bounded deadline and a missing version remains pending.
 Record registry publication and installed-consumer completion separately from command
 start, so release measurements include external visibility waits and delivery checks.
+
+## Evidence convergence
+
+The semantic planner refuses contradictory lane flags or starter modes. Assembly and final
+status both use `scripts/ci-evidence.ts` over named `needs` results. Selected jobs must succeed;
+unselected jobs may succeed or be skipped; failed or cancelled jobs are refused. Plan and repository checks always succeed before assembly.
+Final status also requires successful artifacts exactly when the plan requests them.
+See [ADR 0226](../decisions/0226-evidence-covers-the-affected-tree.md).

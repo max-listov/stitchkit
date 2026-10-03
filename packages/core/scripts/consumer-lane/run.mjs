@@ -56,15 +56,25 @@ const ACCEPTED_UNRESOLVED = ['Bun', 'bun', 'node:http', 'socket.io', '@socket.io
 
 const arguments_ = process.argv.slice(2);
 const unknownArguments = arguments_.filter(
-  (argument) => argument !== '--contained-files-only',
+  (argument) =>
+    !['--contained-files-only', '--native-uid-only', '--native-owners-only'].includes(
+      argument,
+    ),
 );
 if (unknownArguments.length > 0) {
   throw new Error(`Unknown consumer-lane option: ${unknownArguments.join(', ')}`);
 }
 const containedFilesOnly = arguments_.includes('--contained-files-only');
-const FIXTURES = containedFilesOnly
-  ? ['node']
-  : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo', 'google'];
+const nativeUIDOnly = arguments_.includes('--native-uid-only');
+const nativeOwnersOnly = arguments_.includes('--native-owners-only');
+if (arguments_.length > 1) throw new Error('Select one consumer-lane mode');
+if (nativeUIDOnly && (process.platform !== 'linux' || process.getuid?.() !== 0))
+  throw new Error('Mandatory mixed-UID qualification requires Linux UID0');
+const narrowNative = nativeUIDOnly || nativeOwnersOnly;
+const FIXTURES =
+  containedFilesOnly || narrowNative
+    ? ['node']
+    : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo', 'google'];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -191,6 +201,13 @@ try {
       await runInstalledConsumerProofs({
         fixture: containedFilesOnly ? undefined : name,
         platform: process.platform,
+        uid: process.getuid?.(),
+        ids: nativeUIDOnly
+          ? ['native-owner-uid']
+          : nativeOwnersOnly
+            ? ['native-owners', 'native-cross-entry-owner', 'native-command-reasons']
+            : undefined,
+        requireCapabilities: nativeUIDOnly,
         run: async (proof, runtime) =>
           step(`${name}: ${proof.id} (${runtime})`, () =>
             runtime === 'types'
@@ -207,9 +224,11 @@ try {
         verdict: (proof, runtime, state) =>
           console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
       });
-      if (name === 'node')
+      if (name === 'node' && !narrowNative)
         step('neutral library install and types', () => qualifyNeutralLibrary(dir));
     }
+
+    if (narrowNative) continue;
 
     if (containedFilesOnly) {
       for (const runtime of ['bun', 'node']) {
@@ -636,7 +655,7 @@ try {
     }
   }
 
-  if (!containedFilesOnly)
+  if (!containedFilesOnly && !narrowNative)
     try {
       step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
     } catch (error) {
@@ -644,7 +663,7 @@ try {
       console.error(error instanceof Error ? error.message : error);
     }
 
-  if (!containedFilesOnly)
+  if (!containedFilesOnly && !narrowNative)
     try {
       step('self-contained socket artifact', () =>
         runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
@@ -654,7 +673,7 @@ try {
       console.error(error instanceof Error ? error.message : error);
     }
 
-  if (!containedFilesOnly)
+  if (!containedFilesOnly && !narrowNative)
     try {
       await asyncStep('self-contained socket client artifact', () =>
         runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
@@ -664,10 +683,14 @@ try {
       console.error(error instanceof Error ? error.message : error);
     }
 
-  const unexpected = containedFilesOnly
-    ? []
-    : [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
-  const gone = containedFilesOnly ? [] : ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
+  const unexpected =
+    containedFilesOnly || narrowNative
+      ? []
+      : [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
+  const gone =
+    containedFilesOnly || narrowNative
+      ? []
+      : ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
   if (unexpected.length > 0) {
     failed = true;
     console.error(
@@ -695,7 +718,11 @@ try {
 
 if (failed) process.exit(1);
 console.log(
-  containedFilesOnly
-    ? '[consumer-lane] packed contained files work for a macOS consumer'
-    : '[consumer-lane] the published package works for a consumer',
+  nativeUIDOnly
+    ? '[consumer-lane] installed Linux mixed-UID qualification succeeded'
+    : nativeOwnersOnly
+      ? '[consumer-lane] installed native ownership qualification succeeded'
+      : containedFilesOnly
+        ? '[consumer-lane] packed contained files work for a macOS consumer'
+        : '[consumer-lane] the published package works for a consumer',
 );

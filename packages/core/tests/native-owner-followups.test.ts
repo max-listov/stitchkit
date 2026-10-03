@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withExclusiveLock } from '../src/entrypoints/files';
@@ -77,33 +76,36 @@ test('exact lock mode survives restrictive umask and null refuses ownerless lock
   }
 });
 
-test('public process evidence matches native lifetime and unavailable observations preserve cause', async () => {
-  const observation = await observeProcessInstance(process.pid);
-  if (process.platform === 'darwin') return; // Darwin native packed lane is the qualification owner.
-  expect(observation.state).toBe('observed');
-  if (observation.state !== 'observed') throw observation.cause;
-  expect(await probeProcessOwner(process.pid, observation.instance)).toEqual({
-    liveness: 'alive',
-    identity: 'matched',
-  });
-  expect(
-    await probeProcessOwner(process.pid, { ...observation.instance, bootId: 'other-boot' }),
-  ).toEqual({ liveness: 'gone', identity: 'different-boot' });
-  expect(
-    await probeProcessOwner(process.pid, { ...observation.instance, startId: '0' }),
-  ).toEqual({ liveness: 'gone', identity: 'reused-pid' });
-  const failure = await observeProcessInstanceAt(process.pid, '/nonexistent-stitchkit-proc');
-  expect(failure.state).toBe('unavailable');
-  if (failure.state === 'unavailable') expect(failure.cause).toMatchObject({ code: 'ENOENT' });
-  const denied = Object.assign(new Error('fixture denied'), { code: 'EPERM' });
-  const result = await probeProcessOwnerWith(process.pid, observation.instance, {
-    read: async () => observation.instance,
-    liveness: async () => 'alive',
-    observe: async () => ({ state: 'unavailable', cause: denied }),
-  });
-  expect(result).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: denied });
-  await expect(observeProcessInstance(-1)).rejects.toBeInstanceOf(Error);
-});
+test.skipIf(process.platform === 'darwin')(
+  'public process evidence matches native lifetime and unavailable observations preserve cause',
+  async () => {
+    const observation = await observeProcessInstance(process.pid);
+    expect(observation.state).toBe('observed');
+    if (observation.state !== 'observed') throw observation.cause;
+    expect(await probeProcessOwner(process.pid, observation.instance)).toEqual({
+      liveness: 'alive',
+      identity: 'matched',
+    });
+    expect(
+      await probeProcessOwner(process.pid, { ...observation.instance, bootId: 'other-boot' }),
+    ).toEqual({ liveness: 'gone', identity: 'different-boot' });
+    expect(
+      await probeProcessOwner(process.pid, { ...observation.instance, startId: '0' }),
+    ).toEqual({ liveness: 'gone', identity: 'reused-pid' });
+    const failure = await observeProcessInstanceAt(process.pid, '/nonexistent-stitchkit-proc');
+    expect(failure.state).toBe('unavailable');
+    if (failure.state === 'unavailable')
+      expect(failure.cause).toMatchObject({ code: 'ENOENT' });
+    const denied = Object.assign(new Error('fixture denied'), { code: 'EPERM' });
+    const result = await probeProcessOwnerWith(process.pid, observation.instance, {
+      read: async () => observation.instance,
+      liveness: async () => 'alive',
+      observe: async () => ({ state: 'unavailable', cause: denied }),
+    });
+    expect(result).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: denied });
+    await expect(observeProcessInstance(-1)).rejects.toBeInstanceOf(Error);
+  },
+);
 
 test('descriptor mode failure retains cause and leaves a replacement inode untouched', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-mode-failure-'));
@@ -242,69 +244,3 @@ test('hanging leader settlement is cancellable and signal-only execution has no 
   });
   expect(result.exitCode).toBe(0);
 });
-
-test('native shared group reads exact mode, outsider refuses, and another UID reclaims a SIGKILL holder', async () => {
-  if (process.platform !== 'linux' || process.getuid?.() !== 0) return;
-  const root = await mkdtemp(join(tmpdir(), 'native-mixed-uid-'));
-  const lock = join(root, 'lock');
-  const bundle = join(root, 'files.mjs');
-  const output = await Bun.build({
-    entrypoints: [join(import.meta.dir, '../src/entrypoints/files.ts')],
-    target: 'node',
-  });
-  if (!output.success || !output.outputs[0]) throw new Error('fixture bundle failed');
-  await writeFile(bundle, await output.outputs[0].text());
-  const child = (code: string, gid: number) =>
-    new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
-      const reader = spawn('/usr/bin/node', ['--input-type=module', '-e', code], {
-        uid: 65534,
-        gid,
-        cwd: root,
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      let stderr = '';
-      reader.stderr.on('data', (chunk) => {
-        stderr += chunk;
-      });
-      reader.once('error', reject);
-      reader.once('close', (code) => resolve({ code, stderr }));
-    });
-  try {
-    await chmod(root, 0o755);
-    await withExclusiveLock(
-      lock,
-      async () => {
-        const read = `import{readFileSync}from'node:fs';JSON.parse(readFileSync(${JSON.stringify(lock)},'utf8'));`;
-        expect((await child(read, 0)).code).toBe(0);
-        const outsider = await child(read, 65534);
-        expect(outsider.code).not.toBe(0);
-        expect(outsider.stderr).toContain('EACCES');
-      },
-      { mode: 0o640 },
-    );
-    await chmod(root, 0o770);
-    const holder = spawn(
-      '/usr/bin/node',
-      [
-        '--input-type=module',
-        '-e',
-        `import{withExclusiveLock}from${JSON.stringify(bundle)};await withExclusiveLock(${JSON.stringify(lock)},async()=>{console.log('held');setInterval(()=>{},20);await new Promise(()=>{})},{mode:0o640});`,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    await new Promise<void>((resolve, reject) => {
-      holder.stdout.once('data', () => resolve());
-      holder.once('error', reject);
-    });
-    const reaped = new Promise((resolve) => holder.once('close', resolve));
-    holder.kill('SIGKILL');
-    await reaped;
-    const reclaim = await child(
-      `import{withExclusiveLock}from${JSON.stringify(bundle)};await withExclusiveLock(${JSON.stringify(lock)},l=>{if(!l.reclaimed)throw Error('not reclaimed')},{mode:0o640,ownerlessGraceMs:null,timeoutMs:200});`,
-      0,
-    );
-    expect(reclaim).toEqual({ code: 0, stderr: '' });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}, 5000);

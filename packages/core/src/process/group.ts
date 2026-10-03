@@ -65,8 +65,10 @@ async function signalUntilSettled(
     } catch (error) {
       // Do not suppress permission failures. Success requires an actual
       // delivered signal or ESRCH; a persistent refusal keeps its own cause.
-      if (!deniedOnDarwin(error) || Date.now() >= deadline) throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(10, deadline - Date.now())));
+      if (!deniedOnDarwin(error) || performance.now() >= deadline) throw error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(10, deadline - performance.now())),
+      );
     }
   }
 }
@@ -77,15 +79,17 @@ export async function stopCommandGroup(
   cleanupTimeoutMs = 2000,
   force = false,
 ): Promise<void> {
-  const deadline = Date.now() + graceMs + cleanupTimeoutMs;
+  const deadline = performance.now() + graceMs + cleanupTimeoutMs;
   if (force) {
     await signalUntilSettled(pid, 'SIGKILL', deadline);
     return;
   }
   await signalUntilSettled(pid, 'SIGTERM', deadline);
-  const until = Date.now() + graceMs;
-  while (Date.now() < until && exists(pid))
-    await new Promise((resolve) => setTimeout(resolve, Math.min(10, until - Date.now())));
+  const until = performance.now() + graceMs;
+  while (performance.now() < until && exists(pid))
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(10, until - performance.now())),
+    );
   // Includes members holding a pipe after the leader already exited. A zombie
   // group can remain visible until the OS reaper runs, so ESRCH is not a success gate.
   await signalUntilSettled(pid, 'SIGKILL', deadline);

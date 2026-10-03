@@ -1,7 +1,8 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { startNativeCommand } from '../process/command-owner';
 import { NativeCommandError } from '../process/contract';
 import { nativeCommandOwner } from '../process/launch';
+import { spawnOwnedCommand } from '../process/owned-child';
 import type { AgentProcessSandbox } from './sandbox';
 import { SandboxError } from './sandbox-contract';
 
@@ -13,7 +14,23 @@ export function sandboxProcessOwner(assertActive: () => void, maximum: number) {
     if (children.size >= maximum)
       throw new SandboxError('SANDBOX_BUSY', 'Sandbox command concurrency limit reached');
   };
+  const terminate = (child: ChildProcessWithoutNullStreams) => {
+    const owner =
+      nativeCommandOwner(child) ??
+      startNativeCommand(
+        { executable: 'host-owned-command', signal: new AbortController().signal },
+        undefined,
+        { launch: () => child, group: process.platform !== 'win32', force: true },
+      );
+    return owner.terminate();
+  };
   const track = (child: ChildProcessWithoutNullStreams) => {
+    const settleDirect = () => {
+      // The execution owner must observe close before the raw launcher releases its handles.
+      if (!nativeCommandOwner(child)) void terminate(child).catch(() => undefined);
+    };
+    child.once('exit', settleDirect);
+    child.once('error', settleDirect);
     const closed = new Promise<void>((resolve, reject) => {
       child.once('close', () => {
         const settled = nativeCommandOwner(child)?.result ?? Promise.resolve();
@@ -44,11 +61,12 @@ export function sandboxProcessOwner(assertActive: () => void, maximum: number) {
     },
     spawn(input: Parameters<AgentProcessSandbox['prepare']>[0]) {
       admit();
-      const child = spawn(input.executable, [...input.args], {
+      const child = spawnOwnedCommand({
+        executable: input.executable,
+        args: input.args,
         cwd: input.cwd,
         env: input.environment,
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        group: process.platform !== 'win32',
       });
       child.stdin.end();
       track(child);
@@ -56,23 +74,7 @@ export function sandboxProcessOwner(assertActive: () => void, maximum: number) {
     },
     async stop() {
       const pending = [...children];
-      await Promise.all(
-        pending.map(([child]) => {
-          // A direct host launcher has no execution owner until coding adopts it.
-          // Shutdown adopts that same transport before cancelling, rather than owning a second kill path.
-          let owner = nativeCommandOwner(child);
-          if (!owner) {
-            const adopted = startNativeCommand(
-              { executable: 'host-owned-command', signal: new AbortController().signal },
-              undefined,
-              { launch: () => child, group: process.platform !== 'win32', force: true },
-            );
-            owner = nativeCommandOwner(child);
-            if (!owner) return adopted.stop();
-          }
-          return owner.terminate();
-        }),
-      );
+      await Promise.all(pending.map(([child]) => terminate(child)));
       await Promise.all(pending.map(([, closed]) => closed));
     },
   };

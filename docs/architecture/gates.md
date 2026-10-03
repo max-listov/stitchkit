@@ -4,7 +4,12 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-02 17:09 +07:00
+updated: 2026-10-03 13:36 +07:00
+participants:
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-03 13:36 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -99,8 +104,14 @@ step, including the frozen-lockfile install, ran successfully. The fast attestat
 runtime fingerprint; heavy evidence retains its PostgreSQL/browser fingerprint.
 
 The key is the working-tree hash plus the toolchain — never a commit, a branch or a clock — and for
-the two profiles that run lanes it also carries what those lanes talk to: the PostgreSQL server
-version, a credential-free digest of its connection coordinates, and the installed browser set. Neither is visible in a tree or a runtime version, so
+each selected profile it carries only the external inputs its steps actually use: the PostgreSQL server
+version and a credential-free digest of its connection coordinates when a database lane runs,
+and the selected Playwright runtime's upstream registry executables (default Chromium
+headless shell and WebKit) when a browser lane runs.
+TUI-only releases depend on neither. Playwright owns path resolution, including overrides
+and hermetic installations; missing exact runtime/context is unknown. Password-only changes
+do not alter the connection digest. URL-mode probes use the lane's Bun SQL transport with a
+SELECT-only query; local socket probes use the same sudo/psql endpoint. Neither is visible in a tree or a runtime version, so
 without them a database upgrade would leave the memo answering for a run that happened under
 different conditions. PostgreSQL probes have a finite execution/output/cleanup budget.
 Unreachable or unmeasurable databases and absent browser installations cannot authorize
@@ -111,13 +122,24 @@ devDependency, so it is already in the tree. The record lives in the machine's c
 repository, and the tree hash is taken through a scratch `GIT_INDEX_FILE`, so the gate never writes
 to the index.
 
-Reusable evidence is written only after checking the final content hash and input generation.
+Reusable evidence is written only after checking the final content hash, input generation and
+a second external-input fingerprint. Changed or unknown external inputs revoke heavy evidence
+while a fully completed fast subset can still be certified. Memo mutations hold the canonical
+exclusive lock across the complete read/modify/atomic-replace transaction. Readers see whole
+old or new records; process interruption cannot expose a partial JSON file. Cache publication
+uses atomic replacement with durability=none. The transaction uses ownerlessGraceMs:null:
+an empty owner record remains unknown, however old, and times out until explicit owner recovery.
 Inode change times detect content changed and restored within the run; input-directory
 observers detect transient creation/removal using Git's ignore policy. Ignored build output
 churn does not invalidate evidence. A mixed run saves no green record and removes matching
 prior attestations, including its fast subset. Generated tracked declarations and the package
 README are written only when their bytes differ, so regeneration and prepack synchronization
 of unchanged inputs preserve reusable proof.
+Git records symlink text rather than the target tools read. A non-ignored symlink input
+therefore disables memo reuse and saving with an explicit diagnosis, including its fast
+subset. The checks still execute. Ignored dependency links do not count as source inputs.
+Generation observations qualify target drift within a run; they do not claim to attest
+external target bytes across runs.
 This is a local reuse decision; exact-SHA push CI remains the publication authority.
 
 ## CI is the only authority for publication
@@ -152,4 +174,4 @@ Candidate evidence has its own gate identity and cannot certify `verify:fast`,
 which includes tests. Full and fast diagnostic commands retain all their steps.
 Privacy and metadata are never skipped; failed or mismatched CI blocks publication.
 
-On Linux, the runner bounds affordable heavy concurrency by the smallest visible cgroup v2 ancestor `memory.max - memory.current`, as well as host memory and exhausted-swap headroom. Host RAM alone cannot authorize allocations beyond a session or parent slice limit. Confirmed unlimited, unsupported and unavailable cgroup budgets are distinguished from measured zero. An unreadable visible limit keeps the effective budget unknown and selects one heavy lane; an explicit concurrency override retains its documented precedence. This admission estimate does not reserve RAM against other processes.
+On Linux, the runner bounds affordable heavy concurrency by the smallest visible cgroup v2 or v1 memory-controller ancestor budget (limit minus usage), as well as host memory and exhausted-swap headroom. Host RAM alone cannot authorize allocations beyond a session or parent slice limit. Confirmed unlimited, unsupported and unavailable cgroup budgets are distinguished from measured zero. An unreadable visible limit keeps the effective budget unknown and selects one heavy lane; an explicit concurrency override retains its documented precedence. This admission estimate does not reserve RAM against other processes.

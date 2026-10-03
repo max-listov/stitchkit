@@ -1,11 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  packageDirectory,
+  askReleaseCi,
+  CiRunListSchema,
+  type CiRunSummary,
+  selectSuccessfulCiRun,
+} from './release-ci';
+import { output, run } from './release-command';
+import { type ReleaseExecution, release, releaseTrain } from './release-tagging';
+import {
   type ReleaseTarget,
   type ReleaseTrain,
   ReleaseTrainSchema,
   readReleaseTrain,
+  releaseTagForTarget,
   releaseTrainEntry,
 } from './release-train';
 import {
@@ -569,28 +577,6 @@ export function assertReleaseCommitSubject(
   }
 }
 
-export interface CiRunSummary {
-  id: number;
-  head_sha: string;
-  event: string;
-  conclusion: string | null;
-}
-
-/** The successful exact-SHA push run of the heavy CI — or a loud, specific refusal. */
-export function selectSuccessfulCiRun(runs: readonly CiRunSummary[], sha: string): number {
-  const matching = runs.filter((run) => run.head_sha === sha && run.event === 'push');
-  const successful = matching.find((run) => run.conclusion === 'success');
-  if (successful) return successful.id;
-  if (matching.length === 0) {
-    throw new Error(`no push CI run exists for exact SHA ${sha}`);
-  }
-  throw new Error(
-    `no successful push CI run for exact SHA ${sha} — found: ${matching
-      .map((run) => run.conclusion ?? 'pending')
-      .join(', ')}`,
-  );
-}
-
 /**
  * Has CI already answered for these exact commits?
  *
@@ -811,8 +797,8 @@ const PACKAGE_DIR_FOR_SCOPE = {
 
 /** The tag a scope and version would be released under. */
 export function releaseTagFor(scope: ReleaseScope, version: string): string {
-  if (scope === 'core') return `v${version}`;
-  return scope === 'starter' ? `create-stitchkit-v${version}` : `stitchkit-tui-v${version}`;
+  if (scope === 'train') throw new Error('A train has one tag per target');
+  return releaseTagForTarget(scope === 'starter' ? 'create-stitchkit' : scope, version);
 }
 
 /** Stable identity shared by an in-flight CI attempt and later publication. */
@@ -878,10 +864,6 @@ export async function validateReleaseCommit(
   const version = manifestVersion(await read(`${packageDir}/package.json`), packageDir);
   assertReleaseCommitSubject(commit.subject, version, scope);
   return validateReleaseTag(root, releaseTagFor(scope, version), { ...options, read });
-}
-
-function releaseTagForTarget(target: ReleaseTarget, version: string): string {
-  return releaseTagFor(target === 'create-stitchkit' ? 'starter' : target, version);
 }
 
 /**
@@ -982,50 +964,6 @@ async function starterHeadDecision(root: string): Promise<'run' | 'skip'> {
     : 'skip';
 }
 
-function CiRunListSchema(value: unknown): CiRunSummary[] {
-  if (!Array.isArray(value)) throw new Error('expected a JSON array of workflow runs');
-  return value.map((item) => {
-    if (typeof item !== 'object' || item === null) {
-      throw new Error('expected workflow run objects');
-    }
-    const id = Reflect.get(item, 'id');
-    const headSha = Reflect.get(item, 'head_sha');
-    const event = Reflect.get(item, 'event');
-    const conclusion = Reflect.get(item, 'conclusion');
-    if (typeof id !== 'number' || typeof headSha !== 'string' || typeof event !== 'string') {
-      throw new Error('workflow run entries need id, head_sha and event');
-    }
-    return {
-      id,
-      head_sha: headSha,
-      event,
-      conclusion: typeof conclusion === 'string' ? conclusion : null,
-    };
-  });
-}
-
-async function run(command: string[]): Promise<void> {
-  const process = Bun.spawn(command, {
-    cwd: join(import.meta.dir, '..'),
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
-  const exitCode = await process.exited;
-  if (exitCode !== 0) throw new Error(`${command.join(' ')} exited with ${exitCode}`);
-}
-
-async function output(command: string[]): Promise<string> {
-  const process = Bun.spawn(command, {
-    cwd: join(import.meta.dir, '..'),
-    stdout: 'pipe',
-    stderr: 'inherit',
-  });
-  const value = await new Response(process.stdout).text();
-  const exitCode = await process.exited;
-  if (exitCode !== 0) throw new Error(`${command.join(' ')} exited with ${exitCode}`);
-  return value.trim();
-}
-
 /** The pushed branch tips that are release commits, with the subject that says so. */
 async function releaseCommitsIn(
   branchHeads: readonly string[],
@@ -1036,113 +974,6 @@ async function releaseCommitsIn(
     if (isReleaseCommitSubject(subject)) commits.push({ sha, subject });
   }
   return commits;
-}
-
-async function release(target: ReleaseTarget): Promise<void> {
-  const root = join(import.meta.dir, '..');
-  const branch = await output(['git', 'branch', '--show-current']);
-  if (branch !== 'master' && branch !== 'main') {
-    throw new Error('Releases must run from master or main');
-  }
-  if ((await output(['git', 'status', '--porcelain'])) !== '') {
-    throw new Error('Release metadata must be committed before tagging');
-  }
-  await run(['git', 'fetch', 'origin', branch]);
-  const head = await output(['git', 'rev-parse', 'HEAD']);
-  const remoteHead = await output(['git', 'rev-parse', `origin/${branch}`]);
-  if (head !== remoteHead) throw new Error(`HEAD must equal origin/${branch}`);
-
-  const packageDir = packageDirectory(target);
-  const manifest: unknown = JSON.parse(
-    await readFile(join(root, packageDir, 'package.json'), 'utf8'),
-  );
-  const version =
-    typeof manifest === 'object' &&
-    manifest !== null &&
-    Object.hasOwn(manifest, 'version') &&
-    typeof Reflect.get(manifest, 'version') === 'string'
-      ? Reflect.get(manifest, 'version')
-      : null;
-  if (version === null) throw new Error(`${packageDir}/package.json has no string version`);
-  const tag = releaseTagFor(target === 'create-stitchkit' ? 'starter' : target, version);
-  await validateReleaseTag(root, tag);
-  // The commit about to be tagged must itself be the release commit — a green
-  // follow-up fix on top of it is NOT a release (see assertReleaseCommitSubject).
-  await assertReleaseSubjectForTag(
-    root,
-    await output(['git', 'log', '-1', '--format=%s', head]),
-    tag,
-    version,
-  );
-  await run(['git', 'tag', tag, head]);
-  await run(['git', 'push', 'origin', `refs/tags/${tag}`]);
-  await retireReleaseBranches(head);
-}
-
-async function releaseTrain(): Promise<void> {
-  const root = join(import.meta.dir, '..');
-  const branch = await output(['git', 'branch', '--show-current']);
-  if (branch !== 'master' && branch !== 'main')
-    throw new Error('Releases must run from master or main');
-  if ((await output(['git', 'status', '--porcelain'])) !== '') {
-    throw new Error('Release metadata must be committed before tagging');
-  }
-  await run(['git', 'fetch', 'origin', branch]);
-  const head = await output(['git', 'rev-parse', 'HEAD']);
-  const remoteHead = await output(['git', 'rev-parse', `origin/${branch}`]);
-  if (head !== remoteHead) throw new Error(`HEAD must equal origin/${branch}`);
-  const subject = await output(['git', 'log', '-1', '--format=%s', head]);
-  assertReleaseCommitSubject(subject, '', 'train');
-  const train = await readReleaseTrain(root);
-  const tags: string[] = [];
-  for (const entry of train.releases) {
-    const tag = releaseTagForTarget(entry.target, entry.version);
-    await validateReleaseTag(root, tag);
-    await assertReleaseSubjectForTag(root, subject, tag, entry.version);
-    await run(['git', 'tag', tag, head]);
-    tags.push(`refs/tags/${tag}`);
-  }
-  await run(['git', 'push', 'origin', ...tags]);
-  await retireReleaseBranches(head);
-}
-
-/**
- * A `release/…` branch exists to carry one candidate through its exact-SHA CI
- * run. Once that commit is on the default branch and tagged, the branch says
- * nothing the tag does not — and twenty-nine of them had piled up, local and
- * remote. Only branches whose tip is already contained in the released head
- * are removed, so nothing unreleased goes with them. The tags are pushed by
- * then, so a failure here is reported and does not fail the release.
- */
-async function retireReleaseBranches(head: string): Promise<void> {
-  const merged = async (refs: string, format: string): Promise<string[]> =>
-    (await output(['git', 'for-each-ref', `--format=${format}`, '--merged', head, refs]))
-      .split('\n')
-      .filter((name) => name !== '');
-  // One at a time: a branch that cannot go (checked out elsewhere, already
-  // gone) must not keep the rest.
-  const retire = async (command: string[]): Promise<void> => {
-    try {
-      await run(command);
-    } catch (error) {
-      process.stderr.write(
-        `Release branch not retired: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-    }
-  };
-  try {
-    for (const branch of await merged('refs/heads/release/', '%(refname:short)')) {
-      await retire(['git', 'branch', '--delete', branch]);
-    }
-    await run(['git', 'fetch', '--prune', 'origin']);
-    for (const branch of await merged('refs/remotes/origin/release/', '%(refname:lstrip=3)')) {
-      await retire(['git', 'push', 'origin', '--delete', branch]);
-    }
-  } catch (error) {
-    process.stderr.write(
-      `Release branches were not retired: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-  }
 }
 
 async function main(): Promise<void> {
@@ -1274,19 +1105,7 @@ async function main(): Promise<void> {
       const landing = releaseCommits
         .filter((commit) => plan.defaultBranchHeads.includes(commit.sha))
         .map((commit) => commit.sha);
-      const answered = await ciAlreadyAnsweredFor(landing, async (sha) =>
-        CiRunListSchema(
-          JSON.parse(
-            await output([
-              'gh',
-              'api',
-              `repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=completed`,
-              '--jq',
-              '.workflow_runs',
-            ]),
-          ),
-        ),
-      );
+      const answered = await ciAlreadyAnsweredFor(landing, (sha) => askReleaseCi(root, sha));
       if (answered.green) {
         process.stderr.write(
           `[gate] release commit already gated by CI: ${answered.because}. Fast-forwarding master publishes a tree CI has answered for on this exact SHA.\n`,
@@ -1299,14 +1118,23 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'release') {
+    const execution: ReleaseExecution = {
+      root,
+      run,
+      output,
+      validateTag: (tag) => validateReleaseTag(root, tag),
+      validateSubject: (subject, tag, version) =>
+        assertReleaseSubjectForTag(root, subject, tag, version),
+      askCi: (sha) => askReleaseCi(root, sha),
+    };
     if (argument === 'train') {
-      await releaseTrain();
+      await releaseTrain(execution);
       return;
     }
     if (argument !== 'core' && argument !== 'create-stitchkit' && argument !== 'tui') {
       throw new Error('Usage: release-plan.ts release <core|create-stitchkit|tui>');
     }
-    await release(argument);
+    await release(argument, execution);
     return;
   }
   if (command === 'assert-subject') {
@@ -1321,7 +1149,7 @@ async function main(): Promise<void> {
   }
   if (command === 'select-ci-run') {
     if (!argument) throw new Error('Usage: release-plan.ts select-ci-run <sha> < runs.json');
-    const runs = CiRunListSchema(JSON.parse(await Bun.stdin.text()));
+    const runs = CiRunListSchema.parse(JSON.parse(await Bun.stdin.text()));
     process.stdout.write(String(selectSuccessfulCiRun(runs, argument)));
     return;
   }

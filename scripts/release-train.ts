@@ -48,3 +48,11 @@ export function packageDirectory(target: ReleaseTarget): string {
   if (target === 'core') return 'packages/core';
   return target === 'tui' ? 'packages/tui' : 'packages/create-stitchkit';
 }
+
+/** Canonical package-to-tag identity used by metadata and mutation entrypoints. */
+export function releaseTagForTarget(target: ReleaseTarget, version: string): string {
+  if (target === 'core') return `v${version}`;
+  return target === 'create-stitchkit'
+    ? `create-stitchkit-v${version}`
+    : `stitchkit-tui-v${version}`;
+}

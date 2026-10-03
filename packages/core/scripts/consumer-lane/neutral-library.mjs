@@ -120,7 +120,6 @@ export function qualifyNeutralLibrary(author) {
       .replaceAll("'stitchkit/files'", "'neutral-library-fixture/files'")
       .replaceAll("'stitchkit/process'", "'neutral-library-fixture/process'");
     writeFileSync(join(consumer, 'owners.mjs'), fixture);
-    cpSync(join(author, 'src/native-owner-uid.mjs'), join(consumer, 'native-owner-uid.mjs'));
     writeFileSync(
       join(consumer, 'json.mjs'),
       `import assert from 'node:assert/strict';import{canonicalJson}from'neutral-library-fixture/primitives';assert.equal(canonicalJson({2:2,10:10,'\uE000':'bmp','\u{10000}':'pair'}),'{"10":10,"2":2,"𐀀":"pair","":"bmp"}');console.log('neutral JSON: ok');`,

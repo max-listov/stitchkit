@@ -79,6 +79,32 @@ describe('decisions index ↔ principles', () => {
     expect(rows).toEqual(files);
   });
 
+  test('every ADR renders as a row of one complete Markdown table', () => {
+    function tableRows(source: string): number {
+      const html = Bun.markdown.html(source);
+      const tables = [...html.matchAll(/<table>[\s\S]*?<\/table>/g)];
+      expect(tables).toHaveLength(1);
+      const table = tables[0]?.[0] ?? '';
+      expect(table).toContain('<thead>');
+      const headings = [...table.matchAll(/<th>/g)];
+      expect(headings).toHaveLength(4);
+      return [...table.matchAll(/<tr><td>/g)].length;
+    }
+    expect(tableRows(index)).toBe(indexRows(index).length);
+    const broken = index.replace('\n| [0223]', '\n\n| [0223]');
+    expect(tableRows(broken)).toBeLessThan(indexRows(index).length);
+    const html = Bun.markdown.html(broken);
+    expect(html).toContain('<p>| <a href="0223-');
+    for (const line of [
+      '| ADR | Decision | Status | Invariant |',
+      '|-----|----------|--------|-----------|',
+    ]) {
+      const missing = index.replace(`${line}\n`, '');
+      expect(Bun.markdown.html(missing)).not.toContain('<table>');
+      expect(() => tableRows(missing)).toThrow();
+    }
+  });
+
   test('every row carries an invariant the page declares, P, or a superseding record', () => {
     expect(checkDecisionsIndex(index, principles)).toEqual([]);
   });

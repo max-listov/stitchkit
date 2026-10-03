@@ -143,6 +143,8 @@ packages/core/src/                       parts only — no files at the root
 ├── browser/ react/ realtime/ live/      clients, React data layer, typed Socket.IO, watched reads
 ├── tools/ (mcp/ cli/ operations/ transfer/ schema/ connections/ internal/)  tool mounts and runner
 ├── durability/                          neutral durability engine shared by tools and the runtime
+├── process/                             bounded POSIX commands and process-group cleanup
+├── voice/                               speech client, streaming audio and playback contracts
 ├── agent-runtime/ application/          the two separately bounded products (evolving)
 ├── observability/ files/ tracking/ release/ geo/ telegram/ oauth/ google/ declaration/ testing/
 └── internal/                            leaf helpers — imports no other part

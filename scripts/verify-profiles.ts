@@ -1,3 +1,4 @@
+import { type LaneInput, laneInputsForSteps } from './gate-lane-environment';
 import { readReleaseTrain } from './release-train';
 
 /** Every portable CI lane remains available as a local diagnostic gate. */
@@ -34,18 +35,26 @@ export const VERIFY_FLAGS = [
 export interface VerifyProfile {
   gate: string;
   steps: readonly string[];
-  usesLaneEnvironment: boolean;
+  requiredLaneInputs: readonly LaneInput[];
 }
 
 export const PROFILES: Record<'full' | 'fast' | 'head' | 'candidate', VerifyProfile> = {
-  full: { gate: VERIFY_GATE, steps: VERIFY_STEPS, usesLaneEnvironment: true },
+  full: {
+    gate: VERIFY_GATE,
+    steps: VERIFY_STEPS,
+    requiredLaneInputs: laneInputsForSteps(VERIFY_STEPS),
+  },
   candidate: {
     gate: 'verify:candidate',
     steps: ['lockfile', 'lint', 'check'],
-    usesLaneEnvironment: false,
+    requiredLaneInputs: [],
   },
-  fast: { gate: FAST_GATE, steps: FAST_STEPS, usesLaneEnvironment: false },
-  head: { gate: HEAD_GATE, steps: HEAD_STEPS, usesLaneEnvironment: true },
+  fast: { gate: FAST_GATE, steps: FAST_STEPS, requiredLaneInputs: [] },
+  head: {
+    gate: HEAD_GATE,
+    steps: HEAD_STEPS,
+    requiredLaneInputs: laneInputsForSteps(HEAD_STEPS),
+  },
 };
 
 export async function releaseProfile(root: string): Promise<VerifyProfile> {
@@ -76,6 +85,6 @@ export async function releaseProfile(root: string): Promise<VerifyProfile> {
       .sort()
       .join('+')}`,
     steps: [...FAST_STEPS, 'build', ...new Set(lanes)],
-    usesLaneEnvironment: lanes.length > 0,
+    requiredLaneInputs: laneInputsForSteps(lanes),
   };
 }

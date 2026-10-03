@@ -2,6 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, readlinkSync } from 'node:fs';
 import { SQL } from 'bun';
 
+/** The URL transport shared by the lane and its read-only environment probe. */
+export function createStarterAdminSql(adminUrl: string): SQL {
+  return new SQL(adminUrl);
+}
+
 /**
  * A lane owns the database it creates — including when it dies badly.
  *
@@ -320,7 +325,7 @@ export async function createStarterLaneDatabase(mode: string): Promise<StarterLa
   let url: string;
 
   if (adminUrl) {
-    const sql = new SQL(adminUrl);
+    const sql = createStarterAdminSql(adminUrl);
     execute = async (statement) => {
       await sql.unsafe(statement);
     };

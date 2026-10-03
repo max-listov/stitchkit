@@ -4,7 +4,7 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-02 16:28 +07:00
+updated: 2026-10-03 13:36 +07:00
 participants:
   - role: authored
     harness: Codex
@@ -14,6 +14,10 @@ participants:
     harness: Codex
     model: GPT-6
     at: 2026-10-02 00:08 +07:00
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-03 13:36 +07:00
 ---
 
 # Native IO
@@ -216,9 +220,10 @@ independent of umask. Default `0600` stays private. Shared `0640` requires a com
 traversable directories; another UID also needs directory write permission to reclaim a
 proven-dead owner's file. Set `ownerlessGraceMs: null` to refuse every age-only reclaim,
 including ownerless reclaim guards. The default remains 5000 ms for existing clients.
-Восстановление stale reclaim guard использует тот же lock owner и следующий guard:
-проверка inode и удаление выполняются под ним. Конкурирующий writer не обходит guard,
-пока прежнее удаление приостановлено; live и unknown lifetime evidence остаются отказом.
+Stale reclaim guards use the same lock owner and a child guard for the inode check and
+unlink. Recovery depth is capped at 16; a deeper stale chain refuses recovery with a depth diagnosis retained as the cause of
+the bounded `LOCK_TIMEOUT`. Live owners, unknown process-lifetime evidence and unsafe records are never
+reclaimed. Concurrent writers cannot bypass a guard while a prior unlink is paused.
 
 ## Libraries with a Zod-only runtime
 
@@ -247,3 +252,23 @@ Stitchkit leaf fails there. A separate schema-only entry must not import the nat
 
 This delivery removes a runtime kernel installation; it does not remove the build-time
 Stitchkit installation or create an independent lightweight npm package.
+
+## Qualification boundaries
+
+Native command cleanup owns the child before launch subscriptions are installed. Setup
+refusal still settles leader closure and teardown within the cleanup budget; failure to
+prove closure reports `COMMAND_CLEANUP` with the original failure retained. Process-group
+signaling requires evidence from the actual detached launcher, not a structural PID field.
+The built-in sandbox transport carries that ownership across the package's split entrypoints.
+Internal finite deadlines and Darwin retry admission use monotonic elapsed time.
+
+Linux UID-refusal qualification is a separate privileged installed-package proof in Bun
+and real Node; an unsupported platform or insufficient UID reports an explicit skip.
+A generic native-owner marker does not certify the privileged case. Real Darwin CI remains
+the qualification for native Darwin behavior.
+
+Local filesystem tests do not attest delayed NFS visibility, shared-volume microVM or gVisor
+ownership, actual PGID reuse, power-loss durability or macOS full-sync behavior. Those
+require their actual topology or failure environment. The default ownerless grace remains
+5000 ms; stricter callers can retain `ownerlessGraceMs: null`. No age-only observation
+proves a partially published owner's process dead.

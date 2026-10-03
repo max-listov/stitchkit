@@ -252,11 +252,10 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0220](0220-compose-existing-agent-owners.md) | Compose existing agent owners | Active — optional tool, realtime, browser and React composition preserves canonical runtime ownership and exact-run evidence | I1, I2, I7, I8, I9, I10, I12, I15 |
 | [0221](0221-flat-field-explanations-retain-branch-meaning.md) | Flat field explanations retain branch meaning | Active — descriptions and applicability retain discriminator labels independently of structural joins | I1, I3, I8 |
 | [0222](0222-release-evidence-is-paid-once.md) | Кандидат релиза платит за доказательство один раз | Active — полный exact-SHA CI разрешает публикацию; fast subset имеет отдельную attestation, core prepack собирает input один раз | P |
-
 | [0223](0223-release-candidate-tests-are-ci-evidence.md) | Unit tests кандидата проверяет обязательный CI | Active — candidate выполняет structural preflight; полный exact-SHA CI содержит tests и разрешает публикацию, fast attestation не подменяется | P |
-
 | [0224](0224-native-primitives-have-one-owner.md) | Общие IO primitives имеют одного владельца | Active — native boundaries, historical bytes и recipient authority объявлены явно | I8, I10, I12, I15 |
 | [0225](0225-native-libraries-separate-install-and-import-closure.md) | Native libraries separate install and import closure | Active — public imports and reachable declarations may be bundled once with Zod external; build-time package installation and runtime installation are qualified separately | I7, I8, I13 |
+| [0226](0226-evidence-covers-the-affected-tree.md) | Evidence covers the affected tree | Accepted | P |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

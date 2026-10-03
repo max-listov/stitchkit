@@ -1,6 +1,12 @@
 ---
 title: Optional process sandbox
 description: Linux namespace isolation, durable workspaces and a host credential gateway.
+updated: 2026-10-03 14:47 +07:00
+participants:
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-03 14:47 +07:00
 ---
 
 # Optional process sandbox
@@ -70,7 +76,9 @@ Unsupported backends omit the binding and the factory refuses explicitly.
 Stop also kills coding commands. Both launch paths share the configured
 `maxConcurrentCommands` admission limit (default 8); an occupied slot gives
 `SANDBOX_BUSY` before another process starts. This counts direct commands, not
-guest descendants. Required restrictions are checked again during preparation;
+guest descendants. A direct launch retains its slot through terminal group cleanup,
+including descendants that outlive the leader. Required restrictions are checked again
+during preparation;
 a network-policy change invalidates an outstanding prepared launch. After
 reconnect, create the coding profile from the new handle; old tools remain stopped.
 

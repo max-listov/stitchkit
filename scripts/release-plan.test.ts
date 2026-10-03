@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { selectSuccessfulCiRun } from './release-ci';
 import {
   assertBreakingAudience,
   assertLockfileWorkspaceVersions,
@@ -25,7 +26,6 @@ import {
   releaseScopeForSubject,
   releaseScopeForTag,
   releaseTagFor,
-  selectSuccessfulCiRun,
   shouldRunStarterHeadLane,
   validateReleaseCommit,
 } from './release-plan';

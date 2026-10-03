@@ -58,7 +58,9 @@ if (import.meta.main) {
       throw error;
     });
     if (previous !== rendered) {
-      await writeFile(file, rendered);
+      await writeFile(file, rendered).catch((cause: unknown) => {
+        throw new Error(`Declaration write refused: ${file}`, { cause });
+      });
       console.log(`Wrote ${file}`);
     }
   }

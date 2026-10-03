@@ -26,44 +26,46 @@ test('Linux birth is field 22 after the final parenthesis and mismatched PID or 
   expect(linuxProcessStart('42 (name) S 1 2', 42)).toBeNull();
 });
 
-test('Linux kernel fixtures retain boot, PID and time namespace and refuse a foreign proc mount', async () => {
-  if (process.platform !== 'linux') return;
-  const root = await mkdtemp(join(tmpdir(), 'stitchkit-proc-fixture-'));
-  try {
-    for (const dir of ['sys/kernel/random', 'self/ns', '42'])
-      await mkdir(join(root, dir), { recursive: true });
-    await writeFile(join(root, 'sys/kernel/random/boot_id'), 'boot-id\n');
-    await writeFile(join(root, 'self/stat'), stat(process.pid));
-    await writeFile(join(root, 'self/status'), `NStgid:\t${process.pid}\n`);
-    await writeFile(join(root, '42/stat'), stat(42));
-    await symlink('pid:[1]', join(root, 'self/ns/pid'));
-    await symlink('time:[1]', join(root, 'self/ns/time'));
-    expect(await readProcessInstance(42, root)).toEqual({
-      platform: 'linux',
-      bootId: 'boot-id',
-      namespace: 'pid:[1];time:[1]',
-      startId: '98765',
-    });
-    // A kernel before 5.6 has no time namespace: the identity keeps the PID namespace.
-    await rm(join(root, 'self/ns/time'));
-    expect((await readProcessInstance(42, root))?.namespace).toBe('pid:[1];');
-    await symlink('time:[1]', join(root, 'self/ns/time'));
-    await writeFile(join(root, 'self/stat'), stat(process.pid + 1));
-    expect(await readProcessInstance(42, root)).toBeNull();
-    expect(await readProcessInstance(43, root)).toBeNull();
-    await writeFile(join(root, 'self/stat'), stat(process.pid));
-    for (const status of [
-      `NStgid:\t${process.pid}\t${process.pid}\n`,
-      `NStgid:\t${process.pid + 1}\n`,
-      'Name:\tmissing namespace evidence\n',
-    ]) {
-      await writeFile(join(root, 'self/status'), status);
+test.skipIf(process.platform !== 'linux')(
+  'Linux kernel fixtures retain boot, PID and time namespace and refuse a foreign proc mount',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'stitchkit-proc-fixture-'));
+    try {
+      for (const dir of ['sys/kernel/random', 'self/ns', '42'])
+        await mkdir(join(root, dir), { recursive: true });
+      await writeFile(join(root, 'sys/kernel/random/boot_id'), 'boot-id\n');
+      await writeFile(join(root, 'self/stat'), stat(process.pid));
+      await writeFile(join(root, 'self/status'), `NStgid:\t${process.pid}\n`);
+      await writeFile(join(root, '42/stat'), stat(42));
+      await symlink('pid:[1]', join(root, 'self/ns/pid'));
+      await symlink('time:[1]', join(root, 'self/ns/time'));
+      expect(await readProcessInstance(42, root)).toEqual({
+        platform: 'linux',
+        bootId: 'boot-id',
+        namespace: 'pid:[1];time:[1]',
+        startId: '98765',
+      });
+      // A kernel before 5.6 has no time namespace: the identity keeps the PID namespace.
+      await rm(join(root, 'self/ns/time'));
+      expect((await readProcessInstance(42, root))?.namespace).toBe('pid:[1];');
+      await symlink('time:[1]', join(root, 'self/ns/time'));
+      await writeFile(join(root, 'self/stat'), stat(process.pid + 1));
       expect(await readProcessInstance(42, root)).toBeNull();
+      expect(await readProcessInstance(43, root)).toBeNull();
+      await writeFile(join(root, 'self/stat'), stat(process.pid));
+      for (const status of [
+        `NStgid:\t${process.pid}\t${process.pid}\n`,
+        `NStgid:\t${process.pid + 1}\n`,
+        'Name:\tmissing namespace evidence\n',
+      ]) {
+        await writeFile(join(root, 'self/status'), status);
+        expect(await readProcessInstance(42, root)).toBeNull();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 test('unknown evidence never proves death; a boot mismatch does not depend on PID reachability', async () => {
   let probes = 0;
@@ -109,4 +111,43 @@ test('EPERM and an unreadable process identity refuse; ESRCH is the distinct abs
     liveness: 'gone',
     identity: 'pid-gone',
   });
+});
+
+test('same-boot foreign namespace refuses before liveness while different-boot policy stays explicit', async () => {
+  let calls = 0;
+  const probes = {
+    read: async () => identity,
+    liveness: async (): Promise<'alive'> => {
+      calls++;
+      return 'alive';
+    },
+  };
+  expect(
+    await probeProcessOwnerWith(
+      42,
+      { ...identity, namespace: 'pid:[foreign];time:[foreign]' },
+      probes,
+    ),
+  ).toMatchObject({
+    identity: 'unavailable',
+    liveness: 'not-probed',
+    cause: new Error('Process namespaces differ'),
+  });
+  expect(calls).toBe(0);
+  expect(
+    await probeProcessOwnerWith(
+      42,
+      { ...identity, bootId: 'guest-boot', namespace: 'pid:[foreign];time:[foreign]' },
+      probes,
+    ),
+  ).toEqual({
+    identity: 'different-boot',
+    liveness: 'gone',
+  });
+  expect(calls).toBe(0);
+  expect(await probeProcessOwnerWith(42, { ...identity, startId: '0' }, probes)).toEqual({
+    identity: 'reused-pid',
+    liveness: 'gone',
+  });
+  expect(calls).toBe(1);
 });

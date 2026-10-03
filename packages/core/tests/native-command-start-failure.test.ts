@@ -3,40 +3,42 @@ import { getEventListeners } from 'node:events';
 import { runNativeCommand } from '../src/process/command';
 import { NativeCommandError } from '../src/process/contract';
 
-test('real synchronous E2BIG settles once before rejecting and preserves the native cause', async () => {
-  if (process.platform !== 'linux') return;
-  for (const oversized of [false, true]) {
-    const controller = new AbortController();
-    let calls = 0;
-    let settled = false;
-    let nativeCause: unknown;
-    const pending = runNativeCommand({
-      executable: process.execPath,
-      args: ['-e', '', ...(oversized ? ['x'.repeat(200_000)] : [])],
-      signal: controller.signal,
-      timeoutMs: 1000,
-      onLeaderSettled: async (event) => {
-        calls++;
-        if (event.kind === 'error') nativeCause = event.cause;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        settled = true;
-      },
-    });
-    if (oversized) {
-      const error = await pending.catch((cause: unknown) => cause);
-      expect(error).toBeInstanceOf(NativeCommandError);
-      if (!(error instanceof NativeCommandError)) throw error;
-      expect(error.code).toBe('COMMAND_UNAVAILABLE');
-      expect(error.cause).toBe(nativeCause);
-      expect(nativeCause).toMatchObject({ code: 'E2BIG' });
-    } else {
-      expect((await pending).exitCode).toBe(0);
+test.skipIf(process.platform !== 'linux')(
+  'real synchronous E2BIG settles once before rejecting and preserves the native cause',
+  async () => {
+    for (const oversized of [false, true]) {
+      const controller = new AbortController();
+      let calls = 0;
+      let settled = false;
+      let nativeCause: unknown;
+      const pending = runNativeCommand({
+        executable: process.execPath,
+        args: ['-e', '', ...(oversized ? ['x'.repeat(200_000)] : [])],
+        signal: controller.signal,
+        timeoutMs: 1000,
+        onLeaderSettled: async (event) => {
+          calls++;
+          if (event.kind === 'error') nativeCause = event.cause;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          settled = true;
+        },
+      });
+      if (oversized) {
+        const error = await pending.catch((cause: unknown) => cause);
+        expect(error).toBeInstanceOf(NativeCommandError);
+        if (!(error instanceof NativeCommandError)) throw error;
+        expect(error.code).toBe('COMMAND_UNAVAILABLE');
+        expect(error.cause).toBe(nativeCause);
+        expect(nativeCause).toMatchObject({ code: 'E2BIG' });
+      } else {
+        expect((await pending).exitCode).toBe(0);
+      }
+      expect(calls).toBe(1);
+      expect(settled).toBe(true);
+      expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
     }
-    expect(calls).toBe(1);
-    expect(settled).toBe(true);
-    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
-  }
-});
+  },
+);
 
 test('synchronous launch failure bounds a hanging hook and retains both failure causes', async () => {
   let calls = 0;

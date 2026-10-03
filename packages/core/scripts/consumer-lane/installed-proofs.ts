@@ -10,6 +10,7 @@ const ProofSchema = z.object({
   runtimes: z.array(z.enum(['bun', 'node'])),
   kind: z.enum(['runtime', 'declarations']),
   marker: z.string().min(1),
+  capability: z.literal('linux-root').optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
 
@@ -44,8 +45,28 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
     id: 'native-owners',
     fixture: 'node',
     entry: 'native-owners.mjs',
-    files: ['native-owner-uid.mjs'],
+    files: [],
     marker: 'packed native owners: ok',
+  },
+  {
+    ...native,
+    id: 'native-owner-uid',
+    fixture: 'node',
+    entry: 'native-owner-uid.mjs',
+    files: [],
+    platforms: ['linux'],
+    capability: 'linux-root',
+    marker: 'packed Linux mixed UID: ok',
+  },
+  {
+    ...native,
+    id: 'native-cross-entry-owner',
+    fixture: 'node',
+    entry: 'native-cross-entry-owner.mjs',
+    files: [],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server'],
+    platforms: ['linux'],
+    marker: 'packed cross-entry native ownership: ok',
   },
   {
     ...native,
@@ -88,6 +109,9 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
 export async function runInstalledConsumerProofs(input: {
   fixture?: InstalledConsumerProof['fixture'];
   platform: NodeJS.Platform;
+  uid?: number;
+  ids?: readonly string[];
+  requireCapabilities?: boolean;
   run: (proof: InstalledConsumerProof, runtime: 'bun' | 'node' | 'types') => Promise<string>;
   verdict: (
     proof: InstalledConsumerProof,
@@ -96,7 +120,16 @@ export async function runInstalledConsumerProofs(input: {
   ) => void;
 }): Promise<void> {
   for (const proof of installedConsumerProofs) {
+    if (input.ids && !input.ids.includes(proof.id)) continue;
     if (input.fixture && proof.fixture !== input.fixture) continue;
+    if (proof.capability === 'linux-root' && (input.platform !== 'linux' || input.uid !== 0)) {
+      if (input.requireCapabilities) {
+        input.verdict(proof, 'platform', 'failed');
+        throw new Error(`Installed proof ${proof.id} requires Linux UID0`);
+      }
+      input.verdict(proof, 'platform', 'not-applicable');
+      continue;
+    }
     if (!proof.platforms.some((platform) => platform === input.platform)) {
       input.verdict(proof, 'platform', 'not-applicable');
       continue;

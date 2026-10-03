@@ -4,7 +4,12 @@ description: How a breaking change is marked and migrated, which number moves, a
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-10-03 13:36 +07:00
+participants:
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-03 13:36 +07:00
 ---
 
 # Release process — breaking changes, versions and the release train
@@ -192,3 +197,12 @@ tree and every selected tag points at it. `assert-head` and manifest membership 
 another commit or a package/version absent from the train. Publication remains independent per
 package, but validation is paid once per tree rather than once per tag. →
 [ADR 0136](../decisions/0136-one-exact-tree-drives-a-package-aware-release-train.md).
+
+## Bounded registry visibility
+
+The publication job has a 45-minute ceiling. Its idempotent tarball publication step has
+10 minutes, followed by a separate registry visibility step with a 30-minute monotonic
+deadline and one minute of workflow shutdown grace. Every fetch, response body and sleep
+is bounded by the remaining deadline; an exact response arriving after it is refused.
+Matching existing tarball bytes remain a valid rerun; different bytes at one version refuse
+publication. These budgets bound failure; they are not measured registry latency.

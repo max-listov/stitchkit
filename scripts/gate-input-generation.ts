@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { watch } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { type FSWatcher, watch } from 'node:fs';
+import { lstat, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 async function inputPaths(root: string): Promise<string[]> {
@@ -32,11 +32,16 @@ function inputDirectories(names: string[]): Set<string> {
 export async function worktreeInputGeneration(root: string): Promise<string> {
   const names = await inputPaths(root);
   const paths = new Set(names);
+  let symlinkInputs = false;
   const generations = await Promise.all(
     [...paths].sort().map(async (path) => {
       try {
-        const info = await stat(join(root, path), { bigint: true });
-        return `${path}\0${info.dev}:${info.ino}:${info.size}:${info.ctimeNs}:${info.mtimeNs}`;
+        const link = await lstat(join(root, path), { bigint: true });
+        if (link.isSymbolicLink()) symlinkInputs = true;
+        const info = link.isSymbolicLink()
+          ? await stat(join(root, path), { bigint: true })
+          : link;
+        return `${path}\0${link.dev}:${link.ino}:${link.size}:${link.ctimeNs}:${link.mtimeNs}\0${info.dev}:${info.ino}:${info.size}:${info.ctimeNs}:${info.mtimeNs}`;
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
           return `${path}\0absent`;
@@ -44,11 +49,19 @@ export async function worktreeInputGeneration(root: string): Promise<string> {
       }
     }),
   );
-  return createHash('sha256').update(generations.join('\0')).digest('hex');
+  const fingerprint = createHash('sha256').update(generations.join('\0')).digest('hex');
+  // Git hashes link text, not the target read by tools. No prior memo attests that target.
+  return symlinkInputs ? `unattested-symlinks:${fingerprint}` : fingerprint;
 }
 
 /** Watch input directories without traversing ignored build/dependency trees. */
-export async function watchWorktreeInputs(root: string) {
+export async function watchWorktreeInputs(
+  root: string,
+  createWatcher: (
+    path: string,
+    listener: (event: string, filename: string | Buffer | null) => void,
+  ) => FSWatcher = watch,
+) {
   const names = await inputPaths(root);
   const known = new Set(names);
   const ignored = new Map<string, Promise<boolean>>();
@@ -89,7 +102,7 @@ export async function watchWorktreeInputs(root: string) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
         throw error;
       }
-      const watcher = watch(join(root, directory), (_event, filename) => {
+      const watcher = createWatcher(join(root, directory), (_event, filename) => {
         if (filename === null) {
           changed = true;
           return;

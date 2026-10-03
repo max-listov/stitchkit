@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { browserRuntimeFixture } from './gate-environment-fixtures';
 import {
   findGreenGate,
   type GreenGateRecord,
@@ -108,6 +109,18 @@ describe('a gate remembers what it checked, not when it ran', () => {
     expect((await readGreenGates('verify:fast', path))[0]?.tree).toBe('tree-9');
     expect(await readGreenGates('verify', join(directory, 'absent.json'))).toEqual([]);
   });
+
+  test('concurrent writers retain every independent gate', async () => {
+    const directory = await scratch('gate-memo-concurrent-');
+    const path = join(directory, 'green-gates.json');
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        writeGreenGate(`gate-${index}`, record(), path),
+      ),
+    );
+    for (let index = 0; index < 12; index += 1)
+      expect(await readGreenGates(`gate-${index}`, path)).toHaveLength(1);
+  });
 });
 
 describe('the memo knows what the lanes talk to, not only what ran them', () => {
@@ -116,11 +129,22 @@ describe('the memo knows what the lanes talk to, not only what ran them', () => 
     // files, same Bun, different Playwright — and the memo would have answered
     // for a run that happened under different conditions.
     const root = await scratch('gate-memo-browsers-');
-    const before = await laneEnvironmentFingerprint({ PLAYWRIGHT_BROWSERS_PATH: root });
-    await writeFile(join(root, 'chromium-9999'), '');
-    const after = await laneEnvironmentFingerprint({ PLAYWRIGHT_BROWSERS_PATH: root });
+    const context = await browserRuntimeFixture(root);
+    await writeFile(join(root, 'chromium'), 'binary');
+    await writeFile(join(root, 'webkit'), 'binary');
+    const before = await laneEnvironmentFingerprint(
+      { PLAYWRIGHT_BROWSERS_PATH: root },
+      ['browsers'],
+      context,
+    );
+    await writeFile(join(root, 'chromium'), 'upgraded binary');
+    const after = await laneEnvironmentFingerprint(
+      { PLAYWRIGHT_BROWSERS_PATH: root },
+      ['browsers'],
+      context,
+    );
     expect(after).not.toBe(before);
-    expect(after).toContain('chromium-9999');
+    expect(after).toContain('browsers:1.63.0:');
   });
 
   test('what cannot be measured gets a marker of its own, never a shared one', async () => {
@@ -131,12 +155,12 @@ describe('the memo knows what the lanes talk to, not only what ran them', () => 
       PLAYWRIGHT_BROWSERS_PATH: '/nowhere-that-exists',
       STARTER_TEST_DATABASE_ADMIN_URL: 'postgresql://nobody@127.0.0.1:1/none',
     });
-    expect(absent).toContain('browsers:absent');
+    expect(absent).toContain('browsers:unknown');
     expect(absent).toContain('pg:unreachable');
 
     const measured = await laneEnvironmentFingerprint({
       PLAYWRIGHT_BROWSERS_PATH: await scratch('gate-memo-empty-'),
-      STARTER_TEST_DATABASE_ADMIN_URL: 'postgresql://nobody@127.0.0.1:1/none',
+      STARTER_TEST_DATABASE_ADMIN_URL: 'postgresql://nobody@127.0.0.1:2/none',
     });
     expect(measured).not.toBe(absent);
   });
@@ -165,6 +189,33 @@ describe('the tree hash is of the working tree, through nobody else’s index', 
     expect(await worktreeTreeHash(root)).toBe(before);
     await writeFile(join(root, 'added.txt'), 'source\n');
     expect(await worktreeTreeHash(root)).not.toBe(before);
+  });
+
+  test('tracked ignored bytes and deletion count without changing the caller index', async () => {
+    for (const name of ['board.sqlite', 'é-data.sqlite', ' edge\n\t.sqlite ']) {
+      const root = await repository();
+      await mkdir(join(root, '.data'));
+      await writeFile(join(root, '.gitignore'), 'ignored.txt\n.data/\n');
+      const path = join('.data', name);
+      await writeFile(join(root, path), 'reviewed data\n');
+      await git(root, ['add', '--force', '--', path]);
+      const indexPath = join(root, '.git/index');
+      const indexBytes = await readFile(indexPath);
+      const indexMetadata = await stat(indexPath, { bigint: true });
+      const before = await worktreeTreeHash(root);
+      await writeFile(join(root, '.data/untracked.sqlite'), 'ignored output\n');
+      expect(await worktreeTreeHash(root)).toBe(before);
+      await writeFile(join(root, path), 'current data\n');
+      expect(await worktreeTreeHash(root)).not.toBe(before);
+      await writeFile(join(root, path), 'reviewed data\n');
+      expect(await worktreeTreeHash(root)).toBe(before);
+      await rm(join(root, path));
+      expect(await worktreeTreeHash(root)).not.toBe(before);
+      expect(await readFile(indexPath)).toEqual(indexBytes);
+      const afterMetadata = await stat(indexPath, { bigint: true });
+      expect(afterMetadata.mtimeNs).toBe(indexMetadata.mtimeNs);
+      expect(afterMetadata.ctimeNs).toBe(indexMetadata.ctimeNs);
+    }
   });
 
   test('the real index is not touched — not even transiently', async () => {

@@ -279,25 +279,27 @@ describe.skipIf(!supported)('real Bubblewrap sandbox', () => {
   });
 });
 
-test('missing sandbox executable refuses create instead of running on the host', async () => {
-  if (process.platform !== 'linux') return;
-  const root = await mkdtemp(join(tmpdir(), 'sk-sandbox-missing-'));
-  const backend = await createBubblewrapSandboxBackend({
-    stateDirectory: root,
-    executable: '/no-such-bubblewrap',
-    onBrokerError(cause) {
-      console.error(cause);
-    },
-  });
-  try {
-    const t = await backend.prewarm({ template: 'empty' });
-    await expect(
-      backend.create({ template: t.templateKey, network: 'deny-all' }),
-    ).rejects.toBeInstanceOf(SandboxError);
-    const [namespace] = await readdir(root);
-    expect(namespace).toBeDefined();
-    expect(await readdir(join(root, namespace ?? '', 'sessions'))).toEqual([]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.platform !== 'linux')(
+  'missing sandbox executable refuses create instead of running on the host',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sk-sandbox-missing-'));
+    const backend = await createBubblewrapSandboxBackend({
+      stateDirectory: root,
+      executable: '/no-such-bubblewrap',
+      onBrokerError(cause) {
+        console.error(cause);
+      },
+    });
+    try {
+      const t = await backend.prewarm({ template: 'empty' });
+      await expect(
+        backend.create({ template: t.templateKey, network: 'deny-all' }),
+      ).rejects.toBeInstanceOf(SandboxError);
+      const [namespace] = await readdir(root);
+      expect(namespace).toBeDefined();
+      expect(await readdir(join(root, namespace ?? '', 'sessions'))).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
