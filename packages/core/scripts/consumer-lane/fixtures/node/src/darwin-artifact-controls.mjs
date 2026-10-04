@@ -151,7 +151,7 @@ async function lockControls() {
 
 async function refusedBackend() {
   const expected = process.argv[process.argv.indexOf('--expect-unavailable') + 1];
-  assert.ok(expected === 'missing' || expected === 'corrupt');
+  assert.ok(['missing', 'corrupt', 'unsupported'].includes(expected));
   const observation = await observeProcessInstance(process.pid);
   assert.equal(observation.state, 'unavailable');
   assert.ok(observation.cause instanceof Error);
@@ -170,6 +170,12 @@ async function refusedBackend() {
   assert.equal(Object.hasOwn(diagnostic, 'stack'), false);
   assert.equal(Object.hasOwn(diagnostic, 'cause'), false);
   assert.equal(JSON.stringify(diagnostic).includes('stitchkit-'), false);
+  if (expected === 'unsupported') {
+    const loaderError = observation.cause.cause;
+    assert.ok(loaderError instanceof Error);
+    assert.ok(loaderError.cause instanceof Error);
+    assert.equal(loaderError.cause.message, 'Unsupported Darwin addon architecture');
+  }
   const owner = await probeProcessOwner(process.pid, {
     platform: 'darwin',
     bootId: 'unavailable-control',
@@ -182,45 +188,57 @@ async function refusedBackend() {
   console.log(`Darwin artifact backend ${expected}: refused`);
 }
 
-assert.equal(process.platform, 'darwin');
-if (process.argv.includes('--identity-child')) {
-  console.log('ready');
-  await pause(15000);
-} else if (process.argv.includes('--lock-child')) {
-  const lockPath = process.argv[process.argv.indexOf('--lock-child') + 1];
-  await withExclusiveLock(
-    lockPath,
-    async () => {
-      console.log('ready');
-      await pause(15000);
-    },
-    { machineIdentity: 'darwin-artifact-control' },
-  );
-} else if (process.argv.includes('--expect-unavailable')) {
-  await refusedBackend();
+if (process.argv.includes('--expect-linux')) {
+  assert.equal(process.platform, 'linux');
+  const own = await observeProcessInstance(process.pid);
+  assert.equal(own.state, 'observed');
+  assert.equal(own.instance.platform, 'linux');
+  console.log('Universal artifact Linux without Darwin addons: ok');
 } else {
-  if (standalone) {
-    const expected = process.argv[process.argv.indexOf('--expected-native') + 1];
-    const matches = [];
-    for (const file of Bun.embeddedFiles) {
-      if (!file.name.endsWith('.node')) continue;
-      const digest = createHash('sha256')
-        .update(new Uint8Array(await file.arrayBuffer()))
-        .digest('hex');
-      if (digest === expected) matches.push(file);
-    }
-    assert.equal(matches.length, 1, 'Exactly one embedded addon must match the original hash');
-    const asset = matches[0];
-    assert.ok(asset, 'Standalone artifact did not embed its native addon');
-    assert.equal(
-      createHash('sha256')
-        .update(new Uint8Array(await asset.arrayBuffer()))
-        .digest('hex'),
-      expected,
+  assert.equal(process.platform, 'darwin');
+  if (process.argv.includes('--identity-child')) {
+    console.log('ready');
+    await pause(15000);
+  } else if (process.argv.includes('--lock-child')) {
+    const lockPath = process.argv[process.argv.indexOf('--lock-child') + 1];
+    await withExclusiveLock(
+      lockPath,
+      async () => {
+        console.log('ready');
+        await pause(15000);
+      },
+      { machineIdentity: 'darwin-artifact-control' },
     );
+  } else if (process.argv.includes('--expect-unavailable')) {
+    await refusedBackend();
+  } else {
+    if (standalone) {
+      const expected = process.argv[process.argv.indexOf('--expected-native') + 1];
+      const matches = [];
+      for (const file of Bun.embeddedFiles) {
+        if (!file.name.endsWith('.node')) continue;
+        const digest = createHash('sha256')
+          .update(new Uint8Array(await file.arrayBuffer()))
+          .digest('hex');
+        if (digest === expected) matches.push(file);
+      }
+      assert.equal(
+        matches.length,
+        1,
+        'Exactly one embedded addon must match the original hash',
+      );
+      const asset = matches[0];
+      assert.ok(asset, 'Standalone artifact did not embed its native addon');
+      assert.equal(
+        createHash('sha256')
+          .update(new Uint8Array(await asset.arrayBuffer()))
+          .digest('hex'),
+        expected,
+      );
+    }
+    await processControls();
+    await lockControls();
+    await import('./contained-files.mjs');
+    console.log(marker);
   }
-  await processControls();
-  await lockControls();
-  await import('./contained-files.mjs');
-  console.log(marker);
 }

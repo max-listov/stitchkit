@@ -37,6 +37,18 @@ describe('named CI evidence', () => {
     });
   }
 
+  test('core qualification requires the shared producer and native execution before assembly', () => {
+    const plan = planCi({ event: 'schedule', subject: '', changedPaths: [] });
+    const expected = expectedCiEvidence(plan, 'assembly');
+    expect(expected['universal-native-build']).toBe(true);
+    expect(expected['universal-native-run']).toBe(true);
+    for (const job of ['universal-native-build', 'universal-native-run']) {
+      const needs = context(plan, 'assembly');
+      needs[job] = { result: 'failure' };
+      expect(() => assertCiEvidence(needs, 'assembly')).toThrow(job);
+    }
+  });
+
   test('result requires artifacts precisely when publication artifacts were selected', () => {
     const ordinary = planCi({ event: 'push', subject: 'fix: docs', changedPaths: [] });
     expect(() => assertCiEvidence(context(ordinary, 'result'), 'result')).not.toThrow();

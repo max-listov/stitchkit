@@ -330,6 +330,27 @@ Archive the complete output directory with an integrity manifest, unpack to a cl
 verify the same hashes there, and run offline without the build tree or `node_modules`.
 A digest provides integrity, not authenticity: signature and trust policy remain application-owned.
 
+For one JS artifact that runs on both Darwin architectures, change only the packaging inputs:
+
+```ts
+const native = createNativePackaging({
+  platform: 'darwin', architecture: ['arm64', 'x64'], delivery: 'companion',
+  entryPath: 'app/native.js',
+  assetPath: { arm64: 'addons/arm.node', x64: 'addons/intel.node' },
+})
+```
+
+Use the same single plugin and copy loop above. A single-target loader deliberately refuses the
+other architecture; two competing plugins cannot produce a universal loader. The array form
+requires exactly one distinct output path per declared target. A ready result carries the target
+array and both original asset hashes; `NativePackagingOptions<true>` /
+`NativePackagingResult<true>` describe this form when explicitly annotating variables.
+The loader selects only `process.arch`: a missing or wrong-architecture selected addon refuses,
+even when the other valid addon is present. Linux runtime imports remain lazy and use Linux
+process primitives without loading Darwin assets. Qualify the exact same JS bytes on real
+Darwin arm64 and x64 machines, with both companions preserved through archive delivery.
+Build-machine architecture and cross-build success cannot establish universal native support.
+
 For a standalone executable use `delivery: 'embedded'` and the same plugin in `Bun.build`
 with `compile: { outfile: ... }`. Bun embeds the selected addon; `assets` identifies its
 original bytes for qualification, not a companion that must be installed beside the executable.

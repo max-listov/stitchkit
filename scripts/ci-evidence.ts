@@ -21,6 +21,8 @@ export function expectedCiEvidence(plan: CiPlan, phase: CiEvidencePhase) {
     tui: plan.tui,
     'starter-package': plan.starter,
     'darwin-contained-files': plan.darwin,
+    'universal-native-build': plan.darwin,
+    'universal-native-run': plan.darwin,
     supervised: plan.supervised,
     starter: plan.starter,
   };

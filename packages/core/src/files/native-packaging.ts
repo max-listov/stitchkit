@@ -16,29 +16,64 @@ const OutputPathSchema = z
       value.split('/').every((part) => part !== '..' && part !== '.' && part.length > 0),
     'Expected a relative output path without traversal',
   );
+const ArchitectureSchema = z.enum(['arm64', 'x64']);
+const CommonOptions = {
+  platform: z.string().min(1),
+  entryPath: OutputPathSchema.refine(
+    (value) => !value.includes('[') && !value.includes(']'),
+    'Expected a fixed entry path without Bun naming templates',
+  ),
+};
+const SingleOptionsSchema = z.object({
+  ...CommonOptions,
+  architecture: z.string().min(1),
+  delivery: z.enum(['companion', 'embedded']),
+  assetPath: OutputPathSchema,
+});
+const MultipleOptionsSchema = z.object({
+  ...CommonOptions,
+  architecture: z.array(z.string().min(1)).min(1),
+  delivery: z.literal('companion'),
+  assetPath: z.record(z.string().min(1), OutputPathSchema),
+});
 const OptionsSchema = z
-  .object({
-    platform: z.string().min(1),
-    architecture: z.string().min(1),
-    delivery: z.enum(['companion', 'embedded']),
-    entryPath: OutputPathSchema.refine(
-      (value) => !value.includes('[') && !value.includes(']'),
-      'Expected a fixed entry path without Bun naming templates',
-    ),
-    assetPath: OutputPathSchema,
-  })
-  .refine(
-    (input) =>
-      input.entryPath !== input.assetPath &&
-      !input.entryPath.startsWith(`${input.assetPath}/`) &&
-      !input.assetPath.startsWith(`${input.entryPath}/`),
-    'Entry and addon must have non-overlapping paths',
-  );
+  .union([SingleOptionsSchema, MultipleOptionsSchema])
+  .superRefine((input, ctx) => {
+    const targets =
+      typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
+    if (new Set(targets).size !== targets.length)
+      ctx.addIssue({ code: 'custom', message: 'Architecture targets must be unique' });
+    const assetPaths =
+      typeof input.assetPath === 'string' ? [input.assetPath] : Object.values(input.assetPath);
+    const assetMap = input.assetPath;
+    if (
+      typeof assetMap !== 'string' &&
+      (Object.keys(assetMap).length !== targets.length ||
+        targets.some((target) => !Object.hasOwn(assetMap, target)))
+    )
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Asset paths must name exactly the declared architectures',
+      });
+    const paths = [input.entryPath, ...assetPaths];
+    for (let at = 0; at < paths.length; at++) {
+      const left = paths[at];
+      if (!left) continue;
+      for (const right of paths.slice(at + 1)) {
+        if (left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`))
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Entry and addons must have non-overlapping paths',
+          });
+      }
+    }
+  });
 const AssetSchema = z.object({
   sourcePath: z.string(),
   outputPath: z.string(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
+const TargetAssetSchema = AssetSchema.extend({ architecture: ArchitectureSchema });
 const RefusalSchema = z.object({
   state: z.enum(['unsupported', 'missing']),
   platform: z.string(),
@@ -46,8 +81,12 @@ const RefusalSchema = z.object({
   code: z.enum(['NATIVE_TARGET_UNSUPPORTED', 'NATIVE_ASSET_MISSING']),
 });
 
-export type NativePackagingOptions = z.input<typeof OptionsSchema>;
-export type NativePackagingAsset = z.infer<typeof AssetSchema>;
+export type NativePackagingOptions<Multiple extends boolean = false> = Multiple extends true
+  ? z.input<typeof MultipleOptionsSchema>
+  : z.input<typeof SingleOptionsSchema>;
+export type NativePackagingAsset<Multiple extends boolean = false> = Multiple extends true
+  ? z.infer<typeof TargetAssetSchema>
+  : z.infer<typeof AssetSchema>;
 
 /** Structural Bun plugin protocol: declarations need no Bun runtime or ambient types. */
 export type NativePackagingPlugin = {
@@ -72,14 +111,16 @@ export type NativePackagingPlugin = {
   }) => void;
 };
 
-export type NativePackagingResult =
+export type NativePackagingResult<Multiple extends boolean = false> =
   | z.infer<typeof RefusalSchema>
   | {
       state: 'ready';
       platform: 'darwin';
-      architecture: 'arm64' | 'x64';
+      architecture: Multiple extends true
+        ? z.infer<typeof ArchitectureSchema>[]
+        : z.infer<typeof ArchitectureSchema>;
       packageVersion: string;
-      assets: NativePackagingAsset[];
+      assets: NativePackagingAsset<Multiple>[];
       plugin: NativePackagingPlugin;
     };
 
@@ -95,18 +136,30 @@ function installedPackageRoot(): string {
 }
 
 /** Resolve this installed package's asset graph, without parsing downstream loader text. */
-export function createNativePackaging(options: NativePackagingOptions): NativePackagingResult {
+export function createNativePackaging(options: NativePackagingOptions): NativePackagingResult;
+export function createNativePackaging(
+  options: NativePackagingOptions<true>,
+): NativePackagingResult<true>;
+export function createNativePackaging(
+  options: NativePackagingOptions<boolean>,
+): NativePackagingResult<boolean>;
+export function createNativePackaging(
+  options: NativePackagingOptions<boolean>,
+): NativePackagingResult<boolean> {
   const input = OptionsSchema.parse(options);
-  if (
-    input.platform !== 'darwin' ||
-    (input.architecture !== 'arm64' && input.architecture !== 'x64')
-  ) {
-    return {
-      state: 'unsupported',
-      platform: input.platform,
-      architecture: input.architecture,
-      code: 'NATIVE_TARGET_UNSUPPORTED',
-    };
+  const declared =
+    typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
+  const architectures: z.infer<typeof ArchitectureSchema>[] = [];
+  for (const architecture of declared) {
+    const target = ArchitectureSchema.safeParse(architecture);
+    if (input.platform !== 'darwin' || !target.success)
+      return {
+        state: 'unsupported',
+        platform: input.platform,
+        architecture,
+        code: 'NATIVE_TARGET_UNSUPPORTED',
+      };
+    architectures.push(target.data);
   }
   const root = installedPackageRoot();
   const layout = NativeLayoutSchema.parse(
@@ -116,43 +169,52 @@ export function createNativePackaging(options: NativePackagingOptions): NativePa
     .object({ name: z.literal('stitchkit'), version: z.string().min(1) })
     .parse(JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')));
   const loaderPath = resolve(root, layout.loader);
-  const sourcePath = resolve(root, layout.assets[input.architecture]);
-  let bytes: Buffer;
-  try {
-    bytes = readFileSync(sourcePath);
-  } catch (cause) {
-    if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') {
-      return {
-        state: 'missing',
-        platform: input.platform,
-        architecture: input.architecture,
-        code: 'NATIVE_ASSET_MISSING',
-      };
+  const assets: NativePackagingAsset<boolean>[] = [];
+  const specifiers: Record<string, string> = {};
+  for (const architecture of architectures) {
+    const sourcePath = resolve(root, layout.assets[architecture]);
+    const outputPath =
+      typeof input.assetPath === 'string' ? input.assetPath : input.assetPath[architecture];
+    if (!outputPath) throw new Error('Declared architecture has no output path');
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(sourcePath);
+    } catch (cause) {
+      if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT')
+        return {
+          state: 'missing',
+          platform: input.platform,
+          architecture,
+          code: 'NATIVE_ASSET_MISSING',
+        };
+      throw cause;
     }
-    throw cause;
+    const outputSpecifier = relative(dirname(input.entryPath), outputPath)
+      .split('\\')
+      .join('/');
+    specifiers[architecture] =
+      input.delivery === 'embedded'
+        ? sourcePath
+        : outputSpecifier.startsWith('.')
+          ? outputSpecifier
+          : `./${outputSpecifier}`;
+    const asset = {
+      sourcePath,
+      outputPath,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
+    assets.push(typeof input.architecture === 'string' ? asset : { ...asset, architecture });
   }
-  const outputSpecifier = relative(dirname(input.entryPath), input.assetPath)
-    .split('\\')
-    .join('/');
-  const specifier =
-    input.delivery === 'embedded'
-      ? sourcePath
-      : outputSpecifier.startsWith('.')
-        ? outputSpecifier
-        : `./${outputSpecifier}`;
-  const contents = nativeLoaderSource({ [input.architecture]: specifier });
+  const first = architectures[0];
+  if (!first) throw new Error('Native packaging has no declared targets');
+  const contents = nativeLoaderSource(specifiers);
+  const external = new Set(Object.values(specifiers));
   return {
     state: 'ready',
     platform: 'darwin',
-    architecture: input.architecture,
+    architecture: typeof input.architecture === 'string' ? first : architectures,
     packageVersion: manifest.version,
-    assets: [
-      {
-        sourcePath,
-        outputPath: input.assetPath,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-      },
-    ],
+    assets,
     plugin: {
       name: 'stitchkit-native-packaging',
       setup(build) {
@@ -171,8 +233,8 @@ export function createNativePackaging(options: NativePackagingOptions): NativePa
         );
         if (input.delivery === 'companion') {
           build.onResolve({ filter: /./ }, (args) =>
-            args.importer === loaderPath && args.path === specifier
-              ? { path: specifier, external: true }
+            args.importer === loaderPath && external.has(args.path)
+              ? { path: args.path, external: true }
               : undefined,
           );
         }

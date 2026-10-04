@@ -229,6 +229,66 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  universal-native-build:
+    name: Shared universal native archive
+    if: needs.plan.outputs.darwin == 'true'
+    needs: [plan, darwin-contained-files]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: darwin-contained-files-*
+          path: packages/core/native
+          merge-multiple: true
+      - run: bun --filter stitchkit build
+      - run: bun scripts/universal-native-build.ts "$RUNNER_TEMP/universal-native"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: universal-native
+          path: ${{ runner.temp }}/universal-native/universal-native.tar
+          if-no-files-found: error
+          retention-days: 30
+
+  universal-native-run:
+    name: Shared universal native execution / ${{ matrix.arch }}
+    if: needs.plan.outputs.darwin == 'true'
+    needs: [plan, universal-native-build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: test "$(node -p process.arch)" = "${{ matrix.arch }}"
+      - run: test "$(bun -p process.arch)" = "${{ matrix.arch }}"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: universal-native
+          path: ${{ runner.temp }}/universal-native
+      - run: bun scripts/universal-native-run.ts "$RUNNER_TEMP/universal-native/universal-native.tar"
+
   supervised:
     name: Supervised roles under PM2
     if: needs.plan.outputs.supervised == 'true'
@@ -318,6 +378,8 @@ jobs:
         tui,
         starter-package,
         darwin-contained-files,
+        universal-native-build,
+        universal-native-run,
         supervised,
         starter,
       ]
@@ -359,6 +421,8 @@ jobs:
         tui,
         starter-package,
         darwin-contained-files,
+        universal-native-build,
+        universal-native-run,
         supervised,
         starter,
         artifacts,

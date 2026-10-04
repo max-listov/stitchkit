@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import type { BunPlugin } from 'bun';
 import { z } from 'zod';
 import { createNativePackaging } from '../src/entrypoints/files/packaging';
@@ -50,6 +51,63 @@ describe('native packaging contract', () => {
     for (const entryPath of ['[dir]/proof.js', 'app/[name].js', 'app/[hash].js']) {
       expect(() => createNativePackaging({ ...options, entryPath })).toThrow(
         'fixed entry path',
+      );
+    }
+  });
+  test('universal targets require a complete unique collision-free companion map', () => {
+    const universal = {
+      ...options,
+      architecture: ['arm64', 'x64'],
+      assetPath: { arm64: 'addons/arm.node', x64: 'addons/intel.node' },
+    };
+    for (const input of [
+      { ...universal, architecture: [] },
+      { ...universal, architecture: ['arm64', 'arm64'] },
+      { ...universal, assetPath: { arm64: 'addons/arm.node' } },
+      { ...universal, assetPath: { ...universal.assetPath, other: 'other.node' } },
+      { ...universal, assetPath: { arm64: 'same.node', x64: 'same.node' } },
+      { ...universal, assetPath: { arm64: 'addons', x64: 'addons/intel.node' } },
+    ])
+      expect(() => createNativePackaging(input)).toThrow();
+    expect(createNativePackaging({ ...universal, platform: 'linux' })).toEqual({
+      state: 'unsupported',
+      platform: 'linux',
+      architecture: 'arm64',
+      code: 'NATIVE_TARGET_UNSUPPORTED',
+    });
+    expect(
+      createNativePackaging({
+        ...universal,
+        architecture: ['arm64', 'riscv64'],
+        assetPath: { arm64: 'arm.node', riscv64: 'other.node' },
+      }),
+    ).toEqual({
+      state: 'unsupported',
+      platform: 'darwin',
+      architecture: 'riscv64',
+      code: 'NATIVE_TARGET_UNSUPPORTED',
+    });
+  });
+  test('one universal loader selects only its exact runtime target without fallback', () => {
+    for (const architecture of ['arm64', 'x64', 'riscv64']) {
+      const calls: string[] = [];
+      const module = { exports: () => undefined };
+      runInNewContext(nativeLoaderSource({ arm64: './arm.node', x64: './intel.node' }), {
+        module,
+        process: { arch: architecture },
+        require(specifier: string) {
+          calls.push(specifier);
+          throw new Error('selected addon unavailable');
+        },
+      });
+      expect(calls).toEqual([]);
+      expect(() => module.exports()).toThrow('Darwin addon loading failed');
+      expect(calls).toEqual(
+        architecture === 'arm64'
+          ? ['./arm.node']
+          : architecture === 'x64'
+            ? ['./intel.node']
+            : [],
       );
     }
   });
@@ -131,6 +189,7 @@ describe('native packaging contract', () => {
       const armAsset = arm.assets[0];
       const intelAsset = intel.assets[0];
       if (!armAsset || !intelAsset) throw new Error('Target asset is absent');
+      expect(Object.keys(armAsset).sort()).toEqual(['outputPath', 'sha256', 'sourcePath']);
       expect(armAsset.sourcePath).toBe(join(root, layout.assets.arm64));
       expect(intelAsset.sourcePath).toBe(join(root, layout.assets.x64));
       expect(intelAsset.sha256).not.toBe(armAsset.sha256);
@@ -157,6 +216,51 @@ describe('native packaging contract', () => {
         if (!edge) throw new Error('Companion edge is absent');
         expect(resolve(dirname(join(output, entryPath)), edge)).toBe(join(output, assetPath));
       }
+      const universal = ready({
+        ...options,
+        architecture: ['arm64', 'x64'],
+        assetPath: { arm64: 'native/arm.node', x64: 'other/intel.node' },
+      });
+      expect(universal.architecture).toEqual(['arm64', 'x64']);
+      expect(universal.assets.map((asset) => asset.sha256)).toEqual([
+        armAsset.sha256,
+        intelAsset.sha256,
+      ]);
+      const universalOutput = join(root, 'universal');
+      const universalBuild = await Bun.build({
+        entrypoints: [entry],
+        outdir: universalOutput,
+        target: 'node',
+        naming: { entry: options.entryPath },
+        plugins: [universal.plugin],
+      });
+      expect(universalBuild.success).toBe(true);
+      expect(universalBuild.outputs.map((file) => file.path)).toEqual([
+        join(universalOutput, options.entryPath),
+      ]);
+      const edges = [
+        ...readFileSync(join(universalOutput, options.entryPath), 'utf8').matchAll(
+          /require\("([^"]+\.node)"\)/g,
+        ),
+      ].map((match) =>
+        resolve(dirname(join(universalOutput, options.entryPath)), match[1] ?? ''),
+      );
+      expect(edges).toEqual(
+        universal.assets.map((asset) => join(universalOutput, asset.outputPath)),
+      );
+      rmSync(intelAsset.sourcePath);
+      expect(
+        exported.createNativePackaging({
+          ...options,
+          architecture: ['arm64', 'x64'],
+          assetPath: { arm64: 'native/arm.node', x64: 'other/intel.node' },
+        }),
+      ).toEqual({
+        state: 'missing',
+        platform: 'darwin',
+        architecture: 'x64',
+        code: 'NATIVE_ASSET_MISSING',
+      });
       const embedded = ready({ ...options, delivery: 'embedded' });
       const built = await Bun.build({
         entrypoints: [entry],

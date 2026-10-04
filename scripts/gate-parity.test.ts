@@ -69,6 +69,8 @@ function workflowCoverageProblems(source: string): string[] {
       'plan',
       'repository',
       ...Object.keys(selectors),
+      'universal-native-build',
+      'universal-native-run',
       ...(phase === 'result' ? ['artifacts'] : []),
     ]) {
       if (!needs.includes(name)) problems.push(`${phase}: missing ${name}`);
@@ -98,6 +100,20 @@ function workflowCoverageProblems(source: string): string[] {
   const darwin = jobs['darwin-contained-files']?.strategy?.matrix;
   if (!Array.isArray(darwin?.include) || darwin.include.length !== 2)
     problems.push('darwin: incomplete matrix');
+  for (const [name, dependency] of [
+    ['universal-native-build', 'darwin-contained-files'],
+    ['universal-native-run', 'universal-native-build'],
+  ]) {
+    if (!name || !dependency) throw new Error('Invalid universal evidence edge');
+    const job = jobs[name];
+    if (job?.if !== "needs.plan.outputs.darwin == 'true'") problems.push(`${name}: selector`);
+    if (JSON.stringify(job?.needs) !== JSON.stringify(['plan', dependency]))
+      problems.push(`${name}: shared dependency`);
+  }
+  if (
+    JSON.stringify(jobs['universal-native-run']?.strategy?.matrix) !== JSON.stringify(darwin)
+  )
+    problems.push('universal: incomplete native matrix');
   if (jobs.result?.if !== 'always()') problems.push('result: must always check');
   if (jobs.artifacts?.if !== "always() && needs.plan.outputs.artifacts == 'true'")
     problems.push('artifacts: selection');
@@ -206,19 +222,14 @@ describe('CI evidence parity', () => {
     // From the `jobs:` section only — `push:` and `schedule:` sit at the same
     // indentation under `on:`, and counting them as jobs is a test that fails
     // for a reason having nothing to do with what it checks.
-    const section = CI.slice(CI.indexOf('\njobs:'));
-    const jobs = [...section.matchAll(/^ {2}([a-z][a-z-]*):$/gm)].map(
-      (match) => match[1] ?? '',
-    );
-    const evidence = jobs.filter(
-      (job) => job !== 'plan' && job !== 'artifacts' && job !== 'result',
+    const { jobs } = WorkflowSchema.parse(Bun.YAML.parse(CI));
+    const evidence = Object.keys(jobs).filter(
+      (job) => !['plan', 'artifacts', 'result'].includes(job),
     );
     expect(evidence).toContain('portable-lanes');
     for (const block of ['artifacts', 'result']) {
-      const needs =
-        section.slice(section.indexOf(`  ${block}:`)).match(/needs:\s*\[([^\]]*)\]/)?.[1] ??
-        '';
-      const listed = needs.split(',').map((entry) => entry.trim());
+      const raw = jobs[block]?.needs;
+      const listed = typeof raw === 'string' ? [raw] : (raw ?? []);
       for (const job of evidence) expect(listed).toContain(job);
     }
   });
@@ -238,6 +249,26 @@ describe('CI evidence parity', () => {
     expect(CI).toContain('runner: macos-15-intel');
     expect(CI).toContain('bun --filter stitchkit build:native-contained-files');
     expect(CI).toContain('bun run contained-files-packed-lane');
+  });
+
+  test('universal execution depends on one shared archive and both native architectures', () => {
+    expect(
+      workflowCoverageProblems(
+        CI.replace('needs: [plan, universal-native-build]', 'needs: [plan]'),
+      ),
+    ).toContain('universal-native-run: shared dependency');
+    expect(
+      workflowCoverageProblems(CI.replace('        universal-native-run,\n', '')),
+    ).toContain('artifacts: missing universal-native-run');
+    const { jobs } = WorkflowSchema.parse(Bun.YAML.parse(CI));
+    const consumer = jobs['universal-native-run'];
+    expect(consumer?.steps.some((step) => step.run?.includes('universal-native-run.ts'))).toBe(
+      true,
+    );
+    expect(
+      consumer?.steps.some((step) => step.run?.includes('universal-native-build.ts')),
+    ).toBe(false);
+    expect(CI).toContain('name: universal-native');
   });
 
   test('Linux UID refusal has an explicit privileged installed-package proof', () => {

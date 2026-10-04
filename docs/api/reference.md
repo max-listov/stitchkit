@@ -2531,7 +2531,14 @@ It resolves the installed package's target/version and original addon SHA256.
 `platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs.
 The result is `ready` with assets and a structural Bun plugin, or `unsupported`/`missing` with a safe code.
 Malformed options/metadata and other filesystem errors fail rather than masquerade as missing.
-Companion mode places an external addon relative to the emitted entry; embedded mode lets
+Companion accepts a single `architecture` string with an `assetPath` string, or an architecture
+array with an exact per-architecture `assetPath` map. `NativePackagingOptions<true>` and
+`NativePackagingResult<true>` describe the array form; default types preserve single-target signatures.
+A ready array-form result carries the architecture array; `NativePackagingAsset<true>` identifies
+each asset architecture. Default asset types and single-target runtime objects retain their three fields.
+Targets must be unique; entry and all asset paths must be disjoint. One lazy loader chooses only
+the actual runtime architecture, with no fallback.
+Companion mode places external addons relative to the emitted entry; embedded mode lets
 Bun compile retain the matching addon. Keep JS builds without splitting, preserve every output,
 and copy each original asset to its `outputPath` after verifying `sha256`.
 This evolving entrypoint is a build dependency; runtime imports do not reach it.
